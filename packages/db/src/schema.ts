@@ -417,6 +417,40 @@ export const run = sqliteTable("run", {
 })
 
 // Persistent environments and execution ownership outlive deleted Contexts and automations.
+// One permanent admission slot serializes manual binding and automatic setup on every store.
+export const runtimeOwner = sqliteTable("runtime_owner", {
+  context_id: text("context_id").primaryKey(),
+  org_id: text("org_id").notNull(),
+  owner: text("owner").notNull(),
+})
+
+export const runtimeSetup = sqliteTable(
+  "runtime_setup",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    context_id: text("context_id").notNull(),
+    agent_id: text("agent_id").notNull(),
+    created_by: text("created_by").notNull(),
+    connection_id: text("connection_id").notNull(),
+    api_url: text("api_url").notNull(),
+    ortam_org_id: text("ortam_org_id").notNull(),
+    ortam_user_id: text("ortam_user_id").notNull(),
+    request_json: text("request_json").notNull(),
+    phase: text("phase").$type<import("@derive/core").RuntimeSetupRecord["phase"]>().notNull(),
+    revision: integer("revision").notNull().default(0),
+    sandbox_id: text("sandbox_id"),
+    create_operation_id: text("create_operation_id"),
+    stop_operation_id: text("stop_operation_id"),
+    delete_operation_id: text("delete_operation_id"),
+    cancelled_at: text("cancelled_at"),
+    deadline_at: text("deadline_at").notNull(),
+    created_at: text("created_at").notNull(),
+    updated_at: text("updated_at").notNull(),
+  },
+  (t) => [uniqueIndex("runtime_setup_context").on(t.context_id)],
+)
+
 export const contextRuntime = sqliteTable(
   "context_runtime",
   {
@@ -1825,6 +1859,8 @@ const TABLES = [
   automation,
   run,
   contextRuntime,
+  runtimeSetup,
+  runtimeOwner,
   runAttempt,
   workflowRun,
   workflowStepAttempt,

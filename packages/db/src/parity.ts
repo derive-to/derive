@@ -50,6 +50,7 @@ import type {
   ReviewRoundRecord,
   RunAttemptRecord,
   RunRecord,
+  RuntimeSetupRecord,
   SessionMessageRecord,
   SessionRecord,
   SharedStateActivityRecord,
@@ -100,6 +101,7 @@ export interface TypedTables {
   agentMention: AgentMentionRecord
   automation: AutomationRecord
   contextRuntime: ContextRuntimeRecord
+  runtimeSetup: RuntimeSetupRecord
   runAttempt: RunAttemptRecord
   run: RunRecord
   workflowRun: WorkflowRunRecord
@@ -142,6 +144,7 @@ export interface TypedTables {
  * shape parity — but it still has to be named, so it can't be forgotten.
  */
 export type JunctionTable =
+  | "runtimeOwner"
   | "artifactFavorite"
   | "collectionFavorite"
   | "artifactTag"

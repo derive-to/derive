@@ -328,6 +328,53 @@ browser test. It checks concurrent admission, missed times, stale edits, pause,
 timezones, and completion after pause. The store contract runs on SQLite,
 Postgres and D1. Scheduled execution has not yet been qualified against live Ortam.
 
+## Automatic sandbox setup (operator pilot)
+
+The Cloud runs panel can create a Small sandbox from a saved Ortam secret
+connection. `POST /v1/contexts/:id/runtime/setup` takes only `connection_id`;
+`GET /v1/contexts/:id/runtime` includes the durable `setup` receipt. This remains
+restricted to an instance operator in an allowlisted workspace with hosted
+agents and agent writes enabled. Imported Contexts cannot provision a runtime.
+The configured runner path must be
+`/home/ortam/derive-runtime/0.7.0/node_modules/@derive-to/cli/bin/derive.js`.
+
+Derive persists the exact creation request before submitting it, including the
+CLI 0.7.0 installation script and a 1,200-second auto-stop limit. The existing
+minute dispatcher repairs interrupted setup, replays ambiguous lifecycle
+requests with their original idempotency keys, checks the create result, and
+stops the sandbox before waiting for model authorization. No model runs during
+setup. Ortam usage is charged to the controller account.
+
+When the panel says **Attach your model account**, open the displayed sandbox
+in Ortam and use **Settings → Attach my connections**. Leave it stopped. Derive
+checks that the attached account belongs to the controller's Ortam user and
+then connects the runtime automatically. Model delegation directly from Derive
+is still pending; API-key authorization cannot impersonate this consent.
+
+Setup has a 30-minute deadline. Cancellation through
+`POST /v1/contexts/:id/runtime/setup/cancel`, expiry, a failed installation,
+Context deletion, or revoked pilot access before handover sends the newly
+created sandbox to deletion. An ambiguous creation is resolved before deleting
+its exact sandbox. Cleanup remains active after rollout removal and can use the
+retained encrypted controller credential after its Derive grant is revoked.
+Do not remove the runtime deployment configuration or vendor credential until
+cleanup finishes. A vendor outage or failed deletion remains `deleting` and
+requires operator repair; accepting a delete request never marks cleanup done.
+
+One permanent database admission slot prevents manual binding and provisioning
+from both claiming the same Context. Cancellation and final handover compete
+through the setup revision: after `binding`, the accepted runtime is retained,
+and cancellation must use the normal runtime disable flow. If the Context was
+deleted after handover admission, the runtime receipt is repaired as disabled.
+A completed runtime keeps its saved filesystem; setup cancellation never deletes
+it. Failed setup receipts are retained for diagnosis; use a new Context to retry.
+
+Contract coverage lives in `apps/api/test/context-connections.test.ts` (public
+routes and the Ortam HTTP boundary) and `packages/db/test/store-contract.ts`
+(shared SQLite, PostgreSQL, and D1 admission/cancellation contracts). Live
+qualification of this automatic flow is recorded separately from the earlier
+manually provisioned scheduled pilot below.
+
 ## Hosted pilot: two scheduled runs
 
 This is an operator procedure, not an automated test result. Run it in Ortam Pilot

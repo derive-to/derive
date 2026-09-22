@@ -1,3 +1,4 @@
+import type { RuntimeSetupRecord } from "@derive/core"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { api, type Connection } from "@/api"
@@ -8,7 +9,13 @@ import { Input } from "@/components/ui/input"
 import { automationConnectionsQuery, contextRuntimeQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 
-export function RuntimeSetup({ contextId }: { contextId: string }) {
+export function RuntimeSetup({
+  contextId,
+  setup,
+}: {
+  contextId: string
+  setup: RuntimeSetupRecord | null
+}) {
   const qc = useQueryClient()
   const query = contextRuntimeQuery(contextId)
   const connectionsQuery = automationConnectionsQuery()
@@ -20,6 +27,16 @@ export function RuntimeSetup({ contextId }: { contextId: string }) {
     mutationFn: () => api.bindContextRuntime(contextId, connection, sandbox.trim()),
     invalidate: [query.queryKey],
     success: "Sandbox connected",
+  })
+  const provision = useApiMutation({
+    mutationFn: () => api.setupContextRuntime(contextId, connection),
+    invalidate: [query.queryKey],
+    success: "Sandbox setup queued",
+  })
+  const cancel = useApiMutation({
+    mutationFn: () => api.cancelContextRuntimeSetup(contextId),
+    invalidate: [query.queryKey],
+    success: "Setup cancellation requested",
   })
   const saveKey = useApiMutation({
     mutationFn: async () => {
@@ -41,6 +58,56 @@ export function RuntimeSetup({ contextId }: { contextId: string }) {
       setKey("")
     },
   })
+  if (setup) {
+    const labels: Record<RuntimeSetupRecord["phase"], string> = {
+      queued: "Waiting to set up your sandbox",
+      creating: "Creating your sandbox",
+      provisioning: "Installing the runner",
+      stopping: "Saving your sandbox",
+      awaiting_connection: "Attach your model account",
+      binding: "Connecting your sandbox",
+      ready: "Sandbox connected",
+      deleting: "Removing the unfinished sandbox",
+      failed: "Setup ended",
+    }
+    return (
+      <div className="flex flex-col gap-4 rounded-xl border bg-card p-5">
+        <SectionTitle>
+          {setup.cancelled_at && setup.phase !== "failed"
+            ? "Cancelling setup"
+            : labels[setup.phase]}
+        </SectionTitle>
+        <p className="text-sm text-muted-foreground">
+          {setup.phase === "failed"
+            ? "No runtime was connected. Any sandbox created by this setup has been deleted. Use a new Context to try again."
+            : setup.phase === "awaiting_connection" && !setup.cancelled_at
+              ? "Open this sandbox’s settings in Ortam and choose Attach my connections. Keep the sandbox stopped; Derive will connect it automatically."
+              : "Derive checks progress every minute. You can leave this page while setup or cleanup continues."}
+        </p>
+        {setup.sandbox_id && setup.phase === "awaiting_connection" && !setup.cancelled_at && (
+          <p className="break-all font-mono text-sm">{setup.sandbox_id}</p>
+        )}
+        {!setup.cancelled_at &&
+          !["failed", "ready", "deleting", "binding"].includes(setup.phase) && (
+            <>
+              <p className="text-sm text-muted-foreground">
+                Finish setup by {new Date(setup.deadline_at).toLocaleTimeString()}. Incomplete
+                setups are removed automatically.
+              </p>
+              <Button
+                variant="outline"
+                className="self-start"
+                data-testid="context-runtime-setup-cancel"
+                disabled={cancel.isPending}
+                onClick={() => cancel.mutate()}
+              >
+                Cancel setup
+              </Button>
+            </>
+          )}
+      </div>
+    )
+  }
   return (
     <div className="grid gap-8 rounded-xl border bg-card p-5 sm:grid-cols-2 sm:p-6">
       <div className="flex min-w-0 flex-col gap-4">
@@ -63,7 +130,11 @@ export function RuntimeSetup({ contextId }: { contextId: string }) {
             value={connection}
             onChange={(e) => setConnection(e.target.value)}
             disabled={
-              connections.isPending || connections.isError || bind.isPending || saveKey.isPending
+              connections.isPending ||
+              connections.isError ||
+              bind.isPending ||
+              provision.isPending ||
+              saveKey.isPending
             }
           >
             <option value="">Choose a secret connection</option>
@@ -85,7 +156,7 @@ export function RuntimeSetup({ contextId }: { contextId: string }) {
             maxLength={4096}
             value={key}
             onChange={(e) => setKey(e.target.value)}
-            disabled={bind.isPending || saveKey.isPending}
+            disabled={bind.isPending || provision.isPending || saveKey.isPending}
           />
         </label>
         <p className="text-sm text-muted-foreground">
@@ -98,14 +169,34 @@ export function RuntimeSetup({ contextId }: { contextId: string }) {
           className="self-start"
           loading={saveKey.isPending}
           data-testid="context-runtime-key-save"
-          disabled={!key.trim() || bind.isPending || saveKey.isPending}
+          disabled={!key.trim() || bind.isPending || provision.isPending || saveKey.isPending}
           onClick={() => saveKey.mutate()}
         >
           {saveKey.isPending ? "Saving…" : "Save Ortam key"}
         </Button>
       </div>
       <div className="flex min-w-0 flex-col gap-4">
-        <SectionTitle>Sandbox</SectionTitle>
+        <SectionTitle>Create a sandbox</SectionTitle>
+        <p className="text-sm text-muted-foreground">
+          Derive creates a Small sandbox, installs the runner, and sets a 20-minute auto-stop limit.
+          Ortam usage is billed to your account. You’ll then attach your model account in Ortam.
+        </p>
+        <Button
+          className="self-start"
+          data-testid="context-runtime-provision"
+          loading={provision.isPending}
+          disabled={
+            !connection ||
+            !!key.trim() ||
+            provision.isPending ||
+            bind.isPending ||
+            saveKey.isPending
+          }
+          onClick={() => provision.mutate()}
+        >
+          Create sandbox
+        </Button>
+        <SectionTitle>Use an existing sandbox</SectionTitle>
         <p className="text-sm text-muted-foreground">
           Connect the sandbox that will keep this Context’s working files.
         </p>
@@ -116,7 +207,7 @@ export function RuntimeSetup({ contextId }: { contextId: string }) {
             value={sandbox}
             onChange={(e) => setSandbox(e.target.value)}
             placeholder="sbx_…"
-            disabled={bind.isPending}
+            disabled={bind.isPending || provision.isPending}
           />
         </label>
         <div className="rounded-lg bg-secondary p-3 text-sm text-muted-foreground">
@@ -132,7 +223,12 @@ export function RuntimeSetup({ contextId }: { contextId: string }) {
           loading={bind.isPending}
           data-testid="context-runtime-bind"
           disabled={
-            !connection || !sandbox.trim() || !!key.trim() || bind.isPending || saveKey.isPending
+            !connection ||
+            !sandbox.trim() ||
+            !!key.trim() ||
+            bind.isPending ||
+            provision.isPending ||
+            saveKey.isPending
           }
           onClick={() => bind.mutate()}
         >

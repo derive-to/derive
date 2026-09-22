@@ -10,6 +10,7 @@ import type {
   Role,
   RunAttemptRecord,
   RunRecord,
+  RuntimeSetupRecord,
   SharedStateActivity,
   SharedStateMutation,
   SharedStateResult,
@@ -1467,11 +1468,16 @@ export const api = {
     id: string,
   ): Promise<{
     enabled: boolean
+    setup?: RuntimeSetupRecord | null
     runtime: ContextRuntimeRecord | null
     schedule: AutomationRecord | null
     next_run_at: string | null
     runs: (RunRecord & { attempt: RunAttemptRecord | null })[]
   }> => f(`/v1/contexts/${id}/runtime`, opts()).then(j),
+  setupContextRuntime: (id: string, connection_id: string): Promise<unknown> =>
+    f(`/v1/contexts/${id}/runtime/setup`, opts({ connection_id })).then(j),
+  cancelContextRuntimeSetup: (id: string): Promise<unknown> =>
+    f(`/v1/contexts/${id}/runtime/setup/cancel`, opts({})).then(j),
   bindContextRuntime: (id: string, connection_id: string, sandbox_id: string): Promise<unknown> =>
     f(`/v1/contexts/${id}/runtime`, opts({ connection_id, sandbox_id })).then(j),
   runContextRuntime: (

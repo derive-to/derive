@@ -327,6 +327,36 @@ CREATE TABLE IF NOT EXISTS context_runtime (
   UNIQUE (api_url, ortam_org_id, sandbox_id)
 );
 
+CREATE TABLE IF NOT EXISTS runtime_setup (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  context_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  connection_id TEXT NOT NULL,
+  api_url TEXT NOT NULL,
+  ortam_org_id TEXT NOT NULL,
+  ortam_user_id TEXT NOT NULL,
+  request_json TEXT NOT NULL,
+  phase TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 0,
+  sandbox_id TEXT,
+  create_operation_id TEXT,
+  stop_operation_id TEXT,
+  delete_operation_id TEXT,
+  cancelled_at TEXT,
+  deadline_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (context_id)
+);
+
+CREATE TABLE IF NOT EXISTS runtime_owner (
+  context_id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  owner TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS run_attempt (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,

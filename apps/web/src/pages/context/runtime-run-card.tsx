@@ -68,12 +68,12 @@ export function RuntimeRunCard({
           {runtime ? "Cloud runs" : "Connect a sandbox"}
         </SectionHeading>
         <p className="max-w-2xl text-sm text-muted-foreground">
-          Operator pilot: manual Ortam setup for testing. Working files are saved after each run and
-          reused next time.
+          Operator pilot: provision a sandbox and attach your model account in Ortam. Working files
+          are saved after each run and reused next time.
         </p>
       </div>
       {!runtime ? (
-        <RuntimeSetup contextId={contextId} />
+        <RuntimeSetup contextId={contextId} setup={state.data.setup ?? null} />
       ) : (
         <>
           {runtime.disabled_at ? (

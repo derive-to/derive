@@ -13,6 +13,7 @@ import { OrtamClient } from "../src/lib/ortam-client"
 import { signWorkToken } from "../src/lib/run-token"
 import { runtimeDispatchPass } from "../src/lib/runtime-dispatch"
 import { materializeRuntimeSchedules, nextRuntimeOccurrence } from "../src/lib/runtime-schedule"
+import { SETUP_RUNNER_PATH } from "../src/lib/runtime-setup"
 import { materializeAllDueRuns } from "../src/lib/schedule"
 import { log } from "../src/log"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
@@ -1314,5 +1315,296 @@ describe("Ortam runtime lifecycle", () => {
     expect((await attemptRequest(f.sandbox, "claim")).status).toBe(403)
     for (let i = 0; i < 5; i++) await pass()
     expect(f.sandbox.state).toBe("stopped")
+  })
+})
+
+describe("operator runtime provisioning", () => {
+  const owner: TestUser = { id: "setup-owner", email: "setup@derive.test", name: "Operator" }
+  const member: TestUser = { id: "setup-member", email: "setup-member@derive.test", name: "Member" }
+  const config = {
+    apiUrl: "https://ortam.test/v1",
+    runnerPath: SETUP_RUNNER_PATH,
+    pilotWorkspaceIds: new Set(["default"]),
+  }
+  let count = 0
+  let now = new Date()
+  let loseCreate = false
+  let loseDelete = false
+  let failSetup = false
+  let failDelete = false
+  const creates = new Map<
+    string,
+    {
+      body: string
+      sandbox: {
+        id: string
+        state: string
+        current_operation_id: null
+        auto_stop_after_seconds: number
+        agent_connections: { user_id: string } | null
+      }
+      operation: { id: string; sandbox_id: string; kind: string; state: string }
+    }
+  >()
+  const operations = new Map<
+    string,
+    { id: string; sandbox_id: string; kind: string; state: string }
+  >()
+  const peer: typeof fetch = async (url, init) => {
+    const path = new URL(String(url)).pathname.replace("/v1", "")
+    const json = (value: unknown) =>
+      new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } })
+    const key = new Headers(init?.headers).get("Idempotency-Key") ?? ""
+    if (path === "/auth/token")
+      return json({
+        token: `header.${Buffer.from(JSON.stringify({ sub: "ortam-owner", organization_id: "ortam-org" })).toString("base64url")}.signature`,
+      })
+    if (path === "/sandboxes" && init?.method === "POST") {
+      let saved = creates.get(key)
+      if (!saved) {
+        const id = `sbx_${String(++count).padStart(26, "0")}`
+        const body = JSON.parse(String(init.body))
+        expect(body).toMatchObject({ size: "small", auto_stop_after_seconds: 1200 })
+        expect(body.name).toMatch(/^[a-z0-9][a-z0-9-]{0,62}$/)
+        expect(body.setup_script).toContain("--save-exact @derive-to/cli@0.7.0")
+        expect(body.agent_connections).toBeUndefined()
+        saved = {
+          body: String(init.body),
+          sandbox: {
+            id,
+            state: "ready",
+            current_operation_id: null,
+            auto_stop_after_seconds: 1200,
+            agent_connections: null,
+          },
+          operation: {
+            id: `create-${id}`,
+            sandbox_id: id,
+            kind: "create",
+            state: failSetup ? "failed" : "succeeded",
+          },
+        }
+        creates.set(key, saved)
+        operations.set(saved.operation.id, saved.operation)
+      }
+      expect(String(init.body)).toBe(saved.body)
+      if (loseCreate) {
+        loseCreate = false
+        throw new Error("lost accepted response")
+      }
+      return json(saved)
+    }
+    if (path.startsWith("/operations/")) return json(operations.get(path.split("/")[2] ?? ""))
+    const saved = [...creates.values()].find((x) => x.sandbox.id === path.split("/")[2])
+    if (!saved) throw new Error("Unexpected sandbox request")
+    if (path.endsWith("/stop") || init?.method === "DELETE") {
+      const kind = init?.method === "DELETE" ? "delete" : "stop"
+      if (kind === "delete")
+        expect(new Headers(init?.headers).get("X-Ortam-Confirm-Delete")).toBe(saved.sandbox.id)
+      let op = operations.get(key)
+      if (!op) {
+        op = {
+          id: `${kind}-${saved.sandbox.id}`,
+          sandbox_id: saved.sandbox.id,
+          kind,
+          state: kind === "delete" && failDelete ? "failed" : "succeeded",
+        }
+        operations.set(key, op)
+        operations.set(op.id, op)
+        if (op.state === "succeeded")
+          saved.sandbox.state = kind === "delete" ? "deleted" : "stopped"
+      }
+      if (kind === "delete" && loseDelete) {
+        loseDelete = false
+        throw new Error("lost delete response")
+      }
+      return json(op)
+    }
+    return json(saved.sandbox)
+  }
+  const { app, meta, ctx } = makeAuthedApp("runtime-provisioning", [owner, member], "editor", {
+    operatorIds: [owner.id],
+    deps: { encryptionKey: SECRET, runtime: config, runtimeFetch: peer },
+  })
+  const pass = () =>
+    runtimeDispatchPass({
+      meta,
+      blobs: ctx.blobs,
+      secret: SECRET,
+      server: "http://derive.test",
+      config,
+      fetcher: peer,
+      now: () => now,
+    })
+  async function fixture() {
+    now = new Date()
+    loseCreate = false
+    loseDelete = false
+    failSetup = false
+    failDelete = false
+    config.pilotWorkspaceIds.add("default")
+    const settings = await meta.getOrgSettings("default")
+    await meta.setOrgSettings("default", {
+      ...settings,
+      hostedAgentsEnabled: true,
+      agentWrites: true,
+    })
+    const manifest = await (
+      await publishAs(app, "# Setup", { title: `Setup ${++count}` }, as(owner.email))
+    ).json()
+    const context = await (
+      await app.request(
+        "/v1/contexts",
+        jsonAs(as(owner.email), { name: `Setup ${count}`, manifest_short_id: manifest.short_id }),
+      )
+    ).json()
+    const connection = await meta.createConnection({
+      id: `setup-connection-${count}`,
+      org_id: "default",
+      user_id: owner.id,
+      kind: "secret",
+      broker: "none",
+      toolkit: "ortam",
+      broker_ref: `setup-${count}`,
+      status: "active",
+      secret_enc: encryptSecret("setup controller fixture", SECRET),
+    })
+    const path = `/v1/contexts/${context.id}/runtime`
+    const submit = () =>
+      app.request(`${path}/setup`, jsonAs(as(owner.email), { connection_id: connection.id }))
+    const state = () => meta.getRuntimeSetup(context.id, "default")
+    const cancel = () => app.request(`${path}/setup/cancel`, jsonAs(as(owner.email), {}))
+    return { context, connection, path, submit, state, cancel }
+  }
+  it("replays lost creation, stops before binding, and waits for the operator's model consent", async () => {
+    const f = await fixture()
+    const before = creates.size
+    expect((await f.submit()).status).toBe(202)
+    expect((await f.submit()).status).toBe(200)
+    await pass() // durable submission intent
+    loseCreate = true
+    await pass() // accepted, response lost
+    expect((await f.state())?.phase).toBe("creating")
+    await pass() // same request/key recovers receipt
+    expect(creates.size).toBe(before + 1)
+    await pass()
+    await pass()
+    await pass()
+    expect((await f.state())?.phase).toBe("awaiting_connection")
+    await pass()
+    expect(await meta.getContextRuntimeForContext(f.context.id, "default")).toBeNull()
+    const saved = creates.get(`derive-${(await f.state())?.id}-create`)
+    if (!saved) throw new Error("Missing created sandbox")
+    expect(saved.sandbox.state).toBe("stopped")
+    saved.sandbox.agent_connections = { user_id: "another-user" }
+    await pass()
+    expect(await meta.getContextRuntimeForContext(f.context.id, "default")).toBeNull()
+    saved.sandbox.agent_connections = { user_id: "ortam-owner" }
+    await pass()
+    await pass()
+    await pass()
+    expect((await f.state())?.phase).toBe("ready")
+    expect(await meta.getContextRuntimeForContext(f.context.id, "default")).toMatchObject({
+      sandbox_id: saved.sandbox.id,
+      connection_id: f.connection.id,
+    })
+    expect((await f.cancel()).status).toBe(409)
+    await pass()
+    expect(saved.sandbox.state).toBe("stopped")
+  })
+  it("denies setup to nonoperators and prevents a manual binding from overtaking setup", async () => {
+    const f = await fixture()
+    expect(
+      (
+        await app.request(
+          `${f.path}/setup`,
+          jsonAs(as(member.email), { connection_id: f.connection.id }),
+        )
+      ).status,
+    ).toBe(403)
+    await f.submit()
+    const state = await (await app.request(f.path, { headers: as(member.email) })).json()
+    expect(state.setup).toBeUndefined()
+    await pass()
+    await pass()
+    const setup = await f.state()
+    expect(
+      await meta.createContextRuntime(
+        {
+          id: "steal-setup",
+          org_id: "default",
+          context_id: f.context.id,
+          agent_id: f.context.agent_id,
+          api_url: config.apiUrl,
+          ortam_org_id: "ortam-org",
+          ortam_user_id: "ortam-owner",
+          sandbox_id: setup?.sandbox_id ?? "",
+          connection_id: f.connection.id,
+        },
+        now.toISOString(),
+      ),
+    ).toBeNull()
+    await f.cancel()
+    for (let i = 0; i < 4; i++) await pass()
+    expect((await f.state())?.phase).toBe("failed")
+  })
+  it("cancels before submission without creating compute", async () => {
+    const f = await fixture()
+    await f.submit()
+    await f.cancel()
+    const before = creates.size
+    await pass()
+    expect(creates.size).toBe(before)
+    expect((await f.state())?.phase).toBe("failed")
+  })
+  it("resolves an ambiguous create and cleans up after cancellation and rollout removal", async () => {
+    const f = await fixture()
+    await f.submit()
+    await pass()
+    loseCreate = true
+    await pass()
+    await f.cancel()
+    config.pilotWorkspaceIds.clear()
+    await meta.setConnectionStatus(f.connection.id, "default", "revoked")
+    await pass()
+    await pass()
+    loseDelete = true
+    await pass()
+    expect((await f.state())?.phase).toBe("deleting")
+    await pass()
+    await pass()
+    expect((await f.state())?.phase).toBe("failed")
+    expect(await meta.getContextRuntimeForContext(f.context.id, "default")).toBeNull()
+  })
+  it("deletes a failed installation and retains ownership when deletion fails", async () => {
+    const f = await fixture()
+    await f.submit()
+    await pass()
+    failSetup = true
+    failDelete = true
+    await pass()
+    await pass()
+    await pass()
+    await pass()
+    expect((await f.state())?.phase).toBe("deleting")
+    const opId = (await f.state())?.delete_operation_id
+    const op = operations.get(opId ?? "")
+    if (!op) throw new Error("Missing deletion operation")
+    op.state = "succeeded" // operator repairs the failed Ortam operation
+    await pass()
+    expect((await f.state())?.phase).toBe("failed")
+  })
+  it("expires unclaimed setup and still cleans up after the Context is deleted", async () => {
+    const f = await fixture()
+    await f.submit()
+    for (let i = 0; i < 6; i++) await pass()
+    expect((await f.state())?.phase).toBe("awaiting_connection")
+    now = new Date(Date.parse((await f.state())?.deadline_at ?? "") + 1000)
+    await pass()
+    expect((await f.state())?.phase).toBe("deleting")
+    await meta.deleteContext(f.context.id, "default")
+    await pass()
+    await pass()
+    expect((await f.state())?.phase).toBe("failed")
   })
 })

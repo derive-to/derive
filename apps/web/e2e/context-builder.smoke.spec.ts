@@ -423,3 +423,63 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
   await expect(owner.getByTestId("console-tab-chat")).toHaveAttribute("data-state", "active")
   await expect(owner.getByTestId("context-runtime-panel")).toHaveCount(0)
 })
+
+test("Cloud setup accepts a saved connection and keeps consent and cancellation visible", async ({
+  owner,
+}, testInfo) => {
+  const manifest = await publishArtifact(owner, "setup.md", "# Daily checks")
+  const created = await owner.request.post("/v1/contexts", {
+    data: { name: "Provisioned checks", manifest_short_id: manifest },
+  })
+  const context = await created.json()
+  let setup: Record<string, unknown> | null = null
+  await owner.route("**/v1/connections?*", (route) =>
+    route.fulfill({
+      json: {
+        connections: [
+          {
+            id: "setup-controller",
+            kind: "secret",
+            status: "active",
+            toolkit: "ortam",
+            scopes_label: "Pilot controller",
+          },
+        ],
+      },
+    }),
+  )
+  await owner.route(`**/v1/contexts/${context.id}/runtime`, (route) =>
+    route.fulfill({
+      json: { enabled: true, runtime: null, schedule: null, next_run_at: null, runs: [], setup },
+    }),
+  )
+  await owner.route(`**/v1/contexts/${context.id}/runtime/setup`, async (route) => {
+    expect(route.request().postDataJSON()).toEqual({ connection_id: "setup-controller" })
+    setup = {
+      id: "setup-demo",
+      phase: "awaiting_connection",
+      sandbox_id: "sbx_operator_pilot",
+      cancelled_at: null,
+      deadline_at: new Date(Date.now() + 20 * 60000).toISOString(),
+    }
+    await route.fulfill({ status: 202, json: { setup } })
+  })
+  await owner.route(`**/v1/contexts/${context.id}/runtime/setup/cancel`, async (route) => {
+    setup = { ...setup, phase: "deleting", cancelled_at: new Date().toISOString() }
+    await route.fulfill({ json: { setup } })
+  })
+  await owner.goto(`/contexts/${context.id}`)
+  await owner.getByTestId("console-tab-cloud").click()
+  await expect(owner.getByTestId("context-runtime-provision")).toBeDisabled()
+  await owner.getByTestId("context-runtime-connection").selectOption("setup-controller")
+  await owner.getByTestId("context-runtime-provision").click()
+  await expect(owner.getByText("Attach your model account", { exact: true })).toBeVisible()
+  await expect(owner.getByTestId("context-runtime-run")).toHaveCount(0)
+  await owner.setViewportSize({ width: 390, height: 844 })
+  await owner
+    .getByTestId("context-runtime-panel")
+    .screenshot({ path: testInfo.outputPath("setup-consent-mobile.png") })
+  await owner.getByTestId("context-runtime-setup-cancel").click()
+  await expect(owner.getByText("Cancelling setup", { exact: true })).toBeVisible()
+  await expect(owner.getByTestId("context-runtime-setup-cancel")).toHaveCount(0)
+})
