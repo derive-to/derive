@@ -348,6 +348,13 @@ jobs:
       - uses: ./.github/actions/setup
         if: steps.head.outputs.stale != 'true'
 
+      - name: Audit deployed cron isolation
+        if: steps.head.outputs.stale != 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node apps/api/scripts/audit-worker-crons.mjs
+
       - name: Build web client
         if: steps.head.outputs.stale != 'true'
         run: pnpm --filter @derive/api build:web

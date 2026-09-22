@@ -31,6 +31,10 @@ const region = from === -1 ? "" : yml.slice(from)
 
 if (from === -1) fail(`no "Deploy worker" step in ${FILE} — has the deploy moved?`)
 
+const audit = yml.indexOf("run: node apps/api/scripts/audit-worker-crons.mjs")
+if (audit === -1 || audit > from)
+  fail("the live Worker cron-isolation audit must run before production deployment")
+
 if (!/--var\s+BUILD_SHA:/.test(region))
   fail(
     'the deploy does not stamp BUILD_SHA. Without it /healthz reports "dev" forever and the ' +
