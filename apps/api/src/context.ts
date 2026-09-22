@@ -132,7 +132,12 @@ export interface SessionUser {
 }
 
 export interface AppDeps {
-  runtime?: { apiUrl: string; runnerPath: string }
+  runtime?: {
+    apiUrl: string
+    runnerPath: string
+    /** Temporary operator pilot. No allowed workspaces means no interactive access. */
+    pilotWorkspaceIds: ReadonlySet<string>
+  }
   runtimeFetch?: typeof fetch
 
   meta: MetaStore

@@ -54,6 +54,19 @@ for (const root of ROOTS) {
       if (trimmed.startsWith("//") || trimmed.startsWith("*")) return
       if (line.includes("fetch-invocation-ok")) return
       const code = line.split("//")[0]
+      // A parameter property or class field can hide the same defect under any
+      // name (`private fetcher: typeof fetch = fetch`). Catch storage as well as
+      // invocation, while allowing a normal constructor argument wrapped by unbound.
+      if (
+        /\b(?:private|protected|public|readonly)\s+(?:readonly\s+)?\w+\s*:\s*typeof fetch\s*=\s*(?:globalThis\.)?fetch\b/.test(
+          code,
+        ) ||
+        /\bthis\.\w+\s*=\s*(?:globalThis\.)?fetch\s*[;,]/.test(code)
+      ) {
+        violations.push(
+          `${relative(process.cwd(), file)}:${i + 1}: raw global fetch stored on an instance — wrap it with \`unbound()\`.`,
+        )
+      }
       // `<receiver>.fetch(` where the receiver is not a Cloudflare binding.
       for (const m of code.matchAll(/([\w.]+)\.fetch\s*\(/g)) {
         const receiver = m[1]

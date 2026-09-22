@@ -2,7 +2,7 @@ import { newId } from "@derive/core"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
-import { manageableContext } from "../lib/context-access"
+import { manageableContext, runtimePilotAllowed } from "../lib/context-access"
 import { fail, readJson } from "../lib/http"
 import { nextRuntimeOccurrence } from "../lib/runtime-schedule"
 
@@ -11,6 +11,8 @@ export const contextRuntimeScheduleRoutes = (ctx: AppContext) => {
   app.put("/v1/contexts/:id/runtime/schedule", async (c) => {
     const context = await manageableContext(ctx, c)
     if (context instanceof Response) return context
+    if (!(await runtimePilotAllowed(ctx, c, context.org_id)))
+      return fail(c, 403, "Cloud run pilot is unavailable")
     const body = await readJson(
       c,
       z.object({

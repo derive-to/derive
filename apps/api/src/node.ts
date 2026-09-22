@@ -532,6 +532,7 @@ const runtimeConfig = process.env.DERIVE_ORTAM_RUNNER_PATH
   ? {
       runnerPath: process.env.DERIVE_ORTAM_RUNNER_PATH,
       apiUrl: process.env.DERIVE_ORTAM_API_URL ?? "https://api.ortam.dev/v1",
+      pilotWorkspaceIds: workspaceIdsFromEnv(process.env.DERIVE_HOSTED_RUNS_ALLOWLIST),
     }
   : undefined
 const app = createApp({

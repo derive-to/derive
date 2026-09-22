@@ -326,6 +326,7 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           ? {
               runnerPath: env.DERIVE_ORTAM_RUNNER_PATH,
               apiUrl: env.DERIVE_ORTAM_API_URL ?? "https://api.ortam.dev/v1",
+              pilotWorkspaceIds: workspaceIdsFromEnv(env.DERIVE_HOSTED_RUNS_ALLOWLIST),
             }
           : undefined,
         meta,

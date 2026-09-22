@@ -39,6 +39,7 @@ import {
   artifactQuery,
   contextOutputsQuery,
   contextQuery,
+  contextRuntimeQuery,
   contextSessionsQuery,
   contextsQuery,
   sessionQuery,
@@ -178,6 +179,14 @@ function Console({ id }: { id: string }) {
   const mine = (sessions ?? []).filter((s) => s.asker_id === me?.id)
   const active = picked === "new" ? null : (picked ?? mine[0]?.id ?? null)
   const isOwner = !!context && context.created_by === me?.id
+  const { data: runtimeState } = useQuery({
+    ...contextRuntimeQuery(id),
+    enabled: isOwner && !context?.import,
+  })
+  const canUseCloudPilot = isOwner && runtimeState?.enabled === true
+  useEffect(() => {
+    if (tab === "cloud" && !canUseCloudPilot) setTab("chat")
+  }, [tab, canUseCloudPilot])
   // Managed connections are absent from Settings, so their runner token is rotated here.
   // The API enforces admin access and returns the replacement token once.
   const [rotatedToken, setRotatedToken] = useState<string | null>(null)
@@ -264,7 +273,7 @@ function Console({ id }: { id: string }) {
           <TabsTrigger value="chat" data-testid="console-tab-chat">
             Chat
           </TabsTrigger>
-          {isOwner && (
+          {canUseCloudPilot && (
             <TabsTrigger value="cloud" data-testid="console-tab-cloud">
               Cloud runs
             </TabsTrigger>
@@ -379,7 +388,7 @@ function Console({ id }: { id: string }) {
           </div>
         </TabsContent>
 
-        {isOwner && (
+        {canUseCloudPilot && (
           <TabsContent value="cloud" forceMount className="pt-6 data-[state=inactive]:hidden">
             <RuntimeRunCard contextId={id} />
           </TabsContent>

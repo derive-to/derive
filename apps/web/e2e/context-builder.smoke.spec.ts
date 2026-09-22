@@ -90,6 +90,10 @@ test("Context access saves secrets and connections and removes unavailable grant
   expect(sourceResponse.ok()).toBeTruthy()
   const source = await sourceResponse.json()
   await owner.goto(`/contexts/${context.id}`)
+  // Owning a Context does not expose infrastructure pilot controls.
+  await expect(owner.getByTestId("console-tab-chat")).toBeVisible()
+  await expect(owner.getByTestId("console-tab-cloud")).toHaveCount(0)
+  await expect(owner.getByTestId("context-runtime-sandbox")).toHaveCount(0)
   await owner.getByTestId("context-runtime-access").click()
   await owner.getByTestId(`context-source-${source.id}`).click()
   await expect(owner.getByTestId(`context-source-${source.id}`)).toBeChecked()

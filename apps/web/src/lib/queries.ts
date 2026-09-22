@@ -760,6 +760,6 @@ export const contextRuntimeQuery = (id: string) =>
     queryKey: ["contexts", id, "runtime"] as const,
     queryFn: () => api.getContextRuntime(id),
     staleTime: 0,
-    refetchInterval: 5000,
+    refetchInterval: (q) => (q.state.data?.enabled ? 5000 : false),
     meta: { persist: false },
   })

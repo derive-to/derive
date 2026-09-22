@@ -12,7 +12,7 @@ import {
   spendableConnections,
   toolsForRun,
 } from "../lib/broker"
-import { manageableContext } from "../lib/context-access"
+import { manageableContext, runtimePilotAllowed } from "../lib/context-access"
 import { readEnvironmentBindings } from "../lib/context-environment"
 import { decryptSecret } from "../lib/crypto"
 import { fail, readJson } from "../lib/http"
@@ -27,6 +27,8 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
   app.get("/v1/contexts/:id/runtime", async (c) => {
     const context = await manageableContext(ctx, c)
     if (context instanceof Response) return context
+    if (!(await runtimePilotAllowed(ctx, c, context.org_id)))
+      return c.json({ enabled: false, runtime: null, schedule: null, next_run_at: null, runs: [] })
     const runtime = await meta.getContextRuntimeForContext(context.id, context.org_id)
     const schedule = runtime ? await meta.getRuntimeSchedule(runtime.id, context.org_id) : null
     const trigger = schedule ? parseTrigger(schedule.trigger) : null
@@ -41,7 +43,7 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
       ? (await meta.listRuns(context.org_id, 100)).filter((r) => r.runtime_id === runtime.id)
       : []
     return c.json({
-      enabled: !!deps.runtime,
+      enabled: true,
       schedule,
       next_run_at: nextRunAt,
       runtime,
@@ -62,6 +64,8 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
   app.post("/v1/contexts/:id/runtime", async (c) => {
     const context = await manageableContext(ctx, c)
     if (context instanceof Response) return context
+    if (!(await runtimePilotAllowed(ctx, c, context.org_id)))
+      return fail(c, 403, "Cloud run pilot is unavailable")
     if (!deps.runtime || !deps.encryptionKey)
       return fail(c, 503, "Ortam execution is not configured")
     if (context.import_source) return fail(c, 400, "Imported Contexts cannot run agents")
@@ -123,6 +127,8 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
   app.post("/v1/contexts/:id/runtime/runs", async (c) => {
     const context = await manageableContext(ctx, c)
     if (context instanceof Response) return context
+    if (!(await runtimePilotAllowed(ctx, c, context.org_id)))
+      return fail(c, 403, "Cloud run pilot is unavailable")
     if (!deps.runtime) return fail(c, 503, "Ortam execution is not configured")
     const body = await readJson(
       c,
@@ -154,6 +160,8 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
   app.post("/v1/contexts/:id/runtime/disable", async (c) => {
     const context = await manageableContext(ctx, c)
     if (context instanceof Response) return context
+    if (!(await runtimePilotAllowed(ctx, c, context.org_id)))
+      return fail(c, 403, "Cloud run pilot is unavailable")
     const runtime = await meta.getContextRuntimeForContext(context.id, context.org_id)
     if (runtime)
       await meta.disableContextRuntime(runtime.id, context.org_id, new Date().toISOString())

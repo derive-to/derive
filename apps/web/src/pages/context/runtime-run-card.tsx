@@ -72,7 +72,8 @@ export function RuntimeRunCard({ contextId }: { contextId: string }) {
           {runtime ? "Cloud runs" : "Connect a sandbox"}
         </SectionHeading>
         <p className="max-w-2xl text-sm text-muted-foreground">
-          Run tasks in Ortam. Working files are saved after each run and reused next time.
+          Operator pilot: manual Ortam setup for testing. Working files are saved after each run and
+          reused next time.
         </p>
       </div>
       {!runtime ? (
