@@ -14,6 +14,7 @@ import { signWorkToken } from "../src/lib/run-token"
 import { runtimeDispatchPass } from "../src/lib/runtime-dispatch"
 import { materializeRuntimeSchedules, nextRuntimeOccurrence } from "../src/lib/runtime-schedule"
 import { materializeAllDueRuns } from "../src/lib/schedule"
+import { log } from "../src/log"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // P3.5 — a context's connections are its hands in EVERY lane. Before this, connection ids
@@ -1089,6 +1090,61 @@ describe("Ortam runtime lifecycle", () => {
     expect((await meta.getAutomation(f.schedule.id))?.instruction).toBe("Updated task")
   })
 
+  it("explains gated and failed schedule admission without logging task or driver contents", async () => {
+    const f = await scheduled()
+    const info = vi.spyOn(log, "info").mockImplementation(() => {})
+    const warn = vi.spyOn(log, "warn").mockImplementation(() => {})
+    const privateError = "private task and database parameter contents"
+    try {
+      const settings = await meta.getOrgSettings("default")
+      await meta.setOrgSettings("default", { ...settings, automateBeta: false })
+      await materializeRuntimeSchedules(meta, now, config.pilotWorkspaceIds)
+      expect(await meta.latestRunForAutomation(f.schedule.id, "schedule")).toBeNull()
+      expect(info).toHaveBeenCalledWith(
+        "runtime schedule skipped",
+        expect.objectContaining({ automation: f.schedule.id, reason: "automations_disabled" }),
+      )
+      await meta.setOrgSettings("default", settings)
+      const create = vi.spyOn(meta, "createRun").mockImplementationOnce(async () => {
+        throw new Error(privateError, {
+          cause: Object.assign(new Error(privateError), { code: "42P01" }),
+        })
+      })
+      // Keep this failure on the selected schedule even if another test left a definition.
+      const list = vi.spyOn(meta, "listRuntimeSchedules").mockResolvedValue([f.schedule])
+      try {
+        await materializeRuntimeSchedules(meta, now, config.pilotWorkspaceIds)
+        expect(await meta.latestRunForAutomation(f.schedule.id, "schedule")).toBeNull()
+        expect(warn).toHaveBeenCalledWith(
+          "runtime schedule admission deferred",
+          expect.objectContaining({ automation: f.schedule.id, stage: "insert", reason: "schema" }),
+        )
+        const recovered = await materializeRuntimeSchedules(meta, now, config.pilotWorkspaceIds)
+        expect(recovered).toEqual({ schedules: 1, admitted: 1, skipped: {} })
+        expect(await meta.latestRunForAutomation(f.schedule.id, "schedule")).toMatchObject({
+          status: "queued",
+          scheduled_for: now.toISOString(),
+        })
+        expect(await materializeRuntimeSchedules(meta, now, config.pilotWorkspaceIds)).toEqual({
+          schedules: 1,
+          admitted: 0,
+          skipped: { already_admitted: 1 },
+        })
+        const recorded = JSON.stringify([info.mock.calls, warn.mock.calls])
+        expect(recorded).not.toContain(privateError)
+        expect(recorded).not.toContain(dailyTask.instruction)
+        expect(recorded).not.toContain(f.connection.secret_enc)
+      } finally {
+        create.mockRestore()
+        list.mockRestore()
+      }
+    } finally {
+      info.mockRestore()
+      warn.mockRestore()
+      await saveSchedule(f.context.id, { ...dailyTask, revision: 0, enabled: false })
+    }
+  })
+
   it("rejects a launched but unclaimed task after pause and still shuts down", async () => {
     const f = await scheduled()
     for (let i = 0; i < 4; i++) await pass()
@@ -1132,7 +1188,7 @@ describe("Ortam runtime lifecycle", () => {
       throw new Error("Schedule query unavailable")
     })
     try {
-      await pass()
+      await expect(pass()).rejects.toThrow("Schedule query unavailable")
       expect(stateAtScan).toBe("stopped")
     } finally {
       scan.mockRestore()
