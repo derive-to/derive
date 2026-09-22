@@ -2,6 +2,8 @@ import type { AutomationRecord } from "@derive/core"
 import { useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { api } from "@/api"
+import { SectionTitle } from "@/components/shared/section-title"
+import { StatusBadge } from "@/components/shared/status-badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -66,29 +68,40 @@ export function RuntimeScheduleCard({
     },
   })
   return (
-    <div data-testid="context-runtime-schedule" className="flex flex-col gap-3 border-t pt-3">
-      <h3 className="text-sm font-medium">Schedule</h3>
-      <p className="text-xs text-muted-foreground">
-        Runs one job at a time. If several runs are missed, it catches up once. Pausing or editing
-        cancels queued work. A job that has started finishes normally. Reports are private to
-        whoever last saved this schedule.
-      </p>
-      <label className="flex flex-col gap-1 text-sm">
+    <div
+      data-testid="context-runtime-schedule"
+      className="flex min-w-0 flex-col gap-4 rounded-xl border bg-card p-5"
+    >
+      <div className="flex flex-col gap-1">
+        <SectionTitle
+          action={
+            <StatusBadge tone={schedule?.enabled ? "ok" : "muted"}>
+              {schedule?.enabled ? "Active" : schedule ? "Paused" : "Not scheduled"}
+            </StatusBadge>
+          }
+        >
+          Schedule
+        </SectionTitle>
+        <p className="text-sm text-muted-foreground">Repeat a task at the times you choose.</p>
+      </div>
+      <label className="flex min-w-0 flex-col gap-1.5 text-sm">
         Recurring task
         <Textarea
           data-testid="context-runtime-schedule-instruction"
+          className="min-h-28"
+          placeholder="Check for new issues and update your findings…"
           value={instruction}
           maxLength={16000}
           onChange={(e) => setDraft({ ...values, instruction: e.target.value })}
           disabled={save.isPending}
         />
       </label>
-      <label className="flex flex-col gap-1 text-sm">
-        Scheduled agent
+      <label className="flex min-w-0 flex-col gap-1.5 text-sm">
+        Agent
         <select
           data-testid="context-runtime-schedule-provider"
           value={provider}
-          className="rounded-md border bg-background p-2 text-sm"
+          className="h-8 w-fit rounded-lg border border-input bg-transparent px-2 text-sm focus-visible:outline-2 focus-visible:outline-ring"
           disabled={save.isPending}
           onChange={(e) =>
             setDraft({ ...values, provider: e.target.value as "codex" | "claude-code" })
@@ -98,38 +111,41 @@ export function RuntimeScheduleCard({
           <option value="claude-code">Claude Code</option>
         </select>
       </label>
-      <label className="flex flex-col gap-1 text-sm">
-        Cron expression
-        <Input
-          data-testid="context-runtime-schedule-cron"
-          value={cron}
-          disabled={save.isPending}
-          onChange={(e) => setDraft({ ...values, cron: e.target.value })}
-          placeholder="0 9 * * *"
-        />
-        <span className="text-xs text-muted-foreground">
-          Minute, hour, day, month, weekday. 0 9 * * * means every day at 9 AM.
-        </span>
-      </label>
-      <label className="flex flex-col gap-1 text-sm">
-        Timezone
-        <Input
-          data-testid="context-runtime-schedule-timezone"
-          value={timezone}
-          disabled={save.isPending}
-          onChange={(e) => setDraft({ ...values, timezone: e.target.value })}
-          placeholder="America/New_York"
-        />
-      </label>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+        <label className="flex min-w-0 flex-col gap-1.5 text-sm">
+          Cron expression
+          <Input
+            data-testid="context-runtime-schedule-cron"
+            className="font-mono"
+            value={cron}
+            disabled={save.isPending}
+            onChange={(e) => setDraft({ ...values, cron: e.target.value })}
+            placeholder="0 9 * * *"
+          />
+        </label>
+        <label className="flex min-w-0 flex-col gap-1.5 text-sm">
+          Timezone
+          <Input
+            data-testid="context-runtime-schedule-timezone"
+            value={timezone}
+            disabled={save.isPending}
+            onChange={(e) => setDraft({ ...values, timezone: e.target.value })}
+            placeholder="America/New_York"
+          />
+        </label>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        <code className="font-mono">0 9 * * *</code> runs daily at 9 AM in the selected timezone.
+      </p>
       {schedule && (
-        <p className="text-xs text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           {schedule.enabled && nextRunAt
             ? `Next run: ${new Date(nextRunAt).toLocaleString(undefined, { timeZone: trigger.tz })} (${trigger.tz})`
             : "Schedule paused"}
         </p>
       )}
       {stale && (
-        <div className="text-xs text-muted-foreground">
+        <div className="text-sm text-muted-foreground">
           <p>The schedule changed elsewhere. Your unsaved draft has been kept.</p>
           <Button
             variant="outline"
@@ -141,25 +157,42 @@ export function RuntimeScheduleCard({
           </Button>
         </div>
       )}
-      <Button
-        data-testid="context-runtime-schedule-save"
-        disabled={
-          save.isPending || stale || !instruction.trim() || !cron.trim() || !timezone.trim()
-        }
-        onClick={() => save.mutate(false)}
-      >
-        {schedule?.enabled ? "Save schedule" : "Start schedule"}
-      </Button>
-      {!!schedule?.enabled && (
+      <div className="flex flex-wrap items-center gap-2">
         <Button
           variant="outline"
-          data-testid="context-runtime-schedule-pause"
-          disabled={save.isPending}
-          onClick={() => save.mutate(true)}
+          loading={save.isPending}
+          data-testid="context-runtime-schedule-save"
+          disabled={
+            save.isPending || stale || !instruction.trim() || !cron.trim() || !timezone.trim()
+          }
+          onClick={() => save.mutate(false)}
         >
-          Pause schedule
+          {save.isPending ? "Saving…" : schedule?.enabled ? "Save schedule" : "Start schedule"}
         </Button>
-      )}
+        {!!schedule?.enabled && (
+          <Button
+            variant="ghost"
+            data-testid="context-runtime-schedule-pause"
+            disabled={save.isPending}
+            onClick={() => save.mutate(true)}
+          >
+            Pause schedule
+          </Button>
+        )}
+      </div>
+      <details className="text-sm text-muted-foreground">
+        <summary
+          className="cursor-pointer text-foreground"
+          data-testid="context-runtime-schedule-details"
+        >
+          How schedules work
+        </summary>
+        <p className="mt-2">
+          Runs one job at a time. Missed runs are combined into one catch-up. Pausing or editing
+          cancels queued work; a job that has started finishes normally. Reports are private to
+          whoever last saved the schedule.
+        </p>
+      </details>
     </div>
   )
 }

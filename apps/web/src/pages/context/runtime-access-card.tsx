@@ -17,33 +17,29 @@ import { Input } from "@/components/ui/input"
 import { CONTEXT_ENVIRONMENT_LIMIT, contextEnvironmentNameError } from "@/lib/context-environment"
 import { automationConnectionsQuery, contextEnvironmentQuery, contextQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
-import { RuntimeRunCard } from "./runtime-run-card"
 
 export function RuntimeAccessCard({ context }: { context: ContextDetail }) {
   const [open, setOpen] = useState(false)
   return (
-    <>
-      <div className="flex flex-col gap-2 rounded-xl border bg-card p-3.5">
-        <SectionTitle>Agent access</SectionTitle>
-        <p className="text-xs text-muted-foreground">
-          Choose connections and environment variables for this Context.
-        </p>
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button size="sm" variant="outline" data-testid="context-runtime-access">
-              Manage access
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-h-screen overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Agent access</DialogTitle>
-            </DialogHeader>
-            {open && <AccessEditor contextId={context.id} />}
-          </DialogContent>
-        </Dialog>
-      </div>
-      <RuntimeRunCard contextId={context.id} />
-    </>
+    <div className="flex flex-col gap-2 rounded-xl border bg-card p-3.5">
+      <SectionTitle>Agent access</SectionTitle>
+      <p className="text-xs text-muted-foreground">
+        Choose connections and environment variables for this Context.
+      </p>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogTrigger asChild>
+          <Button size="sm" variant="outline" data-testid="context-runtime-access">
+            Manage access
+          </Button>
+        </DialogTrigger>
+        <DialogContent className="max-h-screen overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Agent access</DialogTitle>
+          </DialogHeader>
+          {open && <AccessEditor contextId={context.id} />}
+        </DialogContent>
+      </Dialog>
+    </div>
   )
 }
 
@@ -138,7 +134,11 @@ function AccessForm({
     mutationFn: async () => {
       if (nameError) throw new Error(nameError)
       if (atLimit) throw new Error(`At most ${CONTEXT_ENVIRONMENT_LIMIT} environment variables`)
-      const connection = await api.createEnvironmentSecret(variable, value)
+      const connection = await api.createSecretConnection({
+        toolkit: "environment",
+        secret: value,
+        scopes_label: variable,
+      })
       // If binding fails, keep the encrypted connection available in the existing-secret picker.
       setValue("")
       return persistEnvironment({ ...bindings, [variable]: connection.id })

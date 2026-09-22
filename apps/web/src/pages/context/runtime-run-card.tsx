@@ -1,29 +1,35 @@
+import type { RunAttemptPhase } from "@derive/core"
 import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
 import { api } from "@/api"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import { EmptyState } from "@/components/shared/empty-state"
 import { LoadError } from "@/components/shared/load-error"
-import { SectionTitle } from "@/components/shared/section-title"
+import { SectionHeading, SectionTitle } from "@/components/shared/section-title"
+import { Spinner } from "@/components/shared/spinner"
+import { StatusBadge } from "@/components/shared/status-badge"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { automationConnectionsQuery, contextRuntimeQuery } from "@/lib/queries"
+import { contextRuntimeQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
-
 import { RuntimeScheduleCard } from "./runtime-schedule-card"
+import { RuntimeSetup } from "./runtime-setup"
+
+const attemptLabel: Record<RunAttemptPhase, string> = {
+  starting: "Starting sandbox",
+  ready: "Sandbox ready",
+  launching: "Starting agent",
+  running: "Agent running",
+  stopping: "Waiting for shutdown confirmation",
+  released: "Sandbox stopped",
+}
 
 export function RuntimeRunCard({ contextId }: { contextId: string }) {
   const query = contextRuntimeQuery(contextId)
   const state = useQuery(query)
-  const connections = useQuery(automationConnectionsQuery())
-  const [sandbox, setSandbox] = useState("")
-  const [connection, setConnection] = useState("")
   const [instruction, setInstruction] = useState("")
   const [provider, setProvider] = useState<"codex" | "claude-code">("codex")
-  const bind = useApiMutation({
-    mutationFn: () => api.bindContextRuntime(contextId, connection, sandbox.trim()),
-    invalidate: [query.queryKey],
-    success: "Sandbox connected",
-  })
+  const [confirmDisable, setConfirmDisable] = useState(false)
   const run = useApiMutation({
     mutationFn: () => api.runContextRuntime(contextId, instruction.trim(), provider),
     invalidate: [query.queryKey],
@@ -43,153 +49,191 @@ export function RuntimeRunCard({ contextId }: { contextId: string }) {
         onRetry={() => void state.refetch()}
       />
     )
-  if (!state.data || (!state.data.enabled && !state.data.runtime)) return null
+  if (!state.data) return <Spinner aria-label="Loading cloud runs" />
+  if (!state.data.enabled && !state.data.runtime)
+    return (
+      <EmptyState
+        title="Cloud runs aren’t configured"
+        description="An administrator needs to connect this Derive deployment to Ortam before you can run tasks here."
+      />
+    )
   const runtime = state.data.runtime
   return (
-    <section className="flex flex-col gap-3 rounded-xl border bg-card p-3.5">
-      <SectionTitle>Cloud runs</SectionTitle>
+    <section data-testid="context-runtime-panel" className="flex max-w-4xl flex-col gap-8">
+      <div className="flex flex-col gap-2">
+        <SectionHeading
+          as="h2"
+          action={
+            <StatusBadge tone="muted">
+              {runtime ? (runtime.disabled_at ? "Disabled" : "Connected") : "Not connected"}
+            </StatusBadge>
+          }
+        >
+          {runtime ? "Cloud runs" : "Connect a sandbox"}
+        </SectionHeading>
+        <p className="max-w-2xl text-sm text-muted-foreground">
+          Run tasks in Ortam. Working files are saved after each run and reused next time.
+        </p>
+      </div>
       {!runtime ? (
-        <>
-          <p className="text-xs text-muted-foreground">
-            Connect a stopped Ortam sandbox with your model account attached. Set its auto-stop
-            limit to 20 minutes or less and install this deployment’s runner. Add the Ortam API key
-            as a secret in Connections first.
-          </p>
-          <label className="flex flex-col gap-1 text-sm">
-            Ortam API connection
-            <select
-              data-testid="context-runtime-connection"
-              className="rounded-md border bg-background p-2 text-sm"
-              value={connection}
-              onChange={(e) => setConnection(e.target.value)}
-              disabled={bind.isPending}
-            >
-              <option value="">Choose a secret connection</option>
-              {(connections.data ?? [])
-                .filter((c) => c.kind === "secret" && c.status === "active")
-                .map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.scopes_label ?? c.toolkit}
-                  </option>
-                ))}
-            </select>
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            Sandbox ID
-            <Input
-              data-testid="context-runtime-sandbox"
-              value={sandbox}
-              onChange={(e) => setSandbox(e.target.value)}
-              placeholder="sbx_…"
-              disabled={bind.isPending}
-            />
-          </label>
-          <Button
-            data-testid="context-runtime-bind"
-            disabled={!connection || !sandbox.trim() || bind.isPending}
-            onClick={() => bind.mutate()}
-          >
-            Connect sandbox
-          </Button>
-        </>
+        <RuntimeSetup contextId={contextId} />
       ) : (
         <>
-          <p className="text-xs text-muted-foreground">
-            Working files survive shutdown and are reused on the next run. Reports are private to
-            the person who starts the run.
-          </p>
           {runtime.disabled_at ? (
-            <p className="text-sm">Cloud runs are disabled.</p>
+            <p className="text-sm text-muted-foreground">
+              Cloud runs are disabled. Previous reports remain available below.
+            </p>
           ) : (
-            <>
-              <label className="flex flex-col gap-1 text-sm">
-                Task
-                <Textarea
-                  data-testid="context-runtime-instruction"
-                  value={instruction}
-                  onChange={(e) => setInstruction(e.target.value)}
-                  maxLength={16000}
-                  disabled={run.isPending}
-                />
-              </label>
-              <label className="flex flex-col gap-1 text-sm">
-                Agent
-                <select
-                  data-testid="context-runtime-provider"
-                  className="rounded-md border bg-background p-2 text-sm"
-                  value={provider}
-                  onChange={(e) => setProvider(e.target.value as "codex" | "claude-code")}
-                  disabled={run.isPending}
-                >
-                  <option value="codex">Codex</option>
-                  <option value="claude-code">Claude Code</option>
-                </select>
-              </label>
-              <Button
-                data-testid="context-runtime-run"
-                disabled={!instruction.trim() || run.isPending || disable.isPending}
-                onClick={() => run.mutate()}
-              >
-                Run now
-              </Button>
-              <Button
-                variant="outline"
-                data-testid="context-runtime-disable"
-                disabled={disable.isPending}
-                onClick={() => disable.mutate()}
-              >
-                Disable cloud runs
-              </Button>
+            <div className="grid items-start gap-5 lg:grid-cols-2">
+              <div className="flex min-w-0 flex-col gap-4 rounded-xl border bg-card p-5">
+                <div className="flex flex-col gap-1">
+                  <SectionTitle>Run a task</SectionTitle>
+                  <p className="text-sm text-muted-foreground">
+                    Start a one-time task with your saved files.
+                  </p>
+                </div>
+                <label className="flex flex-col gap-1.5 text-sm">
+                  Instructions
+                  <Textarea
+                    data-testid="context-runtime-instruction"
+                    value={instruction}
+                    onChange={(e) => setInstruction(e.target.value)}
+                    placeholder="Run the daily checks and summarize anything unusual…"
+                    className="min-h-28"
+                    maxLength={16000}
+                    disabled={run.isPending}
+                  />
+                </label>
+                <div className="flex flex-wrap items-end justify-between gap-3">
+                  <label className="flex flex-col gap-1.5 text-sm">
+                    Agent
+                    <select
+                      data-testid="context-runtime-provider"
+                      className="h-8 rounded-lg border border-input bg-transparent px-2 text-sm focus-visible:outline-2 focus-visible:outline-ring"
+                      value={provider}
+                      onChange={(e) => setProvider(e.target.value as "codex" | "claude-code")}
+                      disabled={run.isPending}
+                    >
+                      <option value="codex">Codex</option>
+                      <option value="claude-code">Claude Code</option>
+                    </select>
+                  </label>
+                  <Button
+                    data-testid="context-runtime-run"
+                    loading={run.isPending}
+                    disabled={!instruction.trim() || run.isPending || disable.isPending}
+                    onClick={() => run.mutate()}
+                  >
+                    {run.isPending ? "Queuing…" : "Run now"}
+                  </Button>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Reports are private to the person who starts the run.
+                </p>
+              </div>
               <RuntimeScheduleCard
-                key={contextId}
                 contextId={contextId}
                 schedule={state.data.schedule ?? null}
                 nextRunAt={state.data.next_run_at ?? null}
               />
-            </>
+            </div>
           )}
-          {state.data.runs.map((item) => {
-            const details = item.meta ? JSON.parse(item.meta).runtime : null
-            return (
-              <div key={item.id} className="flex flex-col gap-1 border-t pt-2 text-sm">
-                <span>
-                  {new Date(item.created_at).toLocaleString()} · {item.status}
-                </span>
-                {item.attempt && (
-                  <span className="text-xs text-muted-foreground">
-                    {item.attempt.result_json ? "Report received" : "Awaiting report"} ·{" "}
-                    {item.attempt.released_at
-                      ? "Sandbox stopped"
-                      : item.attempt.phase === "stopping"
-                        ? "Waiting for shutdown confirmation"
-                        : item.attempt.phase}
-                  </span>
-                )}
-                {item.attempt?.result_json && !details?.report_short_id && (
-                  <details>
-                    <summary
-                      className="cursor-pointer text-primary"
-                      data-testid={`context-runtime-receipt-${item.id}`}
+          <div className="flex flex-col gap-4">
+            <SectionHeading count={state.data.runs.length}>Recent runs</SectionHeading>
+            {state.data.runs.length === 0 && (
+              <EmptyState
+                title="No runs yet"
+                description="Run a task or start a schedule. Reports and sandbox status will appear here."
+              />
+            )}
+            {state.data.runs.map((item) => {
+              const details = item.meta ? JSON.parse(item.meta).runtime : null
+              return (
+                <div
+                  key={item.id}
+                  className="flex flex-col gap-2 rounded-lg border bg-card p-4 text-sm"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <time
+                      dateTime={item.created_at}
+                      className="font-mono text-xs text-muted-foreground"
                     >
-                      Read received report
-                    </summary>
-                    <p className="whitespace-pre-wrap text-sm">
-                      {JSON.parse(item.attempt.result_json).summary}
+                      {new Date(item.created_at).toLocaleString()}
+                    </time>
+                    <StatusBadge
+                      tone={
+                        item.status === "succeeded"
+                          ? "ok"
+                          : item.status === "failed"
+                            ? "error"
+                            : item.status === "running"
+                              ? "busy"
+                              : "muted"
+                      }
+                    >
+                      {item.status === "succeeded"
+                        ? "Completed"
+                        : item.status.charAt(0).toUpperCase() + item.status.slice(1)}
+                    </StatusBadge>
+                  </div>
+                  {item.attempt && (
+                    <p className="text-sm text-muted-foreground">
+                      {item.attempt.result_json ? "Report received" : "Awaiting report"} ·{" "}
+                      {item.attempt.released_at
+                        ? "Sandbox stopped"
+                        : attemptLabel[item.attempt.phase]}
                     </p>
-                  </details>
-                )}
-                {details?.report_short_id && (
-                  <a
-                    href={`/artifacts/${details.report_short_id}`}
-                    className="text-primary underline"
-                    data-testid={`context-runtime-report-${item.id}`}
-                  >
-                    Open report
-                  </a>
-                )}
-              </div>
-            )
-          })}
+                  )}
+                  {item.attempt?.result_json && !details?.report_short_id && (
+                    <details>
+                      <summary
+                        className="cursor-pointer text-primary"
+                        data-testid={`context-runtime-receipt-${item.id}`}
+                      >
+                        Read received report
+                      </summary>
+                      <p className="mt-3 whitespace-pre-wrap text-sm">
+                        {JSON.parse(item.attempt.result_json).summary}
+                      </p>
+                    </details>
+                  )}
+                  {details?.report_short_id && (
+                    <a
+                      href={`/artifacts/${details.report_short_id}`}
+                      className="text-primary underline underline-offset-4"
+                      data-testid={`context-runtime-report-${item.id}`}
+                    >
+                      Open report
+                    </a>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+          {!runtime.disabled_at && (
+            <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
+              <span className="min-w-0 break-all font-mono text-xs">{runtime.sandbox_id}</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                data-testid="context-runtime-disable"
+                disabled={disable.isPending}
+                onClick={() => setConfirmDisable(true)}
+              >
+                Disable cloud runs…
+              </Button>
+            </div>
+          )}
+          <ConfirmDialog
+            open={confirmDisable}
+            onOpenChange={setConfirmDisable}
+            title="Disable cloud runs?"
+            description="This stops active work and prevents new runs. You cannot re-enable this sandbox from Derive yet. Saved reports remain available."
+            confirmLabel="Disable cloud runs"
+            onConfirm={async () => {
+              await disable.mutateAsync()
+            }}
+          />
         </>
       )}
     </section>

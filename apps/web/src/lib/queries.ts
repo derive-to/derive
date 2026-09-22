@@ -186,13 +186,7 @@ export const artifactSkillsQuery = (shortId: string) =>
     queryFn: () => api.artifactSkills(shortId),
   })
 
-// The caller's own connected sources. NO UI CONSUMES THIS YET, on purpose: the Sources
-// settings screen was removed because neither broker can produce a usable connection. The
-// local broker reports `active` immediately and then echoes a tool's own arguments back
-// instead of calling anything, and the Composio broker returns `pending` with no callback
-// route to ever complete it — while toolsForRun only ever passes `active` connections to a
-// run. So the screen said "connected" and meant nothing. Kept because the server half is
-// real and the screen comes back the moment a connection can actually reach `active`.
+// The caller's personal connections, shown in Sources settings.
 export const connectionsQuery = () =>
   queryOptions({
     queryKey: ["connections"] as const,

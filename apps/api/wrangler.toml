@@ -320,9 +320,15 @@ DERIVE_SIGNUP_MODE = "open"
 # HOSTED EXECUTION ROLLOUT. This is an immutable workspace id, not the editable display name.
 # The Worker fails closed when this variable is absent or blank, and the dispatcher applies the
 # scope before schedule materialization, stale-run recovery, queue scans, asks, and Run now.
-# QA Lab is the only production workspace enabled for the first live proof. Its own
-# automateBeta + hostedAgentsEnabled settings remain the second, workspace-controlled gate.
-DERIVE_HOSTED_RUNS_ALLOWLIST = "ws_fas46hoo39z55zqg"
+# QA Lab keeps its existing access. Ortam Pilot is an isolated workspace owned by
+# the pilot operator; it has no other members or existing jobs. Each workspace's
+# automateBeta + hostedAgentsEnabled settings remain the second gate.
+DERIVE_HOSTED_RUNS_ALLOWLIST = "ws_fas46hoo39z55zqg,ws_5b0iz1wp99ksykr7"
+# Ortam pilot: install this pinned CLI in each prepared sandbox before binding it
+# to a Context (docs/ortam-smoke.md). This path enables the controller; execution
+# still requires the workspace allowlist above and workspace opt-in. No VM is created
+# or package installed by this setting. Keep it set until all attempts release.
+DERIVE_ORTAM_RUNNER_PATH = "/home/ortam/derive-runtime/0.7.0/node_modules/@derive-to/cli/bin/derive.js"
 # DERIVE_AUTH_SECRET is a secret (`wrangler secret put`). Workspaces are always multi.
 #
 # BASE_URL pins the app origin. It is REQUIRED once DERIVE_SUBDOMAIN_BASE is set:
