@@ -40,6 +40,7 @@ import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { getInstanceSlot } from "./lib/model-library"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
+import { runtimeFailureReason } from "./lib/runtime-diagnostics"
 import { runtimeDispatchPass } from "./lib/runtime-dispatch"
 import { isApiPath } from "./lib/serve-web"
 import { parseSignupMode, signupPolicy } from "./lib/signup-policy"
@@ -779,7 +780,13 @@ const hostedRunTick = (env: Env, ctx?: ExecutionContext): Promise<void> =>
   )
 
 async function runtimeTick(env: Env): Promise<void> {
-  if (!env.DERIVE_ORTAM_RUNNER_PATH || !env.DERIVE_AUTH_SECRET) return
+  if (!env.DERIVE_ORTAM_RUNNER_PATH || !env.DERIVE_AUTH_SECRET) {
+    log.info("runtime tick skipped", {
+      reason: !env.DERIVE_ORTAM_RUNNER_PATH ? "runner_unconfigured" : "auth_unconfigured",
+    })
+    return
+  }
+  log.info("runtime tick started", { store: env.HYPERDRIVE ? "postgres" : "d1" })
   const config = {
     runnerPath: env.DERIVE_ORTAM_RUNNER_PATH,
     apiUrl: env.DERIVE_ORTAM_API_URL ?? "https://api.ortam.dev/v1",
@@ -794,7 +801,14 @@ async function runtimeTick(env: Env): Promise<void> {
       secret,
       config,
     })
-  await (env.HYPERDRIVE
-    ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), scoped)
-    : requestD1.run(env.DB, scoped))
+  try {
+    await (env.HYPERDRIVE
+      ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), scoped)
+      : requestD1.run(env.DB, scoped))
+  } catch (error) {
+    log.warn("runtime tick failed", { reason: runtimeFailureReason(error) })
+    // Mark the scheduled invocation failed without exposing the driver's SQL/parameters
+    // in Cloudflare's automatic exception capture.
+    throw new Error("Runtime tick failed; inspect runtime dispatch diagnostics")
+  }
 }

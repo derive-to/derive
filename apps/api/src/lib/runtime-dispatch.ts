@@ -13,6 +13,7 @@ import { afterPublish } from "./after-publish"
 import { spendableConnections } from "./broker"
 import { decryptSecret } from "./crypto"
 import { OrtamClient } from "./ortam-client"
+import { runtimeFailureReason } from "./runtime-diagnostics"
 import { materializeRuntimeSchedules, runtimeScheduleAllows } from "./runtime-schedule"
 import { signRuntimeToken } from "./runtime-token"
 
@@ -269,6 +270,10 @@ async function reconcile(
 /** Each pass advances durable work. Cleanup is never rollout-gated. */
 export async function runtimeDispatchPass(deps: RuntimeDispatchDeps) {
   const at = deps.now?.() ?? new Date()
+  log.info("runtime dispatch started", {
+    at: at.toISOString(),
+    pilot_workspaces: deps.config.pilotWorkspaceIds.size,
+  })
   const pending = await deps.meta.listPendingRuntimeRuns(100)
   const cleanup = await deps.meta.listUnreleasedRunAttempts(100)
   const runs = new Map(pending.map((run) => [run.id, run]))
@@ -300,13 +305,28 @@ export async function runtimeDispatchPass(deps: RuntimeDispatchDeps) {
         })
       }
       if (attempt) await reconcile(deps, run, attempt, runtime)
-    } catch {
+    } catch (error) {
       // Transport bodies and agent output may contain credentials. IDs suffice for diagnosis.
-      log.warn("runtime reconciliation deferred", { run: run.id })
+      log.warn("runtime reconciliation deferred", {
+        run: run.id,
+        reason: runtimeFailureReason(error),
+      })
     }
   }
   // Repair active work before scanning schedules. Admission can wait; shutdown cannot.
-  await materializeRuntimeSchedules(deps.meta, at, deps.config.pilotWorkspaceIds).catch(() =>
-    log.warn("runtime schedule pass failed"),
-  )
+  try {
+    const admission = await materializeRuntimeSchedules(
+      deps.meta,
+      at,
+      deps.config.pilotWorkspaceIds,
+    )
+    log.info("runtime dispatch completed", {
+      pending: pending.length,
+      unreleased: cleanup.length,
+      ...admission,
+    })
+  } catch (error) {
+    log.warn("runtime schedule pass failed", { reason: runtimeFailureReason(error) })
+    throw error
+  }
 }

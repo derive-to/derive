@@ -9,6 +9,7 @@ import {
 import { Cron } from "croner"
 import { log } from "../log"
 import { parseTrigger } from "./automation"
+import { runtimeFailureReason } from "./runtime-diagnostics"
 import { runtimeInput } from "./runtime-input"
 import { previousOccurrence } from "./schedule"
 
@@ -53,31 +54,77 @@ export async function materializeRuntimeSchedules(
   now: Date,
   orgIds: ReadonlySet<string>,
 ) {
-  for (const a of await meta.listRuntimeSchedules([...orgIds])) {
-    if (!a.runtime_id || !a.created_by) continue
+  const schedules = await meta.listRuntimeSchedules([...orgIds])
+  let admitted = 0
+  const skipped: Record<string, number> = {}
+  for (const a of schedules) {
+    const fields = { automation: a.id, workspace: a.org_id, runtime: a.runtime_id }
+    const skip = (reason: string) => {
+      skipped[reason] = (skipped[reason] ?? 0) + 1
+      log.info("runtime schedule skipped", { ...fields, reason })
+    }
+    let stage = "definition"
     try {
+      if (!a.runtime_id || !a.created_by) {
+        skip("incomplete_definition")
+        continue
+      }
+      stage = "settings"
       const settings = await meta.getOrgSettings(a.org_id)
-      if (!settings.hostedAgentsEnabled || !settings.agentWrites || !settings.automateBeta) continue
-      if (!(await scheduleOwnerAllowed(meta, a))) continue
+      if (!settings.hostedAgentsEnabled || !settings.agentWrites || !settings.automateBeta) {
+        skip(
+          !settings.hostedAgentsEnabled
+            ? "hosted_agents_disabled"
+            : !settings.agentWrites
+              ? "agent_writes_disabled"
+              : "automations_disabled",
+        )
+        continue
+      }
+      stage = "owner"
+      if (!(await scheduleOwnerAllowed(meta, a))) {
+        skip("owner_ineligible")
+        continue
+      }
+      stage = "occurrence"
       const trigger = parseTrigger(a.trigger)
-      if (trigger.kind !== "schedule" || !trigger.cron) continue
+      if (trigger.kind !== "schedule" || !trigger.cron) {
+        skip("invalid_trigger")
+        continue
+      }
       const due = previousOccurrence(trigger.cron, trigger.tz, now)?.toISOString()
-      if (!due || due < (a.updated_at ?? a.created_at)) continue
+      if (!due || due < (a.updated_at ?? a.created_at)) {
+        skip(due ? "not_due_since_edit" : "no_occurrence")
+        continue
+      }
+      stage = "latest_run"
       const latest = await meta.latestRunForAutomation(a.id, "schedule")
-      if (latest?.scheduled_for && latest.scheduled_for >= due) continue
+      if (latest?.scheduled_for && latest.scheduled_for >= due) {
+        skip("already_admitted")
+        continue
+      }
+      stage = "context"
       const runtime = await meta.getContextRuntime(a.runtime_id, a.org_id)
       const context = runtime ? await meta.getContext(runtime.context_id) : null
-      if (!context || context.org_id !== a.org_id || context.agent_id !== a.agent_id) continue
+      if (!context || context.org_id !== a.org_id || context.agent_id !== a.agent_id) {
+        skip("context_unavailable")
+        continue
+      }
+      stage = "input"
       const input = await runtimeInput(meta, context, {
         instruction: a.instruction,
         provider: a.provider,
         model: null,
         schedule_revision: a.revision,
       })
-      if (!input) continue
+      if (!input) {
+        skip("manifest_unavailable")
+        continue
+      }
       // The store rechecks the definition/revision and busy state at insertion. The existing
       // unique schedule-occurrence index arbitrates concurrent ticks, including lost responses.
-      await meta.createRun({
+      stage = "insert"
+      const run = await meta.createRun({
         id: newId("run"),
         org_id: a.org_id,
         agent_id: a.agent_id,
@@ -88,9 +135,16 @@ export async function materializeRuntimeSchedules(
         scheduled_for: due,
         input_snapshot: JSON.stringify(input),
       })
-    } catch {
-      // A busy runtime or duplicate occurrence is normal; neither grants a retry of agent work.
-      log.info("runtime schedule admission deferred", { automation: a.id })
+      admitted++
+      log.info("runtime schedule admitted", { ...fields, run: run.id, scheduled_for: due })
+    } catch (error) {
+      const reason = runtimeFailureReason(error)
+      skipped[reason] = (skipped[reason] ?? 0) + 1
+      // A busy runtime or duplicate occurrence is normal. Other errors need attention;
+      // neither permits retrying an agent that may already be doing the work.
+      const emit = reason === "duplicate" || reason === "admission_conflict" ? log.info : log.warn
+      emit("runtime schedule admission deferred", { ...fields, stage, reason })
     }
   }
+  return { schedules: schedules.length, admitted, skipped }
 }
