@@ -26,12 +26,14 @@ export function useCursorSend(shortId: string): {
   const mySlide = useRef<number | undefined>(undefined)
   const xy = useRef<[number, number] | null>(null)
   const sentAt = useRef(0)
+  const retryAt = useRef(0)
   const live = useRef(false)
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const send = useCallback(
     (extra: Record<string, unknown>) => {
+      if (Date.now() < retryAt.current) return
       const pt = xy.current ?? [0, 0]
       // `?g=` so the cursor's server-derived handle matches this browser's presence row.
       fetch(`${API_BASE}/v1/artifacts/${shortId}/cursor${guestQuery()}`, {
@@ -45,7 +47,14 @@ export function useCursorSend(shortId: string): {
           slide: mySlide.current,
           ...extra,
         }),
-      }).catch(() => {})
+      })
+        .then((response) => {
+          if (response.status !== 429) return
+          const seconds = Number(response.headers.get("Retry-After"))
+          const delay = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 10_000
+          retryAt.current = Math.max(retryAt.current, Date.now() + delay)
+        })
+        .catch(() => {})
     },
     [shortId],
   )

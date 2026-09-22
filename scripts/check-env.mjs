@@ -44,6 +44,7 @@ const NON_CONFIG = new Set([
   "RL_INVITE",
   "RL_ACCESS_REQUEST",
   "RL_WRITE",
+  "RL_REALTIME",
   "RL_PUBLISH",
   "RL_COMMENT",
   "RL_STRICT",

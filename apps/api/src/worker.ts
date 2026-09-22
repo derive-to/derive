@@ -134,13 +134,14 @@ export interface Env {
   // queue of record, so a dropped message costs seconds (the cron sweep re-dispatches),
   // not work. Unbound ⇒ "Run now" simply waits for the next cron tick, as before.
   RUN_QUEUE?: { send: (body: unknown) => Promise<void> }
-  // Native per-colo rate-limit bindings (limit + 60s window declared in wrangler.toml
+  // Native per-colo rate-limit bindings (limit + window declared in wrangler.toml
   // [[ratelimits]]). The edge counts against these instead of an in-process Map so a cap
   // holds across isolates within a location. RL_STRICT is shared by the tight 3/60
   // surfaces (auth-email, unlock, oauth-register, draft-publish, access-request mail),
   // namespaced by key so their counts stay separate.
   RL_AUTH: RateLimit
   RL_WRITE: RateLimit
+  RL_REALTIME: RateLimit
   RL_PUBLISH: RateLimit
   RL_COMMENT: RateLimit
   RL_STRICT: RateLimit
@@ -399,6 +400,7 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           // count stays separate from unlock / oauth-register on the same binding.
           authEmail: nativeLimiter(env.RL_STRICT, 60, "auth-email"),
           write: nativeLimiter(env.RL_WRITE, 60),
+          realtime: nativeLimiter(env.RL_REALTIME, 10),
           publish: nativeLimiter(env.RL_PUBLISH, 60),
           comment: nativeLimiter(env.RL_COMMENT, 60),
           // Rides the write binding, namespaced so slot writes and general writes keep

@@ -53,6 +53,9 @@ export interface RateLimiters {
   authEmail: Limiter
   oauthRegister: Limiter
   write: Limiter
+  /** Ephemeral cursor/presence broadcasts, isolated from edits. IP-keyed before
+   * auth/DB work: even anonymous readers can trigger fan-out to a whole room. */
+  realtime: Limiter
   publish: Limiter
   comment: Limiter
   /** Dynamic table and figure writes (PUT/PATCH/DELETE on a slot). One request is a
@@ -109,6 +112,9 @@ export function inMemoryRateLimiters(
     authEmail: inMemoryLimiter(15 * 60_000, 5),
     oauthRegister: inMemoryLimiter(3_600_000, 10),
     write: inMemoryLimiter(60_000, 120),
+    // A pointer sends ~22 frames/sec. 300/sec leaves room for a group behind one
+    // IP, while bounding runaway fan-out. A short window lets collaboration recover.
+    realtime: inMemoryLimiter(10_000, 3000),
     publish: inMemoryLimiter(60_000, opts.publishRate ?? 30),
     comment: inMemoryLimiter(60_000, opts.commentRate ?? 60),
     // 120 slot writes per minute per actor: a batch per request, so this is two writes
