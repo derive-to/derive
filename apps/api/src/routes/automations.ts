@@ -365,7 +365,7 @@ export const automationRoutes = (ctx: AppContext) => {
     const org = await requireWorkspace(c, "manage")
     if (org instanceof Response) return org
     const a = await meta.getAutomation(c.req.param("id"))
-    if (!a || a.org_id !== org) return fail(c, 404, "not found")
+    if (!a || a.org_id !== org || a.runtime_id) return fail(c, 404, "not found")
     const b = await readJson(
       c,
       z.object({
@@ -459,14 +459,14 @@ export const automationRoutes = (ctx: AppContext) => {
     // One store call, one round trip on Postgres (see automationsWithExecutors);
     // `present` spreads the whole row, so `executor_seen_at` rides along.
     const autos = await meta.automationsWithExecutors(org)
-    return c.json({ automations: autos.map(present) })
+    return c.json({ automations: autos.filter((a) => !a.runtime_id).map(present) })
   })
 
   app.delete("/v1/automations/:id", async (c) => {
     const org = await requireWorkspace(c, "manage")
     if (org instanceof Response) return org
     const a = await meta.getAutomation(c.req.param("id"))
-    if (!a || a.org_id !== org) return fail(c, 404, "not found")
+    if (!a || a.org_id !== org || a.runtime_id) return fail(c, 404, "not found")
     await meta.deleteAutomation(a.id, org)
     return c.body(null, 204)
   })
@@ -482,7 +482,7 @@ export const automationRoutes = (ctx: AppContext) => {
     const me = await requireUser(c)
     if (me instanceof Response) return me
     const a = await meta.getAutomation(c.req.param("id"))
-    if (!a || a.org_id !== org) return fail(c, 404, "not found")
+    if (!a || a.org_id !== org || a.runtime_id) return fail(c, 404, "not found")
     // A disabled automation takes no new runs — from ANY trigger: this path, and the
     // future schedule tick / event kick must all check the same flag.
     if (a.enabled !== 1) return fail(c, 400, "automation is disabled")

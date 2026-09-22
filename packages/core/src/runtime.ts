@@ -20,6 +20,7 @@ export type NewContextRuntime = Omit<ContextRuntimeRecord, "disabled_at" | "crea
 /** Accepted inputs. No tokens or environment values belong in this snapshot. */
 export interface RuntimeRunInput {
   version: 1
+  schedule_revision?: number
   instruction: string
   context_id: string
   manifest: { artifact_id: string; version: number; blob_key: string }

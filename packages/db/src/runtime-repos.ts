@@ -10,6 +10,7 @@ import type {
 } from "@derive/core"
 import { CONTEXT_ENVIRONMENT_LIMIT, contextEnvironmentNameError } from "@derive/core"
 import { type SQL, sql } from "drizzle-orm"
+import { runtimeScheduleRepos } from "./runtime-schedule-repos"
 
 const instant = (value: string): string => {
   if (new Date(value).toISOString() !== value) throw new Error("Expected a canonical UTC timestamp")
@@ -31,6 +32,8 @@ const checkedInput = (value: string | null | undefined): RuntimeRunInput => {
   const input = JSON.parse(value ?? "null") as RuntimeRunInput | null
   if (
     input?.version !== 1 ||
+    (input.schedule_revision !== undefined &&
+      (!Number.isSafeInteger(input.schedule_revision) || input.schedule_revision < 0)) ||
     !text(input.instruction) ||
     !text(input.context_id) ||
     !text(input.manifest?.artifact_id) ||
@@ -53,6 +56,9 @@ const checkedInput = (value: string | null | undefined): RuntimeRunInput => {
   // Copy the accepted shape; accidental caller fields must not turn this into secret storage.
   return {
     version: 1,
+    ...(input.schedule_revision === undefined
+      ? {}
+      : { schedule_revision: input.schedule_revision }),
     instruction: input.instruction,
     context_id: input.context_id,
     manifest: {
@@ -115,11 +121,16 @@ export function runtimeRepos(execute: (statement: SQL) => Promise<unknown[]>): R
   const getRunAttempt: RuntimeStore["getRunAttempt"] = (id, orgId) =>
     first<RunAttemptRecord>(sql`SELECT * FROM run_attempt WHERE id = ${id} AND org_id = ${orgId}`)
   return {
-    claimRunAttempt: (id, orgId, at) =>
+    ...runtimeScheduleRepos(execute),
+    claimRunAttempt: (id, orgId, at, scheduleRevision) =>
       first<RunAttemptRecord>(sql`
       UPDATE run_attempt SET runner_claimed_at = ${instant(at)}, revision = revision + 1, updated_at = ${at}
       WHERE id = ${id} AND org_id = ${orgId} AND phase IN ('launching', 'running')
-        AND deadline_at > ${at} AND runner_claimed_at IS NULL AND result_json IS NULL AND released_at IS NULL RETURNING *`),
+        AND deadline_at > ${at} AND runner_claimed_at IS NULL AND result_json IS NULL AND released_at IS NULL
+        AND EXISTS (SELECT 1 FROM run r WHERE r.id = run_attempt.run_id AND (r.automation_id IS NULL OR EXISTS (
+          SELECT 1 FROM automation a WHERE a.id = r.automation_id AND a.org_id = r.org_id
+            AND a.runtime_id = r.runtime_id AND a.enabled = 1 AND a.created_by = r.initiated_by
+            AND a.revision = ${scheduleRevision ?? -1}))) RETURNING *`),
     getContextRuntimeForContext: (contextId, orgId) =>
       first<ContextRuntimeRecord>(
         sql`SELECT * FROM context_runtime WHERE context_id = ${contextId} AND org_id = ${orgId}`,
@@ -235,7 +246,14 @@ export function runtimeRepos(execute: (statement: SQL) => Promise<unknown[]>): R
           AND (cast(${input.automation_id ?? null} AS text) IS NULL OR EXISTS (
             SELECT 1 FROM automation a WHERE a.id = ${input.automation_id ?? null}
               AND a.org_id = rt.org_id AND a.agent_id = rt.agent_id
-              AND a.context_id = c.id AND a.enabled = 1))
+              AND a.context_id = c.id AND a.enabled = 1
+              AND a.runtime_id = rt.id
+              AND a.created_by = ${input.initiated_by ?? null}
+              AND a.revision = ${snapshot.schedule_revision ?? -1}
+              AND a.instruction = ${snapshot.instruction} AND a.provider = ${snapshot.provider}
+              AND ${input.scheduled_for ?? null} >= coalesce(a.updated_at, a.created_at)))
+          AND (${input.reason} <> 'schedule' OR NOT EXISTS (
+            SELECT 1 FROM run busy WHERE busy.runtime_id = rt.id AND busy.status IN ('queued', 'running')))
           AND c.id = ${snapshot.context_id} AND v.artifact_id = ${snapshot.manifest.artifact_id}
           AND v.n = ${snapshot.manifest.version} AND v.blob_key = ${snapshot.manifest.blob_key}
         RETURNING *`)

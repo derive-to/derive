@@ -13,6 +13,7 @@ import { afterPublish } from "./after-publish"
 import { spendableConnections } from "./broker"
 import { decryptSecret } from "./crypto"
 import { OrtamClient } from "./ortam-client"
+import { materializeRuntimeSchedules, runtimeScheduleAllows } from "./runtime-schedule"
 import { signRuntimeToken } from "./runtime-token"
 
 interface RuntimeConfig {
@@ -52,7 +53,13 @@ async function runtimeClient(
   return new OrtamClient(runtime.api_url, key, deps.fetcher)
 }
 
-async function enabled(deps: RuntimeDispatchDeps, run: RunRecord, runtime: ContextRuntimeRecord) {
+async function enabled(
+  deps: RuntimeDispatchDeps,
+  run: RunRecord,
+  runtime: ContextRuntimeRecord,
+  claimed = false,
+) {
+  if (!claimed && !(await runtimeScheduleAllows(deps.meta, run))) return false
   if (deps.hostedOrgIds && !deps.hostedOrgIds.has(run.org_id)) return false
   const settings = await deps.meta.getOrgSettings(run.org_id)
   const context = await deps.meta.getContext(runtime.context_id)
@@ -60,6 +67,7 @@ async function enabled(deps: RuntimeDispatchDeps, run: RunRecord, runtime: Conte
   const credentials = await spendableConnections(deps.meta, runtime.org_id, [runtime.connection_id])
   return !!(
     credentials.some((c) => c.kind === "secret" && !!c.secret_enc) &&
+    (claimed || !run.automation_id || settings.automateBeta) &&
     settings.hostedAgentsEnabled &&
     settings.agentWrites &&
     !runtime.disabled_at &&
@@ -132,7 +140,9 @@ async function reconcile(
     deps.meta.transitionRunAttempt(attempt.id, run.org_id, attempt.revision, change, at)
   if (
     attempt.phase !== "stopping" &&
-    (attempt.result_json || at >= attempt.deadline_at || !(await enabled(deps, run, runtime)))
+    (attempt.result_json ||
+      at >= attempt.deadline_at ||
+      !(await enabled(deps, run, runtime, !!attempt.runner_claimed_at)))
   ) {
     await transition({ phase: "stopping" })
     return
@@ -261,8 +271,9 @@ async function reconcile(
   }
 }
 
-/** Bounded passes; all progress survives process/Worker restarts. Cleanup is never rollout-gated. */
+/** Each pass advances durable work. Cleanup is never rollout-gated. */
 export async function runtimeDispatchPass(deps: RuntimeDispatchDeps) {
+  const at = deps.now?.() ?? new Date()
   const pending = await deps.meta.listPendingRuntimeRuns(100)
   const cleanup = await deps.meta.listUnreleasedRunAttempts(100)
   const runs = new Map(pending.map((run) => [run.id, run]))
@@ -277,6 +288,10 @@ export async function runtimeDispatchPass(deps: RuntimeDispatchDeps) {
       if (!runtime) continue
       let attempt = await deps.meta.getLatestRunAttempt(run.id, run.org_id)
       if (!attempt) {
+        if (!(await runtimeScheduleAllows(deps.meta, run))) {
+          await deps.meta.cancelQueuedRuntimeRun(run.id, run.org_id, at.toISOString())
+          continue
+        }
         if (!(await enabled(deps, run, runtime))) continue
         await runtimeClient(deps, runtime)
         const now = deps.now?.() ?? new Date()
@@ -294,4 +309,8 @@ export async function runtimeDispatchPass(deps: RuntimeDispatchDeps) {
       log.warn("runtime reconciliation deferred", { run: run.id })
     }
   }
+  // Repair active work before scanning schedules. Admission can wait; shutdown cannot.
+  await materializeRuntimeSchedules(deps.meta, at, deps.hostedOrgIds).catch(() =>
+    log.warn("runtime schedule pass failed"),
+  )
 }

@@ -150,10 +150,15 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
   const context = await created.json()
   let queued = false
   let submitted: unknown
+  let schedule: Record<string, unknown> | null = null
+  let releasePause: (() => void) | undefined
+  let holdPause = false
   await owner.route(`**/v1/contexts/${context.id}/runtime`, async (route) =>
     route.fulfill({
       json: {
         enabled: true,
+        schedule,
+        next_run_at: schedule?.enabled ? "2026-09-22T13:00:00.000Z" : null,
         runtime: { id: "runtime-demo", disabled_at: null },
         runs: queued
           ? [
@@ -178,6 +183,23 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
     queued = true
     await route.fulfill({ status: 201, json: { run: { id: "run-demo" } } })
   })
+  await owner.route(`**/v1/contexts/${context.id}/runtime/schedule`, async (route) => {
+    const body = route.request().postDataJSON()
+    expect(body.revision).toBe(schedule?.revision ?? null)
+    schedule = {
+      ...body,
+      enabled: body.enabled ? 1 : 0,
+      revision: (body.revision ?? -1) + 1,
+      trigger: JSON.stringify({ kind: "schedule", cron: body.cron, tz: body.timezone }),
+    }
+    if (holdPause && !body.enabled)
+      await new Promise<void>((resolve) => {
+        releasePause = resolve
+      })
+    await route.fulfill({
+      json: { schedule, next_run_at: schedule.enabled ? "2026-09-22T13:00:00.000Z" : null },
+    })
+  })
   await owner.goto(`/contexts/${context.id}`)
   await expect(owner.getByTestId("context-runtime-run")).toBeDisabled()
   await owner
@@ -194,7 +216,58 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
   await owner.getByText("Read received report").click()
   await expect(owner.getByText("Checks complete.")).toBeVisible()
   await owner
+    .getByTestId("context-runtime-schedule-instruction")
+    .fill("Run the anti-cheat script and report anything suspicious")
+  await owner.getByTestId("context-runtime-schedule-cron").fill("0 9 * * *")
+  await owner.getByTestId("context-runtime-schedule-timezone").fill("America/New_York")
+  await owner.getByTestId("context-runtime-schedule-save").click()
+  await expect(owner.getByText(/Next run:.*America\/New_York/)).toBeVisible()
+  expect(schedule).toMatchObject({ cron: "0 9 * * *", timezone: "America/New_York", enabled: 1 })
+  await owner
     .locator("section")
     .filter({ has: owner.getByTestId("context-runtime-run") })
     .screenshot({ path: testInfo.outputPath("cloud-runs.png") })
+  await owner
+    .getByTestId("context-runtime-schedule")
+    .screenshot({ path: testInfo.outputPath("schedule.png") })
+  await owner.getByTestId("context-runtime-schedule-instruction").fill("My unsaved investigation")
+  schedule = { ...schedule, revision: 1, instruction: "Another editor's saved task" }
+  // The five-second query refresh must preserve both the draft and its original revision.
+  await expect(
+    owner.getByText("The schedule changed elsewhere. Your unsaved draft has been kept."),
+  ).toBeVisible()
+  await expect(owner.getByTestId("context-runtime-schedule-instruction")).toHaveValue(
+    "My unsaved investigation",
+  )
+  await expect(owner.getByTestId("context-runtime-schedule-save")).toBeDisabled()
+  await owner.getByTestId("context-runtime-schedule-pause").click()
+  await expect(owner.getByText("Schedule paused", { exact: true })).toBeVisible()
+  // Pausing the current schedule does not grant permission to overwrite another editor's changes.
+  await expect(owner.getByTestId("context-runtime-schedule-save")).toBeDisabled()
+  await owner.getByTestId("context-runtime-schedule-reload").click()
+  await expect(owner.getByTestId("context-runtime-schedule-instruction")).toHaveValue(
+    "Another editor's saved task",
+  )
+  await owner.getByTestId("context-runtime-schedule-save").click()
+  await expect(owner.getByTestId("context-runtime-schedule-pause")).toBeVisible()
+  await owner
+    .getByTestId("context-runtime-schedule-instruction")
+    .fill("Keep this draft while pausing")
+  holdPause = true
+  await owner.getByTestId("context-runtime-schedule-pause").click()
+  // A poll can observe our own pause before its PUT response arrives.
+  await expect(owner.getByText("Schedule paused", { exact: true })).toBeVisible()
+  releasePause?.()
+  await expect(owner.getByTestId("context-runtime-schedule-save")).toBeEnabled()
+  await expect(owner.getByTestId("context-runtime-schedule-instruction")).toHaveValue(
+    "Keep this draft while pausing",
+  )
+  expect(schedule).toMatchObject({ instruction: "Another editor's saved task", enabled: 0 })
+  await owner.getByTestId("context-runtime-schedule-save").click()
+  await expect(owner.getByTestId("context-runtime-schedule-pause")).toBeVisible()
+  expect(schedule).toMatchObject({
+    instruction: "Keep this draft while pausing",
+    revision: 5,
+    enabled: 1,
+  })
 })

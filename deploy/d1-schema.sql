@@ -285,6 +285,10 @@ CREATE TABLE IF NOT EXISTS automation (
   refs TEXT,
   connection_ids TEXT,
   context_id TEXT,
+  runtime_id TEXT,
+  created_by TEXT,
+  revision INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT,
   enabled INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -1102,6 +1106,10 @@ CREATE INDEX IF NOT EXISTS context_session_asker ON context_session (asker_id, c
 CREATE INDEX IF NOT EXISTS session_message_session ON session_message (session_id, created_at);
 
 CREATE INDEX IF NOT EXISTS asset_org ON asset (org_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS run_runtime_schedule_pending ON run (runtime_id) WHERE runtime_id IS NOT NULL AND reason = 'schedule' AND status IN ('queued', 'running');
+
+CREATE UNIQUE INDEX IF NOT EXISTS automation_runtime ON automation (runtime_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS run_attempt_runtime_owner ON run_attempt (runtime_id) WHERE released_at IS NULL;
 

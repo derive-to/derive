@@ -708,6 +708,10 @@ export class PgMetaStore implements MetaStore {
   private readonly runtimes = runtimeRepos(
     async (statement) => (await this.db.execute(statement)).rows,
   )
+  getRuntimeSchedule = this.runtimes.getRuntimeSchedule
+  listRuntimeSchedules = this.runtimes.listRuntimeSchedules
+  saveRuntimeSchedule = this.runtimes.saveRuntimeSchedule
+  cancelQueuedRuntimeRun = this.runtimes.cancelQueuedRuntimeRun
   getContextRuntimeForContext = this.runtimes.getContextRuntimeForContext
   claimRunAttempt = this.runtimes.claimRunAttempt
   listPendingRuntimeRuns = this.runtimes.listPendingRuntimeRuns
@@ -5864,7 +5868,9 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db
       .update(automation)
       .set(set)
-      .where(and(eq(automation.id, id), eq(automation.org_id, orgId)))
+      .where(
+        and(eq(automation.id, id), eq(automation.org_id, orgId), isNull(automation.runtime_id)),
+      )
       .returning()
     return rows[0] ?? null
   }
@@ -5886,6 +5892,8 @@ export class PgMetaStore implements MetaStore {
   async createRun(r: NewRun): Promise<RunRecord> {
     if (r.runtime_id != null || r.input_snapshot != null)
       return await this.runtimes.createRuntimeRun(r)
+    if (r.automation_id && (await this.getAutomation(r.automation_id))?.runtime_id)
+      throw new Error("A runtime schedule requires the runtime admission path")
     const rows = await this.db
       .insert(run)
       .values({ ...r, status: r.status ?? "queued" })

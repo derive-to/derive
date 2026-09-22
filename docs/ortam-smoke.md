@@ -211,14 +211,14 @@ uses Ortam's current saved filesystem; it does not create a retained named
 Snapshot after each job. Ortam does not expose a named snapshot ID for normal
 stop, so `saved_snapshot_id` can be null while `save_status` is `saved`.
 
-This path is opt-in and has not been deployed to hosted Derive. Local coverage
-composes the actual Derive
+The manual path was deployed in #933 on 21 September 2026. Execution remains
+opt-in: hosted Derive has no runner path configured. Local coverage composes the actual Derive
 routes, database and worker with a simulated Ortam HTTP peer, exercises the CLI
 through a real child process with a test provider executable, and checks the
 manual-run UI in a browser. The live controller qualification below uses the
 actual API and worker, separately from the earlier fixture-based model test.
 
-Next: add scheduled admission to the same execution path. Automatic sandbox
+Scheduled admission uses the same execution path (see below). Automatic sandbox
 provisioning, GitHub clone/push credential
 delivery, review of learned script changes, and runtime replacement/re-enablement
 are not part of this first manual-run path.
@@ -264,3 +264,41 @@ model-credential refresh, provider outages, schedules, or GitHub credential
 delivery. The working-file scan is not a whole-disk or snapshot credential audit:
 an agent can still write a delivered secret to other persistent files. Production
 rollout and the anti-cheat pilot remain separate work.
+
+
+## Context schedules
+
+After connecting a prepared sandbox, open the Context's Cloud runs panel. Enter
+its recurring task, choose Codex or Claude Code, and set a five-field cron
+expression and IANA timezone. For example, `0 9 * * *` with `America/New_York`
+runs daily at 9 AM local time, including daylight-saving changes. Enable the
+workspace's automations beta as well as hosted agents and agent writes.
+
+A Context has one schedule. Its definition is an Automation bound to the runtime;
+ordinary automation runners cannot claim its work. The existing Node worker or
+Workers cron queues the latest due occurrence as a normal runtime Run. That run
+pins the current Context manifest and selected permissions. Secret values are
+resolved when the agent claims the task, and Ortam continues to supply model
+login. The report is private to the person who last saved the schedule.
+
+Saving or resuming starts from that moment; it does not run an earlier occurrence.
+If Derive misses several times, it queues only the latest due occurrence. A busy
+runtime accepts no additional scheduled job; after it finishes, the next tick
+can admit the latest due occurrence. Database constraints prevent duplicate
+occurrences and multiple pending scheduled jobs across concurrent workers.
+
+Pause or edit invalidates queued instructions. Work that has already claimed its
+task finishes and saves normally. The claim checks the saved schedule revision
+in the same database statement, so an edit between the controller's check and
+the guest's claim prevents the old task from starting. This differs from disabling
+cloud runs or revoking runtime access, which also stops active work.
+
+The scheduler does not retry agent work automatically. Reports, stop confirmation,
+and saved files follow the manual lifecycle described above. Each new run resumes
+the sandbox's current saved filesystem; it does not create a named snapshot.
+Schedule ownership and workspace membership are checked before unattended work.
+
+Coverage lives in the existing Context API, shared store contract, and Cloud runs
+browser test. It checks concurrent admission, missed times, stale edits, pause,
+timezones, and completion after pause. The store contract runs on SQLite,
+Postgres and D1. Scheduled execution has not yet been qualified against live Ortam.
