@@ -78,6 +78,13 @@ export function RuntimeRunCard({ contextId }: { contextId: string }) {
             limit to 20 minutes or less and install this deployment’s runner. Choose a saved Ortam
             key or add one below.
           </p>
+          {connections.isError && (
+            <LoadError
+              title="Couldn’t load saved connections"
+              testId="context-runtime-connections-retry"
+              onRetry={() => void connections.refetch()}
+            />
+          )}
           <label className="flex flex-col gap-1 text-sm">
             Ortam API connection
             <select
@@ -85,7 +92,9 @@ export function RuntimeRunCard({ contextId }: { contextId: string }) {
               className="rounded-md border bg-background p-2 text-sm"
               value={connection}
               onChange={(e) => setConnection(e.target.value)}
-              disabled={bind.isPending || saveKey.isPending}
+              disabled={
+                connections.isPending || connections.isError || bind.isPending || saveKey.isPending
+              }
             >
               <option value="">Choose a secret connection</option>
               {(connections.data ?? [])
@@ -134,7 +143,7 @@ export function RuntimeRunCard({ contextId }: { contextId: string }) {
           <Button
             data-testid="context-runtime-bind"
             disabled={
-              !connection || !sandbox.trim() || !!key || bind.isPending || saveKey.isPending
+              !connection || !sandbox.trim() || !!key.trim() || bind.isPending || saveKey.isPending
             }
             onClick={() => bind.mutate()}
           >
@@ -190,7 +199,6 @@ export function RuntimeRunCard({ contextId }: { contextId: string }) {
                 Disable cloud runs
               </Button>
               <RuntimeScheduleCard
-                key={contextId}
                 contextId={contextId}
                 schedule={state.data.schedule ?? null}
                 nextRunAt={state.data.next_run_at ?? null}

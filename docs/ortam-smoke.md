@@ -175,16 +175,17 @@ Initial setup is explicit:
    Use a pinned build; the worker does not install arbitrary latest packages.
 2. Attach the owning user's model connection in Ortam. Set sandbox auto-stop to
    20 minutes or less, then stop it so this setup is saved.
-3. In the Context's Cloud runs panel, enter that user's Ortam API key and click
+3. Set `DERIVE_ORTAM_RUNNER_PATH` on the API deployment to the installed CLI's
+   absolute `bin/derive.js` path. This makes the Cloud runs setup visible.
+   `DERIVE_ORTAM_API_URL` defaults to `https://api.ortam.dev/v1`.
+   Enable hosted agents, agent writes, and the automations beta for the workspace.
+   Workers also require the workspace in `DERIVE_HOSTED_RUNS_ALLOWLIST`;
+   Node uses its background-worker switch.
+4. In the Context's Cloud runs panel, enter that user's Ortam API key and click
    **Save Ortam key**, or choose an existing secret connection. The new key is
    stored encrypted for the controller and is not bound as an agent environment
    variable or source. Enter the sandbox ID and connect it. Binding checks the actual
    Ortam organization, account owner, sandbox state, and auto-stop setting.
-4. Set `DERIVE_ORTAM_RUNNER_PATH` on the API deployment to the installed CLI's
-   absolute `bin/derive.js` path. `DERIVE_ORTAM_API_URL` defaults to
-   `https://api.ortam.dev/v1`. Enable hosted agents and agent writes for the
-   workspace. Workers also require the workspace in
-   `DERIVE_HOSTED_RUNS_ALLOWLIST`; Node uses its background-worker switch.
 
 Node reconciles every ten seconds; Workers uses the existing cron invocation.
 Each pass does bounded work rather than waiting for a VM or model to finish.

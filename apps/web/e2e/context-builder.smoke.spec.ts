@@ -210,9 +210,36 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
       },
     })
   })
+  let rejectConnectionReads = true
+  let rejectKeySave = true
+  await owner.route("**/v1/connections?*", async (route) => {
+    if (rejectConnectionReads) {
+      await route.fulfill({ status: 403, json: { error: "Connections unavailable" } })
+      return
+    }
+    await route.continue()
+  })
+  await owner.route("**/v1/connections", async (route) => {
+    if (route.request().method() === "POST" && rejectKeySave) {
+      await route.fulfill({ status: 503, json: { error: "Secret storage unavailable" } })
+      return
+    }
+    await route.continue()
+  })
   await owner.goto(`/contexts/${context.id}`)
+  await expect(owner.getByTestId("context-runtime-connections-retry")).toBeVisible()
+  await expect(owner.getByTestId("context-runtime-connection")).toBeDisabled()
+  rejectConnectionReads = false
+  await owner.getByTestId("context-runtime-connections-retry").click()
+  await expect(owner.getByTestId("context-runtime-connection")).toBeEnabled()
+  await expect(owner.getByTestId("context-runtime-connections-retry")).toBeHidden()
   await expect(owner.getByTestId("context-runtime-key-save")).toBeDisabled()
   await owner.getByTestId("context-runtime-key").fill("controller-key-fixture")
+  await owner.getByTestId("context-runtime-key-save").click()
+  await expect(owner.getByText("Secret storage unavailable", { exact: true })).toBeVisible()
+  await expect(owner.getByTestId("context-runtime-key")).toHaveValue("controller-key-fixture")
+  await expect(owner.getByTestId("context-runtime-bind")).toBeDisabled()
+  rejectKeySave = false
   await owner.getByTestId("context-runtime-key-save").click()
   await expect(owner.getByTestId("context-runtime-key")).toHaveValue("")
   const saved = await owner.request.get("/v1/connections?mine=1")
@@ -228,6 +255,9 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
   expect((await detail.json()).connection_ids).toEqual([])
   const sandbox = "sbx_00000000000000000000000000"
   await owner.getByTestId("context-runtime-sandbox").fill(sandbox)
+  await owner.getByTestId("context-runtime-key").fill(" ")
+  await expect(owner.getByTestId("context-runtime-bind")).toBeEnabled()
+  await owner.getByTestId("context-runtime-key").fill("")
   await owner
     .locator("section")
     .filter({ has: owner.getByTestId("context-runtime-bind") })
