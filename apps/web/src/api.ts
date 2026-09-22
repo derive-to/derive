@@ -219,7 +219,13 @@ export type FollowKind = Follow["kind"]
 /** A quote-scoped edit (the inline editor's wire shape): replace the text located by
  *  {exact, prefix, suffix}, resolved server-side against the stored source. */
 export interface QuoteEditInput {
-  quote: { exact: string; prefix?: string; suffix?: string }
+  quote: {
+    exact: string
+    prefix?: string
+    suffix?: string
+    occurrence?: number
+    match_count?: number
+  }
   /** The replacement as text. Exactly one of `new_text` / `new_html` is set. */
   new_text?: string
   /** The replacement as inline markup — a run the reader made bold, italic, or a

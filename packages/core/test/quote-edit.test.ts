@@ -319,6 +319,26 @@ describe("applyQuoteEdits — html", () => {
     expect(out).toContain("<style>p{margin:0}</style>")
   })
 
+  it("uses a verified occurrence when repeated cards have identical context", () => {
+    const source = "<p>Same before Repeat same after</p><p>Same before Repeat same after</p>"
+    const edit: QuoteEdit = {
+      quote: {
+        exact: "Repeat",
+        prefix: "Same before ",
+        suffix: " same after",
+        occurrence: 2,
+        match_count: 2,
+      },
+      new_text: "Updated",
+    }
+    expect(applyQuoteEdits(source, HTML, [edit])).toBe(
+      "<p>Same before Repeat same after</p><p>Same before Updated same after</p>",
+    )
+    expect(() =>
+      applyQuoteEdits(source, HTML, [{ ...edit, quote: { ...edit.quote, match_count: 3 } }]),
+    ).toThrow(/identical contexts/)
+  })
+
   it("never matches text inside script/style", () => {
     const doc = "<style>.teh{color:red}</style><p>say teh word</p>"
     const out = applyQuoteEdits(doc, HTML, [qe("teh", "the", { prefix: "say ", suffix: " word" })])
@@ -381,15 +401,15 @@ describe("applyQuoteEdits — html", () => {
     )
   })
 
-  it("protects links and handles international text across plain formatting seams", () => {
+  it("replaces selected links and keeps link metadata outside the selection", () => {
     const whole = '<p><a href="/docs">مرحبا 🌍</a> world</p>'
-    expect(() => applyQuoteEdits(whole, HTML, [qe("مرحبا 🌍 world", "hello world")])).toThrow(
-      /could remove links or attributes/,
+    expect(applyQuoteEdits(whole, HTML, [qe("مرحبا 🌍 world", "hello world")])).toBe(
+      "<p>hello world</p>",
     )
 
     const partial = '<p><a href="/docs">keep مرحبا</a> world</p>'
-    expect(() => applyQuoteEdits(partial, HTML, [qe("مرحبا world", "hello")])).toThrow(
-      /could remove links or attributes/,
+    expect(applyQuoteEdits(partial, HTML, [qe("مرحبا world", "hello")])).toBe(
+      '<p><a href="/docs">keep </a>hello</p>',
     )
 
     expect(
@@ -461,6 +481,10 @@ describe("quote-edit shapes", () => {
     expect(isQuoteEdit({ old_str: "a", new_str: "b" })).toBe(false)
     expect(isQuoteEdit(null)).toBe(false)
     expect(isQuoteEdit({ quote: { exact: 1 }, new_text: "x" })).toBe(false)
+    expect(isQuoteEdit({ quote: { exact: "a", occurrence: 2 }, new_text: "x" })).toBe(false)
+    expect(
+      isQuoteEdit({ quote: { exact: "a", occurrence: 2, match_count: 1 }, new_text: "x" }),
+    ).toBe(false)
   })
 
   it("rejects malformed context fields (a numeric prefix must not become a 500)", () => {

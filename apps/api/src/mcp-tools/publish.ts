@@ -335,9 +335,27 @@ export function registerPublishTool(tc: ToolContext): void {
                     exact: z.string().describe("The VISIBLE text to replace, as a reader sees it."),
                     prefix: z.string().optional().describe("Visible text just before it."),
                     suffix: z.string().optional().describe("Visible text just after it."),
+                    occurrence: z.coerce
+                      .number()
+                      .int()
+                      .min(1)
+                      .max(200)
+                      .optional()
+                      .describe(
+                        "1-based match in the rendered text when identical wording repeats.",
+                      ),
+                    match_count: z.coerce
+                      .number()
+                      .int()
+                      .min(1)
+                      .max(200)
+                      .optional()
+                      .describe(
+                        "Total rendered matches seen when occurrence was counted. Both hint fields are required together.",
+                      ),
                   })
                   .describe(
-                    "Locates the edit by RENDERED text instead of raw source. The context must pin exactly one spot, and the span may not cross markup.",
+                    "Locates the edit by RENDERED text. Context or a matching occurrence count pins repeated wording. Inline markup can be crossed; block structure cannot.",
                   ),
                 new_text: z
                   .string()

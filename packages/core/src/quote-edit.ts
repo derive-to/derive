@@ -4,9 +4,9 @@
 // sees (rendered text), and this module maps it back to the stored bytes and splices.
 //
 // Two invariants distinguish it from the read-side matcher in `anchor-shared`:
-//   1. STRICT resolution. Painting a highlight may fall back to "the first place the
-//      words appear"; an EDIT must not — the context match must be UNIQUE, and a
-//      context miss is only accepted when the exact text is globally unambiguous.
+//   1. Grounded resolution. A unique context wins. Repeated wording can use the
+//      occurrence the frame observed, but only when the source match count agrees.
+//      Never silently choose the first match.
 //   2. RAW offsets. HTML and Markdown quotes match their rendered-text projections,
 //      then map back to raw-source offsets through segment maps. Safe inline markup
 //      is repaired around the replacement; structural boundaries and decoded-entity
@@ -36,6 +36,10 @@ export interface QuoteEdit {
     exact: string
     prefix?: string
     suffix?: string
+    /** The frame's 1-based occurrence, used only if context is ambiguous. */
+    occurrence?: number
+    /** Number of matches in the frame snapshot. Must agree with stored source. */
+    match_count?: number
   }
   /** Replacement for the quoted span. Empty string deletes. Escaped for HTML content
    *  at apply time — callers pass the text as typed. */
@@ -66,6 +70,14 @@ const optionalString = (v: unknown): boolean => v === undefined || typeof v === 
  *  no sane meaning and picking one silently would apply the edit nobody asked for. */
 export const isQuoteEdit = (e: unknown): e is QuoteEdit => {
   const q = e as QuoteEdit
+  const hint = q?.quote
+  const validHint =
+    (hint?.occurrence === undefined && hint?.match_count === undefined) ||
+    (Number.isInteger(hint?.occurrence) &&
+      Number.isInteger(hint?.match_count) &&
+      (hint?.occurrence ?? 0) >= 1 &&
+      (hint?.match_count ?? 0) <= 200 &&
+      (hint?.match_count ?? 0) >= (hint?.occurrence ?? 0))
   return (
     !!q &&
     typeof q === "object" &&
@@ -74,6 +86,7 @@ export const isQuoteEdit = (e: unknown): e is QuoteEdit => {
     typeof q.quote.exact === "string" &&
     optionalString(q.quote.prefix) &&
     optionalString(q.quote.suffix) &&
+    validHint &&
     optionalString(q.new_text) &&
     optionalString(q.new_html) &&
     (typeof q.new_text === "string") !== (typeof q.new_html === "string")
@@ -144,7 +157,6 @@ interface ParsedHtmlTag {
   closing: boolean
   name: string
   selfClosing: boolean
-  hasAttributes: boolean
 }
 
 const isHtmlSpace = (char: string): boolean =>
@@ -175,39 +187,7 @@ const parseHtmlTag = (raw: string): ParsedHtmlTag | null => {
   while (i < raw.length - 1 && isTagNameChar(raw[i] ?? "")) i++
   const name = raw.slice(nameStart, i).toLowerCase()
   const selfClosing = !closing && raw.slice(0, -1).trimEnd().endsWith("/")
-  const tail = raw.slice(i, -1).trim().replace(/\/$/, "").trim()
-  return { closing, name, selfClosing, hasAttributes: !closing && !!tail }
-}
-
-/** Whether a formatted replacement intersects authored identity/link metadata.
- *  Replacing across plain `<b>`/`<i>` runs is an intentional formatting action,
- *  but silently deleting an href, class, data attribute, or other authored state
- *  is not. */
-const selectionTouchesProtectedMarkup = (src: string, rStart: number, rEnd: number): boolean => {
-  const stack: { name: string; protected: boolean }[] = []
-  for (
-    let boundary = nextHtmlBoundary(src, 0);
-    boundary;
-    boundary = nextHtmlBoundary(src, boundary.next)
-  ) {
-    const { at, raw } = boundary
-    if (at >= rStart && at < rEnd && stack.some((entry) => entry.protected)) return true
-    if (at >= rEnd) return stack.some((entry) => entry.protected)
-    const parsed = parseHtmlTag(raw)
-    if (!parsed) continue
-    if (parsed.closing) {
-      for (let i = stack.length - 1; i >= 0; i--)
-        if (stack[i]?.name === parsed.name) {
-          stack.splice(i, 1)
-          break
-        }
-    } else {
-      const protectedMarkup = parsed.name === "a" || parsed.hasAttributes
-      if (at >= rStart && at < rEnd && protectedMarkup) return true
-      if (!parsed.selfClosing) stack.push({ name: parsed.name, protected: protectedMarkup })
-    }
-  }
-  return stack.some((entry) => entry.protected)
+  return { closing, name, selfClosing }
 }
 
 /** Return the next complete tag/comment without backtracking over attacker input. */
@@ -691,19 +671,24 @@ export function applyQuoteEdits(
     const label = `Edit ${i + 1} of ${edits.length}`
     const exact = e.quote.exact
     if (!exact.trim()) throw new EditError(`${label} failed: the quoted text is empty.`)
-    // Context first — and the context itself must pin exactly ONE spot. A context
-    // that matches twice (identical repeated cards) must refuse, not silently edit
-    // the first card when the user touched the second. A context miss is acceptable
-    // only when the exact text appears exactly once in the document.
+    // Context usually pins a single spot. For identical repeated cards, the frame
+    // also sends the edited occurrence. Use it only when the stored source has the
+    // same number of matches, so extra generated text cannot shift the target.
+    const hintedSpan = (): { start: number; end: number } | null => {
+      const { occurrence, match_count: matchCount } = e.quote
+      if (!occurrence || !matchCount || matchCount > 200) return null
+      const matches = findQuoteMatches(text, exact, matchCount + 1)
+      return matches.length === matchCount ? (matches[occurrence - 1] ?? null) : null
+    }
     const outerWhitespaceMatches = exact !== exact.trim() ? literalMatches(exact) : []
     let span = outerWhitespaceMatches.length === 1 ? outerWhitespaceMatches[0] : null
     if (!span) {
       const ctx = findQuoteContextUnique(text, exact, e.quote.prefix, e.quote.suffix)
-      if (ctx.matches > 1)
+      span = ctx.span ?? (ctx.matches > 1 ? hintedSpan() : null)
+      if (!span && ctx.matches > 1)
         throw new EditError(
           `${label} failed: "${clip(exact, 60)}" appears in ${ctx.matches} identical contexts — the edit can't be pinned to one. Open the source editor.`,
         )
-      span = ctx.span
     }
     if (!span) {
       const all = findQuoteMatches(text, exact)
@@ -712,7 +697,8 @@ export function applyQuoteEdits(
         throw new EditError(
           `${label} failed: "${clip(exact, 60)}" wasn't found — the document may have changed. Re-read and retry.`,
         )
-      else
+      else span = hintedSpan()
+      if (!span)
         throw new EditError(
           `${label} failed: "${clip(exact, 60)}" appears ${all.length} times and the surrounding context didn't pin one down.`,
         )
@@ -757,10 +743,6 @@ export function applyQuoteEdits(
     if (e.new_html !== undefined && !isHtml)
       throw new EditError(
         `${label} failed: this document is ${isLatex ? "LaTeX" : "Markdown"} — write formatting as ${isLatex ? "LaTeX" : "Markdown"} text, not HTML.`,
-      )
-    if (raw.crossesMarkup && selectionTouchesProtectedMarkup(src, raw.rStart, raw.rEnd))
-      throw new EditError(
-        `${label} failed: editing across existing authored markup could remove links or attributes. Edit a plain-text run, or open the source editor.`,
       )
     // Typed text is text in every language: `%` would comment out the rest of a LaTeX
     // line and `&` would start a table cell, so the special characters are escaped the
