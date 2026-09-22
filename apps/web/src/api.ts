@@ -1490,7 +1490,7 @@ export const api = {
       enabled: boolean
       revision: number | null
     },
-  ): Promise<unknown> =>
+  ): Promise<{ schedule: AutomationRecord; next_run_at: string | null }> =>
     f(`/v1/contexts/${id}/runtime/schedule`, { ...opts(body), method: "PUT" }).then(j),
   disableContextRuntime: (id: string): Promise<unknown> =>
     f(`/v1/contexts/${id}/runtime/disable`, opts({})).then(j),

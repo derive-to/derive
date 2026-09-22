@@ -1,6 +1,5 @@
 import {
   type AutomationRecord,
-  type ContextRecord,
   type MetaStore,
   newId,
   type RunRecord,
@@ -10,7 +9,7 @@ import {
 import { Cron } from "croner"
 import { log } from "../log"
 import { parseTrigger } from "./automation"
-import { readEnvironmentBindings } from "./context-environment"
+import { runtimeInput } from "./runtime-input"
 import { previousOccurrence } from "./schedule"
 
 export function nextRuntimeOccurrence(cron: string, timezone: string, after = new Date()) {
@@ -19,29 +18,6 @@ export function nextRuntimeOccurrence(cron: string, timezone: string, after = ne
   const next = new Cron(cron, { timezone }).nextRun(after)
   if (!next) throw new Error("The schedule has no next occurrence")
   return next.toISOString()
-}
-
-export async function runtimeInput(
-  meta: MetaStore,
-  context: ContextRecord,
-  task: Pick<RuntimeRunInput, "instruction" | "provider" | "model" | "schedule_revision">,
-): Promise<RuntimeRunInput | null> {
-  const manifest = (await meta.currentVersions([context.manifest_artifact_id]))[
-    context.manifest_artifact_id
-  ]
-  if (!manifest) return null
-  return {
-    version: 1,
-    ...task,
-    context_id: context.id,
-    manifest: {
-      artifact_id: context.manifest_artifact_id,
-      version: manifest.n,
-      blob_key: manifest.blob_key,
-    },
-    connection_ids: JSON.parse(context.connection_ids ?? "[]"),
-    environment_bindings: readEnvironmentBindings(context.environment_bindings),
-  }
 }
 
 async function scheduleOwnerAllowed(meta: MetaStore, a: AutomationRecord) {
@@ -76,8 +52,8 @@ export async function materializeRuntimeSchedules(
   now: Date,
   orgIds?: ReadonlySet<string>,
 ) {
-  for (const a of await meta.listRuntimeSchedules()) {
-    if (!a.runtime_id || !a.created_by || (orgIds && !orgIds.has(a.org_id))) continue
+  for (const a of await meta.listRuntimeSchedules(orgIds ? [...orgIds] : undefined)) {
+    if (!a.runtime_id || !a.created_by) continue
     try {
       const settings = await meta.getOrgSettings(a.org_id)
       if (!settings.hostedAgentsEnabled || !settings.agentWrites || !settings.automateBeta) continue

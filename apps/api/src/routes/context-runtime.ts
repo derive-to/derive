@@ -17,7 +17,8 @@ import { readEnvironmentBindings } from "../lib/context-environment"
 import { decryptSecret } from "../lib/crypto"
 import { fail, readJson } from "../lib/http"
 import { OrtamClient } from "../lib/ortam-client"
-import { nextRuntimeOccurrence, runtimeInput, runtimeScheduleAllows } from "../lib/runtime-schedule"
+import { runtimeInput } from "../lib/runtime-input"
+import { nextRuntimeOccurrence, runtimeScheduleAllows } from "../lib/runtime-schedule"
 import { verifyRuntimeToken } from "../lib/runtime-token"
 
 export const contextRuntimeRoutes = (ctx: AppContext) => {

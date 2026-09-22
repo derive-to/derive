@@ -271,12 +271,9 @@ async function reconcile(
   }
 }
 
-/** Bounded passes; all progress survives process/Worker restarts. Cleanup is never rollout-gated. */
+/** Each pass advances durable work. Cleanup is never rollout-gated. */
 export async function runtimeDispatchPass(deps: RuntimeDispatchDeps) {
   const at = deps.now?.() ?? new Date()
-  await materializeRuntimeSchedules(deps.meta, at, deps.hostedOrgIds).catch(() =>
-    log.warn("runtime schedule pass failed"),
-  )
   const pending = await deps.meta.listPendingRuntimeRuns(100)
   const cleanup = await deps.meta.listUnreleasedRunAttempts(100)
   const runs = new Map(pending.map((run) => [run.id, run]))
@@ -312,4 +309,8 @@ export async function runtimeDispatchPass(deps: RuntimeDispatchDeps) {
       log.warn("runtime reconciliation deferred", { run: run.id })
     }
   }
+  // Repair active work before scanning schedules. Admission can wait; shutdown cannot.
+  await materializeRuntimeSchedules(deps.meta, at, deps.hostedOrgIds).catch(() =>
+    log.warn("runtime schedule pass failed"),
+  )
 }

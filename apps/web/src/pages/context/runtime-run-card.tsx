@@ -141,7 +141,7 @@ export function RuntimeRunCard({ contextId }: { contextId: string }) {
                 Disable cloud runs
               </Button>
               <RuntimeScheduleCard
-                key={state.data.schedule?.revision ?? "new"}
+                key={contextId}
                 contextId={contextId}
                 schedule={state.data.schedule ?? null}
                 nextRunAt={state.data.next_run_at ?? null}

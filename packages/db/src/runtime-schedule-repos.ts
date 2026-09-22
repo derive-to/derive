@@ -33,10 +33,21 @@ export function runtimeScheduleRepos(execute: (statement: SQL) => Promise<unknow
     saveRuntimeSchedule,
     getRuntimeSchedule: (runtimeId: string, orgId: string) =>
       first(sql`SELECT * FROM automation WHERE runtime_id = ${runtimeId} AND org_id = ${orgId}`),
-    listRuntimeSchedules: async () =>
-      (await execute(sql`SELECT a.* FROM automation a
+    listRuntimeSchedules: async (orgIds?: readonly string[]) =>
+      orgIds?.length === 0
+        ? []
+        : ((await execute(sql`SELECT a.* FROM automation a
         JOIN context_runtime rt ON rt.id = a.runtime_id AND rt.org_id = a.org_id
-        WHERE a.enabled = 1 AND rt.disabled_at IS NULL ORDER BY a.id`)) as AutomationRecord[],
+        WHERE a.enabled = 1 AND rt.disabled_at IS NULL
+          ${
+            orgIds
+              ? sql`AND a.org_id IN (${sql.join(
+                  orgIds.map((id) => sql`${id}`),
+                  sql`, `,
+                )})`
+              : sql``
+          }
+        ORDER BY a.id`)) as AutomationRecord[]),
     cancelQueuedRuntimeRun: async (id: string, orgId: string, at: string) => {
       await execute(sql`UPDATE run SET status = 'failed', finished_at = ${at}
         WHERE id = ${id} AND org_id = ${orgId} AND runtime_id IS NOT NULL AND status = 'queued'

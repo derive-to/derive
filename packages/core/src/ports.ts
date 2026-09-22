@@ -5090,7 +5090,7 @@ export const isBundleContentType = (contentType: string | null | undefined): boo
 /** Control-plane operations only. Runner APIs must not expose these mutations. */
 export interface RuntimeStore {
   getRuntimeSchedule(runtimeId: string, orgId: string): Promise<AutomationRecord | null>
-  listRuntimeSchedules(): Promise<AutomationRecord[]>
+  listRuntimeSchedules(orgIds?: readonly string[]): Promise<AutomationRecord[]>
   saveRuntimeSchedule(input: {
     id: string
     runtimeId: string

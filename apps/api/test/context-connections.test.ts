@@ -2,7 +2,7 @@ import {
   CONTEXT_ENVIRONMENT_LIMIT as SERVER_LIMIT,
   contextEnvironmentNameError as serverError,
 } from "@derive/core"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import {
   CONTEXT_ENVIRONMENT_LIMIT,
   contextEnvironmentNameError,
@@ -883,7 +883,7 @@ describe("Ortam runtime lifecycle", () => {
 
   it("rejects a launched but unclaimed task after pause and still shuts down", async () => {
     const f = await scheduled()
-    for (let i = 0; i < 3; i++) await pass()
+    for (let i = 0; i < 4; i++) await pass()
     expect(f.sandbox.starts).toBe(1)
     expect(
       (await saveSchedule(f.context.id, { ...dailyTask, revision: 0, enabled: false })).status,
@@ -896,9 +896,7 @@ describe("Ortam runtime lifecycle", () => {
 
   it("allows a claimed scheduled job to report and save after the schedule is paused", async () => {
     const f = await scheduled()
-    await pass()
-    await pass()
-    await pass()
+    for (let i = 0; i < 4; i++) await pass()
     expect(f.sandbox.starts).toBe(1)
     expect((await attemptRequest(f.sandbox, "claim")).status).toBe(200)
     expect(
@@ -913,6 +911,26 @@ describe("Ortam runtime lifecycle", () => {
     now = new Date(now.getTime() + 24 * 3600_000)
     await pass()
     expect(f.sandbox.starts).toBe(1)
+  })
+
+  it("repairs shutdown before schedule scanning, even when that scan fails", async () => {
+    const f = await launched()
+    await attemptRequest(f.sandbox, "claim")
+    await attemptRequest(f.sandbox, "result", result)
+    await pass() // Enter stopping.
+    let stateAtScan: string | undefined
+    const scan = vi.spyOn(meta, "listRuntimeSchedules").mockImplementationOnce(async () => {
+      stateAtScan = f.sandbox.state
+      throw new Error("Schedule query unavailable")
+    })
+    try {
+      await pass()
+      expect(stateAtScan).toBe("stopped")
+    } finally {
+      scan.mockRestore()
+    }
+    for (let i = 0; i < 5; i++) await pass()
+    expect((await meta.getRun(f.run.id))?.status).toBe("succeeded")
   })
 
   it("runs once, receives a private report, confirms shutdown, and reuses the same sandbox", async () => {

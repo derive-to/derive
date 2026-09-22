@@ -248,10 +248,10 @@ export function runtimeRepos(execute: (statement: SQL) => Promise<unknown[]>): R
               AND a.org_id = rt.org_id AND a.agent_id = rt.agent_id
               AND a.context_id = c.id AND a.enabled = 1
               AND a.runtime_id = rt.id
-                AND a.created_by = ${input.initiated_by ?? null}
-                AND a.revision = ${snapshot.schedule_revision ?? -1}
-                AND a.instruction = ${snapshot.instruction} AND a.provider = ${snapshot.provider}
-                AND ${input.scheduled_for ?? null} >= coalesce(a.updated_at, a.created_at)))
+              AND a.created_by = ${input.initiated_by ?? null}
+              AND a.revision = ${snapshot.schedule_revision ?? -1}
+              AND a.instruction = ${snapshot.instruction} AND a.provider = ${snapshot.provider}
+              AND ${input.scheduled_for ?? null} >= coalesce(a.updated_at, a.created_at)))
           AND (${input.reason} <> 'schedule' OR NOT EXISTS (
             SELECT 1 FROM run busy WHERE busy.runtime_id = rt.id AND busy.status IN ('queued', 'running')))
           AND c.id = ${snapshot.context_id} AND v.artifact_id = ${snapshot.manifest.artifact_id}

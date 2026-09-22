@@ -5225,6 +5225,9 @@ export function runStoreContract(
       if (!schedule) throw new Error("Schedule not saved")
       expect(schedule).toMatchObject({ revision: 0, created_by: "owner", runtime_id: f.runtime.id })
       expect(await store.getRuntimeSchedule(f.runtime.id, "foreign")).toBeNull()
+      expect(await store.listRuntimeSchedules([])).toEqual([])
+      expect(await store.listRuntimeSchedules(["foreign"])).toEqual([])
+      expect((await store.listRuntimeSchedules([ORG])).map((a) => a.id)).toContain(schedule.id)
       expect(
         await store.saveRuntimeSchedule({ ...definition, orgId: "foreign", revision: 0 }),
       ).toBeNull()
