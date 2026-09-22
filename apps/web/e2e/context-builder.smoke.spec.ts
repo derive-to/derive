@@ -148,18 +148,24 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
     data: { name: "Daily checks", manifest_short_id: manifest },
   })
   const context = await created.json()
+  let binding: { connection_id: string; sandbox_id: string } | null = null
   let queued = false
   let submitted: unknown
-  let schedule: Record<string, unknown> | null = null
+  const scheduleState: { current: Record<string, unknown> | null } = { current: null }
   let releasePause: (() => void) | undefined
   let holdPause = false
-  await owner.route(`**/v1/contexts/${context.id}/runtime`, async (route) =>
-    route.fulfill({
+  await owner.route(`**/v1/contexts/${context.id}/runtime`, async (route) => {
+    if (route.request().method() === "POST") {
+      binding = route.request().postDataJSON()
+      await route.fulfill({ status: 201, json: { runtime: { id: "runtime-demo" } } })
+      return
+    }
+    await route.fulfill({
       json: {
         enabled: true,
-        schedule,
-        next_run_at: schedule?.enabled ? "2026-09-22T13:00:00.000Z" : null,
-        runtime: { id: "runtime-demo", disabled_at: null },
+        schedule: scheduleState.current,
+        next_run_at: scheduleState.current?.enabled ? "2026-09-22T13:00:00.000Z" : null,
+        runtime: binding ? { id: "runtime-demo", disabled_at: null } : null,
         runs: queued
           ? [
               {
@@ -176,8 +182,8 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
             ]
           : [],
       },
-    }),
-  )
+    })
+  })
   await owner.route(`**/v1/contexts/${context.id}/runtime/runs`, async (route) => {
     submitted = route.request().postDataJSON()
     queued = true
@@ -185,23 +191,50 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
   })
   await owner.route(`**/v1/contexts/${context.id}/runtime/schedule`, async (route) => {
     const body = route.request().postDataJSON()
-    expect(body.revision).toBe(schedule?.revision ?? null)
-    schedule = {
+    expect(body.revision).toBe(scheduleState.current?.revision ?? null)
+    const savedSchedule = {
       ...body,
       enabled: body.enabled ? 1 : 0,
       revision: (body.revision ?? -1) + 1,
       trigger: JSON.stringify({ kind: "schedule", cron: body.cron, tz: body.timezone }),
     }
+    scheduleState.current = savedSchedule
     if (holdPause && !body.enabled)
       await new Promise<void>((resolve) => {
         releasePause = resolve
       })
     await route.fulfill({
-      json: { schedule, next_run_at: schedule.enabled ? "2026-09-22T13:00:00.000Z" : null },
+      json: {
+        schedule: savedSchedule,
+        next_run_at: savedSchedule.enabled ? "2026-09-22T13:00:00.000Z" : null,
+      },
     })
   })
   await owner.goto(`/contexts/${context.id}`)
+  await expect(owner.getByTestId("context-runtime-key-save")).toBeDisabled()
+  await owner.getByTestId("context-runtime-key").fill("controller-key-fixture")
+  await owner.getByTestId("context-runtime-key-save").click()
+  await expect(owner.getByTestId("context-runtime-key")).toHaveValue("")
+  const saved = await owner.request.get("/v1/connections?mine=1")
+  const secrets = (await saved.json()).connections
+  expect(secrets).toHaveLength(1)
+  expect(secrets[0]).toMatchObject({ toolkit: "ortam", kind: "secret", scope: "personal" })
+  expect(JSON.stringify(secrets)).not.toContain("controller-key-fixture")
+  await expect(owner.getByTestId("context-runtime-connection")).toHaveValue(secrets[0].id)
+  // Controller credentials must never become task environment variables or source grants.
+  const environment = await owner.request.get(`/v1/contexts/${context.id}/environment`)
+  expect((await environment.json()).bindings).toEqual({})
+  const detail = await owner.request.get(`/v1/contexts/${context.id}`)
+  expect((await detail.json()).connection_ids).toEqual([])
+  const sandbox = "sbx_00000000000000000000000000"
+  await owner.getByTestId("context-runtime-sandbox").fill(sandbox)
+  await owner
+    .locator("section")
+    .filter({ has: owner.getByTestId("context-runtime-bind") })
+    .screenshot({ path: testInfo.outputPath("cloud-run-setup.png") })
+  await owner.getByTestId("context-runtime-bind").click()
   await expect(owner.getByTestId("context-runtime-run")).toBeDisabled()
+  expect(binding).toEqual({ connection_id: secrets[0].id, sandbox_id: sandbox })
   await owner
     .getByTestId("context-runtime-instruction")
     .fill("Run the anti-cheat script and explain unusual results")
@@ -222,7 +255,11 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
   await owner.getByTestId("context-runtime-schedule-timezone").fill("America/New_York")
   await owner.getByTestId("context-runtime-schedule-save").click()
   await expect(owner.getByText(/Next run:.*America\/New_York/)).toBeVisible()
-  expect(schedule).toMatchObject({ cron: "0 9 * * *", timezone: "America/New_York", enabled: 1 })
+  expect(scheduleState.current).toMatchObject({
+    cron: "0 9 * * *",
+    timezone: "America/New_York",
+    enabled: 1,
+  })
   await owner
     .locator("section")
     .filter({ has: owner.getByTestId("context-runtime-run") })
@@ -231,7 +268,11 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
     .getByTestId("context-runtime-schedule")
     .screenshot({ path: testInfo.outputPath("schedule.png") })
   await owner.getByTestId("context-runtime-schedule-instruction").fill("My unsaved investigation")
-  schedule = { ...schedule, revision: 1, instruction: "Another editor's saved task" }
+  scheduleState.current = {
+    ...scheduleState.current,
+    revision: 1,
+    instruction: "Another editor's saved task",
+  }
   // The five-second query refresh must preserve both the draft and its original revision.
   await expect(
     owner.getByText("The schedule changed elsewhere. Your unsaved draft has been kept."),
@@ -262,10 +303,13 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
   await expect(owner.getByTestId("context-runtime-schedule-instruction")).toHaveValue(
     "Keep this draft while pausing",
   )
-  expect(schedule).toMatchObject({ instruction: "Another editor's saved task", enabled: 0 })
+  expect(scheduleState.current).toMatchObject({
+    instruction: "Another editor's saved task",
+    enabled: 0,
+  })
   await owner.getByTestId("context-runtime-schedule-save").click()
   await expect(owner.getByTestId("context-runtime-schedule-pause")).toBeVisible()
-  expect(schedule).toMatchObject({
+  expect(scheduleState.current).toMatchObject({
     instruction: "Keep this draft while pausing",
     revision: 5,
     enabled: 1,

@@ -138,7 +138,11 @@ function AccessForm({
     mutationFn: async () => {
       if (nameError) throw new Error(nameError)
       if (atLimit) throw new Error(`At most ${CONTEXT_ENVIRONMENT_LIMIT} environment variables`)
-      const connection = await api.createEnvironmentSecret(variable, value)
+      const connection = await api.createSecretConnection({
+        toolkit: "environment",
+        secret: value,
+        scopes_label: variable,
+      })
       // If binding fails, keep the encrypted connection available in the existing-secret picker.
       setValue("")
       return persistEnvironment({ ...bindings, [variable]: connection.id })

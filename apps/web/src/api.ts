@@ -1506,11 +1506,11 @@ export const api = {
     connection_ids: string[],
   ): Promise<{ connection_ids: string[] }> =>
     f(`/v1/contexts/${id}/connections`, opts({ connection_ids })).then(j),
-  createEnvironmentSecret: (name: string, secret: string): Promise<Connection> =>
-    f(
-      "/v1/connections",
-      opts({ toolkit: "environment", kind: "secret", secret, scopes_label: name }),
-    ).then(j),
+  createSecretConnection: (input: {
+    toolkit: string
+    secret: string
+    scopes_label: string
+  }): Promise<Connection> => f("/v1/connections", opts({ ...input, kind: "secret" })).then(j),
   getContext: (id: string): Promise<ContextDetail> => f(`/v1/contexts/${id}`, opts()).then(j),
   // An imported paper's implementation analysis, written by an agent, with the prompts a person
   // copies into theirs to start or update it.

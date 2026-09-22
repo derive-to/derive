@@ -1,6 +1,6 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
-import { api } from "@/api"
+import { api, type Connection } from "@/api"
 import { LoadError } from "@/components/shared/load-error"
 import { SectionTitle } from "@/components/shared/section-title"
 import { Button } from "@/components/ui/button"
@@ -12,17 +12,40 @@ import { useApiMutation } from "@/lib/use-api-mutation"
 import { RuntimeScheduleCard } from "./runtime-schedule-card"
 
 export function RuntimeRunCard({ contextId }: { contextId: string }) {
+  const qc = useQueryClient()
   const query = contextRuntimeQuery(contextId)
   const state = useQuery(query)
-  const connections = useQuery(automationConnectionsQuery())
+  const connectionsQuery = automationConnectionsQuery()
+  const connections = useQuery(connectionsQuery)
   const [sandbox, setSandbox] = useState("")
   const [connection, setConnection] = useState("")
+  const [key, setKey] = useState("")
   const [instruction, setInstruction] = useState("")
   const [provider, setProvider] = useState<"codex" | "claude-code">("codex")
   const bind = useApiMutation({
     mutationFn: () => api.bindContextRuntime(contextId, connection, sandbox.trim()),
     invalidate: [query.queryKey],
     success: "Sandbox connected",
+  })
+  const saveKey = useApiMutation({
+    mutationFn: async () => {
+      await qc.cancelQueries({ queryKey: connectionsQuery.queryKey, exact: true })
+      return api.createSecretConnection({
+        toolkit: "ortam",
+        secret: key.trim(),
+        scopes_label: "Ortam controller",
+      })
+    },
+    invalidate: [connectionsQuery.queryKey],
+    success: "Ortam key saved",
+    onSuccess: (saved) => {
+      qc.setQueryData<Connection[]>(connectionsQuery.queryKey, (current) => [
+        ...(current ?? []).filter((item) => item.id !== saved.id),
+        saved,
+      ])
+      setConnection(saved.id)
+      setKey("")
+    },
   })
   const run = useApiMutation({
     mutationFn: () => api.runContextRuntime(contextId, instruction.trim(), provider),
@@ -52,8 +75,8 @@ export function RuntimeRunCard({ contextId }: { contextId: string }) {
         <>
           <p className="text-xs text-muted-foreground">
             Connect a stopped Ortam sandbox with your model account attached. Set its auto-stop
-            limit to 20 minutes or less and install this deployment’s runner. Add the Ortam API key
-            as a secret in Connections first.
+            limit to 20 minutes or less and install this deployment’s runner. Choose a saved Ortam
+            key or add one below.
           </p>
           <label className="flex flex-col gap-1 text-sm">
             Ortam API connection
@@ -62,7 +85,7 @@ export function RuntimeRunCard({ contextId }: { contextId: string }) {
               className="rounded-md border bg-background p-2 text-sm"
               value={connection}
               onChange={(e) => setConnection(e.target.value)}
-              disabled={bind.isPending}
+              disabled={bind.isPending || saveKey.isPending}
             >
               <option value="">Choose a secret connection</option>
               {(connections.data ?? [])
@@ -75,6 +98,30 @@ export function RuntimeRunCard({ contextId }: { contextId: string }) {
             </select>
           </label>
           <label className="flex flex-col gap-1 text-sm">
+            New Ortam API key
+            <Input
+              data-testid="context-runtime-key"
+              type="password"
+              autoComplete="new-password"
+              maxLength={4096}
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              disabled={bind.isPending || saveKey.isPending}
+            />
+          </label>
+          <p className="text-xs text-muted-foreground">
+            Derive uses this key to start and stop your sandbox. It is stored encrypted and is not
+            added to the agent’s environment.
+          </p>
+          <Button
+            variant="outline"
+            data-testid="context-runtime-key-save"
+            disabled={!key.trim() || bind.isPending || saveKey.isPending}
+            onClick={() => saveKey.mutate()}
+          >
+            {saveKey.isPending ? "Saving…" : "Save Ortam key"}
+          </Button>
+          <label className="flex flex-col gap-1 text-sm">
             Sandbox ID
             <Input
               data-testid="context-runtime-sandbox"
@@ -86,7 +133,9 @@ export function RuntimeRunCard({ contextId }: { contextId: string }) {
           </label>
           <Button
             data-testid="context-runtime-bind"
-            disabled={!connection || !sandbox.trim() || bind.isPending}
+            disabled={
+              !connection || !sandbox.trim() || !!key || bind.isPending || saveKey.isPending
+            }
             onClick={() => bind.mutate()}
           >
             Connect sandbox

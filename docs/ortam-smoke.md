@@ -175,8 +175,10 @@ Initial setup is explicit:
    Use a pinned build; the worker does not install arbitrary latest packages.
 2. Attach the owning user's model connection in Ortam. Set sandbox auto-stop to
    20 minutes or less, then stop it so this setup is saved.
-3. Add that user's Ortam API key as a secret connection in Derive. Select it and
-   the sandbox ID in the Context's Cloud runs panel. Binding checks the actual
+3. In the Context's Cloud runs panel, enter that user's Ortam API key and click
+   **Save Ortam key**, or choose an existing secret connection. The new key is
+   stored encrypted for the controller and is not bound as an agent environment
+   variable or source. Enter the sandbox ID and connect it. Binding checks the actual
    Ortam organization, account owner, sandbox state, and auto-stop setting.
 4. Set `DERIVE_ORTAM_RUNNER_PATH` on the API deployment to the installed CLI's
    absolute `bin/derive.js` path. `DERIVE_ORTAM_API_URL` defaults to
@@ -344,8 +346,8 @@ Do not widen the allowlist to a working team workspace just to get this test run
 ### Create and observe the schedule
 
 Create a Context in Ortam Pilot with a private manifest describing this bounded test.
-Add the sandbox owner's Ortam API key as a secret connection, bind the stopped
-sandbox in **Cloud runs**, and enable the required workspace settings after the
+Save the sandbox owner's Ortam API key in **Cloud runs**, bind the stopped
+sandbox, and enable the required workspace settings after the
 checks above. Keep the receipt free of API keys, bearer tokens and secret values.
 
 Use Codex and this instruction for both occurrences:
