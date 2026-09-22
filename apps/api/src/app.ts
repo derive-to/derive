@@ -357,9 +357,15 @@ export function createApp(deps: AppDeps): Hono {
     // first (same ordering rationale as authEmail above).
     app.use("/v1/drafts", ipRateLimit(rateLimiters.draftPublish))
     const writeLimiter = ipRateLimit(rateLimiters.write)
-    app.use("/v1/*", (c, next) =>
-      c.req.method === "GET" || c.req.method === "HEAD" ? next() : writeLimiter(c, next),
-    )
+    const realtimeLimiter = ipRateLimit(rateLimiters.realtime)
+    app.use("/v1/*", (c, next) => {
+      if (c.req.method === "GET" || c.req.method === "HEAD") return next()
+      // Mouse movement and presence are ephemeral broadcasts, not persistent edits.
+      // Their normal cadence must never exhaust the budget for sharing or publishing.
+      if (c.req.method === "POST" && /^\/v1\/artifacts\/[^/]+\/(cursor|presence)$/.test(c.req.path))
+        return realtimeLimiter(c, next)
+      return writeLimiter(c, next)
+    })
   }
 
   // After an anonymous registration, opportunistically reap abandoned anonymous

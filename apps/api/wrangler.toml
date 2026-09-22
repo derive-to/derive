@@ -185,6 +185,16 @@ namespace_id = "1002"
   limit = 120
   period = 60
 
+# Ephemeral cursor/presence fan-out must not consume the edit budget. A pointer
+# sends ~22 frames/sec; 300/sec accommodates a group sharing an IP. The short
+# window bounds runaway broadcasts without leaving collaboration blocked a minute.
+[[ratelimits]]
+name = "RL_REALTIME"
+namespace_id = "1009"
+  [ratelimits.simple]
+  limit = 3000
+  period = 10
+
 [[ratelimits]]
 name = "RL_PUBLISH"
 namespace_id = "1003"

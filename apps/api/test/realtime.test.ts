@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest"
 import { type Backplane, createInProcessBackplane, type DeriveEvent } from "../src/bus"
 import { anonName } from "../src/lib/http"
-import { bearer, json, publishAs, quotaApp, TEST_TOKEN } from "./helpers"
+import { inMemoryLimiter, inMemoryRateLimiters } from "../src/lib/rate-limit"
+import { bearer, json, jsonAs, publishAs, quotaApp, TEST_TOKEN } from "./helpers"
 
 // The live-cursor frame is the wire contract between viewers: a position plus two
 // one-shot signals (gone = "I blurred/left", tap = "I clicked"). There is no cosmetic
@@ -54,6 +55,65 @@ describe("live cursor frame", () => {
     expect(f?.color).toBeUndefined()
     expect(f?.kind).toBeUndefined()
     expect(f?.emoji).toBeUndefined()
+  })
+})
+
+describe("realtime rate limits", () => {
+  it("normal cursor traffic leaves visibility edits available and still checks access", async () => {
+    const { app } = quotaApp("realtime-edit-budget", { rateLimit: true })
+    const headers = bearer(TEST_TOKEN)
+    const { short_id } = await (
+      await publishAs(app, "<h1>doc</h1>", { visibility: "public" }, headers)
+    ).json()
+    const path = `/v1/artifacts/${short_id}`
+    // About eleven seconds of movement at the client's 45ms cadence. This used
+    // to exhaust the shared 120/min write budget before the Share dialog opened.
+    for (let i = 0; i < 250; i++)
+      expect((await app.request(`${path}/cursor`, json({ x: 0.5, y: 0.5 }))).status).toBe(204)
+    expect((await app.request(`${path}/presence`, json({}))).status).toBe(200)
+    const access = { workspaceAccess: "none", linkRole: "none", listed: "none" }
+    expect((await app.request(`${path}/access`, jsonAs(headers, access, "PATCH"))).status).toBe(200)
+    const record = await (await app.request(path, { headers })).json()
+    expect(record.link_role).toBe("none")
+    // A separate budget is not an access exemption: the old anonymous reader
+    // loses both broadcast routes immediately when the owner removes link access.
+    for (const route of ["cursor", "presence"])
+      expect((await app.request(`${path}/${route}`, json({ x: 0.5, y: 0.5 }))).status).toBe(404)
+  })
+
+  it("bounds realtime floods independently, without disabling edit protection", async () => {
+    const { app } = quotaApp("realtime-flood-budget", {
+      rateLimit: true,
+      rateLimiters: {
+        ...inMemoryRateLimiters(),
+        realtime: inMemoryLimiter(10_000, 2),
+        write: inMemoryLimiter(60_000, 2),
+      },
+    })
+    const headers = { ...bearer(TEST_TOKEN), "x-forwarded-for": "203.0.113.25" }
+    const { short_id } = await (
+      await publishAs(app, "<h1>doc</h1>", { visibility: "public" }, headers)
+    ).json()
+    const path = `/v1/artifacts/${short_id}`
+    const cursor = () => app.request(`${path}/cursor`, jsonAs(headers, { x: 0.5, y: 0.5 }))
+    expect((await cursor()).status).toBe(204)
+    expect((await app.request(`${path}/presence`, jsonAs(headers, {}))).status).toBe(200)
+    const blocked = await cursor()
+    expect(blocked.status).toBe(429)
+    expect(Number(blocked.headers.get("Retry-After"))).toBeGreaterThan(0)
+    expect(Number(blocked.headers.get("Retry-After"))).toBeLessThanOrEqual(10)
+    const edit = () => app.request(`${path}/access`, jsonAs(headers, { listed: "none" }, "PATCH"))
+    expect((await edit()).status).toBe(200)
+    expect((await edit()).status).toBe(429)
+    // The pre-auth abuse backstop is scoped to the source, not the whole site.
+    expect(
+      (
+        await app.request(
+          `${path}/cursor`,
+          jsonAs({ "x-forwarded-for": "203.0.113.26" }, { x: 0.5, y: 0.5 }),
+        )
+      ).status,
+    ).toBe(204)
   })
 })
 
