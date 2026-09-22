@@ -145,7 +145,7 @@ that request cannot be authorized or served. Existing CLI 0.6.0 runners can keep
 using the new API, but cannot deliver the new environment bindings.
 
 The API and CLI 0.7.0 have shipped. The next rollout sets
-`DERIVE_ORTAM_RUNNER_PATH` for the QA Lab pilot; the existing hosted workspace
+`DERIVE_ORTAM_RUNNER_PATH` for the Ortam pilot; the hosted workspace
 allowlist still limits dispatch. Install the pinned CLI in a pilot sandbox before
 binding it, then qualify the hosted controller with the procedure below.
 Turning off workspace hosted
@@ -308,12 +308,14 @@ Postgres and D1. Scheduled execution has not yet been qualified against live Ort
 
 ## Hosted pilot: two scheduled runs
 
-This is an operator procedure, not an automated test result. Run it in QA Lab
-(`ws_fas46hoo39z55zqg`), the only workspace in the production execution allowlist.
+This is an operator procedure, not an automated test result. Run it in Ortam Pilot
+(`ws_5b0iz1wp99ksykr7`), a dedicated workspace owned by the pilot operator.
+The deployment change adds it to the execution allowlist and preserves QA Lab's
+existing access. Ortam Pilot has private artifact defaults and no other members.
 Use the normal CI deployment for the runner-path setting. A local Cloudflare
 login for another account cannot configure the production Worker.
 
-Before starting, check QA Lab's existing schedules and queued work, and record its
+Before starting, check the pilot workspace's schedules and queued work, and record its
 current settings. Enabling hosted agents, agent writes, or the automations beta
 can also enable other work in that workspace. If it is not an isolated test
 workspace, use a dedicated workspace and review an explicit allowlist change.
@@ -341,7 +343,7 @@ Do not widen the allowlist to a working team workspace just to get this test run
 
 ### Create and observe the schedule
 
-Create a Context in QA Lab with a private manifest describing this bounded test.
+Create a Context in Ortam Pilot with a private manifest describing this bounded test.
 Add the sandbox owner's Ortam API key as a secret connection, bind the stopped
 sandbox in **Cloud runs**, and enable the required workspace settings after the
 checks above. Keep the receipt free of API keys, bearer tokens and secret values.
