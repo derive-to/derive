@@ -1,0 +1,191 @@
+import type { MetaStore, RuntimeSetupRecord } from "@derive/core"
+import type { AppDeps } from "../context"
+import { log } from "../log"
+import { spendableConnections } from "./broker"
+import { decryptSecret } from "./crypto"
+import { OrtamClient } from "./ortam-client"
+import { runtimeFailureReason } from "./runtime-diagnostics"
+
+interface SetupDeps {
+  meta: MetaStore
+  secret: string
+  config: NonNullable<AppDeps["runtime"]>
+  fetcher?: typeof fetch
+  now?: () => Date
+}
+
+export const SETUP_RUNNER_PATH =
+  "/home/ortam/derive-runtime/0.7.0/node_modules/@derive-to/cli/bin/derive.js"
+export const SETUP_TIMEOUT_MS = 30 * 60_000
+
+/** This exact request is persisted before submission, including the version, for replay across deploys. */
+export function runtimeSetupRequest(id: string) {
+  return {
+    name: `derive-${id.replaceAll("_", "-")}`,
+    size: "small",
+    auto_stop_after_seconds: 1200,
+    setup_script: [
+      "set -eu",
+      "mkdir -p /home/ortam/derive-runtime/0.7.0 /home/ortam/work",
+      "npm install --prefix /home/ortam/derive-runtime/0.7.0 --omit=dev --ignore-scripts --no-audit --no-fund --save-exact @derive-to/cli@0.7.0",
+      `node ${SETUP_RUNNER_PATH} --help`,
+    ].join("\n"),
+  }
+}
+
+async function advance(deps: SetupDeps, setup: RuntimeSetupRecord) {
+  const at = (deps.now?.() ?? new Date()).toISOString()
+  const { meta } = deps
+  const transition = (change: Parameters<typeof meta.transitionRuntimeSetup>[3]) =>
+    meta.transitionRuntimeSetup(setup.id, setup.org_id, setup.revision, change, at)
+  // A crash after binding must repair the receipt before considering cancellation or expiry.
+  const bound = await meta.getContextRuntimeForContext(setup.context_id, setup.org_id)
+  if (bound) {
+    if (bound.sandbox_id !== setup.sandbox_id) throw new Error("Runtime setup binding mismatch")
+    await transition({ phase: "ready" })
+    return
+  }
+  if (setup.phase === "binding") {
+    // Consent and cancellation serialized at admission. Finish the accepted handover after a restart.
+    if (!setup.sandbox_id) throw new Error("Runtime setup receipt is incomplete")
+    await meta.createContextRuntime(
+      {
+        id: `rt_${setup.id}`,
+        org_id: setup.org_id,
+        context_id: setup.context_id,
+        agent_id: setup.agent_id,
+        api_url: setup.api_url,
+        ortam_org_id: setup.ortam_org_id,
+        ortam_user_id: setup.ortam_user_id,
+        sandbox_id: setup.sandbox_id,
+        connection_id: setup.connection_id,
+      },
+      at,
+    )
+    return
+  }
+  const context = await meta.getContext(setup.context_id)
+  const settings = await meta.getOrgSettings(setup.org_id)
+  const active = await spendableConnections(meta, setup.org_id, [setup.connection_id])
+  const allowed =
+    !setup.cancelled_at &&
+    at < setup.deadline_at &&
+    deps.config.pilotWorkspaceIds.has(setup.org_id) &&
+    settings.hostedAgentsEnabled &&
+    settings.agentWrites &&
+    context?.org_id === setup.org_id &&
+    context.agent_id === setup.agent_id &&
+    (await meta.isInstanceOperator(setup.created_by)) &&
+    (await meta.getMembership(setup.org_id, setup.created_by)) &&
+    active.some((c) => c.kind === "secret" && !!c.secret_enc)
+  if (setup.phase === "queued") {
+    await transition({ phase: allowed ? "creating" : "failed" })
+    return
+  }
+  if (setup.api_url !== deps.config.apiUrl)
+    throw new Error("Runtime belongs to a different Ortam API")
+  // Retained credentials may finish cleanup after their Derive grant is revoked.
+  const connection = (await meta.getConnectionsByIds([setup.connection_id])).find(
+    (c) => c.org_id === setup.org_id,
+  )
+  if (connection?.kind !== "secret" || !connection.secret_enc)
+    throw new Error("Ortam connection is unavailable")
+  const key = decryptSecret(connection.secret_enc, deps.secret)
+  if (key === connection.secret_enc) throw new Error("Ortam connection cannot be decrypted")
+  const client = new OrtamClient(setup.api_url, key, deps.fetcher)
+  const identity = { organization_id: setup.ortam_org_id, user_id: setup.ortam_user_id }
+  if (setup.phase === "creating") {
+    // Even after cancellation, resolve an ambiguous accepted create with the SAME immutable request/key.
+    const result = await client.create(
+      JSON.parse(setup.request_json),
+      `derive-${setup.id}-create`,
+      identity,
+    )
+    await transition({
+      phase: "provisioning",
+      sandbox_id: result.sandbox.id,
+      create_operation_id: result.operation.id,
+    })
+    return
+  }
+  if (!setup.sandbox_id || !setup.create_operation_id)
+    throw new Error("Runtime setup receipt is incomplete")
+  if (setup.phase === "provisioning") {
+    const op = await client.operation(
+      setup.create_operation_id,
+      setup.sandbox_id,
+      "create",
+      identity,
+    )
+    // Never race an in-flight create with deletion, including after a lost response or timeout.
+    if (op.state === "succeeded" || op.state === "failed")
+      await transition({ phase: op.state === "succeeded" && allowed ? "stopping" : "deleting" })
+    return
+  }
+  if (setup.phase !== "deleting" && !allowed) {
+    await transition({ phase: "deleting" })
+    return
+  }
+  if (setup.phase === "deleting") {
+    if (!setup.delete_operation_id) {
+      const op = await client.deleteSandbox(setup.sandbox_id, `derive-${setup.id}-delete`, identity)
+      await transition({ phase: "deleting", delete_operation_id: op.id })
+    } else {
+      const op = await client.operation(
+        setup.delete_operation_id,
+        setup.sandbox_id,
+        "delete",
+        identity,
+      )
+      // Failed deletion is still owned cleanup work, never a false terminal success.
+      if (op.state === "succeeded") await transition({ phase: "failed" })
+    }
+    return
+  }
+  const sandbox = await client.sandbox(setup.sandbox_id, identity)
+  if (setup.phase === "stopping") {
+    if (sandbox.state === "stopped") {
+      await transition({ phase: "awaiting_connection" })
+    } else if (!setup.stop_operation_id) {
+      const op = await client.lifecycle(
+        setup.sandbox_id,
+        "stop",
+        `derive-${setup.id}-stop`,
+        identity,
+      )
+      await transition({ phase: "stopping", stop_operation_id: op.id })
+    } else {
+      const op = await client.operation(setup.stop_operation_id, setup.sandbox_id, "stop", identity)
+      if (op.state === "failed") await transition({ phase: "deleting" })
+    }
+    return
+  }
+  if (setup.phase === "awaiting_connection") {
+    if (sandbox.state !== "stopped" || sandbox.agent_connections?.user_id !== setup.ortam_user_id)
+      return
+    if (
+      sandbox.auto_stop_after_seconds <= 0 ||
+      sandbox.auto_stop_after_seconds > 1200 ||
+      deps.config.runnerPath !== SETUP_RUNNER_PATH
+    ) {
+      await transition({ phase: "deleting" })
+      return
+    }
+    await transition({ phase: "binding" })
+    // The next pass confirms the binding. A concurrent cancellation is enforced by the store.
+  }
+}
+
+export async function reconcileRuntimeSetups(deps: SetupDeps) {
+  for (const setup of await deps.meta.listPendingRuntimeSetups(100)) {
+    try {
+      await advance(deps, setup)
+    } catch (error) {
+      log.warn("runtime setup deferred", {
+        setup: setup.id,
+        phase: setup.phase,
+        reason: runtimeFailureReason(error),
+      })
+    }
+  }
+}

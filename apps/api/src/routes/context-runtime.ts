@@ -44,6 +44,7 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
       : []
     return c.json({
       enabled: true,
+      setup: await meta.getRuntimeSetup(context.id, context.org_id),
       schedule,
       next_run_at: nextRunAt,
       runtime,

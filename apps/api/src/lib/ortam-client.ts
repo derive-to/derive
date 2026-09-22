@@ -87,6 +87,7 @@ export class OrtamClient {
     method = "GET",
     body?: unknown,
     key?: string,
+    headers?: Record<string, string>,
   ) {
     const auth = await this.authenticate()
     if (auth.organization_id !== identity.organization_id || auth.user_id !== identity.user_id)
@@ -97,9 +98,36 @@ export class OrtamClient {
         Authorization: `Bearer ${auth.token}`,
         "Content-Type": "application/json",
         ...(key ? { "Idempotency-Key": key } : {}),
+        ...headers,
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
+  }
+  async create(body: unknown, key: string, identity: { organization_id: string; user_id: string }) {
+    const result = z
+      .object({ sandbox: Sandbox, operation: Operation })
+      .parse(await this.request("/sandboxes", identity, "POST", body, key))
+    if (result.operation.sandbox_id !== result.sandbox.id || result.operation.kind !== "create")
+      throw new Error("Ortam operation mismatch")
+    return result
+  }
+  async deleteSandbox(
+    id: string,
+    key: string,
+    identity: { organization_id: string; user_id: string },
+  ) {
+    const op = Operation.parse(
+      await this.request(
+        `/sandboxes/${encodeURIComponent(id)}`,
+        identity,
+        "DELETE",
+        undefined,
+        key,
+        { "X-Ortam-Confirm-Delete": id },
+      ),
+    )
+    if (op.sandbox_id !== id || op.kind !== "delete") throw new Error("Ortam operation mismatch")
+    return op
   }
   async sandbox(id: string, identity: { organization_id: string; user_id: string }) {
     const sandbox = Sandbox.parse(
@@ -111,7 +139,7 @@ export class OrtamClient {
   async operation(
     id: string,
     sandboxId: string,
-    kind: "resume" | "stop",
+    kind: "create" | "resume" | "stop" | "delete",
     identity: { organization_id: string; user_id: string },
   ) {
     const op = Operation.parse(

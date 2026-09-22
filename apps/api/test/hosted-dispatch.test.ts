@@ -40,6 +40,10 @@ const deps = (substrate: Substrate) => ({
 // case asserts on exactly its own run.
 const settleQueue = async () => {
   const now = new Date().toISOString()
+  // Settling rows alone leaves earlier cron definitions able to create new work
+  // when this file crosses a minute boundary under load.
+  for (const automation of await meta.listEnabledAutomations(1000, ["default"]))
+    await meta.updateAutomation(automation.id, "default", { enabled: 0 })
   for (const r of await meta.listRuns("default", 200)) {
     if (r.status === "queued") await meta.claimRunById(r.id, r.agent_id, now)
     if (r.status === "queued" || r.status === "running")

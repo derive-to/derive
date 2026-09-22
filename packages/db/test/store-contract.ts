@@ -5200,6 +5200,138 @@ export function runStoreContract(
       return { runtime, binding, input, enqueue, context, agentId }
     }
 
+    async function setupFixture() {
+      const f = await fixture()
+      const context = await store.createContext({
+        id: uuid(),
+        org_id: ORG,
+        name: `Provision ${uuid()}`,
+        agent_id: uuid(),
+        manifest_artifact_id: f.context.manifest_artifact_id,
+        created_by: "owner",
+      })
+      const input = {
+        ...f.binding,
+        id: uuid(),
+        context_id: context.id,
+        agent_id: context.agent_id,
+        api_url: "https://api.ortam.test/v1",
+        created_by: "owner",
+        request_json: "{}",
+        deadline_at: deadlineAt,
+      }
+      return {
+        input,
+        context,
+        binding: {
+          ...f.binding,
+          id: uuid(),
+          api_url: input.api_url,
+          sandbox_id: uuid(),
+          context_id: context.id,
+          agent_id: context.agent_id,
+        },
+      }
+    }
+
+    it("serializes automatic setup against manual binding through one Context admission slot", async () => {
+      const f = await setupFixture()
+      const [setup, bound] = await Promise.all([
+        store.createRuntimeSetup(f.input, at),
+        store.createContextRuntime(f.binding, at),
+      ])
+      expect(Number(!!setup) + Number(!!bound)).toBe(1)
+      expect(await store.getRuntimeSetup(f.context.id, "foreign")).toBeNull()
+      if (setup) {
+        expect(await store.createContextRuntime(f.binding, at)).toBeNull()
+        expect(await store.createRuntimeSetup({ ...f.input, id: uuid() }, at)).toBeNull()
+      } else {
+        expect(await store.createRuntimeSetup(f.input, at)).toBeNull()
+      }
+    })
+
+    it("fences stale setup receipts and serializes cancellation against the final handover", async () => {
+      const f = await setupFixture()
+      let setup = await store.createRuntimeSetup(f.input, at)
+      if (!setup) throw new Error("Setup fixture missing")
+      expect(
+        await store.transitionRuntimeSetup(setup.id, "foreign", 0, { phase: "creating" }, at),
+      ).toBeNull()
+      const transition = async (change: Parameters<MetaStore["transitionRuntimeSetup"]>[3]) => {
+        const current = await store.getRuntimeSetup(f.context.id, ORG)
+        if (!current) throw new Error("Setup disappeared")
+        const next = await store.transitionRuntimeSetup(
+          current.id,
+          ORG,
+          current.revision,
+          change,
+          at,
+        )
+        if (!next) throw new Error("Transition rejected")
+        return next
+      }
+      await transition({ phase: "creating" })
+      expect(
+        await store.transitionRuntimeSetup(setup.id, ORG, 0, { phase: "failed" }, at),
+      ).toBeNull()
+      await transition({
+        phase: "provisioning",
+        sandbox_id: f.binding.sandbox_id,
+        create_operation_id: "create-receipt",
+      })
+      await transition({ phase: "stopping" })
+      setup = await transition({ phase: "awaiting_connection" })
+      await Promise.all([
+        store.cancelRuntimeSetup(f.context.id, ORG, at),
+        store.transitionRuntimeSetup(setup.id, ORG, setup.revision, { phase: "binding" }, at),
+      ])
+      const final = await store.getRuntimeSetup(f.context.id, ORG)
+      expect(!!final?.cancelled_at).toBe(final?.phase === "awaiting_connection")
+      const bound = await store.createContextRuntime(f.binding, at)
+      expect(!!bound).toBe(final?.phase === "binding")
+      if (bound) {
+        await store.cancelRuntimeSetup(f.context.id, ORG, at)
+        expect((await store.getRuntimeSetup(f.context.id, ORG))?.cancelled_at).toBeNull()
+        expect(
+          await store.transitionRuntimeSetup(
+            setup.id,
+            ORG,
+            final?.revision ?? -1,
+            { phase: "deleting" },
+            at,
+          ),
+        ).toBeNull()
+      }
+    })
+
+    it("repairs an accepted handover as disabled when its Context disappears", async () => {
+      const f = await setupFixture()
+      let setup = await store.createRuntimeSetup(f.input, at)
+      if (!setup) throw new Error("Setup fixture missing")
+      for (const change of [
+        { phase: "creating" as const },
+        {
+          phase: "provisioning" as const,
+          sandbox_id: f.binding.sandbox_id,
+          create_operation_id: "create-receipt",
+        },
+        { phase: "stopping" as const },
+        { phase: "awaiting_connection" as const },
+        { phase: "binding" as const },
+      ]) {
+        setup = await store.transitionRuntimeSetup(setup.id, ORG, setup.revision, change, at)
+        if (!setup) throw new Error("Transition rejected")
+      }
+      await store.deleteContext(f.context.id, ORG)
+      const runtime = await store.createContextRuntime(f.binding, at)
+      expect(runtime).toMatchObject({ sandbox_id: f.binding.sandbox_id, disabled_at: at })
+      expect(
+        await store.transitionRuntimeSetup(setup.id, ORG, setup.revision, { phase: "ready" }, at),
+      ).toMatchObject({ phase: "ready" })
+      await store.cancelRuntimeSetup(f.context.id, ORG, at)
+      expect((await store.getRuntimeSetup(f.context.id, ORG))?.cancelled_at).toBeNull()
+    })
+
     it("saves runtime schedules with revision checks and admits one current occurrence at a time", async () => {
       const f = await fixture()
       await store.setMembership({ id: uuid(), org_id: ORG, user_id: "owner", role: "owner" })

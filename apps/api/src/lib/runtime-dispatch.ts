@@ -15,6 +15,7 @@ import { decryptSecret } from "./crypto"
 import { OrtamClient } from "./ortam-client"
 import { runtimeFailureReason } from "./runtime-diagnostics"
 import { materializeRuntimeSchedules, runtimeScheduleAllows } from "./runtime-schedule"
+import { reconcileRuntimeSetups } from "./runtime-setup"
 import { signRuntimeToken } from "./runtime-token"
 
 export interface RuntimeDispatchDeps {
@@ -313,6 +314,7 @@ export async function runtimeDispatchPass(deps: RuntimeDispatchDeps) {
       })
     }
   }
+  await reconcileRuntimeSetups(deps)
   // Repair active work before scanning schedules. Admission can wait; shutdown cannot.
   try {
     const admission = await materializeRuntimeSchedules(

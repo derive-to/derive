@@ -82,3 +82,57 @@ export interface RunAttemptTransition {
   process_id?: string
   stop_operation_id?: string
 }
+
+/** Durable provisioning intent. Kept after Context deletion so cleanup can finish. */
+export interface RuntimeSetupRecord {
+  id: string
+  org_id: string
+  context_id: string
+  agent_id: string
+  created_by: string
+  connection_id: string
+  api_url: string
+  ortam_org_id: string
+  ortam_user_id: string
+  request_json: string
+  phase:
+    | "queued"
+    | "creating"
+    | "provisioning"
+    | "stopping"
+    | "awaiting_connection"
+    | "binding"
+    | "ready"
+    | "deleting"
+    | "failed"
+  revision: number
+  sandbox_id: string | null
+  create_operation_id: string | null
+  stop_operation_id: string | null
+  delete_operation_id: string | null
+  cancelled_at: string | null
+  deadline_at: string
+  created_at: string
+  updated_at: string
+}
+export type NewRuntimeSetup = Pick<
+  RuntimeSetupRecord,
+  | "id"
+  | "org_id"
+  | "context_id"
+  | "agent_id"
+  | "created_by"
+  | "connection_id"
+  | "api_url"
+  | "ortam_org_id"
+  | "ortam_user_id"
+  | "request_json"
+  | "deadline_at"
+>
+export type RuntimeSetupChange = Pick<RuntimeSetupRecord, "phase"> &
+  Partial<
+    Pick<
+      RuntimeSetupRecord,
+      "sandbox_id" | "create_operation_id" | "stop_operation_id" | "delete_operation_id"
+    >
+  >

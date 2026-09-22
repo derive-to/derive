@@ -1,10 +1,13 @@
 import type {
   ContextRuntimeRecord,
   NewContextRuntime,
+  NewRuntimeSetup,
   RunAttemptRecord,
   RunAttemptResult,
   RunAttemptTransition,
   RuntimeSaveStatus,
+  RuntimeSetupChange,
+  RuntimeSetupRecord,
 } from "./runtime"
 /**
  * Core owns the ports; packages/db and packages/storage provide the adapters.
@@ -5135,6 +5138,17 @@ export interface RuntimeStore {
     sizeBytes: number,
     at: string,
   ): Promise<void>
+  createRuntimeSetup(input: NewRuntimeSetup, at: string): Promise<RuntimeSetupRecord | null>
+  getRuntimeSetup(contextId: string, orgId: string): Promise<RuntimeSetupRecord | null>
+  listPendingRuntimeSetups(limit?: number): Promise<RuntimeSetupRecord[]>
+  transitionRuntimeSetup(
+    id: string,
+    orgId: string,
+    revision: number,
+    change: RuntimeSetupChange,
+    at: string,
+  ): Promise<RuntimeSetupRecord | null>
+  cancelRuntimeSetup(contextId: string, orgId: string, at: string): Promise<void>
   createContextRuntime(input: NewContextRuntime, at: string): Promise<ContextRuntimeRecord | null>
   getContextRuntime(id: string, orgId: string): Promise<ContextRuntimeRecord | null>
   disableContextRuntime(id: string, orgId: string, at: string): Promise<void>

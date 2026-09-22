@@ -11,6 +11,7 @@ import type {
 import { CONTEXT_ENVIRONMENT_LIMIT, contextEnvironmentNameError } from "@derive/core"
 import { type SQL, sql } from "drizzle-orm"
 import { runtimeScheduleRepos } from "./runtime-schedule-repos"
+import { claimRuntimeOwner, runtimeSetupRepos } from "./runtime-setup-repos"
 
 const instant = (value: string): string => {
   if (new Date(value).toISOString() !== value) throw new Error("Expected a canonical UTC timestamp")
@@ -122,6 +123,7 @@ export function runtimeRepos(execute: (statement: SQL) => Promise<unknown[]>): R
     first<RunAttemptRecord>(sql`SELECT * FROM run_attempt WHERE id = ${id} AND org_id = ${orgId}`)
   return {
     ...runtimeScheduleRepos(execute),
+    ...runtimeSetupRepos(execute),
     claimRunAttempt: (id, orgId, at, scheduleRevision) =>
       first<RunAttemptRecord>(sql`
       UPDATE run_attempt SET runner_claimed_at = ${instant(at)}, revision = revision + 1, updated_at = ${at}
@@ -200,6 +202,27 @@ export function runtimeRepos(execute: (statement: SQL) => Promise<unknown[]>): R
         throw new Error("Runtime API must be HTTPS or local HTTP, without URL credentials")
       if (!Object.values(input).every(text)) throw new Error("Runtime binding fields are required")
       const apiUrl = url.toString().replace(/\/+$/, "")
+      const setup = await first<{ phase: string }>(
+        sql`SELECT phase FROM runtime_setup WHERE context_id = ${input.context_id} AND org_id = ${input.org_id}`,
+      )
+      if (setup ? setup.phase !== "binding" : !(await claimRuntimeOwner(execute, input, "manual")))
+        return null
+      if (setup) {
+        // Binding is a committed handover. Project its receipt even if the source was deleted
+        // after admission; such a runtime is disabled and cannot queue new work.
+        return first<ContextRuntimeRecord>(sql`INSERT INTO context_runtime
+          (id, org_id, context_id, agent_id, api_url, ortam_org_id, ortam_user_id, sandbox_id, connection_id, disabled_at, created_at)
+          SELECT ${input.id}, s.org_id, s.context_id, s.agent_id, s.api_url, s.ortam_org_id, s.ortam_user_id,
+            s.sandbox_id, s.connection_id,
+            CASE WHEN EXISTS (SELECT 1 FROM context c JOIN connection cn ON cn.id = s.connection_id AND cn.org_id = c.org_id
+              WHERE c.id = s.context_id AND c.org_id = s.org_id AND c.agent_id = s.agent_id AND cn.status = 'active')
+              THEN NULL ELSE ${at} END, ${at}
+          FROM runtime_setup s WHERE s.context_id = ${input.context_id} AND s.org_id = ${input.org_id}
+            AND s.phase = 'binding' AND s.cancelled_at IS NULL AND s.sandbox_id = ${input.sandbox_id}
+            AND s.connection_id = ${input.connection_id} AND s.agent_id = ${input.agent_id}
+            AND s.api_url = ${apiUrl} AND s.ortam_org_id = ${input.ortam_org_id} AND s.ortam_user_id = ${input.ortam_user_id}
+          ON CONFLICT DO NOTHING RETURNING *`)
+      }
       return first<ContextRuntimeRecord>(sql`
         INSERT INTO context_runtime (id, org_id, context_id, agent_id, api_url, ortam_org_id,
           ortam_user_id, sandbox_id, connection_id, created_at)
@@ -209,6 +232,9 @@ export function runtimeRepos(execute: (statement: SQL) => Promise<unknown[]>): R
         WHERE c.id = ${input.context_id} AND c.org_id = ${input.org_id}
           AND c.agent_id = ${input.agent_id} AND c.import_source IS NULL
           AND cn.kind = 'secret' AND cn.status = 'active' AND cn.secret_enc IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM runtime_setup s WHERE s.context_id = c.id AND
+            (s.phase <> 'binding' OR s.cancelled_at IS NOT NULL
+              OR s.sandbox_id <> ${input.sandbox_id} OR s.connection_id <> cn.id))
         ON CONFLICT DO NOTHING RETURNING *`)
     },
     getContextRuntime: (id, orgId) =>

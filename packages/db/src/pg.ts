@@ -271,6 +271,8 @@ import {
   reviewRound,
   run,
   runAttempt,
+  runtimeOwner,
+  runtimeSetup,
   sessionMessage,
   sharedState,
   sharedStateActivity,
@@ -343,6 +345,8 @@ export const schema = {
   automation,
   run,
   contextRuntime,
+  runtimeSetup,
+  runtimeOwner,
   runAttempt,
   workflowRun,
   workflowStepAttempt,
@@ -411,6 +415,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   automation: true,
   run: true,
   contextRuntime: true,
+  runtimeSetup: true,
   runAttempt: true,
   workflowRun: true,
   workflowStepAttempt: true,
@@ -719,6 +724,11 @@ export class PgMetaStore implements MetaStore {
   markRuntimeRunStarted = this.runtimes.markRuntimeRunStarted
   settleRuntimeRun = this.runtimes.settleRuntimeRun
   publishRuntimeReport = this.runtimes.publishRuntimeReport
+  createRuntimeSetup = this.runtimes.createRuntimeSetup
+  getRuntimeSetup = this.runtimes.getRuntimeSetup
+  listPendingRuntimeSetups = this.runtimes.listPendingRuntimeSetups
+  transitionRuntimeSetup = this.runtimes.transitionRuntimeSetup
+  cancelRuntimeSetup = this.runtimes.cancelRuntimeSetup
   createContextRuntime = this.runtimes.createContextRuntime
   getContextRuntime = this.runtimes.getContextRuntime
   disableContextRuntime = this.runtimes.disableContextRuntime
