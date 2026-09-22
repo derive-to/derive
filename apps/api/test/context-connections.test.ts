@@ -1332,6 +1332,8 @@ describe("operator runtime provisioning", () => {
   let loseDelete = false
   let failSetup = false
   let failDelete = false
+  let authStatus = 200
+  let sandboxStatus = 200
   const creates = new Map<
     string,
     {
@@ -1355,10 +1357,12 @@ describe("operator runtime provisioning", () => {
     const json = (value: unknown) =>
       new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } })
     const key = new Headers(init?.headers).get("Idempotency-Key") ?? ""
-    if (path === "/auth/token")
+    if (path === "/auth/token") {
+      if (authStatus !== 200) return new Response(null, { status: authStatus })
       return json({
         token: `header.${Buffer.from(JSON.stringify({ sub: "ortam-owner", organization_id: "ortam-org" })).toString("base64url")}.signature`,
       })
+    }
     if (path === "/sandboxes" && init?.method === "POST") {
       let saved = creates.get(key)
       if (!saved) {
@@ -1420,6 +1424,8 @@ describe("operator runtime provisioning", () => {
       }
       return json(op)
     }
+    if (sandboxStatus !== 200) return new Response(null, { status: sandboxStatus })
+    if (saved.sandbox.state === "deleted") return new Response(null, { status: 404 })
     return json(saved.sandbox)
   }
   const { app, meta, ctx } = makeAuthedApp("runtime-provisioning", [owner, member], "editor", {
@@ -1442,6 +1448,8 @@ describe("operator runtime provisioning", () => {
     loseDelete = false
     failSetup = false
     failDelete = false
+    authStatus = 200
+    sandboxStatus = 200
     config.pilotWorkspaceIds.add("default")
     const settings = await meta.getOrgSettings("default")
     await meta.setOrgSettings("default", {
@@ -1590,9 +1598,38 @@ describe("operator runtime provisioning", () => {
     const opId = (await f.state())?.delete_operation_id
     const op = operations.get(opId ?? "")
     if (!op) throw new Error("Missing deletion operation")
-    op.state = "succeeded" // operator repairs the failed Ortam operation
+    expect(op.state).toBe("failed")
+    // Neither an auth 404 nor a sandbox permission/server failure proves deletion.
+    authStatus = 404
     await pass()
+    expect((await f.state())?.phase).toBe("deleting")
+    authStatus = 200
+    for (const status of [403, 503]) {
+      sandboxStatus = status
+      await pass()
+      expect((await f.state())?.phase).toBe("deleting")
+    }
+    sandboxStatus = 200
+    const saved = creates.get(`derive-${(await f.state())?.id}-create`)
+    if (!saved) throw new Error("Missing created sandbox")
+    saved.sandbox.state = "deleted" // Ortam's reconciler finishes cleanup; operation stays failed.
+    await pass()
+    expect(op.state).toBe("failed")
     expect((await f.state())?.phase).toBe("failed")
+  })
+  it("recognizes an operator deletion before submitting its own delete request", async () => {
+    const f = await fixture()
+    await f.submit()
+    for (let i = 0; i < 6; i++) await pass()
+    expect((await f.state())?.phase).toBe("awaiting_connection")
+    const saved = creates.get(`derive-${(await f.state())?.id}-create`)
+    if (!saved) throw new Error("Missing created sandbox")
+    saved.sandbox.state = "deleted"
+    await f.cancel()
+    await pass()
+    await pass()
+    expect(await f.state()).toMatchObject({ phase: "failed", delete_operation_id: null })
+    expect(await meta.getContextRuntimeForContext(f.context.id, "default")).toBeNull()
   })
   it("expires unclaimed setup and still cleans up after the Context is deleted", async () => {
     const f = await fixture()

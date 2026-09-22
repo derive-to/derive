@@ -5138,6 +5138,8 @@ export interface RuntimeStore {
     sizeBytes: number,
     at: string,
   ): Promise<void>
+  /** Project a committed setup handover; manual binding cannot enter this path. */
+  bindRuntimeSetup(id: string, orgId: string, at: string): Promise<ContextRuntimeRecord | null>
   createRuntimeSetup(input: NewRuntimeSetup, at: string): Promise<RuntimeSetupRecord | null>
   getRuntimeSetup(contextId: string, orgId: string): Promise<RuntimeSetupRecord | null>
   listPendingRuntimeSetups(limit?: number): Promise<RuntimeSetupRecord[]>

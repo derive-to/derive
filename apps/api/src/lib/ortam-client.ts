@@ -27,6 +27,15 @@ const Process = z.object({
   ]),
 })
 
+class OrtamHttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly path: string,
+  ) {
+    super(`Ortam returned HTTP ${status}`)
+  }
+}
+
 /** Operator-configured API only. Redirects and response bodies never enter errors/logs. */
 export class OrtamClient {
   private readonly fetcher: typeof fetch
@@ -63,7 +72,7 @@ export class OrtamClient {
     } catch {
       throw new Error("Ortam request outcome is unknown")
     }
-    if (!response.ok) throw new Error(`Ortam returned HTTP ${response.status}`)
+    if (!response.ok) throw new OrtamHttpError(response.status, path)
     try {
       return await response.json()
     } catch {
@@ -135,6 +144,21 @@ export class OrtamClient {
     )
     if (sandbox.id !== id) throw new Error("Ortam sandbox mismatch")
     return sandbox
+  }
+  async isSandboxDeleted(id: string, identity: { organization_id: string; user_id: string }) {
+    try {
+      return (await this.sandbox(id, identity)).state === "deleted"
+    } catch (error) {
+      // Ortam hides a sandbox only after cleanup is committed. An auth/operation 404,
+      // changed identity, or transport failure does not establish sandbox deletion.
+      if (
+        error instanceof OrtamHttpError &&
+        error.status === 404 &&
+        error.path === `/sandboxes/${encodeURIComponent(id)}`
+      )
+        return true
+      throw error
+    }
   }
   async operation(
     id: string,

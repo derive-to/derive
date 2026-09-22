@@ -1,8 +1,9 @@
-import type { RuntimeSetupRecord, RuntimeStore } from "@derive/core"
+import type { ContextRuntimeRecord, RuntimeSetupRecord, RuntimeStore } from "@derive/core"
 import { type SQL, sql } from "drizzle-orm"
 
 type SetupStore = Pick<
   RuntimeStore,
+  | "bindRuntimeSetup"
   | "createRuntimeSetup"
   | "getRuntimeSetup"
   | "listPendingRuntimeSetups"
@@ -26,7 +27,7 @@ const transitions: Record<RuntimeSetupRecord["phase"], RuntimeSetupRecord["phase
 export async function claimRuntimeOwner(
   execute: (statement: SQL) => Promise<unknown[]>,
   input: { context_id: string; org_id: string; connection_id: string; agent_id: string },
-  owner: string,
+  owner: "manual" | "setup",
 ) {
   await execute(sql`INSERT INTO runtime_owner (context_id, org_id, owner)
     SELECT c.id, c.org_id, ${owner} FROM context c
@@ -44,9 +45,33 @@ export async function claimRuntimeOwner(
 }
 
 export function runtimeSetupRepos(execute: (statement: SQL) => Promise<unknown[]>): SetupStore {
+  const instant = (at: string) => {
+    if (new Date(at).toISOString() !== at) throw new Error("Expected a canonical UTC timestamp")
+  }
   const first = async (statement: SQL) =>
     (await execute(statement))[0] as RuntimeSetupRecord | undefined
   return {
+    async bindRuntimeSetup(id, orgId, at) {
+      instant(at)
+      // Binding commits consent before projection. Recover from either statement failing,
+      // even if the source Context disappeared after handover (project it as disabled).
+      await execute(sql`INSERT INTO context_runtime
+        (id, org_id, context_id, agent_id, api_url, ortam_org_id, ortam_user_id, sandbox_id, connection_id, disabled_at, created_at)
+        SELECT ${`rt_${id}`}, s.org_id, s.context_id, s.agent_id, s.api_url, s.ortam_org_id, s.ortam_user_id,
+          s.sandbox_id, s.connection_id,
+          CASE WHEN EXISTS (SELECT 1 FROM context c JOIN connection cn ON cn.id = s.connection_id AND cn.org_id = c.org_id
+            WHERE c.id = s.context_id AND c.org_id = s.org_id AND c.agent_id = s.agent_id AND cn.status = 'active')
+            THEN NULL ELSE ${at} END, ${at}
+        FROM runtime_setup s WHERE s.id = ${id} AND s.org_id = ${orgId}
+          AND s.phase = 'binding' AND s.cancelled_at IS NULL
+        ON CONFLICT DO NOTHING RETURNING id`)
+      const rows = await execute(sql`SELECT rt.* FROM context_runtime rt JOIN runtime_setup s
+        ON rt.context_id = s.context_id AND rt.org_id = s.org_id AND rt.sandbox_id = s.sandbox_id
+          AND rt.connection_id = s.connection_id AND rt.agent_id = s.agent_id
+          AND rt.api_url = s.api_url AND rt.ortam_org_id = s.ortam_org_id AND rt.ortam_user_id = s.ortam_user_id
+        WHERE s.id = ${id} AND s.org_id = ${orgId} AND s.phase = 'binding' AND s.cancelled_at IS NULL`)
+      return (rows[0] as ContextRuntimeRecord | undefined) ?? null
+    },
     async createRuntimeSetup(input, at) {
       if (
         new Date(at).toISOString() !== at ||
@@ -80,26 +105,31 @@ export function runtimeSetupRepos(execute: (statement: SQL) => Promise<unknown[]
         ORDER BY updated_at, id LIMIT ${Math.max(1, Math.min(1000, limit))}`)) as RuntimeSetupRecord[]
     },
     async cancelRuntimeSetup(contextId, orgId, at) {
+      instant(at)
       // Binding and cancellation serialize in the store. Never delete a sandbox already handed to a runtime.
       await execute(sql`UPDATE runtime_setup SET cancelled_at = ${at}, revision = revision + 1, updated_at = ${at}
         WHERE context_id = ${contextId} AND org_id = ${orgId} AND cancelled_at IS NULL AND phase NOT IN ('binding', 'ready', 'failed')
           AND NOT EXISTS (SELECT 1 FROM context_runtime rt WHERE rt.context_id = runtime_setup.context_id) RETURNING id`)
     },
     async transitionRuntimeSetup(id, orgId, revision, change, at) {
+      instant(at)
       const prior = await first(
         sql`SELECT * FROM runtime_setup WHERE id = ${id} AND org_id = ${orgId}`,
       )
       if (!prior || prior.revision !== revision || !transitions[prior.phase].includes(change.phase))
         return null
-      for (const key of [
-        "sandbox_id",
-        "create_operation_id",
-        "stop_operation_id",
-        "delete_operation_id",
-      ] as const)
+      const receiptPhase = {
+        sandbox_id: "provisioning",
+        create_operation_id: "provisioning",
+        stop_operation_id: "stopping",
+        delete_operation_id: "deleting",
+      } as const
+      for (const key of Object.keys(receiptPhase) as (keyof typeof receiptPhase)[])
         if (
           change[key] !== undefined &&
-          (!change[key] || (prior[key] && prior[key] !== change[key]))
+          (change.phase !== receiptPhase[key] ||
+            !change[key] ||
+            (prior[key] && prior[key] !== change[key]))
         )
           return null
       const sandbox = change.sandbox_id ?? prior.sandbox_id
@@ -111,8 +141,6 @@ export function runtimeSetupRepos(execute: (statement: SQL) => Promise<unknown[]
         ["awaiting_connection", "binding"].includes(change.phase) &&
         (prior.cancelled_at || at >= prior.deadline_at)
       )
-        return null
-      if (change.phase === "failed" && prior.phase === "deleting" && !prior.delete_operation_id)
         return null
       return (
         (await first(sql`UPDATE runtime_setup SET phase = ${change.phase}, sandbox_id = ${sandbox},

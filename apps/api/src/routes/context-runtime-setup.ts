@@ -80,8 +80,6 @@ export const contextRuntimeSetupRoutes = (ctx: AppContext) => {
       return fail(c, 403, "Cloud run pilot is unavailable")
     if (await meta.getContextRuntimeForContext(context.id, context.org_id))
       return fail(c, 409, "Setup has completed; disable the runtime instead")
-    if ((await meta.getRuntimeSetup(context.id, context.org_id))?.phase === "binding")
-      return fail(c, 409, "Setup is connecting; disable the runtime once connected")
     await meta.cancelRuntimeSetup(context.id, context.org_id, new Date().toISOString())
     const setup = await meta.getRuntimeSetup(context.id, context.org_id)
     if (setup && !setup.cancelled_at && ["binding", "ready"].includes(setup.phase))
