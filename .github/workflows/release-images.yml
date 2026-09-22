@@ -14,7 +14,7 @@ concurrency:
 jobs:
   publish:
     if: github.repository == 'derive-to/derive'
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-4
     permissions:
       contents: write
       packages: write
