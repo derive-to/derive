@@ -22,7 +22,13 @@
  * Keep its imports DOM-free + pure so it bundles into one small self-contained script.
  */
 
-import { BLOCK_TEXT_ELEMENTS, findQuoteWithContext, fingerprintFrom, normWs } from "./anchor-shared"
+import {
+  BLOCK_TEXT_ELEMENTS,
+  findQuoteMatches,
+  findQuoteWithContext,
+  fingerprintFrom,
+  normWs,
+} from "./anchor-shared"
 import {
   isMentionHandle,
   MENTION_NON_PROSE_SELECTOR,
@@ -6950,33 +6956,6 @@ interface ElReg {
       const t = asEl(e.target)?.closest("[data-derive-editable]")
       if (!t) return
       const it = e.inputType || ""
-      /* Replacing a selection may delete the DOM nodes between its endpoints before
-         the diff collector ever sees them. Plain inline wrappers are intentionally
-         replaceable (the authored-HTML seam fixture and Markdown's adjacent <strong>
-         runs rely on that), but an attributed descendant carries authored metadata:
-         hrefs, annotations, IDs, ARIA wiring, classes, and data attributes. Flattening
-         any of those into plaintext would turn a convenient edit into source loss.
-
-         cloneContents gives us exactly the structure the browser is about to remove.
-         A selection wholly inside one attributed element clones only text and remains
-         safe: the element survives and the aligned text-node diff preserves it. */
-      const selection = window.getSelection()
-      if (selection?.rangeCount && !selection.isCollapsed) {
-        const range = selection.getRangeAt(0)
-        const owner = range.commonAncestorContainer
-        const ownerEl = owner.nodeType === 1 ? (owner as Element) : owner.parentElement
-        if (ownerEl?.closest("[data-derive-editable]") === t) {
-          const fragment = range.cloneContents()
-          const attributed = Array.from(fragment.querySelectorAll("*")).some(
-            (el) => el.attributes.length > 0,
-          )
-          if (attributed) {
-            e.preventDefault()
-            post({ type: "edit-blocked", reason: "protected-structure" })
-            return
-          }
-        }
-      }
       if (it.indexOf("delete") === 0 && deleteHitsReadonly(t, e)) {
         e.preventDefault()
         post({ type: "edit-blocked", reason: "readonly" })
@@ -7072,15 +7051,18 @@ interface ElReg {
     span.setAttribute(FMT_ATTR, kind)
     if (href) span.setAttribute(HREF_ATTR, href)
     try {
-      // Throws when the selection only half-contains an element — exactly the case
-      // we can't express as one inline run, so the refusal is the right answer.
       range.surroundContents(span)
     } catch (_e) {
-      // The checkpoint was for an action that didn't happen — drop it, or Undo would
-      // have a step that changes nothing.
-      undoStack.pop()
-      post({ type: "edit-blocked", reason: "format-range" })
-      return
+      // A selection may start inside a link and end after it. Extract the selected
+      // contents so the person's format action can still reach the stored source.
+      try {
+        span.appendChild(range.extractContents())
+        range.insertNode(span)
+      } catch (_fallbackError) {
+        undoStack.pop()
+        post({ type: "edit-blocked", reason: "format-range" })
+        return
+      }
     }
     // Return the writing context to the document after a host-side command. A
     // collapsed caret immediately after the formatted run is the natural place to
@@ -7126,8 +7108,7 @@ interface ElReg {
   }
 
   /** Serialize a block as inline markup: text escaped, editor spans as real tags,
-   *  anything else contributing its text only (the server refuses a span that
-   *  crosses the document's own markup anyway, and this keeps that refusal clean). */
+   *  anything else contributing its selected text only. */
   const serializeFmtNode = (n: Node): string => {
     if (n.nodeType === 3) return escapeText(n.nodeValue ?? "")
     if (n.nodeType !== 1) return ""
@@ -7154,6 +7135,19 @@ interface ElReg {
   const isLoSur = (ch: string | undefined): boolean =>
     !!ch && ch.charCodeAt(0) >= 0xdc00 && ch.charCodeAt(0) <= 0xdfff
 
+  // If the same wording appears several times, the frame knows which occurrence
+  // the person edited. Send that fact with the quote. The server uses it only when
+  // the stored projection has the same number of matches.
+  const occurrenceHint = (exact: string, start: number) => {
+    const base = editBase
+    if (!base || base.text.slice(start, start + exact.length) !== exact) return {}
+    const matches = findQuoteMatches(base.text, exact, 201)
+    if (!matches.length || matches.length > 200) return {}
+    const firstText = start + exact.length - exact.trimStart().length
+    const index = matches.findIndex((match) => match.start === firstText)
+    return index < 0 ? {} : { occurrence: index + 1, match_count: matches.length }
+  }
+
   /* One changed text run → a quote edit built from the PRE-EDIT document text.
      Minimal diff (common prefix/suffix), then snapped OUT to word boundaries: the
      matcher's context join expects whitespace between prefix|exact|suffix, and whole
@@ -7162,7 +7156,14 @@ interface ElReg {
     orig: string,
     cur: string,
     docStart: number,
-  ): { exact: string; prefix: string; suffix: string; new_text: string } | null => {
+  ): {
+    exact: string
+    prefix: string
+    suffix: string
+    occurrence?: number
+    match_count?: number
+    new_text: string
+  } | null => {
     const base = editBase
     if (!base) return null
     let p = 0
@@ -7180,11 +7181,9 @@ interface ElReg {
     s = orig.length - end
     let exact = orig.slice(p, end)
     let newText = cur.slice(p, cur.length - s)
-    // A whitespace-only difference has no rendered effect — not worth a version.
-    if (!exact.trim() && !newText.trim()) return null
     if (!exact.trim()) {
-      // Pure insertion between whitespace: fold in the neighboring word (left if
-      // there is one, else right) so the exact has something to anchor on.
+      // An insertion or whitespace edit needs a neighboring word as its anchor.
+      // Spaces can change layout, so do not drop the edit as a no-op.
       if (!orig.trim()) return null
       if (p > 0) {
         while (p > 0 && /\s/.test(orig[p - 1] as string)) p--
@@ -7202,12 +7201,19 @@ interface ElReg {
       exact,
       prefix: base.text.slice(Math.max(0, docStart + p - 40), docStart + p),
       suffix: base.text.slice(docStart + end, docStart + end + 40),
+      ...occurrenceHint(exact, docStart + p),
       new_text: newText,
     }
   }
   /** The wire shape of one collected edit: text, or (formatting only) markup. */
   interface WireEdit {
-    quote: { exact: string; prefix: string; suffix: string }
+    quote: {
+      exact: string
+      prefix: string
+      suffix: string
+      occurrence?: number
+      match_count?: number
+    }
     new_text?: string
     new_html?: string
   }
@@ -7270,29 +7276,47 @@ interface ElReg {
     exact: string
     prefix: string
     suffix: string
+    occurrence?: number
+    match_count?: number
     new_text: string
   }): WireEdit => ({
-    quote: { exact: qe.exact, prefix: qe.prefix, suffix: qe.suffix },
+    quote: {
+      exact: qe.exact,
+      prefix: qe.prefix,
+      suffix: qe.suffix,
+      occurrence: qe.occurrence,
+      match_count: qe.match_count,
+    },
     new_text: qe.new_text,
   })
-  /* A block someone formatted goes as ONE markup edit for the whole block, not a
-     per-run diff. Two reasons: the wrap splits text nodes, so the per-node
-     alignment the text path depends on is gone; and a bold run's boundaries are
-     only meaningful together with the words around them. The quote is the block's
-     PRE-edit text (which is what the stored source still holds), so a block that
-     already contains markup is refused by the server's tag-crossing guard rather
-     than mangled here — with a message that names the source editor. */
+  /* A block someone formatted goes as one markup edit. The wrap splits text
+     nodes, so the per-node text alignment cannot represent the format action. */
   const targetedFormatEdit = (t: EditTarget): WireEdit | null => {
     const base = editBase
     if (!base) return null
     const formatted = t.el.querySelectorAll(`[${FMT_ATTR}]`)
     if (formatted.length !== 1) return null
     const target = formatted[0] as Element
-    // A selection containing authored elements cannot be faithfully represented by
-    // the tiny formatting allowlist. Refuse it instead of flattening those elements.
-    if (target.querySelector(`*:not([${FMT_ATTR}])`)) return null
     const exact = target.textContent ?? ""
     if (!exact.trim()) return null
+    // Formatting keeps the rendered words unchanged. Their offset from the start
+    // of this block identifies a selection that spans several original text nodes.
+    if ((t.el.textContent ?? "") === t.origConcat) {
+      const before = document.createRange()
+      before.setStart(t.el, 0)
+      before.setEndBefore(target)
+      const start = (t.origStarts[0] ?? 0) + before.toString().length
+      if (base.text.slice(start, start + exact.length) === exact)
+        return {
+          quote: {
+            exact,
+            prefix: base.text.slice(Math.max(0, start - 40), start),
+            suffix: base.text.slice(start + exact.length, start + exact.length + 40),
+            ...occurrenceHint(exact, start),
+          },
+          new_html: serializeFmtNode(target),
+        }
+    }
     const matches: { node: number; at: number }[] = []
     for (let i = 0; i < t.origValues.length; i++) {
       const value = t.origValues[i] as string
@@ -7307,6 +7331,7 @@ interface ElReg {
         exact,
         prefix: base.text.slice(Math.max(0, start - 40), start),
         suffix: base.text.slice(start + exact.length, start + exact.length + 40),
+        ...occurrenceHint(exact, start),
       },
       new_html: serializeFmtNode(target),
     }
@@ -7328,6 +7353,7 @@ interface ElReg {
         exact,
         prefix: base.text.slice(Math.max(0, start - 40), start),
         suffix: base.text.slice(end, end + 40),
+        ...occurrenceHint(exact, start),
       },
       new_html: serializeFmt(t.el).replace(/\s*\n\s*/g, " "),
     }
@@ -7343,6 +7369,11 @@ interface ElReg {
   const collectStructuralEdits = (): { edits: WireStructuralEdit[]; invalid: boolean } => {
     const edits: WireStructuralEdit[] = []
     if (structureResizeDrag) return { edits, invalid: true }
+    // Text edits do not need a valid structural schema. Many authored decks mark
+    // only the movable parts of a slide and leave labels or footers unmarked.
+    // Their structural scanner has no regions, but their text still has a valid
+    // source quote. Check layout integrity only when a layout change is pending.
+    if (structureDirtyCount() === 0) return { edits, invalid: false }
     if (!structureDocumentIntegrityValid()) return { edits, invalid: true }
     for (const region of activeStructureRegions()) {
       if (!structureIntegrityValid(region)) return { edits: [], invalid: true }

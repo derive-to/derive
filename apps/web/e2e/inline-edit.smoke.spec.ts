@@ -18,6 +18,20 @@ import { expect, openArtifact, publishArtifact, shareArtifact, test } from "./fi
  */
 
 const DOC = "<h1>Runbook</h1><p id=one>First paragraph.</p><p id=two>Second paragraph.</p>"
+// A deck may mark the movable content but leave its footer outside that schema.
+// The layout scanner rejects the partial schema; title and body text still save.
+const PARTIAL_LAYOUT_DOC = `<section data-derive-slide="0" data-derive-region="slide-0" data-derive-layout="stack">
+  <div data-derive-node="main"><h1 id="title">The original title for this slide.</h1>
+    <p id="subtitle">The original supporting sentence.</p></div>
+  <footer>Slide 01</footer>
+</section>`
+const REPEATED_DOC = `<main>${[0, 1]
+  .map(
+    (n) => `<article><p>The same lead appears before this title on every card.</p>
+      <h2 id="repeated-${n}">Repeated title</h2>
+      <p>The same supporting sentence follows this title on every card.</p></article>`,
+  )
+  .join("")}</main>`
 const RESIZE_DOC = `<h1>Layout</h1>
 <img id="hero" alt="Hero" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='90'%3E%3Crect width='160' height='90' fill='%2364748b'/%3E%3C/svg%3E" style="display:block;width:160px;height:90px">
 <div id="summary-box" data-derive-resizable style="width:220px;height:110px"><p>Summary box.</p></div>`
@@ -228,6 +242,64 @@ test("type in the document and save — the edit lands in the stored source", as
     expect(html).toContain("<p id=two>Second paragraph.</p>")
     expect(html).toContain("<h1>Runbook</h1>")
   }).toPass({ timeout: 10_000 })
+})
+
+test("replaces deck text when its partial layout schema cannot be scanned", async ({ owner }) => {
+  const shortId = await publishArtifact(
+    owner,
+    "partial-layout.deck.html",
+    PARTIAL_LAYOUT_DOC,
+    "text/html",
+  )
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+
+  const title = doc(owner).locator("#title")
+  await title.click()
+  await title.evaluate((el) => {
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+  })
+  await owner.keyboard.type("AI-native social")
+  await appendToParagraph(owner, "subtitle", " Ready for review.")
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("2 unsaved changes")
+
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await expect(async () => {
+    const saved = await contentOf(owner, shortId)
+    expect(saved).toContain('<h1 id="title">AI-native social</h1>')
+    expect(saved).toContain("The original supporting sentence. Ready for review.")
+    expect(saved).toContain("<footer>Slide 01</footer>")
+  }).toPass()
+})
+
+test("saves the selected occurrence when cards repeat the same wording", async ({ owner }) => {
+  const shortId = await publishArtifact(owner, "repeated.html", REPEATED_DOC, "text/html")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+
+  const second = doc(owner).locator("#repeated-1")
+  await second.click()
+  await second.evaluate((el) => {
+    ;(el as HTMLElement).focus()
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+  })
+  await owner.keyboard.type("Updated title")
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await expect(async () => {
+    const saved = await contentOf(owner, shortId)
+    expect(saved).toContain('<h2 id="repeated-0">Repeated title</h2>')
+    expect(saved).toContain('<h2 id="repeated-1">Updated title</h2>')
+  }).toPass()
 })
 
 test("discard reverts the text and publishes nothing", async ({ owner }) => {
@@ -1488,7 +1560,7 @@ test("Markdown saves a selection across consecutive bold subtitle lines", async 
   }).toPass({ timeout: 10_000 })
 })
 
-test("typing across attributed inline elements refuses instead of flattening authored metadata", async ({
+test("replacing selected linked and annotated text saves the user's replacement", async ({
   owner,
 }) => {
   const html =
@@ -1514,22 +1586,54 @@ test("typing across attributed inline elements refuses instead of flattening aut
   })
   await expect(target).toHaveAttribute("contenteditable", /^(plaintext-only|true)$/)
   await target.evaluate((el) => {
+    ;(el as HTMLElement).focus()
     const range = document.createRange()
     range.selectNodeContents(el)
     const selection = window.getSelection()
     selection?.removeAllRanges()
     selection?.addRange(range)
   })
-  await owner.keyboard.type("REFUSAL-CHECK")
+  await owner.keyboard.type("Rewritten content")
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await expect(async () => {
+    expect(await contentOf(owner, shortId)).toBe('<p class="target">Rewritten content</p>')
+  }).toPass()
+})
 
-  await expect(
-    owner.getByText("That selection includes linked or annotated content."),
-  ).toBeVisible()
-  await expect(target).toContainText("ORBIT-LINK ORBIT-NOTE")
-  await expect(target.locator('a[href="/jobs"]')).toHaveText("ORBIT-LINK")
-  await expect(target.locator('mark[data-note="keep"]')).toHaveText("ORBIT-NOTE")
-  await expect(owner.getByTestId("inline-edit-save")).toHaveCount(0)
-  expect(await contentOf(owner, shortId)).toBe(html)
+test("formats a selection that starts inside a link and crosses an annotation", async ({
+  owner,
+}) => {
+  const html =
+    '<p class="target"><a href="/jobs">Alpha</a> <mark data-note="keep">Beta</mark> Gamma</p>'
+  const shortId = await publishArtifact(owner, "format-linked.html", html, "text/html")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+
+  const target = doc(owner).locator(".target")
+  await target.click()
+  await target.evaluate((el) => {
+    ;(el as HTMLElement).focus()
+    const start = el.querySelector("a")?.firstChild
+    const end = el.lastChild
+    if (!start || !end) throw new Error("Expected inline text nodes")
+    const range = document.createRange()
+    range.setStart(start, 2)
+    range.setEnd(end, 4)
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+  })
+  await expect(owner.getByTestId("inline-edit-bold")).toBeEnabled()
+  await owner.getByTestId("inline-edit-bold").click()
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await expect(async () => {
+    const saved = await contentOf(owner, shortId)
+    expect(saved).toContain('<a href="/jobs">Al</a>')
+    expect(saved).toContain("<b>pha Beta Gam</b>")
+  }).toPass()
 })
 
 test("Inspect appears only inside an editor's HTML edit session", async ({ owner, secondUser }) => {

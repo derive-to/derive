@@ -457,7 +457,7 @@ describe("editing eval — HTML projection, topology, and injection", () => {
     ).toBe("<script>hidden</script >X")
   })
 
-  it("[HTML-013] blocks normalized script URLs and refuses formatting over authored markup", () => {
+  it("[HTML-013] blocks script URLs and formats a selection across authored markup", () => {
     for (const href of ["java&#9;script:alert(1)", "java\nscript:alert(1)"]) {
       const out = applyQuoteEdits("<p>target</p>", HTML, [
         markup("target", `<a href="${href}">target</a>`),
@@ -466,9 +466,9 @@ describe("editing eval — HTML projection, topology, and injection", () => {
     }
     const authored =
       '<p><mark data-note="keep">Acme</mark> <a href="/jobs">platform</a> <em>team</em></p>'
-    expect(() =>
+    expect(
       applyQuoteEdits(authored, HTML, [markup("Acme platform team", "<b>Acme platform team</b>")]),
-    ).toThrow(/could remove links or attributes/)
+    ).toBe("<p><b>Acme platform team</b></p>")
   })
 
   it("[HTML-014] refuses surrogate, combining-mark, modifier, and ZWJ splits", () => {
@@ -478,11 +478,9 @@ describe("editing eval — HTML projection, topology, and injection", () => {
       )
   })
 
-  it("[HTML-015] refuses plain-text replacement that would delete authored metadata", () => {
+  it("[HTML-015] replaces selected linked and annotated text", () => {
     const source = '<p><a href="/x">foo</a> <mark data-k="v">bar</mark></p>'
-    expect(() => applyQuoteEdits(source, HTML, [qe("foo bar", "X")])).toThrow(
-      /could remove links or attributes/,
-    )
+    expect(applyQuoteEdits(source, HTML, [qe("foo bar", "X")])).toBe("<p>X</p>")
   })
 
   it("[HTML-016] keeps nested templates, hidden elements, and legacy comments invisible", () => {
