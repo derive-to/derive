@@ -724,6 +724,7 @@ export class PgMetaStore implements MetaStore {
   markRuntimeRunStarted = this.runtimes.markRuntimeRunStarted
   settleRuntimeRun = this.runtimes.settleRuntimeRun
   publishRuntimeReport = this.runtimes.publishRuntimeReport
+  bindRuntimeSetup = this.runtimes.bindRuntimeSetup
   createRuntimeSetup = this.runtimes.createRuntimeSetup
   getRuntimeSetup = this.runtimes.getRuntimeSetup
   listPendingRuntimeSetups = this.runtimes.listPendingRuntimeSetups

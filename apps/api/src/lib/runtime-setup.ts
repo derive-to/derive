@@ -38,30 +38,11 @@ async function advance(deps: SetupDeps, setup: RuntimeSetupRecord) {
   const { meta } = deps
   const transition = (change: Parameters<typeof meta.transitionRuntimeSetup>[3]) =>
     meta.transitionRuntimeSetup(setup.id, setup.org_id, setup.revision, change, at)
-  // A crash after binding must repair the receipt before considering cancellation or expiry.
-  const bound = await meta.getContextRuntimeForContext(setup.context_id, setup.org_id)
-  if (bound) {
-    if (bound.sandbox_id !== setup.sandbox_id) throw new Error("Runtime setup binding mismatch")
-    await transition({ phase: "ready" })
-    return
-  }
   if (setup.phase === "binding") {
-    // Consent and cancellation serialized at admission. Finish the accepted handover after a restart.
-    if (!setup.sandbox_id) throw new Error("Runtime setup receipt is incomplete")
-    await meta.createContextRuntime(
-      {
-        id: `rt_${setup.id}`,
-        org_id: setup.org_id,
-        context_id: setup.context_id,
-        agent_id: setup.agent_id,
-        api_url: setup.api_url,
-        ortam_org_id: setup.ortam_org_id,
-        ortam_user_id: setup.ortam_user_id,
-        sandbox_id: setup.sandbox_id,
-        connection_id: setup.connection_id,
-      },
-      at,
-    )
+    // Consent and cancellation serialized at admission. The store projects the saved
+    // handover, including a crash after insertion but before this receipt was updated.
+    if (await meta.bindRuntimeSetup(setup.id, setup.org_id, at))
+      await transition({ phase: "ready" })
     return
   }
   const context = await meta.getContext(setup.context_id)
@@ -128,6 +109,10 @@ async function advance(deps: SetupDeps, setup: RuntimeSetupRecord) {
   }
   if (setup.phase === "deleting") {
     if (!setup.delete_operation_id) {
+      if (await client.isSandboxDeleted(setup.sandbox_id, identity)) {
+        await transition({ phase: "failed" })
+        return
+      }
       const op = await client.deleteSandbox(setup.sandbox_id, `derive-${setup.id}-delete`, identity)
       await transition({ phase: "deleting", delete_operation_id: op.id })
     } else {
@@ -137,8 +122,13 @@ async function advance(deps: SetupDeps, setup: RuntimeSetupRecord) {
         "delete",
         identity,
       )
-      // Failed deletion is still owned cleanup work, never a false terminal success.
-      if (op.state === "succeeded") await transition({ phase: "failed" })
+      // Ortam can finish background cleanup after the original operation fails.
+      // Keep ownership until either the operation or the sandbox confirms deletion.
+      if (
+        op.state === "succeeded" ||
+        (op.state === "failed" && (await client.isSandboxDeleted(setup.sandbox_id, identity)))
+      )
+        await transition({ phase: "failed" })
     }
     return
   }

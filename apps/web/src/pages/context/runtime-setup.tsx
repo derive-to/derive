@@ -16,6 +16,73 @@ export function RuntimeSetup({
   contextId: string
   setup: RuntimeSetupRecord | null
 }) {
+  return setup ? (
+    <RuntimeSetupProgress contextId={contextId} setup={setup} />
+  ) : (
+    <RuntimeSetupForm contextId={contextId} />
+  )
+}
+
+function RuntimeSetupProgress({
+  contextId,
+  setup,
+}: {
+  contextId: string
+  setup: RuntimeSetupRecord
+}) {
+  const cancel = useApiMutation({
+    mutationFn: () => api.cancelContextRuntimeSetup(contextId),
+    invalidate: [contextRuntimeQuery(contextId).queryKey],
+    success: "Setup cancellation requested",
+  })
+  const labels: Record<RuntimeSetupRecord["phase"], string> = {
+    queued: "Waiting to set up your sandbox",
+    creating: "Creating your sandbox",
+    provisioning: "Installing the runner",
+    stopping: "Saving your sandbox",
+    awaiting_connection: "Attach your model account",
+    binding: "Connecting your sandbox",
+    ready: "Sandbox connected",
+    deleting: "Removing the unfinished sandbox",
+    failed: "Setup ended",
+  }
+  return (
+    <div className="flex flex-col gap-4 rounded-xl border bg-card p-5">
+      <SectionTitle>
+        {setup.cancelled_at && setup.phase !== "failed" ? "Cancelling setup" : labels[setup.phase]}
+      </SectionTitle>
+      <p className="text-sm text-muted-foreground">
+        {setup.phase === "failed"
+          ? "No runtime was connected. Any sandbox created by this setup has been deleted. Use a new Context to try again."
+          : setup.phase === "awaiting_connection" && !setup.cancelled_at
+            ? "Open this sandbox’s settings in Ortam and choose Attach my connections. Keep the sandbox stopped; Derive will connect it automatically."
+            : "Derive checks progress every minute. You can leave this page while setup or cleanup continues."}
+      </p>
+      {setup.sandbox_id && setup.phase === "awaiting_connection" && !setup.cancelled_at && (
+        <p className="break-all font-mono text-sm">{setup.sandbox_id}</p>
+      )}
+      {!setup.cancelled_at && !["failed", "ready", "deleting", "binding"].includes(setup.phase) && (
+        <>
+          <p className="text-sm text-muted-foreground">
+            Finish setup by {new Date(setup.deadline_at).toLocaleTimeString()}. Incomplete setups
+            are removed automatically.
+          </p>
+          <Button
+            variant="outline"
+            className="self-start"
+            data-testid="context-runtime-setup-cancel"
+            disabled={cancel.isPending}
+            onClick={() => cancel.mutate()}
+          >
+            Cancel setup
+          </Button>
+        </>
+      )}
+    </div>
+  )
+}
+
+function RuntimeSetupForm({ contextId }: { contextId: string }) {
   const qc = useQueryClient()
   const query = contextRuntimeQuery(contextId)
   const connectionsQuery = automationConnectionsQuery()
@@ -32,11 +99,6 @@ export function RuntimeSetup({
     mutationFn: () => api.setupContextRuntime(contextId, connection),
     invalidate: [query.queryKey],
     success: "Sandbox setup queued",
-  })
-  const cancel = useApiMutation({
-    mutationFn: () => api.cancelContextRuntimeSetup(contextId),
-    invalidate: [query.queryKey],
-    success: "Setup cancellation requested",
   })
   const saveKey = useApiMutation({
     mutationFn: async () => {
@@ -58,56 +120,6 @@ export function RuntimeSetup({
       setKey("")
     },
   })
-  if (setup) {
-    const labels: Record<RuntimeSetupRecord["phase"], string> = {
-      queued: "Waiting to set up your sandbox",
-      creating: "Creating your sandbox",
-      provisioning: "Installing the runner",
-      stopping: "Saving your sandbox",
-      awaiting_connection: "Attach your model account",
-      binding: "Connecting your sandbox",
-      ready: "Sandbox connected",
-      deleting: "Removing the unfinished sandbox",
-      failed: "Setup ended",
-    }
-    return (
-      <div className="flex flex-col gap-4 rounded-xl border bg-card p-5">
-        <SectionTitle>
-          {setup.cancelled_at && setup.phase !== "failed"
-            ? "Cancelling setup"
-            : labels[setup.phase]}
-        </SectionTitle>
-        <p className="text-sm text-muted-foreground">
-          {setup.phase === "failed"
-            ? "No runtime was connected. Any sandbox created by this setup has been deleted. Use a new Context to try again."
-            : setup.phase === "awaiting_connection" && !setup.cancelled_at
-              ? "Open this sandbox’s settings in Ortam and choose Attach my connections. Keep the sandbox stopped; Derive will connect it automatically."
-              : "Derive checks progress every minute. You can leave this page while setup or cleanup continues."}
-        </p>
-        {setup.sandbox_id && setup.phase === "awaiting_connection" && !setup.cancelled_at && (
-          <p className="break-all font-mono text-sm">{setup.sandbox_id}</p>
-        )}
-        {!setup.cancelled_at &&
-          !["failed", "ready", "deleting", "binding"].includes(setup.phase) && (
-            <>
-              <p className="text-sm text-muted-foreground">
-                Finish setup by {new Date(setup.deadline_at).toLocaleTimeString()}. Incomplete
-                setups are removed automatically.
-              </p>
-              <Button
-                variant="outline"
-                className="self-start"
-                data-testid="context-runtime-setup-cancel"
-                disabled={cancel.isPending}
-                onClick={() => cancel.mutate()}
-              >
-                Cancel setup
-              </Button>
-            </>
-          )}
-      </div>
-    )
-  }
   return (
     <div className="grid gap-8 rounded-xl border bg-card p-5 sm:grid-cols-2 sm:p-6">
       <div className="flex min-w-0 flex-col gap-4">

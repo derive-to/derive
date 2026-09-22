@@ -5270,6 +5270,16 @@ export function runStoreContract(
         if (!next) throw new Error("Transition rejected")
         return next
       }
+      expect(await store.bindRuntimeSetup(setup.id, ORG, at)).toBeNull()
+      expect(
+        await store.transitionRuntimeSetup(
+          setup.id,
+          ORG,
+          setup.revision,
+          { phase: "creating", delete_operation_id: "premature-delete" },
+          at,
+        ),
+      ).toBeNull()
       await transition({ phase: "creating" })
       expect(
         await store.transitionRuntimeSetup(setup.id, ORG, 0, { phase: "failed" }, at),
@@ -5287,7 +5297,9 @@ export function runStoreContract(
       ])
       const final = await store.getRuntimeSetup(f.context.id, ORG)
       expect(!!final?.cancelled_at).toBe(final?.phase === "awaiting_connection")
-      const bound = await store.createContextRuntime(f.binding, at)
+      // Manual binding cannot adopt even a matching accepted setup.
+      expect(await store.createContextRuntime(f.binding, at)).toBeNull()
+      const bound = await store.bindRuntimeSetup(setup.id, ORG, at)
       expect(!!bound).toBe(final?.phase === "binding")
       if (bound) {
         await store.cancelRuntimeSetup(f.context.id, ORG, at)
@@ -5323,8 +5335,10 @@ export function runStoreContract(
         if (!setup) throw new Error("Transition rejected")
       }
       await store.deleteContext(f.context.id, ORG)
-      const runtime = await store.createContextRuntime(f.binding, at)
+      expect(await store.bindRuntimeSetup(setup.id, "foreign", at)).toBeNull()
+      const runtime = await store.bindRuntimeSetup(setup.id, ORG, at)
       expect(runtime).toMatchObject({ sandbox_id: f.binding.sandbox_id, disabled_at: at })
+      expect(await store.bindRuntimeSetup(setup.id, ORG, deadlineAt)).toEqual(runtime)
       expect(
         await store.transitionRuntimeSetup(setup.id, ORG, setup.revision, { phase: "ready" }, at),
       ).toMatchObject({ phase: "ready" })

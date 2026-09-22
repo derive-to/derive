@@ -174,8 +174,8 @@ artifact. Disabling cloud runs stops new admission and sends active work into
 cleanup.
 
 Ordinary Derive users should never enter an Ortam key or sandbox ID. Automatic
-provisioning and model-account delegation are still to be built; they will replace
-this setup while reusing the execution and persistence machinery. Self-hosted
+provisioning is available in the operator pilot below; model-account delegation
+inside Derive is still to be built. Self-hosted
 administrators configure infrastructure once for their deployment. Background
 shutdown reconciliation is independent of interactive pilot access. Background
 admission and guest claims recheck the workspace allowlist and the initiating
@@ -326,7 +326,10 @@ Schedule ownership and workspace membership are checked before unattended work.
 Coverage lives in the existing Context API, shared store contract, and Cloud runs
 browser test. It checks concurrent admission, missed times, stale edits, pause,
 timezones, and completion after pause. The store contract runs on SQLite,
-Postgres and D1. Scheduled execution has not yet been qualified against live Ortam.
+Postgres and D1. The hosted pilot passed two scheduled Codex runs on 22 September
+2026, preserving files across shutdowns and producing private reports. Its
+[qualification evidence](https://derive.to/artifacts/rfc-scheduled-agents-that-keep-their-work-derive-ueg04djq#hosted-pilot-setup)
+is recorded in the private RFC.
 
 ## Automatic sandbox setup (operator pilot)
 
@@ -358,8 +361,11 @@ created sandbox to deletion. An ambiguous creation is resolved before deleting
 its exact sandbox. Cleanup remains active after rollout removal and can use the
 retained encrypted controller credential after its Derive grant is revoked.
 Do not remove the runtime deployment configuration or vendor credential until
-cleanup finishes. A vendor outage or failed deletion remains `deleting` and
-requires operator repair; accepting a delete request never marks cleanup done.
+cleanup finishes. A vendor outage or unconfirmed deletion remains `deleting`.
+The dispatcher recognizes a successful delete operation or authoritative sandbox
+deletion, including cleanup Ortam completes after the original operation fails.
+An authentication failure, permission error or transport error never confirms
+cleanup. Accepting a delete request alone does not mark cleanup done.
 
 One permanent database admission slot prevents manual binding and provisioning
 from both claiming the same Context. Cancellation and final handover compete
