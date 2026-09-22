@@ -144,9 +144,11 @@ the task's selected variables from `/v1/agent/environment`, and fail closed if
 that request cannot be authorized or served. Existing CLI 0.6.0 runners can keep
 using the new API, but cannot deliver the new environment bindings.
 
-Keep `DERIVE_ORTAM_RUNNER_PATH` unset during the initial deployment. Install the
-pinned CLI in a pilot sandbox and qualify that deployment's controller before
-setting the path and enabling the pilot workspace. Turning off workspace hosted
+The API and CLI 0.7.0 have shipped. The next rollout sets
+`DERIVE_ORTAM_RUNNER_PATH` for the QA Lab pilot; the existing hosted workspace
+allowlist still limits dispatch. Install the pinned CLI in a pilot sandbox before
+binding it, then qualify the hosted controller with the procedure below.
+Turning off workspace hosted
 agents or disabling its runtime prevents new work while preserving cleanup.
 Do not remove the worker's configuration while attempts still need shutdown.
 
@@ -156,7 +158,7 @@ retain their existing repository-materialization behavior. The new attempt token
 uses `/home/ortam/work` directly: it does not reset repositories or replace saved
 files. The agent chooses which scripts to run and which repositories to fetch.
 
-## Manual cloud runs (local implementation)
+## Manual cloud runs
 
 The Context page now has a Cloud runs panel when the deployment opts in. An owner
 connects an existing stopped sandbox, chooses Codex or Claude Code, writes an
@@ -168,7 +170,7 @@ cleanup.
 
 Initial setup is explicit:
 
-1. Install this branch's CLI package at a fixed path inside the sandbox, with its
+1. Install CLI 0.7.0 at a fixed path inside the sandbox, with its
    package dependencies. Keep that installation separate from `/home/ortam/work`.
    Use a pinned build; the worker does not install arbitrary latest packages.
 2. Attach the owning user's model connection in Ortam. Set sandbox auto-stop to
@@ -212,7 +214,7 @@ Snapshot after each job. Ortam does not expose a named snapshot ID for normal
 stop, so `saved_snapshot_id` can be null while `save_status` is `saved`.
 
 The manual path was deployed in #933 on 21 September 2026. Execution remains
-opt-in: hosted Derive has no runner path configured. Local coverage composes the actual Derive
+opt-in. Local coverage composes the actual Derive
 routes, database and worker with a simulated Ortam HTTP peer, exercises the CLI
 through a real child process with a test provider executable, and checks the
 manual-run UI in a browser. The live controller qualification below uses the
@@ -259,7 +261,8 @@ deletion, so the tunnel failure is correlated evidence rather than a proved
 root cause. The successful two-machine test removed that tunnel dependency.
 
 This qualifies manual Codex execution through the Node/SQLite controller. It
-does not qualify the deployed Workers/D1 controller, Claude Code, long-term
+does not qualify the hosted Workers/Postgres controller, the Workers/D1 fallback,
+Claude Code, long-term
 model-credential refresh, provider outages, schedules, or GitHub credential
 delivery. The working-file scan is not a whole-disk or snapshot credential audit:
 an agent can still write a delivered secret to other persistent files. Production
@@ -302,3 +305,99 @@ Coverage lives in the existing Context API, shared store contract, and Cloud run
 browser test. It checks concurrent admission, missed times, stale edits, pause,
 timezones, and completion after pause. The store contract runs on SQLite,
 Postgres and D1. Scheduled execution has not yet been qualified against live Ortam.
+
+## Hosted pilot: two scheduled runs
+
+This is an operator procedure, not an automated test result. Run it in QA Lab
+(`ws_fas46hoo39z55zqg`), the only workspace in the production execution allowlist.
+Use the normal CI deployment for the runner-path setting. A local Cloudflare
+login for another account cannot configure the production Worker.
+
+Before starting, check QA Lab's existing schedules and queued work, and record its
+current settings. Enabling hosted agents, agent writes, or the automations beta
+can also enable other work in that workspace. If it is not an isolated test
+workspace, use a dedicated workspace and review an explicit allowlist change.
+Do not widen the allowlist to a working team workspace just to get this test running.
+
+### Prepare the sandbox
+
+1. In Ortam, create a Small sandbox with **Use my agent connections** selected
+   from the account that owns the testing API key. Confirm Codex is connected.
+2. Record the sandbox ID in a private local receipt before running commands.
+   Set its automatic stop limit to 1,200 seconds or less.
+3. In the sandbox terminal, install the published package into the versioned path
+   configured in `apps/api/wrangler.toml`:
+
+   ```sh
+   mkdir -p /home/ortam/derive-runtime/0.7.0 /home/ortam/work
+   npm install --prefix /home/ortam/derive-runtime/0.7.0 \
+     --omit=dev --ignore-scripts --no-audit --no-fund --save-exact @derive-to/cli@0.7.0
+   node /home/ortam/derive-runtime/0.7.0/node_modules/@derive-to/cli/bin/derive.js --help
+   ```
+
+4. Stop the sandbox and wait for Ortam to confirm it is stopped. This saves the
+   installation and working directory. Keep the package installation outside the
+   agent's working directory.
+
+### Create and observe the schedule
+
+Create a Context in QA Lab with a private manifest describing this bounded test.
+Add the sandbox owner's Ortam API key as a secret connection, bind the stopped
+sandbox in **Cloud runs**, and enable the required workspace settings after the
+checks above. Keep the receipt free of API keys, bearer tokens and secret values.
+
+Use Codex and this instruction for both occurrences:
+
+> Work only in the current directory. If scheduled-pilot.json is absent, create
+> it with {"count":1,"label":"derive-scheduled-pilot"}. Otherwise read it, verify
+> that count is 1 and label is derive-scheduled-pilot, then change count to 2.
+> If the file has any other contents, report PILOT_FAILED and leave it unchanged.
+> Return a short Markdown report containing PILOT_COUNT_1 or PILOT_COUNT_2 to
+> match the new count, and describe whether you created or read the previous file.
+> Do not access other services, send messages, or change any other files.
+
+Save a one-minute schedule (`* * * * *`, timezone `UTC`). Do not use **Run now**:
+this qualification needs jobs admitted by the production cron. Observe the
+Context's runtime response at `GET /v1/contexts/:id/runtime`. Record each run ID,
+its `reason: schedule`, scheduled occurrence and attempt ID. A busy sandbox does
+not accumulate a job for every missed minute.
+
+Once the second attempt has a non-null `runner_claimed_at`, immediately pause the
+schedule using its current revision. A claimed job finishes after pause; queued
+jobs are invalidated. If observation is interrupted, pause on recovery and
+inspect the history before doing anything else. The task refuses to increment
+past 2, but that is not a replacement for pausing the schedule.
+
+For both jobs, require all of these:
+
+- Run status is `succeeded`, with the expected count marker in its report.
+- Attempt `save_status` is `saved` and `released_at` is present.
+- Report artifact is readable by its owner and rejects anonymous content access.
+- Ortam independently reports the sandbox as stopped after the final job.
+
+After the second job settles, observe at least two further cron ticks and confirm
+there is no third scheduled job. A null named snapshot ID is expected: normal
+stop saves the sandbox without creating a retained Snapshot.
+
+### Verify persistence and finish
+
+With the schedule paused and both attempts released, resume the sandbox for an
+operator inspection. Read `/home/ortam/work/scheduled-pilot.json` and require
+`count: 2` with the original label. Stop it again and confirm completion.
+
+Disable this test Context's runtime, delete the disposable sandbox through
+Ortam, and confirm the deletion operation succeeded. Retain the private reports
+and a receipt containing the production build, CLI version, workspace, sandbox,
+schedule and run IDs, assertions, and cleanup outcome. Remove the test-only
+Ortam connection once no runtime needs it. Restore any workspace settings changed
+for the test if doing so will not interfere with work started since the test.
+
+If a run fails, capture its report or process diagnostics privately before
+cleanup. Disable the runtime to stop new work and let Derive reconcile shutdown.
+Keep the controller configured until every attempt is released; removing the
+runner-path setting early would also remove its cleanup worker. Do not retry a
+process start whose outcome is unknown.
+
+A pass qualifies scheduled Codex execution through the hosted Workers/Postgres
+controller and saved-file persistence. It does not qualify Claude Code, GitHub
+credentials, reviewed script improvements, or model refresh over several days.
