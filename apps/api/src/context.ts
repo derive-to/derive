@@ -132,7 +132,13 @@ export interface SessionUser {
 }
 
 export interface AppDeps {
-  runtime?: { apiUrl: string; runnerPath: string }
+  runtime?: {
+    apiUrl: string
+    /** Absolute path to a pinned CLI installation in the saved sandbox. */
+    runnerPath: string
+    /** Temporary operator pilot. Empty denies admission; cleanup stays independent. */
+    pilotWorkspaceIds: ReadonlySet<string>
+  }
   runtimeFetch?: typeof fetch
 
   meta: MetaStore

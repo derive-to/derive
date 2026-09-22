@@ -7,7 +7,7 @@ import {
   type RunAttemptResult,
   type RunRecord,
 } from "@derive/core"
-import { buildContext } from "../context"
+import { type AppDeps, buildContext } from "../context"
 import { log } from "../log"
 import { afterPublish } from "./after-publish"
 import { spendableConnections } from "./broker"
@@ -16,18 +16,12 @@ import { OrtamClient } from "./ortam-client"
 import { materializeRuntimeSchedules, runtimeScheduleAllows } from "./runtime-schedule"
 import { signRuntimeToken } from "./runtime-token"
 
-interface RuntimeConfig {
-  apiUrl: string
-  /** Absolute path to a pinned Derive CLI installation in the saved sandbox. */
-  runnerPath: string
-}
 export interface RuntimeDispatchDeps {
   meta: MetaStore
   blobs: BlobStore
   secret: string
   server: string
-  config: RuntimeConfig
-  hostedOrgIds?: ReadonlySet<string>
+  config: NonNullable<AppDeps["runtime"]>
   fetcher?: typeof fetch
   now?: () => Date
 }
@@ -60,7 +54,7 @@ async function enabled(
   claimed = false,
 ) {
   if (!claimed && !(await runtimeScheduleAllows(deps.meta, run))) return false
-  if (deps.hostedOrgIds && !deps.hostedOrgIds.has(run.org_id)) return false
+  if (!deps.config.pilotWorkspaceIds.has(run.org_id)) return false
   const settings = await deps.meta.getOrgSettings(run.org_id)
   const context = await deps.meta.getContext(runtime.context_id)
   const agent = await deps.meta.getAgent(run.agent_id)
@@ -75,6 +69,7 @@ async function enabled(
     context.agent_id === run.agent_id &&
     agent?.org_id === run.org_id &&
     run.initiated_by &&
+    (await deps.meta.isInstanceOperator(run.initiated_by)) &&
     (await deps.meta.getMembership(run.org_id, run.initiated_by))
   )
 }
@@ -288,11 +283,12 @@ export async function runtimeDispatchPass(deps: RuntimeDispatchDeps) {
       if (!runtime) continue
       let attempt = await deps.meta.getLatestRunAttempt(run.id, run.org_id)
       if (!attempt) {
-        if (!(await runtimeScheduleAllows(deps.meta, run))) {
+        if (!(await enabled(deps, run, runtime))) {
+          // A revoked job must not occupy the bounded pending scan indefinitely
+          // or silently run later if access is restored.
           await deps.meta.cancelQueuedRuntimeRun(run.id, run.org_id, at.toISOString())
           continue
         }
-        if (!(await enabled(deps, run, runtime))) continue
         await runtimeClient(deps, runtime)
         const now = deps.now?.() ?? new Date()
         attempt = await deps.meta.reserveRunAttempt({
@@ -310,7 +306,7 @@ export async function runtimeDispatchPass(deps: RuntimeDispatchDeps) {
     }
   }
   // Repair active work before scanning schedules. Admission can wait; shutdown cannot.
-  await materializeRuntimeSchedules(deps.meta, at, deps.hostedOrgIds).catch(() =>
+  await materializeRuntimeSchedules(deps.meta, at, deps.config.pilotWorkspaceIds).catch(() =>
     log.warn("runtime schedule pass failed"),
   )
 }

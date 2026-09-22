@@ -17,3 +17,15 @@ export async function manageableContext(
     return fail(c, 403, "forbidden")
   return context
 }
+
+/** Manual machine setup and diagnostics are temporary operator tooling, not Context-owner powers.
+ * Management OAuth may act for an existing operator, but still needs its workspace/manage grant. */
+export async function runtimePilotAllowed(
+  ctx: AppContext,
+  c: Context,
+  orgId: string,
+): Promise<boolean> {
+  if (!ctx.deps.runtime?.pilotWorkspaceIds.has(orgId)) return false
+  const userId = await ctx.managementPrincipal(c)
+  return !!userId && ((await ctx.isSuperAdmin(c)) || (await ctx.meta.isInstanceOperator(userId)))
+}

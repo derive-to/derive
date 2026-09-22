@@ -144,10 +144,11 @@ the task's selected variables from `/v1/agent/environment`, and fail closed if
 that request cannot be authorized or served. Existing CLI 0.6.0 runners can keep
 using the new API, but cannot deliver the new environment bindings.
 
-The API and CLI 0.7.0 have shipped. The next rollout sets
-`DERIVE_ORTAM_RUNNER_PATH` for the Ortam pilot; the hosted workspace
-allowlist still limits dispatch. Install the pinned CLI in a pilot sandbox before
-binding it, then qualify the hosted controller with the procedure below.
+The API and CLI 0.7.0 have shipped, and the hosted pilot has a pinned
+`DERIVE_ORTAM_RUNNER_PATH`. The workspace allowlist limits dispatch and, together
+with instance-operator authority, interactive pilot access. Install the pinned
+CLI in a pilot sandbox before binding it, then qualify the hosted controller
+with the procedure below.
 Turning off workspace hosted
 agents or disabling its runtime prevents new work while preserving cleanup.
 Do not remove the worker's configuration while attempts still need shutdown.
@@ -160,7 +161,11 @@ files. The agent chooses which scripts to run and which repositories to fetch.
 
 ## Manual cloud runs
 
-The Context page has a Cloud runs tab for its owner. Setup is available when the deployment opts in. An owner
+The Cloud runs tab is temporary operator pilot tooling. It is visible only to a
+Context owner who is also an instance operator, in a workspace explicitly listed
+in `DERIVE_HOSTED_RUNS_ALLOWLIST`. The API applies the same operator/workspace
+boundary to runtime details, sandbox binding, runs, schedules, and disabling.
+An authorized operator
 connects an existing stopped sandbox, chooses Codex or Claude Code, writes an
 instruction, and clicks **Run now**. The panel distinguishes receipt of the report
 from confirmation that the sandbox stopped. The received report remains readable
@@ -168,7 +173,18 @@ while shutdown is pending; once settled, it also links to an owner-only Markdown
 artifact. Disabling cloud runs stops new admission and sends active work into
 cleanup.
 
-Initial setup is explicit:
+Ordinary Derive users should never enter an Ortam key or sandbox ID. Automatic
+provisioning and model-account delegation are still to be built; they will replace
+this setup while reusing the execution and persistence machinery. Self-hosted
+administrators configure infrastructure once for their deployment. Background
+shutdown reconciliation is independent of interactive pilot access. Background
+admission and guest claims recheck the workspace allowlist and the initiating
+user’s operator status. Existing non-operator jobs cannot bypass the restriction
+through saved schedules. Denied queued jobs are marked failed and cannot revive
+when access is restored. Removing pilot access does not prevent saving an
+accepted result or confirming shutdown.
+
+Initial operator setup is explicit:
 
 1. Install CLI 0.7.0 at a fixed path inside the sandbox, with its
    package dependencies. Keep that installation separate from `/home/ortam/work`.
@@ -176,11 +192,14 @@ Initial setup is explicit:
 2. Attach the owning user's model connection in Ortam. Set sandbox auto-stop to
    20 minutes or less, then stop it so this setup is saved.
 3. Set `DERIVE_ORTAM_RUNNER_PATH` on the API deployment to the installed CLI's
-   absolute `bin/derive.js` path. This makes the Cloud runs setup visible.
+   absolute `bin/derive.js` path.
    `DERIVE_ORTAM_API_URL` defaults to `https://api.ortam.dev/v1`.
    Enable hosted agents, agent writes, and the automations beta for the workspace.
-   Workers also require the workspace in `DERIVE_HOSTED_RUNS_ALLOWLIST`;
-   Node uses its background-worker switch.
+   Both Node and Workers require an explicit workspace entry in
+   `DERIVE_HOSTED_RUNS_ALLOWLIST` for pilot access; an unset or empty list denies
+   interactive pilot access. Use an existing instance-operator account that can
+   manage the Context. A manage-scoped OAuth grant can act for that operator
+   within its allowed workspaces. Node also needs its background-worker switch.
 4. In the Context's **Cloud runs** tab, enter that user's Ortam API key and click
    **Save Ortam key**, or choose an existing secret connection. The new key is
    stored encrypted for the controller and is not bound as an agent environment

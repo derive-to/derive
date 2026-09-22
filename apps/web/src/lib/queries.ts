@@ -6,6 +6,7 @@ import {
   queryOptions,
 } from "@tanstack/react-query"
 import { API_BASE, type Artifact, api } from "@/api"
+import { isTransient } from "./query-client"
 
 // The signed-in user (or null for an anon visitor). One key read by the thin
 // AuthProvider (useQuery) AND the route guards (ensureQueryData) — they dedupe
@@ -760,6 +761,11 @@ export const contextRuntimeQuery = (id: string) =>
     queryKey: ["contexts", id, "runtime"] as const,
     queryFn: () => api.getContextRuntime(id),
     staleTime: 0,
-    refetchInterval: 5000,
+    // A failed initial capability read must recover even though the tab is still hidden.
+    // A successful denial or permanent auth failure does not poll.
+    refetchInterval: (q) => {
+      if (q.state.status === "error") return isTransient(q.state.error) ? 5000 : false
+      return q.state.data?.enabled ? 5000 : false
+    },
     meta: { persist: false },
   })

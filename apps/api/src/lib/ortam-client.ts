@@ -1,3 +1,4 @@
+import { unbound } from "@derive/broker"
 import { z } from "zod"
 
 const Sandbox = z.object({
@@ -28,11 +29,14 @@ const Process = z.object({
 
 /** Operator-configured API only. Redirects and response bodies never enter errors/logs. */
 export class OrtamClient {
+  private readonly fetcher: typeof fetch
+
   constructor(
     readonly base: string,
     private key: string,
-    private fetcher: typeof fetch = fetch,
+    fetcher: typeof fetch = fetch,
   ) {
+    this.fetcher = unbound(fetcher)
     const url = new URL(base)
     if (
       url.username ||
@@ -52,7 +56,8 @@ export class OrtamClient {
     try {
       response = await this.fetcher(this.base + path, {
         ...init,
-        redirect: "error",
+        // workerd does not support redirect: "error". Reject 3xx below instead.
+        redirect: "manual",
         signal: AbortSignal.timeout(15000),
       })
     } catch {

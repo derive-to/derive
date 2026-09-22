@@ -39,6 +39,7 @@ import {
   artifactQuery,
   contextOutputsQuery,
   contextQuery,
+  contextRuntimeQuery,
   contextSessionsQuery,
   contextsQuery,
   sessionQuery,
@@ -178,6 +179,12 @@ function Console({ id }: { id: string }) {
   const mine = (sessions ?? []).filter((s) => s.asker_id === me?.id)
   const active = picked === "new" ? null : (picked ?? mine[0]?.id ?? null)
   const isOwner = !!context && context.created_by === me?.id
+  const runtimeState = useQuery({
+    ...contextRuntimeQuery(id),
+    enabled: isOwner && !context?.import,
+  })
+  const canUseCloudPilot = isOwner && runtimeState.data?.enabled === true
+  const visibleTab = tab === "cloud" && !canUseCloudPilot ? "chat" : tab
   // Managed connections are absent from Settings, so their runner token is rotated here.
   // The API enforces admin access and returns the replacement token once.
   const [rotatedToken, setRotatedToken] = useState<string | null>(null)
@@ -225,7 +232,7 @@ function Console({ id }: { id: string }) {
           <h1 className="font-serif text-2xl font-medium tracking-tight text-foreground">
             {context.name}
           </h1>
-          {tab !== "cloud" && <RunnerLiveness seenAt={context.runner_seen_at} />}
+          {visibleTab !== "cloud" && <RunnerLiveness seenAt={context.runner_seen_at} />}
         </div>
         <Eyebrow>
           Context
@@ -248,7 +255,7 @@ function Console({ id }: { id: string }) {
       </div>
 
       {/* The chat runner's heartbeat does not describe an Ortam sandbox. */}
-      {tab !== "cloud" && (
+      {visibleTab !== "cloud" && (
         <ContextStatusWorkspace
           context={context}
           sessions={sessions ?? []}
@@ -259,12 +266,12 @@ function Console({ id }: { id: string }) {
         />
       )}
 
-      <Tabs value={tab} onValueChange={setTab}>
+      <Tabs value={visibleTab} onValueChange={setTab}>
         <TabsList variant="line" className="max-w-full justify-start overflow-x-auto">
           <TabsTrigger value="chat" data-testid="console-tab-chat">
             Chat
           </TabsTrigger>
-          {isOwner && (
+          {canUseCloudPilot && (
             <TabsTrigger value="cloud" data-testid="console-tab-cloud">
               Cloud runs
             </TabsTrigger>
@@ -379,9 +386,9 @@ function Console({ id }: { id: string }) {
           </div>
         </TabsContent>
 
-        {isOwner && (
+        {canUseCloudPilot && (
           <TabsContent value="cloud" forceMount className="pt-6 data-[state=inactive]:hidden">
-            <RuntimeRunCard contextId={id} />
+            <RuntimeRunCard contextId={id} state={runtimeState} />
           </TabsContent>
         )}
 

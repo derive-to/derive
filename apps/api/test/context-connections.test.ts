@@ -9,6 +9,7 @@ import {
 } from "../../web/src/lib/context-environment"
 import { encryptSecret } from "../src/lib/crypto"
 import { dispatchPass, type Substrate } from "../src/lib/dispatch"
+import { OrtamClient } from "../src/lib/ortam-client"
 import { signWorkToken } from "../src/lib/run-token"
 import { runtimeDispatchPass } from "../src/lib/runtime-dispatch"
 import { materializeRuntimeSchedules, nextRuntimeOccurrence } from "../src/lib/runtime-schedule"
@@ -604,7 +605,11 @@ describe("Ortam runtime lifecycle", () => {
     email: "runtime-member@derive.test",
     name: "Member",
   }
-  const config = { apiUrl: "https://ortam.test/v1", runnerPath: "/opt/derive/bin/derive.js" }
+  const config = {
+    apiUrl: "https://ortam.test/v1",
+    runnerPath: "/opt/derive/bin/derive.js",
+    pilotWorkspaceIds: new Set(["default"]),
+  }
   const sandboxes = new Map<
     string,
     {
@@ -621,7 +626,11 @@ describe("Ortam runtime lifecycle", () => {
     { id: string; sandbox_id: string; kind: string; state: string }
   >()
   let counter = 0
-  const peer: typeof fetch = async (url, init) => {
+  const peer: typeof fetch = async function (this: unknown, url, init) {
+    // Cloudflare's global fetch rejects a client instance as its receiver. Node's
+    // fetch accepts it, so make the HTTP peer enforce the production contract.
+    expect(this).toBeUndefined()
+    expect(init?.redirect).toBe("manual")
     const path = new URL(String(url)).pathname.replace("/v1", "")
     const json = (data: unknown, status = 200) =>
       new Response(JSON.stringify(data), {
@@ -677,6 +686,7 @@ describe("Ortam runtime lifecycle", () => {
     })
   }
   const { app, meta, ctx } = makeAuthedApp("runtime-lifecycle", [owner, member], "editor", {
+    operatorIds: [owner.id],
     deps: { encryptionKey: SECRET, runtime: config, runtimeFetch: peer },
   })
   let now = new Date()
@@ -804,6 +814,202 @@ describe("Ortam runtime lifecycle", () => {
     return { ...f, schedule }
   }
 
+  it("rejects an upstream redirect without forwarding controller credentials", async () => {
+    const redirect = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(null, { status: 302, headers: { Location: "https://other.test/token" } }),
+      )
+    const client = new OrtamClient(config.apiUrl, "controller-fixture", redirect)
+    await expect(client.authenticate()).rejects.toThrow("Ortam returned HTTP 302")
+    expect(redirect).toHaveBeenCalledExactlyOnceWith(
+      `${config.apiUrl}/auth/token`,
+      expect.objectContaining({ redirect: "manual" }),
+    )
+  })
+
+  it("keeps pilot setup and runtime details behind operator and workspace access", async () => {
+    const f = await setup()
+    await meta.cancelQueuedRuntimeRun(f.run.id, "default", now.toISOString())
+    const runtimePath = `/v1/contexts/${f.context.id}/runtime`
+    const original = await meta.getContextRuntimeForContext(f.context.id, "default")
+    const assertDenied = async (email: string) => {
+      const state = await app.request(runtimePath, { headers: as(email) })
+      expect(state.status).toBe(200)
+      expect(await state.json()).toEqual({
+        enabled: false,
+        runtime: null,
+        schedule: null,
+        next_run_at: null,
+        runs: [],
+      })
+      for (const [suffix, method] of [
+        ["", "POST"],
+        ["/runs", "POST"],
+        ["/schedule", "PUT"],
+        ["/disable", "POST"],
+      ]) {
+        const response = await app.request(`${runtimePath}${suffix}`, {
+          ...jsonAs(as(email), {}),
+          method,
+        })
+        expect(response.status).toBe(403)
+      }
+      expect(await meta.getContextRuntimeForContext(f.context.id, "default")).toEqual(original)
+      expect(
+        (await meta.listRuns("default", 100)).filter((r) => r.runtime_id === original?.id),
+      ).toHaveLength(1)
+    }
+    // Even workspace administration does not grant machine setup rights.
+    await meta.setMembership({
+      id: "runtime-member-seat",
+      org_id: "default",
+      user_id: member.id,
+      role: "owner",
+    })
+    try {
+      await assertDenied(member.email)
+    } finally {
+      await meta.setMembership({
+        id: "runtime-member-seat",
+        org_id: "default",
+        user_id: member.id,
+        role: "editor",
+      })
+    }
+    // Being the Context's creator is also insufficient, even in an allowed workspace.
+    const manifest = await publishAs(
+      app,
+      "# Member task",
+      { title: "Member pilot" },
+      as(member.email),
+    )
+    const created = await app.request(
+      "/v1/contexts",
+      jsonAs(as(member.email), {
+        name: "Member pilot",
+        manifest_short_id: (await manifest.json()).short_id,
+      }),
+    )
+    expect(created.status).toBe(201)
+    const memberPath = `/v1/contexts/${(await created.json()).id}/runtime`
+    expect(
+      await (await app.request(memberPath, { headers: as(member.email) })).json(),
+    ).toMatchObject({ enabled: false, runtime: null })
+    expect((await app.request(memberPath, jsonAs(as(member.email), {}))).status).toBe(403)
+    // The instance operator must also stay inside the explicit rollout boundary.
+    config.pilotWorkspaceIds.clear()
+    try {
+      await assertDenied(owner.email)
+    } finally {
+      config.pilotWorkspaceIds.add("default")
+    }
+    const state = await app.request(runtimePath, { headers: as(owner.email) })
+    expect(await state.json()).toMatchObject({ enabled: true, runtime: { id: original?.id } })
+  })
+
+  it("uses the same rollout boundary for background admission and still confirms shutdown", async () => {
+    const f = await scheduled()
+    config.pilotWorkspaceIds.clear()
+    try {
+      await pass()
+      expect(await meta.latestRunForAutomation(f.schedule.id, "schedule")).toBeNull()
+      expect(f.sandbox.starts).toBe(0)
+      config.pilotWorkspaceIds.add("default")
+      for (let i = 0; i < 4; i++) await pass()
+      const run = await meta.latestRunForAutomation(f.schedule.id, "schedule")
+      if (!run) throw new Error("Scheduled run missing")
+      expect((await attemptRequest(f.sandbox, "claim")).status).toBe(200)
+      expect((await attemptRequest(f.sandbox, "result", result)).status).toBe(200)
+      config.pilotWorkspaceIds.clear()
+      for (let i = 0; i < 5; i++) await pass()
+      expect((await meta.getRun(run.id))?.status).toBe("succeeded")
+      expect(await meta.getLatestRunAttempt(run.id, "default")).toMatchObject({
+        phase: "released",
+        save_status: "saved",
+      })
+      expect(f.sandbox.state).toBe("stopped")
+    } finally {
+      config.pilotWorkspaceIds.add("default")
+      await saveSchedule(f.context.id, { ...dailyTask, enabled: false, revision: 0 })
+    }
+  })
+
+  it("does not execute existing manual or scheduled work owned by a non-operator", async () => {
+    const f = await setup()
+    await meta.cancelQueuedRuntimeRun(f.run.id, "default", now.toISOString())
+    await meta.setMembership({
+      id: "runtime-member-seat",
+      org_id: "default",
+      user_id: member.id,
+      role: "owner",
+    })
+    try {
+      // Seed records admitted before operator-only access was enforced.
+      const schedule = await meta.saveRuntimeSchedule({
+        ...dailyTask,
+        provider: "codex",
+        id: `legacy_schedule_${counter}`,
+        runtimeId: f.run.runtime_id,
+        orgId: "default",
+        ownerId: member.id,
+        at: now.toISOString(),
+      })
+      if (!schedule) throw new Error("Legacy schedule missing")
+      const legacy = await meta.createRun({
+        id: `legacy_run_${counter}`,
+        org_id: "default",
+        agent_id: f.run.agent_id,
+        runtime_id: f.run.runtime_id,
+        initiated_by: member.id,
+        reason: "manual:runtime",
+        input_snapshot: f.run.input_snapshot,
+      })
+      now = new Date(nextRuntimeOccurrence(dailyTask.cron, dailyTask.timezone, now))
+      await pass()
+      expect(await meta.latestRunForAutomation(schedule.id, "schedule")).toBeNull()
+      expect(await meta.getLatestRunAttempt(legacy.id, "default")).toBeNull()
+      expect((await meta.getRun(legacy.id))?.status).toBe("failed")
+      expect(f.sandbox.starts).toBe(0)
+      await meta.deleteAutomation(schedule.id, "default")
+    } finally {
+      await meta.setMembership({
+        id: "runtime-member-seat",
+        org_id: "default",
+        user_id: member.id,
+        role: "editor",
+      })
+    }
+  })
+
+  it("cancels queued work when pilot access is removed without reviving it on restoration", async () => {
+    const f = await setup()
+    config.pilotWorkspaceIds.clear()
+    try {
+      await pass()
+      expect((await meta.getRun(f.run.id))?.status).toBe("failed")
+      expect(await meta.getLatestRunAttempt(f.run.id, "default")).toBeNull()
+    } finally {
+      config.pilotWorkspaceIds.add("default")
+    }
+    await pass()
+    expect(f.sandbox.starts).toBe(0)
+  })
+
+  it("refuses a guest claim after pilot access is removed and cleans up its machine", async () => {
+    const f = await launched()
+    config.pilotWorkspaceIds.clear()
+    try {
+      expect((await attemptRequest(f.sandbox, "claim")).status).toBe(403)
+      expect((await meta.getLatestRunAttempt(f.run.id, "default"))?.runner_claimed_at).toBeNull()
+      for (let i = 0; i < 5; i++) await pass()
+      expect(f.sandbox.state).toBe("stopped")
+      expect((await meta.getRun(f.run.id))?.status).toBe("failed")
+    } finally {
+      config.pilotWorkspaceIds.add("default")
+    }
+  })
+
   it("validates schedule permissions, timezone, and concurrent edits", async () => {
     const f = await scheduled()
     expect(
@@ -851,7 +1057,9 @@ describe("Ortam runtime lifecycle", () => {
     await materializeAllDueRuns(meta, now, true)
     expect(await meta.latestRunForAutomation(f.schedule.id, "schedule")).toBeNull()
     now = new Date(now.getTime() + 3 * 3600_000)
-    await Promise.all([0, 1, 2].map(() => materializeRuntimeSchedules(meta, now)))
+    await Promise.all(
+      [0, 1, 2].map(() => materializeRuntimeSchedules(meta, now, config.pilotWorkspaceIds)),
+    )
     const first = await meta.latestRunForAutomation(f.schedule.id, "schedule")
     expect(first).toMatchObject({
       runtime_id: f.schedule.runtime_id,
@@ -863,7 +1071,7 @@ describe("Ortam runtime lifecycle", () => {
       schedule_revision: 0,
     })
     now = new Date(now.getTime() + 3600_000)
-    await materializeRuntimeSchedules(meta, now)
+    await materializeRuntimeSchedules(meta, now, config.pilotWorkspaceIds)
     expect((await meta.latestRunForAutomation(f.schedule.id, "schedule"))?.id).toBe(first?.id)
     expect(
       (
