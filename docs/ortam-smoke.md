@@ -489,6 +489,12 @@ or runner environment receives it. Existing operator provisioning stays availabl
 under its original gate. An empty managed allowlist disables new work; retain the
 key until all active attempts and pending setup cleanup are settled.
 
+The hosted configuration allows managed qualification only in Ortam Pilot
+(`ws_5b0iz1wp99ksykr7`). QA Lab's existing operator access does not enable this
+customer flow there. Before testing, inspect the pilot's existing schedules and
+runs, record its settings, and keep the service key in the Worker secret store.
+The allowlist is permission to run the bounded acceptance, not evidence it passed.
+
 A job keeps its configured runner, model connection and Context tools. Its Context
 creator or a workspace manager selects one of their own named accounts in Derive.
 The account owner signs in through the provider's page and explicitly grants the job
@@ -576,8 +582,8 @@ the owner for retrying incomplete disconnect cleanup. Existing operator runtimes
 and old managed identities retain their cleanup paths; no old login is silently
 shared with another job.
 
-Keep managed rollout disabled until deployment and the two-job live acceptance
-check pass. Qualify one account on two machines, concurrent runs, saved files,
+Keep general managed rollout disabled until deployment and the two-job live
+acceptance check pass in the isolated pilot. Qualify one account on two machines, concurrent runs, saved files,
 reconnect, a stopped-machine account switch, one-job removal, shared disconnect,
 collaborator execution and confirmed shutdown. Earlier operator-pilot evidence
 and local contracts do not establish live qualification of this account flow.
