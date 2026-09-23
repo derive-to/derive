@@ -541,8 +541,10 @@ const runtimeConfig = process.env.DERIVE_ORTAM_RUNNER_PATH
         : undefined,
     }
   : undefined
+let pokeRuntime: (() => void) | undefined
 const app = createApp({
   runtime: runtimeConfig,
+  pokeRuntime: () => pokeRuntime?.(),
   meta,
   // Self-host: whatever the image was built from. Docker builds can pass it; a source run
   // reports "dev". Same contract as the edge — /healthz answers "what is running".
@@ -698,6 +700,7 @@ if (runtimeConfig && cfg.backgroundWorkers) {
         ticking = false
       })
   }
+  pokeRuntime = tick
   tick()
   runtimeTimer = setInterval(tick, 10_000)
   runtimeTimer.unref()

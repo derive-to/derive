@@ -206,8 +206,19 @@ Initial operator setup is explicit:
    variable or source. Enter the sandbox ID and connect it. Binding checks the actual
    Ortam organization, account owner, sandbox state, and auto-stop setting.
 
-Node reconciles every ten seconds; Workers uses the existing cron invocation.
-Each pass does bounded work rather than waiting for a VM or model to finish.
+Node reconciles every ten seconds; Workers retains the minute cron as a recovery
+sweep. Setup, manual runs, results, cancellation and permission changes also wake
+the controller immediately: Node nudges its existing worker, and Workers reuses
+`RUN_QUEUE` with a `{ kind: "runtime" }` message. Duplicate nudges in one batch
+share a pass; a lost nudge leaves the durable work for the sweep. Scheduled
+admission nudges the queue after saving the new run.
+
+Each setup or attempt advances up to eight confirmed steps per pass, yielding
+when its revision is unchanged or its ten-second progress budget is reached
+(an in-flight request retains its existing timeout). State and access are reread
+between steps. Pending external operations and unknown outcomes are not polled
+in a loop; they wait for a later wake or recovery sweep. This removes idle minutes
+between ready steps without promising immediate completion of a VM operation.
 The queue, ownership, launch intent, guest claim, accepted result, and confirmed
 release live in the database. An expired owner is not replaced while its compute
 release remains unconfirmed. A failed stop retains ownership for repair.
@@ -343,7 +354,7 @@ The configured runner path must be
 
 Derive persists the exact creation request before submitting it, including the
 CLI 0.7.0 installation script and a 1,200-second auto-stop limit. The existing
-minute dispatcher repairs interrupted setup, replays ambiguous lifecycle
+runtime controller repairs interrupted setup, replays ambiguous lifecycle
 requests with their original idempotency keys, checks the create result, and
 stops the sandbox before waiting for model authorization. No model runs during
 setup. Ortam usage is charged to the controller account.

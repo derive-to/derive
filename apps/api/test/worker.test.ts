@@ -70,3 +70,45 @@ describe("worker scheduled runtime diagnostics", () => {
     }
   })
 })
+
+describe("worker runtime queue wake-up", () => {
+  it("coalesces runtime nudges in one batch and keeps controller failures redacted", async () => {
+    const info = vi.spyOn(log, "info").mockImplementation(() => {})
+    const warn = vi.spyOn(log, "warn").mockImplementation(() => {})
+    try {
+      await expect(
+        worker.queue(
+          {
+            messages: [
+              { body: null },
+              { body: { kind: "unknown" } },
+              { body: { kind: "runtime" } },
+              { body: { kind: "runtime" } },
+            ],
+          },
+          {
+            DERIVE_AUTH_SECRET: "runtime-queue-test-secret",
+            DERIVE_ORTAM_RUNNER_PATH: "/opt/derive/bin/derive.js",
+            DB: {
+              prepare: () => {
+                throw Object.assign(new Error("private queue database input"), {
+                  code: "ECONNRESET",
+                })
+              },
+            },
+          } as unknown as Env,
+        ),
+      ).rejects.toThrow("Runtime tick failed; inspect runtime dispatch diagnostics")
+      expect(
+        info.mock.calls.filter(([message]) => message === "runtime tick started"),
+      ).toHaveLength(1)
+      expect(warn).toHaveBeenCalledWith("runtime tick failed", { reason: "connection" })
+      expect(JSON.stringify([info.mock.calls, warn.mock.calls])).not.toContain(
+        "private queue database input",
+      )
+    } finally {
+      info.mockRestore()
+      warn.mockRestore()
+    }
+  })
+})

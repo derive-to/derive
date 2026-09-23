@@ -397,6 +397,8 @@ export interface AppDeps {
    * every deployment with hosted runs off) ⇒ the run waits to be claimed, unchanged.
    */
   pokeRun?: (runId: string) => void
+  /** Best-effort wake for durable Ortam setup, execution and cleanup; cron remains the backstop. */
+  pokeRuntime?: () => void
   /**
    * derive.to's public site (the front door): the marketing pages, the blog, and
    * the trust files, served by their own Worker (the derive-to/site repo, private). A

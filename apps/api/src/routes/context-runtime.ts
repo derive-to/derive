@@ -209,6 +209,7 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
       runtime_id: runtime.id,
       input_snapshot: JSON.stringify(input),
     })
+    deps.pokeRuntime?.()
     return c.json({ run }, 201)
   })
   app.post("/v1/contexts/:id/runtime/disable", async (c) => {
@@ -219,6 +220,7 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
       return fail(c, 403, "Cloud runs are unavailable")
     if (runtime)
       await meta.disableContextRuntime(runtime.id, context.org_id, new Date().toISOString())
+    deps.pokeRuntime?.()
     return c.json({ disabled: true })
   })
 
@@ -366,6 +368,7 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
     )
     if (!receipt)
       return fail(c, 409, "Attempt is closed or a different result was already accepted")
+    deps.pokeRuntime?.()
     return c.json({ accepted: true })
   })
   return app
