@@ -24,6 +24,8 @@ const AUTHZ = new Set([
   "canManageCollection",
   // Shared Context gate checks the active workspace and creator/manager access.
   "manageableContext",
+  // Execution gate checks membership, publish permission and the Context ask policy.
+  "runnableContext",
   "ensureMembership",
   "isMember",
   "activeWorkspace",

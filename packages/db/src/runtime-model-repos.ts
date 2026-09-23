@@ -41,9 +41,9 @@ export function runtimeModelRepos(execute: (statement: SQL) => Promise<unknown[]
       return row
     },
     getRuntimeModelConnection: get,
-    listRuntimeModelConnections: async (orgId, ownerId) =>
+    listRuntimeModelConnections: async (orgId, ownerId, includeRevoked = false) =>
       (await execute(sql`SELECT * FROM runtime_model_connection
-        WHERE org_id = ${orgId} AND created_by = ${ownerId} AND revoked_at IS NULL
+        WHERE org_id = ${orgId} AND created_by = ${ownerId} AND (${includeRevoked ? 1 : 0} = 1 OR revoked_at IS NULL)
         ORDER BY created_at, id`)) as RuntimeModelConnectionRecord[],
     renameRuntimeModelConnection: (id, orgId, revision, name, at) =>
       first(sql`UPDATE runtime_model_connection SET name = ${checkedName(name)},

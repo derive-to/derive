@@ -14,16 +14,18 @@ export function RuntimeScheduleCard({
   contextId,
   schedule,
   nextRunAt,
+  fixedProvider,
 }: {
   contextId: string
   schedule: AutomationRecord | null
   nextRunAt: string | null
+  fixedProvider?: "codex" | "claude-code"
 }) {
   const queryClient = useQueryClient()
   const trigger = schedule ? JSON.parse(schedule.trigger) : null
   const saved = {
     instruction: schedule?.instruction ?? "",
-    provider: schedule?.provider ?? "codex",
+    provider: fixedProvider ?? schedule?.provider ?? "codex",
     cron: String(trigger?.cron ?? "0 9 * * *"),
     timezone: String(trigger?.tz ?? Intl.DateTimeFormat().resolvedOptions().timeZone),
     revision: schedule?.revision ?? null,
@@ -31,7 +33,7 @@ export function RuntimeScheduleCard({
   // Capture the revision on the first edit. Polling may refresh the saved definition,
   // but must neither erase the draft nor silently authorize overwriting another edit.
   const [draft, setDraft] = useState<typeof saved | null>(null)
-  const values = draft ?? saved
+  const values = { ...(draft ?? saved), ...(fixedProvider ? { provider: fixedProvider } : {}) }
   const { instruction, provider, cron, timezone } = values
   const stale = draft !== null && draft.revision !== saved.revision
   const save = useApiMutation({
@@ -102,7 +104,7 @@ export function RuntimeScheduleCard({
           data-testid="context-runtime-schedule-provider"
           value={provider}
           className="h-8 w-fit rounded-lg border border-input bg-transparent px-2 text-sm focus-visible:outline-2 focus-visible:outline-ring"
-          disabled={save.isPending}
+          disabled={!!fixedProvider || save.isPending}
           onChange={(e) =>
             setDraft({ ...values, provider: e.target.value as "codex" | "claude-code" })
           }

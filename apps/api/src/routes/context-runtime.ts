@@ -23,8 +23,8 @@ import { decryptSecret } from "../lib/crypto"
 import { fail, readJson } from "../lib/http"
 import { OrtamClient } from "../lib/ortam-client"
 import { runtimeRunContext } from "../lib/runtime-access"
-import { managedRuntimeClient } from "../lib/runtime-controller"
 import { runtimeInput } from "../lib/runtime-input"
+import { runtimeModelReady } from "../lib/runtime-model-grant"
 import { nextRuntimeOccurrence, runtimeScheduleAllows } from "../lib/runtime-schedule"
 import { verifyRuntimeToken } from "../lib/runtime-token"
 
@@ -38,6 +38,10 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
     const setup = await meta.getRuntimeSetup(context.id, context.org_id)
     if (!(await runtimeAvailable(ctx, c, context.org_id, runtime ?? setup)))
       return c.json({ enabled: false, runtime: null, schedule: null, next_run_at: null, runs: [] })
+    const modelGrant = await meta.getRuntimeModelBinding(context.id, context.org_id)
+    const modelAccount = modelGrant?.model_connection_id
+      ? await meta.getRuntimeModelConnection(modelGrant.model_connection_id, context.org_id)
+      : null
     const binding = runtime ?? setup
     const managed = binding
       ? binding.connection_id === null
@@ -57,6 +61,12 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
     return c.json({
       enabled: true,
       managed,
+      model_connection: modelAccount && {
+        id: modelAccount.id,
+        name: modelAccount.name,
+        provider: modelAccount.provider,
+        revoked: !!modelAccount.revoked_at,
+      },
       can_edit: context.created_by === viewer || (await ctx.workspaceCan(c, "manage")),
       setup: managed
         ? setup && {
@@ -179,13 +189,9 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
     if (body instanceof Response) return body
     if (managed && deps.runtime) {
       try {
-        const client = managedRuntimeClient(
-          deps.runtime,
-          context.org_id,
-          context.id,
-          deps.runtimeFetch,
+        if (
+          !(await runtimeModelReady(meta, deps.runtime, runtime, body.provider, deps.runtimeFetch))
         )
-        if (!(await client.hasModelConnection(body.provider, await client.authenticate())))
           return fail(c, 409, "The job’s model account needs to be connected")
       } catch {
         return fail(c, 502, "Could not verify the job’s model account")

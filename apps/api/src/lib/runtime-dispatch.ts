@@ -14,6 +14,8 @@ import { afterPublish } from "./after-publish"
 import { runtimeRunContext } from "./runtime-access"
 import { runtimeController } from "./runtime-controller"
 import { runtimeFailureReason } from "./runtime-diagnostics"
+import { prepareRuntimeModel } from "./runtime-model-attachment"
+import { runtimeModelReady } from "./runtime-model-grant"
 import { materializeRuntimeSchedules, runtimeScheduleAllows } from "./runtime-schedule"
 import { reconcileRuntimeSetups } from "./runtime-setup"
 import { signRuntimeToken } from "./runtime-token"
@@ -41,14 +43,7 @@ async function enabled(
     return false
   if (runtime.connection_id !== null) return true
   const input = JSON.parse(run.input_snapshot ?? "null") as RuntimeRunInput | null
-  const client = await runtimeController(deps.meta, deps.config, deps.secret, runtime, deps.fetcher)
-  return (
-    !!input &&
-    client.hasModelConnection(input.provider, {
-      organization_id: runtime.ortam_org_id,
-      user_id: runtime.ortam_user_id,
-    })
-  )
+  return !!input && runtimeModelReady(deps.meta, deps.config, runtime, input.provider, deps.fetcher)
 }
 
 async function finish(
@@ -107,6 +102,11 @@ async function reconcile(
   const at = (deps.now?.() ?? new Date()).toISOString()
   if (attempt.released_at) return finish(deps, run, attempt, at)
   await deps.meta.markRuntimeRunStarted(run.id, run.org_id, at)
+  if (["starting", "stopping"].includes(attempt.phase) && !attempt.startup_operation_id) {
+    const prepared = await prepareRuntimeModel(deps, run, attempt, runtime)
+    if (!prepared) return
+    runtime = prepared
+  }
   const identity = { organization_id: runtime.ortam_org_id, user_id: runtime.ortam_user_id }
   const transition = (change: Parameters<MetaStore["transitionRunAttempt"]>[3]) =>
     deps.meta.transitionRunAttempt(attempt.id, run.org_id, attempt.revision, change, at)

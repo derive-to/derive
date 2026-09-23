@@ -4,7 +4,7 @@ import { z } from "zod"
 import type { AppContext } from "../context"
 import { manageableContext, runtimeAvailable } from "../lib/context-access"
 import { fail, readJson } from "../lib/http"
-import { managedRuntimeClient } from "../lib/runtime-controller"
+import { runtimeModelReady } from "../lib/runtime-model-grant"
 import { nextRuntimeOccurrence } from "../lib/runtime-schedule"
 
 export const contextRuntimeScheduleRoutes = (ctx: AppContext) => {
@@ -38,13 +38,15 @@ export const contextRuntimeScheduleRoutes = (ctx: AppContext) => {
       return fail(c, 409, "Connect an active runtime first")
     if (body.enabled && runtime.connection_id === null && ctx.deps.runtime) {
       try {
-        const client = managedRuntimeClient(
-          ctx.deps.runtime,
-          context.org_id,
-          context.id,
-          ctx.deps.runtimeFetch,
+        if (
+          !(await runtimeModelReady(
+            ctx.meta,
+            ctx.deps.runtime,
+            runtime,
+            body.provider,
+            ctx.deps.runtimeFetch,
+          ))
         )
-        if (!(await client.hasModelConnection(body.provider, await client.authenticate())))
           return fail(c, 409, "Connect the selected agent’s model account first")
       } catch {
         return fail(c, 502, "Could not verify the job’s model account")

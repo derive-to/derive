@@ -6,8 +6,9 @@ import { connectionBindError, spendableConnections } from "../lib/broker"
 import { manageableContext, runtimeAvailable, runtimePilotAllowed } from "../lib/context-access"
 import { decryptSecret } from "../lib/crypto"
 import { fail, readJson } from "../lib/http"
-import { modelConnections, OrtamClient } from "../lib/ortam-client"
-import { managedRuntimeClient } from "../lib/runtime-controller"
+import { OrtamClient } from "../lib/ortam-client"
+import { managedModelClient } from "../lib/runtime-controller"
+import { runtimeModelSelection } from "../lib/runtime-model-grant"
 import { runtimeSetupRequest, SETUP_RUNNER_PATH, SETUP_TIMEOUT_MS } from "../lib/runtime-setup"
 
 export const contextRuntimeSetupRoutes = (ctx: AppContext) => {
@@ -37,9 +38,18 @@ export const contextRuntimeSetupRoutes = (ctx: AppContext) => {
     if (!connectionId && !managed) return fail(c, 400, "Choose a controller connection")
     if (connectionId && !(await runtimePilotAllowed(ctx, c, context.org_id)))
       return fail(c, 403, "Manual setup is operator-only")
+    const selected = connectionId
+      ? null
+      : await runtimeModelSelection(meta, context.id, context.org_id)
+    if (!connectionId && !selected)
+      return fail(c, 409, "Choose a connected model account for this job first")
     const prior = await meta.getRuntimeSetup(context.id, context.org_id)
     if (prior) {
-      if (prior.connection_id !== connectionId || prior.phase === "failed")
+      if (
+        prior.connection_id !== connectionId ||
+        prior.model_connection_id !== (selected?.connection.id ?? null) ||
+        prior.phase === "failed"
+      )
         return fail(c, 409, "This Context already has a setup attempt")
       return c.json({
         setup: connectionId
@@ -69,16 +79,14 @@ export const contextRuntimeSetupRoutes = (ctx: AppContext) => {
           return fail(c, 503, "Controller credential cannot be decrypted")
         auth = await new OrtamClient(deps.runtime.apiUrl, key, deps.runtimeFetch).authenticate()
       } else {
-        const client = managedRuntimeClient(
-          deps.runtime,
-          context.org_id,
-          context.id,
-          deps.runtimeFetch,
-        )
-        auth = await client.authenticate()
-        const connections = modelConnections.parse(await client.request("/agents", auth))
-        if (!connections.items.some((item) => item.status === "active"))
-          return fail(c, 409, "Connect a model account first")
+        if (!selected) return fail(c, 409, "Choose a model account first")
+        const client = managedModelClient(deps.runtime, selected.connection, deps.runtimeFetch)
+        auth = {
+          organization_id: selected.connection.ortam_org_id,
+          user_id: selected.connection.ortam_user_id,
+        }
+        if (!(await client.hasModelConnection(selected.connection.provider, auth)))
+          return fail(c, 409, "Connect the selected model account first")
       }
     } catch {
       return fail(c, 502, "Could not verify the cloud connection")
@@ -93,6 +101,8 @@ export const contextRuntimeSetupRoutes = (ctx: AppContext) => {
         agent_id: context.agent_id,
         created_by: owner,
         connection_id: connectionId,
+        model_connection_id: selected?.connection.id ?? null,
+        model_binding_revision: selected?.binding.revision ?? null,
         api_url: deps.runtime.apiUrl,
         ortam_org_id: auth.organization_id,
         ortam_user_id: auth.user_id,

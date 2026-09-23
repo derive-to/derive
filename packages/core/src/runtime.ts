@@ -10,18 +10,24 @@ export interface ContextRuntimeRecord {
   ortam_org_id: string
   ortam_user_id: string
   sandbox_id: string
-  /** Null uses the deployment service integration, scoped to this Context’s job. */
+  /** Null uses the deployment service integration. */
   connection_id: string | null
+  /** Last applied account; retained for cleanup after the job grant changes. */
+  model_connection_id: string | null
   disabled_at: string | null
   created_at: string
 }
 
-export type NewContextRuntime = Omit<ContextRuntimeRecord, "disabled_at" | "created_at">
+export type NewContextRuntime = Omit<
+  ContextRuntimeRecord,
+  "disabled_at" | "created_at" | "model_connection_id"
+>
 
 /** Accepted inputs. No tokens or environment values belong in this snapshot. */
 export interface RuntimeRunInput {
   version: 1
   schedule_revision?: number
+  model_connection?: { id: string; revision: number }
   instruction: string
   context_id: string
   manifest: { artifact_id: string; version: number; blob_key: string }
@@ -62,6 +68,9 @@ export interface RunAttemptRecord {
   attempt: number
   revision: number
   phase: RunAttemptPhase
+  /** Previous attachment identity captured by exclusive attempt admission. */
+  model_source_connection_id: string | null
+  model_source_user_id: string | null
   startup_operation_id: string | null
   /** Persisted before process submission. An unknown launch outcome cannot be retried. */
   launch_started_at: string | null
@@ -91,11 +100,13 @@ export interface RuntimeSetupRecord {
   context_id: string
   agent_id: string
   created_by: string
-  /** Null uses the deployment service integration, scoped to this Context’s job. */
+  /** Null uses the deployment service integration. */
   connection_id: string | null
   api_url: string
   ortam_org_id: string
   ortam_user_id: string
+  model_connection_id: string | null
+  model_binding_revision: number | null
   request_json: string
   phase:
     | "queued"
@@ -130,7 +141,10 @@ export type NewRuntimeSetup = Pick<
   | "ortam_user_id"
   | "request_json"
   | "deadline_at"
->
+> & {
+  model_connection_id?: string | null
+  model_binding_revision?: number | null
+}
 export type RuntimeSetupChange = Pick<RuntimeSetupRecord, "phase"> &
   Partial<
     Pick<
@@ -153,5 +167,15 @@ export interface RuntimeModelConnectionRecord {
   revision: number
   revoked_at: string | null
   created_at: string
+  updated_at: string
+}
+
+/** Explicit consent for one job. Removing access retains the revision, invalidating old runs. */
+export interface RuntimeModelBindingRecord {
+  context_id: string
+  org_id: string
+  model_connection_id: string | null
+  granted_by: string
+  revision: number
   updated_at: string
 }

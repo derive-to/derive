@@ -377,6 +377,15 @@ export const runtimeModelConnection = pgTable(
 
 // Persistent environments and execution ownership outlive deleted Contexts and automations.
 // One permanent admission slot serializes manual binding and automatic setup on every store.
+export const runtimeModelBinding = pgTable("runtime_model_binding", {
+  context_id: text("context_id").primaryKey(),
+  org_id: text("org_id").notNull(),
+  model_connection_id: text("model_connection_id"),
+  granted_by: text("granted_by").notNull(),
+  revision: integer("revision").notNull().default(0),
+  updated_at: text("updated_at").notNull(),
+})
+
 export const runtimeOwner = pgTable("runtime_owner", {
   context_id: text("context_id").primaryKey(),
   org_id: text("org_id").notNull(),
@@ -395,6 +404,8 @@ export const runtimeSetup = pgTable(
     api_url: text("api_url").notNull(),
     ortam_org_id: text("ortam_org_id").notNull(),
     ortam_user_id: text("ortam_user_id").notNull(),
+    model_connection_id: text("model_connection_id"),
+    model_binding_revision: integer("model_binding_revision"),
     request_json: text("request_json").notNull(),
     phase: text("phase").$type<import("@derive/core").RuntimeSetupRecord["phase"]>().notNull(),
     revision: integer("revision").notNull().default(0),
@@ -422,6 +433,7 @@ export const contextRuntime = pgTable(
     ortam_user_id: text("ortam_user_id").notNull(),
     sandbox_id: text("sandbox_id").notNull(),
     connection_id: text("connection_id"),
+    model_connection_id: text("model_connection_id"),
     disabled_at: text("disabled_at"),
     created_at: text("created_at").notNull(),
   },
@@ -441,6 +453,8 @@ export const runAttempt = pgTable(
     attempt: integer("attempt").notNull(),
     revision: integer("revision").notNull().default(0),
     phase: text("phase").$type<import("@derive/core").RunAttemptPhase>().notNull(),
+    model_source_connection_id: text("model_source_connection_id"),
+    model_source_user_id: text("model_source_user_id"),
     startup_operation_id: text("startup_operation_id"),
     launch_started_at: text("launch_started_at"),
     runner_claimed_at: text("runner_claimed_at"),
@@ -1619,6 +1633,7 @@ const TABLES = [
   runtimeSetup,
   runtimeOwner,
   runtimeModelConnection,
+  runtimeModelBinding,
   runAttempt,
   workflowRun,
   workflowStepAttempt,

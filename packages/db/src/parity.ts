@@ -50,6 +50,7 @@ import type {
   ReviewRoundRecord,
   RunAttemptRecord,
   RunRecord,
+  RuntimeModelBindingRecord,
   RuntimeModelConnectionRecord,
   RuntimeSetupRecord,
   SessionMessageRecord,
@@ -103,6 +104,7 @@ export interface TypedTables {
   automation: AutomationRecord
   contextRuntime: ContextRuntimeRecord
   runtimeModelConnection: RuntimeModelConnectionRecord
+  runtimeModelBinding: RuntimeModelBindingRecord
   runtimeSetup: RuntimeSetupRecord
   runAttempt: RunAttemptRecord
   run: RunRecord

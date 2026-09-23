@@ -4,7 +4,10 @@ import { spendableConnections } from "./broker"
 import { decryptSecret, sha256 } from "./crypto"
 import { OrtamClient } from "./ortam-client"
 
-type Controller = Pick<ContextRuntimeRecord, "api_url" | "org_id" | "context_id" | "connection_id">
+type Controller = Pick<
+  ContextRuntimeRecord,
+  "api_url" | "org_id" | "context_id" | "connection_id" | "model_connection_id"
+>
 export function managedRuntimeClient(
   config: NonNullable<AppDeps["runtime"]>,
   orgId: string,
@@ -31,8 +34,15 @@ export async function runtimeController(
   cleanup = false,
 ) {
   if (runtime.api_url !== config.apiUrl) throw new Error("Runtime belongs to a different Ortam API")
-  if (runtime.connection_id === null)
+  if (runtime.connection_id === null) {
+    if (runtime.model_connection_id)
+      return managedModelClient(
+        config,
+        { id: runtime.model_connection_id, org_id: runtime.org_id, api_url: runtime.api_url },
+        fetcher,
+      )
     return managedRuntimeClient(config, runtime.org_id, runtime.context_id, fetcher)
+  }
   const connections = cleanup
     ? await meta.getConnectionsByIds([runtime.connection_id])
     : await spendableConnections(meta, runtime.org_id, [runtime.connection_id])

@@ -321,6 +321,7 @@ CREATE TABLE IF NOT EXISTS context_runtime (
   ortam_user_id TEXT NOT NULL,
   sandbox_id TEXT NOT NULL,
   connection_id TEXT,
+  model_connection_id TEXT,
   disabled_at TEXT,
   created_at TEXT NOT NULL,
   UNIQUE (context_id),
@@ -337,6 +338,8 @@ CREATE TABLE IF NOT EXISTS runtime_setup (
   api_url TEXT NOT NULL,
   ortam_org_id TEXT NOT NULL,
   ortam_user_id TEXT NOT NULL,
+  model_connection_id TEXT,
+  model_binding_revision INTEGER,
   request_json TEXT NOT NULL,
   phase TEXT NOT NULL,
   revision INTEGER NOT NULL DEFAULT 0,
@@ -372,6 +375,15 @@ CREATE TABLE IF NOT EXISTS runtime_model_connection (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS runtime_model_binding (
+  context_id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  model_connection_id TEXT,
+  granted_by TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS run_attempt (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,
@@ -380,6 +392,8 @@ CREATE TABLE IF NOT EXISTS run_attempt (
   attempt INTEGER NOT NULL,
   revision INTEGER NOT NULL DEFAULT 0,
   phase TEXT NOT NULL,
+  model_source_connection_id TEXT,
+  model_source_user_id TEXT,
   startup_operation_id TEXT,
   launch_started_at TEXT,
   runner_claimed_at TEXT,
