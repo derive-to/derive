@@ -529,6 +529,12 @@ manage its login; workspace membership or permission to edit an unrelated job do
 not grant that authority. Infrastructure identifiers and provider credentials are
 excluded from responses.
 
+Creating a connection or starting/completing sign-in requires managed rollout and
+publish access. An owner who still has workspace read access can inspect or cancel
+an existing sign-in and disconnect the account after either gate is withdrawn.
+Status responses recheck local revocation after reading the provider, so a slow
+provider response cannot overwrite a completed disconnect with an active account.
+
 A connection's immutable ID and workspace determine its integration subject, in
 a namespace separate from legacy Context subjects. Its expected Ortam organization,
 user identity and API origin are saved at creation. A configuration change cannot
