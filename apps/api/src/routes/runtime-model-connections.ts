@@ -151,43 +151,50 @@ export const runtimeModelConnectionRoutes = (ctx: AppContext) => {
     }
   })
 
-  const signInRequest = async (c: Context, suffix: string, method = "GET", body?: unknown) => {
+  const signInRequest = async (
+    c: Context,
+    action: "start" | "read" | "complete" | "cancel",
+    code?: string,
+  ) => {
     const connection = await owned(c)
     if (connection instanceof Response) return connection
     const config = await available(c, connection.org_id)
     if (config instanceof Response) return config
     if (connection.revoked_at) return fail(c, 409, "This connection has been revoked")
     try {
-      const result = modelSignIn.parse(
-        await clientFor(connection).request(
-          suffix === "/sign-in" ? `/agents/${modelHarness(connection.provider)}/sign-in` : suffix,
-          identity(connection),
-          method,
-          body,
-        ),
-      )
+      const client = clientFor(connection)
+      const attemptId = c.req.param("attempt") ?? ""
+      const attemptPath = `/agent-sign-in-attempts/${encodeURIComponent(attemptId)}`
+      const result =
+        action === "complete"
+          ? await client.completeModelSignIn(attemptId, code ?? "", identity(connection))
+          : modelSignIn.parse(
+              await client.request(
+                action === "start"
+                  ? `/agents/${modelHarness(connection.provider)}/sign-in`
+                  : `${attemptPath}${action === "cancel" ? "/cancel" : ""}`,
+                identity(connection),
+                action === "read" ? "GET" : "POST",
+              ),
+            )
       // A slow sign-in must not report success after the owner disconnected it.
       const current = await ctx.meta.getRuntimeModelConnection(connection.id, connection.org_id)
       if (!current || current.revoked_at) {
         await disconnect(connection)
         return fail(c, 409, "This connection has been revoked")
       }
-      return c.json(result, suffix === "/sign-in" ? 202 : 200)
+      return c.json(result, action === "start" ? 202 : 200)
     } catch {
       return fail(c, 502, "Could not update model sign-in. Check the connection and try again.")
     }
   }
-  const attemptPath = (c: Context) =>
-    `/agent-sign-in-attempts/${encodeURIComponent(c.req.param("attempt") ?? "")}`
-  app.post(`${path}/:connection/sign-in`, (c) => signInRequest(c, "/sign-in", "POST"))
-  app.get(`${path}/:connection/sign-in/:attempt`, (c) => signInRequest(c, attemptPath(c)))
+  app.post(`${path}/:connection/sign-in`, (c) => signInRequest(c, "start"))
+  app.get(`${path}/:connection/sign-in/:attempt`, (c) => signInRequest(c, "read"))
   app.post(`${path}/:connection/sign-in/:attempt/complete`, async (c) => {
-    const body = await readJson(c, z.object({ code: z.string().trim().min(1).max(8192) }))
+    const body = await readJson(c, z.object({ code: z.string().trim().min(1).max(4096) }))
     if (body instanceof Response) return body
-    return signInRequest(c, `${attemptPath(c)}/complete`, "POST", body)
+    return signInRequest(c, "complete", body.code)
   })
-  app.post(`${path}/:connection/sign-in/:attempt/cancel`, (c) =>
-    signInRequest(c, `${attemptPath(c)}/cancel`, "POST"),
-  )
+  app.post(`${path}/:connection/sign-in/:attempt/cancel`, (c) => signInRequest(c, "cancel"))
   return app
 }

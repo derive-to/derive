@@ -128,6 +128,21 @@ export class OrtamClient {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
   }
+  /** Completion returns a Connection in Ortam's public API, not an Attempt.
+   * Read the attempt to report its state; a retry after a lost success must not
+   * exchange the same authorization code again. */
+  async completeModelSignIn(
+    attemptId: string,
+    code: string,
+    identity: { organization_id: string; user_id: string },
+  ) {
+    const path = `/agent-sign-in-attempts/${encodeURIComponent(attemptId)}`
+    const prior = modelSignIn.parse(await this.request(path, identity))
+    if (prior.state === "complete") return prior
+    await this.request(`${path}/complete`, identity, "POST", { code })
+    return modelSignIn.parse(await this.request(path, identity))
+  }
+
   async hasModelConnection(
     provider: "codex" | "claude-code",
     identity: { organization_id: string; user_id: string },

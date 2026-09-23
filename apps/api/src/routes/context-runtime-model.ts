@@ -58,17 +58,10 @@ export const contextRuntimeModelRoutes = (ctx: AppContext) => {
   app.post("/v1/contexts/:id/runtime/model/sign-in/:attempt/complete", async (c) => {
     const auth = await authority(c)
     if (auth instanceof Response) return auth
-    const body = await readJson(c, z.object({ code: z.string().trim().min(1).max(8192) }))
+    const body = await readJson(c, z.object({ code: z.string().trim().min(1).max(4096) }))
     if (body instanceof Response) return body
     return c.json(
-      modelSignIn.parse(
-        await auth.client.request(
-          `/agent-sign-in-attempts/${encodeURIComponent(c.req.param("attempt"))}/complete`,
-          auth.identity,
-          "POST",
-          body,
-        ),
-      ),
+      await auth.client.completeModelSignIn(c.req.param("attempt"), body.code, auth.identity),
     )
   })
   app.post("/v1/contexts/:id/runtime/model/sign-in/:attempt/cancel", async (c) => {

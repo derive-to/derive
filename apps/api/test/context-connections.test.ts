@@ -1954,6 +1954,7 @@ describe("reusable runtime model accounts", () => {
     managed: { apiKey: "reusable integration fixture", workspaceIds: new Set(["default"]) },
   }
   const requests: { path: string; subject: string | null; method: string }[] = []
+  const signInStates = new Map<string | null, string>()
   let failDisconnect = false
   let completeGate: Promise<void> | null = null
   let enteredComplete: (() => void) | null = null
@@ -1988,13 +1989,21 @@ describe("reusable runtime model accounts", () => {
         enteredComplete?.()
         await completeGate
       }
+      if (path.endsWith("/complete")) {
+        signInStates.set(subject, "complete")
+        return json({
+          id: "connection-fixture",
+          harness: "claude_code",
+          status: "active",
+          identity: { email: "claude@example.test" },
+        })
+      }
+      if (path.endsWith("/sign-in")) signInStates.set(subject, "pending")
+      if (path.endsWith("/cancel") && signInStates.get(subject) === "pending")
+        signInStates.set(subject, "cancelled")
       return json({
         id: "sign-in-fixture",
-        state: path.endsWith("/complete")
-          ? "complete"
-          : path.endsWith("/cancel")
-            ? "cancelled"
-            : "pending",
+        state: signInStates.get(subject) ?? "pending",
         user_code: "ABCD-1234",
         verification_url: "https://auth.example.test/device",
         authorize_url: null,
@@ -2085,6 +2094,14 @@ describe("reusable runtime model accounts", () => {
       jsonAs(as(owner.email), { code: "authorization fixture" }),
     )
     expect((await finish.json()).state).toBe("complete")
+    const exchanges = requests.filter((r) => r.path.endsWith("/complete")).length
+    const retry = await app.request(
+      `${base}/sign-in/sign-in-fixture/complete`,
+      jsonAs(as(owner.email), { code: "authorization fixture" }),
+    )
+    expect((await retry.json()).state).toBe("complete")
+    expect(requests.filter((r) => r.path.endsWith("/complete"))).toHaveLength(exchanges)
+    await app.request(`${base}/sign-in`, jsonAs(as(owner.email), {}))
     const cancel = await app.request(
       `${base}/sign-in/sign-in-fixture/cancel`,
       jsonAs(as(owner.email), {}),
@@ -2157,8 +2174,9 @@ describe("reusable runtime model accounts", () => {
     expect(list.items.some((item: { id: string }) => item.id === connection.id)).toBe(false)
   })
   it("does not report successful sign-in when disconnect wins during provider completion", async () => {
-    const connection = await create()
+    const connection = await create("claude-code")
     const base = `${path}/${connection.id}`
+    await app.request(`${base}/sign-in`, jsonAs(as(owner.email), {}))
     let release: () => void = () => {}
     completeGate = new Promise<void>((resolve) => {
       release = resolve
@@ -2182,6 +2200,29 @@ describe("reusable runtime model accounts", () => {
       completeGate = null
       enteredComplete = null
     }
+  })
+  it("normalizes the real completion response for the existing Context sign-in flow too", async () => {
+    const manifest = await publishAs(app, "# Job", { title: "Claude sign-in" }, as(owner.email))
+    const { short_id } = await manifest.json()
+    const context = await (
+      await app.request(
+        "/v1/contexts",
+        jsonAs(as(owner.email), {
+          name: "Claude sign-in",
+          manifest_short_id: short_id,
+        }),
+      )
+    ).json()
+    const modelPath = `/v1/contexts/${context.id}/runtime/model/sign-in`
+    expect(
+      (await app.request(modelPath, jsonAs(as(owner.email), { provider: "claude-code" }))).status,
+    ).toBe(202)
+    const response = await app.request(
+      `${modelPath}/sign-in-fixture/complete`,
+      jsonAs(as(owner.email), { code: "authorization fixture" }),
+    )
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ id: "sign-in-fixture", state: "complete" })
   })
   it("rejects malformed connection creation before contacting the service", async () => {
     const before = requests.length
