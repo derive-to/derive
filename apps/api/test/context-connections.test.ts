@@ -1016,6 +1016,30 @@ describe("Ortam runtime lifecycle", () => {
     }
   })
 
+  it.each([
+    "rollout",
+    "controller",
+  ])("revokes claimed tool access after %s withdrawal but accepts results and saves", async (withdrawal) => {
+    const f = await launched()
+    expect((await attemptRequest(f.sandbox, "claim")).status).toBe(200)
+    // An unknown tool reaches the grant check, then the tool allowlist.
+    expect((await attemptRequest(f.sandbox, "tool", { tool: "anything" })).status).toBe(403)
+    if (withdrawal === "rollout") config.pilotWorkspaceIds.clear()
+    else await meta.setConnectionStatus(f.connection.id, "default", "revoked")
+    try {
+      expect((await attemptRequest(f.sandbox, "claim")).status).toBe(403)
+      const denied = await attemptRequest(f.sandbox, "tool", { tool: "anything" })
+      expect(denied.status).toBe(403)
+      expect(await denied.text()).toContain("Runtime access has been revoked")
+      expect((await attemptRequest(f.sandbox, "result", result)).status).toBe(200)
+      for (let i = 0; i < 5; i++) await pass()
+      expect(f.sandbox.state).toBe("stopped")
+      expect((await meta.getRun(f.run.id))?.status).toBe("succeeded")
+    } finally {
+      config.pilotWorkspaceIds.add("default")
+    }
+  })
+
   it("validates schedule permissions, timezone, and concurrent edits", async () => {
     const f = await scheduled()
     expect(
@@ -1709,6 +1733,7 @@ describe("operator runtime provisioning", () => {
       jsonAs(as(owner.email), { provider: "codex" }),
     )
     expect(login.status).toBe(202)
+    expect(login.headers.get("Cache-Control")).toBe("no-store")
     expect(await login.json()).toMatchObject({ user_code: "ABCD-1234" })
     const started = await app.request(`${f.path}/setup`, jsonAs(as(owner.email), {}))
     expect(started.status).toBe(202)
@@ -1781,6 +1806,59 @@ describe("operator runtime provisioning", () => {
       claimed: true,
       input: { provider: "codex", instruction: definition.instruction },
     })
+    const callManagedTool = () =>
+      app.request(`/v1/runtime-attempts/${task.attempt}/tool`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ tool: "anything" }),
+      })
+    await app.request(
+      `/v1/contexts/${f.context.id}/access`,
+      jsonAs(as(owner.email), { ask_policy: "invited" }),
+    )
+    const restricted = await callManagedTool()
+    expect(restricted.status).toBe(403)
+    expect(await restricted.text()).toContain("Runtime access has been revoked")
+    await app.request(
+      `/v1/contexts/${f.context.id}/access`,
+      jsonAs(as(owner.email), { ask_policy: "workspace" }),
+    )
+    await meta.setMembership({
+      id: "setup-member-seat",
+      org_id: "default",
+      user_id: member.id,
+      role: "viewer",
+    })
+    const demoted = await callManagedTool()
+    expect(demoted.status).toBe(403)
+    expect(await demoted.text()).toContain("Runtime access has been revoked")
+    await meta.setMembership({
+      id: "setup-member-seat",
+      org_id: "default",
+      user_id: member.id,
+      role: "editor",
+    })
+    // Keeping operator rollout enabled must never reopen a revoked managed job.
+    config.managed.workspaceIds.clear()
+    config.pilotWorkspaceIds.add("default")
+    const deniedState = await app.request(f.path, { headers: as(owner.email) })
+    expect(await deniedState.json()).toMatchObject({ enabled: false, runtime: null })
+    expect((await app.request(`${f.path}/runs`, jsonAs(as(owner.email), {}))).status).toBe(403)
+    expect(
+      (
+        await app.request(`${f.path}/schedule`, {
+          ...jsonAs(as(owner.email), { ...definition, revision: 0 }),
+          method: "PUT",
+        })
+      ).status,
+    ).toBe(403)
+    const deniedTool = await app.request(`/v1/runtime-attempts/${task.attempt}/tool`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ tool: "anything" }),
+    })
+    expect(deniedTool.status).toBe(403)
+    expect(await deniedTool.text()).toContain("Runtime access has been revoked")
     const result = await app.request(`/v1/runtime-attempts/${task.attempt}/result`, {
       method: "POST",
       headers,
@@ -1799,6 +1877,7 @@ describe("operator runtime provisioning", () => {
       phase: "released",
     })
 
+    config.managed.workspaceIds.add("default")
     const updated = await app.request(`${f.path}/schedule`, {
       ...jsonAs(as(owner.email), { ...definition, instruction: "Updated job", revision: 0 }),
       method: "PUT",
@@ -1811,6 +1890,43 @@ describe("operator runtime provisioning", () => {
     ).toBe(200)
     expect((await app.request(`${f.path}/runs`, jsonAs(as(member.email), {}))).status).toBe(409)
     expect((await app.request(`${f.path}/disable`, jsonAs(as(member.email), {}))).status).toBe(403)
+  })
+
+  it("does not convert pending operator setup into managed authority when the rollout changes", async () => {
+    const f = await fixture()
+    expect((await f.submit()).status).toBe(202)
+    const initial = await f.state()
+    config.managed.workspaceIds.add("default")
+    const visible = await app.request(f.path, { headers: as(owner.email) })
+    expect(await visible.json()).toMatchObject({
+      managed: false,
+      setup: { connection_id: f.connection.id },
+    })
+    await meta.setMembership({
+      id: "setup-member-seat",
+      org_id: "default",
+      user_id: member.id,
+      role: "owner",
+    })
+    try {
+      expect(
+        (await app.request(`${f.path}/setup/cancel`, jsonAs(as(member.email), {}))).status,
+      ).toBe(403)
+      expect(await f.state()).toEqual(initial)
+      config.pilotWorkspaceIds.clear()
+      expect((await f.cancel()).status).toBe(403)
+      expect(await (await app.request(f.path, { headers: as(owner.email) })).json()).toMatchObject({
+        enabled: false,
+      })
+      expect(await f.state()).toEqual(initial)
+    } finally {
+      await meta.setMembership({
+        id: "setup-member-seat",
+        org_id: "default",
+        user_id: member.id,
+        role: "editor",
+      })
+    }
   })
 
   it("keeps managed cleanup working after rollout is revoked", async () => {

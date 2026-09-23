@@ -121,7 +121,8 @@ export const contextRuntimeSetupRoutes = (ctx: AppContext) => {
   app.post("/v1/contexts/:id/runtime/setup/cancel", async (c) => {
     const context = await manageableContext(ctx, c)
     if (context instanceof Response) return context
-    if (!(await runtimeAvailable(ctx, c, context.org_id)))
+    const prior = await meta.getRuntimeSetup(context.id, context.org_id)
+    if (!(await runtimeAvailable(ctx, c, context.org_id, prior)))
       return fail(c, 403, "Cloud run pilot is unavailable")
     if (await meta.getContextRuntimeForContext(context.id, context.org_id))
       return fail(c, 409, "Setup has completed; disable the runtime instead")

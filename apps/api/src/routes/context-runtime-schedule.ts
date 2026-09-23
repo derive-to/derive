@@ -2,9 +2,8 @@ import { newId } from "@derive/core"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
-import { manageableContext, runtimeAvailable, runtimePilotAllowed } from "../lib/context-access"
+import { manageableContext, runtimeAvailable } from "../lib/context-access"
 import { fail, readJson } from "../lib/http"
-import { modelConnections } from "../lib/ortam-client"
 import { managedRuntimeClient } from "../lib/runtime-controller"
 import { nextRuntimeOccurrence } from "../lib/runtime-schedule"
 
@@ -13,7 +12,8 @@ export const contextRuntimeScheduleRoutes = (ctx: AppContext) => {
   app.put("/v1/contexts/:id/runtime/schedule", async (c) => {
     const context = await manageableContext(ctx, c)
     if (context instanceof Response) return context
-    if (!(await runtimeAvailable(ctx, c, context.org_id)))
+    const runtime = await ctx.meta.getContextRuntimeForContext(context.id, context.org_id)
+    if (!(await runtimeAvailable(ctx, c, context.org_id, runtime)))
       return fail(c, 403, "Cloud run pilot is unavailable")
     const body = await readJson(
       c,
@@ -33,12 +33,9 @@ export const contextRuntimeScheduleRoutes = (ctx: AppContext) => {
       (!settings.hostedAgentsEnabled || !settings.agentWrites || !settings.automateBeta)
     )
       return fail(c, 403, "Enable hosted agents, agent writes and automations for this workspace")
-    const runtime = await ctx.meta.getContextRuntimeForContext(context.id, context.org_id)
     const owner = await ctx.managementPrincipal(c)
     if (!runtime || runtime.disabled_at || !owner)
       return fail(c, 409, "Connect an active runtime first")
-    if (runtime.connection_id !== null && !(await runtimePilotAllowed(ctx, c, context.org_id)))
-      return fail(c, 403, "Cloud run pilot is unavailable")
     if (body.enabled && runtime.connection_id === null && ctx.deps.runtime) {
       try {
         const client = managedRuntimeClient(
@@ -47,16 +44,7 @@ export const contextRuntimeScheduleRoutes = (ctx: AppContext) => {
           context.id,
           ctx.deps.runtimeFetch,
         )
-        const connections = modelConnections.parse(
-          await client.request("/agents", await client.authenticate()),
-        )
-        if (
-          !connections.items.some(
-            (item) =>
-              item.status === "active" &&
-              item.harness === (body.provider === "codex" ? "codex" : "claude_code"),
-          )
-        )
+        if (!(await client.hasModelConnection(body.provider, await client.authenticate())))
           return fail(c, 409, "Connect the selected agent’s model account first")
       } catch {
         return fail(c, 502, "Could not verify the job’s model account")

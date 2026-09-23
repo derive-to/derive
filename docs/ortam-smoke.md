@@ -501,7 +501,11 @@ invited asker or workspace ask policy). Editing still requires Context managemen
 Manual runs consume the saved schedule's instruction, provider and revision rather
 than parameters supplied by the triggerer. Edits invalidate queued stale definitions;
 claimed work finishes against its pinned input and live tool-grant intersection.
-Disconnecting an account prevents new runs and withdraws model delivery.
+Disconnecting an account prevents new runs and withdraws model delivery. Dispatch,
+runner claims and every tool call share the live execution grant, including the saved
+runtime's rollout mode, membership, Context access and controller status. Revocation
+still permits result receipts and shutdown; it never converts a managed runtime into
+an operator runtime, or the reverse.
 
 Customers see provider sign-in, preparation, the job and run status. Service identities,
 controller references and sandbox IDs are omitted from the managed status projection.
