@@ -218,7 +218,9 @@ test("failed stop still deletes the disposable machine, without claiming the cyc
 
 test("failed deletion leaves a recoverable receipt and cannot report cleanup complete", async (t) => {
   const f = await fixture(t, { failedOperation: "delete" })
-  await assert.rejects(runOrtamSmoke({ ...f.input, cleanupMs: 100 }), /Cleanup is unconfirmed/)
+  // The failed operation must end the check; a wall-clock timeout is not evidence
+  // that deletion was attempted or that its recovery receipt was persisted.
+  await assert.rejects(runOrtamSmoke(f.input), /Ortam deletion failed\. Cleanup is unconfirmed/)
   const receipt = JSON.parse(await readFile(f.statePath, "utf8"))
   assert.equal(receipt.phase, "delete")
   assert.ok(receipt.delete_operation)
