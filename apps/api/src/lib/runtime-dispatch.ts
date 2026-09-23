@@ -6,13 +6,12 @@ import {
   type RunAttemptRecord,
   type RunAttemptResult,
   type RunRecord,
-  roleAllows,
+  type RuntimeRunInput,
 } from "@derive/core"
 import { type AppDeps, buildContext } from "../context"
 import { log } from "../log"
 import { afterPublish } from "./after-publish"
-import { spendableConnections } from "./broker"
-import { modelConnections } from "./ortam-client"
+import { runtimeRunContext } from "./runtime-access"
 import { runtimeController } from "./runtime-controller"
 import { runtimeFailureReason } from "./runtime-diagnostics"
 import { materializeRuntimeSchedules, runtimeScheduleAllows } from "./runtime-schedule"
@@ -37,56 +36,18 @@ async function enabled(
   claimed = false,
 ) {
   if (!claimed && !(await runtimeScheduleAllows(deps.meta, run))) return false
-  const managed = runtime.connection_id === null
-  if (
-    managed
-      ? !deps.config.managed?.workspaceIds.has(run.org_id)
-      : !deps.config.pilotWorkspaceIds.has(run.org_id)
-  )
+  if (!(await runtimeRunContext(deps.meta, deps.config, run, runtime))) return false
+  if (!claimed && run.automation_id && !(await deps.meta.getOrgSettings(run.org_id)).automateBeta)
     return false
-  const settings = await deps.meta.getOrgSettings(run.org_id)
-  const context = await deps.meta.getContext(runtime.context_id)
-  const agent = await deps.meta.getAgent(run.agent_id)
-  const credentials = runtime.connection_id
-    ? await spendableConnections(deps.meta, runtime.org_id, [runtime.connection_id])
-    : []
-  const member = run.initiated_by
-    ? await deps.meta.getMembership(run.org_id, run.initiated_by)
-    : null
-  const allowed = !!(
-    (managed || credentials.some((c) => c.kind === "secret" && !!c.secret_enc)) &&
-    (claimed || !run.automation_id || settings.automateBeta) &&
-    settings.hostedAgentsEnabled &&
-    settings.agentWrites &&
-    !runtime.disabled_at &&
-    context?.org_id === run.org_id &&
-    context.agent_id === run.agent_id &&
-    agent?.org_id === run.org_id &&
-    run.initiated_by &&
-    (managed || (await deps.meta.isInstanceOperator(run.initiated_by))) &&
-    member &&
-    (!managed || roleAllows(member.role, "publish"))
-  )
-  if (!allowed || !managed) return allowed
-  if (
-    context &&
-    context.ask_policy !== "workspace" &&
-    context.created_by !== run.initiated_by &&
-    (!run.initiated_by || !(await deps.meta.getContextAsker(context.id, run.initiated_by)))
-  )
-    return false
-  const input = JSON.parse(run.input_snapshot ?? "null")
+  if (runtime.connection_id !== null) return true
+  const input = JSON.parse(run.input_snapshot ?? "null") as RuntimeRunInput | null
   const client = await runtimeController(deps.meta, deps.config, deps.secret, runtime, deps.fetcher)
-  const connections = modelConnections.parse(
-    await client.request("/agents", {
+  return (
+    !!input &&
+    client.hasModelConnection(input.provider, {
       organization_id: runtime.ortam_org_id,
       user_id: runtime.ortam_user_id,
-    }),
-  )
-  return connections.items.some(
-    (item) =>
-      item.status === "active" &&
-      item.harness === (input?.provider === "codex" ? "codex" : "claude_code"),
+    })
   )
 }
 

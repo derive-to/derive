@@ -1,4 +1,4 @@
-import type { ContextRecord } from "@derive/core"
+import type { ContextRecord, ContextRuntimeRecord } from "@derive/core"
 import type { Context } from "hono"
 import type { AppContext } from "../context"
 import { fail } from "./http"
@@ -46,6 +46,14 @@ export async function runnableContext(ctx: AppContext, c: Context) {
   return manageableContext(ctx, c)
 }
 
-export async function runtimeAvailable(ctx: AppContext, c: Context, orgId: string) {
-  return !!ctx.deps.runtime?.managed?.workspaceIds.has(orgId) || runtimePilotAllowed(ctx, c, orgId)
+/** Once a setup/runtime exists, its saved controller selects the rollout gate. */
+export async function runtimeAvailable(
+  ctx: AppContext,
+  c: Context,
+  orgId: string,
+  binding?: Pick<ContextRuntimeRecord, "connection_id"> | null,
+) {
+  const managed = !!ctx.deps.runtime?.managed?.workspaceIds.has(orgId)
+  if (binding?.connection_id === null) return managed
+  return (!binding && managed) || runtimePilotAllowed(ctx, c, orgId)
 }

@@ -3,11 +3,10 @@ import { z } from "zod"
 import type { AppContext } from "../context"
 import { manageableContext } from "../lib/context-access"
 import { fail, readJson } from "../lib/http"
-import { modelConnections } from "../lib/ortam-client"
+import { modelConnections, modelHarness } from "../lib/ortam-client"
 import { managedRuntimeClient } from "../lib/runtime-controller"
 
 const provider = z.enum(["codex", "claude-code"])
-const harness = (value: z.infer<typeof provider>) => (value === "codex" ? "codex" : "claude_code")
 const link = z
   .string()
   .url()
@@ -25,6 +24,7 @@ const signIn = z.object({
 export const contextRuntimeModelRoutes = (ctx: AppContext) => {
   const app = new Hono()
   const authority = async (c: Parameters<typeof manageableContext>[1]) => {
+    c.header("Cache-Control", "no-store")
     const context = await manageableContext(ctx, c)
     if (context instanceof Response) return context
     if (context.import_source) return fail(c, 400, "Imported Contexts cannot run agents")
@@ -48,7 +48,7 @@ export const contextRuntimeModelRoutes = (ctx: AppContext) => {
     return c.json(
       signIn.parse(
         await auth.client.request(
-          `/agents/${harness(body.provider)}/sign-in`,
+          `/agents/${modelHarness(body.provider)}/sign-in`,
           auth.identity,
           "POST",
         ),
@@ -102,7 +102,7 @@ export const contextRuntimeModelRoutes = (ctx: AppContext) => {
     if (auth instanceof Response) return auth
     const parsed = provider.safeParse(c.req.param("provider"))
     if (!parsed.success) return fail(c, 400, "Unknown agent")
-    await auth.client.request(`/agents/${harness(parsed.data)}`, auth.identity, "DELETE")
+    await auth.client.request(`/agents/${modelHarness(parsed.data)}`, auth.identity, "DELETE")
     return c.json({ disconnected: true })
   })
   return app

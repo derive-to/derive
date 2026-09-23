@@ -128,6 +128,15 @@ export class OrtamClient {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
   }
+  async hasModelConnection(
+    provider: "codex" | "claude-code",
+    identity: { organization_id: string; user_id: string },
+  ) {
+    const connections = modelConnections.parse(await this.request("/agents", identity))
+    return connections.items.some(
+      (item) => item.status === "active" && item.harness === modelHarness(provider),
+    )
+  }
   async create(body: unknown, key: string, identity: { organization_id: string; user_id: string }) {
     const result = z
       .object({ sandbox: Sandbox, operation: Operation })
@@ -241,3 +250,7 @@ export const modelConnections = z.object({
     }),
   ),
 })
+
+export function modelHarness(provider: "codex" | "claude-code") {
+  return provider === "codex" ? "codex" : "claude_code"
+}

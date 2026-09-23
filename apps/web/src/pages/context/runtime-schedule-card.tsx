@@ -189,8 +189,9 @@ export function RuntimeScheduleCard({
         </summary>
         <p className="mt-2">
           Runs one job at a time. Missed runs are combined into one catch-up. Pausing or editing
-          cancels queued work; a job that has started finishes normally. Reports are private to
-          whoever last saved the schedule.
+          cancels queued work; a job that has started finishes normally. Scheduled reports are
+          private to whoever last saved the schedule. Manual reports are private to the person who
+          started the run.
         </p>
       </details>
     </div>
