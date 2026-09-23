@@ -432,7 +432,7 @@ export const runtimeSetup = sqliteTable(
     context_id: text("context_id").notNull(),
     agent_id: text("agent_id").notNull(),
     created_by: text("created_by").notNull(),
-    connection_id: text("connection_id").notNull(),
+    connection_id: text("connection_id"),
     api_url: text("api_url").notNull(),
     ortam_org_id: text("ortam_org_id").notNull(),
     ortam_user_id: text("ortam_user_id").notNull(),
@@ -462,7 +462,7 @@ export const contextRuntime = sqliteTable(
     ortam_org_id: text("ortam_org_id").notNull(),
     ortam_user_id: text("ortam_user_id").notNull(),
     sandbox_id: text("sandbox_id").notNull(),
-    connection_id: text("connection_id").notNull(),
+    connection_id: text("connection_id"),
     disabled_at: text("disabled_at"),
     created_at: text("created_at").notNull(),
   },
@@ -2078,3 +2078,22 @@ export const CONTEXT_SESSION_RELAX_SQLITE: string[] = [
 // Schema parity is enforced in repos.ts, where the shared `schema` object lives:
 // `Exhaustive`/`Shapes` (./parity) force every table to be classified and every
 // typed table's row shape to match its @derive/core Record. See ./parity.
+
+/** Rebuild only when the legacy controller column is NOT NULL. Generated from
+ * the current schema so every receipt and uniqueness constraint survives. */
+export function runtimeControllerRelaxation(table: "context_runtime" | "runtime_setup") {
+  const definition = table === "context_runtime" ? contextRuntime : runtimeSetup
+  const columns = getTableConfig(definition)
+    .columns.map((column) => column.name)
+    .join(", ")
+  const create = SCHEMA_STATEMENTS.find((statement) =>
+    statement.startsWith(`CREATE TABLE IF NOT EXISTS ${table} (`),
+  )
+  if (!create) throw new Error("Runtime schema is missing")
+  return [
+    create.replace(`IF NOT EXISTS ${table}`, `${table}__new`),
+    `INSERT INTO ${table}__new (${columns}) SELECT ${columns} FROM ${table}`,
+    `DROP TABLE ${table}`, // schema-ignore: transactional rebuild after complete receipt copy; only stale NOT NULL triggers it
+    `ALTER TABLE ${table}__new RENAME TO ${table}`,
+  ]
+}

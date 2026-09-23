@@ -2,8 +2,7 @@ import type { MetaStore, RuntimeSetupRecord } from "@derive/core"
 import type { AppDeps } from "../context"
 import { log } from "../log"
 import { spendableConnections } from "./broker"
-import { decryptSecret } from "./crypto"
-import { OrtamClient } from "./ortam-client"
+import { runtimeController } from "./runtime-controller"
 import { runtimeFailureReason } from "./runtime-diagnostics"
 
 interface SetupDeps {
@@ -47,33 +46,28 @@ async function advance(deps: SetupDeps, setup: RuntimeSetupRecord) {
   }
   const context = await meta.getContext(setup.context_id)
   const settings = await meta.getOrgSettings(setup.org_id)
-  const active = await spendableConnections(meta, setup.org_id, [setup.connection_id])
+  const managed = setup.connection_id === null
+  const active = setup.connection_id
+    ? await spendableConnections(meta, setup.org_id, [setup.connection_id])
+    : []
   const allowed =
     !setup.cancelled_at &&
     at < setup.deadline_at &&
-    deps.config.pilotWorkspaceIds.has(setup.org_id) &&
+    (managed
+      ? deps.config.managed?.workspaceIds.has(setup.org_id)
+      : deps.config.pilotWorkspaceIds.has(setup.org_id)) &&
     settings.hostedAgentsEnabled &&
     settings.agentWrites &&
     context?.org_id === setup.org_id &&
     context.agent_id === setup.agent_id &&
-    (await meta.isInstanceOperator(setup.created_by)) &&
+    (managed || (await meta.isInstanceOperator(setup.created_by))) &&
     (await meta.getMembership(setup.org_id, setup.created_by)) &&
-    active.some((c) => c.kind === "secret" && !!c.secret_enc)
+    (managed || active.some((c) => c.kind === "secret" && !!c.secret_enc))
   if (setup.phase === "queued") {
     await transition({ phase: allowed ? "creating" : "failed" })
     return
   }
-  if (setup.api_url !== deps.config.apiUrl)
-    throw new Error("Runtime belongs to a different Ortam API")
-  // Retained credentials may finish cleanup after their Derive grant is revoked.
-  const connection = (await meta.getConnectionsByIds([setup.connection_id])).find(
-    (c) => c.org_id === setup.org_id,
-  )
-  if (connection?.kind !== "secret" || !connection.secret_enc)
-    throw new Error("Ortam connection is unavailable")
-  const key = decryptSecret(connection.secret_enc, deps.secret)
-  if (key === connection.secret_enc) throw new Error("Ortam connection cannot be decrypted")
-  const client = new OrtamClient(setup.api_url, key, deps.fetcher)
+  const client = await runtimeController(meta, deps.config, deps.secret, setup, deps.fetcher, true)
   const identity = { organization_id: setup.ortam_org_id, user_id: setup.ortam_user_id }
   if (setup.phase === "creating") {
     // Even after cancellation, resolve an ambiguous accepted create with the SAME immutable request/key.

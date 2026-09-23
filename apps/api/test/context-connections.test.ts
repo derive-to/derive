@@ -12,7 +12,11 @@ import { dispatchPass, type Substrate } from "../src/lib/dispatch"
 import { OrtamClient } from "../src/lib/ortam-client"
 import { signWorkToken } from "../src/lib/run-token"
 import { runtimeDispatchPass } from "../src/lib/runtime-dispatch"
-import { materializeRuntimeSchedules, nextRuntimeOccurrence } from "../src/lib/runtime-schedule"
+import {
+  materializeRuntimeSchedules,
+  nextRuntimeOccurrence,
+  runtimeScheduleAllows,
+} from "../src/lib/runtime-schedule"
 import { SETUP_RUNNER_PATH } from "../src/lib/runtime-setup"
 import { materializeAllDueRuns } from "../src/lib/schedule"
 import { log } from "../src/log"
@@ -1325,6 +1329,7 @@ describe("operator runtime provisioning", () => {
     apiUrl: "https://ortam.test/v1",
     runnerPath: SETUP_RUNNER_PATH,
     pilotWorkspaceIds: new Set(["default"]),
+    managed: { apiKey: "service integration fixture", workspaceIds: new Set<string>() },
   }
   let count = 0
   let now = new Date()
@@ -1334,6 +1339,8 @@ describe("operator runtime provisioning", () => {
   let failDelete = false
   let authStatus = 200
   let sandboxStatus = 200
+  let modelActive = true
+  const launched = new Map<string, { token: string; attempt: string }>()
   const creates = new Map<
     string,
     {
@@ -1363,6 +1370,30 @@ describe("operator runtime provisioning", () => {
         token: `header.${Buffer.from(JSON.stringify({ sub: "ortam-owner", organization_id: "ortam-org" })).toString("base64url")}.signature`,
       })
     }
+    const subject = new Headers(init?.headers).get("X-Ortam-Integration-Subject")
+    if (path === "/integration") {
+      expect(subject).toMatch(/^[a-f0-9]{64}$/)
+      return json({ organization_id: "ortam-org", user_id: `integration:${subject}` })
+    }
+    if (path === "/agents")
+      return json({
+        items: modelActive
+          ? [{ harness: "codex", status: "active", identity: { email: "model@example.test" } }]
+          : [],
+      })
+    if (path === "/agents/codex/sign-in")
+      return json({
+        id: "attempt-fixture",
+        state: "pending",
+        user_code: "ABCD-1234",
+        verification_url: "https://auth.openai.com/codex/device",
+        authorize_url: null,
+        expires_at: new Date(Date.now() + 600000).toISOString(),
+      })
+    if (path === "/agents/codex" && init?.method === "DELETE") {
+      modelActive = false
+      return new Response(null, { status: 204 })
+    }
     if (path === "/sandboxes" && init?.method === "POST") {
       let saved = creates.get(key)
       if (!saved) {
@@ -1371,7 +1402,7 @@ describe("operator runtime provisioning", () => {
         expect(body).toMatchObject({ size: "small", auto_stop_after_seconds: 1200 })
         expect(body.name).toMatch(/^[a-z0-9][a-z0-9-]{0,62}$/)
         expect(body.setup_script).toContain("--save-exact @derive-to/cli@0.7.0")
-        expect(body.agent_connections).toBeUndefined()
+        expect(body.agent_connections).toBe(subject ? true : undefined)
         saved = {
           body: String(init.body),
           sandbox: {
@@ -1379,7 +1410,7 @@ describe("operator runtime provisioning", () => {
             state: "ready",
             current_operation_id: null,
             auto_stop_after_seconds: 1200,
-            agent_connections: null,
+            agent_connections: subject ? { user_id: `integration:${subject}` } : null,
           },
           operation: {
             id: `create-${id}`,
@@ -1401,8 +1432,20 @@ describe("operator runtime provisioning", () => {
     if (path.startsWith("/operations/")) return json(operations.get(path.split("/")[2] ?? ""))
     const saved = [...creates.values()].find((x) => x.sandbox.id === path.split("/")[2])
     if (!saved) throw new Error("Unexpected sandbox request")
-    if (path.endsWith("/stop") || init?.method === "DELETE") {
-      const kind = init?.method === "DELETE" ? "delete" : "stop"
+    if (path.endsWith("/processes")) {
+      const body = JSON.parse(String(init?.body))
+      expect(JSON.stringify(body)).not.toContain(config.managed.apiKey)
+      launched.set(saved.sandbox.id, {
+        token: body.env.DERIVE_TOKEN,
+        attempt: body.env.DERIVE_ATTEMPT_ID,
+      })
+      return json({ id: `process-${saved.sandbox.id}`, status: "running" })
+    }
+    if (path.includes("/processes/"))
+      return json({ id: `process-${saved.sandbox.id}`, status: "running" })
+    if (path.endsWith("/resume") || path.endsWith("/stop") || init?.method === "DELETE") {
+      const kind =
+        init?.method === "DELETE" ? "delete" : path.endsWith("/resume") ? "resume" : "stop"
       if (kind === "delete")
         expect(new Headers(init?.headers).get("X-Ortam-Confirm-Delete")).toBe(saved.sandbox.id)
       let op = operations.get(key)
@@ -1416,7 +1459,8 @@ describe("operator runtime provisioning", () => {
         operations.set(key, op)
         operations.set(op.id, op)
         if (op.state === "succeeded")
-          saved.sandbox.state = kind === "delete" ? "deleted" : "stopped"
+          saved.sandbox.state =
+            kind === "delete" ? "deleted" : kind === "resume" ? "ready" : "stopped"
       }
       if (kind === "delete" && loseDelete) {
         loseDelete = false
@@ -1444,6 +1488,8 @@ describe("operator runtime provisioning", () => {
     })
   async function fixture() {
     now = new Date()
+    config.managed.workspaceIds.clear()
+    modelActive = true
     loseCreate = false
     loseDelete = false
     failSetup = false
@@ -1643,5 +1689,140 @@ describe("operator runtime provisioning", () => {
     await pass()
     await pass()
     expect((await f.state())?.phase).toBe("failed")
+  })
+  it("shares the configured job with authorized members without exposing its controller or allowing edits", async () => {
+    const f = await fixture()
+    config.managed.workspaceIds.add("default")
+    config.pilotWorkspaceIds.clear()
+    const settings = await meta.getOrgSettings("default")
+    await meta.setOrgSettings("default", { ...settings, automateBeta: true })
+    expect(
+      (
+        await app.request(
+          `${f.path}/model/sign-in`,
+          jsonAs(as(member.email), { provider: "codex" }),
+        )
+      ).status,
+    ).toBe(403)
+    const login = await app.request(
+      `${f.path}/model/sign-in`,
+      jsonAs(as(owner.email), { provider: "codex" }),
+    )
+    expect(login.status).toBe(202)
+    expect(await login.json()).toMatchObject({ user_code: "ABCD-1234" })
+    const started = await app.request(`${f.path}/setup`, jsonAs(as(owner.email), {}))
+    expect(started.status).toBe(202)
+    expect(JSON.stringify(await started.json())).not.toContain("ortam")
+    for (let i = 0; i < 9; i++) await pass()
+    const runtime = await meta.getContextRuntimeForContext(f.context.id, "default")
+    expect(runtime).toMatchObject({ connection_id: null, disabled_at: null })
+    expect((await app.request(`${f.path}/runs`, jsonAs(as(member.email), {}))).status).toBe(403)
+    expect(
+      (
+        await app.request(`/v1/contexts/${f.context.id}/access`, {
+          ...jsonAs(as(owner.email), { ask_policy: "workspace" }),
+        })
+      ).status,
+    ).toBe(200)
+    const status = await app.request(f.path, { headers: as(member.email) })
+    expect(status.status).toBe(200)
+    const state = await status.json()
+    expect(state).toMatchObject({ managed: true, can_edit: false, runtime: { id: runtime?.id } })
+    expect(state.runtime).not.toHaveProperty("sandbox_id")
+    expect(state.setup).not.toHaveProperty("request_json")
+    const definition = {
+      instruction: "Use this job's tools and saved files",
+      provider: "codex",
+      cron: "0 9 * * *",
+      timezone: "UTC",
+      enabled: true,
+      revision: null,
+    }
+    expect(
+      (
+        await app.request(`${f.path}/schedule`, {
+          ...jsonAs(as(member.email), definition),
+          method: "PUT",
+        })
+      ).status,
+    ).toBe(403)
+    expect(
+      (
+        await app.request(`${f.path}/schedule`, {
+          ...jsonAs(as(owner.email), definition),
+          method: "PUT",
+        })
+      ).status,
+    ).toBe(200)
+    const fired = await app.request(
+      `${f.path}/runs`,
+      jsonAs(as(member.email), { instruction: "Ignore the saved job", provider: "claude-code" }),
+    )
+    expect(fired.status).toBe(201)
+    const { run } = await fired.json()
+    expect(run.initiated_by).toBe(member.id)
+    expect(run.automation_id).toBeTruthy()
+    expect(JSON.parse(run.input_snapshot)).toMatchObject({
+      instruction: definition.instruction,
+      provider: "codex",
+      schedule_revision: 0,
+    })
+    expect(await runtimeScheduleAllows(meta, run)).toBe(true)
+    for (let i = 0; i < 6; i++) await pass()
+    const task = launched.get(runtime?.sandbox_id ?? "")
+    if (!task) throw new Error("Managed job was not launched")
+    const headers = { Authorization: `Bearer ${task.token}`, "Content-Type": "application/json" }
+    const claim = await app.request(`/v1/runtime-attempts/${task.attempt}/claim`, {
+      method: "POST",
+      headers,
+    })
+    expect(claim.status).toBe(200)
+    expect(await claim.json()).toMatchObject({
+      claimed: true,
+      input: { provider: "codex", instruction: definition.instruction },
+    })
+    const result = await app.request(`/v1/runtime-attempts/${task.attempt}/result`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        version: 1,
+        outcome: "completed",
+        summary: "Managed job completed",
+        outputs: [],
+      }),
+    })
+    expect(result.status).toBe(200)
+    for (let i = 0; i < 6; i++) await pass()
+    expect(await meta.getRun(run.id)).toMatchObject({ status: "succeeded" })
+    expect(await meta.getLatestRunAttempt(run.id, "default")).toMatchObject({
+      save_status: "saved",
+      phase: "released",
+    })
+
+    const updated = await app.request(`${f.path}/schedule`, {
+      ...jsonAs(as(owner.email), { ...definition, instruction: "Updated job", revision: 0 }),
+      method: "PUT",
+    })
+    expect(updated.status).toBe(200)
+    expect(await runtimeScheduleAllows(meta, run)).toBe(false)
+    expect(
+      (await app.request(`${f.path}/model/codex`, { headers: as(owner.email), method: "DELETE" }))
+        .status,
+    ).toBe(200)
+    expect((await app.request(`${f.path}/runs`, jsonAs(as(member.email), {}))).status).toBe(409)
+    expect((await app.request(`${f.path}/disable`, jsonAs(as(member.email), {}))).status).toBe(403)
+  })
+
+  it("keeps managed cleanup working after rollout is revoked", async () => {
+    const f = await fixture()
+    config.managed.workspaceIds.add("default")
+    config.pilotWorkspaceIds.clear()
+    expect((await app.request(`${f.path}/setup`, jsonAs(as(owner.email), {}))).status).toBe(202)
+    await pass()
+    await pass()
+    config.managed.workspaceIds.clear()
+    for (let i = 0; i < 6; i++) await pass()
+    expect((await f.state())?.phase).toBe("failed")
+    expect(await meta.getContextRuntimeForContext(f.context.id, "default")).toBeNull()
   })
 })

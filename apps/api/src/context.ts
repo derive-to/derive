@@ -138,6 +138,7 @@ export interface AppDeps {
     runnerPath: string
     /** Temporary operator pilot. Empty denies admission; cleanup stays independent. */
     pilotWorkspaceIds: ReadonlySet<string>
+    managed?: { apiKey: string; workspaceIds: ReadonlySet<string> }
   }
   runtimeFetch?: typeof fetch
 

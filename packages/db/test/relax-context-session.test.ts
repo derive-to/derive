@@ -3,6 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import Database from "better-sqlite3"
 import { describe, expect, it } from "vitest"
+import { SCHEMA_STATEMENTS } from "../src/schema"
 import { SqliteMetaStore } from "../src/sqlite"
 
 // THE RELAXATION MIGRATION — the one piece of this change that touches existing data.
@@ -103,5 +104,47 @@ describe("relaxing context_session on an existing database", () => {
     expect(s.context_id).toBeNull()
     expect(s.subject_ref).toContain("doc1")
     ;(store as unknown as { close(): void }).close()
+  })
+})
+
+describe("managed runtime controller migration", () => {
+  it("preserves legacy runtime and provisioning receipts across repeated boots", () => {
+    const dir = mkdtempSync(join(tmpdir(), "runtime-controller-"))
+    const path = join(dir, "legacy.sqlite")
+    const raw = new Database(path)
+    const tables = ["context_runtime", "runtime_setup"]
+    const before: Record<string, unknown[]> = {}
+    for (const table of tables) {
+      const create = SCHEMA_STATEMENTS.find((statement) =>
+        statement.startsWith(`CREATE TABLE IF NOT EXISTS ${table} (`),
+      )
+      if (!create) throw new Error("Missing runtime schema")
+      raw.exec(create.replace("connection_id TEXT,", "connection_id TEXT NOT NULL,"))
+      const columns = raw.pragma(`table_info(${table})`) as {
+        name: string
+        notnull: number
+        type: string
+        pk: number
+      }[]
+      const required = columns.filter((column) => column.notnull || column.pk)
+      raw
+        .prepare(
+          `INSERT INTO ${table} (${required.map((column) => column.name).join(", ")}) VALUES (${required.map(() => "?").join(", ")})`,
+        )
+        .run(...required.map((column) => (column.type === "INTEGER" ? 0 : `old-${column.name}`)))
+      before[table] = raw.prepare(`SELECT * FROM ${table}`).all()
+    }
+    raw.close()
+    for (let boot = 0; boot < 2; boot++) {
+      const store = new SqliteMetaStore(path)
+      const db = new Database(path)
+      for (const table of tables) {
+        expect(db.prepare(`SELECT * FROM ${table}`).all()).toEqual(before[table])
+        const columns = db.pragma(`table_info(${table})`) as { name: string; notnull: number }[]
+        expect(columns.find((column) => column.name === "connection_id")?.notnull).toBe(0)
+      }
+      db.close()
+      ;(store as unknown as { close(): void }).close()
+    }
   })
 })

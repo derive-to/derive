@@ -119,6 +119,25 @@ if (alters.length === 0) {
   wrangler(["--command", alters.join(" ")])
 }
 
+// Hosted runtimes can use the deployment controller, so legacy controller refs
+// are nullable. D1 executes each submitted SQL file as one transaction.
+for (const table of ["context_runtime", "runtime_setup"]) {
+  const info = JSON.parse(wrangler(["--json", "--command", `PRAGMA table_info(${table})`], true))[0]
+    .results
+  if (!info.some((column) => column.name === "connection_id" && column.notnull === 1)) continue
+  const create = preIndex.find((statement) =>
+    statement.startsWith(`CREATE TABLE IF NOT EXISTS ${table} (`),
+  )
+  if (!create) throw new Error(`Missing ${table} schema`)
+  const columns = Object.keys(expected[table]).join(", ")
+  applySql(`relax-${table}`, [
+    create.replace(`IF NOT EXISTS ${table}`, `${table}__new`),
+    `INSERT INTO ${table}__new (${columns}) SELECT ${columns} FROM ${table};`,
+    `DROP TABLE ${table};`,
+    `ALTER TABLE ${table}__new RENAME TO ${table};`,
+  ])
+}
+
 // 3. Indexes last — every column they reference (e.g. context_session.dedupe_key) now
 //    exists, whether just ALTER-added above or already present. IF NOT EXISTS → idempotent.
 applySql("indexes", indexes)

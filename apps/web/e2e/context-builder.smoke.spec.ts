@@ -483,3 +483,101 @@ test("Cloud setup accepts a saved connection and keeps consent and cancellation 
   await expect(owner.getByText("Cancelling setup", { exact: true })).toBeVisible()
   await expect(owner.getByTestId("context-runtime-setup-cancel")).toHaveCount(0)
 })
+
+test("Cloud managed jobs connect a provider and run the saved agent without infrastructure setup", async ({
+  owner,
+}, testInfo) => {
+  const manifest = await publishArtifact(
+    owner,
+    "managed-job.md",
+    "# Keep the job’s files and run its checks",
+  )
+  const created = await owner.request.post("/v1/contexts", {
+    data: { name: "Shared daily job", manifest_short_id: manifest },
+  })
+  const context = await created.json()
+  let connected = false
+  let prepared = false
+  let editable = true
+  let fired: unknown
+  const job = {
+    id: "job-demo",
+    instruction: "Check the saved data and report changes",
+    provider: "codex",
+    enabled: 1,
+    revision: 0,
+    trigger: JSON.stringify({ kind: "schedule", cron: "0 9 * * *", tz: "UTC" }),
+  }
+  await owner.route(`**/v1/contexts/${context.id}/runtime`, (route) =>
+    route.fulfill({
+      json: {
+        enabled: true,
+        managed: true,
+        can_edit: editable,
+        runtime: prepared ? { id: "runtime-demo", disabled_at: null } : null,
+        setup: null,
+        schedule: prepared ? job : null,
+        next_run_at: "2026-09-24T09:00:00.000Z",
+        runs: [],
+      },
+    }),
+  )
+  await owner.route(`**/v1/contexts/${context.id}/runtime/model`, (route) =>
+    route.fulfill({
+      json: {
+        items: connected
+          ? [{ harness: "codex", status: "active", identity: { email: "model@example.test" } }]
+          : [],
+      },
+    }),
+  )
+  const attempt = {
+    id: "login-demo",
+    state: "pending",
+    user_code: "ABCD-1234",
+    verification_url: "https://auth.openai.com/codex/device",
+    authorize_url: null,
+    expires_at: new Date(Date.now() + 600000).toISOString(),
+  }
+  await owner.route(`**/v1/contexts/${context.id}/runtime/model/sign-in`, (route) =>
+    route.fulfill({ status: 202, json: attempt }),
+  )
+  await owner.route(`**/v1/contexts/${context.id}/runtime/model/sign-in/login-demo`, (route) =>
+    route.fulfill({ json: { ...attempt, state: connected ? "complete" : "pending" } }),
+  )
+  await owner.route(`**/v1/contexts/${context.id}/runtime/setup`, async (route) => {
+    expect(route.request().postDataJSON()).toEqual({})
+    prepared = true
+    await route.fulfill({ status: 202, json: { setup: { phase: "queued" } } })
+  })
+  await owner.route(`**/v1/contexts/${context.id}/runtime/runs`, async (route) => {
+    fired = route.request().postDataJSON()
+    await route.fulfill({ status: 201, json: { run: { id: "run-demo" } } })
+  })
+  await owner.goto(`/contexts/${context.id}`)
+  await owner.getByTestId("console-tab-cloud").click()
+  await owner.getByTestId("context-managed-model-connect").click()
+  await expect(owner.getByText("ABCD-1234", { exact: true })).toBeVisible()
+  await expect(owner.getByTestId("context-managed-model-authorize")).toHaveAttribute(
+    "href",
+    attempt.verification_url,
+  )
+  await expect(owner.getByTestId("context-runtime-connection")).toHaveCount(0)
+  await expect(owner.getByText(/Ortam|sandbox ID|controller key/i)).toHaveCount(0)
+  connected = true
+  await expect(owner.getByText("Account connected.", { exact: true })).toBeVisible({
+    timeout: 15000,
+  })
+  await owner.getByTestId("context-managed-setup").click()
+  await expect(owner.getByTestId("context-managed-run")).toBeVisible()
+  await owner.getByTestId("context-managed-run").click()
+  expect(fired).toEqual({})
+  editable = false
+  await owner.reload()
+  await owner.getByTestId("console-tab-cloud").click()
+  await expect(owner.getByTestId("context-managed-model-connect")).toHaveCount(0)
+  await expect(owner.getByTestId("context-runtime-schedule-save")).toHaveCount(0)
+  await expect(owner.getByTestId("context-managed-run")).toBeEnabled()
+  await owner.setViewportSize({ width: 390, height: 844 })
+  await owner.screenshot({ path: testInfo.outputPath("managed-job-mobile.png"), fullPage: true })
+})

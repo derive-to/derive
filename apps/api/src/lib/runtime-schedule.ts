@@ -25,9 +25,11 @@ async function scheduleOwnerAllowed(meta: MetaStore, a: AutomationRecord) {
   if (!a.created_by || !a.context_id) return false
   const member = await meta.getMembership(a.org_id, a.created_by)
   const context = await meta.getContext(a.context_id)
+  const runtime = a.runtime_id ? await meta.getContextRuntime(a.runtime_id, a.org_id) : null
+  const managed = runtime?.connection_id === null
   return !!(
     member &&
-    (await meta.isInstanceOperator(a.created_by)) &&
+    (managed || (await meta.isInstanceOperator(a.created_by))) &&
     context?.org_id === a.org_id &&
     (context.created_by === a.created_by || roleAllows(member.role, "manage"))
   )
@@ -37,6 +39,7 @@ async function scheduleOwnerAllowed(meta: MetaStore, a: AutomationRecord) {
 export async function runtimeScheduleAllows(meta: MetaStore, run: RunRecord): Promise<boolean> {
   if (!run.automation_id) return true
   const a = await meta.getAutomation(run.automation_id)
+  const runtime = run.runtime_id ? await meta.getContextRuntime(run.runtime_id, run.org_id) : null
   const input = JSON.parse(run.input_snapshot ?? "null") as RuntimeRunInput | null
   return !!(
     a &&
@@ -44,7 +47,7 @@ export async function runtimeScheduleAllows(meta: MetaStore, run: RunRecord): Pr
     a.org_id === run.org_id &&
     a.runtime_id === run.runtime_id &&
     a.enabled === 1 &&
-    a.created_by === run.initiated_by &&
+    (runtime?.connection_id === null || a.created_by === run.initiated_by) &&
     a.revision === input?.schedule_revision
   )
 }

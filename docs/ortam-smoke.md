@@ -161,7 +161,7 @@ files. The agent chooses which scripts to run and which repositories to fetch.
 
 ## Manual cloud runs
 
-The Cloud runs tab is temporary operator pilot tooling. It is visible only to a
+The original Cloud runs panel is operator pilot tooling. It is visible only to a
 Context owner who is also an instance operator, in a workspace explicitly listed
 in `DERIVE_HOSTED_RUNS_ALLOWLIST`. The API applies the same operator/workspace
 boundary to runtime details, sandbox binding, runs, schedules, and disabling.
@@ -174,8 +174,8 @@ artifact. Disabling cloud runs stops new admission and sends active work into
 cleanup.
 
 Ordinary Derive users should never enter an Ortam key or sandbox ID. Automatic
-provisioning is available in the operator pilot below; model-account delegation
-inside Derive is still to be built. Self-hosted
+provisioning is available in the operator pilot below; the managed flow described
+at the end of this document also handles model sign-in inside Derive. Self-hosted
 administrators configure infrastructure once for their deployment. Background
 shutdown reconciliation is independent of interactive pilot access. Background
 admission and guest claims recheck the workspace allowlist and the initiating
@@ -478,3 +478,39 @@ process start whose outcome is unknown.
 A pass qualifies scheduled Codex execution through the hosted Workers/Postgres
 controller and saved-file persistence. It does not qualify Claude Code, GitHub
 credentials, reviewed script improvements, or model refresh over several days.
+
+## Managed jobs inside Derive
+
+The customer flow is separately enabled with `DERIVE_ORTAM_INTEGRATION_KEY` and
+`DERIVE_MANAGED_RUNS_ALLOWLIST`, together with the existing pinned runner path and
+workspace hosted-agent, agent-write and automation settings. The key must be an
+Ortam **Service integration** key. Keep it on the deployment; no user connection
+or runner environment receives it. Existing operator provisioning stays available
+under its original gate. An empty managed allowlist disables new work; retain the
+key until all active attempts and pending setup cleanup are settled.
+
+A job keeps its configured runner, model connection and Context tools. Its Context
+creator or a workspace manager connects an account in Derive through the provider's
+sign-in page. This explicitly lets the job use that account for authorized manual
+and scheduled runs. Model refresh authority stays in Ortam. Each workspace/Context
+pair has a distinct external connection identity, even if Contexts reuse an internal
+Derive agent ID. Same-owner service-key rotation preserves those identities.
+
+The run permission is workspace publish access plus access to the Context (creator,
+invited asker or workspace ask policy). Editing still requires Context management.
+Manual runs consume the saved schedule's instruction, provider and revision rather
+than parameters supplied by the triggerer. Edits invalidate queued stale definitions;
+claimed work finishes against its pinned input and live tool-grant intersection.
+Disconnecting an account prevents new runs and withdraws model delivery.
+
+Customers see provider sign-in, preparation, the job and run status. Service identities,
+controller references and sandbox IDs are omitted from the managed status projection.
+Reports retain the existing initiator privacy rule. Provisioning uses the existing
+replayable setup state machine with automatic connection attachment. Legacy controller
+references become nullable through receipt-preserving SQLite/D1 rebuilds and a Postgres
+constraint relaxation; null denotes deployment-owned authority.
+
+Local contract and browser checks qualify this implementation. The previous live
+operator pilot does not establish live service-integration qualification: deployment
+of the Ortam integration API, deployment configuration, fresh provider authorization
+and two real scheduled runs remain the live acceptance check.

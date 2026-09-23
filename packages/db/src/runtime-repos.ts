@@ -129,9 +129,9 @@ export function runtimeRepos(execute: (statement: SQL) => Promise<unknown[]>): R
       UPDATE run_attempt SET runner_claimed_at = ${instant(at)}, revision = revision + 1, updated_at = ${at}
       WHERE id = ${id} AND org_id = ${orgId} AND phase IN ('launching', 'running')
         AND deadline_at > ${at} AND runner_claimed_at IS NULL AND result_json IS NULL AND released_at IS NULL
-        AND EXISTS (SELECT 1 FROM run r WHERE r.id = run_attempt.run_id AND (r.automation_id IS NULL OR EXISTS (
+        AND EXISTS (SELECT 1 FROM run r JOIN context_runtime rt ON rt.id = r.runtime_id AND rt.org_id = r.org_id WHERE r.id = run_attempt.run_id AND (r.automation_id IS NULL OR EXISTS (
           SELECT 1 FROM automation a WHERE a.id = r.automation_id AND a.org_id = r.org_id
-            AND a.runtime_id = r.runtime_id AND a.enabled = 1 AND a.created_by = r.initiated_by
+            AND a.runtime_id = r.runtime_id AND a.enabled = 1 AND (rt.connection_id IS NULL OR a.created_by = r.initiated_by)
             AND a.revision = ${scheduleRevision ?? -1}))) RETURNING *`),
     getContextRuntimeForContext: (contextId, orgId) =>
       first<ContextRuntimeRecord>(
@@ -242,20 +242,20 @@ export function runtimeRepos(execute: (statement: SQL) => Promise<unknown[]>): R
           ${input.initiated_by ?? null}, 'queued', ${input.scheduled_for ?? null}, rt.id,
           ${JSON.stringify(snapshot)}, ${input.meta ?? null}, ${new Date().toISOString()}
         FROM context_runtime rt JOIN context c ON c.id = rt.context_id AND c.org_id = rt.org_id
-        JOIN connection cn ON cn.id = rt.connection_id AND cn.org_id = rt.org_id
+        LEFT JOIN connection cn ON cn.id = rt.connection_id AND cn.org_id = rt.org_id
         JOIN version v ON v.artifact_id = c.manifest_artifact_id
         WHERE rt.id = ${input.runtime_id} AND rt.org_id = ${input.org_id}
           AND rt.agent_id = ${input.agent_id} AND c.agent_id = rt.agent_id AND rt.disabled_at IS NULL
-          AND cn.kind = 'secret' AND cn.status = 'active' AND cn.secret_enc IS NOT NULL
+          AND (rt.connection_id IS NULL OR (cn.kind = 'secret' AND cn.status = 'active' AND cn.secret_enc IS NOT NULL))
           AND (cast(${input.automation_id ?? null} AS text) IS NULL OR EXISTS (
             SELECT 1 FROM automation a WHERE a.id = ${input.automation_id ?? null}
               AND a.org_id = rt.org_id AND a.agent_id = rt.agent_id
               AND a.context_id = c.id AND a.enabled = 1
               AND a.runtime_id = rt.id
-              AND a.created_by = ${input.initiated_by ?? null}
+              AND (rt.connection_id IS NULL OR a.created_by = ${input.initiated_by ?? null})
               AND a.revision = ${snapshot.schedule_revision ?? -1}
               AND a.instruction = ${snapshot.instruction} AND a.provider = ${snapshot.provider}
-              AND ${input.scheduled_for ?? null} >= coalesce(a.updated_at, a.created_at)))
+              AND (${input.reason} <> 'schedule' OR ${input.scheduled_for ?? null} >= coalesce(a.updated_at, a.created_at))))
           AND (${input.reason} <> 'schedule' OR NOT EXISTS (
             SELECT 1 FROM run busy WHERE busy.runtime_id = rt.id AND busy.status IN ('queued', 'running')))
           AND c.id = ${snapshot.context_id} AND v.artifact_id = ${snapshot.manifest.artifact_id}
@@ -275,11 +275,11 @@ export function runtimeRepos(execute: (statement: SQL) => Promise<unknown[]>): R
           'starting', ${input.deadlineAt}, ${input.at}, ${input.at}
         FROM run r JOIN context_runtime rt ON rt.id = r.runtime_id AND rt.org_id = r.org_id
         JOIN context c ON c.id = rt.context_id AND c.org_id = rt.org_id
-        JOIN connection cn ON cn.id = rt.connection_id AND cn.org_id = rt.org_id
+        LEFT JOIN connection cn ON cn.id = rt.connection_id AND cn.org_id = rt.org_id
         WHERE r.id = ${input.runId} AND r.org_id = ${input.orgId} AND r.status = 'queued'
           AND (r.scheduled_for IS NULL OR r.scheduled_for <= ${input.at})
           AND rt.disabled_at IS NULL AND c.agent_id = rt.agent_id AND r.agent_id = rt.agent_id
-          AND cn.kind = 'secret' AND cn.status = 'active' AND cn.secret_enc IS NOT NULL
+          AND (rt.connection_id IS NULL OR (cn.kind = 'secret' AND cn.status = 'active' AND cn.secret_enc IS NOT NULL))
           AND (r.automation_id IS NULL OR EXISTS (
             SELECT 1 FROM automation a WHERE a.id = r.automation_id AND a.org_id = r.org_id
               AND a.agent_id = r.agent_id AND a.context_id = c.id AND a.enabled = 1))

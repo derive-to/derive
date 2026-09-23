@@ -99,6 +99,8 @@ const PREVIEW_NAME = "previews"
 export interface Env {
   DERIVE_ORTAM_RUNNER_PATH?: string
   DERIVE_ORTAM_API_URL?: string
+  DERIVE_ORTAM_INTEGRATION_KEY?: string
+  DERIVE_MANAGED_RUNS_ALLOWLIST?: string
   DB: D1Database
   /** Isolated, short-lived Workers for the read-only derive_code MCP tool. */
   LOADER: WorkerLoader
@@ -329,6 +331,12 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
               runnerPath: env.DERIVE_ORTAM_RUNNER_PATH,
               apiUrl: env.DERIVE_ORTAM_API_URL ?? "https://api.ortam.dev/v1",
               pilotWorkspaceIds: workspaceIdsFromEnv(env.DERIVE_HOSTED_RUNS_ALLOWLIST),
+              managed: env.DERIVE_ORTAM_INTEGRATION_KEY
+                ? {
+                    apiKey: env.DERIVE_ORTAM_INTEGRATION_KEY,
+                    workspaceIds: workspaceIdsFromEnv(env.DERIVE_MANAGED_RUNS_ALLOWLIST),
+                  }
+                : undefined,
             }
           : undefined,
         meta,
@@ -793,6 +801,12 @@ async function runtimeTick(env: Env): Promise<void> {
     runnerPath: env.DERIVE_ORTAM_RUNNER_PATH,
     apiUrl: env.DERIVE_ORTAM_API_URL ?? "https://api.ortam.dev/v1",
     pilotWorkspaceIds: workspaceIdsFromEnv(env.DERIVE_HOSTED_RUNS_ALLOWLIST),
+    managed: env.DERIVE_ORTAM_INTEGRATION_KEY
+      ? {
+          apiKey: env.DERIVE_ORTAM_INTEGRATION_KEY,
+          workspaceIds: workspaceIdsFromEnv(env.DERIVE_MANAGED_RUNS_ALLOWLIST),
+        }
+      : undefined,
   }
   const secret = env.DERIVE_AUTH_SECRET
   const scoped = async () =>

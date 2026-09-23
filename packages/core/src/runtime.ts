@@ -10,7 +10,8 @@ export interface ContextRuntimeRecord {
   ortam_org_id: string
   ortam_user_id: string
   sandbox_id: string
-  connection_id: string
+  /** Null uses the deployment service integration, scoped to this Context’s job. */
+  connection_id: string | null
   disabled_at: string | null
   created_at: string
 }
@@ -90,7 +91,8 @@ export interface RuntimeSetupRecord {
   context_id: string
   agent_id: string
   created_by: string
-  connection_id: string
+  /** Null uses the deployment service integration, scoped to this Context’s job. */
+  connection_id: string | null
   api_url: string
   ortam_org_id: string
   ortam_user_id: string
