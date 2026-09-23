@@ -357,6 +357,21 @@ CREATE TABLE IF NOT EXISTS runtime_owner (
   owner TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS runtime_model_connection (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  name TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  api_url TEXT NOT NULL,
+  ortam_org_id TEXT NOT NULL,
+  ortam_user_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 0,
+  revoked_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS run_attempt (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,
@@ -1086,6 +1101,8 @@ CREATE TABLE IF NOT EXISTS view_read (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     PRIMARY KEY (artifact_id, viewer)
   );
+
+CREATE INDEX IF NOT EXISTS runtime_model_connection_owner ON runtime_model_connection (org_id, created_by);
 
 CREATE INDEX IF NOT EXISTS workflow_run_org_created ON workflow_run (org_id, created_at);
 

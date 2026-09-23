@@ -138,3 +138,20 @@ export type RuntimeSetupChange = Pick<RuntimeSetupRecord, "phase"> &
       "sandbox_id" | "create_operation_id" | "stop_operation_id" | "delete_operation_id"
     >
   >
+
+/** A reusable cloud model account. Provider credentials remain exclusively in Ortam.
+ * Revoked records retain their identity for remote disconnect and runtime cleanup. */
+export interface RuntimeModelConnectionRecord {
+  id: string
+  org_id: string
+  created_by: string
+  name: string
+  provider: "codex" | "claude-code"
+  api_url: string
+  ortam_org_id: string
+  ortam_user_id: string
+  revision: number
+  revoked_at: string | null
+  created_at: string
+  updated_at: string
+}

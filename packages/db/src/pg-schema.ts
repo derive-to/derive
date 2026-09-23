@@ -354,6 +354,27 @@ export const run = pgTable("run", {
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 
+export const runtimeModelConnection = pgTable(
+  "runtime_model_connection",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    created_by: text("created_by").notNull(),
+    name: text("name").notNull(),
+    provider: text("provider")
+      .$type<import("@derive/core").RuntimeModelConnectionRecord["provider"]>()
+      .notNull(),
+    api_url: text("api_url").notNull(),
+    ortam_org_id: text("ortam_org_id").notNull(),
+    ortam_user_id: text("ortam_user_id").notNull(),
+    revision: integer("revision").notNull().default(0),
+    revoked_at: text("revoked_at"),
+    created_at: text("created_at").notNull(),
+    updated_at: text("updated_at").notNull(),
+  },
+  (t) => [index("runtime_model_connection_owner").on(t.org_id, t.created_by)],
+)
+
 // Persistent environments and execution ownership outlive deleted Contexts and automations.
 // One permanent admission slot serializes manual binding and automatic setup on every store.
 export const runtimeOwner = pgTable("runtime_owner", {
@@ -1597,6 +1618,7 @@ const TABLES = [
   contextRuntime,
   runtimeSetup,
   runtimeOwner,
+  runtimeModelConnection,
   runAttempt,
   workflowRun,
   workflowStepAttempt,

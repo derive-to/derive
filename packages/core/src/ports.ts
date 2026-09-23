@@ -5,6 +5,7 @@ import type {
   RunAttemptRecord,
   RunAttemptResult,
   RunAttemptTransition,
+  RuntimeModelConnectionRecord,
   RuntimeSaveStatus,
   RuntimeSetupChange,
   RuntimeSetupRecord,
@@ -5092,6 +5093,32 @@ export const isBundleContentType = (contentType: string | null | undefined): boo
 
 /** Control-plane operations only. Runner APIs must not expose these mutations. */
 export interface RuntimeStore {
+  createRuntimeModelConnection(
+    input: Omit<
+      RuntimeModelConnectionRecord,
+      "revision" | "revoked_at" | "created_at" | "updated_at"
+    >,
+    at: string,
+  ): Promise<RuntimeModelConnectionRecord>
+  getRuntimeModelConnection(id: string, orgId: string): Promise<RuntimeModelConnectionRecord | null>
+  listRuntimeModelConnections(
+    orgId: string,
+    ownerId: string,
+  ): Promise<RuntimeModelConnectionRecord[]>
+  renameRuntimeModelConnection(
+    id: string,
+    orgId: string,
+    revision: number,
+    name: string,
+    at: string,
+  ): Promise<RuntimeModelConnectionRecord | null>
+  /** Irreversible local revocation precedes remote disconnect; repeat calls retain the receipt. */
+  revokeRuntimeModelConnection(
+    id: string,
+    orgId: string,
+    at: string,
+  ): Promise<RuntimeModelConnectionRecord | null>
+
   getRuntimeSchedule(runtimeId: string, orgId: string): Promise<AutomationRecord | null>
   listRuntimeSchedules(orgIds?: readonly string[]): Promise<AutomationRecord[]>
   saveRuntimeSchedule(input: {

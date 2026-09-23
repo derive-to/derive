@@ -518,3 +518,34 @@ Local contract and browser checks qualify this implementation. The previous live
 operator pilot does not establish live service-integration qualification: deployment
 of the Ortam integration API, deployment configuration, fresh provider authorization
 and two real scheduled runs remain the live acceptance check.
+
+### Reusable model connection foundation
+
+The replacement account API is `/v1/runtime-model-connections`. It gives a named
+Codex or Claude account its own identity, independent of a Context. The owner can
+create/list/read/rename the reference, start/poll/complete/cancel provider sign-in,
+read `/status`, and disconnect it with `DELETE`. Only the connection owner may
+manage its login; workspace membership or permission to edit an unrelated job does
+not grant that authority. Infrastructure identifiers and provider credentials are
+excluded from responses.
+
+A connection's immutable ID and workspace determine its integration subject, in
+a namespace separate from legacy Context subjects. Its expected Ortam organization,
+user identity and API origin are saved at creation. A configuration change cannot
+silently transfer it to another service-key owner or backend. Credentials remain
+in Ortam; Derive does not copy refresh tokens into jobs or its existing local-runner
+model-credential store.
+
+Disconnect permanently revokes the reference in Derive before contacting Ortam.
+A remote failure returns an incomplete-cleanup error; retry `DELETE` using the
+same ID. The revoked record remains readable by its owner for recovery and cannot
+be reactivated. Reconnecting an active account keeps its identity; after explicitly
+revoking a connection, create a new one. The backend must support disconnecting a
+pending sign-in and retrying a completed disconnect before this flow is activated.
+
+This is the first implementation slice. Job selection/grants, switching an existing
+machine while stopped, the account picker, and a two-job live acceptance test are
+still required. The existing managed setup continues to use its legacy Context
+subject until those pieces land. Keep the managed allowlist disabled during that
+transition; do not interpret this API as an enabled customer workflow or migrate
+consent based on matching account email addresses.

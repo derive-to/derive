@@ -1942,3 +1942,297 @@ describe("operator runtime provisioning", () => {
     expect(await meta.getContextRuntimeForContext(f.context.id, "default")).toBeNull()
   })
 })
+
+describe("reusable runtime model accounts", () => {
+  const owner: TestUser = { id: "model-owner", email: "model-owner@derive.test", name: "Owner" }
+  const member: TestUser = { id: "model-member", email: "model-member@derive.test", name: "Member" }
+  const path = "/v1/runtime-model-connections"
+  const config = {
+    apiUrl: "https://ortam.test/v1",
+    runnerPath: SETUP_RUNNER_PATH,
+    pilotWorkspaceIds: new Set<string>(),
+    managed: { apiKey: "reusable integration fixture", workspaceIds: new Set(["default"]) },
+  }
+  const requests: { path: string; subject: string | null; method: string }[] = []
+  const signInStates = new Map<string | null, string>()
+  let failDisconnect = false
+  let completeGate: Promise<void> | null = null
+  let enteredComplete: (() => void) | null = null
+  const peer: typeof fetch = async (url, init) => {
+    const path = new URL(String(url)).pathname.replace("/v1", "")
+    const subject = new Headers(init?.headers).get("X-Ortam-Integration-Subject")
+    requests.push({ path, subject, method: init?.method ?? "GET" })
+    const json = (value: unknown) => Response.json(value)
+    if (path === "/auth/token")
+      return json({
+        token: `header.${Buffer.from(JSON.stringify({ sub: "service-owner", organization_id: "model-org" })).toString("base64url")}.signature`,
+      })
+    if (path === "/integration") {
+      expect(subject).toMatch(/^[a-f0-9]{64}$/)
+      return json({ organization_id: "model-org", user_id: `integration:${subject}` })
+    }
+    if (path === "/agents")
+      return json({
+        items: [
+          {
+            harness: "codex",
+            status: "active",
+            identity: { email: "codex@example.test" },
+            private_token: "do not expose",
+          },
+          { harness: "claude_code", status: "active", identity: { email: "claude@example.test" } },
+        ],
+      })
+    if (init?.method === "DELETE") return new Response(null, { status: failDisconnect ? 503 : 204 })
+    if (path.includes("sign-in")) {
+      if (path.endsWith("/complete") && completeGate) {
+        enteredComplete?.()
+        await completeGate
+      }
+      if (path.endsWith("/complete")) {
+        signInStates.set(subject, "complete")
+        return json({
+          id: "connection-fixture",
+          harness: "claude_code",
+          status: "active",
+          identity: { email: "claude@example.test" },
+        })
+      }
+      if (path.endsWith("/sign-in")) signInStates.set(subject, "pending")
+      if (path.endsWith("/cancel") && signInStates.get(subject) === "pending")
+        signInStates.set(subject, "cancelled")
+      return json({
+        id: "sign-in-fixture",
+        state: signInStates.get(subject) ?? "pending",
+        user_code: "ABCD-1234",
+        verification_url: "https://auth.example.test/device",
+        authorize_url: null,
+        expires_at: "2026-09-24T00:00:00.000Z",
+        secret: "do not expose",
+      })
+    }
+    throw new Error(`Unexpected model request ${path}`)
+  }
+  const { app, meta } = makeAuthedApp("reusable-runtime-models", [owner, member], "editor", {
+    deps: { encryptionKey: SECRET, runtime: config, runtimeFetch: peer },
+  })
+  const create = async (provider = "codex") => {
+    config.managed.workspaceIds.add("default")
+    const response = await app.request(
+      path,
+      jsonAs(as(owner.email), { name: "  Work account  ", provider }),
+    )
+    expect(response.status).toBe(201)
+    return (await response.json()) as { id: string; revision: number; name: string }
+  }
+  it("creates reusable identities without a Context and exposes only the owner's named accounts", async () => {
+    const first = await create()
+    const second = await create()
+    expect(first.name).toBe("Work account")
+    expect(first.id).not.toBe(second.id)
+    const a = await meta.getRuntimeModelConnection(first.id, "default")
+    const b = await meta.getRuntimeModelConnection(second.id, "default")
+    expect(a?.ortam_user_id).not.toBe(b?.ortam_user_id)
+    expect(a?.created_by).toBe(owner.id)
+    const list = await (await app.request(path, { headers: as(owner.email) })).json()
+    expect(list.items.map((item: { id: string }) => item.id)).toEqual(
+      expect.arrayContaining([first.id, second.id]),
+    )
+    expect(JSON.stringify(list)).not.toMatch(/ortam|api_url|created_by|integration/)
+    expect(await (await app.request(path, { headers: as(member.email) })).json()).toEqual({
+      items: [],
+    })
+    const before = requests.length
+    for (const suffix of ["", "/status", "/sign-in/sign-in-fixture"]) {
+      expect(
+        (await app.request(`${path}/${first.id}${suffix}`, { headers: as(member.email) })).status,
+      ).toBe(404)
+    }
+    for (const suffix of [
+      "/sign-in",
+      "/sign-in/sign-in-fixture/complete",
+      "/sign-in/sign-in-fixture/cancel",
+    ]) {
+      expect(
+        (
+          await app.request(
+            `${path}/${first.id}${suffix}`,
+            jsonAs(as(member.email), { code: "code" }),
+          )
+        ).status,
+      ).toBe(404)
+    }
+    expect(
+      (
+        await app.request(`${path}/${first.id}`, {
+          ...jsonAs(as(member.email), { name: "Stolen", revision: 0 }),
+          method: "PATCH",
+        })
+      ).status,
+    ).toBe(404)
+    expect(
+      (await app.request(`${path}/${first.id}`, { headers: as(member.email), method: "DELETE" }))
+        .status,
+    ).toBe(404)
+    expect(requests).toHaveLength(before)
+    expect((await app.request(path)).status).toBe(403)
+  })
+  it("keeps one provider identity through reconnect, sign-in and name edits", async () => {
+    const connection = await create("claude-code")
+    const base = `${path}/${connection.id}`
+    const before = requests.length
+    for (const suffix of ["/sign-in", "/sign-in"]) {
+      const response = await app.request(base + suffix, jsonAs(as(owner.email), {}))
+      expect(response.status).toBe(202)
+      expect(response.headers.get("Cache-Control")).toBe("no-store")
+      expect(await response.text()).not.toContain("do not expose")
+    }
+    const poll = await app.request(`${base}/sign-in/sign-in-fixture`, { headers: as(owner.email) })
+    expect((await poll.json()).state).toBe("pending")
+    const finish = await app.request(
+      `${base}/sign-in/sign-in-fixture/complete`,
+      jsonAs(as(owner.email), { code: "authorization fixture" }),
+    )
+    expect((await finish.json()).state).toBe("complete")
+    const exchanges = requests.filter((r) => r.path.endsWith("/complete")).length
+    const retry = await app.request(
+      `${base}/sign-in/sign-in-fixture/complete`,
+      jsonAs(as(owner.email), { code: "authorization fixture" }),
+    )
+    expect((await retry.json()).state).toBe("complete")
+    expect(requests.filter((r) => r.path.endsWith("/complete"))).toHaveLength(exchanges)
+    await app.request(`${base}/sign-in`, jsonAs(as(owner.email), {}))
+    const cancel = await app.request(
+      `${base}/sign-in/sign-in-fixture/cancel`,
+      jsonAs(as(owner.email), {}),
+    )
+    expect((await cancel.json()).state).toBe("cancelled")
+    const rename = await app.request(base, {
+      ...jsonAs(as(owner.email), { name: "Shared work account", revision: 0 }),
+      method: "PATCH",
+    })
+    expect((await rename.json()).revision).toBe(1)
+    expect(
+      (
+        await app.request(base, {
+          ...jsonAs(as(owner.email), { name: "Old edit", revision: 0 }),
+          method: "PATCH",
+        })
+      ).status,
+    ).toBe(409)
+    const status = await (await app.request(`${base}/status`, { headers: as(owner.email) })).json()
+    expect(status.account.harness).toBe("claude_code")
+    expect(JSON.stringify(status)).not.toContain("do not expose")
+    const calls = requests.slice(before).filter((r) => r.subject)
+    expect(new Set(calls.map((r) => r.subject)).size).toBe(1)
+    expect(calls.some((r) => r.path === "/agents/claude_code/sign-in")).toBe(true)
+    expect(calls.some((r) => r.path === "/agents/codex/sign-in")).toBe(false)
+  })
+  it("revokes locally before remote disconnect, keeps cleanup possible after rollout withdrawal, and never revives the identity", async () => {
+    const connection = await create()
+    const base = `${path}/${connection.id}`
+    const original = await meta.getRuntimeModelConnection(connection.id, "default")
+    config.managed.workspaceIds.clear()
+    expect(
+      (await app.request(path, jsonAs(as(owner.email), { name: "Blocked", provider: "codex" })))
+        .status,
+    ).toBe(404)
+    expect((await app.request(`${base}/sign-in`, jsonAs(as(owner.email), {}))).status).toBe(404)
+    failDisconnect = true
+    try {
+      const response = await app.request(base, { headers: as(owner.email), method: "DELETE" })
+      expect(response.status).toBe(502)
+      expect(await response.text()).toContain("Connection revoked")
+      expect(
+        (await meta.getRuntimeModelConnection(connection.id, "default"))?.revoked_at,
+      ).toBeTruthy()
+    } finally {
+      failDisconnect = false
+    }
+    const receipt = await meta.getRuntimeModelConnection(connection.id, "default")
+    expect(receipt?.ortam_user_id).toBe(original?.ortam_user_id)
+    expect((await app.request(base, { headers: as(owner.email), method: "DELETE" })).status).toBe(
+      200,
+    )
+    expect(await meta.getRuntimeModelConnection(connection.id, "default")).toEqual(receipt)
+    config.managed.workspaceIds.add("default")
+    const before = requests.length
+    expect((await app.request(`${base}/sign-in`, jsonAs(as(owner.email), {}))).status).toBe(409)
+    expect(
+      (
+        await app.request(
+          `${base}/sign-in/sign-in-fixture/complete`,
+          jsonAs(as(owner.email), { code: "code" }),
+        )
+      ).status,
+    ).toBe(409)
+    expect(
+      await (await app.request(`${base}/status`, { headers: as(owner.email) })).json(),
+    ).toEqual({ account: null, revoked: true })
+    expect(requests).toHaveLength(before)
+    const list = await (await app.request(path, { headers: as(owner.email) })).json()
+    expect(list.items.some((item: { id: string }) => item.id === connection.id)).toBe(false)
+  })
+  it("does not report successful sign-in when disconnect wins during provider completion", async () => {
+    const connection = await create("claude-code")
+    const base = `${path}/${connection.id}`
+    await app.request(`${base}/sign-in`, jsonAs(as(owner.email), {}))
+    let release: () => void = () => {}
+    completeGate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const entered = new Promise<void>((resolve) => {
+      enteredComplete = resolve
+    })
+    const pending = app.request(
+      `${base}/sign-in/sign-in-fixture/complete`,
+      jsonAs(as(owner.email), { code: "code" }),
+    )
+    try {
+      await entered
+      expect((await app.request(base, { headers: as(owner.email), method: "DELETE" })).status).toBe(
+        200,
+      )
+      release()
+      expect((await pending).status).toBe(409)
+    } finally {
+      release()
+      completeGate = null
+      enteredComplete = null
+    }
+  })
+  it("normalizes the real completion response for the existing Context sign-in flow too", async () => {
+    const manifest = await publishAs(app, "# Job", { title: "Claude sign-in" }, as(owner.email))
+    const { short_id } = await manifest.json()
+    const context = await (
+      await app.request(
+        "/v1/contexts",
+        jsonAs(as(owner.email), {
+          name: "Claude sign-in",
+          manifest_short_id: short_id,
+        }),
+      )
+    ).json()
+    const modelPath = `/v1/contexts/${context.id}/runtime/model/sign-in`
+    expect(
+      (await app.request(modelPath, jsonAs(as(owner.email), { provider: "claude-code" }))).status,
+    ).toBe(202)
+    const response = await app.request(
+      `${modelPath}/sign-in-fixture/complete`,
+      jsonAs(as(owner.email), { code: "authorization fixture" }),
+    )
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ id: "sign-in-fixture", state: "complete" })
+  })
+  it("rejects malformed connection creation before contacting the service", async () => {
+    const before = requests.length
+    for (const body of [
+      { name: " ", provider: "codex" },
+      { name: "No", provider: "arbitrary" },
+      { name: "x".repeat(101), provider: "codex" },
+    ]) {
+      expect((await app.request(path, jsonAs(as(owner.email), body))).status).toBe(400)
+    }
+    expect(requests).toHaveLength(before)
+  })
+})

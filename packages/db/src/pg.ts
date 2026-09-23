@@ -271,6 +271,7 @@ import {
   reviewRound,
   run,
   runAttempt,
+  runtimeModelConnection,
   runtimeOwner,
   runtimeSetup,
   sessionMessage,
@@ -347,6 +348,7 @@ export const schema = {
   contextRuntime,
   runtimeSetup,
   runtimeOwner,
+  runtimeModelConnection,
   runAttempt,
   workflowRun,
   workflowStepAttempt,
@@ -416,6 +418,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   run: true,
   contextRuntime: true,
   runtimeSetup: true,
+  runtimeModelConnection: true,
   runAttempt: true,
   workflowRun: true,
   workflowStepAttempt: true,
@@ -713,6 +716,11 @@ export class PgMetaStore implements MetaStore {
   private readonly runtimes = runtimeRepos(
     async (statement) => (await this.db.execute(statement)).rows,
   )
+  createRuntimeModelConnection = this.runtimes.createRuntimeModelConnection
+  getRuntimeModelConnection = this.runtimes.getRuntimeModelConnection
+  listRuntimeModelConnections = this.runtimes.listRuntimeModelConnections
+  renameRuntimeModelConnection = this.runtimes.renameRuntimeModelConnection
+  revokeRuntimeModelConnection = this.runtimes.revokeRuntimeModelConnection
   getRuntimeSchedule = this.runtimes.getRuntimeSchedule
   listRuntimeSchedules = this.runtimes.listRuntimeSchedules
   saveRuntimeSchedule = this.runtimes.saveRuntimeSchedule
