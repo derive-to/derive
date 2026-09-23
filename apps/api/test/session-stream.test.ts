@@ -29,13 +29,12 @@ const harness = (over: { now?: () => number; flushChars?: number; flushMs?: numb
 const call = (fn: AgentLoopInput["callModel"]) => fn({ system: "", messages: [], tools: [] })
 
 describe("delta coalescing", () => {
-  it("buffers small pieces instead of publishing each one", async () => {
-    // A frozen clock: only the SIZE boundary can fire, so this isolates it from the age one.
+  it("publishes the first readable slice immediately, then coalesces", async () => {
     const { sent, stream } = harness({ now: () => 0 })
-    await call(stream.wrap(emitting(["a", "b", "c"])))
-    expect(sent).toEqual([]) // still buffered — three tokens are not three publishes
+    await call(stream.wrap(emitting(["a first readable phrase", "b", "c"])))
+    expect(sent).toHaveLength(1)
     stream.flush()
-    expect(sent).toMatchObject([{ seq: 1, text: "abc" }])
+    expect(sent.map((slice) => slice.text).join("")).toBe("a first readable phrasebc")
   })
 
   it("flushes on the size boundary mid-reply", async () => {
@@ -271,9 +270,7 @@ describe("a re-generated reply", () => {
     expect(sent.map((s) => s.seq)).toEqual([...sent.map((s) => s.seq)].sort((a, b) => a - b))
   })
 
-  it("drops text still buffered from an attempt that was abandoned", async () => {
-    // Text the model emitted but that never flushed belongs to a reply being thrown away.
-    // Publishing it later would put words on screen the transcript will never contain.
+  it("marks an abandoned first slice so the next attempt replaces it", async () => {
     const sent: { seq: number; text: string; attempt: number }[] = []
     const stream = makeDeltaStream({
       publish: (s) => {
@@ -286,7 +283,7 @@ describe("a re-generated reply", () => {
       return { text: "abandoned", toolUses: [], costUsd: null, done: true }
     }) as AgentLoopInput["callModel"])
     await first({ system: "", messages: [], tools: [] })
-    // No flush between attempts — the next call must discard that buffer, not inherit it.
+    // The next attempt has a new id, so the client replaces the fast provisional slice.
     const second = stream.wrap((async ({ onDelta }) => {
       onDelta?.("real answer")
       return { text: "real answer", toolUses: [], costUsd: null, done: true }
@@ -294,9 +291,9 @@ describe("a re-generated reply", () => {
     await second({ system: "", messages: [], tools: [] })
     stream.flush()
 
-    expect(sent).toHaveLength(1)
-    expect(sent[0]?.text).toBe("real answer")
-    expect(sent[0]?.text).not.toContain("abandoned")
+    expect(sent).toHaveLength(2)
+    expect(sent.map((slice) => slice.attempt)).toEqual([1, 2])
+    expect(sent[1]?.text).toBe("real answer")
   })
 })
 

@@ -28,6 +28,7 @@ export function useArtifactChat(shortId: string) {
     messages: chat.messages,
     working: chat.working,
     streaming: chat.streaming,
+    activity: chat.activity,
     error: chat.error,
     send: chat.send,
     poll: chat.poll,
