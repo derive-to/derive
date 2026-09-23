@@ -1,4 +1,4 @@
-import type { ContextRuntimeRecord, MetaStore } from "@derive/core"
+import type { ContextRuntimeRecord, MetaStore, RuntimeModelConnectionRecord } from "@derive/core"
 import type { AppDeps } from "../context"
 import { spendableConnections } from "./broker"
 import { decryptSecret, sha256 } from "./crypto"
@@ -44,4 +44,21 @@ export async function runtimeController(
   const key = decryptSecret(connection.secret_enc, secret)
   if (key === connection.secret_enc) throw new Error("Ortam connection cannot be decrypted")
   return new OrtamClient(runtime.api_url, key, fetcher)
+}
+
+/** Connection IDs have a separate namespace from legacy Context-scoped subjects. */
+export function managedModelClient(
+  config: NonNullable<AppDeps["runtime"]>,
+  connection: Pick<RuntimeModelConnectionRecord, "id" | "org_id" | "api_url">,
+  fetcher?: typeof fetch,
+) {
+  if (!config.managed?.apiKey) throw new Error("Cloud execution is not configured")
+  if (connection.api_url !== config.apiUrl)
+    throw new Error("Model connection belongs to a different API")
+  return new OrtamClient(
+    connection.api_url,
+    config.managed.apiKey,
+    fetcher,
+    sha256(JSON.stringify([connection.org_id, "model-connection", connection.id])),
+  )
 }

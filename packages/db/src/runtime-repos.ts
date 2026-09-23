@@ -10,6 +10,7 @@ import type {
 } from "@derive/core"
 import { CONTEXT_ENVIRONMENT_LIMIT, contextEnvironmentNameError } from "@derive/core"
 import { type SQL, sql } from "drizzle-orm"
+import { runtimeModelRepos } from "./runtime-model-repos"
 import { runtimeScheduleRepos } from "./runtime-schedule-repos"
 import { claimRuntimeOwner, runtimeSetupRepos } from "./runtime-setup-repos"
 
@@ -124,6 +125,7 @@ export function runtimeRepos(execute: (statement: SQL) => Promise<unknown[]>): R
   return {
     ...runtimeScheduleRepos(execute),
     ...runtimeSetupRepos(execute),
+    ...runtimeModelRepos(execute),
     claimRunAttempt: (id, orgId, at, scheduleRevision) =>
       first<RunAttemptRecord>(sql`
       UPDATE run_attempt SET runner_claimed_at = ${instant(at)}, revision = revision + 1, updated_at = ${at}

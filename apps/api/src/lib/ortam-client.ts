@@ -254,3 +254,17 @@ export const modelConnections = z.object({
 export function modelHarness(provider: "codex" | "claude-code") {
   return provider === "codex" ? "codex" : "claude_code"
 }
+
+const link = z
+  .string()
+  .url()
+  .refine((value) => new URL(value).protocol === "https:")
+  .nullable()
+export const modelSignIn = z.object({
+  id: z.string(),
+  state: z.enum(["pending", "complete", "failed", "expired", "cancelled"]),
+  user_code: z.string().nullable(),
+  verification_url: link,
+  authorize_url: link,
+  expires_at: z.string(),
+})

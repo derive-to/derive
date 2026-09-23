@@ -3,23 +3,10 @@ import { z } from "zod"
 import type { AppContext } from "../context"
 import { manageableContext } from "../lib/context-access"
 import { fail, readJson } from "../lib/http"
-import { modelConnections, modelHarness } from "../lib/ortam-client"
+import { modelConnections, modelHarness, modelSignIn } from "../lib/ortam-client"
 import { managedRuntimeClient } from "../lib/runtime-controller"
 
 const provider = z.enum(["codex", "claude-code"])
-const link = z
-  .string()
-  .url()
-  .refine((value) => new URL(value).protocol === "https:")
-  .nullable()
-const signIn = z.object({
-  id: z.string(),
-  state: z.enum(["pending", "complete", "failed", "expired", "cancelled"]),
-  user_code: z.string().nullable(),
-  verification_url: link,
-  authorize_url: link,
-  expires_at: z.string(),
-})
 
 export const contextRuntimeModelRoutes = (ctx: AppContext) => {
   const app = new Hono()
@@ -46,7 +33,7 @@ export const contextRuntimeModelRoutes = (ctx: AppContext) => {
     const body = await readJson(c, z.object({ provider }))
     if (body instanceof Response) return body
     return c.json(
-      signIn.parse(
+      modelSignIn.parse(
         await auth.client.request(
           `/agents/${modelHarness(body.provider)}/sign-in`,
           auth.identity,
@@ -60,7 +47,7 @@ export const contextRuntimeModelRoutes = (ctx: AppContext) => {
     const auth = await authority(c)
     if (auth instanceof Response) return auth
     return c.json(
-      signIn.parse(
+      modelSignIn.parse(
         await auth.client.request(
           `/agent-sign-in-attempts/${encodeURIComponent(c.req.param("attempt"))}`,
           auth.identity,
@@ -74,7 +61,7 @@ export const contextRuntimeModelRoutes = (ctx: AppContext) => {
     const body = await readJson(c, z.object({ code: z.string().trim().min(1).max(8192) }))
     if (body instanceof Response) return body
     return c.json(
-      signIn.parse(
+      modelSignIn.parse(
         await auth.client.request(
           `/agent-sign-in-attempts/${encodeURIComponent(c.req.param("attempt"))}/complete`,
           auth.identity,
@@ -88,7 +75,7 @@ export const contextRuntimeModelRoutes = (ctx: AppContext) => {
     const auth = await authority(c)
     if (auth instanceof Response) return auth
     return c.json(
-      signIn.parse(
+      modelSignIn.parse(
         await auth.client.request(
           `/agent-sign-in-attempts/${encodeURIComponent(c.req.param("attempt"))}/cancel`,
           auth.identity,

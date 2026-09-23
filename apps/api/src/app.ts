@@ -58,6 +58,7 @@ import { rawRoutes } from "./routes/raw"
 import { realtimeRoutes } from "./routes/realtime"
 import { reviewRoutes } from "./routes/review"
 import { reworkRoutes } from "./routes/rework"
+import { runtimeModelConnectionRoutes } from "./routes/runtime-model-connections"
 import { seenRoutes } from "./routes/seen"
 import { sessionRoutes } from "./routes/session"
 import { sharedStateRoutes } from "./routes/shared-state"
@@ -516,6 +517,7 @@ export function createApp(deps: AppDeps): Hono {
     contextRuntimeRoutes,
     contextRuntimeSetupRoutes,
     contextRuntimeModelRoutes,
+    runtimeModelConnectionRoutes,
     contextRuntimeScheduleRoutes,
     templateLibraryRoutes,
     realtimeRoutes,

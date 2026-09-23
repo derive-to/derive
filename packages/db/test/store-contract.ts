@@ -5131,6 +5131,78 @@ export function runStoreContract(
     })
   })
 
+  describe(`${label}: reusable runtime model connections`, () => {
+    const at = "2026-09-23T12:00:00.000Z"
+    const later = "2026-09-23T12:01:00.000Z"
+    const input = () => ({
+      id: uuid(),
+      org_id: ORG,
+      created_by: uuid(),
+      name: "Rob’s Claude",
+      provider: "claude-code" as const,
+      api_url: "https://ortam.test/v1",
+      ortam_org_id: "ortam-org",
+      ortam_user_id: `integration:${uuid()}`,
+    })
+    it("keeps independent reusable identities and isolates workspace and owner reads", async () => {
+      const source = input()
+      const first = await store.createRuntimeModelConnection(
+        { ...source, name: "  Rob’s Claude  " },
+        at,
+      )
+      const second = await store.createRuntimeModelConnection(
+        { ...source, id: uuid(), ortam_user_id: `integration:${uuid()}` },
+        at,
+      )
+      expect(first).toMatchObject({ name: "Rob’s Claude", revision: 0, revoked_at: null })
+      expect(
+        (await store.listRuntimeModelConnections(ORG, source.created_by)).map((r) => r.id).sort(),
+      ).toEqual([first.id, second.id].sort())
+      expect(await store.listRuntimeModelConnections(ORG, "someone-else")).toEqual([])
+      expect(await store.listRuntimeModelConnections("foreign", source.created_by)).toEqual([])
+      expect(await store.getRuntimeModelConnection(first.id, "foreign")).toBeNull()
+      expect(
+        await store.renameRuntimeModelConnection(first.id, "foreign", 0, "Stolen", at),
+      ).toBeNull()
+      expect(await store.revokeRuntimeModelConnection(first.id, "foreign", at)).toBeNull()
+      expect(await store.getRuntimeModelConnection(first.id, ORG)).toEqual(first)
+      await expect(
+        store.createRuntimeModelConnection({ ...input(), name: " " }, at),
+      ).rejects.toThrow(/name/)
+    })
+    it("serializes edits and retains an irreversible revocation receipt for cleanup", async () => {
+      const connection = await store.createRuntimeModelConnection(input(), at)
+      const edits = await Promise.all([
+        store.renameRuntimeModelConnection(connection.id, ORG, 0, "First edit", later),
+        store.renameRuntimeModelConnection(connection.id, ORG, 0, "Second edit", later),
+      ])
+      expect(edits.filter(Boolean)).toHaveLength(1)
+      await Promise.all([
+        store.renameRuntimeModelConnection(connection.id, ORG, 1, "Concurrent edit", later),
+        store.revokeRuntimeModelConnection(connection.id, ORG, later),
+      ])
+      const revoked = await store.getRuntimeModelConnection(connection.id, ORG)
+      expect(revoked).toMatchObject({
+        revoked_at: later,
+        ortam_user_id: connection.ortam_user_id,
+        created_at: at,
+      })
+      expect(await store.listRuntimeModelConnections(ORG, connection.created_by)).toEqual([])
+      expect(
+        await store.renameRuntimeModelConnection(
+          connection.id,
+          ORG,
+          revoked?.revision ?? -1,
+          "Revive",
+          later,
+        ),
+      ).toBeNull()
+      expect(
+        await store.revokeRuntimeModelConnection(connection.id, ORG, "2026-09-23T13:00:00.000Z"),
+      ).toEqual(revoked)
+    })
+  })
+
   describe(`${label}: persistent runtime ownership`, () => {
     const at = "2026-09-21T12:00:00.000Z"
     const deadlineAt = "2026-09-21T12:15:00.000Z"
