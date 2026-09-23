@@ -49,6 +49,7 @@ import {
   notification,
   report,
   reviewRound,
+  runtimeControllerRelaxation,
   SCHEMA_STATEMENTS,
   SLACK_THREAD_LINK_REKEY_SQLITE,
   sessionMessage,
@@ -94,6 +95,15 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
     }
   }
   for (const stmt of SCHEMA_STATEMENTS) raw.exec(stmt)
+  for (const table of ["context_runtime", "runtime_setup"] as const) {
+    const columns = raw.pragma(`table_info(${table})`) as { name: string; notnull: number }[]
+    if (!columns.some((column) => column.name === "connection_id" && column.notnull === 1)) continue
+    // These receipt tables have no foreign keys. SQLite's transaction makes the
+    // copy/rename atomic; any failure preserves the original rows and aborts boot.
+    raw.transaction(() => {
+      for (const statement of runtimeControllerRelaxation(table)) raw.exec(statement)
+    })()
+  }
   // RELAXATIONS: a rebuild, so it runs only when the old constraint is actually still there.
   // `PRAGMA table_info` is the check — cheap, exact, and it makes a second boot a no-op instead
   // of a second rebuild. Wrapped in a transaction so a failure mid-way leaves the original table

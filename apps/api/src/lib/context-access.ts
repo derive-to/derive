@@ -29,3 +29,23 @@ export async function runtimePilotAllowed(
   const userId = await ctx.managementPrincipal(c)
   return !!userId && ((await ctx.isSuperAdmin(c)) || (await ctx.meta.isInstanceOperator(userId)))
 }
+
+/** Managed jobs follow the automation run permission. Editing still belongs to
+ * the Context creator or a workspace manager; a caller never supplies an agent ID. */
+export async function runnableContext(ctx: AppContext, c: Context) {
+  const orgId = await ctx.requireWorkspace(c, "publish")
+  if (orgId instanceof Response) return orgId
+  if (!(await ctx.managementPrincipal(c))) return fail(c, 401, "unauthenticated")
+  const context = await ctx.meta.getContext(c.req.param("id") ?? "")
+  if (!context || context.org_id !== orgId) return fail(c, 404, "not found")
+  if (ctx.deps.runtime?.managed?.workspaceIds.has(orgId)) {
+    const userId = await ctx.managementPrincipal(c)
+    if (!userId || !(await ctx.canUserAskContext(userId, context))) return fail(c, 403, "forbidden")
+    return context
+  }
+  return manageableContext(ctx, c)
+}
+
+export async function runtimeAvailable(ctx: AppContext, c: Context, orgId: string) {
+  return !!ctx.deps.runtime?.managed?.workspaceIds.has(orgId) || runtimePilotAllowed(ctx, c, orgId)
+}

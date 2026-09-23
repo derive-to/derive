@@ -44,6 +44,7 @@ export class OrtamClient {
     readonly base: string,
     private key: string,
     fetcher: typeof fetch = fetch,
+    private subject?: string,
   ) {
     this.fetcher = unbound(fetcher)
     const url = new URL(base)
@@ -73,6 +74,7 @@ export class OrtamClient {
       throw new Error("Ortam request outcome is unknown")
     }
     if (!response.ok) throw new OrtamHttpError(response.status, path)
+    if (response.status === 204) return null
     try {
       return await response.json()
     } catch {
@@ -88,6 +90,19 @@ export class OrtamClient {
     const claims = z
       .object({ organization_id: z.string(), sub: z.string() })
       .parse(JSON.parse(atob(encoded.replace(/-/g, "+").replace(/_/g, "/"))))
+    if (this.subject) {
+      const identity = z.object({ organization_id: z.string(), user_id: z.string() }).parse(
+        await this.json("/integration", {
+          headers: {
+            Authorization: `Bearer ${response.token}`,
+            "X-Ortam-Integration-Subject": this.subject,
+          },
+        }),
+      )
+      if (identity.organization_id !== claims.organization_id)
+        throw new Error("Ortam integration ownership changed")
+      return { ...identity, token: response.token }
+    }
     return { organization_id: claims.organization_id, user_id: claims.sub, token: response.token }
   }
   async request(
@@ -108,6 +123,7 @@ export class OrtamClient {
         "Content-Type": "application/json",
         ...(key ? { "Idempotency-Key": key } : {}),
         ...headers,
+        ...(this.subject ? { "X-Ortam-Integration-Subject": this.subject } : {}),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
@@ -215,3 +231,13 @@ export class OrtamClient {
     return process
   }
 }
+
+export const modelConnections = z.object({
+  items: z.array(
+    z.object({
+      harness: z.string(),
+      status: z.string(),
+      identity: z.object({ email: z.string().optional() }).nullable(),
+    }),
+  ),
+})

@@ -1474,14 +1474,45 @@ export const api = {
     id: string,
   ): Promise<{
     enabled: boolean
-    setup?: RuntimeSetupRecord | null
-    runtime: ContextRuntimeRecord | null
+    managed?: boolean
+    can_edit?: boolean
+    setup?:
+      | (Pick<RuntimeSetupRecord, "phase" | "cancelled_at" | "deadline_at"> &
+          Partial<RuntimeSetupRecord>)
+      | null
+    runtime:
+      | (Pick<ContextRuntimeRecord, "id" | "disabled_at"> & Partial<ContextRuntimeRecord>)
+      | null
     schedule: AutomationRecord | null
     next_run_at: string | null
     runs: (RunRecord & { attempt: RunAttemptRecord | null })[]
   }> => f(`/v1/contexts/${id}/runtime`, opts()).then(j),
-  setupContextRuntime: (id: string, connection_id: string): Promise<unknown> =>
+  setupContextRuntime: (id: string, connection_id?: string): Promise<unknown> =>
     f(`/v1/contexts/${id}/runtime/setup`, opts({ connection_id })).then(j),
+  runtimeModels: (
+    id: string,
+  ): Promise<{
+    items: { harness: string; status: string; identity: { email?: string } | null }[]
+  }> => f(`/v1/contexts/${id}/runtime/model`, opts()).then(j),
+  startRuntimeModelSignIn: (
+    id: string,
+    provider: "codex" | "claude-code",
+  ): Promise<RuntimeModelSignIn> =>
+    f(`/v1/contexts/${id}/runtime/model/sign-in`, opts({ provider })).then(j),
+  runtimeModelSignIn: (id: string, attempt: string): Promise<RuntimeModelSignIn> =>
+    f(`/v1/contexts/${id}/runtime/model/sign-in/${attempt}`, opts()).then(j),
+  completeRuntimeModelSignIn: (
+    id: string,
+    attempt: string,
+    code: string,
+  ): Promise<RuntimeModelSignIn> =>
+    f(`/v1/contexts/${id}/runtime/model/sign-in/${attempt}/complete`, opts({ code })).then(j),
+  cancelRuntimeModelSignIn: (id: string, attempt: string): Promise<RuntimeModelSignIn> =>
+    f(`/v1/contexts/${id}/runtime/model/sign-in/${attempt}/cancel`, opts({})).then(j),
+  disconnectRuntimeModel: (id: string, provider: "codex" | "claude-code"): Promise<unknown> =>
+    f(`/v1/contexts/${id}/runtime/model/${provider}`, { ...opts(), method: "DELETE" }).then(j),
+  runSavedRuntimeJob: (id: string): Promise<unknown> =>
+    f(`/v1/contexts/${id}/runtime/runs`, opts({})).then(j),
   cancelContextRuntimeSetup: (id: string): Promise<unknown> =>
     f(`/v1/contexts/${id}/runtime/setup/cancel`, opts({})).then(j),
   bindContextRuntime: (id: string, connection_id: string, sandbox_id: string): Promise<unknown> =>
@@ -2198,4 +2229,13 @@ export const api = {
     const r = await f(`/v1/connections/${id}`, { credentials: "include", method: "DELETE" })
     if (!r.ok) throw new ApiError("Couldn't revoke the connection.", r.status)
   },
+}
+
+export interface RuntimeModelSignIn {
+  id: string
+  state: "pending" | "complete" | "failed" | "expired" | "cancelled"
+  user_code: string | null
+  verification_url: string | null
+  authorize_url: string | null
+  expires_at: string
 }

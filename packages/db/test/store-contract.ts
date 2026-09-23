@@ -5222,6 +5222,7 @@ export function runStoreContract(
       }
       return {
         input,
+        runInput: { ...f.input, context_id: context.id },
         context,
         binding: {
           ...f.binding,
@@ -5344,6 +5345,73 @@ export function runStoreContract(
       ).toMatchObject({ phase: "ready" })
       await store.cancelRuntimeSetup(f.context.id, ORG, at)
       expect((await store.getRuntimeSetup(f.context.id, ORG))?.cancelled_at).toBeNull()
+    })
+
+    it("retains a managed job account while another user runs its saved configuration", async () => {
+      const f = await setupFixture()
+      let setup = await store.createRuntimeSetup({ ...f.input, connection_id: null }, at)
+      if (!setup) throw new Error("Managed setup missing")
+      for (const change of [
+        { phase: "creating" as const },
+        {
+          phase: "provisioning" as const,
+          sandbox_id: f.binding.sandbox_id,
+          create_operation_id: "managed-create",
+        },
+        { phase: "stopping" as const },
+        { phase: "awaiting_connection" as const },
+        { phase: "binding" as const },
+      ]) {
+        setup = await store.transitionRuntimeSetup(setup.id, ORG, setup.revision, change, at)
+        if (!setup) throw new Error("Managed transition rejected")
+      }
+      const runtime = await store.bindRuntimeSetup(setup.id, ORG, at)
+      if (!runtime) throw new Error("Managed runtime missing")
+      expect(runtime.connection_id).toBeNull()
+      expect(runtime.ortam_user_id).toBe(f.input.ortam_user_id)
+      await store.setMembership({ id: uuid(), org_id: ORG, user_id: "owner", role: "owner" })
+      const schedule = await store.saveRuntimeSchedule({
+        id: uuid(),
+        runtimeId: runtime.id,
+        orgId: ORG,
+        ownerId: "owner",
+        instruction: "Check yesterday's games",
+        provider: "codex",
+        cron: "0 9 * * *",
+        timezone: "America/New_York",
+        enabled: true,
+        revision: null,
+        at,
+      })
+      if (!schedule) throw new Error("Managed schedule missing")
+      const run = await store.createRun({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: f.context.agent_id,
+        runtime_id: runtime.id,
+        automation_id: schedule.id,
+        initiated_by: "collaborator",
+        reason: "manual:collaborator",
+        input_snapshot: JSON.stringify({ ...f.runInput, schedule_revision: 0 }),
+      })
+      let attempt = await store.reserveRunAttempt({
+        id: uuid(),
+        runId: run.id,
+        orgId: ORG,
+        at,
+        deadlineAt,
+      })
+      for (const phase of ["ready", "launching"] as const) {
+        if (!attempt) throw new Error("Managed attempt missing")
+        attempt = await store.transitionRunAttempt(attempt.id, ORG, attempt.revision, { phase }, at)
+      }
+      if (!attempt) throw new Error("Managed claim missing")
+      expect(await store.claimRunAttempt(attempt.id, ORG, at, 99)).toBeNull()
+      expect(await store.claimRunAttempt(attempt.id, ORG, at, 0)).toMatchObject({
+        runner_claimed_at: at,
+      })
+      expect(await store.claimRunAttempt(attempt.id, ORG, at, 0)).toBeNull()
+      expect((await store.getRuntimeSchedule(runtime.id, ORG))?.created_by).toBe("owner")
     })
 
     it("saves runtime schedules with revision checks and admits one current occurrence at a time", async () => {

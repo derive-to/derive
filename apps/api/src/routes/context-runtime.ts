@@ -1,5 +1,5 @@
 import { refRouter } from "@derive/broker"
-import { newId, type RuntimeRunInput } from "@derive/core"
+import { newId, type RuntimeRunInput, roleAllows } from "@derive/core"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
@@ -12,11 +12,17 @@ import {
   spendableConnections,
   toolsForRun,
 } from "../lib/broker"
-import { manageableContext, runtimePilotAllowed } from "../lib/context-access"
+import {
+  manageableContext,
+  runnableContext,
+  runtimeAvailable,
+  runtimePilotAllowed,
+} from "../lib/context-access"
 import { readEnvironmentBindings } from "../lib/context-environment"
 import { decryptSecret } from "../lib/crypto"
 import { fail, readJson } from "../lib/http"
-import { OrtamClient } from "../lib/ortam-client"
+import { modelConnections, OrtamClient } from "../lib/ortam-client"
+import { managedRuntimeClient } from "../lib/runtime-controller"
 import { runtimeInput } from "../lib/runtime-input"
 import { nextRuntimeOccurrence, runtimeScheduleAllows } from "../lib/runtime-schedule"
 import { verifyRuntimeToken } from "../lib/runtime-token"
@@ -25,11 +31,17 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
   const { meta, deps } = ctx
   const app = new Hono()
   app.get("/v1/contexts/:id/runtime", async (c) => {
-    const context = await manageableContext(ctx, c)
+    const context = await runnableContext(ctx, c)
     if (context instanceof Response) return context
-    if (!(await runtimePilotAllowed(ctx, c, context.org_id)))
+    if (!(await runtimeAvailable(ctx, c, context.org_id)))
       return c.json({ enabled: false, runtime: null, schedule: null, next_run_at: null, runs: [] })
     const runtime = await meta.getContextRuntimeForContext(context.id, context.org_id)
+    const managed = runtime
+      ? runtime.connection_id === null
+      : !!deps.runtime?.managed?.workspaceIds.has(context.org_id)
+    if (!managed && !(await runtimePilotAllowed(ctx, c, context.org_id)))
+      return c.json({ enabled: false, runtime: null, schedule: null, next_run_at: null, runs: [] })
+    const setup = await meta.getRuntimeSetup(context.id, context.org_id)
     const schedule = runtime ? await meta.getRuntimeSchedule(runtime.id, context.org_id) : null
     const trigger = schedule ? parseTrigger(schedule.trigger) : null
     let nextRunAt: string | null = null
@@ -44,10 +56,18 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
       : []
     return c.json({
       enabled: true,
-      setup: await meta.getRuntimeSetup(context.id, context.org_id),
+      managed,
+      can_edit: context.created_by === viewer || (await ctx.workspaceCan(c, "manage")),
+      setup: managed
+        ? setup && {
+            phase: setup.phase,
+            cancelled_at: setup.cancelled_at,
+            deadline_at: setup.deadline_at,
+          }
+        : setup,
       schedule,
       next_run_at: nextRunAt,
-      runtime,
+      runtime: managed ? runtime && { id: runtime.id, disabled_at: runtime.disabled_at } : runtime,
       runs: await Promise.all(
         runs.map(async (run) => {
           const attempt = await meta.getLatestRunAttempt(run.id, run.org_id)
@@ -126,24 +146,55 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
     }
   })
   app.post("/v1/contexts/:id/runtime/runs", async (c) => {
-    const context = await manageableContext(ctx, c)
+    const context = await runnableContext(ctx, c)
     if (context instanceof Response) return context
-    if (!(await runtimePilotAllowed(ctx, c, context.org_id)))
+    if (!(await runtimeAvailable(ctx, c, context.org_id)))
       return fail(c, 403, "Cloud run pilot is unavailable")
-    const body = await readJson(
-      c,
-      z.object({
-        instruction: z.string().trim().min(1).max(16000),
-        provider: z.enum(["codex", "claude-code"]),
-        model: z.string().min(1).max(128).nullable().default(null),
-      }),
-    )
-    if (body instanceof Response) return body
     const settings = await meta.getOrgSettings(context.org_id)
     if (!settings.hostedAgentsEnabled || !settings.agentWrites)
       return fail(c, 403, "Enable hosted agents and agent writes for this workspace")
     const runtime = await meta.getContextRuntimeForContext(context.id, context.org_id)
     if (!runtime || runtime.disabled_at) return fail(c, 409, "Context runtime is unavailable")
+    const managed = runtime.connection_id === null
+    if (!managed && !(await runtimePilotAllowed(ctx, c, context.org_id)))
+      return fail(c, 403, "Cloud run pilot is unavailable")
+    const schedule = managed ? await meta.getRuntimeSchedule(runtime.id, context.org_id) : null
+    if (managed && schedule?.enabled !== 1) return fail(c, 409, "Save and enable the job first")
+    const body =
+      managed && schedule
+        ? {
+            instruction: schedule.instruction,
+            provider: schedule.provider,
+            model: null,
+            schedule_revision: schedule.revision,
+          }
+        : await readJson(
+            c,
+            z.object({
+              instruction: z.string().trim().min(1).max(16000),
+              provider: z.enum(["codex", "claude-code"]),
+              model: z.string().min(1).max(128).nullable().default(null),
+            }),
+          )
+    if (body instanceof Response) return body
+    if (managed && deps.runtime) {
+      try {
+        const client = managedRuntimeClient(
+          deps.runtime,
+          context.org_id,
+          context.id,
+          deps.runtimeFetch,
+        )
+        const connections = modelConnections.parse(
+          await client.request("/agents", await client.authenticate()),
+        )
+        const harness = body.provider === "codex" ? "codex" : "claude_code"
+        if (!connections.items.some((item) => item.harness === harness && item.status === "active"))
+          return fail(c, 409, "The job’s model account needs to be connected")
+      } catch {
+        return fail(c, 502, "Could not verify the job’s model account")
+      }
+    }
     const input = await runtimeInput(meta, context, body)
     if (!input) return fail(c, 409, "Context manifest is unavailable")
     const run = await meta.createRun({
@@ -152,6 +203,7 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
       agent_id: context.agent_id,
       initiated_by: await ctx.managementPrincipal(c),
       reason: "manual:runtime",
+      automation_id: schedule?.id,
       runtime_id: runtime.id,
       input_snapshot: JSON.stringify(input),
     })
@@ -160,7 +212,7 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
   app.post("/v1/contexts/:id/runtime/disable", async (c) => {
     const context = await manageableContext(ctx, c)
     if (context instanceof Response) return context
-    if (!(await runtimePilotAllowed(ctx, c, context.org_id)))
+    if (!(await runtimeAvailable(ctx, c, context.org_id)))
       return fail(c, 403, "Cloud run pilot is unavailable")
     const runtime = await meta.getContextRuntimeForContext(context.id, context.org_id)
     if (runtime)
@@ -201,10 +253,21 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
       agent?.org_id !== run.org_id ||
       !settings.hostedAgentsEnabled ||
       !settings.agentWrites ||
-      !deps.runtime?.pilotWorkspaceIds.has(run.org_id) ||
+      !(runtime.connection_id === null
+        ? deps.runtime?.managed?.workspaceIds.has(run.org_id)
+        : deps.runtime?.pilotWorkspaceIds.has(run.org_id)) ||
       !run.initiated_by ||
-      !(await meta.isInstanceOperator(run.initiated_by)) ||
+      (runtime.connection_id !== null && !(await meta.isInstanceOperator(run.initiated_by))) ||
       !(await meta.getMembership(run.org_id, run.initiated_by))
+    )
+      return fail(c, 403, "Runtime access has been revoked")
+    if (
+      runtime.connection_id === null &&
+      (!(await ctx.canUserAskContext(run.initiated_by, context)) ||
+        !roleAllows(
+          (await meta.getMembership(run.org_id, run.initiated_by))?.role ?? "viewer",
+          "publish",
+        ))
     )
       return fail(c, 403, "Runtime access has been revoked")
     const current = readEnvironmentBindings(context.environment_bindings)
@@ -278,6 +341,15 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
       !settings.hostedAgentsEnabled ||
       !run.initiated_by ||
       !(await meta.getMembership(run.org_id, run.initiated_by))
+    )
+      return fail(c, 403, "Runtime access has been revoked")
+    if (
+      runtime.connection_id === null &&
+      (!(await ctx.canUserAskContext(run.initiated_by, context)) ||
+        !roleAllows(
+          (await meta.getMembership(run.org_id, run.initiated_by))?.role ?? "viewer",
+          "publish",
+        ))
     )
       return fail(c, 403, "Runtime access has been revoked")
     const body = await readJson(

@@ -26,14 +26,14 @@ const transitions: Record<RuntimeSetupRecord["phase"], RuntimeSetupRecord["phase
  * insert uses the same owner; another mode cannot steal the Context between statements. */
 export async function claimRuntimeOwner(
   execute: (statement: SQL) => Promise<unknown[]>,
-  input: { context_id: string; org_id: string; connection_id: string; agent_id: string },
+  input: { context_id: string; org_id: string; connection_id: string | null; agent_id: string },
   owner: "manual" | "setup",
 ) {
   await execute(sql`INSERT INTO runtime_owner (context_id, org_id, owner)
     SELECT c.id, c.org_id, ${owner} FROM context c
-    JOIN connection cn ON cn.id = ${input.connection_id} AND cn.org_id = c.org_id
+    LEFT JOIN connection cn ON cn.id = ${input.connection_id} AND cn.org_id = c.org_id
     WHERE c.id = ${input.context_id} AND c.org_id = ${input.org_id} AND c.agent_id = ${input.agent_id}
-      AND c.import_source IS NULL AND cn.kind = 'secret' AND cn.status = 'active' AND cn.secret_enc IS NOT NULL
+      AND c.import_source IS NULL AND (cast(${input.connection_id} AS text) IS NULL OR (cn.kind = 'secret' AND cn.status = 'active' AND cn.secret_enc IS NOT NULL))
       AND NOT EXISTS (SELECT 1 FROM context_runtime rt WHERE rt.context_id = c.id)
     ON CONFLICT DO NOTHING RETURNING context_id`)
   return (
@@ -59,15 +59,15 @@ export function runtimeSetupRepos(execute: (statement: SQL) => Promise<unknown[]
         (id, org_id, context_id, agent_id, api_url, ortam_org_id, ortam_user_id, sandbox_id, connection_id, disabled_at, created_at)
         SELECT ${`rt_${id}`}, s.org_id, s.context_id, s.agent_id, s.api_url, s.ortam_org_id, s.ortam_user_id,
           s.sandbox_id, s.connection_id,
-          CASE WHEN EXISTS (SELECT 1 FROM context c JOIN connection cn ON cn.id = s.connection_id AND cn.org_id = c.org_id
-            WHERE c.id = s.context_id AND c.org_id = s.org_id AND c.agent_id = s.agent_id AND cn.status = 'active')
+          CASE WHEN EXISTS (SELECT 1 FROM context c LEFT JOIN connection cn ON cn.id = s.connection_id AND cn.org_id = c.org_id
+            WHERE c.id = s.context_id AND c.org_id = s.org_id AND c.agent_id = s.agent_id AND (s.connection_id IS NULL OR cn.status = 'active'))
             THEN NULL ELSE ${at} END, ${at}
         FROM runtime_setup s WHERE s.id = ${id} AND s.org_id = ${orgId}
           AND s.phase = 'binding' AND s.cancelled_at IS NULL
         ON CONFLICT DO NOTHING RETURNING id`)
       const rows = await execute(sql`SELECT rt.* FROM context_runtime rt JOIN runtime_setup s
         ON rt.context_id = s.context_id AND rt.org_id = s.org_id AND rt.sandbox_id = s.sandbox_id
-          AND rt.connection_id = s.connection_id AND rt.agent_id = s.agent_id
+          AND (rt.connection_id = s.connection_id OR (rt.connection_id IS NULL AND s.connection_id IS NULL)) AND rt.agent_id = s.agent_id
           AND rt.api_url = s.api_url AND rt.ortam_org_id = s.ortam_org_id AND rt.ortam_user_id = s.ortam_user_id
         WHERE s.id = ${id} AND s.org_id = ${orgId} AND s.phase = 'binding' AND s.cancelled_at IS NULL`)
       return (rows[0] as ContextRuntimeRecord | undefined) ?? null
@@ -84,11 +84,11 @@ export function runtimeSetupRepos(execute: (statement: SQL) => Promise<unknown[]
         (await first(sql`INSERT INTO runtime_setup
         (id, org_id, context_id, agent_id, created_by, connection_id, api_url, ortam_org_id, ortam_user_id,
           request_json, phase, deadline_at, created_at, updated_at)
-        SELECT ${input.id}, c.org_id, c.id, c.agent_id, ${input.created_by}, cn.id, ${input.api_url},
+        SELECT ${input.id}, c.org_id, c.id, c.agent_id, ${input.created_by}, ${input.connection_id}, ${input.api_url},
           ${input.ortam_org_id}, ${input.ortam_user_id}, ${input.request_json}, 'queued', ${input.deadline_at}, ${at}, ${at}
-        FROM context c JOIN connection cn ON cn.id = ${input.connection_id} AND cn.org_id = c.org_id
+        FROM context c LEFT JOIN connection cn ON cn.id = ${input.connection_id} AND cn.org_id = c.org_id
         WHERE c.id = ${input.context_id} AND c.org_id = ${input.org_id} AND c.agent_id = ${input.agent_id}
-          AND c.import_source IS NULL AND cn.kind = 'secret' AND cn.status = 'active' AND cn.secret_enc IS NOT NULL
+          AND c.import_source IS NULL AND (cast(${input.connection_id} AS text) IS NULL OR (cn.kind = 'secret' AND cn.status = 'active' AND cn.secret_enc IS NOT NULL))
           AND NOT EXISTS (SELECT 1 FROM context_runtime rt WHERE rt.context_id = c.id)
         ON CONFLICT DO NOTHING RETURNING *`)) ?? null
       )

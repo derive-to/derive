@@ -181,9 +181,9 @@ function Console({ id }: { id: string }) {
   const isOwner = !!context && context.created_by === me?.id
   const runtimeState = useQuery({
     ...contextRuntimeQuery(id),
-    enabled: isOwner && !context?.import,
+    enabled: !!context && !context.import,
   })
-  const canUseCloudPilot = isOwner && runtimeState.data?.enabled === true
+  const canUseCloudPilot = runtimeState.data?.enabled === true
   const visibleTab = tab === "cloud" && !canUseCloudPilot ? "chat" : tab
   // Managed connections are absent from Settings, so their runner token is rotated here.
   // The API enforces admin access and returns the replacement token once.

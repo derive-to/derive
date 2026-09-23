@@ -14,7 +14,10 @@ export function RuntimeSetup({
   setup,
 }: {
   contextId: string
-  setup: RuntimeSetupRecord | null
+  setup:
+    | (Pick<RuntimeSetupRecord, "phase" | "cancelled_at" | "deadline_at"> &
+        Partial<RuntimeSetupRecord>)
+    | null
 }) {
   return setup ? (
     <RuntimeSetupProgress contextId={contextId} setup={setup} />
@@ -28,7 +31,8 @@ function RuntimeSetupProgress({
   setup,
 }: {
   contextId: string
-  setup: RuntimeSetupRecord
+  setup: Pick<RuntimeSetupRecord, "phase" | "cancelled_at" | "deadline_at"> &
+    Partial<RuntimeSetupRecord>
 }) {
   const cancel = useApiMutation({
     mutationFn: () => api.cancelContextRuntimeSetup(contextId),

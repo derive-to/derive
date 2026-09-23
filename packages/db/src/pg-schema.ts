@@ -370,7 +370,7 @@ export const runtimeSetup = pgTable(
     context_id: text("context_id").notNull(),
     agent_id: text("agent_id").notNull(),
     created_by: text("created_by").notNull(),
-    connection_id: text("connection_id").notNull(),
+    connection_id: text("connection_id"),
     api_url: text("api_url").notNull(),
     ortam_org_id: text("ortam_org_id").notNull(),
     ortam_user_id: text("ortam_user_id").notNull(),
@@ -400,7 +400,7 @@ export const contextRuntime = pgTable(
     ortam_org_id: text("ortam_org_id").notNull(),
     ortam_user_id: text("ortam_user_id").notNull(),
     sandbox_id: text("sandbox_id").notNull(),
-    connection_id: text("connection_id").notNull(),
+    connection_id: text("connection_id"),
     disabled_at: text("disabled_at"),
     created_at: text("created_at").notNull(),
   },
@@ -1734,6 +1734,8 @@ export const buildPgSchemaStatements = (): string[] => {
     // A session no longer requires a context (chat with a document). Postgres can say this
     // directly, and DROP NOT NULL on an already-nullable column is a no-op, so it is safe to
     // run on every boot. SQLite needs a table rebuild instead — see CONTEXT_SESSION_RELAX_SQLITE.
+    `ALTER TABLE context_runtime ALTER COLUMN connection_id DROP NOT NULL`,
+    `ALTER TABLE runtime_setup ALTER COLUMN connection_id DROP NOT NULL`,
     `ALTER TABLE context_session ALTER COLUMN context_id DROP NOT NULL`,
     `ALTER TABLE context_session ALTER COLUMN context_version DROP NOT NULL`,
     // A Derive thread mirrors into every subscribed channel, so slack_thread_link is keyed

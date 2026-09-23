@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { contextRuntimeQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { ManagedRuntimeCard } from "./managed-runtime-card"
 import { RuntimeScheduleCard } from "./runtime-schedule-card"
 import { RuntimeSetup } from "./runtime-setup"
 
@@ -46,6 +47,7 @@ export function RuntimeRunCard({
     success: "New runs disabled; active runs will stop",
   })
   if (!state.data?.enabled) return null
+  if (state.data.managed) return <ManagedRuntimeCard contextId={contextId} state={state.data} />
   const runtime = state.data.runtime
   return (
     <section data-testid="context-runtime-panel" className="flex max-w-4xl flex-col gap-8">

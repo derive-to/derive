@@ -6,13 +6,14 @@ import {
   type RunAttemptRecord,
   type RunAttemptResult,
   type RunRecord,
+  roleAllows,
 } from "@derive/core"
 import { type AppDeps, buildContext } from "../context"
 import { log } from "../log"
 import { afterPublish } from "./after-publish"
 import { spendableConnections } from "./broker"
-import { decryptSecret } from "./crypto"
-import { OrtamClient } from "./ortam-client"
+import { modelConnections } from "./ortam-client"
+import { runtimeController } from "./runtime-controller"
 import { runtimeFailureReason } from "./runtime-diagnostics"
 import { materializeRuntimeSchedules, runtimeScheduleAllows } from "./runtime-schedule"
 import { reconcileRuntimeSetups } from "./runtime-setup"
@@ -29,26 +30,6 @@ export interface RuntimeDispatchDeps {
 }
 export const RUNTIME_ATTEMPT_MS = 15 * 60_000
 
-async function runtimeClient(
-  deps: RuntimeDispatchDeps,
-  runtime: ContextRuntimeRecord,
-  cleanup = false,
-) {
-  if (runtime.api_url !== deps.config.apiUrl)
-    throw new Error("Runtime belongs to a different Ortam API")
-  const connections = cleanup
-    ? await deps.meta.getConnectionsByIds([runtime.connection_id])
-    : await spendableConnections(deps.meta, runtime.org_id, [runtime.connection_id])
-  const connection = connections.find(
-    (c) => c.id === runtime.connection_id && c.org_id === runtime.org_id,
-  )
-  if (connection?.kind !== "secret" || !connection.secret_enc)
-    throw new Error("Ortam connection is unavailable")
-  const key = decryptSecret(connection.secret_enc, deps.secret)
-  if (key === connection.secret_enc) throw new Error("Ortam connection cannot be decrypted")
-  return new OrtamClient(runtime.api_url, key, deps.fetcher)
-}
-
 async function enabled(
   deps: RuntimeDispatchDeps,
   run: RunRecord,
@@ -56,13 +37,24 @@ async function enabled(
   claimed = false,
 ) {
   if (!claimed && !(await runtimeScheduleAllows(deps.meta, run))) return false
-  if (!deps.config.pilotWorkspaceIds.has(run.org_id)) return false
+  const managed = runtime.connection_id === null
+  if (
+    managed
+      ? !deps.config.managed?.workspaceIds.has(run.org_id)
+      : !deps.config.pilotWorkspaceIds.has(run.org_id)
+  )
+    return false
   const settings = await deps.meta.getOrgSettings(run.org_id)
   const context = await deps.meta.getContext(runtime.context_id)
   const agent = await deps.meta.getAgent(run.agent_id)
-  const credentials = await spendableConnections(deps.meta, runtime.org_id, [runtime.connection_id])
-  return !!(
-    credentials.some((c) => c.kind === "secret" && !!c.secret_enc) &&
+  const credentials = runtime.connection_id
+    ? await spendableConnections(deps.meta, runtime.org_id, [runtime.connection_id])
+    : []
+  const member = run.initiated_by
+    ? await deps.meta.getMembership(run.org_id, run.initiated_by)
+    : null
+  const allowed = !!(
+    (managed || credentials.some((c) => c.kind === "secret" && !!c.secret_enc)) &&
     (claimed || !run.automation_id || settings.automateBeta) &&
     settings.hostedAgentsEnabled &&
     settings.agentWrites &&
@@ -71,8 +63,30 @@ async function enabled(
     context.agent_id === run.agent_id &&
     agent?.org_id === run.org_id &&
     run.initiated_by &&
-    (await deps.meta.isInstanceOperator(run.initiated_by)) &&
-    (await deps.meta.getMembership(run.org_id, run.initiated_by))
+    (managed || (await deps.meta.isInstanceOperator(run.initiated_by))) &&
+    member &&
+    (!managed || roleAllows(member.role, "publish"))
+  )
+  if (!allowed || !managed) return allowed
+  if (
+    context &&
+    context.ask_policy !== "workspace" &&
+    context.created_by !== run.initiated_by &&
+    (!run.initiated_by || !(await deps.meta.getContextAsker(context.id, run.initiated_by)))
+  )
+    return false
+  const input = JSON.parse(run.input_snapshot ?? "null")
+  const client = await runtimeController(deps.meta, deps.config, deps.secret, runtime, deps.fetcher)
+  const connections = modelConnections.parse(
+    await client.request("/agents", {
+      organization_id: runtime.ortam_org_id,
+      user_id: runtime.ortam_user_id,
+    }),
+  )
+  return connections.items.some(
+    (item) =>
+      item.status === "active" &&
+      item.harness === (input?.provider === "codex" ? "codex" : "claude_code"),
   )
 }
 
@@ -144,7 +158,14 @@ async function reconcile(
     await transition({ phase: "stopping" })
     return
   }
-  const client = await runtimeClient(deps, runtime, attempt.phase === "stopping")
+  const client = await runtimeController(
+    deps.meta,
+    deps.config,
+    deps.secret,
+    runtime,
+    deps.fetcher,
+    attempt.phase === "stopping",
+  )
   if (attempt.phase === "starting") {
     if (!attempt.startup_operation_id) {
       const operation = await client.lifecycle(
@@ -295,7 +316,7 @@ export async function runtimeDispatchPass(deps: RuntimeDispatchDeps) {
           await deps.meta.cancelQueuedRuntimeRun(run.id, run.org_id, at.toISOString())
           continue
         }
-        await runtimeClient(deps, runtime)
+        await runtimeController(deps.meta, deps.config, deps.secret, runtime, deps.fetcher)
         const now = deps.now?.() ?? new Date()
         attempt = await deps.meta.reserveRunAttempt({
           id: newId("rta"),
@@ -320,7 +341,7 @@ export async function runtimeDispatchPass(deps: RuntimeDispatchDeps) {
     const admission = await materializeRuntimeSchedules(
       deps.meta,
       at,
-      deps.config.pilotWorkspaceIds,
+      new Set([...deps.config.pilotWorkspaceIds, ...(deps.config.managed?.workspaceIds ?? [])]),
     )
     log.info("runtime dispatch completed", {
       pending: pending.length,
