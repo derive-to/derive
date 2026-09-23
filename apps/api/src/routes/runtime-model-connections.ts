@@ -141,6 +141,8 @@ export const runtimeModelConnectionRoutes = (ctx: AppContext) => {
       const models = modelConnections.parse(
         await clientFor(connection).request("/agents", identity(connection)),
       )
+      const current = await ctx.meta.getRuntimeModelConnection(connection.id, connection.org_id)
+      if (!current || current.revoked_at) return c.json({ account: null, revoked: true })
       return c.json({
         account:
           models.items.find((item) => item.harness === modelHarness(connection.provider)) ?? null,
@@ -151,32 +153,44 @@ export const runtimeModelConnectionRoutes = (ctx: AppContext) => {
     }
   })
 
-  const signInRequest = async (
-    c: Context,
-    action: "start" | "read" | "complete" | "cancel",
-    code?: string,
-  ) => {
+  const signInRequest = async (c: Context, action: "start" | "read" | "complete" | "cancel") => {
     const connection = await owned(c)
     if (connection instanceof Response) return connection
-    const config = await available(c, connection.org_id)
-    if (config instanceof Response) return config
     if (connection.revoked_at) return fail(c, 409, "This connection has been revoked")
+    // Withdrawing admission must still allow the owner to inspect or cancel
+    // an existing attempt, just as it allows disconnect cleanup.
+    if (action === "start" || action === "complete") {
+      const config = await available(c, connection.org_id)
+      if (config instanceof Response) return config
+    }
     try {
       const client = clientFor(connection)
-      const attemptId = c.req.param("attempt") ?? ""
-      const attemptPath = `/agent-sign-in-attempts/${encodeURIComponent(attemptId)}`
-      const result =
-        action === "complete"
-          ? await client.completeModelSignIn(attemptId, code ?? "", identity(connection))
-          : modelSignIn.parse(
-              await client.request(
-                action === "start"
-                  ? `/agents/${modelHarness(connection.provider)}/sign-in`
-                  : `${attemptPath}${action === "cancel" ? "/cancel" : ""}`,
-                identity(connection),
-                action === "read" ? "GET" : "POST",
-              ),
-            )
+      let result: z.infer<typeof modelSignIn>
+      if (action === "start") {
+        result = modelSignIn.parse(
+          await client.request(
+            `/agents/${modelHarness(connection.provider)}/sign-in`,
+            identity(connection),
+            "POST",
+          ),
+        )
+      } else {
+        const attemptId = c.req.param("attempt")
+        if (!attemptId) return fail(c, 404, "not found")
+        if (action === "complete") {
+          const body = await readJson(c, z.object({ code: z.string().trim().min(1).max(4096) }))
+          if (body instanceof Response) return body
+          result = await client.completeModelSignIn(attemptId, body.code, identity(connection))
+        } else {
+          result = modelSignIn.parse(
+            await client.request(
+              `/agent-sign-in-attempts/${encodeURIComponent(attemptId)}${action === "cancel" ? "/cancel" : ""}`,
+              identity(connection),
+              action === "read" ? "GET" : "POST",
+            ),
+          )
+        }
+      }
       // A slow sign-in must not report success after the owner disconnected it.
       const current = await ctx.meta.getRuntimeModelConnection(connection.id, connection.org_id)
       if (!current || current.revoked_at) {
@@ -190,11 +204,7 @@ export const runtimeModelConnectionRoutes = (ctx: AppContext) => {
   }
   app.post(`${path}/:connection/sign-in`, (c) => signInRequest(c, "start"))
   app.get(`${path}/:connection/sign-in/:attempt`, (c) => signInRequest(c, "read"))
-  app.post(`${path}/:connection/sign-in/:attempt/complete`, async (c) => {
-    const body = await readJson(c, z.object({ code: z.string().trim().min(1).max(4096) }))
-    if (body instanceof Response) return body
-    return signInRequest(c, "complete", body.code)
-  })
+  app.post(`${path}/:connection/sign-in/:attempt/complete`, (c) => signInRequest(c, "complete"))
   app.post(`${path}/:connection/sign-in/:attempt/cancel`, (c) => signInRequest(c, "cancel"))
   return app
 }

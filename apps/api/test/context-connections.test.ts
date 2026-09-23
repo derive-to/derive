@@ -1956,6 +1956,8 @@ describe("reusable runtime model accounts", () => {
   const requests: { path: string; subject: string | null; method: string }[] = []
   const signInStates = new Map<string | null, string>()
   let failDisconnect = false
+  let statusGate: Promise<void> | null = null
+  let enteredStatus: (() => void) | null = null
   let completeGate: Promise<void> | null = null
   let enteredComplete: (() => void) | null = null
   const peer: typeof fetch = async (url, init) => {
@@ -1971,7 +1973,9 @@ describe("reusable runtime model accounts", () => {
       expect(subject).toMatch(/^[a-f0-9]{64}$/)
       return json({ organization_id: "model-org", user_id: `integration:${subject}` })
     }
-    if (path === "/agents")
+    if (path === "/agents") {
+      enteredStatus?.()
+      if (statusGate) await statusGate
       return json({
         items: [
           {
@@ -1983,6 +1987,7 @@ describe("reusable runtime model accounts", () => {
           { harness: "claude_code", status: "active", identity: { email: "claude@example.test" } },
         ],
       })
+    }
     if (init?.method === "DELETE") return new Response(null, { status: failDisconnect ? 503 : 204 })
     if (path.includes("sign-in")) {
       if (path.endsWith("/complete") && completeGate) {
@@ -2127,6 +2132,70 @@ describe("reusable runtime model accounts", () => {
     expect(new Set(calls.map((r) => r.subject)).size).toBe(1)
     expect(calls.some((r) => r.path === "/agents/claude_code/sign-in")).toBe(true)
     expect(calls.some((r) => r.path === "/agents/codex/sign-in")).toBe(false)
+  })
+  it.each([
+    "rollout",
+    "publish",
+  ])("allows the owner to inspect and cancel sign-in after %s access is withdrawn", async (withdrawal) => {
+    const connection = await create("claude-code")
+    const base = `${path}/${connection.id}`
+    expect((await app.request(`${base}/sign-in`, jsonAs(as(owner.email), {}))).status).toBe(202)
+    const membership = await meta.getMembership("default", owner.id)
+    if (!membership) throw new Error("Missing owner membership")
+    if (withdrawal === "rollout") config.managed.workspaceIds.clear()
+    else await meta.setMembership({ ...membership, role: "viewer" })
+    try {
+      for (const suffix of ["/sign-in", "/sign-in/sign-in-fixture/complete"]) {
+        const before = requests.length
+        expect(
+          (await app.request(base + suffix, jsonAs(as(owner.email), { code: "code" }))).status,
+        ).toBe(withdrawal === "rollout" ? 404 : 403)
+        expect(requests).toHaveLength(before)
+      }
+      const read = await app.request(`${base}/sign-in/sign-in-fixture`, {
+        headers: as(owner.email),
+      })
+      expect(read.status).toBe(200)
+      expect((await read.json()).state).toBe("pending")
+      const cancel = await app.request(
+        `${base}/sign-in/sign-in-fixture/cancel`,
+        jsonAs(as(owner.email), {}),
+      )
+      expect(cancel.status).toBe(200)
+      expect((await cancel.json()).state).toBe("cancelled")
+      expect(
+        (await meta.getRuntimeModelConnection(connection.id, "default"))?.revoked_at,
+      ).toBeNull()
+    } finally {
+      config.managed.workspaceIds.add("default")
+      await meta.setMembership(membership)
+    }
+  })
+  it("does not report a stale active account when disconnect wins during a status request", async () => {
+    const connection = await create()
+    const base = `${path}/${connection.id}`
+    let release: () => void = () => {}
+    statusGate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const entered = new Promise<void>((resolve) => {
+      enteredStatus = resolve
+    })
+    const pending = app.request(`${base}/status`, { headers: as(owner.email) })
+    try {
+      await entered
+      expect((await app.request(base, { headers: as(owner.email), method: "DELETE" })).status).toBe(
+        200,
+      )
+      release()
+      const response = await pending
+      expect(response.status).toBe(200)
+      expect(await response.json()).toEqual({ account: null, revoked: true })
+    } finally {
+      release()
+      statusGate = null
+      enteredStatus = null
+    }
   })
   it("revokes locally before remote disconnect, keeps cleanup possible after rollout withdrawal, and never revives the identity", async () => {
     const connection = await create()
