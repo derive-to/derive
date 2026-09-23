@@ -66,7 +66,13 @@ export const runtimeModelConnectionRoutes = (ctx: AppContext) => {
     const auth = await principal(c)
     if (auth instanceof Response) return auth
     return c.json({
-      items: (await ctx.meta.listRuntimeModelConnections(auth.org, auth.owner)).map(view),
+      items: (
+        await ctx.meta.listRuntimeModelConnections(
+          auth.org,
+          auth.owner,
+          c.req.query("include_revoked") === "true",
+        )
+      ).map(view),
     })
   })
   app.post(path, async (c) => {

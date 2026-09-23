@@ -490,18 +490,21 @@ under its original gate. An empty managed allowlist disables new work; retain th
 key until all active attempts and pending setup cleanup are settled.
 
 A job keeps its configured runner, model connection and Context tools. Its Context
-creator or a workspace manager connects an account in Derive through the provider's
-sign-in page. This explicitly lets the job use that account for authorized manual
-and scheduled runs. Model refresh authority stays in Ortam. Each workspace/Context
-pair has a distinct external connection identity, even if Contexts reuse an internal
-Derive agent ID. Same-owner service-key rotation preserves those identities.
+creator or a workspace manager selects one of their own named accounts in Derive.
+The account owner signs in through the provider's page and explicitly grants the job
+access. Authorized teammates can then run that saved job. One account can serve
+multiple jobs; each job retains its own machine, files, instructions and tools.
+Model refresh authority stays in Ortam. The workspace and reusable account ID determine
+the external identity. Same-owner service-key rotation preserves those identities.
 
 The run permission is workspace publish access plus access to the Context (creator,
 invited asker or workspace ask policy). Editing still requires Context management.
 Manual runs consume the saved schedule's instruction, provider and revision rather
 than parameters supplied by the triggerer. Edits invalidate queued stale definitions;
-claimed work finishes against its pinned input and live tool-grant intersection.
-Disconnecting an account prevents new runs and withdraws model delivery. Dispatch,
+claimed work uses its pinned input and live tool-grant intersection. Changing or removing
+the account grant invalidates old runs and stops active work. Removing one job's grant
+leaves other jobs and the provider login intact. Disconnecting the shared account
+prevents runs across all its jobs and withdraws model delivery. Dispatch,
 runner claims and every tool call share the live execution grant, including the saved
 runtime's rollout mode, membership, Context access and controller status. Revocation
 still permits result receipts and shutdown; it never converts a managed runtime into
@@ -519,7 +522,7 @@ operator pilot does not establish live service-integration qualification: deploy
 of the Ortam integration API, deployment configuration, fresh provider authorization
 and two real scheduled runs remain the live acceptance check.
 
-### Reusable model connection foundation
+### Reusable model accounts and job grants
 
 The replacement account API is `/v1/runtime-model-connections`. It gives a named
 Codex or Claude account its own identity, independent of a Context. The owner can
@@ -549,9 +552,32 @@ be reactivated. Reconnecting an active account keeps its identity; after explici
 revoking a connection, create a new one. The backend must support disconnecting a
 pending sign-in and retrying a completed disconnect before this flow is activated.
 
-This is the first implementation slice. Job selection/grants, switching an existing
-machine while stopped, the account picker, and a two-job live acceptance test are
-still required. The existing managed setup continues to use its legacy Context
-subject until those pieces land. Keep the managed allowlist disabled during that
-transition; do not interpret this API as an enabled customer workflow or migrate
-consent based on matching account email addresses.
+The job's `/runtime/model-connection` endpoint reads or replaces its explicit grant.
+Selection requires both Context management and ownership of the selected account;
+workspace administrators cannot borrow another owner's account. Edits compare the
+binding revision, including the initial absent revision. Removing a grant retains
+its revision so removing and re-adding an account cannot revive an old queued run.
+Each run pins the connection ID and grant revision. Admission, exclusive machine
+reservation, runner claims and tool access reject withdrawn or superseded grants.
+
+New preparation uses the selected account. When an existing machine needs another
+account, its exclusive run attempt owns the transfer before resume. The controller
+observes the stopped machine, detaches the previous identity, attaches the pinned
+account, verifies the result and records the applied identity. Every attachment
+update carries Ortam's observed sandbox version. A stale delayed request cannot
+undo a later switch. Lost responses are resolved by observing the machine again;
+revocation still permits recording a receipt and confirming shutdown. Switching
+requires an Ortam backend with conditional sandbox settings (`expected_version`).
+
+The account picker replaces the old Context-specific sign-in routes. Users can
+connect an account once, select it on multiple jobs, remove one job's access, or
+confirm disconnect for every job. Retained revoked accounts remain available to
+the owner for retrying incomplete disconnect cleanup. Existing operator runtimes
+and old managed identities retain their cleanup paths; no old login is silently
+shared with another job.
+
+Keep managed rollout disabled until deployment and the two-job live acceptance
+check pass. Qualify one account on two machines, concurrent runs, saved files,
+reconnect, a stopped-machine account switch, one-job removal, shared disconnect,
+collaborator execution and confirmed shutdown. Earlier operator-pilot evidence
+and local contracts do not establish live qualification of this account flow.

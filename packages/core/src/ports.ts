@@ -5,6 +5,7 @@ import type {
   RunAttemptRecord,
   RunAttemptResult,
   RunAttemptTransition,
+  RuntimeModelBindingRecord,
   RuntimeModelConnectionRecord,
   RuntimeSaveStatus,
   RuntimeSetupChange,
@@ -5093,6 +5094,24 @@ export const isBundleContentType = (contentType: string | null | undefined): boo
 
 /** Control-plane operations only. Runner APIs must not expose these mutations. */
 export interface RuntimeStore {
+  getRuntimeModelBinding(
+    contextId: string,
+    orgId: string,
+  ): Promise<RuntimeModelBindingRecord | null>
+  saveRuntimeModelBinding(input: {
+    contextId: string
+    orgId: string
+    ownerId: string
+    connectionId: string | null
+    revision: number | null
+    at: string
+  }): Promise<RuntimeModelBindingRecord | null>
+  /** Record a verified attachment while the attempt still owns the machine. */
+  applyRuntimeModelConnection(
+    attemptId: string,
+    orgId: string,
+    connectionId: string,
+  ): Promise<ContextRuntimeRecord | null>
   createRuntimeModelConnection(
     input: Omit<
       RuntimeModelConnectionRecord,
@@ -5104,6 +5123,7 @@ export interface RuntimeStore {
   listRuntimeModelConnections(
     orgId: string,
     ownerId: string,
+    includeRevoked?: boolean,
   ): Promise<RuntimeModelConnectionRecord[]>
   renameRuntimeModelConnection(
     id: string,

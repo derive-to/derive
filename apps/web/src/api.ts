@@ -1475,6 +1475,9 @@ export const api = {
   ): Promise<{
     enabled: boolean
     managed?: boolean
+    model_connection?:
+      | (Pick<CloudModelConnection, "id" | "name" | "provider"> & { revoked: boolean })
+      | null
     can_edit?: boolean
     setup?:
       | (Pick<RuntimeSetupRecord, "phase" | "cancelled_at" | "deadline_at"> &
@@ -1489,28 +1492,53 @@ export const api = {
   }> => f(`/v1/contexts/${id}/runtime`, opts()).then(j),
   setupContextRuntime: (id: string, connection_id?: string): Promise<unknown> =>
     f(`/v1/contexts/${id}/runtime/setup`, opts({ connection_id })).then(j),
-  runtimeModels: (
+  runtimeModelConnections: (): Promise<{ items: CloudModelConnection[] }> =>
+    f("/v1/runtime-model-connections?include_revoked=true", opts()).then(j),
+  createRuntimeModelConnection: (
+    name: string,
+    provider: "codex" | "claude-code",
+  ): Promise<CloudModelConnection> =>
+    f("/v1/runtime-model-connections", opts({ name, provider })).then(j),
+  runtimeModelStatus: (
     id: string,
   ): Promise<{
-    items: { harness: string; status: string; identity: { email?: string } | null }[]
-  }> => f(`/v1/contexts/${id}/runtime/model`, opts()).then(j),
-  startRuntimeModelSignIn: (
+    account: { status: string; identity: { email?: string } | null } | null
+    revoked: boolean
+  }> => f(`/v1/runtime-model-connections/${id}/status`, opts()).then(j),
+  runtimeModelBinding: (
     id: string,
-    provider: "codex" | "claude-code",
-  ): Promise<RuntimeModelSignIn> =>
-    f(`/v1/contexts/${id}/runtime/model/sign-in`, opts({ provider })).then(j),
+  ): Promise<{
+    revision: number | null
+    connection:
+      | (Pick<CloudModelConnection, "id" | "name" | "provider"> & {
+          revoked: boolean
+          can_manage: boolean
+        })
+      | null
+  }> => f(`/v1/contexts/${id}/runtime/model-connection`, opts()).then(j),
+  setRuntimeModelBinding: (
+    id: string,
+    connection_id: string | null,
+    revision: number | null,
+  ): Promise<{ revision: number; connection_id: string | null }> =>
+    f(`/v1/contexts/${id}/runtime/model-connection`, {
+      ...opts({ connection_id, revision }),
+      method: "PUT",
+    }).then(j),
+  startRuntimeModelSignIn: (id: string): Promise<RuntimeModelSignIn> =>
+    f(`/v1/runtime-model-connections/${id}/sign-in`, opts({})).then(j),
   runtimeModelSignIn: (id: string, attempt: string): Promise<RuntimeModelSignIn> =>
-    f(`/v1/contexts/${id}/runtime/model/sign-in/${attempt}`, opts()).then(j),
+    f(`/v1/runtime-model-connections/${id}/sign-in/${attempt}`, opts()).then(j),
   completeRuntimeModelSignIn: (
     id: string,
     attempt: string,
     code: string,
   ): Promise<RuntimeModelSignIn> =>
-    f(`/v1/contexts/${id}/runtime/model/sign-in/${attempt}/complete`, opts({ code })).then(j),
+    f(`/v1/runtime-model-connections/${id}/sign-in/${attempt}/complete`, opts({ code })).then(j),
   cancelRuntimeModelSignIn: (id: string, attempt: string): Promise<RuntimeModelSignIn> =>
-    f(`/v1/contexts/${id}/runtime/model/sign-in/${attempt}/cancel`, opts({})).then(j),
-  disconnectRuntimeModel: (id: string, provider: "codex" | "claude-code"): Promise<unknown> =>
-    f(`/v1/contexts/${id}/runtime/model/${provider}`, { ...opts(), method: "DELETE" }).then(j),
+    f(`/v1/runtime-model-connections/${id}/sign-in/${attempt}/cancel`, opts({})).then(j),
+  disconnectRuntimeModel: (id: string): Promise<unknown> =>
+    f(`/v1/runtime-model-connections/${id}`, { ...opts(), method: "DELETE" }).then(j),
   runSavedRuntimeJob: (id: string): Promise<unknown> =>
     f(`/v1/contexts/${id}/runtime/runs`, opts({})).then(j),
   cancelContextRuntimeSetup: (id: string): Promise<unknown> =>
@@ -2229,6 +2257,14 @@ export const api = {
     const r = await f(`/v1/connections/${id}`, { credentials: "include", method: "DELETE" })
     if (!r.ok) throw new ApiError("Couldn't revoke the connection.", r.status)
   },
+}
+
+export interface CloudModelConnection {
+  id: string
+  name: string
+  provider: "codex" | "claude-code"
+  revision: number
+  revoked_at: string | null
 }
 
 export interface RuntimeModelSignIn {

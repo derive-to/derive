@@ -1,6 +1,13 @@
-import { type ContextRuntimeRecord, type MetaStore, type RunRecord, roleAllows } from "@derive/core"
+import {
+  type ContextRuntimeRecord,
+  type MetaStore,
+  type RunRecord,
+  type RuntimeRunInput,
+  roleAllows,
+} from "@derive/core"
 import type { AppDeps } from "../context"
 import { spendableConnections } from "./broker"
+import { runtimeModelSelection } from "./runtime-model-grant"
 
 /** Live execution authority shared by dispatch, runner claims and every tool call.
  * Result receipts and shutdown deliberately do not depend on this grant. */
@@ -40,6 +47,18 @@ export async function runtimeRunContext(
     return null
   if (runtime.connection_id === null) {
     if (!roleAllows(member.role, "publish")) return null
+    const binding = await meta.getRuntimeModelBinding(context.id, run.org_id)
+    const input = JSON.parse(run.input_snapshot ?? "null") as RuntimeRunInput | null
+    if (binding || input?.model_connection) {
+      const selected = await runtimeModelSelection(meta, context.id, run.org_id)
+      if (
+        !selected ||
+        selected.binding.revision !== input?.model_connection?.revision ||
+        selected.connection.id !== input.model_connection.id ||
+        selected.connection.provider !== input.provider
+      )
+        return null
+    }
     if (
       context.created_by !== run.initiated_by &&
       context.ask_policy !== "workspace" &&

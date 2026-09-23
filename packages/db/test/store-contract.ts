@@ -5144,6 +5144,193 @@ export function runStoreContract(
       ortam_org_id: "ortam-org",
       ortam_user_id: `integration:${uuid()}`,
     })
+    async function managedFixture() {
+      const account = await store.createRuntimeModelConnection(input(), at)
+      const manifest = await store.createArtifact(newArtifact())
+      const version = await store.addVersion(manifest.id, newVersion())
+      const context = await store.createContext({
+        id: uuid(),
+        org_id: ORG,
+        name: `Shared model ${uuid()}`,
+        agent_id: uuid(),
+        manifest_artifact_id: manifest.id,
+        created_by: account.created_by,
+      })
+      const select = (
+        connectionId: string | null,
+        revision: number | null,
+        ownerId = account.created_by,
+        orgId = ORG,
+      ) =>
+        store.saveRuntimeModelBinding({
+          contextId: context.id,
+          orgId,
+          ownerId,
+          connectionId,
+          revision,
+          at,
+        })
+      expect(await select(account.id, null)).toMatchObject({ revision: 0 })
+      let setup = await store.createRuntimeSetup(
+        {
+          id: uuid(),
+          org_id: ORG,
+          context_id: context.id,
+          agent_id: context.agent_id,
+          created_by: account.created_by,
+          connection_id: null,
+          api_url: account.api_url,
+          ortam_org_id: account.ortam_org_id,
+          ortam_user_id: account.ortam_user_id,
+          model_connection_id: account.id,
+          model_binding_revision: 0,
+          request_json: "{}",
+          deadline_at: "2026-09-23T12:15:00.000Z",
+        },
+        at,
+      )
+      if (!setup) throw new Error("Missing model setup")
+      for (const change of [
+        { phase: "creating" as const },
+        { phase: "provisioning" as const, sandbox_id: uuid(), create_operation_id: uuid() },
+        { phase: "stopping" as const },
+        { phase: "awaiting_connection" as const },
+        { phase: "binding" as const },
+      ]) {
+        setup = await store.transitionRuntimeSetup(setup.id, ORG, setup.revision, change, at)
+        if (!setup) throw new Error("Model setup transition failed")
+      }
+      const runtime = await store.bindRuntimeSetup(setup.id, ORG, at)
+      if (!runtime) throw new Error("Missing model runtime")
+      const snapshot = {
+        version: 1,
+        instruction: "Check saved files",
+        context_id: context.id,
+        manifest: { artifact_id: manifest.id, version: version.n, blob_key: version.blob_key },
+        provider: account.provider,
+        model: null,
+        connection_ids: [],
+        environment_bindings: {},
+        model_connection: { id: account.id, revision: 0 },
+      }
+      const enqueue = (
+        pin: { id: string; revision: number } | undefined = snapshot.model_connection,
+      ) =>
+        store.createRun({
+          id: uuid(),
+          org_id: ORG,
+          agent_id: context.agent_id,
+          reason: "manual:owner",
+          runtime_id: runtime.id,
+          input_snapshot: JSON.stringify({ ...snapshot, model_connection: pin }),
+        })
+      const reserve = (runId: string) =>
+        store.reserveRunAttempt({
+          id: uuid(),
+          runId,
+          orgId: ORG,
+          at,
+          deadlineAt: "2026-09-23T12:15:00.000Z",
+        })
+      return { account, context, runtime, snapshot, select, enqueue, reserve }
+    }
+    it("fences account grants by owner, workspace and revision, including removal and regrant", async () => {
+      const f = await managedFixture()
+      expect(await f.select(f.account.id, 0, "another-owner")).toBeNull()
+      expect(await f.select(f.account.id, 0, f.account.created_by, "foreign")).toBeNull()
+      expect(await f.select(f.account.id, null)).toBeNull()
+      expect(await store.getRuntimeModelBinding(f.context.id, "foreign")).toBeNull()
+      const queued = await f.enqueue()
+      const edits = await Promise.all([f.select(null, 0), f.select(null, 0)])
+      expect(edits.filter(Boolean)).toHaveLength(1)
+      expect(await f.reserve(queued.id)).toBeNull()
+      await expect(f.enqueue()).rejects.toThrow(/unavailable/)
+      // A removed grant is durable; omitting the pin cannot restore legacy authority.
+      await expect(
+        store.createRun({
+          id: uuid(),
+          org_id: ORG,
+          agent_id: f.context.agent_id,
+          reason: "manual:owner",
+          runtime_id: f.runtime.id,
+          input_snapshot: JSON.stringify({ ...f.snapshot, model_connection: undefined }),
+        }),
+      ).rejects.toThrow(/unavailable/)
+      expect(await f.select(f.account.id, 1)).toMatchObject({ revision: 2 })
+      expect(await f.reserve(queued.id)).toBeNull()
+      const fresh = await f.enqueue({ id: f.account.id, revision: 2 })
+      expect(await f.reserve(fresh.id)).toMatchObject({
+        model_source_connection_id: f.account.id,
+        model_source_user_id: f.account.ortam_user_id,
+      })
+      await store.revokeRuntimeModelConnection(f.account.id, ORG, later)
+      expect(await f.select(f.account.id, 2)).toBeNull()
+      expect(await store.listRuntimeModelConnections(ORG, f.account.created_by, true)).toEqual([
+        await store.getRuntimeModelConnection(f.account.id, ORG),
+      ])
+      expect(await store.listRuntimeModelConnections(ORG, "another-owner", true)).toEqual([])
+    })
+    it("blocks a stale runner claim and records attachment receipts only while the attempt owns the machine", async () => {
+      const f = await managedFixture()
+      const target = await store.createRuntimeModelConnection(
+        { ...input(), created_by: f.account.created_by },
+        at,
+      )
+      await f.select(target.id, 0)
+      const run = await f.enqueue({ id: target.id, revision: 1 })
+      let attempt = await f.reserve(run.id)
+      if (!attempt) throw new Error("Missing model attempt")
+      expect(await store.applyRuntimeModelConnection(attempt.id, "foreign", target.id)).toBeNull()
+      expect(await store.applyRuntimeModelConnection(attempt.id, ORG, f.account.id)).toBeNull()
+      await store.revokeRuntimeModelConnection(target.id, ORG, later)
+      // A remote attachment may already have committed. Retain its identity for shutdown.
+      expect(await store.applyRuntimeModelConnection(attempt.id, ORG, target.id)).toMatchObject({
+        model_connection_id: target.id,
+        ortam_user_id: target.ortam_user_id,
+      })
+      attempt = await store.transitionRunAttempt(
+        attempt.id,
+        ORG,
+        attempt.revision,
+        { phase: "starting", startup_operation_id: uuid() },
+        at,
+      )
+      if (!attempt) throw new Error("Missing resume receipt")
+      expect(await store.applyRuntimeModelConnection(attempt.id, ORG, target.id)).toBeNull()
+      attempt = await store.transitionRunAttempt(
+        attempt.id,
+        ORG,
+        attempt.revision,
+        { phase: "ready" },
+        at,
+      )
+      if (!attempt) throw new Error("Missing ready attempt")
+      attempt = await store.transitionRunAttempt(
+        attempt.id,
+        ORG,
+        attempt.revision,
+        { phase: "launching" },
+        at,
+      )
+      if (!attempt) throw new Error("Missing launching attempt")
+      expect(await store.claimRunAttempt(attempt.id, ORG, at)).toBeNull()
+      attempt = await store.transitionRunAttempt(
+        attempt.id,
+        ORG,
+        attempt.revision,
+        { phase: "stopping" },
+        at,
+      )
+      if (!attempt) throw new Error("Missing stopping attempt")
+      await store.releaseRunAttempt(
+        attempt.id,
+        ORG,
+        attempt.revision,
+        { status: "saved", snapshotId: null },
+        at,
+      )
+      expect(await store.applyRuntimeModelConnection(attempt.id, ORG, target.id)).toBeNull()
+    })
     it("keeps independent reusable identities and isolates workspace and owner reads", async () => {
       const source = input()
       const first = await store.createRuntimeModelConnection(

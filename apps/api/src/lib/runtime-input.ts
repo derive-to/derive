@@ -10,8 +10,13 @@ export async function runtimeInput(
     context.manifest_artifact_id
   ]
   if (!manifest) return null
+  const binding = await meta.getRuntimeModelBinding(context.id, context.org_id)
+  if (binding && !binding.model_connection_id) return null
   return {
     version: 1,
+    ...(binding?.model_connection_id
+      ? { model_connection: { id: binding.model_connection_id, revision: binding.revision } }
+      : {}),
     ...task,
     context_id: context.id,
     manifest: {

@@ -1346,7 +1346,7 @@ describe("Ortam runtime lifecycle", () => {
   })
 })
 
-describe("operator runtime provisioning", () => {
+describe("runtime provisioning and shared model accounts", () => {
   const owner: TestUser = { id: "setup-owner", email: "setup@derive.test", name: "Operator" }
   const member: TestUser = { id: "setup-member", email: "setup-member@derive.test", name: "Member" }
   const config = {
@@ -1364,6 +1364,8 @@ describe("operator runtime provisioning", () => {
   let authStatus = 200
   let sandboxStatus = 200
   let modelActive = true
+  let loseAttachment = false
+  const disconnectedSubjects = new Set<string | null>()
   const launched = new Map<string, { token: string; attempt: string }>()
   const creates = new Map<
     string,
@@ -1372,6 +1374,7 @@ describe("operator runtime provisioning", () => {
       sandbox: {
         id: string
         state: string
+        version: number
         current_operation_id: null
         auto_stop_after_seconds: number
         agent_connections: { user_id: string } | null
@@ -1401,9 +1404,10 @@ describe("operator runtime provisioning", () => {
     }
     if (path === "/agents")
       return json({
-        items: modelActive
-          ? [{ harness: "codex", status: "active", identity: { email: "model@example.test" } }]
-          : [],
+        items:
+          modelActive && !disconnectedSubjects.has(subject)
+            ? [{ harness: "codex", status: "active", identity: { email: "model@example.test" } }]
+            : [],
       })
     if (path === "/agents/codex/sign-in")
       return json({
@@ -1415,7 +1419,7 @@ describe("operator runtime provisioning", () => {
         expires_at: new Date(Date.now() + 600000).toISOString(),
       })
     if (path === "/agents/codex" && init?.method === "DELETE") {
-      modelActive = false
+      disconnectedSubjects.add(subject)
       return new Response(null, { status: 204 })
     }
     if (path === "/sandboxes" && init?.method === "POST") {
@@ -1432,6 +1436,7 @@ describe("operator runtime provisioning", () => {
           sandbox: {
             id,
             state: "ready",
+            version: 1,
             current_operation_id: null,
             auto_stop_after_seconds: 1200,
             agent_connections: subject ? { user_id: `integration:${subject}` } : null,
@@ -1456,7 +1461,23 @@ describe("operator runtime provisioning", () => {
     if (path.startsWith("/operations/")) return json(operations.get(path.split("/")[2] ?? ""))
     const saved = [...creates.values()].find((x) => x.sandbox.id === path.split("/")[2])
     if (!saved) throw new Error("Unexpected sandbox request")
+    if (init?.method === "PATCH") {
+      const body = JSON.parse(String(init.body))
+      if (body.expected_version !== saved.sandbox.version || saved.sandbox.state !== "stopped")
+        return new Response(null, { status: 409 })
+      const userId = `integration:${subject}`
+      if (saved.sandbox.agent_connections && saved.sandbox.agent_connections.user_id !== userId)
+        return new Response(null, { status: 403 })
+      saved.sandbox.agent_connections = body.agent_connections ? { user_id: userId } : null
+      saved.sandbox.version++
+      if (loseAttachment) {
+        loseAttachment = false
+        throw new Error("lost accepted attachment response")
+      }
+      return json(saved.sandbox)
+    }
     if (path.endsWith("/processes")) {
+      if (subject) expect(saved.sandbox.agent_connections?.user_id).toBe(`integration:${subject}`)
       const body = JSON.parse(String(init?.body))
       expect(JSON.stringify(body)).not.toContain(config.managed.apiKey)
       launched.set(saved.sandbox.id, {
@@ -1482,9 +1503,11 @@ describe("operator runtime provisioning", () => {
         }
         operations.set(key, op)
         operations.set(op.id, op)
-        if (op.state === "succeeded")
+        if (op.state === "succeeded") {
           saved.sandbox.state =
             kind === "delete" ? "deleted" : kind === "resume" ? "ready" : "stopped"
+          saved.sandbox.version++
+        }
       }
       if (kind === "delete" && loseDelete) {
         loseDelete = false
@@ -1514,6 +1537,7 @@ describe("operator runtime provisioning", () => {
     now = new Date()
     config.managed.workspaceIds.clear()
     modelActive = true
+    loseAttachment = false
     loseCreate = false
     loseDelete = false
     failSetup = false
@@ -1714,23 +1738,274 @@ describe("operator runtime provisioning", () => {
     await pass()
     expect((await f.state())?.phase).toBe("failed")
   })
+  const modelAccount = async (contextId: string, existingId?: string) => {
+    config.managed.workspaceIds.add("default")
+    const created = existingId
+      ? null
+      : await app.request(
+          "/v1/runtime-model-connections",
+          jsonAs(as(owner.email), { name: "Shared work account", provider: "codex" }),
+        )
+    if (created) expect(created.status).toBe(201)
+    const model = existingId ? { id: existingId } : await created?.json()
+    const selection = await app.request(`/v1/contexts/${contextId}/runtime/model-connection`, {
+      ...jsonAs(as(owner.email), { connection_id: model.id, revision: null }),
+      method: "PUT",
+    })
+    expect(selection.status).toBe(200)
+    return model as { id: string }
+  }
+  async function managedJob(existingId?: string) {
+    const f = await fixture()
+    const model = await modelAccount(f.context.id, existingId)
+    const settings = await meta.getOrgSettings("default")
+    await meta.setOrgSettings("default", { ...settings, automateBeta: true })
+    expect((await app.request(`${f.path}/setup`, jsonAs(as(owner.email), {}))).status).toBe(202)
+    for (let i = 0; i < 9; i++) await pass()
+    const runtime = await meta.getContextRuntimeForContext(f.context.id, "default")
+    const saved = creates.get(`derive-${(await f.state())?.id}-create`)
+    if (!runtime || !saved) throw new Error("Managed fixture was not provisioned")
+    expect(
+      (
+        await app.request(`${f.path}/schedule`, {
+          ...jsonAs(as(owner.email), {
+            instruction: "Check saved files",
+            provider: "codex",
+            cron: "0 9 * * *",
+            timezone: "UTC",
+            enabled: true,
+            revision: null,
+          }),
+          method: "PUT",
+        })
+      ).status,
+    ).toBe(200)
+    const select = (connectionId: string | null, revision: number | null) =>
+      app.request(`${f.path}/model-connection`, {
+        ...jsonAs(as(owner.email), { connection_id: connectionId, revision }),
+        method: "PUT",
+      })
+    const fire = async () => {
+      const response = await app.request(`${f.path}/runs`, jsonAs(as(owner.email), {}))
+      expect(response.status).toBe(201)
+      return (await response.json()).run as { id: string; input_snapshot: string }
+    }
+    return { ...f, model, runtime, sandbox: saved.sandbox, select, fire }
+  }
+
+  it("shares one account across isolated jobs, and removes one grant without revoking the other", async () => {
+    const first = await managedJob()
+    const second = await managedJob(first.model.id)
+    expect(first.runtime.sandbox_id).not.toBe(second.runtime.sandbox_id)
+    expect(first.runtime.ortam_user_id).toBe(second.runtime.ortam_user_id)
+    const stale = await first.fire()
+    expect(JSON.parse(stale.input_snapshot).model_connection).toEqual({
+      id: first.model.id,
+      revision: 0,
+    })
+    expect((await first.select(null, 0)).status).toBe(200)
+    expect((await first.select(first.model.id, 1)).status).toBe(200)
+    await pass()
+    expect(await meta.getLatestRunAttempt(stale.id, "default")).toBeNull()
+    expect(await meta.getRun(stale.id)).toMatchObject({ status: "failed" })
+    expect((await first.select(null, 2)).status).toBe(200)
+    expect((await app.request(`${first.path}/runs`, jsonAs(as(owner.email), {}))).status).toBe(409)
+    expect(await meta.getRuntimeModelConnection(first.model.id, "default")).toMatchObject({
+      revoked_at: null,
+    })
+    const run = await second.fire()
+    for (let i = 0; i < 5; i++) await pass()
+    const task = launched.get(second.sandbox.id)
+    if (!task) throw new Error("Shared account did not launch")
+    const headers = { Authorization: `Bearer ${task.token}`, "Content-Type": "application/json" }
+    expect(
+      (await app.request(`/v1/runtime-attempts/${task.attempt}/claim`, { method: "POST", headers }))
+        .status,
+    ).toBe(200)
+    expect(
+      (
+        await app.request(`/v1/runtime-model-connections/${first.model.id}`, {
+          method: "DELETE",
+          headers: as(owner.email),
+        })
+      ).status,
+    ).toBe(200)
+    expect(
+      (
+        await app.request(`/v1/runtime-attempts/${task.attempt}/tool`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ tool: "anything" }),
+        })
+      ).status,
+    ).toBe(403)
+    for (let i = 0; i < 5; i++) await pass()
+    expect(second.sandbox.state).toBe("stopped")
+    expect(await meta.getLatestRunAttempt(run.id, "default")).toMatchObject({
+      phase: "released",
+      save_status: "saved",
+    })
+  })
+
+  it("switches a stopped machine without losing files or repeating a lost attachment response", async () => {
+    const f = await managedJob()
+    const created = await app.request(
+      "/v1/runtime-model-connections",
+      jsonAs(as(owner.email), { name: "Replacement account", provider: "codex" }),
+    )
+    const target = await created.json()
+    expect((await f.select(target.id, 0)).status).toBe(200)
+    const run = await f.fire()
+    const originalId = f.sandbox.id
+    const originalVersion = f.sandbox.version
+    loseAttachment = true
+    await pass() // detach committed, response lost
+    expect(f.sandbox.agent_connections).toBeNull()
+    expect(f.sandbox.state).toBe("stopped")
+    loseAttachment = true
+    await pass() // attach committed, response lost
+    const account = await meta.getRuntimeModelConnection(target.id, "default")
+    expect(f.sandbox.agent_connections?.user_id).toBe(account?.ortam_user_id)
+    expect(f.sandbox.state).toBe("stopped")
+    expect(f.sandbox.version).toBe(originalVersion + 2)
+    await Promise.all([pass(), pass()])
+    for (let i = 0; i < 4; i++) await pass()
+    expect(f.sandbox.id).toBe(originalId)
+    expect(await meta.getContextRuntime(f.runtime.id, "default")).toMatchObject({
+      model_connection_id: target.id,
+      ortam_user_id: account?.ortam_user_id,
+    })
+    const task = launched.get(f.sandbox.id)
+    if (!task) throw new Error("Replacement account did not launch")
+    const headers = { Authorization: `Bearer ${task.token}`, "Content-Type": "application/json" }
+    // A changed grant cannot be claimed by a process launched under the previous selection.
+    expect((await f.select(null, 1)).status).toBe(200)
+    expect(
+      (await app.request(`/v1/runtime-attempts/${task.attempt}/claim`, { method: "POST", headers }))
+        .status,
+    ).toBe(403)
+    for (let i = 0; i < 5; i++) await pass()
+    expect(f.sandbox.state).toBe("stopped")
+    expect(await meta.getLatestRunAttempt(run.id, "default")).toMatchObject({ phase: "released" })
+  })
+
+  it("finishes ambiguous attachment cleanup without launching after the grant is withdrawn", async () => {
+    const f = await managedJob()
+    const target = await (
+      await app.request(
+        "/v1/runtime-model-connections",
+        jsonAs(as(owner.email), { name: "Next account", provider: "codex" }),
+      )
+    ).json()
+    await f.select(target.id, 0)
+    const run = await f.fire()
+    loseAttachment = true
+    await pass()
+    expect(f.sandbox.agent_connections).toBeNull()
+    await f.select(null, 1)
+    await meta.revokeRuntimeModelConnection(target.id, "default", now.toISOString())
+    for (let i = 0; i < 6; i++) await pass()
+    expect(launched.has(f.sandbox.id)).toBe(false)
+    expect(f.sandbox.state).toBe("stopped")
+    expect(await meta.getLatestRunAttempt(run.id, "default")).toMatchObject({ phase: "released" })
+    expect(await meta.getContextRuntime(f.runtime.id, "default")).toMatchObject({
+      model_connection_id: target.id,
+    })
+  })
+
+  it("requires the account owner's grant even for a workspace administrator and rejects stale selection edits", async () => {
+    const f = await managedJob()
+    await meta.setMembership({
+      id: "setup-member-seat",
+      org_id: "default",
+      user_id: member.id,
+      role: "owner",
+    })
+    try {
+      const before = await meta.getRuntimeModelBinding(f.context.id, "default")
+      expect(
+        (
+          await app.request(`${f.path}/model-connection`, {
+            ...jsonAs(as(member.email), { connection_id: f.model.id, revision: 0 }),
+            method: "PUT",
+          })
+        ).status,
+      ).toBe(404)
+      expect(await meta.getRuntimeModelBinding(f.context.id, "default")).toEqual(before)
+      expect((await f.select(f.model.id, null)).status).toBe(409)
+      expect((await f.select(null, 0)).status).toBe(200)
+      expect((await f.select(f.model.id, 0)).status).toBe(409)
+      expect((await f.select(f.model.id, 1)).status).toBe(200)
+      const run = await f.fire()
+      await meta.setMembership({
+        id: "setup-owner-seat",
+        org_id: "default",
+        user_id: owner.id,
+        role: "viewer",
+      })
+      await pass()
+      expect(await meta.getLatestRunAttempt(run.id, "default")).toBeNull()
+    } finally {
+      await meta.setMembership({
+        id: "setup-owner-seat",
+        org_id: "default",
+        user_id: owner.id,
+        role: "editor",
+      })
+      await meta.setMembership({
+        id: "setup-member-seat",
+        org_id: "default",
+        user_id: member.id,
+        role: "editor",
+      })
+    }
+  })
+
+  it("cleans up a withdrawn setup grant and disables a handover whose grant changed before projection", async () => {
+    for (const committed of [false, true]) {
+      const f = await fixture()
+      await modelAccount(f.context.id)
+      expect((await app.request(`${f.path}/setup`, jsonAs(as(owner.email), {}))).status).toBe(202)
+      for (let i = 0; i < (committed ? 6 : 5); i++) await pass()
+      expect((await f.state())?.phase).toBe(committed ? "binding" : "awaiting_connection")
+      expect(
+        (
+          await app.request(`${f.path}/model-connection`, {
+            ...jsonAs(as(owner.email), { connection_id: null, revision: 0 }),
+            method: "PUT",
+          })
+        ).status,
+      ).toBe(200)
+      for (let i = 0; i < 4; i++) await pass()
+      const runtime = await meta.getContextRuntimeForContext(f.context.id, "default")
+      if (committed) {
+        expect(runtime?.disabled_at).toBeTruthy()
+        expect((await f.state())?.phase).toBe("ready")
+      } else {
+        expect(runtime).toBeNull()
+        expect((await f.state())?.phase).toBe("failed")
+      }
+    }
+  })
+
   it("shares the configured job with authorized members without exposing its controller or allowing edits", async () => {
     const f = await fixture()
     config.managed.workspaceIds.add("default")
     config.pilotWorkspaceIds.clear()
     const settings = await meta.getOrgSettings("default")
     await meta.setOrgSettings("default", { ...settings, automateBeta: true })
+    const model = await modelAccount(f.context.id)
     expect(
       (
         await app.request(
-          `${f.path}/model/sign-in`,
-          jsonAs(as(member.email), { provider: "codex" }),
+          `/v1/runtime-model-connections/${model.id}/sign-in`,
+          jsonAs(as(member.email), {}),
         )
       ).status,
-    ).toBe(403)
+    ).toBe(404)
     const login = await app.request(
-      `${f.path}/model/sign-in`,
-      jsonAs(as(owner.email), { provider: "codex" }),
+      `/v1/runtime-model-connections/${model.id}/sign-in`,
+      jsonAs(as(owner.email), {}),
     )
     expect(login.status).toBe(202)
     expect(login.headers.get("Cache-Control")).toBe("no-store")
@@ -1885,8 +2160,12 @@ describe("operator runtime provisioning", () => {
     expect(updated.status).toBe(200)
     expect(await runtimeScheduleAllows(meta, run)).toBe(false)
     expect(
-      (await app.request(`${f.path}/model/codex`, { headers: as(owner.email), method: "DELETE" }))
-        .status,
+      (
+        await app.request(`/v1/runtime-model-connections/${model.id}`, {
+          headers: as(owner.email),
+          method: "DELETE",
+        })
+      ).status,
     ).toBe(200)
     expect((await app.request(`${f.path}/runs`, jsonAs(as(member.email), {}))).status).toBe(409)
     expect((await app.request(`${f.path}/disable`, jsonAs(as(member.email), {}))).status).toBe(403)
@@ -1933,6 +2212,7 @@ describe("operator runtime provisioning", () => {
     const f = await fixture()
     config.managed.workspaceIds.add("default")
     config.pilotWorkspaceIds.clear()
+    await modelAccount(f.context.id)
     expect((await app.request(`${f.path}/setup`, jsonAs(as(owner.email), {}))).status).toBe(202)
     await pass()
     await pass()
@@ -2269,29 +2549,6 @@ describe("reusable runtime model accounts", () => {
       completeGate = null
       enteredComplete = null
     }
-  })
-  it("normalizes the real completion response for the existing Context sign-in flow too", async () => {
-    const manifest = await publishAs(app, "# Job", { title: "Claude sign-in" }, as(owner.email))
-    const { short_id } = await manifest.json()
-    const context = await (
-      await app.request(
-        "/v1/contexts",
-        jsonAs(as(owner.email), {
-          name: "Claude sign-in",
-          manifest_short_id: short_id,
-        }),
-      )
-    ).json()
-    const modelPath = `/v1/contexts/${context.id}/runtime/model/sign-in`
-    expect(
-      (await app.request(modelPath, jsonAs(as(owner.email), { provider: "claude-code" }))).status,
-    ).toBe(202)
-    const response = await app.request(
-      `${modelPath}/sign-in-fixture/complete`,
-      jsonAs(as(owner.email), { code: "authorization fixture" }),
-    )
-    expect(response.status).toBe(200)
-    expect(await response.json()).toMatchObject({ id: "sign-in-fixture", state: "complete" })
   })
   it("rejects malformed connection creation before contacting the service", async () => {
     const before = requests.length

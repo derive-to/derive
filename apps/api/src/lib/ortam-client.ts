@@ -2,6 +2,7 @@ import { unbound } from "@derive/broker"
 import { z } from "zod"
 
 const Sandbox = z.object({
+  version: z.number().int().nonnegative().optional(),
   id: z.string(),
   state: z.string(),
   current_operation_id: z.string().nullable(),
@@ -185,6 +186,28 @@ export class OrtamClient {
     if (sandbox.id !== id) throw new Error("Ortam sandbox mismatch")
     return sandbox
   }
+  /** Conditional updates fence delayed attachment requests across future runs. */
+  async setModelAttachment(
+    sandbox: z.infer<typeof Sandbox>,
+    attached: boolean,
+    identity: { organization_id: string; user_id: string },
+  ) {
+    if (sandbox.version === undefined) throw new Error("Ortam conditional settings are unavailable")
+    const updated = Sandbox.parse(
+      await this.request(`/sandboxes/${encodeURIComponent(sandbox.id)}`, identity, "PATCH", {
+        expected_version: sandbox.version,
+        agent_connections: attached,
+      }),
+    )
+    if (
+      updated.id !== sandbox.id ||
+      updated.version === undefined ||
+      updated.version <= sandbox.version
+    )
+      throw new Error("Ortam attachment receipt mismatch")
+    return updated
+  }
+
   async isSandboxDeleted(id: string, identity: { organization_id: string; user_id: string }) {
     try {
       return (await this.sandbox(id, identity)).state === "deleted"

@@ -4,6 +4,7 @@ import { log } from "../log"
 import { spendableConnections } from "./broker"
 import { runtimeController } from "./runtime-controller"
 import { runtimeFailureReason } from "./runtime-diagnostics"
+import { runtimeModelSelection } from "./runtime-model-grant"
 
 interface SetupDeps {
   meta: MetaStore
@@ -50,8 +51,14 @@ async function advance(deps: SetupDeps, setup: RuntimeSetupRecord) {
   const active = setup.connection_id
     ? await spendableConnections(meta, setup.org_id, [setup.connection_id])
     : []
+  const selected = setup.model_connection_id
+    ? await runtimeModelSelection(meta, setup.context_id, setup.org_id)
+    : null
   const allowed =
     !setup.cancelled_at &&
+    (!setup.model_connection_id ||
+      (selected?.connection.id === setup.model_connection_id &&
+        selected.binding.revision === setup.model_binding_revision)) &&
     at < setup.deadline_at &&
     (managed
       ? deps.config.managed?.workspaceIds.has(setup.org_id)

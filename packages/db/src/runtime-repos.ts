@@ -10,6 +10,7 @@ import type {
 } from "@derive/core"
 import { CONTEXT_ENVIRONMENT_LIMIT, contextEnvironmentNameError } from "@derive/core"
 import { type SQL, sql } from "drizzle-orm"
+import { runtimeModelBindingRepos, runtimeModelGrant } from "./runtime-model-binding-repos"
 import { runtimeModelRepos } from "./runtime-model-repos"
 import { runtimeScheduleRepos } from "./runtime-schedule-repos"
 import { claimRuntimeOwner, runtimeSetupRepos } from "./runtime-setup-repos"
@@ -36,6 +37,10 @@ const checkedInput = (value: string | null | undefined): RuntimeRunInput => {
     input?.version !== 1 ||
     (input.schedule_revision !== undefined &&
       (!Number.isSafeInteger(input.schedule_revision) || input.schedule_revision < 0)) ||
+    (input.model_connection !== undefined &&
+      (!text(input.model_connection?.id) ||
+        !Number.isSafeInteger(input.model_connection.revision) ||
+        input.model_connection.revision < 0)) ||
     !text(input.instruction) ||
     !text(input.context_id) ||
     !text(input.manifest?.artifact_id) ||
@@ -61,6 +66,14 @@ const checkedInput = (value: string | null | undefined): RuntimeRunInput => {
     ...(input.schedule_revision === undefined
       ? {}
       : { schedule_revision: input.schedule_revision }),
+    ...(input.model_connection
+      ? {
+          model_connection: {
+            id: input.model_connection.id,
+            revision: input.model_connection.revision,
+          },
+        }
+      : {}),
     instruction: input.instruction,
     context_id: input.context_id,
     manifest: {
@@ -126,15 +139,24 @@ export function runtimeRepos(execute: (statement: SQL) => Promise<unknown[]>): R
     ...runtimeScheduleRepos(execute),
     ...runtimeSetupRepos(execute),
     ...runtimeModelRepos(execute),
-    claimRunAttempt: (id, orgId, at, scheduleRevision) =>
-      first<RunAttemptRecord>(sql`
+    ...runtimeModelBindingRepos(execute),
+    claimRunAttempt: async (id, orgId, at, scheduleRevision) => {
+      const run =
+        await first<RunRecord>(sql`SELECT r.* FROM run r JOIN run_attempt a ON a.run_id = r.id AND a.org_id = r.org_id
+        WHERE a.id = ${id} AND a.org_id = ${orgId}`)
+      if (!run) return null
+      const snapshot = checkedInput(run.input_snapshot)
+      return first<RunAttemptRecord>(sql`
       UPDATE run_attempt SET runner_claimed_at = ${instant(at)}, revision = revision + 1, updated_at = ${at}
       WHERE id = ${id} AND org_id = ${orgId} AND phase IN ('launching', 'running')
         AND deadline_at > ${at} AND runner_claimed_at IS NULL AND result_json IS NULL AND released_at IS NULL
-        AND EXISTS (SELECT 1 FROM run r JOIN context_runtime rt ON rt.id = r.runtime_id AND rt.org_id = r.org_id WHERE r.id = run_attempt.run_id AND (r.automation_id IS NULL OR EXISTS (
+        AND EXISTS (SELECT 1 FROM run r JOIN context_runtime rt ON rt.id = r.runtime_id AND rt.org_id = r.org_id WHERE r.id = run_attempt.run_id
+        AND (rt.connection_id IS NOT NULL OR ${runtimeModelGrant(sql`rt.context_id`, sql`rt.org_id`, snapshot)})
+        AND (r.automation_id IS NULL OR EXISTS (
           SELECT 1 FROM automation a WHERE a.id = r.automation_id AND a.org_id = r.org_id
             AND a.runtime_id = r.runtime_id AND a.enabled = 1 AND (rt.connection_id IS NULL OR a.created_by = r.initiated_by)
-            AND a.revision = ${scheduleRevision ?? -1}))) RETURNING *`),
+            AND a.revision = ${scheduleRevision ?? -1}))) RETURNING *`)
+    },
     getContextRuntimeForContext: (contextId, orgId) =>
       first<ContextRuntimeRecord>(
         sql`SELECT * FROM context_runtime WHERE context_id = ${contextId} AND org_id = ${orgId}`,
@@ -249,6 +271,7 @@ export function runtimeRepos(execute: (statement: SQL) => Promise<unknown[]>): R
         WHERE rt.id = ${input.runtime_id} AND rt.org_id = ${input.org_id}
           AND rt.agent_id = ${input.agent_id} AND c.agent_id = rt.agent_id AND rt.disabled_at IS NULL
           AND (rt.connection_id IS NULL OR (cn.kind = 'secret' AND cn.status = 'active' AND cn.secret_enc IS NOT NULL))
+          AND (rt.connection_id IS NOT NULL OR ${runtimeModelGrant(sql`c.id`, sql`rt.org_id`, snapshot)})
           AND (cast(${input.automation_id ?? null} AS text) IS NULL OR EXISTS (
             SELECT 1 FROM automation a WHERE a.id = ${input.automation_id ?? null}
               AND a.org_id = rt.org_id AND a.agent_id = rt.agent_id
@@ -270,11 +293,16 @@ export function runtimeRepos(execute: (statement: SQL) => Promise<unknown[]>): R
       instant(input.at)
       instant(input.deadlineAt)
       if (input.deadlineAt <= input.at) throw new Error("Attempt deadline must follow admission")
+      const run = await first<RunRecord>(
+        sql`SELECT * FROM run WHERE id = ${input.runId} AND org_id = ${input.orgId}`,
+      )
+      if (!run) return null
+      const snapshot = checkedInput(run.input_snapshot)
       return first<RunAttemptRecord>(sql`
-        INSERT INTO run_attempt (id, org_id, run_id, runtime_id, attempt, phase, deadline_at, created_at, updated_at)
+        INSERT INTO run_attempt (id, org_id, run_id, runtime_id, attempt, phase, deadline_at, created_at, updated_at, model_source_connection_id, model_source_user_id)
         SELECT ${input.id}, r.org_id, r.id, rt.id,
           (SELECT coalesce(max(a.attempt), 0) + 1 FROM run_attempt a WHERE a.run_id = r.id),
-          'starting', ${input.deadlineAt}, ${input.at}, ${input.at}
+          'starting', ${input.deadlineAt}, ${input.at}, ${input.at}, rt.model_connection_id, rt.ortam_user_id
         FROM run r JOIN context_runtime rt ON rt.id = r.runtime_id AND rt.org_id = r.org_id
         JOIN context c ON c.id = rt.context_id AND c.org_id = rt.org_id
         LEFT JOIN connection cn ON cn.id = rt.connection_id AND cn.org_id = rt.org_id
@@ -282,6 +310,7 @@ export function runtimeRepos(execute: (statement: SQL) => Promise<unknown[]>): R
           AND (r.scheduled_for IS NULL OR r.scheduled_for <= ${input.at})
           AND rt.disabled_at IS NULL AND c.agent_id = rt.agent_id AND r.agent_id = rt.agent_id
           AND (rt.connection_id IS NULL OR (cn.kind = 'secret' AND cn.status = 'active' AND cn.secret_enc IS NOT NULL))
+          AND (rt.connection_id IS NOT NULL OR ${runtimeModelGrant(sql`c.id`, sql`rt.org_id`, snapshot)})
           AND (r.automation_id IS NULL OR EXISTS (
             SELECT 1 FROM automation a WHERE a.id = r.automation_id AND a.org_id = r.org_id
               AND a.agent_id = r.agent_id AND a.context_id = c.id AND a.enabled = 1))
