@@ -28,6 +28,7 @@ export interface RuntimeDispatchDeps {
   config: NonNullable<AppDeps["runtime"]>
   fetcher?: typeof fetch
   now?: () => Date
+  pokeRuntime?: () => void
 }
 export const RUNTIME_ATTEMPT_MS = 15 * 60_000
 
@@ -267,7 +268,7 @@ export async function runtimeDispatchPass(deps: RuntimeDispatchDeps) {
   for (const run of runs.values()) {
     try {
       if (!run.runtime_id) continue
-      const runtime = await deps.meta.getContextRuntime(run.runtime_id, run.org_id)
+      let runtime = await deps.meta.getContextRuntime(run.runtime_id, run.org_id)
       if (!runtime) continue
       let attempt = await deps.meta.getLatestRunAttempt(run.id, run.org_id)
       if (!attempt) {
@@ -287,7 +288,19 @@ export async function runtimeDispatchPass(deps: RuntimeDispatchDeps) {
           deadlineAt: new Date(now.getTime() + RUNTIME_ATTEMPT_MS).toISOString(),
         })
       }
-      if (attempt) await reconcile(deps, run, attempt, runtime)
+      // Confirm each durable transition before advancing again. Pending operations,
+      // lost responses and unchanged launch intent yield to the recovery sweep.
+      const until = performance.now() + 10_000
+      for (let step = 0; attempt && step < 8; step++) {
+        await reconcile(deps, run, attempt, runtime)
+        if (attempt.released_at) break
+        const next = await deps.meta.getRunAttempt(attempt.id, run.org_id)
+        if (!next || next.revision === attempt.revision || performance.now() >= until) break
+        const currentRuntime = await deps.meta.getContextRuntime(run.runtime_id, run.org_id)
+        if (!currentRuntime) break
+        runtime = currentRuntime
+        attempt = next
+      }
     } catch (error) {
       // Transport bodies and agent output may contain credentials. IDs suffice for diagnosis.
       log.warn("runtime reconciliation deferred", {
@@ -304,6 +317,7 @@ export async function runtimeDispatchPass(deps: RuntimeDispatchDeps) {
       at,
       new Set([...deps.config.pilotWorkspaceIds, ...(deps.config.managed?.workspaceIds ?? [])]),
     )
+    if (admission.admitted > 0) deps.pokeRuntime?.()
     log.info("runtime dispatch completed", {
       pending: pending.length,
       unreleased: cleanup.length,

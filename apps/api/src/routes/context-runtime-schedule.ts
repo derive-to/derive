@@ -67,6 +67,7 @@ export const contextRuntimeScheduleRoutes = (ctx: AppContext) => {
       at: new Date().toISOString(),
     })
     if (!schedule) return fail(c, 409, "Schedule changed; reload before saving")
+    ctx.deps.pokeRuntime?.()
     return c.json({ schedule, next_run_at: body.enabled ? next : null })
   })
   return app

@@ -132,6 +132,7 @@ export const runtimeModelConnectionRoutes = (ctx: AppContext) => {
       connection.org_id,
       new Date().toISOString(),
     )
+    ctx.deps.pokeRuntime?.()
     try {
       await disconnect(connection)
     } catch {

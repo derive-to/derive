@@ -691,9 +691,10 @@ describe("Ortam runtime lifecycle", () => {
       agent_connections: { user_id: "ortam-owner" },
     })
   }
+  const pokeRuntime = vi.fn()
   const { app, meta, ctx } = makeAuthedApp("runtime-lifecycle", [owner, member], "editor", {
     operatorIds: [owner.id],
-    deps: { encryptionKey: SECRET, runtime: config, runtimeFetch: peer },
+    deps: { encryptionKey: SECRET, runtime: config, runtimeFetch: peer, pokeRuntime },
   })
   let now = new Date()
   const pass = () =>
@@ -705,6 +706,7 @@ describe("Ortam runtime lifecycle", () => {
       config,
       fetcher: peer,
       now: () => now,
+      pokeRuntime,
     })
   async function setup(withEnvironment = false) {
     now = new Date()
@@ -1276,6 +1278,25 @@ describe("Ortam runtime lifecycle", () => {
     for (let i = 0; i < 5; i++) await pass()
   })
 
+  it("launches ready work and settles a saved result without waiting for another timer tick", async () => {
+    pokeRuntime.mockClear()
+    const f = await setup()
+    expect(pokeRuntime).toHaveBeenCalledTimes(1)
+    await Promise.all([pass(), pass()])
+    expect(f.sandbox.starts).toBe(1)
+    expect((await attemptRequest(f.sandbox, "claim")).status).toBe(200)
+    pokeRuntime.mockClear()
+    expect((await attemptRequest(f.sandbox, "result", result)).status).toBe(200)
+    expect(pokeRuntime).toHaveBeenCalledTimes(1)
+    await pass()
+    expect(await meta.getRun(f.run.id)).toMatchObject({ status: "succeeded" })
+    expect(await meta.getLatestRunAttempt(f.run.id, "default")).toMatchObject({
+      phase: "released",
+      save_status: "saved",
+    })
+    expect(f.sandbox.state).toBe("stopped")
+  })
+
   it("does not launch twice under concurrent controller passes or a lost launch response", async () => {
     const f = await setup()
     f.sandbox.loseLaunch = true
@@ -1360,6 +1381,7 @@ describe("runtime provisioning and shared model accounts", () => {
   let loseCreate = false
   let loseDelete = false
   let failSetup = false
+  let pendingSetup = false
   let failDelete = false
   let authStatus = 200
   let sandboxStatus = 200
@@ -1445,7 +1467,7 @@ describe("runtime provisioning and shared model accounts", () => {
             id: `create-${id}`,
             sandbox_id: id,
             kind: "create",
-            state: failSetup ? "failed" : "succeeded",
+            state: failSetup ? "failed" : pendingSetup ? "running" : "succeeded",
           },
         }
         creates.set(key, saved)
@@ -1519,9 +1541,10 @@ describe("runtime provisioning and shared model accounts", () => {
     if (saved.sandbox.state === "deleted") return new Response(null, { status: 404 })
     return json(saved.sandbox)
   }
+  const pokeRuntime = vi.fn()
   const { app, meta, ctx } = makeAuthedApp("runtime-provisioning", [owner, member], "editor", {
     operatorIds: [owner.id],
-    deps: { encryptionKey: SECRET, runtime: config, runtimeFetch: peer },
+    deps: { encryptionKey: SECRET, runtime: config, runtimeFetch: peer, pokeRuntime },
   })
   const pass = () =>
     runtimeDispatchPass({
@@ -1532,6 +1555,7 @@ describe("runtime provisioning and shared model accounts", () => {
       config,
       fetcher: peer,
       now: () => now,
+      pokeRuntime,
     })
   async function fixture() {
     now = new Date()
@@ -1541,6 +1565,7 @@ describe("runtime provisioning and shared model accounts", () => {
     loseCreate = false
     loseDelete = false
     failSetup = false
+    pendingSetup = false
     failDelete = false
     authStatus = 200
     sandboxStatus = 200
@@ -1583,7 +1608,6 @@ describe("runtime provisioning and shared model accounts", () => {
     const before = creates.size
     expect((await f.submit()).status).toBe(202)
     expect((await f.submit()).status).toBe(200)
-    await pass() // durable submission intent
     loseCreate = true
     await pass() // accepted, response lost
     expect((await f.state())?.phase).toBe("creating")
@@ -1662,14 +1686,11 @@ describe("runtime provisioning and shared model accounts", () => {
   it("resolves an ambiguous create and cleans up after cancellation and rollout removal", async () => {
     const f = await fixture()
     await f.submit()
-    await pass()
     loseCreate = true
     await pass()
     await f.cancel()
     config.pilotWorkspaceIds.clear()
     await meta.setConnectionStatus(f.connection.id, "default", "revoked")
-    await pass()
-    await pass()
     loseDelete = true
     await pass()
     expect((await f.state())?.phase).toBe("deleting")
@@ -1681,7 +1702,6 @@ describe("runtime provisioning and shared model accounts", () => {
   it("deletes a failed installation and retains ownership when deletion fails", async () => {
     const f = await fixture()
     await f.submit()
-    await pass()
     failSetup = true
     failDelete = true
     await pass()
@@ -1731,6 +1751,7 @@ describe("runtime provisioning and shared model accounts", () => {
     for (let i = 0; i < 6; i++) await pass()
     expect((await f.state())?.phase).toBe("awaiting_connection")
     now = new Date(Date.parse((await f.state())?.deadline_at ?? "") + 1000)
+    loseDelete = true
     await pass()
     expect((await f.state())?.phase).toBe("deleting")
     await meta.deleteContext(f.context.id, "default")
@@ -1792,6 +1813,33 @@ describe("runtime provisioning and shared model accounts", () => {
     }
     return { ...f, model, runtime, sandbox: saved.sandbox, select, fire }
   }
+
+  it("prepares a ready managed job in one pass while another installation is still pending", async () => {
+    const waiting = await fixture()
+    await modelAccount(waiting.context.id)
+    pendingSetup = true
+    pokeRuntime.mockClear()
+    expect((await app.request(`${waiting.path}/setup`, jsonAs(as(owner.email), {}))).status).toBe(
+      202,
+    )
+    expect(pokeRuntime).toHaveBeenCalledTimes(1)
+    await pass()
+    expect((await waiting.state())?.phase).toBe("provisioning")
+    const ready = await fixture()
+    await modelAccount(ready.context.id)
+    expect((await app.request(`${ready.path}/setup`, jsonAs(as(owner.email), {}))).status).toBe(202)
+    await pass()
+    expect((await waiting.state())?.phase).toBe("provisioning")
+    expect((await ready.state())?.phase).toBe("ready")
+    expect(await meta.getContextRuntimeForContext(ready.context.id, "default")).toMatchObject({
+      disabled_at: null,
+    })
+    const pending = creates.get(`derive-${(await waiting.state())?.id}-create`)
+    if (!pending) throw new Error("Missing pending installation")
+    pending.operation.state = "succeeded"
+    await pass()
+    expect((await waiting.state())?.phase).toBe("ready")
+  })
 
   it("shares one account across isolated jobs, and removes one grant without revoking the other", async () => {
     const first = await managedJob()
@@ -1966,17 +2014,36 @@ describe("runtime provisioning and shared model accounts", () => {
       const f = await fixture()
       await modelAccount(f.context.id)
       expect((await app.request(`${f.path}/setup`, jsonAs(as(owner.email), {}))).status).toBe(202)
-      for (let i = 0; i < (committed ? 6 : 5); i++) await pass()
-      expect((await f.state())?.phase).toBe(committed ? "binding" : "awaiting_connection")
-      expect(
-        (
-          await app.request(`${f.path}/model-connection`, {
-            ...jsonAs(as(owner.email), { connection_id: null, revision: 0 }),
-            method: "PUT",
-          })
-        ).status,
-      ).toBe(200)
-      for (let i = 0; i < 4; i++) await pass()
+      // Withdraw between two durable steps in the SAME pass, not between timer ticks.
+      const transition = meta.transitionRuntimeSetup.bind(meta)
+      let withdrawn = false
+      const intercept = vi
+        .spyOn(meta, "transitionRuntimeSetup")
+        .mockImplementation(async (...args) => {
+          const next = await transition(...args)
+          if (
+            next &&
+            next.context_id === f.context.id &&
+            next.phase === (committed ? "binding" : "awaiting_connection")
+          ) {
+            expect(
+              (
+                await app.request(`${f.path}/model-connection`, {
+                  ...jsonAs(as(owner.email), { connection_id: null, revision: 0 }),
+                  method: "PUT",
+                })
+              ).status,
+            ).toBe(200)
+            withdrawn = true
+          }
+          return next
+        })
+      try {
+        await pass()
+      } finally {
+        intercept.mockRestore()
+      }
+      expect(withdrawn).toBe(true)
       const runtime = await meta.getContextRuntimeForContext(f.context.id, "default")
       if (committed) {
         expect(runtime?.disabled_at).toBeTruthy()
@@ -2214,8 +2281,8 @@ describe("runtime provisioning and shared model accounts", () => {
     config.pilotWorkspaceIds.clear()
     await modelAccount(f.context.id)
     expect((await app.request(`${f.path}/setup`, jsonAs(as(owner.email), {}))).status).toBe(202)
-    await pass()
-    await pass()
+    loseCreate = true
+    await pass() // A remote create exists, but its response was lost before binding.
     config.managed.workspaceIds.clear()
     for (let i = 0; i < 6; i++) await pass()
     expect((await f.state())?.phase).toBe("failed")
@@ -2298,8 +2365,9 @@ describe("reusable runtime model accounts", () => {
     }
     throw new Error(`Unexpected model request ${path}`)
   }
+  const pokeRuntime = vi.fn()
   const { app, meta } = makeAuthedApp("reusable-runtime-models", [owner, member], "editor", {
-    deps: { encryptionKey: SECRET, runtime: config, runtimeFetch: peer },
+    deps: { encryptionKey: SECRET, runtime: config, runtimeFetch: peer, pokeRuntime },
   })
   const create = async (provider = "codex") => {
     config.managed.workspaceIds.add("default")

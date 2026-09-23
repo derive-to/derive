@@ -60,6 +60,7 @@ export const contextRuntimeModelBindingRoutes = (ctx: AppContext) => {
     })
     if (!binding)
       return fail(c, 409, "Model selection changed or is unavailable; reload before saving")
+    ctx.deps.pokeRuntime?.()
     return c.json({ revision: binding.revision, connection_id: binding.model_connection_id })
   })
   return app

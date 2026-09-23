@@ -115,6 +115,7 @@ export const contextRuntimeSetupRoutes = (ctx: AppContext) => {
       at.toISOString(),
     )
     if (!setup) return fail(c, 409, "This Context already has a runtime or setup attempt")
+    deps.pokeRuntime?.()
     return c.json(
       {
         setup: connectionId
@@ -140,6 +141,7 @@ export const contextRuntimeSetupRoutes = (ctx: AppContext) => {
     const setup = await meta.getRuntimeSetup(context.id, context.org_id)
     if (setup && !setup.cancelled_at && ["binding", "ready"].includes(setup.phase))
       return fail(c, 409, "Setup is connecting; disable the runtime once connected")
+    deps.pokeRuntime?.()
     return c.json({
       setup: setup?.connection_id
         ? setup
