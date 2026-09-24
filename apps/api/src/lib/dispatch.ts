@@ -6,6 +6,7 @@ import {
   type RunRecord,
 } from "@derive/core"
 import { log } from "../log"
+import { hostedWorkspaceAllowed } from "./automation-availability"
 import { overBudget } from "./budget"
 import {
   RUN_LEASE_MS,
@@ -96,7 +97,7 @@ export interface DispatchResult {
 }
 
 const hostedOrgAllowed = (deps: DispatchDeps, orgId: string): boolean =>
-  deps.hostedOrgIds === undefined || deps.hostedOrgIds.has(orgId)
+  hostedWorkspaceAllowed(deps.hostedOrgIds, orgId)
 
 const hostedOrgScope = (deps: DispatchDeps): readonly string[] | undefined =>
   deps.hostedOrgIds === undefined ? undefined : [...deps.hostedOrgIds]
@@ -436,7 +437,12 @@ export const dispatchRunNow = async (deps: DispatchDeps, runId: string): Promise
     await startOne(
       deps,
       "run",
-      { id: r.id, agentId: r.agent_id, orgId: r.org_id },
+      {
+        id: r.id,
+        agentId: r.agent_id,
+        orgId: r.org_id,
+        execution: parseRunExecution(parseRunMeta(r.meta)),
+      },
       now.getTime() + RUN_TOKEN_TTL_MS,
     )
     return true

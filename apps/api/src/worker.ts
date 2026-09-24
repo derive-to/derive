@@ -326,6 +326,16 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
       })
       const models = catalogFromGateway(workerGateway(env))
       app = createApp({
+        hostedAutomation: {
+          workspaceIds: workspaceIdsFromEnv(env.DERIVE_HOSTED_RUNS_ALLOWLIST),
+          providers: !secret
+            ? []
+            : containerSubstrateFromEnv(env as unknown as Record<string, unknown>)
+              ? ["claude-code", "codex"]
+              : env.DERIVE_LOOP_RUNS === "1"
+                ? ["claude-code"]
+                : [],
+        },
         runtime: env.DERIVE_ORTAM_RUNNER_PATH
           ? {
               runnerPath: env.DERIVE_ORTAM_RUNNER_PATH,

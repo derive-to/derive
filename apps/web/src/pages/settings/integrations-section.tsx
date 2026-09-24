@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button"
 import { toast } from "@/components/ui/sonner"
 import { Switch } from "@/components/ui/switch"
 import {
+  automationsQuery,
   connectionsQuery,
   githubQuery,
   slackQuery,
@@ -157,6 +158,7 @@ export function IntegrationsSection() {
       return rollback
     },
     onSuccess: (s) => qc.setQueryData(workspaceSettingsQuery().queryKey, s),
+    invalidate: [automationsQuery().queryKey],
   })
   const flip = (key: keyof OrgSettings) => (next: boolean) =>
     update.mutate({ [key]: next } as Partial<OrgSettings>)

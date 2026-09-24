@@ -543,6 +543,9 @@ const runtimeConfig = process.env.DERIVE_ORTAM_RUNNER_PATH
   : undefined
 let pokeRuntime: (() => void) | undefined
 const app = createApp({
+  hostedAutomation: hostedDispatch
+    ? { providers: ["claude-code", "codex"], workspaceIds: hostedDispatch.hostedOrgIds }
+    : undefined,
   runtime: runtimeConfig,
   pokeRuntime: () => pokeRuntime?.(),
   meta,

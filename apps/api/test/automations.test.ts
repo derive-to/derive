@@ -58,11 +58,79 @@ describe("automations + runs", () => {
       }),
     )
 
+  it("refuses unavailable hosted execution before creating a run and reports the same blocker in the directory", async () => {
+    const workspaceIds = new Set<string>()
+    const providers: Array<"claude-code" | "codex"> = []
+    const hosted = makeAuthedApp("automations-hosted-admission", [owner], "editor", {
+      deps: { hostedAutomation: { workspaceIds, providers } },
+    })
+    const body = {
+      trigger: { kind: "manual" },
+      instruction: "Create a time artifact",
+      provider: "codex",
+    }
+    const created = await hosted.app.request("/v1/automations", jsonAs(as(owner.email), body))
+    expect(created.status).toBe(201)
+    const automation = (await created.json()) as { id: string }
+    const start = () =>
+      hosted.app.request(`/v1/automations/${automation.id}/run`, jsonAs(as(owner.email), {}))
+    const blocked = await start()
+    expect(blocked.status).toBe(409)
+    const { error } = (await blocked.json()) as { error: string }
+    expect(error).toContain("not available for this workspace")
+    const listed = await hosted.app.request("/v1/automations", { headers: as(owner.email) })
+    expect(
+      ((await listed.json()) as { automations: Array<{ run_blocked_reason: string }> })
+        .automations[0]?.run_blocked_reason,
+    ).toBe(error)
+    const agentsBefore = (await hosted.meta.listAgents("default")).length
+    const createAndRun = await hosted.app.request(
+      "/v1/automations",
+      jsonAs(as(owner.email), { ...body, runNow: true }),
+    )
+    expect(createAndRun.status).toBe(409)
+    expect(await hosted.meta.listRuns("default", 100)).toEqual([])
+    expect((await hosted.meta.listAgents("default")).length).toBe(agentsBefore)
+    expect((await hosted.meta.listAutomations("default")).length).toBe(1)
+
+    workspaceIds.add("default")
+    expect(await (await start()).json()).toMatchObject({
+      error: "No hosted Codex runner is configured on this instance.",
+    })
+    providers.push("codex")
+    const settings = await hosted.meta.getOrgSettings("default")
+    await hosted.meta.setOrgSettings("default", { ...settings, hostedAgentsEnabled: false })
+    expect(await (await start()).json()).toMatchObject({
+      error: "Hosted agents are disabled in workspace settings.",
+    })
+    await hosted.meta.setOrgSettings("default", { ...settings, agentWrites: false })
+    expect(await (await start()).json()).toMatchObject({
+      error: "Agent writes are paused in workspace settings.",
+    })
+    await hosted.meta.setOrgSettings("default", settings)
+    await connectPoolPlan(hosted.meta, "default", "codex")
+    expect((await start()).status).toBe(201)
+    expect((await hosted.meta.listRuns("default", 100)).length).toBe(1)
+
+    // An explicitly registered polling runner does not depend on hosted rollout.
+    workspaceIds.clear()
+    const agentResponse = await hosted.app.request(
+      "/v1/agents",
+      jsonAs(as(owner.email), { name: "Local runner" }),
+    )
+    const agent = (await agentResponse.json()) as { id: string }
+    const local = await hosted.app.request(
+      "/v1/automations",
+      jsonAs(as(owner.email), { ...body, agentId: agent.id, runNow: true }),
+    )
+    expect(local.status).toBe(201)
+  })
+
   it("dispatches GitHub Actions directly without a model plan or executor", async () => {
     const key = "direct-github-actions-key"
     const direct = makeAuthedApp("automations-direct-github", [owner], "editor", {
       noPlan: true,
-      deps: { encryptionKey: key },
+      deps: { encryptionKey: key, hostedAutomation: { providers: [], workspaceIds: new Set() } },
     })
     await direct.meta.setGithubApp({
       id: "default",

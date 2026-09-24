@@ -131,12 +131,12 @@ function AutomationRow({
           {automation.context_id && <Badge variant="outline">Context</Badge>}
           <Badge variant="secondary">{triggerLabel(automation.trigger)}</Badge>
           {!automation.enabled && <Badge variant="outline">Disabled</Badge>}
-          {!automation.trigger.action ? (
+          {!automation.trigger.action && automation.run_blocked_reason === undefined ? (
             <ExecutorBadge seenAt={automation.executor_seen_at ?? null} />
           ) : null}
         </span>
       }
-      meta={summary || undefined}
+      meta={automation.run_blocked_reason || summary || undefined}
       actions={
         <>
           {canRun && automation.enabled && (
@@ -146,7 +146,7 @@ function AutomationRow({
               size="sm"
               onClick={() => run.mutate()}
               loading={run.isPending}
-              disabled={run.isPending}
+              disabled={run.isPending || Boolean(automation.run_blocked_reason)}
             >
               Run now
             </Button>

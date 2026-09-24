@@ -503,6 +503,8 @@ export interface Automation {
   /** When this automation's agent last polled the run claim endpoint (list responses
    *  only). Null = no executor has ever polled — the automation is inert. */
   executor_seen_at?: string | null
+  /** Deployment or workspace restriction, checked again before enqueue. */
+  run_blocked_reason?: string | null
 }
 /** One execution — the queue (queued/running) and the ledger (succeeded/failed) in one row. */
 export interface Run {

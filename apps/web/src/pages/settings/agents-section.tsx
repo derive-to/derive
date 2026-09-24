@@ -24,6 +24,7 @@ import {
 import { Switch } from "@/components/ui/switch"
 import {
   agentsQuery,
+  automationsQuery,
   modelCredentialsQuery,
   workspaceQuery,
   workspaceSettingsQuery,
@@ -129,6 +130,7 @@ function AgentWritesRow() {
       return rollback
     },
     onSuccess: (s) => qc.setQueryData(workspaceSettingsQuery().queryKey, s),
+    invalidate: [automationsQuery().queryKey],
   })
   if (!settings) return null
   return (
