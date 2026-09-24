@@ -111,17 +111,17 @@ test("starting a workflow creates a visible, version-pinned run", async ({ owner
   await expect(owner).toHaveURL(/\/workflows$/)
   await expect(owner.getByTestId("nav-workflows")).toHaveAttribute("aria-current", "page")
   await expect(owner.getByRole("heading", { level: 1, name: "Workflows" })).toHaveCount(1)
-  await expect(
-    owner.getByRole("heading", { level: 2, name: "Coordinated workflows" }),
-  ).toBeVisible()
-  await expect(
-    owner.getByRole("heading", { level: 2, name: "Single-agent workflows" }),
-  ).toBeVisible()
-  const directoryRow = owner
-    .getByTestId("workflow-row")
-    .filter({ hasText: "Keep internal docs aligned with code changes." })
+  await expect(owner.getByTestId("workflows-view-schedules")).toHaveAttribute(
+    "data-state",
+    "active",
+  )
+  await owner.getByTestId("workflows-view-browse").click()
+  await expect(owner).toHaveURL(/view=definitions/)
+  await owner.reload()
+  await expect(owner.getByTestId("workflows-view-browse")).toHaveAttribute("data-state", "active")
+  const directoryRow = owner.getByTestId(`workflow-row-${shortId}`)
   await expect(directoryRow).toContainText("Keep internal docs aligned with code changes.")
-  await expect(directoryRow).toContainText("1 Context step")
+  await expect(directoryRow).toContainText("1 step")
   await directoryRow.click()
   await expect(owner).toHaveURL(new RegExp(`/artifacts/.+${shortId}`))
   await expect(owner.getByTestId("workflow-preview")).toBeVisible()
@@ -919,4 +919,182 @@ test("a join link brings a new person into the workspace as a Creator", async ({
   // The owner's card reflects the join after a reload.
   await owner.reload()
   await expect(owner.getByTestId("join-link-meta")).toContainText("1 joined")
+})
+
+test("cloud workflows keep manual runs available after pausing and link their reports", async ({
+  owner,
+}, testInfo) => {
+  await owner.emulateMedia({ reducedMotion: "reduce" })
+  const configured = await owner.request.patch("/v1/workspace/settings", {
+    data: { hostedAgentsEnabled: true, agentWrites: true, automateBeta: true },
+  })
+  expect(configured.ok()).toBeTruthy()
+  const id = "ctx_workflow_ui"
+  const account = {
+    id: "rmc_ui",
+    name: "Work account",
+    provider: "codex",
+    revoked_at: null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    revision: 0,
+  }
+  const context = {
+    id,
+    name: "Daily integrity review",
+    agent_id: "agent_ui",
+    created_by: "owner",
+    created_at: new Date().toISOString(),
+    runner_seen_at: null,
+    manifest_short_id: null,
+    ask_policy: "invited",
+    connection_ids: [],
+    import: null,
+  }
+  let schedule = {
+    id: "auto_ui",
+    instruction: "Review new evidence and report findings",
+    provider: "codex",
+    trigger: JSON.stringify({ kind: "schedule", cron: "0 9 * * *", tz: "UTC" }),
+    enabled: 1,
+    revision: 0,
+  }
+  let runRequests = 0
+  let created: { name: string; model_connection_id: string } | null = null
+  await owner.route("**/v1/workflow-runtimes", (route) => {
+    if (route.request().method() === "POST") {
+      created = route.request().postDataJSON()
+      return route.fulfill({ json: { id }, status: 201 })
+    }
+    return route.fulfill({
+      json: {
+        available: true,
+        can_create: true,
+        items: [
+          {
+            ...context,
+            ready: true,
+            disabled: false,
+            preparing: false,
+            can_open: true,
+            schedule: { enabled: !!schedule.enabled, trigger: JSON.parse(schedule.trigger) },
+          },
+        ],
+      },
+    })
+  })
+  await owner.route("**/v1/runtime-model-connections", (route) =>
+    route.fulfill({ json: account, status: 201 }),
+  )
+  await owner.route(`**/v1/runtime-model-connections/${account.id}/status`, (route) =>
+    route.fulfill({ json: { revoked: false, account: { status: "active" } } }),
+  )
+  await owner.route(`**/v1/contexts/${id}`, (route) => route.fulfill({ json: context }))
+  await owner.route("**/v1/runtime-model-connections?include_revoked=true", (route) =>
+    route.fulfill({ json: { items: [account] } }),
+  )
+  await owner.route(`**/v1/contexts/${id}/runtime/model-connection`, (route) =>
+    route.fulfill({
+      json: { revision: 0, connection: { ...account, revoked: false, can_manage: false } },
+    }),
+  )
+  await owner.route(`**/v1/contexts/${id}/runtime`, (route) =>
+    route.fulfill({
+      json: {
+        enabled: true,
+        managed: true,
+        can_edit: true,
+        setup: null,
+        model_connection: { ...account, revoked: false },
+        runtime: { id: "runtime_ui", disabled_at: null },
+        schedule,
+        next_run_at: schedule.enabled ? "2026-10-01T09:00:00Z" : null,
+        runs: [
+          {
+            id: "run_ui",
+            created_at: "2026-09-24T09:00:00Z",
+            status: "succeeded",
+            reason: "schedule",
+            meta: JSON.stringify({
+              runtime: {
+                report_short_id: "private-report",
+                save_status: "saved",
+                released_at: "2026-09-24T09:05:00Z",
+              },
+            }),
+            attempt: { phase: "released", save_status: "saved", result_json: null },
+          },
+        ],
+      },
+    }),
+  )
+  await owner.route(`**/v1/contexts/${id}/runtime/schedule`, async (route) => {
+    const body = route.request().postDataJSON()
+    schedule = {
+      ...schedule,
+      instruction: body.instruction,
+      trigger: JSON.stringify(
+        body.cron ? { kind: "schedule", cron: body.cron, tz: body.timezone } : { kind: "manual" },
+      ),
+      enabled: body.enabled ? 1 : 0,
+      revision: schedule.revision + 1,
+    }
+    await route.fulfill({ json: { schedule, next_run_at: null } })
+  })
+  await owner.route(`**/v1/contexts/${id}/runtime/runs`, async (route) => {
+    runRequests++
+    await route.fulfill({ json: { run: { id: "queued_ui" } } })
+  })
+  await owner.goto("/workflows")
+  await owner.getByTestId("workflows-new").click()
+  await owner.getByTestId("workflow-create-name").fill(context.name)
+  await owner.getByTestId("context-model-account-add").click()
+  await owner.getByTestId("context-model-account-name").fill(account.name)
+  await owner.getByTestId("context-model-account-create").click()
+  await expect(owner.getByTestId("workflow-create-account")).toHaveValue(account.id)
+  await owner.getByTestId("workflow-create-submit").click()
+  await expect.poll(() => created).toEqual({ name: context.name, model_connection_id: account.id })
+  await expect(owner.getByTestId("workflow-detail-configuration")).toHaveAttribute(
+    "data-state",
+    "active",
+  )
+  expect(runRequests).toBe(0)
+  await owner.getByTestId("workflow-detail-runs").click()
+  await expect(owner.getByRole("heading", { level: 1, name: context.name })).toBeVisible()
+  await expect(owner.getByTestId("context-runtime-report-run_ui")).toHaveAttribute(
+    "href",
+    "/artifacts/private-report",
+  )
+  await owner.screenshot({
+    path: testInfo.outputPath("workflow-runs-desktop.png"),
+    fullPage: true,
+    animations: "disabled",
+  })
+  await owner.getByTestId("workflow-detail-configuration").click()
+  await owner.getByTestId("context-runtime-schedule-pause").click()
+  await expect(owner.getByTestId("context-managed-run")).toBeEnabled()
+  await owner.getByTestId("context-managed-run").click()
+  await expect.poll(() => runRequests).toBe(1)
+  await owner.getByTestId("context-runtime-trigger").selectOption("manual")
+  await owner.getByTestId("context-runtime-schedule-save").click()
+  await expect.poll(() => JSON.parse(schedule.trigger).kind).toBe("manual")
+  await owner.reload()
+  await expect(owner.getByTestId("workflow-detail-configuration")).toHaveAttribute(
+    "data-state",
+    "active",
+  )
+  await expect(owner.getByTestId("context-runtime-trigger")).toHaveValue("manual")
+  await owner.setViewportSize({ width: 390, height: 844 })
+  await owner.screenshot({
+    path: testInfo.outputPath("workflow-configuration-mobile.png"),
+    fullPage: true,
+    animations: "disabled",
+  })
+  await expect(owner.getByTestId("context-managed-run")).toBeEnabled()
+  await owner.getByTestId("context-runtime-trigger").scrollIntoViewIfNeeded()
+  await owner.screenshot({
+    path: testInfo.outputPath("workflow-task-mobile.png"),
+    fullPage: true,
+    animations: "disabled",
+  })
 })

@@ -1,4 +1,5 @@
 import type { Automation, Run } from "@/api"
+import { runtimeReport } from "@/lib/runtime-report"
 import {
   githubActionRunReceipt,
   runExecutionReceipt,
@@ -43,6 +44,7 @@ export const presentAutomationRun = (
   run: Run,
   automation: Automation | undefined,
 ): AutomationRunPresentation => {
+  const cloud = runtimeReport(run.meta)
   const writes = runWrites(run.meta)
   const outcome = runOutcome(run.meta)
   const receipt = runExecutionReceipt(run.meta)
@@ -77,18 +79,25 @@ export const presentAutomationRun = (
     summary = githubReceipt
       ? `GitHub started ${githubReceipt.workflow} as run #${githubReceipt.runId}.`
       : "GitHub accepted the workflow dispatch."
+  } else if (cloud) {
+    summary = cloud.report_short_id
+      ? "Report ready."
+      : "Run finished. No report is available to you here."
+    if (cloud.save_status === "saved") facts.push("Files saved")
+    if (cloud.released_at) facts.push("Workspace stopped")
   } else if (writes.length > 0) {
     summary = `The Agent wrote ${countLabel(writes.length, "Artifact")}.`
   } else if (outcome) {
     summary = `The Agent finished: ${runOutcomeLabel(outcome)}.`
   } else {
-    summary = "The Agent finished without an Artifact write."
+    summary = "Run finished. No published output was recorded."
   }
 
   return {
     title:
+      run.workflow_name ??
       automation?.instruction ??
-      (run.automation_id ? "Removed automated workflow" : "One-time Agent run"),
+      (run.automation_id ? "Workflow unavailable" : "One-time Agent run"),
     summary,
     facts,
   }

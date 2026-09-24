@@ -25,6 +25,7 @@ import { OrtamClient } from "../lib/ortam-client"
 import { runtimeRunContext } from "../lib/runtime-access"
 import { runtimeInput } from "../lib/runtime-input"
 import { runtimeModelReady } from "../lib/runtime-model-grant"
+import { runtimeRunView } from "../lib/runtime-run-view"
 import { nextRuntimeOccurrence, runtimeScheduleAllows } from "../lib/runtime-schedule"
 import { verifyRuntimeToken } from "../lib/runtime-token"
 
@@ -82,7 +83,7 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
         runs.map(async (run) => {
           const attempt = await meta.getLatestRunAttempt(run.id, run.org_id)
           return {
-            ...run,
+            ...(await runtimeRunView(ctx, c, run)),
             attempt: attempt && {
               ...attempt,
               result_json: run.initiated_by === viewer ? attempt.result_json : null,
@@ -169,7 +170,7 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
     if (!(await runtimeAvailable(ctx, c, context.org_id, runtime)))
       return fail(c, 403, "Cloud runs are unavailable")
     const schedule = managed ? await meta.getRuntimeSchedule(runtime.id, context.org_id) : null
-    if (managed && schedule?.enabled !== 1) return fail(c, 409, "Save and enable the job first")
+    if (managed && !schedule) return fail(c, 409, "Save the workflow instructions first")
     const body =
       managed && schedule
         ? {
@@ -245,12 +246,7 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
     const runtime = await meta.getContextRuntime(run.runtime_id, run.org_id)
     const input = JSON.parse(run.input_snapshot) as RuntimeRunInput
     const context = await runtimeRunContext(meta, deps.runtime, run, runtime)
-    if (
-      !context ||
-      context.id !== input.context_id ||
-      (run.automation_id && !(await meta.getOrgSettings(run.org_id)).automateBeta) ||
-      !(await runtimeScheduleAllows(meta, run))
-    )
+    if (!context || context.id !== input.context_id || !(await runtimeScheduleAllows(meta, run)))
       return fail(c, 403, "Runtime access has been revoked")
     const current = readEnvironmentBindings(context.environment_bindings)
     const environment: Record<string, string> = {}

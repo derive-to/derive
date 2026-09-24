@@ -769,3 +769,25 @@ export const contextRuntimeQuery = (id: string) =>
     },
     meta: { persist: false },
   })
+
+export const workflowRuntimesQuery = () =>
+  queryOptions({
+    queryKey: ["workflow-runtimes"],
+    queryFn: api.workflowRuntimes,
+    refetchInterval: 15000,
+  })
+
+export const runtimeModelConnectionsQuery = () =>
+  queryOptions({
+    queryKey: ["runtime-model-connections"] as const,
+    queryFn: api.runtimeModelConnections,
+    meta: { persist: false },
+  })
+
+export const runtimeModelBindingQuery = (id: string) =>
+  queryOptions({
+    queryKey: ["runtime-model-binding", id] as const,
+    queryFn: () => api.runtimeModelBinding(id),
+    refetchInterval: 15000,
+    meta: { persist: false },
+  })

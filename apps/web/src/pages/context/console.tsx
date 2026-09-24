@@ -388,6 +388,16 @@ function Console({ id }: { id: string }) {
 
         {canUseCloudPilot && (
           <TabsContent value="cloud" forceMount className="pt-6 data-[state=inactive]:hidden">
+            {runtimeState.data?.managed && (
+              <Link
+                to="/workflows"
+                search={{ workflow: id }}
+                data-testid="context-open-workflow"
+                className="mb-4 inline-block text-sm text-primary underline"
+              >
+                Open workflow and run history →
+              </Link>
+            )}
             <RuntimeRunCard contextId={id} state={runtimeState} />
           </TabsContent>
         )}

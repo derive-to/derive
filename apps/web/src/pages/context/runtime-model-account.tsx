@@ -6,11 +6,13 @@ import { LoadError } from "@/components/shared/load-error"
 import { SectionTitle } from "@/components/shared/section-title"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { contextRuntimeQuery } from "@/lib/queries"
+import {
+  contextRuntimeQuery,
+  runtimeModelBindingQuery,
+  runtimeModelConnectionsQuery,
+  workflowRuntimesQuery,
+} from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
-
-const accountsKey = ["runtime-model-connections"]
-const bindingKey = (id: string) => ["runtime-model-binding", id]
 
 export function RuntimeModelAccount({
   contextId,
@@ -19,20 +21,13 @@ export function RuntimeModelAccount({
   contextId: string
   canEdit: boolean
 }) {
-  const binding = useQuery({
-    queryKey: bindingKey(contextId),
-    queryFn: () => api.runtimeModelBinding(contextId),
-    refetchInterval: 15000,
-  })
+  const binding = useQuery(runtimeModelBindingQuery(contextId))
   const accounts = useQuery({
-    queryKey: accountsKey,
-    queryFn: api.runtimeModelConnections,
+    ...runtimeModelConnectionsQuery(),
     enabled: canEdit,
   })
   const [draft, setDraft] = useState<{ id: string; revision: number | null } | null>(null)
   const [confirmRemove, setConfirmRemove] = useState(false)
-  const [name, setName] = useState("")
-  const [provider, setProvider] = useState<"codex" | "claude-code">("codex")
   const selected = binding.data?.connection
   const chosenId = draft?.id ?? selected?.id ?? ""
   const chosen = accounts.data?.items.find((item) => item.id === chosenId)
@@ -47,26 +42,21 @@ export function RuntimeModelAccount({
             ? draft.revision
             : (binding.data?.revision ?? null),
       ),
-    invalidate: [bindingKey(contextId), contextRuntimeQuery(contextId).queryKey],
+    invalidate: [
+      runtimeModelBindingQuery(contextId).queryKey,
+      contextRuntimeQuery(contextId).queryKey,
+      workflowRuntimesQuery().queryKey,
+    ],
     success: (_, remove) =>
-      remove ? "This job’s account access was removed" : "Model account selected",
+      remove ? "This workflow’s account access was removed" : "Model account selected",
     onSuccess: () => setDraft(null),
-  })
-  const create = useApiMutation({
-    mutationFn: (_revision: number | null) =>
-      api.createRuntimeModelConnection(name.trim(), provider),
-    invalidate: [accountsKey],
-    onSuccess: (account, revision) => {
-      setDraft({ id: account.id, revision })
-      setName("")
-    },
   })
   return (
     <div className="flex flex-col gap-3 rounded-xl border bg-card p-5">
       <SectionTitle>Model account</SectionTitle>
       {binding.isError && (
         <LoadError
-          title="Could not load the job’s account"
+          title="Could not load the workflow’s account"
           testId="context-model-binding-error"
           onRetry={() => binding.refetch()}
         />
@@ -77,15 +67,15 @@ export function RuntimeModelAccount({
             ? "Loading model account…"
             : selected
               ? `${selected.name} · ${selected.provider === "codex" ? "Codex" : "Claude Code"}${selected.revoked ? " · Disconnected" : ""}`
-              : "No account selected for this job."}
+              : "No account selected for this workflow."}
         </p>
       )}
       {canEdit && (
         <>
           <p className="text-sm text-muted-foreground">
-            Choose one of your accounts to let authorized teammates run this job. Other jobs can use
-            the same account while keeping separate files and tools. Changes take effect before the
-            next run; active work using the previous selection stops.
+            Choose one of your accounts to let authorized teammates run this workflow. Other
+            workflows can use the same account while keeping separate files and tools. Changes take
+            effect before the next run; active work using the previous selection stops.
           </p>
           {accounts.isError && (
             <LoadError
@@ -107,7 +97,9 @@ export function RuntimeModelAccount({
             >
               <option value="">Choose an account</option>
               {selected && !accounts.data?.items.some((item) => item.id === selected.id) && (
-                <option value={selected.id}>{selected.name} · Already shared with this job</option>
+                <option value={selected.id}>
+                  {selected.name} · Already shared with this workflow
+                </option>
               )}
               {accounts.data?.items.map((item) => (
                 <option key={item.id} value={item.id}>
@@ -133,59 +125,24 @@ export function RuntimeModelAccount({
                 disabled={save.isPending}
                 onClick={() => setConfirmRemove(true)}
               >
-                Remove this job’s access
+                Remove this workflow’s access
               </Button>
             )}
           </div>
           <ConfirmDialog
             open={confirmRemove}
             onOpenChange={setConfirmRemove}
-            title="Remove this job’s account access?"
-            description="Active work will stop and this job cannot run until an account is selected. Other jobs keep their access."
+            title="Remove this workflow’s account access?"
+            description="Active work will stop and this workflow cannot run until an account is selected. Other workflows keep their access."
             confirmLabel="Remove access"
             onConfirm={() => save.mutateAsync(true).then(() => undefined)}
           />
-          <details>
-            <summary
-              data-testid="context-model-account-add"
-              className="cursor-pointer text-sm underline"
-            >
-              Add a model account
-            </summary>
-            <div className="mt-3 flex flex-col gap-3">
-              <label className="flex flex-col gap-1.5 text-sm">
-                Account name
-                <Input
-                  data-testid="context-model-account-name"
-                  value={name}
-                  maxLength={100}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Work account"
-                />
-              </label>
-              <label className="flex flex-col gap-1.5 text-sm">
-                Agent
-                <select
-                  data-testid="context-managed-model-provider"
-                  className="h-8 rounded-lg border border-input bg-transparent px-2 text-sm"
-                  value={provider}
-                  onChange={(e) => setProvider(e.target.value as typeof provider)}
-                >
-                  <option value="codex">Codex</option>
-                  <option value="claude-code">Claude Code</option>
-                </select>
-              </label>
-              <Button
-                data-testid="context-model-account-create"
-                className="self-start"
-                disabled={!name.trim() || !binding.data}
-                loading={create.isPending}
-                onClick={() => create.mutate(binding.data?.revision ?? null)}
-              >
-                Add account
-              </Button>
-            </div>
-          </details>
+          <NewModelAccount
+            disabled={!binding.data || save.isPending}
+            onCreated={(account) =>
+              setDraft({ id: account.id, revision: binding.data?.revision ?? null })
+            }
+          />
           {chosen && <ConnectionControls key={chosen.id} account={chosen} contextId={contextId} />}
         </>
       )}
@@ -247,12 +204,13 @@ function ConnectionControls({
   const disconnect = useApiMutation({
     mutationFn: () => api.disconnectRuntimeModel(account.id),
     invalidate: [
-      accountsKey,
+      runtimeModelConnectionsQuery().queryKey,
       queryKey,
-      bindingKey(contextId),
+      runtimeModelBindingQuery(contextId).queryKey,
       contextRuntimeQuery(contextId).queryKey,
+      workflowRuntimesQuery().queryKey,
     ],
-    success: "Account disconnected for all jobs",
+    success: "Account disconnected for all workflows",
     onSuccess: () => {
       setAttempt(null)
       setCode("")
@@ -271,7 +229,7 @@ function ConnectionControls({
       )}
       <p className="text-sm">
         {revoked
-          ? "Disconnected from jobs."
+          ? "Disconnected from workflows."
           : status.data?.account?.status === "active"
             ? "Connected"
             : "Sign-in needed"}
@@ -294,15 +252,15 @@ function ConnectionControls({
             variant="outline"
             onClick={() => setConfirmDisconnect(true)}
           >
-            {revoked ? "Finish disconnect" : "Disconnect from all jobs…"}
+            {revoked ? "Finish disconnect" : "Disconnect from all workflows…"}
           </Button>
         )}
       </div>
       <ConfirmDialog
         open={confirmDisconnect}
         onOpenChange={setConfirmDisconnect}
-        title="Disconnect this account from all jobs?"
-        description="Every job using this account will lose access. To change only this job, use Remove this job’s access instead."
+        title="Disconnect this account from all workflows?"
+        description="Every workflow using this account will lose access. To change only this workflow, use Remove this workflow’s access instead."
         confirmLabel="Disconnect account"
         onConfirm={() => disconnect.mutateAsync().then(() => undefined)}
       />
@@ -373,5 +331,70 @@ function ConnectionControls({
         </p>
       )}
     </div>
+  )
+}
+
+/** Shared account creation; assigning it to a workflow remains the caller's decision. */
+export function NewModelAccount({
+  disabled = false,
+  onCreated,
+}: {
+  disabled?: boolean
+  onCreated: (account: CloudModelConnection) => void
+}) {
+  const [name, setName] = useState("")
+  const [provider, setProvider] = useState<"codex" | "claude-code">("codex")
+  const create = useApiMutation({
+    // Capture the receiver at the click so a polling update cannot advance its binding revision.
+    mutationFn: (_accept: typeof onCreated) =>
+      api.createRuntimeModelConnection(name.trim(), provider),
+    invalidate: [runtimeModelConnectionsQuery().queryKey],
+    onSuccess: (account, accept) => {
+      setName("")
+      accept(account)
+    },
+  })
+  return (
+    <details>
+      <summary data-testid="context-model-account-add" className="cursor-pointer text-sm underline">
+        Add a model account
+      </summary>
+      <div className="mt-3 flex flex-col gap-3">
+        <label className="flex flex-col gap-1.5 text-sm">
+          Account name
+          <Input
+            data-testid="context-model-account-name"
+            value={name}
+            maxLength={100}
+            onChange={(e) => setName(e.target.value)}
+            disabled={disabled || create.isPending}
+            placeholder="Work account"
+          />
+        </label>
+        <label className="flex flex-col gap-1.5 text-sm">
+          Agent
+          <select
+            data-testid="context-managed-model-provider"
+            value={provider}
+            className="h-8 rounded-lg border border-input bg-transparent px-2 text-sm"
+            disabled={disabled || create.isPending}
+            onChange={(e) => setProvider(e.target.value as typeof provider)}
+          >
+            <option value="codex">Codex</option>
+            <option value="claude-code">Claude Code</option>
+          </select>
+        </label>
+        <Button
+          type="button"
+          data-testid="context-model-account-create"
+          className="self-start"
+          disabled={disabled || !name.trim() || create.isPending}
+          loading={create.isPending}
+          onClick={() => create.mutate(onCreated)}
+        >
+          Add account
+        </Button>
+      </div>
+    </details>
   )
 }
