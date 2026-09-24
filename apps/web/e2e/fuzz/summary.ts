@@ -89,7 +89,8 @@ export function summarize(results: SessionResult[]): string {
       (a, b) =>
         Number(a.arranged) - Number(b.arranged) || a.editActions - b.editActions || a.seed - b.seed,
     )[0] as SessionResult
-    const cell = (s: string) => s.replace(/\|/g, "\\|").replace(/\s+/g, " ").slice(0, 160)
+    const cell = (s: string) =>
+      s.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\s+/g, " ").slice(0, 160)
     lines.push(
       `| ${i + 1} | ${row.seeds.length} | ${row.phase} | ${row.oracle} | ${cell(signature)} | ${best.seed} (${best.editActions} gestures${best.arranged ? ", +arrange" : ""}) | ${cell(row.example)} |`,
     )
