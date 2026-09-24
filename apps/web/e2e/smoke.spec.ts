@@ -960,8 +960,13 @@ test("cloud workflows keep manual runs available after pausing and link their re
     revision: 0,
   }
   let runRequests = 0
-  await owner.route("**/v1/workflow-runtimes", (route) =>
-    route.fulfill({
+  let created: { name: string; model_connection_id: string } | null = null
+  await owner.route("**/v1/workflow-runtimes", (route) => {
+    if (route.request().method() === "POST") {
+      created = route.request().postDataJSON()
+      return route.fulfill({ json: { id }, status: 201 })
+    }
+    return route.fulfill({
       json: {
         available: true,
         can_create: true,
@@ -972,11 +977,17 @@ test("cloud workflows keep manual runs available after pausing and link their re
             disabled: false,
             preparing: false,
             can_open: true,
-            schedule: { enabled: true, trigger: JSON.parse(schedule.trigger) },
+            schedule: { enabled: !!schedule.enabled, trigger: JSON.parse(schedule.trigger) },
           },
         ],
       },
-    }),
+    })
+  })
+  await owner.route("**/v1/runtime-model-connections", (route) =>
+    route.fulfill({ json: account, status: 201 }),
+  )
+  await owner.route(`**/v1/runtime-model-connections/${account.id}/status`, (route) =>
+    route.fulfill({ json: { revoked: false, account: { status: "active" } } }),
   )
   await owner.route(`**/v1/contexts/${id}`, (route) => route.fulfill({ json: context }))
   await owner.route("**/v1/runtime-model-connections?include_revoked=true", (route) =>
@@ -1035,7 +1046,20 @@ test("cloud workflows keep manual runs available after pausing and link their re
     await route.fulfill({ json: { run: { id: "queued_ui" } } })
   })
   await owner.goto("/workflows")
-  await owner.getByTestId(`cloud-workflow-${id}`).click()
+  await owner.getByTestId("workflows-new").click()
+  await owner.getByTestId("workflow-create-name").fill(context.name)
+  await owner.getByTestId("context-model-account-add").click()
+  await owner.getByTestId("context-model-account-name").fill(account.name)
+  await owner.getByTestId("context-model-account-create").click()
+  await expect(owner.getByTestId("workflow-create-account")).toHaveValue(account.id)
+  await owner.getByTestId("workflow-create-submit").click()
+  await expect.poll(() => created).toEqual({ name: context.name, model_connection_id: account.id })
+  await expect(owner.getByTestId("workflow-detail-configuration")).toHaveAttribute(
+    "data-state",
+    "active",
+  )
+  expect(runRequests).toBe(0)
+  await owner.getByTestId("workflow-detail-runs").click()
   await expect(owner.getByRole("heading", { level: 1, name: context.name })).toBeVisible()
   await expect(owner.getByTestId("context-runtime-report-run_ui")).toHaveAttribute(
     "href",

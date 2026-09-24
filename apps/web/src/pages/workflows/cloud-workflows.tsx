@@ -8,8 +8,9 @@ import { StatusBadge } from "@/components/shared/status-badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
-import { workflowRuntimesQuery } from "@/lib/queries"
+import { runtimeModelConnectionsQuery, workflowRuntimesQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { NewModelAccount } from "../context/runtime-model-account"
 
 export function CloudWorkflows() {
   const query = useQuery(workflowRuntimesQuery())
@@ -45,6 +46,7 @@ export function CloudWorkflows() {
             <Link
               to="/workflows"
               search={{ workflow: item.id }}
+              disabled={!item.can_open}
               className="text-sm font-medium hover:underline"
               data-testid={`cloud-workflow-${item.id}`}
             >
@@ -87,19 +89,9 @@ export function CloudWorkflows() {
 }
 
 export function NewCloudWorkflow({ onCreated }: { onCreated: (id: string) => void }) {
-  const accounts = useQuery({
-    queryKey: ["runtime-model-connections"],
-    queryFn: api.runtimeModelConnections,
-  })
+  const accounts = useQuery(runtimeModelConnectionsQuery())
   const [name, setName] = useState("")
   const [accountId, setAccountId] = useState("")
-  const [accountName, setAccountName] = useState("")
-  const [provider, setProvider] = useState<"codex" | "claude-code">("codex")
-  const add = useApiMutation({
-    mutationFn: () => api.createRuntimeModelConnection(accountName.trim(), provider),
-    invalidate: [["runtime-model-connections"]],
-    onSuccess: (account) => setAccountId(account.id),
-  })
   const create = useApiMutation({
     mutationFn: () =>
       api.createWorkflowRuntime({ name: name.trim(), model_connection_id: accountId }),
@@ -157,47 +149,13 @@ export function NewCloudWorkflow({ onCreated }: { onCreated: (id: string) => voi
           </select>
         </label>
       )}
-      <details>
-        <summary className="cursor-pointer text-sm" data-testid="workflow-add-account">
-          Add a model account
-        </summary>
-        <div className="mt-3 flex flex-col gap-3">
-          <label className="flex flex-col gap-1 text-sm">
-            Account name
-            <Input
-              data-testid="workflow-account-name"
-              value={accountName}
-              maxLength={100}
-              onChange={(e) => setAccountName(e.target.value)}
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            Runner
-            <select
-              data-testid="workflow-account-provider"
-              className="h-9 rounded-lg border bg-background px-2 text-sm"
-              value={provider}
-              onChange={(e) => setProvider(e.target.value as typeof provider)}
-            >
-              <option value="codex">Codex</option>
-              <option value="claude-code">Claude Code</option>
-            </select>
-          </label>
-          <Button
-            type="button"
-            variant="outline"
-            data-testid="workflow-account-add"
-            disabled={!accountName.trim() || add.isPending}
-            loading={add.isPending}
-            onClick={() => add.mutate()}
-          >
-            Add account
-          </Button>
-          <p className="text-xs text-muted-foreground">
-            You’ll sign in on the workflow’s Configuration page.
-          </p>
-        </div>
-      </details>
+      <NewModelAccount
+        disabled={create.isPending}
+        onCreated={(account) => setAccountId(account.id)}
+      />
+      <p className="text-xs text-muted-foreground">
+        You’ll sign in on the workflow’s Configuration page.
+      </p>
       <Button
         data-testid="workflow-create-submit"
         type="submit"

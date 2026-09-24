@@ -2,12 +2,12 @@ import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
 import { api } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import { ExecutionReadiness } from "@/components/shared/execution-readiness"
 import { LoadError } from "@/components/shared/load-error"
 import { SectionTitle } from "@/components/shared/section-title"
 import { Button } from "@/components/ui/button"
 import { contextRuntimeQuery, workflowRuntimesQuery, workspaceSettingsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
-import { ExecutionReadiness } from "../workflows/execution-readiness"
 import { RuntimeModelAccount } from "./runtime-model-account"
 import { RuntimeRunHistory } from "./runtime-run-history"
 import { RuntimeScheduleCard } from "./runtime-schedule-card"
@@ -138,15 +138,19 @@ export function ManagedRuntimeCard({
           )}
           {job && (
             <div className="flex flex-col gap-3 rounded-xl border bg-card p-5">
-              <SectionTitle>{job.provider === "codex" ? "Codex" : "Claude Code"}</SectionTitle>
-              <p className="whitespace-pre-wrap text-sm">{job.instruction}</p>
-              <p className="text-sm text-muted-foreground">
-                {state.next_run_at
-                  ? `Next run: ${new Date(state.next_run_at).toLocaleString()}`
-                  : job && JSON.parse(job.trigger).kind === "schedule"
-                    ? "Schedule paused · Run now is available"
-                    : "On demand"}
-              </p>
+              {view !== "configuration" && (
+                <>
+                  <SectionTitle>{job.provider === "codex" ? "Codex" : "Claude Code"}</SectionTitle>
+                  <p className="whitespace-pre-wrap text-sm">{job.instruction}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {state.next_run_at
+                      ? `Next run: ${new Date(state.next_run_at).toLocaleString()}`
+                      : JSON.parse(job.trigger).kind === "schedule"
+                        ? "Schedule paused · Run now is available"
+                        : "On demand"}
+                  </p>
+                </>
+              )}
               {(!state.model_connection ||
                 state.model_connection.revoked ||
                 state.model_connection.provider !== job.provider) && (

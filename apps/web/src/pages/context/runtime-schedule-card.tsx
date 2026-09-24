@@ -2,14 +2,14 @@ import type { AutomationRecord } from "@derive/core"
 import { useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { api } from "@/api"
+import { ExecutionReadiness } from "@/components/shared/execution-readiness"
 import { SectionTitle } from "@/components/shared/section-title"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { contextRuntimeQuery } from "@/lib/queries"
+import { contextRuntimeQuery, workflowRuntimesQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
-import { ExecutionReadiness } from "../workflows/execution-readiness"
 
 export function RuntimeScheduleCard({
   contextId,
@@ -48,7 +48,7 @@ export function RuntimeScheduleCard({
         enabled: !pause && values.mode === "schedule",
         revision: pause ? saved.revision : values.revision,
       }),
-    invalidate: [contextRuntimeQuery(contextId).queryKey],
+    invalidate: [contextRuntimeQuery(contextId).queryKey, workflowRuntimesQuery().queryKey],
     success: "Workflow configuration saved",
     onSuccess: (result, pause) => {
       queryClient.setQueryData<Awaited<ReturnType<typeof api.getContextRuntime>>>(

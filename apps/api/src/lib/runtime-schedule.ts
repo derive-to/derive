@@ -46,7 +46,8 @@ export async function runtimeScheduleAllows(meta: MetaStore, run: RunRecord): Pr
     (await scheduleOwnerAllowed(meta, a)) &&
     a.org_id === run.org_id &&
     a.runtime_id === run.runtime_id &&
-    (a.enabled === 1 || run.reason === "manual:runtime") &&
+    (run.reason === "manual:runtime" ||
+      (a.enabled === 1 && (await meta.getOrgSettings(run.org_id)).automateBeta)) &&
     (runtime?.connection_id === null || a.created_by === run.initiated_by) &&
     a.revision === input?.schedule_revision
   )

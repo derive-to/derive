@@ -1929,6 +1929,7 @@ describe("runtime provisioning and shared model accounts", () => {
     ).toBe(200)
     for (let i = 0; i < 5; i++) await pass()
     const saved = await meta.getRun(run.id)
+    if (!saved) throw new Error("Run was not saved")
     const reportId = JSON.parse(saved?.meta ?? "{}").runtime.report_short_id
     expect(reportId).toBeTruthy()
     await app.request(
@@ -1954,6 +1955,22 @@ describe("runtime provisioning and shared model accounts", () => {
       expect(listed.workflow_name).toBe(f.context.name)
       expect(JSON.parse(listed.meta).runtime.report_short_id).toBeNull()
       expect(JSON.stringify(listed)).not.toContain("Private workflow findings")
+      // Legacy or malformed metadata must never fall back to exposing its arbitrary fields.
+      const reads = vi.spyOn(meta, "listRuns")
+      try {
+        for (const receipt of [
+          { summary: "Private workflow findings" },
+          { runtime: "invalid", summary: "Private workflow findings" },
+          { runtime: { outcome: { summary: "Private workflow findings" } } },
+        ]) {
+          reads.mockResolvedValue([{ ...saved, meta: JSON.stringify(receipt) }])
+          const history = await app.request("/v1/workspace/runs", { headers: as(member.email) })
+          expect(history.status).toBe(200)
+          expect(await history.text()).not.toContain("Private workflow findings")
+        }
+      } finally {
+        reads.mockRestore()
+      }
     } finally {
       await meta.setMembership(seat)
     }

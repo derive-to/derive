@@ -246,14 +246,7 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
     const runtime = await meta.getContextRuntime(run.runtime_id, run.org_id)
     const input = JSON.parse(run.input_snapshot) as RuntimeRunInput
     const context = await runtimeRunContext(meta, deps.runtime, run, runtime)
-    if (
-      !context ||
-      context.id !== input.context_id ||
-      (run.automation_id &&
-        run.reason !== "manual:runtime" &&
-        !(await meta.getOrgSettings(run.org_id)).automateBeta) ||
-      !(await runtimeScheduleAllows(meta, run))
-    )
+    if (!context || context.id !== input.context_id || !(await runtimeScheduleAllows(meta, run)))
       return fail(c, 403, "Runtime access has been revoked")
     const current = readEnvironmentBindings(context.environment_bindings)
     const environment: Record<string, string> = {}

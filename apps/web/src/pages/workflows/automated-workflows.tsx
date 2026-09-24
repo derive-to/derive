@@ -217,11 +217,34 @@ function AutomationRow({
   )
 }
 
-export function RecentRuns({ automations }: { automations: Automation[] }) {
+export function RecentRuns() {
+  const workspace = useQuery(workspaceQuery())
+  if (workspace.isPending) return <SettingsListSkeleton />
+  if (workspace.isError)
+    return (
+      <LoadError
+        title="Couldn’t check run access"
+        testId="workflow-run-access-retry"
+        onRetry={() => workspace.refetch()}
+      />
+    )
+  if (workspace.data.role !== "owner")
+    return (
+      <p className="text-sm text-muted-foreground">
+        Open a cloud workflow to see its runs and the reports available to you. Workspace-wide run
+        history is available to owners.
+      </p>
+    )
+  return <WorkspaceRuns />
+}
+
+function WorkspaceRuns() {
+  const definitions = useQuery(automationsQuery())
   const {
     data: runs,
     isPending,
     isError,
+    refetch,
   } = useQuery({
     ...runsQuery(),
     refetchInterval: (query) =>
@@ -229,9 +252,19 @@ export function RecentRuns({ automations }: { automations: Automation[] }) {
         ? 5000
         : false,
   })
-  if (isPending) return null
-  if (isError)
-    return <p className="mt-6 text-sm text-muted-foreground">Couldn't load recent runs.</p>
+  if (isPending || definitions.isPending) return <SettingsListSkeleton />
+  if (isError || definitions.isError)
+    return (
+      <LoadError
+        title="Couldn’t load recent runs"
+        testId="workflow-runs-retry"
+        onRetry={() => {
+          void refetch()
+          void definitions.refetch()
+        }}
+      />
+    )
+  const automations = definitions.data
   if (!runs || runs.length === 0)
     return <SettingsEmpty>No runs yet. Open a workflow to start one.</SettingsEmpty>
   return (
@@ -249,7 +282,8 @@ export function RecentRuns({ automations }: { automations: Automation[] }) {
           const githubReceipt = githubActionRunReceipt(run.meta)
           const timeline = run.timeline
           const hasDetails = Boolean(
-            cloud?.report_short_id ||
+            run.context_id ||
+              cloud?.report_short_id ||
               writes.length ||
               githubReceipt ||
               runOutcome(run.meta) ||

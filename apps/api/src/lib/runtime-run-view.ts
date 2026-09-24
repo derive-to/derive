@@ -9,15 +9,15 @@ export async function runtimeRunView(ctx: AppContext, c: Context, run: RunRecord
   const context = runtime ? await ctx.meta.getContext(runtime.context_id) : null
   const user = await ctx.managementPrincipal(c)
   const allowed = context && user && (await ctx.canUserAskContext(user, context))
-  let meta: Record<string, unknown> = {}
+  let details: Record<string, unknown> | null = null
   try {
-    meta = JSON.parse(run.meta ?? "{}") ?? {}
+    const value = JSON.parse(run.meta ?? "null")?.runtime
+    if (value && typeof value === "object" && !Array.isArray(value)) details = value
   } catch {
-    /* Older malformed receipts remain readable. */
+    // Invalid stored metadata has no public fields.
   }
-  const receipt = meta.runtime
-  if (receipt && typeof receipt === "object") {
-    const details = receipt as Record<string, unknown>
+  let meta = {}
+  if (details) {
     const report =
       typeof details.report_short_id === "string"
         ? await ctx.meta.getByShortId(details.report_short_id)
@@ -26,9 +26,9 @@ export async function runtimeRunView(ctx: AppContext, c: Context, run: RunRecord
       report && report.org_id === run.org_id && (await ctx.authorizeStanding(c, "read", report))
     meta = {
       runtime: {
-        outcome: details.outcome,
-        save_status: details.save_status,
-        released_at: details.released_at,
+        outcome: typeof details.outcome === "string" ? details.outcome : undefined,
+        save_status: typeof details.save_status === "string" ? details.save_status : undefined,
+        released_at: typeof details.released_at === "string" ? details.released_at : undefined,
         report_short_id: canRead ? details.report_short_id : null,
       },
     }
