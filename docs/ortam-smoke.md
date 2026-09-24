@@ -206,8 +206,19 @@ Initial operator setup is explicit:
    variable or source. Enter the sandbox ID and connect it. Binding checks the actual
    Ortam organization, account owner, sandbox state, and auto-stop setting.
 
-Node reconciles every ten seconds; Workers uses the existing cron invocation.
-Each pass does bounded work rather than waiting for a VM or model to finish.
+Node reconciles every ten seconds; Workers retains the minute cron as a recovery
+sweep. Setup, manual runs, results, cancellation and permission changes also wake
+the controller immediately: Node nudges its existing worker, and Workers reuses
+`RUN_QUEUE` with a `{ kind: "runtime" }` message. Duplicate nudges in one batch
+share a pass; a lost nudge leaves the durable work for the sweep. Scheduled
+admission nudges the queue after saving the new run.
+
+Each setup or attempt advances up to eight confirmed steps per pass, yielding
+when its revision is unchanged or its ten-second progress budget is reached
+(an in-flight request retains its existing timeout). State and access are reread
+between steps. Pending external operations and unknown outcomes are not polled
+in a loop; they wait for a later wake or recovery sweep. This removes idle minutes
+between ready steps without promising immediate completion of a VM operation.
 The queue, ownership, launch intent, guest claim, accepted result, and confirmed
 release live in the database. An expired owner is not replaced while its compute
 release remains unconfirmed. A failed stop retains ownership for repair.
@@ -343,7 +354,7 @@ The configured runner path must be
 
 Derive persists the exact creation request before submitting it, including the
 CLI 0.7.0 installation script and a 1,200-second auto-stop limit. The existing
-minute dispatcher repairs interrupted setup, replays ambiguous lifecycle
+runtime controller repairs interrupted setup, replays ambiguous lifecycle
 requests with their original idempotency keys, checks the create result, and
 stops the sandbox before waiting for model authorization. No model runs during
 setup. Ortam usage is charged to the controller account.
@@ -489,6 +500,12 @@ or runner environment receives it. Existing operator provisioning stays availabl
 under its original gate. An empty managed allowlist disables new work; retain the
 key until all active attempts and pending setup cleanup are settled.
 
+The hosted configuration allows managed qualification only in Ortam Pilot
+(`ws_5b0iz1wp99ksykr7`). QA Lab's existing operator access does not enable this
+customer flow there. Before testing, inspect the pilot's existing schedules and
+runs, record its settings, and keep the service key in the Worker secret store.
+The allowlist is permission to run the bounded acceptance, not evidence it passed.
+
 A job keeps its configured runner, model connection and Context tools. Its Context
 creator or a workspace manager selects one of their own named accounts in Derive.
 The account owner signs in through the provider's page and explicitly grants the job
@@ -576,8 +593,8 @@ the owner for retrying incomplete disconnect cleanup. Existing operator runtimes
 and old managed identities retain their cleanup paths; no old login is silently
 shared with another job.
 
-Keep managed rollout disabled until deployment and the two-job live acceptance
-check pass. Qualify one account on two machines, concurrent runs, saved files,
+Keep general managed rollout disabled until deployment and the two-job live
+acceptance check pass in the isolated pilot. Qualify one account on two machines, concurrent runs, saved files,
 reconnect, a stopped-machine account switch, one-job removal, shared disconnect,
 collaborator execution and confirmed shutdown. Earlier operator-pilot evidence
 and local contracts do not establish live qualification of this account flow.

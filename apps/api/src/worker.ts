@@ -465,6 +465,10 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // Hosted runs: nudge the dispatch queue so an interactive run starts in seconds
         // instead of on the next minute's cron. Best-effort by construction — the sweep is
         // the guarantee — and a no-op when the queue isn't bound (hosted execution off).
+        pokeRuntime: () => {
+          if (env.RUN_QUEUE)
+            void edgeWaitUntil(env.RUN_QUEUE.send({ kind: "runtime" }).catch(() => {}))
+        },
         pokeRun: (runId: string) => {
           if (env.RUN_QUEUE) void edgeWaitUntil(env.RUN_QUEUE.send({ runId }).catch(() => {}))
         },
@@ -602,11 +606,9 @@ export default {
     ctx.waitUntil(runtimeTick(env))
   },
 
-  // The dispatch queue's consumer: one message = "this run was just created, start it now".
-  // Purely a latency path. Postgres remains the queue of record, so a message that is lost,
-  // duplicated, or arrives late costs nothing: dispatchRunNow no-ops on a run that is already
-  // claimed or settled, and the cron sweep re-dispatches anything still queued. Messages are
-  // acked either way — a retry would only re-enter the same idempotent path a minute early.
+  // Queue messages nudge hosted dispatch or Ortam reconciliation. Duplicate runtime
+  // nudges share one bounded pass per batch; durable revisions fence concurrent passes.
+  // Cron remains the recovery path when a message is lost or publication fails.
   async queue(
     batch: { messages: { body: unknown }[] },
     env: Env,
@@ -615,16 +617,22 @@ export default {
     const ids = batch.messages
       .map((m) => (m.body as { runId?: unknown })?.runId)
       .filter((id): id is string => typeof id === "string" && id.length > 0)
-    if (ids.length === 0) return
-    await withHostedDispatch(
-      env,
-      async (deps) => {
-        for (const runId of ids) await dispatchRunNow(deps, runId)
-      },
-      // Same reason as the cron tick: on the loop substrate the run happens here, so the consumer
-      // invocation has to be kept alive past the ack.
-      ctx,
-    )
+    const pending: Promise<void>[] = []
+    if (batch.messages.some((m) => (m.body as { kind?: unknown })?.kind === "runtime"))
+      pending.push(runtimeTick(env))
+    if (ids.length > 0)
+      pending.push(
+        withHostedDispatch(
+          env,
+          async (deps) => {
+            for (const runId of ids) await dispatchRunNow(deps, runId)
+          },
+          // Same reason as the cron tick: on the loop substrate the run happens here, so the consumer
+          // invocation has to be kept alive past the ack.
+          ctx,
+        ),
+      )
+    await Promise.all(pending)
   },
 }
 
@@ -809,14 +817,20 @@ async function runtimeTick(env: Env): Promise<void> {
       : undefined,
   }
   const secret = env.DERIVE_AUTH_SECRET
-  const scoped = async () =>
-    runtimeDispatchPass({
+  const scoped = async () => {
+    let wake = false
+    await runtimeDispatchPass({
       meta: env.HYPERDRIVE ? PgMetaStore.fromPool(livePgPool) : createD1Store(liveD1),
       blobs: new R2BlobStore(env.BUCKET),
       server: env.BASE_URL ?? "",
       secret,
       config,
+      pokeRuntime: () => {
+        wake = true
+      },
     })
+    if (wake && env.RUN_QUEUE) await env.RUN_QUEUE.send({ kind: "runtime" }).catch(() => {})
+  }
   try {
     await (env.HYPERDRIVE
       ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), scoped)

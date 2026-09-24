@@ -163,14 +163,29 @@ async function advance(deps: SetupDeps, setup: RuntimeSetupRecord) {
       return
     }
     await transition({ phase: "binding" })
-    // The next pass confirms the binding. A concurrent cancellation is enforced by the store.
+    // The next step confirms the binding. A concurrent cancellation is enforced by the store.
   }
 }
 
 export async function reconcileRuntimeSetups(deps: SetupDeps) {
-  for (const setup of await deps.meta.listPendingRuntimeSetups(100)) {
+  for (let setup of await deps.meta.listPendingRuntimeSetups(100)) {
     try {
-      await advance(deps, setup)
+      // Drain confirmed progress, not an external operation that is still pending.
+      // Reload consent and revision before each step; cron recovers a lost wake-up.
+      const until = performance.now() + 10_000
+      for (let step = 0; step < 8; step++) {
+        await advance(deps, setup)
+        const next = await deps.meta.getRuntimeSetup(setup.context_id, setup.org_id)
+        if (
+          !next ||
+          next.id !== setup.id ||
+          next.revision === setup.revision ||
+          ["ready", "failed"].includes(next.phase) ||
+          performance.now() >= until
+        )
+          break
+        setup = next
+      }
     } catch (error) {
       log.warn("runtime setup deferred", {
         setup: setup.id,
