@@ -3,7 +3,15 @@ import { beforeEach, describe, expect, it } from "vitest"
 import { dispatchPass, dispatchRunNow, type Substrate } from "../src/lib/dispatch"
 import { SESSION_MAX_AGE_MS } from "../src/lib/run-lifecycle"
 import { signRunToken, verifyRunToken } from "../src/lib/run-token"
-import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
+import {
+  as,
+  bearer,
+  connectPoolPlan,
+  jsonAs,
+  makeAuthedApp,
+  publishAs,
+  type TestUser,
+} from "./helpers"
 
 // HOSTED DISPATCH, tested with NO container, NO wrangler, and NO network. The substrate is the
 // only platform-specific piece, so a fake one lets the whole correctness story — materialize,
@@ -174,7 +182,9 @@ describe("hosted dispatch — the platform-agnostic core", () => {
   })
 
   it("the run-now nudge boots immediately, and is a no-op for an unknown or settled run", async () => {
+    await connectPoolPlan(meta, "default", "codex")
     const auto = await mkAutomation({
+      provider: "codex",
       trigger: { kind: "manual" },
       instruction: "Start me now.",
     })
@@ -183,6 +193,7 @@ describe("hosted dispatch — the platform-agnostic core", () => {
 
     expect(await dispatchRunNow(deps(substrate), run.id)).toBe(true)
     expect(started[0]?.runId).toBe(run.id)
+    expect(started[0]?.execution).toMatchObject({ provider: "codex", location: "hosted" })
     // Unknown run: false, never a throw — a failed nudge must never fail the request that
     // created the run (the tick is the guarantee).
     expect(await dispatchRunNow(deps(substrate), newId("run"))).toBe(false)

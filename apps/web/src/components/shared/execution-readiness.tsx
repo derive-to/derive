@@ -3,7 +3,7 @@ import { api } from "@/api"
 import { LoadError } from "@/components/shared/load-error"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { workspaceQuery, workspaceSettingsQuery } from "@/lib/queries"
+import { automationsQuery, workspaceQuery, workspaceSettingsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 
 /** Workspace consent is visible at the point of use. Rollout and account access remain separate. */
@@ -15,7 +15,7 @@ export function ExecutionReadiness({ cloud = false }: { cloud?: boolean }) {
       api.updateWorkspaceSettings(
         cloud ? { hostedAgentsEnabled: true, agentWrites: true } : { automateBeta: true },
       ),
-    invalidate: [workspaceSettingsQuery().queryKey],
+    invalidate: [workspaceSettingsQuery().queryKey, automationsQuery().queryKey],
     success: "Workflow execution enabled",
   })
   if (workspace.isError || settings.isError)

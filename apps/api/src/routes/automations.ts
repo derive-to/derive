@@ -28,6 +28,7 @@ import {
   runDirectAutomation,
   validateGithubWorkflowAutomation,
 } from "../lib/automation-action"
+import { automationRunBlocker } from "../lib/automation-availability"
 import {
   brokerFor,
   callTool,
@@ -236,6 +237,16 @@ export const automationRoutes = (ctx: AppContext) => {
       }
     }
     let agentId = b.agentId ?? boundContext?.agent_id ?? null
+    if (b.runNow && !b.trigger.action) {
+      const blocked = automationRunBlocker(
+        deps.hostedAutomation,
+        org,
+        await meta.getOrgSettings(org),
+        b.provider,
+        agentId ? await meta.getAgent(agentId) : null,
+      )
+      if (blocked) return bail(fail(c, 409, blocked))
+    }
     let agentToken: string | null = null
     if (!agentId) {
       agentToken = `dk_agt_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`
@@ -458,8 +469,28 @@ export const automationRoutes = (ctx: AppContext) => {
     // whether ANYTHING executes this automation — null = no executor has ever polled.
     // One store call, one round trip on Postgres (see automationsWithExecutors);
     // `present` spreads the whole row, so `executor_seen_at` rides along.
-    const autos = await meta.automationsWithExecutors(org)
-    return c.json({ automations: autos.filter((a) => !a.runtime_id).map(present) })
+    const [autos, settings, agents] = await Promise.all([
+      meta.automationsWithExecutors(org),
+      meta.getOrgSettings(org),
+      meta.listAgents(org),
+    ])
+    const agentsById = new Map(agents.map((agent) => [agent.id, agent]))
+    return c.json({
+      automations: autos
+        .filter((a) => !a.runtime_id)
+        .map((a) => ({
+          ...present(a),
+          run_blocked_reason: githubWorkflowAction(a)
+            ? null
+            : automationRunBlocker(
+                deps.hostedAutomation,
+                org,
+                settings,
+                automationProvider(a),
+                agentsById.get(a.agent_id),
+              ),
+        })),
+    })
   })
 
   app.delete("/v1/automations/:id", async (c) => {
@@ -502,6 +533,14 @@ export const automationRoutes = (ctx: AppContext) => {
         return fail(c, status, message)
       }
     }
+    const blocked = automationRunBlocker(
+      deps.hostedAutomation,
+      org,
+      await meta.getOrgSettings(org),
+      automationProvider(a),
+      await meta.getAgent(a.agent_id),
+    )
+    if (blocked) return fail(c, 409, blocked)
     // Budget guard at enqueue (invariant 2): a run-now bills to the requester.
     if (await overBudget(meta, org, me.id)) return fail(c, 429, "monthly run budget reached")
     // PAYER guard: never queue work nothing can pay for. Without it the run is created,

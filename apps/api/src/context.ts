@@ -132,6 +132,7 @@ export interface SessionUser {
 }
 
 export interface AppDeps {
+  hostedAutomation?: import("./lib/automation-availability").HostedAutomationConfig
   runtime?: {
     apiUrl: string
     /** Absolute path to a pinned CLI installation in the saved sandbox. */
