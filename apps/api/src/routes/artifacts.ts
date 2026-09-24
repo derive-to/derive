@@ -23,6 +23,7 @@ import {
   isLatexBundle,
   isLatexLike,
   isMarkdownBundle,
+  isSourceEditable,
   LATEX_BUNDLE_CONTENT_TYPE,
   LINKED_BUNDLE_CONTENT_TYPE,
   type LinkedBundleManifest,
@@ -42,10 +43,12 @@ import {
   renderMarkdown,
   roleAllows,
   type SlideOp,
+  SourceConflictError,
   sectionOf,
   slotShapeDriftAdvisories,
   slugify,
   sortKeyOf,
+  sourceMap,
   toJson,
   toMarkdown,
   type VersionRecord,
@@ -82,6 +85,7 @@ import {
   type MaterializedEdits,
   materializeEdits,
   materializeSlideOps,
+  materializeSourceOps,
   parseBaseVersion,
 } from "../lib/edits"
 import {
@@ -118,6 +122,7 @@ import {
 } from "../lib/search"
 import { slotValuesOf } from "../lib/serve-content"
 import { normalizeTags, parseTagsField } from "../lib/tags"
+import { INLINE_EDIT_COALESCE_MS } from "../lib/version-cache"
 import { parseLinkedWorkflowFacts } from "../lib/workflow-facts"
 import { log } from "../log"
 import { Artifact } from "../schemas"
@@ -143,12 +148,6 @@ const SAFE_BINARY_CONTENT_TYPES = new Set([
   "text/javascript",
   "application/json",
 ])
-
-/**
- * Attended inline saves are a working burst, not a trail of meaningful checkpoints.
- * Five minutes matches the product rule: a pause creates the next durable version.
- */
-const INLINE_EDIT_COALESCE_MS = 5 * 60_000
 
 /** The artifact lifecycle: browse + summary, publish/republish, detail, restore,
  *  source read-back, and version diffs. */
@@ -689,6 +688,10 @@ export const artifactRoutes = (ctx: AppContext) => {
     // spans that cross element boundaries, and expressing it as search/replace means
     // shipping two byte-perfect copies of the slide.
     const slideOpsField = body["slide_ops"]
+    // `ops` — the rendered editor's exact-source save (see @derive/core source-edit):
+    // element N's new children as text / keep / allowlisted formatting, each referenced
+    // element pinned by its content hash.
+    const opsField = body["ops"]
     let bytes: Uint8Array
     let filename: string
     let isBundle: boolean
@@ -700,30 +703,41 @@ export const artifactRoutes = (ctx: AppContext) => {
     let previousSearchSource:
       | { source: string; contentType: string | null; title: string | null }
       | undefined
-    if (typeof editsField === "string" || typeof slideOpsField === "string") {
+    if (
+      typeof editsField === "string" ||
+      typeof slideOpsField === "string" ||
+      typeof opsField === "string"
+    ) {
       if (typeof editsField === "string" && typeof slideOpsField === "string")
         return fail(c, 400, "Provide `edits` OR `slide_ops`, not both")
+      const sourceOps = typeof opsField === "string"
+      if (sourceOps && (typeof editsField === "string" || typeof slideOpsField === "string"))
+        return fail(c, 400, "`ops` can't be combined with `edits` or `slide_ops`")
       const structural = typeof slideOpsField === "string"
-      const field = structural ? "slide_ops" : "edits"
+      const field = sourceOps ? "ops" : structural ? "slide_ops" : "edits"
       if (!shortId || !existing)
         return fail(
           c,
           400,
           `${field} revises an EXISTING artifact — POST to its /versions endpoint`,
         )
-      let parsed: AnyDocEdit[] | SlideOp[]
+      let parsed: AnyDocEdit[] | SlideOp[] | unknown
       try {
-        parsed = JSON.parse((structural ? slideOpsField : editsField) as string)
+        parsed = JSON.parse(
+          (sourceOps ? opsField : structural ? slideOpsField : editsField) as string,
+        )
       } catch {
         return fail(
           c,
           400,
-          structural
-            ? "slide_ops must be a JSON array of {op,...}"
+          sourceOps || structural
+            ? `${field} must be a JSON array of {op,...}`
             : "edits must be a JSON array of {old_str,new_str}",
+          sourceOps ? { code: "invalid_ops" } : undefined,
         )
       }
       let materialized: MaterializedEdits
+      let opChanges: { before: string; after: string }[] | undefined
       try {
         const baseVersion = parseBaseVersion(str(body["base_version"]))
         const deps = {
@@ -735,15 +749,25 @@ export const artifactRoutes = (ctx: AppContext) => {
           manifestOf: (v: VersionRecord) => manifestOf(blobs, v),
           bundleTexts: (m: BundleManifest) => bundleTextFiles(blobs, m),
         }
-        materialized = structural
-          ? await materializeSlideOps(deps, existing, parsed as SlideOp[], baseVersion)
-          : await materializeEdits(deps, existing, parsed as AnyDocEdit[], baseVersion)
+        if (sourceOps) {
+          const applied = await materializeSourceOps(deps, existing, parsed)
+          opChanges = applied.changes
+          materialized = applied
+        } else
+          materialized = structural
+            ? await materializeSlideOps(deps, existing, parsed as SlideOp[], baseVersion)
+            : await materializeEdits(deps, existing, parsed as AnyDocEdit[], baseVersion)
       } catch (e) {
+        // An element the save references changed since the editor loaded it: name them,
+        // so the editor keeps the page's edits and says which ones need redoing.
+        if (e instanceof SourceConflictError)
+          return fail(c, 409, e.message, { code: "source_conflict", conflicts: e.conflicts })
         if (e instanceof EditConflictError) return fail(c, 409, e.message)
         return fail(
           c,
           e instanceof EditError ? 400 : 500,
           e instanceof Error ? e.message : "edit failed",
+          sourceOps && e instanceof EditError ? { code: "invalid_ops" } : undefined,
         )
       }
       if (materialized.bundle) {
@@ -758,7 +782,14 @@ export const artifactRoutes = (ctx: AppContext) => {
         bytes = new TextEncoder().encode(materialized.content)
         preparedSource = materialized.content
       }
-      if (!structural) {
+      if (opChanges?.length)
+        editSummary = summarizeTextEdits({
+          edits: opChanges.map((change) => ({ ...change, contentType: "text/html" })),
+          fromVersion: existing.current_version,
+          toVersion: existing.current_version + 1,
+          note: str(body["message"]),
+        })
+      else if (!structural && !sourceOps) {
         const applied = parsed as AnyDocEdit[]
         const textEdits = applied.flatMap((edit) => {
           if ("old_str" in edit)
@@ -906,7 +937,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // five-minute pause all force the normal append-only path.
       let replaceCurrent: { n: number; blobKey: string } | undefined
       const coalesceRequested =
-        typeof editsField === "string" &&
+        (typeof editsField === "string" || typeof opsField === "string") &&
         (body["coalesce"] === "true" || body["coalesce"] === "1") &&
         !str(body["name"]) &&
         body["request_review"] !== "true" &&
@@ -1929,6 +1960,11 @@ export const artifactRoutes = (ctx: AppContext) => {
       const rawToken = signRawToken(deps.encryptionKey ?? "", {
         rid: artifact.id,
         history: !!artifact.public_history || hasArtifactStanding(actor, artifact.workspace_access),
+        // Someone who can publish gets their page served with the inline editor's source
+        // ids (a separate claim, so a separate URL and cache entry from any reader's).
+        ...(can(actor, "publish", artifact.workspace_access, artifact.link_role)
+          ? { edit: true as const }
+          : {}),
       })
       // `versions` stays at revision granularity (machines/agents); `sessions` is
       // the time-grouped view the UI shows by default. `my_role` tells the client
@@ -2703,6 +2739,28 @@ export const artifactRoutes = (ctx: AppContext) => {
       null,
     )
     return c.json({ handles: targets.map((target) => target.handle) })
+  })
+
+  // The inline editor's source map for one version (?v=N, default current): the sha of
+  // the stored source and each source id's content hash, which an `ops` save quotes back
+  // so the server can prove every element it names is unchanged. Publishers only: it
+  // exists to make a save, and a reader has none to make.
+  app.get("/v1/artifacts/:shortId/source-map", async (c) => {
+    const artifact = await requireArtifact(c, "publish")
+    if (artifact instanceof Response) return artifact
+    if (artifact.removed_at) return fail(c, 410, TOMBSTONE)
+    const vq = c.req.query("v")
+    const v = vq ? Number(vq) : artifact.current_version
+    if (!Number.isInteger(v)) return fail(c, 400, "bad version")
+    const version = await meta.getVersion(artifact.id, v)
+    if (!version) return fail(c, 404, `no version ${v}`)
+    if (!isSourceEditable(version.content_type))
+      return fail(c, 404, "only HTML pages and decks have a source map")
+    const src = await sourceText(version)
+    if (src === null) return fail(c, 500, "blob missing")
+    // An inline save may replace this version's bytes in place, so never reuse a copy.
+    c.header("Cache-Control", "private, no-cache")
+    return c.json({ version: v, ...(await sourceMap(src)) })
   })
 
   // Source read-back for machines: returns an artifact's text content for any

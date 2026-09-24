@@ -2,6 +2,7 @@ import { INTERNAL_DELIVERY } from "@derive/core"
 import { zipSync } from "fflate"
 import { describe, expect, it, vi } from "vitest"
 import { runExportTick } from "../src/exports"
+import { INLINE_EDIT_COALESCE_MS, mayStillCoalesce } from "../src/lib/version-cache"
 import {
   anonApp,
   app,
@@ -507,20 +508,152 @@ describe("inline edit version coalescing", () => {
   })
 
   it("starts a new version after five minutes", async () => {
-    vi.useFakeTimers()
+    // Only Date is faked, starting from the real clock: the store stamps a published
+    // version's created_at with its own real clock, so a fixed fake date would give
+    // every save a negative age and a new version without ever reaching the window.
+    vi.useFakeTimers({ toFake: ["Date"] })
     try {
-      vi.setSystemTime(new Date("2026-08-22T12:00:00.000Z"))
+      vi.setSystemTime(vi.getRealSystemTime())
       const created = await (
         await publishAs(timedApp, "<h1>Early</h1>", { title: "Timed page" }, as(owner.email))
       ).json()
-      vi.advanceTimersByTime(5 * 60_000 + 1)
+      // One second either side of the window (the slack absorbs the publish's own
+      // round trip between the two clocks). Just inside: the save coalesces into v1.
+      vi.advanceTimersByTime(INLINE_EDIT_COALESCE_MS - 1_000)
+      const inside = await edit(created.short_id, 1, "Early", "Middle", as(owner.email), timedApp)
+      expect(inside.status).toBe(201)
+      expect((await inside.json()).current_version).toBe(1)
 
-      const saved = await edit(created.short_id, 1, "Early", "Later", as(owner.email), timedApp)
-      expect(saved.status).toBe(201)
-      expect((await saved.json()).current_version).toBe(2)
+      // The window restarts at each coalesced save; a pause just past it appends.
+      vi.advanceTimersByTime(INLINE_EDIT_COALESCE_MS + 1_000)
+      const outside = await edit(created.short_id, 1, "Middle", "Later", as(owner.email), timedApp)
+      expect(outside.status).toBe(201)
+      expect((await outside.json()).current_version).toBe(2)
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it("serves a coalesced save's new bytes at the unchanged version URL, uncached", async () => {
+    // Only Date is faked, from the real clock: the store stamps a new version's
+    // created_at itself, so a fixed fake date would put every save out of window.
+    vi.useFakeTimers({ toFake: ["Date"] })
+    try {
+      const rawUrls = async (shortId: string) => {
+        const detail = await (
+          await timedApp.request(`/v1/artifacts/${shortId}`, { headers: as(owner.email) })
+        ).json()
+        expect(detail.raw_token).toBeTruthy()
+        return [
+          `/raw/${shortId}/v/1/t/${detail.raw_token}/index.html`,
+          `/raw/${shortId}/v/1/index.html`,
+        ]
+      }
+      const fetchRaw = (url: string) => timedApp.request(url, { headers: as(owner.email) })
+      // World-readable is the case that used to be a year-long immutable cache.
+      for (const linkRole of ["viewer", "none"]) {
+        vi.setSystemTime(vi.getRealSystemTime())
+        const created = await (
+          await publishAs(
+            timedApp,
+            "<h1>Before save</h1>",
+            { title: `Cached page ${linkRole}`, link_role: linkRole },
+            as(owner.email),
+          )
+        ).json()
+        for (const url of await rawUrls(created.short_id)) {
+          const first = await fetchRaw(url)
+          expect(await first.text()).toContain("Before save")
+          // Inside the edit burst the bytes may still change under this URL.
+          expect(first.headers.get("cache-control")).not.toMatch(/immutable|max-age=[1-9]/)
+        }
+
+        vi.advanceTimersByTime(60_000)
+        const saved = await edit(created.short_id, 1, "Before", "After", as(owner.email), timedApp)
+        expect((await saved.json()).current_version).toBe(1)
+        for (const url of await rawUrls(created.short_id)) {
+          const again = await fetchRaw(url)
+          expect(await again.text()).toContain("After save")
+          expect(again.headers.get("cache-control")).not.toMatch(/immutable|max-age=[1-9]/)
+        }
+
+        // Past the window (plus settle slack) no save can replace the bytes any more,
+        // so the version is cached by its access model again.
+        vi.advanceTimersByTime(6 * 60_000 + 1)
+        const [tokenUrl] = await rawUrls(created.short_id)
+        const settled = await fetchRaw(tokenUrl as string)
+        expect(await settled.text()).toContain("After save")
+        // The owner's URL is the editor's stamped view, so it stays out of shared caches.
+        expect(settled.headers.get("cache-control")).toBe(
+          linkRole === "viewer" ? "private, max-age=31536000, immutable" : "private, max-age=120",
+        )
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("revalidates a pinned fact slot a save may still replace, and drops facts the save removed", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] })
+    try {
+      vi.setSystemTime(vi.getRealSystemTime())
+      const fact = (day: number) =>
+        `<script type="application/derive-data" data-slot="checks">{"day":${day}}</script>`
+      const created = await (
+        await publishAs(
+          timedApp,
+          `<p>Checks</p>${fact(1)}`,
+          { title: "Fact cache page", link_role: "viewer" },
+          as(owner.email),
+        )
+      ).json()
+      const slot = () =>
+        timedApp.request(`/raw/${created.short_id}/v/1/data/checks`, { headers: as(owner.email) })
+      const first = await slot()
+      expect(await first.json()).toEqual({ day: 1 })
+      expect(first.headers.get("cache-control")).not.toMatch(/immutable|max-age=[1-9]/)
+
+      vi.advanceTimersByTime(60_000)
+      const rewritten = await edit(created.short_id, 1, fact(1), fact(2), as(owner.email), timedApp)
+      expect((await rewritten.json()).current_version).toBe(1)
+      const again = await slot()
+      expect(await again.json()).toEqual({ day: 2 })
+      expect(again.headers.get("cache-control")).not.toMatch(/immutable|max-age=[1-9]/)
+
+      // A save that removes the fact leaves version 1 without it, not with stale rows.
+      const removed = await edit(created.short_id, 1, fact(2), "", as(owner.email), timedApp)
+      expect((await removed.json()).current_version).toBe(1)
+      expect((await slot()).status).toBe(404)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("keeps immutable caching for versions no inline save can replace", async () => {
+    const created = await (
+      await publishAs(
+        inlineApp,
+        "<h1>Named</h1>",
+        { title: "Named cache page", name: "Launch", link_role: "viewer" },
+        as(owner.email),
+      )
+    ).json()
+    const res = await inlineApp.request(`/raw/${created.short_id}/v/1/index.html`, {
+      headers: as(owner.email),
+    })
+    expect(res.headers.get("cache-control")).toBe("public, max-age=31536000, immutable")
+    expect(
+      mayStillCoalesce(
+        { current_version: 2 },
+        { n: 1, source: "web", name: null, created_at: new Date().toISOString() },
+      ),
+    ).toBe(false)
+    expect(
+      mayStillCoalesce(
+        { current_version: 1 },
+        { n: 1, source: "mcp", name: null, created_at: new Date().toISOString() },
+      ),
+    ).toBe(false)
   })
 
   it("keeps named checkpoints immutable", async () => {
@@ -535,6 +668,208 @@ describe("inline edit version coalescing", () => {
     const saved = await edit(created.short_id, 1, "Checkpoint", "Changed", as(owner.email))
     expect(saved.status).toBe(201)
     expect((await saved.json()).current_version).toBe(2)
+  })
+})
+
+describe("exact-source inline saves (ops)", () => {
+  const owner: TestUser = { id: "ops-owner", email: "ops-owner@test.dev", name: "Owner" }
+  const colleague: TestUser = { id: "ops-colleague", email: "ops-colleague@test.dev", name: "C" }
+  const { app: opsApp } = makeAuthedApp("inline-source-ops", [owner, colleague], "editor")
+  const page = `<!doctype html><html><head><title>Ops</title></head><body><section class="slide" data-derive-slide="0"><h1>Launch plan</h1><p>First <b>bold</b> point</p></section><section class="slide" data-derive-slide="1"><h2>Risks</h2><p>Second point</p></section></body></html>`
+
+  const detail = async (shortId: string, headers: Record<string, string> = {}) =>
+    (await opsApp.request(`/v1/artifacts/${shortId}`, { headers })).json()
+  const framePage = async (shortId: string, n: number, headers: Record<string, string>) => {
+    const { raw_token } = await detail(shortId, headers)
+    return opsApp.request(`/raw/${shortId}/v/${n}/t/${raw_token}/index.html`)
+  }
+  const sourceMapOf = async (shortId: string, v?: number) =>
+    (
+      await opsApp.request(`/v1/artifacts/${shortId}/source-map${v ? `?v=${v}` : ""}`, {
+        headers: as(owner.email),
+      })
+    ).json() as Promise<{ version: number; sha: string; hashes: string[] }>
+  /** The source id the editor's page carries for the nth `<tag>`. */
+  const idOf = (stamped: string, tag: string, nth = 0) =>
+    Number([...stamped.matchAll(new RegExp(`<${tag} data-derive-src="(\\d+)"`, "g"))][nth]?.[1])
+  const saveOps = (shortId: string, ops: unknown, baseVersion: number, who = owner) => {
+    const form = new FormData()
+    form.append("ops", JSON.stringify(ops))
+    form.append("base_version", String(baseVersion))
+    form.append("coalesce", "true")
+    form.append("message", "Inline edit")
+    return opsApp.request(`/v1/artifacts/${shortId}/versions`, {
+      method: "POST",
+      body: form,
+      headers: as(who.email),
+    })
+  }
+  const content = async (shortId: string) =>
+    (await opsApp.request(`/v1/artifacts/${shortId}/content`, { headers: as(owner.email) })).text()
+  const publish = async () =>
+    (
+      await publishAs(opsApp, page, { title: "Ops page", link_role: "viewer" }, as(owner.email))
+    ).json() as Promise<{ short_id: string }>
+
+  it("serves editors a stamped page, readers the stored bytes, never from one cache entry", async () => {
+    const { short_id } = await publish()
+    const editorPage = await framePage(short_id, 1, as(owner.email))
+    const stamped = await editorPage.text()
+    const map = await sourceMapOf(short_id)
+    expect(stamped).toContain(`data-derive-src-version="1" data-derive-src-sha="${map.sha}"`)
+    expect(stamped).toContain(`<h1 data-derive-src="${idOf(stamped, "h1")}">Launch plan</h1>`)
+    expect(editorPage.headers.get("cache-control")).toMatch(/^private,/)
+
+    // A reader's capability is a different URL, and its bytes carry no editor ids.
+    expect((await detail(short_id)).raw_token).not.toBe(
+      (await detail(short_id, as(owner.email))).raw_token,
+    )
+    const readerPage = await framePage(short_id, 1, {})
+    expect(await readerPage.text()).not.toContain("data-derive-src")
+    expect(readerPage.headers.get("cache-control")).not.toMatch(/private/)
+    // The cookie route has no capability to say who asked, so it never stamps.
+    const cookiePage = await opsApp.request(`/raw/${short_id}/v/1/index.html`, {
+      headers: as(owner.email),
+    })
+    expect(await cookiePage.text()).not.toContain("data-derive-src")
+  })
+
+  it("publishes ops exactly: only the edited element's inner bytes change", async () => {
+    const { short_id } = await publish()
+    const stamped = await (await framePage(short_id, 1, as(owner.email))).text()
+    const { hashes } = await sourceMapOf(short_id)
+    const [h1, p, b] = [idOf(stamped, "h1"), idOf(stamped, "p"), idOf(stamped, "b")]
+    const saved = await saveOps(
+      short_id,
+      [
+        { op: "content", src: h1, hash: hashes[h1], children: [{ text: "Rollout & <roadmap>" }] },
+        {
+          op: "content",
+          src: p,
+          hash: hashes[p],
+          children: [{ keep: b, hash: hashes[b] }, { text: " first, " }, { tag: "br" }],
+        },
+      ],
+      1,
+    )
+    expect(saved.status).toBe(201)
+    // An attended burst coalesces into the current version, as quote edits do.
+    expect((await saved.json()).current_version).toBe(1)
+    expect(await content(short_id)).toBe(
+      page
+        .replace("<h1>Launch plan</h1>", "<h1>Rollout &amp; &lt;roadmap&gt;</h1>")
+        .replace("<p>First <b>bold</b> point</p>", "<p><b>bold</b> first, <br></p>"),
+    )
+    // The page an editor reopens is the new bytes, re-stamped against them.
+    const reopened = await (await framePage(short_id, 1, as(owner.email))).text()
+    expect(reopened).toContain(`data-derive-src-sha="${(await sourceMapOf(short_id)).sha}"`)
+    expect(reopened).toContain(">Rollout &amp; &lt;roadmap&gt;</h1>")
+
+    const bad = await saveOps(short_id, [{ op: "content", src: h1, hash: "nope", children: [] }], 1)
+    expect(bad.status).toBe(400)
+    expect(await bad.json()).toMatchObject({ code: "invalid_ops" })
+  })
+
+  it("lands on a newer head when only other elements changed, and 409s naming the ones that did", async () => {
+    const { short_id } = await publish()
+    const stamped = await (await framePage(short_id, 1, as(owner.email))).text()
+    const { hashes } = await sourceMapOf(short_id, 1)
+    const [h1, secondP] = [idOf(stamped, "h1"), idOf(stamped, "p", 1)]
+    // Someone else publishes in between (a new version: a different person).
+    const form = new FormData()
+    form.append("edits", JSON.stringify([{ old_str: "Second point", new_str: "Second, revised" }]))
+    const other = await opsApp.request(`/v1/artifacts/${short_id}/versions`, {
+      method: "POST",
+      body: form,
+      headers: as(colleague.email),
+    })
+    expect((await other.json()).current_version).toBe(2)
+
+    // The editor's save was based on v1; the element it names is unchanged in v2.
+    const retried = await saveOps(
+      short_id,
+      [{ op: "content", src: h1, hash: hashes[h1], children: [{ text: "Plan B" }] }],
+      1,
+    )
+    expect(retried.status).toBe(201)
+    expect((await retried.json()).current_version).toBe(3)
+    const head = await content(short_id)
+    expect(head).toContain("<h1>Plan B</h1>")
+    expect(head).toContain("<p>Second, revised</p>")
+
+    const conflict = await saveOps(
+      short_id,
+      [{ op: "content", src: secondP, hash: hashes[secondP], children: [{ text: "Mine" }] }],
+      1,
+    )
+    expect(conflict.status).toBe(409)
+    const body = await conflict.json()
+    expect(body).toMatchObject({ code: "source_conflict", conflicts: [secondP] })
+    expect(body.error).toContain(`slide 2 (element ${secondP})`)
+    expect(await content(short_id)).toBe(head)
+  })
+
+  it("saves a legacy deck's layout with its text in one version, persisting its structure", async () => {
+    const legacy =
+      '<!doctype html><html><head><title>D</title></head><body><section class="slide" data-derive-slide="0"><h1>One</h1><p>Alpha</p></section>' +
+      '<section class="slide" data-derive-slide="1"><h2>Two</h2></section>' +
+      '<script>parent.postMessage({source:"derive-deck",type:"state",i:0,total:2},"*")</script></body></html>'
+    const { short_id } = await (
+      await publishAs(opsApp, legacy, { title: "Legacy" }, as(owner.email))
+    ).json()
+    const stamped = await (await framePage(short_id, 1, as(owner.email))).text()
+    const { hashes } = await sourceMapOf(short_id)
+    const [h1, p] = [idOf(stamped, "h1"), idOf(stamped, "p")]
+    const ops = (width: string) => [
+      { op: "content", src: h1, hash: hashes[h1], children: [{ text: "Uno" }] },
+      {
+        op: "attrs",
+        src: p,
+        hash: hashes[p],
+        style: `--derive-structural-width: ${width}%`,
+        attrs: { "data-derive-width": width },
+      },
+    ]
+    // A value the structural contract refuses fails the whole save.
+    expect((await saveOps(short_id, ops("5"), 1)).status).toBe(400)
+    expect(await content(short_id)).toBe(legacy)
+    const saved = await saveOps(short_id, ops("60"), 1)
+    expect(saved.status).toBe(201)
+    expect((await saved.json()).current_version).toBe(1)
+    const stored = await content(short_id)
+    expect(stored).toContain(
+      '<section class="slide" data-derive-slide="0" data-derive-region="slide-0" data-derive-layout="stack"><h1 data-derive-node="slide-0-node-1" data-derive-kind="heading">Uno</h1>',
+    )
+    expect(stored).toContain(
+      '<p style="--derive-structural-width: 60%" data-derive-width="60" data-derive-node="slide-0-node-2" data-derive-kind="text">Alpha</p>',
+    )
+    expect(stored).toContain("data-derive-structural-backfill")
+  })
+
+  it("gives the source map to publishers only, and only for HTML pages and decks", async () => {
+    const { short_id } = await publish()
+    const url = `/v1/artifacts/${short_id}/source-map`
+    expect((await opsApp.request(url)).status).toBe(404)
+    const asColleague = await opsApp.request(url, { headers: as(colleague.email) })
+    expect(asColleague.status).toBe(200)
+    expect(asColleague.headers.get("cache-control")).toBe("private, no-cache")
+    const map = await asColleague.json()
+    expect(map).toMatchObject({ version: 1, sha: expect.stringMatching(/^[0-9a-f]{64}$/) })
+    expect(map.hashes.filter((h: string) => h)).toHaveLength(8)
+
+    const form = new FormData()
+    form.append("file", new Blob(["# Notes"]), "notes.md")
+    const md = await (
+      await opsApp.request("/v1/artifacts", {
+        method: "POST",
+        body: form,
+        headers: as(owner.email),
+      })
+    ).json()
+    const notes = await opsApp.request(`/v1/artifacts/${md.short_id}/source-map`, {
+      headers: as(owner.email),
+    })
+    expect(notes.status).toBe(404)
   })
 })
 

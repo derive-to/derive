@@ -63,13 +63,15 @@ export const signState = (
 
 /** The raw-content capability the sandboxed viewer carries in its URL path (raw.ts's
  *  `t/:token` route): `rid` binds it to one artifact, `history` says whether its older
- *  versions are in reach too. One minting place, so every surface that embeds raw content
+ *  versions are in reach too, and `edit` (minted only for a caller who may publish)
+ *  serves HTML with the inline editor's source ids. A distinct claim is a distinct URL,
+ *  so an editor's page and a reader's never share a cache entry. One minting place, so every surface that embeds raw content
  *  (the artifact record, the editor's live preview) hands out the same token for the same
  *  claim inside a window and the browser's cache entry stays reachable. `issuedAt` is the
  *  bucketed stamp the token carries, for callers that state its expiry. */
 export const signRawToken = (
   secret: string,
-  claim: { rid: string; history: boolean },
+  claim: { rid: string; history: boolean; edit?: true },
 ): { token: string; issuedAt: number } => {
   const issuedAt = bucketedNow(RAW_TOKEN_WINDOW_MS)
   return { token: signState(claim, secret, issuedAt), issuedAt }

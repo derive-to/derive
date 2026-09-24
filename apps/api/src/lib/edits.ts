@@ -6,9 +6,11 @@ import {
   applyQuoteEdits,
   applySceneEdits,
   applySlideOps,
+  applySourceOps,
   applyStructuralEdits,
   type BundleManifest,
   backfillLegacyDeckStructure,
+  DECK_CONTENT_TYPE,
   type DiffOp,
   type DocEdit,
   diffLines,
@@ -19,12 +21,14 @@ import {
   isLatexLike,
   isQuoteEdit,
   isSceneEdit,
+  isSourceEditable,
   isStructuralUserEdit,
   LATEX_BUNDLE_CONTENT_TYPE,
   LATEX_CONTENT_TYPE,
   type QuoteEdit,
   type SceneEdit,
   type SlideOp,
+  type SourceOp,
   type StructuralUserEdit,
   toMarkdown,
   type VersionRecord,
@@ -268,6 +272,33 @@ export async function materializeSlideOps(
       "Those slide_ops leave the deck exactly as it is, so there is nothing to publish. Check the positions against `read(short_id, map:true)`.",
     )
   return { content, filename: preservingFilename(contentType) }
+}
+
+/**
+ * Turn an inline editor's `ops` save into stored-revision bytes. Ops name elements by
+ * source id and hash (see @derive/core source-edit), so a stale `base_version` is not
+ * refused here: they apply to the CURRENT source whenever every element they reference
+ * is byte-identical there, and a changed one throws `SourceConflictError` (409).
+ */
+export async function materializeSourceOps(
+  deps: MaterializeEditsDeps,
+  artifact: Pick<ArtifactRecord, "id" | "short_id" | "kind" | "current_version">,
+  ops: unknown,
+): Promise<MaterializedEdits & { changes: { before: string; after: string }[] }> {
+  const { src, contentType } = await currentSource(deps, artifact, undefined, "ops")
+  if (!isSourceEditable(contentType ?? ""))
+    throw new EditError(
+      `"${artifact.short_id}" isn't an HTML page or deck; \`ops\` edit HTML source only.`,
+    )
+  let { html, changes } = await applySourceOps(src, ops)
+  // A legacy deck's arrangeable nodes exist only at serve time (runtime identities).
+  // Layout set on one persists those identities, as a structural edit's save does.
+  if (
+    contentType?.startsWith(DECK_CONTENT_TYPE) &&
+    (ops as SourceOp[]).some((op) => op.op === "attrs" && op.attrs)
+  )
+    html = backfillLegacyDeckStructure(html, { layout: true }).html
+  return { content: html, filename: preservingFilename(contentType), changes }
 }
 
 export async function materializeEdits(

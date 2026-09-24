@@ -48,6 +48,12 @@ export default defineConfig({
   },
   server: {
     port: 3090,
+    // Playwright writes its HTML report (and traces) under this root. Vite treats a
+    // changed .html file as a full page reload for every open tab, so one e2e run
+    // finishing reloaded the pages of any run still in flight — mid edit session.
+    watch: {
+      ignored: ["**/playwright-report/**", "**/playwright-report-public/**", "**/test-results/**"],
+    },
     // /artifacts is the SPA's own route — only proxy API + raw artifact bytes + the
     // server-rendered OAuth consent page.
     proxy: Object.fromEntries(

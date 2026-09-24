@@ -19,6 +19,8 @@ import { applyElementEdits, type ElementResizeEdit } from "../src/element-edit"
 import { attrValues, tags } from "../src/html-tags"
 import { applyQuoteEdits, type QuoteEdit } from "../src/quote-edit"
 import { applySceneEdits, sliceScenes } from "../src/videos"
+// A real 44-slide deck with placeholder copy; markup and structural identities untouched.
+import REAL_DECK from "./fixtures/decks/structural-deck-44.html?raw"
 
 const MD = "text/markdown"
 const HTML = "text/html"
@@ -353,7 +355,7 @@ describe("editing eval — HTML projection, topology, and injection", () => {
       applyQuoteEdits("<section><p>first part</p><p>second part</p></section>", HTML, [
         qe("part second", "merged"),
       ]),
-    ).toThrow(/element boundary/)
+    ).toThrow(/crosses a <p> boundary/)
   })
 
   it("[HTML-003] decodes valid entities, replaces invalid scalar values, and keeps entities indivisible", () => {
@@ -675,7 +677,7 @@ describe("editing eval — deck identity and structural operations", () => {
   it("[DECK-002] refuses text edits that would merge two slides", () => {
     const source = deck(["<p>Alpha ending</p>", "<p>Beta opening</p>"])
     expect(() => applyQuoteEdits(source, DECK, [qe("ending Beta", "bridge")])).toThrow(
-      /element boundary/,
+      /crosses a <p> boundary/,
     )
   })
 
@@ -892,6 +894,116 @@ describe("editing eval — deck identity and structural operations", () => {
     ])
     expect(applySlideOps(source, [{ op: "duplicate", at: 1 }])).toContain(
       "url(#grad&amp;x--derive-copy-12)",
+    )
+  })
+})
+
+// Repros from a dogfood pass on a real 44-slide deck, rebuilt as minimal synthetic
+// slides. The agenda slide has three cards whose headings carry a <br>, and one Save
+// commonly carries several edits on it.
+describe("editing eval — deck text saves", () => {
+  const agenda =
+    '<div class="brandrow"><div class="brand">Product deep dive</div><span class="sec">Today</span></div>\n' +
+    "  <h2>Agenda</h2>\n" +
+    '  <div class="body"><div class="agenda">' +
+    '<div class="agenda-item"><span class="index">01</span><h3>Agentic<br>Social Ops</h3><p>AI advances care work and keeps agents in control.</p></div>' +
+    '<div class="agenda-item"><span class="index">02</span><h3>Powerful AI-First<br>Social Data</h3><p>Every conversation adds structured insight.</p></div>' +
+    '<div class="agenda-item"><span class="index">03</span><h3>Extensions and<br>Integration</h3><p>Connect social channels, customer systems, and workflows.</p></div>' +
+    "</div></div>\n" +
+    '  <span class="num">02</span><aside class="notes">Set the agenda.</aside>'
+  const source = deck(["<h1>Agenda</h1><p>Opening.</p>", agenda])
+  // Five edits on the one slide, shaped the way the frame sends them: word-snapped
+  // exacts with 40 characters of context whose block seams are newlines.
+  const batch = (second = "agents in control."): QuoteEdit[] => [
+    qe("Agenda", "Agenda for today", {
+      prefix: "Product deep dive\nToday\n",
+      suffix: "\n01\nAgentic",
+    }),
+    qe(second, "people in control.", { prefix: "care work and keeps ", suffix: "\n02\nPowerful" }),
+    qe("insight.", "signal.", { prefix: "Every conversation adds structured ", suffix: "\n03" }),
+    qe("and\nIntegration", "and Integrations", {
+      prefix: "03\nExtensions ",
+      suffix: "\nConnect social",
+    }),
+    qe("workflows.", "workflows, in one place.", {
+      prefix: "systems, and ",
+      suffix: "\n02\nSet the",
+    }),
+  ]
+  const saved = agenda
+    .replace("<h2>Agenda</h2>", "<h2>Agenda for today</h2>")
+    .replace("agents in control.", "people in control.")
+    .replace("structured insight.", "structured signal.")
+    .replace("Extensions and<br>Integration", "Extensions and Integrations")
+    .replace("and workflows.", "and workflows, in one place.")
+
+  it("[DECK-TEXT-001] saves a five-edit batch on one slide, including a retyped <br> heading", () => {
+    expect(applyQuoteEdits(source, DECK, batch())).toBe(
+      deck(["<h1>Agenda</h1><p>Opening.</p>", saved]),
+    )
+  })
+
+  it("[DECK-TEXT-003] keeps whitespace on a block seam out of a paragraph edit", () => {
+    const panel = deck([
+      '<div class="panel"><div class="label">AI work at launch</div>' +
+        "<p>AI classifies, translates, routes, finds context, and drafts. People review exceptions.</p></div>",
+    ])
+    expect(
+      applyQuoteEdits(panel, DECK, [
+        qe(
+          " AI classifies, translates, routes, finds context, and drafts.",
+          " AI sorts and drafts.",
+        ),
+      ]),
+    ).toContain("<p>AI sorts and drafts. People review exceptions.</p>")
+    expect(
+      applyQuoteEdits(panel, DECK, [qe("People review exceptions. ", "People decide. ")]),
+    ).toContain("and drafts. People decide.</p>")
+  })
+
+  it("[DECK-TEXT-004] pins a repeated word by context with or without the seam space", () => {
+    const surfaces = deck([
+      "<p>Slack alerts reach the owner.</p><p>Route to Slack or email.</p>" +
+        '<div class="surface-row"><h3>Slack</h3><p>Ask in a channel. Get an alert.</p></div>' +
+        '<div class="surface-row"><h3>Email</h3><p>Ask by reply.</p></div>',
+    ])
+    for (const suffix of ["Ask in a channel", " Ask in a channel"])
+      expect(
+        applyQuoteEdits(surfaces, DECK, [qe("Slack", "Slack workspace", { suffix })]),
+      ).toContain("<h3>Slack workspace</h3><p>Ask in a channel.")
+    expect(
+      applyQuoteEdits(surfaces, DECK, [
+        qe("Ask", "Reply", { prefix: "Email", suffix: "by reply" }),
+      ]),
+    ).toContain("<h3>Email</h3><p>Reply by reply.</p>")
+    // Optional seams never turn a repeated context into a unique one.
+    const twice = deck(["<h3>Slack</h3><p>Ask here.</p>", "<h3>Slack</h3><p>Ask here.</p>"])
+    expect(() => applyQuoteEdits(twice, DECK, [qe("Slack", "x", { suffix: "Ask here" })])).toThrow(
+      /identical contexts/,
+    )
+  })
+})
+
+// Deck structure on a real deck: a duplicated slide never shares an identity, and
+// slide_ops errors name the real slide count.
+describe("editing eval — deck structural edits", () => {
+  it("[DECK-STRUCT-003] a duplicated slide gets fresh structural identities", () => {
+    const out = applySlideOps(REAL_DECK, [{ op: "duplicate", at: 2 }])
+    const span = sliceSlides(out)[2]
+    const copy = out.slice(span?.start, span?.end)
+    expect(copy).toContain('data-derive-region="slide-45"')
+    expect(copy.match(/data-derive-node="[^"]+"/g)).toEqual([
+      'data-derive-node="s45-brand"',
+      'data-derive-node="s45-title"',
+      'data-derive-node="s45-main"',
+    ])
+    const ids = [...out.matchAll(/data-derive-(?:region|node)="([^"]+)"/g)].map((m) => m[1])
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it("[DECK-STRUCT-004] an out-of-range insert names the real slide count and range", () => {
+    expect(() => applySlideOps(REAL_DECK, [{ op: "insert", at: 46 }])).toThrow(
+      "slide_ops: at 46 is out of range — this deck has 44 slides, so an insert accepts positions 1–45.",
     )
   })
 })

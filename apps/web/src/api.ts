@@ -15,7 +15,7 @@ import type {
   SharedStateMutation,
   SharedStateResult,
   SortMode,
-  StructuralUserEdit,
+  SourceOp,
   WorkspaceAccess,
 } from "@derive/core"
 import type { components, paths } from "./api-types"
@@ -216,8 +216,8 @@ export type CollectionGrant = components["schemas"]["CollectionGrant"]
  *  web client and server can't silently drift. */
 export type Follow = components["schemas"]["Follow"]
 export type FollowKind = Follow["kind"]
-/** A quote-scoped edit (the inline editor's wire shape): replace the text located by
- *  {exact, prefix, suffix}, resolved server-side against the stored source. */
+/** A quote-scoped edit (the inline editor on Markdown and LaTeX): replace the text
+ *  located by {exact, prefix, suffix}, resolved server-side against the stored source. */
 export interface QuoteEditInput {
   quote: {
     exact: string
@@ -226,11 +226,7 @@ export interface QuoteEditInput {
     occurrence?: number
     match_count?: number
   }
-  /** The replacement as text. Exactly one of `new_text` / `new_html` is set. */
-  new_text?: string
-  /** The replacement as inline markup — a run the reader made bold, italic, or a
-   *  link. Sanitized server-side down to a five-tag allowlist. */
-  new_html?: string
+  new_text: string
 }
 /** A source-safe resize emitted by the rendered editor. The element selector is
  *  resolved against the base version; only that opening tag's size is changed. */
@@ -240,7 +236,6 @@ export interface ElementResizeEditInput {
   width: number
   height: number | "auto"
 }
-export type StructuralEditInput = StructuralUserEdit
 export type SceneEditInput =
   | {
       op: "scene-update"
@@ -253,11 +248,13 @@ export type SceneEditInput =
   | { op: "scene-move"; id: string; direction: "previous" | "next" }
   | { op: "scene-duplicate"; id: string }
   | { op: "scene-delete"; id: string }
-export type InlineEditInput =
-  | QuoteEditInput
-  | ElementResizeEditInput
-  | StructuralEditInput
-  | SceneEditInput
+export type InlineEditInput = QuoteEditInput | ElementResizeEditInput | SceneEditInput
+/** A stamped version's element hashes (`hashes[N]` for `data-derive-src="N"`). */
+export interface SourceMap {
+  version: number
+  sha: string
+  hashes: string[]
+}
 /** The other edit shape the server accepts: a literal string swap against the raw
  *  source. The inline editor uses it for exactly one thing — replacing an image's
  *  URL, which lives in an attribute and so has no visible text to quote. The two
@@ -826,6 +823,29 @@ export interface Connection {
 
 export type GithubStatus = components["schemas"]["GithubStatus"]
 export type GithubIntegrationAccount = GithubStatus["accounts"][number]
+
+/** One saved change from the inline editor: the edits or ops, their base version, and
+ *  coalescing — consecutive attended edits are one working version for five minutes
+ *  (the server applies the author/time/review barriers and falls back to an append). */
+const publishChange = (
+  id: string,
+  field: "edits" | "ops",
+  payload: unknown,
+  baseVersion: number,
+  message: string,
+): Promise<Artifact> => {
+  const fd = new FormData()
+  fd.append(field, JSON.stringify(payload))
+  fd.append("base_version", String(baseVersion))
+  fd.append("coalesce", "true")
+  if (message) fd.append("message", message)
+  return f(`/v1/artifacts/${id}/versions`, {
+    method: "POST",
+    body: fd,
+    credentials: "include",
+    headers: { accept: "application/json" },
+  }).then(j)
+}
 
 export const api = {
   // The ONE identity read — behind meQuery, and re-read after login/signup to seed the
@@ -2169,29 +2189,26 @@ export const api = {
     if (title?.trim()) fields.title = title.trim()
     return this.publish(new File([text], filename), fields, id)
   },
-  // Quote-scoped edits (the inline editor): each edit is located by the rendered
-  // text ({exact, prefix, suffix}) and resolved server-side against the stored
-  // source. base_version turns a concurrent publish into a 409 instead of a
-  // silently mis-placed splice.
+  // Quote-scoped edits (the inline editor on Markdown and LaTeX, and element edits):
+  // each edit is located by the rendered text ({exact, prefix, suffix}) and resolved
+  // server-side against the stored source. base_version turns a concurrent publish
+  // into a 409 instead of a silently mis-placed splice.
   publishEdits(
     id: string,
     edits: (InlineEditInput | StrEditInput)[],
     baseVersion: number,
     message: string,
   ): Promise<Artifact> {
-    const fd = new FormData()
-    fd.append("edits", JSON.stringify(edits))
-    fd.append("base_version", String(baseVersion))
-    // Consecutive attended edits are one working version for five minutes. The
-    // server applies the author/time/review barriers and falls back to an append.
-    fd.append("coalesce", "true")
-    if (message) fd.append("message", message)
-    return f(`/v1/artifacts/${id}/versions`, {
-      method: "POST",
-      body: fd,
-      credentials: "include",
-      headers: { accept: "application/json" },
-    }).then(j)
+    return publishChange(id, "edits", edits, baseVersion, message)
+  },
+  // Exact-source edits (the inline editor on HTML and decks): each op names an element
+  // by its source id and hash (see the source map), so nothing is searched for.
+  publishOps(id: string, ops: SourceOp[], baseVersion: number, message: string): Promise<Artifact> {
+    return publishChange(id, "ops", ops, baseVersion, message)
+  },
+  /** The element hashes of a stamped HTML version, indexed by source id. */
+  sourceMap(id: string, version: number): Promise<SourceMap> {
+    return f(`/v1/artifacts/${id}/source-map?v=${version}`, opts()).then(j)
   },
 
   // Whole-slide edits from the visual organizer. The browser sends compact structural

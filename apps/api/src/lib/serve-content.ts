@@ -8,10 +8,10 @@ import {
   type DynamicValue,
   injectArtifactRuntimeScripts,
   injectSharedStateScript,
-  inspectStructuralDocument,
   isBundleContentType,
   isCodePath,
   isLatexLike,
+  isSourceEditable,
   looksLikeHtmlDocument,
   MARKS_SCRIPT,
   mimeFor,
@@ -21,6 +21,8 @@ import {
   renderMarkdown,
   SELECTION_SCRIPT,
   SHARED_STATE_SCRIPT,
+  sourceSha,
+  stampSourceIds,
   validateDynamicValue,
 } from "@derive/core"
 import type { Context } from "hono"
@@ -103,6 +105,10 @@ export const serveContent = async (
    *  render it, never hand back its `.tex`/`.bib`/`.sty` bytes. Images still serve, and
    *  the renderer resolves the paper's own files server-side, so the page is unchanged. */
   sourceHidden = false,
+  /** The caller may publish this version: serve an HTML page or deck with source ids
+   *  stamped for the inline editor (@derive/core source-edit). Never for a reader, and
+   *  never cached where a reader could be handed it. */
+  editor?: { version: number },
 ) => {
   const slots = slotValuesOf(dynamic)
   // Bound by declaration: the rendered document carries a binding attribute on a real
@@ -125,24 +131,9 @@ export const serveContent = async (
   // other read.
   const wantsMarks = ["1", "true"].includes(c.req.query("marks") ?? "")
   const marks = wantsMarks ? MARKS_SCRIPT : ""
-  const structuralSourceValidity = (doc: string): string => {
-    if (!/\bdata-derive-(?:runtime-)?(?:region|layout|node|kind|size)\s*=/i.test(doc)) return ""
-    try {
-      inspectStructuralDocument(doc)
-      return ""
-    } catch {
-      // The HTML parser collapses duplicate attributes, so the browser cannot
-      // independently detect every source ambiguity the save-time parser rejects.
-      // Carry that source verdict into the runtime and expose no unsafe handles.
-      return '<script>Object.defineProperty(window,"__deriveStructuralSourceValid",{value:false})</script>'
-    }
-  }
   const withRuntime = anchors
     ? (doc: string, isBound = bound(doc)) =>
-        injectArtifactRuntimeScripts(
-          doc,
-          structuralSourceValidity(doc) + runtimeScripts(isBound) + SELECTION_SCRIPT,
-        )
+        injectArtifactRuntimeScripts(doc, runtimeScripts(isBound) + SELECTION_SCRIPT)
     : (doc: string) => doc
   // renderMarkdown already carries SELECTION_SCRIPT in its generated shell, so it
   // needs only the early shared-state runtime (plus the dynamic-data runtime when the
@@ -306,9 +297,19 @@ export const serveContent = async (
   // html file artifact — any path serves the document (+ selection capture)
   const ct = mimeFor(path || "index.html")
   if (ct.startsWith("text/html")) {
-    const doc = applyDynamicBindings(withDeckStructure(new TextDecoder().decode(data)), slots)
+    let text = new TextDecoder().decode(data)
+    // Stamp the STORED source before any serve-time transform, so every id and hash
+    // names bytes a save can find again.
+    const stamp = !!editor && isSourceEditable(content.content_type)
+    if (stamp) text = stampSourceIds(text, { version: editor.version, sha: await sourceSha(text) })
+    const doc = applyDynamicBindings(withDeckStructure(text), slots)
     const isBound = bound(doc)
-    return c.body(htmlBody(doc, isBound), 200, { ...hdrs(isBound), "Content-Type": ct })
+    const pageHeaders = hdrs(isBound)
+    // Stamped bytes are the editors' view: same lifetime as the page, never in a shared cache.
+    const cache = pageHeaders["Cache-Control"]
+    if (stamp && !/private|no-store/.test(cache))
+      pageHeaders["Cache-Control"] = `private, ${cache.replace(/^public,\s*/, "")}`
+    return c.body(htmlBody(doc, isBound), 200, { ...pageHeaders, "Content-Type": ct })
   }
   return c.body(toBody(data), 200, { ...headers, "Content-Type": ct })
 }

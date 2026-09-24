@@ -133,6 +133,12 @@ export function findQuoteWithContext(
  * refuse. `span` is null on a miss (no context given, pattern failed, or zero
  * matches) — pair with {@link findQuoteMatches} to accept a miss only when the
  * exact is globally unambiguous.
+ *
+ * When the adjacent-context pattern finds nothing, one retry lets the seams between
+ * prefix|exact|suffix hold optional whitespace. A capture path can drop the space at a
+ * block edge ("Slack" + suffix "Ask in a channel" for `<h3>Slack</h3><p>Ask…`). The
+ * retry only runs on a miss and must also match exactly once, so it never changes a
+ * result the adjacent pattern already decided.
  */
 export function findQuoteContextUnique(
   text: string,
@@ -142,7 +148,32 @@ export function findQuoteContextUnique(
 ): { span: { start: number; end: number } | null; matches: number } {
   const q = exact.trim()
   if (!q) return { span: null, matches: 0 }
-  const re = contextPattern(q, prefix ?? "", suffix ?? "", "dg")
+  const adjacent = uniqueCapture(text, contextPattern(q, prefix ?? "", suffix ?? "", "dg"))
+  if (adjacent.matches) return adjacent
+  return uniqueCapture(text, seamContextPattern(q, prefix ?? "", suffix ?? ""))
+}
+
+/** The context pattern with optional whitespace at both seams. Context that is only
+ *  whitespace pins nothing once the seam is optional, so it is dropped. */
+const seamContextPattern = (q: string, pre: string, suf: string): RegExp | null => {
+  const p = pre.trimEnd()
+  const s = suf.trimStart()
+  if (!p && !s) return null
+  try {
+    return new RegExp(
+      `${p ? `${flexPattern(p)}\\s*` : ""}(${flexPattern(q)})${s ? `\\s*${flexPattern(s)}` : ""}`,
+      "dg",
+    )
+  } catch {
+    return null
+  }
+}
+
+/** The capture span of `re` in `text` when it matches exactly once. */
+const uniqueCapture = (
+  text: string,
+  re: RegExp | null,
+): { span: { start: number; end: number } | null; matches: number } => {
   if (!re) return { span: null, matches: 0 }
   const first = re.exec(text) as CaptureMatch | null
   const gi = first?.indices?.[1]

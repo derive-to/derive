@@ -73,6 +73,9 @@ export const updatedStyle = (
   return kept.map((declaration) => declaration.trim()).join("; ")
 }
 
+const STYLE_ATTRIBUTE = /(\sstyle\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i
+const styleValueOf = (m: RegExpExecArray): string => m[2] ?? m[3] ?? m[4] ?? ""
+
 /** Change only requested properties in one opening tag's style attribute. Existing
  * quote style and unrelated declarations survive; an emptied style attribute is
  * removed so reset can restore the exact absence of editor-owned styling. */
@@ -80,24 +83,29 @@ export const updateOpeningTagStyle = (
   tag: string,
   changes: Readonly<Record<string, string | null>>,
 ): string => {
-  const style = /(\sstyle\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(tag)
+  const current = STYLE_ATTRIBUTE.exec(tag)
+  if (current) return setOpeningTagStyle(tag, updatedStyle(styleValueOf(current), changes) || null)
+  const additions = Object.entries(changes).flatMap(([property, next]) =>
+    next === null ? [] : [`${property}: ${next}`],
+  )
+  return setOpeningTagStyle(tag, additions.join("; ") || null)
+}
+
+/** Replace one opening tag's whole style attribute value (raw attribute text; the caller
+ * escapes it), or remove the attribute when `value` is null or empty. The existing quote
+ * style and every other attribute stay byte-identical. */
+export const setOpeningTagStyle = (tag: string, value: string | null): string => {
+  const style = STYLE_ATTRIBUTE.exec(tag)
   if (style) {
-    const raw = style[2] ?? style[3] ?? style[4] ?? ""
-    const next = updatedStyle(raw, changes)
-    const quote = style[2] !== undefined ? '"' : style[3] !== undefined ? "'" : '"'
-    const replacement = next ? `${style[1]}${quote}${next}${quote}` : ""
+    const quote = style[3] !== undefined ? "'" : '"'
+    const replacement = value ? `${style[1]}${quote}${value}${quote}` : ""
     return tag.slice(0, style.index) + replacement + tag.slice(style.index + style[0].length)
   }
-  const additions = Object.entries(changes).filter((entry): entry is [string, string] => {
-    const value = entry[1]
-    return value !== null
-  })
-  if (!additions.length) return tag
+  if (!value) return tag
   const close = tag.lastIndexOf(">")
   if (close < 0) return tag
   let insert = close
   for (let i = close - 1; i >= 0 && /\s/.test(tag[i] as string); i--) insert = i
   if (tag[insert - 1] === "/") insert--
-  const value = additions.map(([property, next]) => `${property}: ${next}`).join("; ")
   return `${tag.slice(0, insert)} style="${value}"${tag.slice(insert)}`
 }

@@ -296,6 +296,34 @@ const cssUnescapeIdentifier = (value: string): string =>
 const domIds = (html: string): string[] =>
   tags(html).flatMap((tag) => (tag.closing ? [] : attrValues(tag.attrs, "id")))
 
+/** Rewrite attribute values in every opening tag. The name=value tokenizer consumes
+ *  quoted values whole, so text that merely looks like an attribute inside one is never
+ *  rewritten; attribute spelling and quote style stay unchanged. */
+const rewriteAttrs = (html: string, rewrite: (name: string, value: string) => string): string => {
+  const attr = /([^\s"'<>/=]+)(\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/g
+  let out = ""
+  let cursor = 0
+  for (const tag of tags(html)) {
+    if (tag.closing) continue
+    out += html.slice(cursor, tag.start)
+    out += html
+      .slice(tag.start, tag.end)
+      .replace(
+        attr,
+        (whole, name: string, equals: string, double: string, single: string, bare: string) => {
+          const value = double ?? single ?? bare ?? ""
+          const next = rewrite(name, value)
+          if (next === value) return whole
+          if (double !== undefined) return `${name}${equals}"${next}"`
+          if (single !== undefined) return `${name}${equals}'${next}'`
+          return `${name}${equals}${next}`
+        },
+      )
+    cursor = tag.end
+  }
+  return out + html.slice(cursor)
+}
+
 /** A duplicated slide is a new DOM subtree, so authored IDs inside it must also be
  *  new. Rewrite the IDREF attributes browsers and assistive technology resolve,
  *  plus fragment/url references used by SVG. Attribute spelling and quote style
@@ -346,37 +374,86 @@ const rewriteCopiedDomIds = (html: string, slideId: number, used: Set<string>): 
     )
   }
 
-  const attr = /([^\s"'<>/=]+)(\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/g
-  let out = ""
-  let cursor = 0
+  return rewriteAttrs(html, rewriteValue)
+}
+
+/** A structural region or node identity (shared with structural-edit). */
+export const STRUCTURAL_ID = /^[A-Za-z][A-Za-z0-9_-]{0,127}$/
+
+const structuralIds = (html: string): string[] =>
+  tags(html).flatMap((tag) =>
+    tag.closing
+      ? []
+      : [
+          ...attrValues(tag.attrs, "data-derive-region"),
+          ...attrValues(tag.attrs, "data-derive-node"),
+        ],
+  )
+
+/** A duplicated slide's structural identities must be new too, or every later
+ *  structural edit on either copy is refused as ambiguous. A value derived from the
+ *  source slide's identity follows the copy's (`slide-4` → `slide-46`, `s4-title` →
+ *  `s46-title`); anything else gains a `-copy-N` suffix. `data-derive-owner` names a
+ *  node, so it follows the node rename and the copy's hierarchy stays intact. */
+const rewriteCopiedStructuralIds = (
+  html: string,
+  sourceId: number | null,
+  copyId: number,
+  used: Set<string>,
+): string => {
+  const token = sourceId === null ? null : new RegExp(`(?<![0-9])${sourceId}(?![0-9])`)
+  const fresh = (original: string): string => {
+    // An unreadable identity is refused by structural editing either way; leave it be.
+    if (!STRUCTURAL_ID.test(original)) return original
+    const derived = token ? original.replace(token, String(copyId)) : original
+    const base =
+      derived !== original && STRUCTURAL_ID.test(derived)
+        ? derived
+        : `${original.slice(0, 100)}-copy-${copyId}`
+    let candidate = base
+    for (let n = 2; used.has(candidate); n++) candidate = `${base.slice(0, 120)}-${n}`
+    used.add(candidate)
+    return candidate
+  }
+  const regions = new Map<string, string>()
+  const nodes = new Map<string, string>()
   for (const tag of tags(html)) {
     if (tag.closing) continue
-    out += html.slice(cursor, tag.start)
-    const raw = html
-      .slice(tag.start, tag.end)
-      .replace(
-        attr,
-        (whole, name: string, equals: string, double: string, single: string, bare: string) => {
-          const value = double ?? single ?? bare ?? ""
-          const next = rewriteValue(name, value)
-          if (next === value) return whole
-          if (double !== undefined) return `${name}${equals}"${next}"`
-          if (single !== undefined) return `${name}${equals}'${next}'`
-          return `${name}${equals}${next}`
-        },
-      )
-    out += raw
-    cursor = tag.end
+    for (const value of attrValues(tag.attrs, "data-derive-region"))
+      if (!regions.has(value)) regions.set(value, fresh(value))
+    for (const value of attrValues(tag.attrs, "data-derive-node"))
+      if (!nodes.has(value)) nodes.set(value, fresh(value))
   }
-  return out + html.slice(cursor)
+  if (!regions.size && !nodes.size) return html
+  return rewriteAttrs(html, (name, value) => {
+    const lower = name.toLowerCase()
+    const ids =
+      lower === "data-derive-region"
+        ? regions
+        : lower === "data-derive-node" || lower === "data-derive-owner"
+          ? nodes
+          : null
+    return ids?.get(value) ?? value
+  })
 }
 
 /** A newly-created slide is never the live one merely because its source was. Deck
  *  runtimes commonly persist `on`/`active` on the first slide in authored source; copying
  *  that state would paint two slides at once after reload. Only the OUTER slide's class
  *  list is touched, and content/style classes remain byte-for-byte. */
-const inactiveCopy = (text: string, id: number, usedDomIds: Set<string>): string => {
-  const copied = rewriteCopiedDomIds(withId(text, id), id, usedDomIds)
+const inactiveCopy = (
+  text: string,
+  sourceId: number | null,
+  id: number,
+  usedDomIds: Set<string>,
+  usedStructuralIds: Set<string>,
+): string => {
+  const copied = rewriteCopiedStructuralIds(
+    rewriteCopiedDomIds(withId(text, id), id, usedDomIds),
+    sourceId,
+    id,
+    usedStructuralIds,
+  )
   const open = tags(copied).find((tag) => !tag.closing && SLIDE_TAGS.has(tag.name))
   if (!open) return copied
   const opening = copied
@@ -386,6 +463,56 @@ const inactiveCopy = (text: string, id: number, usedDomIds: Set<string>): string
       return `class=${quote}${classes.join(" ")}${quote}`
     })
   return copied.slice(0, open.start) + opening + copied.slice(open.end)
+}
+
+/** The identities a document already uses, which every copy made from it must avoid.
+ *  `copies` names non-slide copies (`id--derive-copy-N`), so repeated copies stay unique. */
+export interface CopyIdentities {
+  slides: Set<number>
+  dom: Set<string>
+  structural: Set<string>
+  copies: number
+}
+
+export const copyIdentitiesOf = (html: string): CopyIdentities => ({
+  slides: new Set(
+    tags(html).flatMap((tag) =>
+      tag.closing
+        ? []
+        : attrValues(tag.attrs, "data-derive-slide").flatMap((v) =>
+            /^-?\d+$/.test(v) && Number.isSafeInteger(Number(v)) ? [Number(v)] : [],
+          ),
+    ),
+  ),
+  dom: new Set(domIds(html)),
+  structural: new Set(structuralIds(html)),
+  copies: 0,
+})
+
+/** A duplicated element's bytes with fresh identities, so the copy never shares comment
+ *  threads, DOM ids, or structural handles with its original. A slide copy gets a new
+ *  slide identity and is made inactive, exactly as a slide_ops duplicate; any other
+ *  element's DOM and structural ids gain a copy suffix, and slides nested inside it get
+ *  new identities. `used` grows with every identity minted. */
+export const copyWithFreshIdentities = (text: string, used: CopyIdentities): string => {
+  const mint = (): number => {
+    const id = nextUnusedSlideId(used.slides)
+    used.slides.add(id)
+    return id
+  }
+  const root = tags(text).find((tag) => !tag.closing)
+  if (root && SLIDE_TAGS.has(root.name) && isSlideAttrs(root.attrs))
+    return inactiveCopy(text, idOf(root.attrs), mint(), used.dom, used.structural)
+  const copy = ++used.copies
+  const nested = rewriteAttrs(text, (name, value) =>
+    name.toLowerCase() === "data-derive-slide" && /^-?\d+$/.test(value) ? String(mint()) : value,
+  )
+  return rewriteCopiedStructuralIds(
+    rewriteCopiedDomIds(nested, copy, used.dom),
+    null,
+    copy,
+    used.structural,
+  )
 }
 
 const escapeAttr = (value: string): string =>
@@ -468,19 +595,24 @@ export const applySlideOps = (html: string, ops: SlideOp[]): string => {
     spans.map((s) => html.slice(s.start, s.end)),
     ids,
   )
-  const usedSlideIds = new Set(items.map((item) => item.id))
-  const authoredDomIds = domIds(html)
-  if (new Set(authoredDomIds).size !== authoredDomIds.length)
+  const used = copyIdentitiesOf(html)
+  if (used.dom.size !== domIds(html).length)
     throw new EditError(
       "This deck repeats a DOM id, so its document-wide references are already ambiguous. Give every element a unique id before arranging slides.",
     )
-  const usedDomIds = new Set(authoredDomIds)
+  for (const item of items) used.slides.add(item.id)
 
   const at = (n: unknown, label: string, max: number): number => {
-    if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > max)
+    if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > max) {
+      // An insert may target one past the end, so its range is not the slide count.
+      const count = items.length
+      const slides = `this deck has ${count} slide${count === 1 ? "" : "s"}`
       throw new EditError(
-        `slide_ops: ${label} ${JSON.stringify(n)} is out of range — this deck has ${max} slide${max === 1 ? "" : "s"} (positions are 1-based).`,
+        max > count
+          ? `slide_ops: ${label} ${JSON.stringify(n)} is out of range — ${slides}, so an insert accepts positions 1–${max}.`
+          : `slide_ops: ${label} ${JSON.stringify(n)} is out of range — ${slides} (positions are 1-based).`,
       )
+    }
     return n
   }
 
@@ -501,20 +633,18 @@ export const applySlideOps = (html: string, ops: SlideOp[]): string => {
       items.splice(pos - 1, 1)
     } else if (op?.op === "duplicate") {
       const pos = at(op.at, "at", items.length)
-      const src = items[pos - 1] as { text: string; id: number | null }
-      const nextId = nextUnusedSlideId(usedSlideIds)
-      usedSlideIds.add(nextId)
+      const src = items[pos - 1] as { text: string }
       // The copy is a NEW slide: it must not inherit the original's identity, or every
       // thread pinned to the original would claim both.
-      items.splice(pos, 0, { text: inactiveCopy(src.text, nextId, usedDomIds), id: nextId })
+      items.splice(pos, 0, { text: copyWithFreshIdentities(src.text, used), id: -1 })
     } else if (op?.op === "insert") {
       // `at` is the position the new slide will occupy, so unlike the other ops it may
       // be one past the current end. Use the nearest existing slide as the visual shell.
       const pos = at(op.at, "at", items.length + 1)
       const templateAt = Math.min(Math.max(pos - 1, 0), items.length - 1)
       const src = items[templateAt] as { text: string; id: number | null }
-      const nextId = nextUnusedSlideId(usedSlideIds)
-      usedSlideIds.add(nextId)
+      const nextId = nextUnusedSlideId(used.slides)
+      used.slides.add(nextId)
       items.splice(pos - 1, 0, { text: blankFrom(src.text, nextId), id: nextId })
     } else {
       throw new EditError(

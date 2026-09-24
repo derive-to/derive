@@ -1,5 +1,13 @@
+import type { SourceOp, SourceToken } from "@derive/core"
 import { type RefObject, useEffect, useRef, useState } from "react"
-import { ApiError, type Artifact, api, type DirUser, type InlineEditInput } from "@/api"
+import {
+  ApiError,
+  type Artifact,
+  api,
+  type DirUser,
+  type InlineEditInput,
+  type SourceMap,
+} from "@/api"
 import { toast } from "@/components/ui/sonner"
 import { canPublishArtifact } from "@/lib/artifact"
 import { useApiMutation } from "@/lib/use-api-mutation"
@@ -16,31 +24,61 @@ export const unsavedEditsCopy = (n: number) => ({
   confirmLabel: "Discard edits",
 })
 
-// The auto version message: a single edit reads as what changed; a batch as a count.
-// A formatting edit carries markup rather than text, and saying so is more useful in
-// the history than quoting tags at someone. (Reading `new_text` unconditionally used
-// to throw here — the save died before it reached the network, and the failure
-// surfaced as a bare "couldn't save".)
+// The auto version message for a quote save (Markdown, LaTeX, video): a single edit
+// reads as what changed; a batch as a count.
 const editMessage = (edits: InlineEditInput[]): string => {
   const first = edits[0]
   if (edits.length !== 1 || !first) return `Inline edits (${edits.length})`
   if ("op" in first && first.op === "resize")
     return `Resized ${first.target.snapshot?.label ?? first.target.tag} to ${first.width}px`
-  if ("op" in first && first.op === "structural-size")
-    return `${first.size ? `Set ${first.node} to ${first.size}` : `Reset ${first.node} size`}`
-  if ("op" in first && first.op === "structural-width")
-    return `${first.width_pct === null ? `Reset ${first.node} width` : `Resized ${first.node} to ${first.width_pct}%`}`
-  if ("op" in first && first.op === "structural-dimensions")
-    return `Resized ${first.node} to ${first.width_pct === null ? "authored width" : `${first.width_pct}%`} × ${first.height_px === null ? "authored height" : `${first.height_px}px`}`
-  if ("op" in first && first.op === "structural-align")
-    return `${first.align === null ? `Reset ${first.node} alignment` : `Aligned ${first.node} to ${first.align}`}`
-  if ("op" in first && first.op === "structural-gap")
-    return `${first.gap_px === null ? `Reset ${first.region} spacing` : `Set ${first.region} spacing to ${first.gap_px}px`}`
-  if ("op" in first && first.op === "structural-order") return `Reordered ${first.region}`
-  if ("op" in first && first.op === "structural-remove") return `Removed ${first.node}`
   if ("op" in first) return `Updated video scene ${first.id}`
-  if (first.new_text === undefined) return `Inline formatting: "${clip(first.quote.exact.trim())}"`
   return `Inline edit: "${clip(first.quote.exact.trim())}" → "${clip(first.new_text.trim())}"`
+}
+
+/** A save's message for exact-source ops: one edit reads as its new words. */
+const opsMessage = (ops: SourceOp[]): string => {
+  const first = ops[0]
+  if (ops.length !== 1 || !first) return `Inline edits (${ops.length})`
+  if (first.op === "attrs") return first.attrs ? "Changed a layout" : "Resized an element"
+  const words = (ts: SourceToken[]): string =>
+    ts.map((t) => ("text" in t ? t.text : "children" in t ? words(t.children ?? []) : "")).join("")
+  const text = words(first.children).trim()
+  return text ? `Inline edit: "${clip(text)}"` : "Inline edit"
+}
+
+/** Ops as sent: every element they name carries its hash from the source map. */
+const withHashes = (ops: SourceOp[], hashes: string[]): SourceOp[] => {
+  const hash = (n: number) => {
+    const h = hashes[n]
+    if (h === undefined) throw new Error("The page is out of date. Reload it and edit again.")
+    // The source doesn't say where this element ends (misnested markup).
+    if (!h)
+      throw new Error(
+        "Part of this edit is in markup the editor can't save. Use the source editor.",
+      )
+    return h
+  }
+  const token = (t: SourceToken): SourceToken =>
+    "keep" in t || "tag" in t
+      ? {
+          ...t,
+          ...("keep" in t && { hash: hash(t.keep) }),
+          ...(t.children && { children: t.children.map(token) }),
+        }
+      : t
+  return ops.map((o) =>
+    o.op === "content"
+      ? { ...o, hash: hash(o.src), children: o.children.map(token) }
+      : { ...o, hash: hash(o.src) },
+  )
+}
+
+/** What the frame reports on collect: `ops` (with the version and source sha the frame
+ *  was served) on a stamped HTML page, quote `edits` everywhere else. */
+type Collected = {
+  edits: InlineEditInput[]
+  ops?: SourceOp[]
+  base?: { version: number; sha: string }
 }
 
 type SaveOutcome = { kind: "published"; version: number } | null
@@ -76,22 +114,25 @@ const BLOCKED_COPY: Record<string, string> = {
   "format-outside": "Select text inside the document to format it.",
   "format-range":
     "That selection is part of something bigger. Select a run of plain words instead.",
+  "format-text":
+    "In Markdown and LaTeX, formatting and line breaks are written as text. Type them, or use the source editor.",
   readonly:
     "Math, tables, figures and generated text can't be edited inline. Open the source editor to change them.",
 }
 
 /**
  * The host half of inline editing (click-to-type in the rendered artifact). The
- * frame owns the caret, the snapshots, and the diff→quote construction; this hook
- * owns the MODE — entering it (freezing the shown version so an SSE republish can't
- * reload the frame and wipe typed text), the dirty count the save bar shows, and
- * landing the collected quote edits through publish
- * (commenters / locked artifacts) with the shared error grammar:
+ * frame owns the caret, the snapshots, and what changed — exact-source ops on an
+ * HTML page (elements named by source id; this hook adds their hashes from the
+ * source map), quote edits on Markdown and LaTeX. This hook owns the MODE — entering
+ * it (freezing the shown version so an SSE republish can't reload the frame and wipe
+ * typed text), the dirty count the save bar shows, and landing the save with the
+ * shared error grammar:
  *
- *  - 409 (a publish raced ours): refetch the head; edits stay in the frame, saving
- *    again re-resolves them against the new version.
- *  - 400 (a quote didn't resolve, or a selection crossed document structure):
- *    surface the server's precise reason and preserve the painted edit for retry.
+ *  - 409 (an element the save names changed since the page loaded): edits stay in
+ *    the frame, and the server's message says which; saving again re-checks them.
+ *  - 400 (a quote didn't resolve, or a malformed save): surface the server's
+ *    precise reason and preserve the painted edit for retry.
  *
  * The session is bounded by the FRAME's lifetime: `onFrameGone` (wired to the
  * page's iframe onLoad) force-exits with a warning, because a reloaded frame boots
@@ -106,6 +147,8 @@ export function useInlineEdit(p: {
   load: () => void
   /** The fallback surface when a quote can't be applied inline. */
   onOpenSourceEditor: () => void
+  /** Reload the frame on its version (after an in-place save its stamps are stale). */
+  reloadFrame: () => void
   /** Clear selection/composer state the moment edit mode opens. */
   onEnter?: () => void
   /** This viewer could open the mode right now (permission, current version, not a
@@ -148,7 +191,7 @@ export function useInlineEdit(p: {
   dirtyRef.current = dirty
   const collectWait = useRef<{
     nonce: number
-    resolve: (e: InlineEditInput[] | { desync: true }) => void
+    resolve: (e: Collected | { desync: true }) => void
     timer: number
   } | null>(null)
   const nonceSeq = useRef(0)
@@ -248,6 +291,7 @@ export function useInlineEdit(p: {
         collectWait.current = null
         clearTimeout(w.timer)
         const edits = Array.isArray(d.edits) ? (d.edits as InlineEditInput[]) : []
+        const ops = Array.isArray(d.ops) ? (d.ops as SourceOp[]) : undefined
         // Blocks the frame changed but could NOT express as an edit. Saving the rest
         // would publish some of the user's work and let the post-save reload wipe
         // the remainder — data loss presented as success. `uncaptured` is reported
@@ -255,8 +299,8 @@ export function useInlineEdit(p: {
         // counts alone can't tell a partial failure from a normal multi-edit save.
         const uncaptured = typeof d.uncaptured === "number" ? d.uncaptured : 0
         const frameDirty = typeof d.dirty === "number" ? d.dirty : 0
-        const lost = uncaptured > 0 || (edits.length === 0 && frameDirty > 0)
-        w.resolve(lost ? { desync: true } : edits)
+        const lost = uncaptured > 0 || (edits.length === 0 && !ops?.length && frameDirty > 0)
+        w.resolve(lost ? { desync: true } : { edits, ops, base: d.base })
       } else if (d.type === "edit-save") {
         // ⌘S / ⌘Enter pressed inside the frame. Deliberately NOT gated on the dirty
         // count: that number arrives on a debounce, and gating on it dropped the
@@ -289,7 +333,19 @@ export function useInlineEdit(p: {
     return () => window.removeEventListener("message", onMsg)
   }, [])
 
-  const collect = (): Promise<InlineEditInput[] | { desync: true }> =>
+  // Element hashes for the version the frame shows, fetched as the mode opens so a
+  // save doesn't wait on them. Keyed by version; a failed fetch is retried at save.
+  const sourceMaps = useRef(new Map<number, Promise<SourceMap>>())
+  const sourceMap = (version: number): Promise<SourceMap> => {
+    const hit = sourceMaps.current.get(version)
+    if (hit) return hit
+    const next = api.sourceMap(p.shortId, version)
+    sourceMaps.current.set(version, next)
+    next.catch(() => sourceMaps.current.delete(version))
+    return next
+  }
+
+  const collect = (): Promise<Collected | { desync: true }> =>
     new Promise((resolve, reject) => {
       const nonce = ++nonceSeq.current
       const timer = window.setTimeout(() => {
@@ -415,6 +471,10 @@ export function useInlineEdit(p: {
     setMention(null)
     setDirty(0)
     setFrozenVersion(p.art.current_version)
+    sourceMaps.current.clear()
+    const type = p.art.current_content_type ?? ""
+    if (type.startsWith("text/html") || type === "text/x-derive-deck")
+      sourceMap(p.art.current_version).catch(() => {})
     p.post({ type: "edit-mode", on: true, elementEdits: p.allowElementEdits, ...entry })
   }
   // Done only ever exits CLEAN (the bar swaps to Discard/Save once dirty); the
@@ -506,13 +566,28 @@ export function useInlineEdit(p: {
       if (!art) throw new Error("save fired before the artifact loaded")
       const collected = await collect()
       if ("desync" in collected) return collected
-      if (!collected.length) return null
+      const { edits, ops, base } = collected
+      if (!(ops ?? edits).length) return null
+      let a: Artifact
+      if (ops && base) {
+        // Exact-source save, based on the version the frame was served: the server
+        // checks each element's hash and applies onto a newer head when nothing it
+        // touches changed there. A save coalesced into this version since the map was
+        // fetched changed its bytes, so a stale map is fetched again.
+        let map = await sourceMap(base.version)
+        if (map.sha !== base.sha) {
+          sourceMaps.current.delete(base.version)
+          map = await sourceMap(base.version)
+        }
+        if (map.sha !== base.sha)
+          throw new Error("The page is out of date. Reload it and edit again.")
+        const message = opsMessage(ops)
+        a = await api.publishOps(p.shortId, withHashes(ops, map.hashes), base.version, message)
+      }
       // Base = the CURRENT head, not the frozen view: if a publish landed mid-edit,
       // the quotes re-resolve against the new source (the strict matcher refuses
       // anything that moved), which is the closest thing to a clean auto-merge.
-      const base = art.current_version
-      const message = editMessage(collected)
-      const a = await api.publishEdits(p.shortId, collected, base, message)
+      else a = await api.publishEdits(p.shortId, edits, art.current_version, editMessage(edits))
       return { kind: "published", version: a.current_version }
     },
     errorToast: false,
@@ -542,6 +617,9 @@ export function useInlineEdit(p: {
       }
       // The version bump reloads the frame onto the published content; posting
       // mode-off here would flash the pre-edit text for a beat first.
+      // A save coalesced into the version on screen changes no URL, so nothing would
+      // reload the frame — and its source ids are now stale.
+      if (r.version === frozenVersion) p.reloadFrame()
       exit("settle")
       toast.success(`Saved v${r.version}`)
       p.load()
@@ -549,10 +627,10 @@ export function useInlineEdit(p: {
     onError: (err) => {
       if (err instanceof ApiError && err.status === 409) {
         p.load()
+        // The server names what changed under which edit (by slide where it can).
         toast.error("The artifact changed while you were editing.", {
           id: "inline-edit-conflict",
-          description:
-            "Your edits are still on the page. Save again to re-check them against the new version.",
+          description: `${err.message} Your edits are still on the page. Save again to re-check them against the new version.`,
           duration: 10_000,
         })
         return
@@ -563,7 +641,7 @@ export function useInlineEdit(p: {
       // first — the editor unmounts the frame, and a phantom session pinned to a stale
       // frozen version would otherwise survive underneath it.
       // biome-ignore format: the escape-hatch comment must stay on the toast line.
-      toast.error(err instanceof ApiError ? err.message : "Couldn't save your edits.", { // mutation-ignore: bespoke server-message toast with a source-editor fallback action
+      toast.error(err instanceof ApiError ? `Nothing was saved: ${err.message}` : "Couldn't save your edits.", { // mutation-ignore: bespoke server-message toast with a source-editor fallback action
         id: "inline-edit-failed",
         duration: 12_000,
         action: {

@@ -855,6 +855,16 @@ export function Artifact({ template = false }: { template?: boolean }) {
     resetEdit()
   }
 
+  // A reload of the same version (after an in-place inline save) starts a deck on its
+  // first slide; put the reader back on the slide they were editing.
+  const resumeSlide = useRef<number | null>(null)
+  useEffect(() => {
+    const at = resumeSlide.current
+    if (at === null || !deck) return
+    if (deck.i === at) resumeSlide.current = null
+    else deckCmd("goto", at)
+  }, [deck, deckCmd])
+
   // Inline (click-to-type) editing: the frame owns the caret and the diffs, this
   // hook owns the mode + save. Entering clears any parked selection so the
   // comment grammar and the edit grammar never overlap; the raw source editor is
@@ -878,6 +888,10 @@ export function Artifact({ template = false }: { template?: boolean }) {
       art?.current_content_type === "text/x-derive-video" ||
       art?.current_content_type === "text/x-derive-linked-bundle",
     onOpenSourceEditor: () => startEdit(),
+    reloadFrame: () => {
+      resumeSlide.current = deck?.i ?? null
+      reloadFrame()
+    },
     onEnter: () => {
       setSel(null)
       setComposer(null)

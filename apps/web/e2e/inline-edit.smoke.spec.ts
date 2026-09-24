@@ -18,10 +18,11 @@ import { expect, openArtifact, publishArtifact, shareArtifact, test } from "./fi
  */
 
 const DOC = "<h1>Runbook</h1><p id=one>First paragraph.</p><p id=two>Second paragraph.</p>"
-// A deck may mark the movable content but leave its footer outside that schema.
-// The layout scanner rejects the partial schema; title and body text still save.
+// A deck may mark its layout schema wrongly: here a node id the contract refuses (ids
+// start with a letter). The layout scanner refuses that region; title and body text
+// still save.
 const PARTIAL_LAYOUT_DOC = `<section data-derive-slide="0" data-derive-region="slide-0" data-derive-layout="stack">
-  <div data-derive-node="main"><h1 id="title">The original title for this slide.</h1>
+  <div data-derive-node="1-main"><h1 id="title">The original title for this slide.</h1>
     <p id="subtitle">The original supporting sentence.</p></div>
   <footer>Slide 01</footer>
 </section>`
@@ -235,13 +236,20 @@ test("type in the document and save — the edit lands in the stored source", as
   await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
 
   await expect(async () => {
-    expect(await versionOf(owner, shortId)).toBe(2)
+    // The owner's own web publish is minutes old, so the inline save coalesces into
+    // it: same version number, new bytes (a pause or a named version appends instead).
+    expect(await versionOf(owner, shortId)).toBe(1)
     const html = await contentOf(owner, shortId)
     expect(html).toContain("First paragraph. Amended.")
     // Surgical: the rest of the source is untouched, markup included.
     expect(html).toContain("<p id=two>Second paragraph.</p>")
     expect(html).toContain("<h1>Runbook</h1>")
   }).toPass({ timeout: 10_000 })
+
+  // Reopening shows the save. The version URL is unchanged, so this only holds if no
+  // cache kept the pre-save bytes it served a moment ago.
+  await owner.reload()
+  await expect(doc(owner).locator("#one")).toHaveText("First paragraph. Amended.")
 })
 
 test("replaces deck text when its partial layout schema cannot be scanned", async ({ owner }) => {
@@ -428,6 +436,133 @@ test("navigating away with unsaved edits is guarded, not silent", async ({ owner
   expect(await versionOf(owner, shortId)).toBe(1)
 })
 
+/**
+ * A deck's own chrome, as real decks write it: invisible full-height prev/next
+ * buttons laid over the slide (17% of the width each side), with the slide's title
+ * and the start of every line underneath the left one.
+ */
+const ZONES_DOC = `<!doctype html><html><head><meta charset="utf-8"><style>
+body{margin:0}.stage{position:relative;min-height:100vh}.slide{padding:40px 60px}
+.zone{position:absolute;top:0;bottom:0;width:17%;border:0;background:none;cursor:pointer}
+.zone.l{left:0}.zone.r{right:0}
+</style></head><body><div class="stage"><section class="slide">
+<h2 id="title">Agenda</h2>
+<h3 id="card">Extensions and<br>Integration</h3>
+<p id="item">Automations and workflows.</p>
+<p id="other">A second paragraph.</p>
+</section><button class="zone l" id="prev" aria-label="Previous slide"></button><button class="zone r" id="next" aria-label="Next slide"></button></div>
+<script>for (const z of document.querySelectorAll('.zone')) z.onclick = () => { window.__nav = (window.__nav || 0) + 1 }</script>
+</body></html>`
+
+async function seedZones(page: Page) {
+  const shortId = await publishArtifact(page, "zones.html", ZONES_DOC, "text/html")
+  await openArtifact(page, shortId)
+  await enterEditMode(page)
+  return shortId
+}
+
+test("typing follows the click: a click off the active block takes the keyboard with it", async ({
+  owner,
+}) => {
+  const shortId = await seedZones(owner)
+  await appendToParagraph(owner, "item", " A")
+
+  // The title sits under the deck's invisible "previous slide" button. The click
+  // goes through it to the words, and the next keystroke lands there — not at the
+  // end of the paragraph that was being edited a moment ago.
+  await doc(owner)
+    .locator("#title")
+    .click({ position: { x: 10, y: 8 }, force: true })
+  await owner.keyboard.type("B")
+  await expect(doc(owner).locator("#item")).toHaveText("Automations and workflows. A")
+  await expect(doc(owner).locator("#title")).toContainText("B")
+  await expect(doc(owner).locator("#title")).toHaveText(/^[ABadegn]{7}$/)
+
+  // Empty space under the other button arms nothing, so typing goes nowhere.
+  const next = doc(owner).locator("#next")
+  const box = await next.boundingBox()
+  if (!box) throw new Error("zone not laid out")
+  await next.click({ position: { x: 10, y: box.height - 10 }, force: true })
+  await owner.keyboard.type("C")
+  await expect(doc(owner).locator(".slide")).not.toContainText("C")
+  // …and the deck's own handler never ran: editing never flips the slide.
+  expect(
+    await doc(owner)
+      .locator("body")
+      .evaluate(() => (window as unknown as { __nav?: number }).__nav ?? 0),
+  ).toBe(0)
+
+  // With the caret dropped, Escape asks about the mode rather than leaving silently.
+  await owner.keyboard.press("Escape")
+  await expect(owner.getByTestId("inline-edit-exit-confirm")).toBeVisible()
+  await owner.getByTestId("confirm-dialog-cancel").click()
+  await expect(owner.getByTestId("inline-edit-exit-confirm")).toBeHidden()
+
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  // The success toast clears itself while the page is visible.
+  const saved = owner.getByText(/^Saved v\d+$/)
+  await expect(saved).toBeVisible()
+  await expect(saved).toBeHidden({ timeout: 10_000 })
+  const stored = await contentOf(owner, shortId)
+  expect(stored).toContain('<p id="item">Automations and workflows. A</p>')
+  expect(stored).toMatch(/<h2 id="title">[ABadegn]{7}<\/h2>/)
+})
+
+test("Shift+click through an overlay extends the selection, and Bold reaches it", async ({
+  owner,
+}) => {
+  const shortId = await seedZones(owner)
+  const item = doc(owner).locator("#item")
+  // The paragraph's box runs past its words, so a click at its centre lands the caret
+  // at the end; the Shift+click lands on its first letters, under the left button.
+  await item.click()
+  await item.click({ position: { x: 5, y: 8 }, force: true, modifiers: ["Shift"] })
+  await owner.keyboard.press("ControlOrMeta+b")
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  const stored = await contentOf(owner, shortId)
+  expect(stored).toMatch(/<p id="item">A?<b>[^<]*workflows\.<\/b><\/p>/)
+  expect(stored.replace(/<\/?b>/g, "")).toContain('<p id="item">Automations and workflows.</p>')
+})
+
+test("⌘A selects the block being edited, and a retype across a heading's <br> saves", async ({
+  owner,
+}) => {
+  const shortId = await seedZones(owner)
+  await doc(owner).locator("#other").click()
+  await owner.keyboard.press("ControlOrMeta+a")
+  await owner.keyboard.type("Replaced.")
+  await expect(doc(owner).locator("#other")).toHaveText("Replaced.")
+  await expect(doc(owner).locator("#item")).toHaveText("Automations and workflows.")
+
+  // The heading's original <br> goes with the select-all; the server accepts a span
+  // across it, so the retype saves as one line.
+  await doc(owner).locator("#card").click()
+  await owner.keyboard.press("ControlOrMeta+a")
+  await owner.keyboard.type("Extensions & Integrations")
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("2 unsaved changes")
+
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  const stored = await contentOf(owner, shortId)
+  expect(stored).toContain('<p id="other">Replaced.</p>')
+  expect(stored).toContain('<h3 id="card">Extensions &amp; Integrations</h3>')
+  expect(stored).toContain('<p id="item">Automations and workflows.</p>')
+})
+
+test("closing the tab with unsaved inline edits asks first", async ({ owner }) => {
+  await seed(owner)
+  await enterEditMode(owner)
+  await appendToParagraph(owner, "one", " Unsaved.")
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+  const dialog = owner.waitForEvent("dialog")
+  await owner.close({ runBeforeUnload: true })
+  const prompt = await dialog
+  expect(prompt.type()).toBe("beforeunload")
+  await prompt.dismiss()
+})
+
 test("double-clicking the text stays a plain word select — it never opens the mode", async ({
   owner,
 }) => {
@@ -605,7 +740,7 @@ test("resize an image and box, then undo/redo and save", async ({ owner }) => {
   await owner.getByTestId("inline-edit-save").click()
   await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
   const src = await contentOf(owner, shortId)
-  expect(src).toContain("display:block; width: 200px; height: auto")
+  expect(src).toContain('style="display:block; width: 200px; height: auto"')
   expect(src).toContain(
     '<div id="summary-box" data-derive-resizable style="width: 228px; height: 118px">',
   )
@@ -663,6 +798,10 @@ test("nested cards and their owning group move independently, undo, and save saf
   await expect(cards.nth(0)).toHaveAttribute("id", "card-a")
   await owner.getByTestId("inline-edit-discard").click()
   await expect(cards.nth(0)).toHaveAttribute("id", "card-b")
+  // Discard reverts but keeps the mode open; Done is the way out.
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("click text to edit")
+  await owner.getByTestId("inline-edit-done").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
 
   // If the final intent removes the parent, child-region changes are superseded by
   // that atomic subtree removal instead of producing a dangling operation.
@@ -1631,8 +1770,11 @@ test("formats a selection that starts inside a link and crosses an annotation", 
   await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
   await expect(async () => {
     const saved = await contentOf(owner, shortId)
-    expect(saved).toContain('<a href="/jobs">Al</a>')
-    expect(saved).toContain("<b>pha Beta Gam</b>")
+    // What the page shows is what's saved: the bold run keeps the link's second half
+    // (a copy of the authored link) and the annotation, byte for byte.
+    expect(saved).toBe(
+      '<p class="target"><a href="/jobs">Al</a><b><a href="/jobs">pha</a> <mark data-note="keep">Beta</mark> Gam</b>ma</p>',
+    )
   }).toPass()
 })
 

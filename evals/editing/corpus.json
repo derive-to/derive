@@ -41,6 +41,7 @@
         "playwright",
         "test",
         "e2e/deep/editing.deep.spec.ts",
+        "e2e/deep/editing-structure.deep.spec.ts",
         "--project=editing-deep"
       ],
       "filterFlag": "--grep"
@@ -938,6 +939,56 @@
       "cadence": "regression"
     },
     {
+      "id": "DECK-TEXT-001",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P0",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "five-edit same-slide save including a heading retyped across its br",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-TEXT-003",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "whitespace on a block seam stays out of a paragraph edit",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-TEXT-004",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "context pins repeated text with or without seam whitespace and never loosens uniqueness",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-STRUCT-003",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P1",
+      "oracle": "stable-unique-identity",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "duplicated slide gets fresh region and node ids, unique across the deck",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-STRUCT-004",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P2",
+      "oracle": "specific-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "out-of-range insert states the real slide count and the accepted insert range",
+      "cadence": "regression"
+    },
+    {
       "id": "VIDEO-001",
       "lane": "core",
       "surface": "video",
@@ -1165,6 +1216,36 @@
       "oracle": "conflict-no-version",
       "source": "apps/web/e2e/deep/editing.deep.spec.ts",
       "covers": "concurrent publish rejects stale inline save",
+      "cadence": "regression"
+    },
+    {
+      "id": "BROWSER-DECK-STRUCT-001",
+      "lane": "browser",
+      "surface": "deck",
+      "risk": "P0",
+      "oracle": "exact-source",
+      "source": "apps/web/e2e/deep/editing-structure.deep.spec.ts",
+      "covers": "a real 44-slide deck arms every region's nodes and saves moves as swaps that keep footers, notes, and in-between content in place",
+      "cadence": "regression"
+    },
+    {
+      "id": "BROWSER-DECK-LAYOUT-001",
+      "lane": "browser",
+      "surface": "deck",
+      "risk": "P0",
+      "oracle": "atomic-exact-source",
+      "source": "apps/web/e2e/deep/editing-structure.deep.spec.ts",
+      "covers": "a structural resize and a text edit save in one request and one version; a conflict saves neither",
+      "cadence": "regression"
+    },
+    {
+      "id": "BROWSER-FRAME-001",
+      "lane": "browser",
+      "surface": "browser",
+      "risk": "P0",
+      "oracle": "typing-target-and-stored-source",
+      "source": "apps/web/e2e/deep/editing-structure.deep.spec.ts",
+      "covers": "a click through an overlay moves typing to the clicked text, not the previously edited block",
       "cadence": "regression"
     }
   ]

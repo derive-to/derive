@@ -70,42 +70,7 @@ describe("serveContent — single-file artifacts", () => {
     expectSandbox(res)
   })
 
-  it("disables structural handles when source attributes are ambiguous", async () => {
-    const malformed = `<section data-derive-region="r" data-derive-layout="stack">
-  <p data-derive-node="a" data-derive-node="b">A</p>
-  <p data-derive-node="c">C</p>
-</section>`
-    const res = await serveContent(
-      ctx(),
-      blobStore({ k: malformed }),
-      { blob_key: "k", content_type: "text/html" },
-      "Malformed structure",
-      "/",
-      "",
-    )
-    const body = await res.text()
-    expect(body).toContain('Object.defineProperty(window,"__deriveStructuralSourceValid"')
-    expect(body).toContain(malformed)
-    expect(body.indexOf("__deriveStructuralSourceValid")).toBeLessThan(body.indexOf(SCRIPT))
-  })
-
-  it("does not disable handles for a valid structural contract", async () => {
-    const valid = `<section data-derive-region="r" data-derive-layout="stack">
-  <p data-derive-node="a">A</p>
-  <p data-derive-node="b">B</p>
-</section>`
-    const res = await serveContent(
-      ctx(),
-      blobStore({ k: valid }),
-      { blob_key: "k", content_type: "text/html" },
-      "Valid structure",
-      "/",
-      "",
-    )
-    expect(await res.text()).not.toContain('__deriveStructuralSourceValid",{value:false}')
-  })
-
-  it("keeps handles enabled for a valid horizontal row contract", async () => {
+  it("serves a horizontal row contract as authored", async () => {
     const valid = `<section data-derive-region="cards" data-derive-layout="row">
   <article data-derive-node="a">A</article>
   <article data-derive-node="b">B</article>
@@ -118,9 +83,7 @@ describe("serveContent — single-file artifacts", () => {
       "/",
       "",
     )
-    const body = await res.text()
-    expect(body).not.toContain('__deriveStructuralSourceValid",{value:false}')
-    expect(body).toContain('data-derive-layout="row"')
+    expect(await res.text()).toContain('data-derive-layout="row"')
   })
 
   it("optimistically exposes safe legacy deck children as structural nodes", async () => {

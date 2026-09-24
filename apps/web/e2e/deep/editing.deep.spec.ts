@@ -1,6 +1,15 @@
 import { Buffer } from "node:buffer"
-import { DECK_TEMPLATE, pageTextParts, sliceScenes } from "@derive/core"
+import { fileURLToPath } from "node:url"
+import {
+  applySourceOps,
+  DECK_TEMPLATE,
+  pageTextParts,
+  sliceScenes,
+  sourceMap,
+  stampSourceIds,
+} from "@derive/core"
 import type { Page } from "@playwright/test"
+import { buildSync } from "esbuild"
 import { expect, openArtifact, publishArtifact, test } from "../fixtures"
 
 const frame = (page: Page) => page.frameLocator("iframe[title]")
@@ -152,9 +161,13 @@ test("[BROWSER-DECK-001] a slide edit preserves deck position behavior and ident
   const title = frame(owner).getByRole("heading", {
     name: "The stage is fixed. Only the scale changes.",
   })
-  await title.click({ force: true })
+  // The canonical deck marks its headings as structural nodes: one click selects the
+  // box (move/resize), a double click reaches the words. Keys pressed while only the
+  // box is selected still belong to the deck, so End would jump to the last slide.
+  await title.dblclick({ force: true })
   await owner.keyboard.press("End")
   await owner.keyboard.type(" Updated.")
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
   await expect(owner.getByTestId("deck-position")).toHaveText("2 / 3")
   await owner.getByTestId("inline-edit-save").click()
   await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
@@ -261,21 +274,9 @@ test("[BROWSER-VIDEO-002] undo and discard restore a deleted active scene", asyn
   expect(await contentOf(owner, shortId)).toBe(source)
 })
 
-test("[BROWSER-CONCURRENCY-001] stale save keeps dirty work and succeeds after re-read", async ({
-  owner,
-}) => {
-  const v1 = '<h1>Concurrent</h1><p id="mine">My paragraph.</p><p>Original external line.</p>'
-  const v2 = '<h1>Concurrent</h1><p id="mine">My paragraph.</p><p>Changed externally.</p>'
-  const shortId = await publishArtifact(owner, "concurrent.html", v1, "text/html")
-  await openArtifact(owner, shortId)
-  await enterEditMode(owner)
-  await frame(owner).locator("#mine").click()
-  await owner.keyboard.press("End")
-  await owner.keyboard.type(" Pending edit.")
-
-  // Freeze the browser's v1-based save after it has been constructed, then land a
-  // full v2 publish through APIRequestContext (which is not intercepted by page.route).
-  // This deterministically creates the real race instead of hoping two requests cross.
+/** Save inline edits while `publish` lands a concurrent version: the browser's save is
+ *  held after it is built, the other publish goes through the API, then it proceeds. */
+const saveAcross = async (page: Page, shortId: string, publish: () => Promise<void>) => {
   let captured!: () => void
   let release!: () => void
   const saveCaptured = new Promise<void>((resolve) => {
@@ -285,7 +286,7 @@ test("[BROWSER-CONCURRENCY-001] stale save keeps dirty work and succeeds after r
     release = resolve
   })
   let delayed = false
-  await owner.route(`**/v1/artifacts/${shortId}/versions`, async (route) => {
+  await page.route(`**/v1/artifacts/${shortId}/versions`, async (route) => {
     if (!delayed && route.request().method() === "POST") {
       delayed = true
       captured()
@@ -293,32 +294,317 @@ test("[BROWSER-CONCURRENCY-001] stale save keeps dirty work and succeeds after r
     }
     await route.continue()
   })
-
-  await owner.getByTestId("inline-edit-save").click()
+  await page.getByTestId("inline-edit-save").click()
   await saveCaptured
-  const external = await owner.request.post(`/v1/artifacts/${shortId}/versions`, {
-    multipart: {
-      file: { name: "concurrent.html", mimeType: "text/html", buffer: Buffer.from(v2) },
-      message: "Concurrent external publish",
-    },
-  })
-  expect(external.ok(), `external publish failed: ${external.status()}`).toBeTruthy()
-  expect(await versionOf(owner, shortId)).toBe(2)
+  await publish()
   release()
+}
 
+test("[BROWSER-CONCURRENCY-001] a concurrent publish elsewhere merges; one to the same element conflicts", async ({
+  owner,
+}) => {
+  const v1 = '<h1>Concurrent</h1><p id="mine">My paragraph.</p><p>Original external line.</p>'
+  const shortId = await publishArtifact(owner, "concurrent.html", v1, "text/html")
+  const publish = (html: string) => async () => {
+    const external = await owner.request.post(`/v1/artifacts/${shortId}/versions`, {
+      multipart: {
+        file: { name: "concurrent.html", mimeType: "text/html", buffer: Buffer.from(html) },
+        message: "Concurrent external publish",
+      },
+    })
+    expect(external.ok(), `external publish failed: ${external.status()}`).toBeTruthy()
+  }
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+  await frame(owner).locator("#mine").click()
+  await owner.keyboard.press("End")
+  await owner.keyboard.type(" Pending edit.")
+
+  // Another line changed under the save: the paragraph it names is byte-identical at
+  // head, so the save lands there and keeps both.
+  await saveAcross(
+    owner,
+    shortId,
+    publish(v1.replace("Original external line.", "Changed externally.")),
+  )
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await expect(async () => {
+    const stored = await contentOf(owner, shortId)
+    expect(stored).toContain("My paragraph. Pending edit.")
+    expect(stored).toContain("Changed externally.")
+  }).toPass({ timeout: 10_000 })
+  await owner.unroute(`**/v1/artifacts/${shortId}/versions`)
+
+  // The same paragraph changed under the save: nothing is saved, the typing stays on
+  // the page, and saving again says which element conflicts.
+  await expect(frame(owner).locator("#mine")).toHaveText("My paragraph. Pending edit.")
+  const head = await contentOf(owner, shortId)
+  await enterEditMode(owner)
+  await frame(owner).locator("#mine").click()
+  await owner.keyboard.press("End")
+  await owner.keyboard.type(" Mine again.")
+  await saveAcross(owner, shortId, publish(head.replace("My paragraph.", "Their paragraph.")))
+  const conflict = owner.getByText("The artifact changed while you were editing.", { exact: true })
+  await expect(conflict).toBeVisible()
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+  await expect(frame(owner).locator("#mine")).toContainText("Mine again.")
+  await owner.getByTestId("inline-edit-save").click()
   await expect(
-    owner.getByText("The artifact changed while you were editing.", { exact: true }),
+    owner.locator("[data-sonner-toast]").filter({ hasText: /element \d+/ }),
   ).toBeVisible()
   await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
-  await expect(frame(owner).locator("#mine")).toHaveText("My paragraph. Pending edit.")
-  expect(await versionOf(owner, shortId)).toBe(2)
+  expect(await contentOf(owner, shortId)).toContain("Their paragraph.")
+})
 
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
-  // The retry is another attended inline save by the same user, so the current
-  // unreviewed web version is intentionally coalesced instead of appending v3.
-  expect(await versionOf(owner, shortId)).toBe(2)
-  const stored = await contentOf(owner, shortId)
-  expect(stored).toContain("My paragraph. Pending edit.")
-  expect(stored).toContain("Changed externally.")
+/* The exact-source serializer (packages/core/src/source-tokens.ts), against what a real
+   browser does to the DOM while someone edits. Each case stamps a document the way the
+   server serves it to an editor, snapshots it like edit mode does, lets Chromium mutate
+   it, and applies the collected ops to the stored source with the server's own
+   applySourceOps. The saved source must read exactly like the edited page, and every
+   byte outside the edited elements must be unchanged. */
+test.describe("exact-source serializer", () => {
+  const SERIALIZER = buildSync({
+    entryPoints: [
+      fileURLToPath(new URL("../../../../packages/core/src/source-tokens.ts", import.meta.url)),
+    ],
+    bundle: true,
+    format: "iife",
+    globalName: "__src",
+    write: false,
+  }).outputFiles[0]?.text as string
+  type Tok = { text?: string; keep?: number; tag?: string; href?: string; children?: Tok[] }
+  type Op = { op: string; src: number; children?: Tok[]; hash?: string; style?: string | null }
+
+  /** Load `src` stamped, let `before` play the page's own script, snapshot it like
+   *  edit mode does, and make `[data-edit]` contenteditable. */
+  const open = async (
+    page: Page,
+    src: string,
+    { mode = "plaintext-only", before = () => {} } = {},
+  ) => {
+    await page.setContent(stampSourceIds(src, { version: 1, sha: "x" }))
+    await page.evaluate(before)
+    await page.addScriptTag({ content: SERIALIZER })
+    await page.evaluate(
+      ([sel, m]) => {
+        const w = window as unknown as {
+          __snap: unknown
+          __src: { snapshotSource: (r: Element) => unknown }
+        }
+        w.__snap = w.__src.snapshotSource(document.body)
+        for (const el of document.querySelectorAll(sel as string))
+          el.setAttribute("contenteditable", m as string)
+      },
+      ["[data-edit]", mode],
+    )
+  }
+  const collect = (page: Page) =>
+    page.evaluate(() => {
+      const w = window as unknown as {
+        __snap: unknown
+        __src: { collectSourceOps: (r: Element, s: unknown) => { ops: Op[]; ok: boolean } }
+      }
+      return w.__src.collectSourceOps(document.body, w.__snap)
+    })
+  const text = (page: Page) =>
+    page.evaluate(() => document.body.innerText.replace(/\s+/g, " ").trim())
+
+  /** Collect, apply as the server does, render the result, and compare with the page. */
+  const roundTrip = async (page: Page, src: string) => {
+    const { ops, ok } = await collect(page)
+    expect(ok).toBe(true)
+    const { hashes } = await sourceMap(src)
+    const hash = (t: Tok): Tok => ({
+      ...t,
+      ...(t.keep !== undefined && { hash: hashes[t.keep] }),
+      ...(t.children && { children: t.children.map(hash) }),
+    })
+    const sent = ops.map((o) => ({
+      ...o,
+      hash: hashes[o.src],
+      ...(o.children && { children: o.children.map(hash) }),
+    }))
+    const { html } = await applySourceOps(src, sent)
+    const edited = await text(page)
+    await page.setContent(html)
+    expect(await text(page)).toBe(edited)
+    return { ops, html }
+  }
+  const selectText = (page: Page, from: [string, number], to: [string, number]) =>
+    page.evaluate(
+      ([a, b]) => {
+        const at = ([sel, off]: [string, number]) => {
+          const el = document.querySelector(sel) as Element
+          const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+          let n = walker.nextNode() as Text
+          let o = off
+          while (o > n.data.length) {
+            o -= n.data.length
+            n = walker.nextNode() as Text
+          }
+          return [n, o] as const
+        }
+        const r = document.createRange()
+        r.setStart(...at(a as [string, number]))
+        r.setEnd(...at(b as [string, number]))
+        const s = getSelection() as Selection
+        s.removeAllRanges()
+        s.addRange(r)
+      },
+      [from, to],
+    )
+
+  test("typing: one op on the element typed in, carrying only its children", async ({ page }) => {
+    const src =
+      '<body><main><p id="a" data-edit>Hello world</p><p>Other &amp; kept</p></main></body>'
+    await open(page, src)
+    await page.locator("#a").click()
+    await page.keyboard.press("End")
+    await page.keyboard.type(" & more <b>")
+    const { ops, html } = await roundTrip(page, src)
+    expect(ops).toEqual([
+      { op: "content", src: 2, hash: "", children: [{ text: "Hello world & more <b>" }] },
+    ])
+    expect(html).toBe(src.replace("Hello world", "Hello world &amp; more &lt;b&gt;"))
+  })
+
+  test("deleting across elements and a <br> merges them, and keeps what's left verbatim", async ({
+    page,
+  }) => {
+    const src =
+      '<body><div class="card" data-edit><span class="n">01</span><h3>Juliet<br>Kilo Lima</h3><p>Mike <em>november</em> oscar</p></div><p>After</p></body>'
+    await open(page, src)
+    await page.locator(".card").focus()
+    await selectText(page, ["h3", 3], ["p", 7])
+    await page.keyboard.press("Backspace")
+    const { ops, html } = await roundTrip(page, src)
+    expect(ops).toHaveLength(1)
+    expect(html.startsWith('<body><div class="card" data-edit><span class="n">01</span><h3>')).toBe(
+      true,
+    )
+    expect(html.endsWith("<p>After</p></body>")).toBe(true)
+    expect(html).not.toContain("<br>")
+  })
+
+  test("Enter in a browser-owned block becomes a <br>, never an invented div", async ({ page }) => {
+    const src = '<body><div id="a" data-edit>First line</div></body>'
+    await open(page, src, { mode: "true" })
+    await page.locator("#a").click()
+    await page.keyboard.press("End")
+    await page.keyboard.press("Enter")
+    await page.keyboard.type("Second")
+    const { html } = await roundTrip(page, src)
+    expect(html).toBe('<body><div id="a" data-edit>First line<br>Second</div></body>')
+  })
+
+  test("⌘A and retype replaces the element's children, <br> included", async ({ page }) => {
+    const src = '<body><h3 id="a" data-edit>Old<br>heading</h3><p>Stay</p></body>'
+    await open(page, src)
+    await page.locator("#a").click()
+    await page.keyboard.press("ControlOrMeta+a")
+    await page.keyboard.type("New")
+    const { ops, html } = await roundTrip(page, src)
+    expect(ops).toEqual([{ op: "content", src: 1, hash: "", children: [{ text: "New" }] }])
+    expect(html).toBe('<body><h3 id="a" data-edit>New</h3><p>Stay</p></body>')
+  })
+
+  test("the editor's bold, italic and link spans become the allowed tags", async ({ page }) => {
+    const src = '<body><p id="a" data-edit>one two three four</p></body>'
+    await open(page, src)
+    await page.evaluate(() => {
+      const t = (document.querySelector("#a") as Element).firstChild as Text
+      const wrap = (start: number, end: number, fmt: string, href?: string) => {
+        const r = document.createRange()
+        r.setStart(t.parentNode?.firstChild as Text, start)
+        r.setEnd(t.parentNode?.firstChild as Text, end)
+        const s = document.createElement("span")
+        s.setAttribute("data-derive-fmt", fmt)
+        if (href) s.setAttribute("data-derive-href", href)
+        r.surroundContents(s)
+      }
+      wrap(14, 18, "a", "https://example.com/?a=1&b=2")
+      wrap(8, 13, "i")
+      wrap(4, 7, "b")
+    })
+    const { html } = await roundTrip(page, src)
+    expect(html).toBe(
+      '<body><p id="a" data-edit>one <b>two</b> <i>three</i> <a href="https://example.com/?a=1&amp;b=2">four</a></p></body>',
+    )
+  })
+
+  test("browser-invented spans and pasted markup are unwrapped to their words", async ({
+    page,
+  }) => {
+    const src = '<body><div id="a" data-edit>Start end</div></body>'
+    await open(page, src, { mode: "true" })
+    await page.locator("#a").click()
+    await selectText(page, ["#a", 6], ["#a", 6])
+    await page.evaluate(() =>
+      document.execCommand(
+        "insertHTML",
+        false,
+        '<span style="color:red">red</span> <font size="5">big</font><div>block <strong>strong</strong></div><script>x()</script>',
+      ),
+    )
+    const { html } = await roundTrip(page, src)
+    expect(html.replace('<div id="a" data-edit>', "")).not.toMatch(/<(?:span|font|div|script)\b/)
+    expect(html).not.toContain("x()")
+    expect(html).toContain("<strong>strong</strong>")
+  })
+
+  test("a reorder keeps every moved element's bytes; a duplicate keeps it twice", async ({
+    page,
+  }) => {
+    const src =
+      '<body><section id="r"><div class="a" style="color:red">A &amp; a</div>\n  <div class="b">B<!-- note --></div>\n  <div class="c">C</div></section></body>'
+    await open(page, src)
+    await page.evaluate(() => {
+      const r = document.querySelector("#r") as Element
+      r.insertBefore(r.querySelector(".c") as Element, r.querySelector(".a"))
+      ;(r.querySelector(".b") as Element).after((r.querySelector(".a") as Element).cloneNode(true))
+    })
+    const { ops, html } = await roundTrip(page, src)
+    expect(ops).toEqual([
+      {
+        op: "content",
+        src: 1,
+        hash: "",
+        children: [
+          { keep: 4, hash: "" },
+          { keep: 2, hash: "" },
+          { text: "\n  " },
+          { keep: 3, hash: "" },
+          { keep: 2, hash: "" },
+          { text: "\n  " },
+        ],
+      },
+    ])
+    expect(html).toContain('<div class="b">B<!-- note --></div>')
+    expect(html.match(/<div class="a" style="color:red">A &amp; a<\/div>/g)).toHaveLength(2)
+  })
+
+  test("what a page script made is never written; source it swallowed refuses the save", async ({
+    page,
+  }) => {
+    const src = '<body><p id="a" data-edit>Words</p><div id="b"><p>Held</p></div></body>'
+    await open(page, src, {
+      before: () => {
+        const n = document.createElement("span")
+        n.textContent = " (generated)"
+        document.querySelector("#a")?.append(n)
+      },
+    })
+    await page.evaluate(() => document.querySelector("#a")?.prepend("New "))
+    const { ops } = await collect(page)
+    expect(ops).toEqual([{ op: "content", src: 1, hash: "", children: [{ text: "New Words" }] }])
+    // A script that wraps source in its own element leaves nothing a save can say.
+    await page.evaluate(() => {
+      const b = document.querySelector("#b") as Element
+      const wrap = document.createElement("div")
+      wrap.setAttribute("data-derive-generated", "")
+      wrap.append(...b.childNodes)
+      b.append(wrap)
+    })
+    expect((await collect(page)).ok).toBe(false)
+  })
 })

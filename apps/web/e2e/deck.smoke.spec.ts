@@ -553,38 +553,79 @@ test.describe("deck", () => {
     document.addEventListener('click', function(){ window.__clicks++ })
   </script></body></html>`
 
-  test("while a caret is in a block the page hears nothing, and hears again after", async ({
-    owner,
-  }) => {
+  test("while editing the page hears nothing, and hears again after", async ({ owner }) => {
     const shortId = await publishArtifact(owner, "counter.html", COUNTER, "text/html")
     await openArtifact(owner, shortId)
-    // The counter the fixture keeps, read from inside the sandboxed frame.
+    // What the fixture's own listeners counted, read from inside the sandboxed frame.
     const seen = () =>
       doc(owner)
         .locator("body")
-        .evaluate(() => (window as unknown as { __keys: number }).__keys)
+        .evaluate(() => {
+          const w = window as unknown as { __keys: number; __clicks: number }
+          return w.__keys + w.__clicks
+        })
 
-    // Reading: the page owns its keyboard, exactly as it would without us.
+    // Reading: the page owns its keyboard and clicks, exactly as it would without us.
     await doc(owner).locator("#p").click()
     await owner.keyboard.press("ArrowRight")
-    await expect.poll(seen).toBeGreaterThan(0)
+    await expect.poll(seen).toBeGreaterThan(1)
 
-    // Editing, caret in a block: the page hears nothing at all.
+    // Editing: with a caret in a block or not, the page hears no key and no click.
     await owner.getByTestId("artifact-inline-edit").click()
     await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
-    await doc(owner).locator("#p").click()
     const before = await seen()
+    await doc(owner).locator("#p").click()
     await owner.keyboard.type("typed words")
     await owner.keyboard.press("ArrowLeft")
     await owner.keyboard.press("Home")
+    await owner.keyboard.press("Escape")
+    await owner.keyboard.press("ArrowRight")
     expect(await seen()).toBe(before)
     // …and the characters still reached the document: propagation was stopped, the
     // default never was.
     await expect(doc(owner).locator("#p")).toContainText("typed words")
 
-    // Escape drops the caret. The page is listening again immediately.
+    // Leaving the mode hands the page its input back.
     await owner.keyboard.press("Escape")
+    await owner.getByTestId("inline-edit-exit-confirm").click()
+    await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+    await doc(owner).locator("#p").click()
     await owner.keyboard.press("ArrowRight")
-    await expect.poll(seen).toBeGreaterThan(before)
+    await expect.poll(seen).toBeGreaterThan(before + 1)
+  })
+
+  test("in edit mode the deck's own keys never change slides; the deck bar still does", async ({
+    owner,
+  }) => {
+    await seedDeck(owner)
+    await expect(owner.getByTestId("deck-position")).toHaveText("1 / 3")
+    await owner.getByTestId("deck-edit").click()
+    await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
+    const keys = ["End", "Space", "ArrowRight", "ArrowDown", "PageDown", "ArrowLeft", "Home"]
+
+    // No caret anywhere: the deck binds every one of these to navigation.
+    await doc(owner)
+      .locator("body")
+      .click({ position: { x: 4, y: 4 } })
+    for (const key of keys) await owner.keyboard.press(key)
+    await expect(owner.getByTestId("deck-position")).toHaveText("1 / 3")
+
+    // A caret in the title: the same keys move the caret and type, nothing else.
+    const title = doc(owner).getByRole("heading", { name: "New deck" })
+    await title.dblclick()
+    await owner.keyboard.press("End")
+    for (const key of keys) await owner.keyboard.press(key)
+    await expect(owner.getByTestId("deck-position")).toHaveText("1 / 3")
+    await expect(title).toBeVisible()
+
+    // A selected structural node: Option+arrows are the editor's (they move it), plain
+    // arrows and End are still nobody's.
+    await owner.keyboard.press("Escape")
+    for (const key of keys) await owner.keyboard.press(key)
+    await expect(owner.getByTestId("deck-position")).toHaveText("1 / 3")
+
+    // The host's bar is how slides change while editing.
+    await owner.getByTestId("deck-next").click()
+    await expect(owner.getByTestId("deck-position")).toHaveText("2 / 3")
   })
 })

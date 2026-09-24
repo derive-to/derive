@@ -147,6 +147,10 @@ const INLINE_TAGS = new Set([
   "var",
 ])
 
+/** Line-break voids. A retyped two-line heading replaces its `<br>`: the break is
+ *  part of what the person selected and typed over, not structure around it. */
+const INLINE_VOID_TAGS = new Set(["br", "wbr"])
+
 interface OpenInlineTag {
   name: string
   raw: string
@@ -262,10 +266,13 @@ const inlineBoundaryRepair = (
       continue
     }
     const name = parsed.name
+    // A line break inside the selection is spliced out with it; one outside it is
+    // untouched. It never opens or closes anything, so the stack is unaffected.
+    if (INLINE_VOID_TAGS.has(name)) continue
     if (!INLINE_TAGS.has(name)) {
       if (at >= rStart)
         throw new EditError(
-          `${label} failed: the selection crosses an element boundary in the source.`,
+          `${label} failed: the selection crosses a <${name}> boundary in the source.`,
         )
       continue
     }
@@ -609,6 +616,37 @@ const markdownSpanToRaw = (
 }
 
 /**
+ * Whitespace at the edge of a quote that sits on a block seam. The projection renders
+ * a block boundary (or a `<br>`) as a space, so a literal quote such as " AI classifies…"
+ * can begin on the seam before its paragraph. That space belongs to no block the person
+ * could type into; splicing it would cross the boundary. Drop an edge whitespace run
+ * from the span when it touches such a seam, and report which edges moved so the
+ * replacement's matching whitespace goes too. Whitespace inside one text run is
+ * ordinary text and stays in the span.
+ */
+const trimSeamWhitespace = (
+  text: string,
+  segments: PageTextSegment[],
+  span: { start: number; end: number },
+): { start: number; end: number; head: boolean; tail: boolean } => {
+  const onSeam = (from: number, to: number): boolean => {
+    for (let t = from; t < to; t++)
+      if (segments[segmentIndexAt(segments, t)]?.kind === "gap") return true
+    return false
+  }
+  let { start, end } = span
+  let lead = start
+  while (lead < end && /\s/.test(text[lead] as string)) lead++
+  const head = lead > start && lead < end && onSeam(start, lead)
+  if (head) start = lead
+  let trail = end
+  while (trail > start && /\s/.test(text[trail - 1] as string)) trail--
+  const tail = trail < end && trail > start && onSeam(trail, end)
+  if (tail) end = trail
+  return { start, end, head, tail }
+}
+
+/**
  * Apply quote-scoped edits to `src` atomically. Every quote is resolved against the
  * ORIGINAL source projection (rendered text for HTML and Markdown, literal source
  * for other content types), mapped back to raw offsets through its segment map.
@@ -703,11 +741,24 @@ export function applyQuoteEdits(
           `${label} failed: "${clip(exact, 60)}" appears ${all.length} times and the surrounding context didn't pin one down.`,
         )
     }
+    let newText = e.new_text
+    let newHtml = e.new_html
+    if (isHtml && segments) {
+      const seam = trimSeamWhitespace(text, segments, span)
+      span = { start: seam.start, end: seam.end }
+      if (seam.head) {
+        newText = newText?.trimStart()
+        newHtml = newHtml?.trimStart()
+      }
+      if (seam.tail) {
+        newText = newText?.trimEnd()
+        newHtml = newHtml?.trimEnd()
+      }
+    }
     if (!safeTextOffsets.has(span.start) || !safeTextOffsets.has(span.end))
       throw new EditError(
         `${label} failed: the edit would split a character, emoji, or grapheme. Select the whole character.`,
       )
-    let newText = e.new_text
     if (isLatex && segments && typeof newText === "string") {
       const trimmed = trimUnchangedEntities(src, text, segments, span, newText)
       span = { start: trimmed.start, end: trimmed.end }
@@ -740,7 +791,7 @@ export function applyQuoteEdits(
     // Markup, only where markup is the language. On markdown the source IS what the
     // author writes, so formatting is `**bold**` typed as text; splicing tags there
     // would put literal HTML in someone's prose.
-    if (e.new_html !== undefined && !isHtml)
+    if (newHtml !== undefined && !isHtml)
       throw new EditError(
         `${label} failed: this document is ${isLatex ? "LaTeX" : "Markdown"} — write formatting as ${isLatex ? "LaTeX" : "Markdown"} text, not HTML.`,
       )
@@ -748,13 +799,13 @@ export function applyQuoteEdits(
     // line and `&` would start a table cell, so the special characters are escaped the
     // way HTML's are.
     const replacement =
-      e.new_html !== undefined
-        ? sanitizeInline(e.new_html)
+      newHtml !== undefined
+        ? sanitizeInline(newHtml)
         : isHtml
-          ? escapeHtml(e.new_text ?? "")
+          ? escapeHtml(newText ?? "")
           : isLatex
             ? escapeLatex(newText ?? "")
-            : (e.new_text ?? "")
+            : (newText ?? "")
     spans.push({ ...raw, replacement: raw.before + replacement + raw.after, label })
   }
 
