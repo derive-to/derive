@@ -40,6 +40,11 @@ export async function prepareRuntimeModel(
     organization_id: runtime.ortam_org_id,
     user_id: runtime.ortam_user_id,
   })
+  // The desired account may already be attached and another pass may have resumed
+  // compute. Record that receipt before considering a stop; a stale observer must
+  // never undo the winning controller's resume. Only an actual transfer needs a stop.
+  if (sandbox.agent_connections?.user_id === target.ortam_user_id)
+    return deps.meta.applyRuntimeModelConnection(attempt.id, run.org_id, target.id)
   if (sandbox.state !== "stopped") {
     if (!attempt.stop_operation_id) {
       const operation = await observer.lifecycle(
@@ -61,8 +66,6 @@ export async function prepareRuntimeModel(
     }
     return null
   }
-  if (sandbox.agent_connections?.user_id === target.ortam_user_id)
-    return deps.meta.applyRuntimeModelConnection(attempt.id, run.org_id, target.id)
   if (sandbox.agent_connections) {
     if (
       !attempt.model_source_user_id ||
