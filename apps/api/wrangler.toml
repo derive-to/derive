@@ -334,10 +334,9 @@ DERIVE_SIGNUP_MODE = "open"
 # the pilot operator; it has no other members or existing jobs. Each workspace's
 # automateBeta + hostedAgentsEnabled settings remain the second gate.
 DERIVE_HOSTED_RUNS_ALLOWLIST = "ws_fas46hoo39z55zqg,ws_5b0iz1wp99ksykr7,ws_abfxtkvjfijoyeau"
-# Managed model-account qualification is restricted to the isolated Ortam Pilot.
+# Persistent workflows are enabled for Derive after shared-account pilot qualification.
 # The deployment-owned integration key is a Worker secret, never a user connection.
-# Keep other workspaces excluded until the shared-account live acceptance passes.
-DERIVE_MANAGED_RUNS_ALLOWLIST = "ws_5b0iz1wp99ksykr7"
+DERIVE_MANAGED_RUNS_ALLOWLIST = "ws_5b0iz1wp99ksykr7,ws_abfxtkvjfijoyeau"
 # Ortam pilot: install this pinned CLI in each prepared sandbox before binding it
 # to a Context (docs/ortam-smoke.md). This path enables the controller; execution
 # still requires the workspace allowlist above and workspace opt-in. No VM is created

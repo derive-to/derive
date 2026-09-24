@@ -1387,6 +1387,7 @@ describe("runtime provisioning and shared model accounts", () => {
   let sandboxStatus = 200
   let modelActive = true
   let loseAttachment = false
+  let holdSandboxRead: (() => Promise<void>) | null = null
   const disconnectedSubjects = new Set<string | null>()
   const launched = new Map<string, { token: string; attempt: string }>()
   const creates = new Map<
@@ -1539,6 +1540,9 @@ describe("runtime provisioning and shared model accounts", () => {
     }
     if (sandboxStatus !== 200) return new Response(null, { status: sandboxStatus })
     if (saved.sandbox.state === "deleted") return new Response(null, { status: 404 })
+    const hold = holdSandboxRead
+    holdSandboxRead = null
+    if (hold) await hold()
     return json(saved.sandbox)
   }
   const pokeRuntime = vi.fn()
@@ -1562,6 +1566,7 @@ describe("runtime provisioning and shared model accounts", () => {
     config.managed.workspaceIds.clear()
     modelActive = true
     loseAttachment = false
+    holdSandboxRead = null
     loseCreate = false
     loseDelete = false
     failSetup = false
@@ -2078,7 +2083,30 @@ describe("runtime provisioning and shared model accounts", () => {
     expect(f.sandbox.agent_connections?.user_id).toBe(account?.ortam_user_id)
     expect(f.sandbox.state).toBe("stopped")
     expect(f.sandbox.version).toBe(originalVersion + 2)
-    await Promise.all([pass(), pass()])
+    // A delayed observer must not stop a machine another controller has resumed.
+    // Hold its sandbox read until the winning pass has committed the resume receipt.
+    let entered: () => void = () => {}
+    let release: () => void = () => {}
+    const reading = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    holdSandboxRead = async () => {
+      entered()
+      await released
+    }
+    const delayed = pass()
+    await reading
+    try {
+      await pass()
+      expect(f.sandbox.state).toBe("ready")
+    } finally {
+      release()
+      await delayed
+    }
+    expect(f.sandbox.state).toBe("ready")
     for (let i = 0; i < 4; i++) await pass()
     expect(f.sandbox.id).toBe(originalId)
     expect(await meta.getContextRuntime(f.runtime.id, "default")).toMatchObject({
