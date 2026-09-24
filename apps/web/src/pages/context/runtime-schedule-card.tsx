@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { contextRuntimeQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { ExecutionReadiness } from "../workflows/execution-readiness"
 
 export function RuntimeScheduleCard({
   contextId,
@@ -29,6 +30,7 @@ export function RuntimeScheduleCard({
     cron: String(trigger?.cron ?? "0 9 * * *"),
     timezone: String(trigger?.tz ?? Intl.DateTimeFormat().resolvedOptions().timeZone),
     revision: schedule?.revision ?? null,
+    mode: trigger?.kind === "schedule" ? "schedule" : "manual",
   }
   // Capture the revision on the first edit. Polling may refresh the saved definition,
   // but must neither erase the draft nor silently authorize overwriting another edit.
@@ -41,13 +43,13 @@ export function RuntimeScheduleCard({
       api.saveContextRuntimeSchedule(contextId, {
         instruction: pause && schedule ? schedule.instruction : instruction.trim(),
         provider: pause && schedule ? schedule.provider : provider,
-        cron: pause ? trigger.cron : cron.trim(),
-        timezone: pause ? trigger.tz : timezone.trim(),
-        enabled: !pause,
+        cron: pause ? (trigger?.cron ?? null) : values.mode === "manual" ? null : cron.trim(),
+        timezone: pause ? (trigger?.tz ?? timezone) : timezone.trim(),
+        enabled: !pause && values.mode === "schedule",
         revision: pause ? saved.revision : values.revision,
       }),
     invalidate: [contextRuntimeQuery(contextId).queryKey],
-    success: "Schedule saved",
+    success: "Workflow configuration saved",
     onSuccess: (result, pause) => {
       queryClient.setQueryData<Awaited<ReturnType<typeof api.getContextRuntime>>>(
         contextRuntimeQuery(contextId).queryKey,
@@ -78,16 +80,22 @@ export function RuntimeScheduleCard({
         <SectionTitle
           action={
             <StatusBadge tone={schedule?.enabled ? "ok" : "muted"}>
-              {schedule?.enabled ? "Active" : schedule ? "Paused" : "Not scheduled"}
+              {trigger?.kind !== "schedule"
+                ? "On demand"
+                : schedule?.enabled
+                  ? "Scheduled"
+                  : "Schedule paused"}
             </StatusBadge>
           }
         >
-          Schedule
+          Instructions and schedule
         </SectionTitle>
-        <p className="text-sm text-muted-foreground">Repeat a task at the times you choose.</p>
+        <p className="text-sm text-muted-foreground">
+          Save the task once. Run it on demand or add a schedule.
+        </p>
       </div>
       <label className="flex min-w-0 flex-col gap-1.5 text-sm">
-        Recurring task
+        Task instructions
         <Textarea
           data-testid="context-runtime-schedule-instruction"
           className="min-h-28"
@@ -113,33 +121,72 @@ export function RuntimeScheduleCard({
           <option value="claude-code">Claude Code</option>
         </select>
       </label>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
-        <label className="flex min-w-0 flex-col gap-1.5 text-sm">
-          Cron expression
-          <Input
-            data-testid="context-runtime-schedule-cron"
-            className="font-mono"
-            value={cron}
-            disabled={save.isPending}
-            onChange={(e) => setDraft({ ...values, cron: e.target.value })}
-            placeholder="0 9 * * *"
-          />
-        </label>
-        <label className="flex min-w-0 flex-col gap-1.5 text-sm">
-          Timezone
-          <Input
-            data-testid="context-runtime-schedule-timezone"
-            value={timezone}
-            disabled={save.isPending}
-            onChange={(e) => setDraft({ ...values, timezone: e.target.value })}
-            placeholder="America/New_York"
-          />
-        </label>
-      </div>
-      <p className="text-sm text-muted-foreground">
-        <code className="font-mono">0 9 * * *</code> runs daily at 9 AM in the selected timezone.
-      </p>
-      {schedule && (
+      <label className="flex flex-col gap-1.5 text-sm">
+        When to run
+        <select
+          data-testid="context-runtime-trigger"
+          className="h-8 rounded-lg border border-input bg-background px-2 text-sm"
+          value={values.mode}
+          disabled={save.isPending}
+          onChange={(e) => setDraft({ ...values, mode: e.target.value })}
+        >
+          <option value="manual">On demand</option>
+          <option value="schedule">On a schedule</option>
+        </select>
+      </label>
+      {values.mode === "schedule" && (
+        <>
+          <ExecutionReadiness />
+          <label className="flex flex-col gap-1.5 text-sm">
+            Frequency
+            <select
+              data-testid="context-runtime-frequency"
+              className="h-8 rounded-lg border border-input bg-background px-2 text-sm"
+              value={["0 9 * * *", "0 9 * * 1-5", "0 9 * * 1"].includes(cron) ? cron : "custom"}
+              onChange={(e) =>
+                setDraft({
+                  ...values,
+                  cron: e.target.value === "custom" ? "0 12 * * *" : e.target.value,
+                })
+              }
+              disabled={save.isPending}
+            >
+              <option value="0 9 * * *">Daily at 9 AM</option>
+              <option value="0 9 * * 1-5">Weekdays at 9 AM</option>
+              <option value="0 9 * * 1">Mondays at 9 AM</option>
+              <option value="custom">Custom</option>
+            </select>
+          </label>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="flex min-w-0 flex-col gap-1.5 text-sm">
+              Cron expression
+              <Input
+                data-testid="context-runtime-schedule-cron"
+                className="font-mono"
+                value={cron}
+                disabled={save.isPending}
+                onChange={(e) => setDraft({ ...values, cron: e.target.value })}
+                placeholder="0 9 * * *"
+              />
+            </label>
+            <label className="flex min-w-0 flex-col gap-1.5 text-sm">
+              Timezone
+              <Input
+                data-testid="context-runtime-schedule-timezone"
+                value={timezone}
+                disabled={save.isPending}
+                onChange={(e) => setDraft({ ...values, timezone: e.target.value })}
+                placeholder="America/New_York"
+              />
+            </label>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            <code className="font-mono">0 9 * * *</code> runs daily at 9 AM in the selected
+            timezone.
+          </p>
+        </>
+      )}
+      {schedule && trigger?.kind === "schedule" && (
         <p className="text-sm text-muted-foreground">
           {schedule.enabled && nextRunAt
             ? `Next run: ${new Date(nextRunAt).toLocaleString(undefined, { timeZone: trigger.tz })} (${trigger.tz})`
@@ -165,13 +212,16 @@ export function RuntimeScheduleCard({
           loading={save.isPending}
           data-testid="context-runtime-schedule-save"
           disabled={
-            save.isPending || stale || !instruction.trim() || !cron.trim() || !timezone.trim()
+            save.isPending ||
+            stale ||
+            !instruction.trim() ||
+            (values.mode === "schedule" && (!cron.trim() || !timezone.trim()))
           }
           onClick={() => save.mutate(false)}
         >
-          {save.isPending ? "Saving…" : schedule?.enabled ? "Save schedule" : "Start schedule"}
+          {save.isPending ? "Saving…" : "Save configuration"}
         </Button>
-        {!!schedule?.enabled && (
+        {!!schedule?.enabled && trigger?.kind === "schedule" && (
           <Button
             variant="ghost"
             data-testid="context-runtime-schedule-pause"
@@ -190,10 +240,10 @@ export function RuntimeScheduleCard({
           How schedules work
         </summary>
         <p className="mt-2">
-          Runs one job at a time. Missed runs are combined into one catch-up. Pausing or editing
-          cancels queued work; a job that has started finishes normally. Scheduled reports are
-          private to whoever last saved the schedule. Manual reports are private to the person who
-          started the run.
+          Runs one workflow at a time. Missed runs are combined into one catch-up. Editing or
+          pausing invalidates queued work. New manual runs remain available. A run that has started
+          finishes normally. Scheduled reports are private to whoever last saved the schedule.
+          Manual reports are private to the person who started the run.
         </p>
       </details>
     </div>

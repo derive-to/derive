@@ -3,22 +3,19 @@ import { Link } from "@tanstack/react-router"
 import { ExternalLink, GitBranch, Sparkles } from "lucide-react"
 import { useState } from "react"
 import { type Automation, api, type Run } from "@/api"
-import { AdminNote } from "@/components/shared/admin-note"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
 import { RunReceipt } from "@/components/shared/run-receipt"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
-import { SectionHeading } from "@/components/shared/section-title"
-import { SettingRow } from "@/components/shared/setting-row"
 import { SettingsEmpty } from "@/components/shared/settings-empty"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Skeleton } from "@/components/ui/skeleton"
 import { automationsQuery, runsQuery, workspaceQuery, workspaceSettingsQuery } from "@/lib/queries"
+import { runtimeReport } from "@/lib/runtime-report"
 import { ago } from "@/lib/time"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { SettingsListSkeleton } from "../settings/settings-list-skeleton"
@@ -36,7 +33,6 @@ import { presentAutomationRun } from "./run-presentation"
 
 export function AutomatedWorkflows() {
   const qc = useQueryClient()
-  const [createVersion, setCreateVersion] = useState(0)
   const { data: automations, isPending, isError, refetch } = useQuery(automationsQuery())
   const workspace = useQuery(workspaceQuery())
   const settingsQuery = useQuery(workspaceSettingsQuery())
@@ -45,69 +41,13 @@ export function AutomatedWorkflows() {
   const isAdmin = ws?.role === "owner"
   const canRun = ws?.role === "owner" || ws?.role === "editor"
   const standingRunsEnabled = settings?.automateBeta === true
-  const accessPending = workspace.isPending || settingsQuery.isPending
-  const accessError = workspace.isError || settingsQuery.isError
-  const retryAccess = () => {
-    void Promise.all([workspace.refetch(), settingsQuery.refetch()])
-  }
   const reload = () => {
     qc.invalidateQueries({ queryKey: automationsQuery().queryKey })
     qc.invalidateQueries({ queryKey: runsQuery().queryKey })
   }
-  const created = () => {
-    setCreateVersion((version) => version + 1)
-    reload()
-  }
-  const enable = useApiMutation({
-    mutationFn: () => api.updateWorkspaceSettings({ automateBeta: true }),
-    success: "Workflows enabled",
-    onSuccess: (next) => qc.setQueryData(workspaceSettingsQuery().queryKey, next),
-  })
 
   return (
     <section className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <SectionHeading>Automate</SectionHeading>
-        <p className="text-sm text-muted-foreground">
-          Start a simple AI task now, on a schedule, or from an event—or safely dispatch an opted-in
-          GitHub Action.
-        </p>
-      </div>
-      {accessPending ? (
-        <Skeleton className="h-20 w-full rounded-lg" />
-      ) : accessError ? (
-        <LoadError
-          title="Couldn’t load workflow permissions"
-          testId="workflow-permissions-retry"
-          layout="inline"
-          onRetry={retryAccess}
-        />
-      ) : isAdmin && standingRunsEnabled ? (
-        <div className="rounded-lg border bg-card p-4">
-          <AutomationForm key={createVersion} runOnCreate onDone={created} />
-        </div>
-      ) : isAdmin ? (
-        <SettingsGroup>
-          <SettingRow
-            label="Enable automated workflows"
-            description="Turn on direct AI tasks and GitHub Action dispatches for this workspace. You can review every run before adding a schedule."
-          >
-            <Button
-              data-testid="automations-enable"
-              variant="secondary"
-              size="sm"
-              onClick={() => enable.mutate()}
-              loading={enable.isPending}
-              disabled={enable.isPending}
-            >
-              Enable workflows
-            </Button>
-          </SettingRow>
-        </SettingsGroup>
-      ) : (
-        <AdminNote can="create workflows" />
-      )}
-
       {isPending ? (
         <SettingsListSkeleton />
       ) : isError ? (
@@ -118,8 +58,7 @@ export function AutomatedWorkflows() {
         />
       ) : !automations || automations.length === 0 ? (
         <SettingsEmpty>
-          Choose Simple for an AI instruction or Advanced for a safe derive-*.yml GitHub Action.
-          Your first run starts as soon as you create it.
+          No other configured workflows yet. Use New workflow to add a task or GitHub Action.
         </SettingsEmpty>
       ) : (
         <SettingsGroup>
@@ -134,9 +73,6 @@ export function AutomatedWorkflows() {
           ))}
         </SettingsGroup>
       )}
-
-      {/* The runs endpoint is Admin-gated: don't issue a query that can only 403. */}
-      {isAdmin && automations ? <RecentRuns automations={automations} /> : null}
     </section>
   )
 }
@@ -161,7 +97,7 @@ function AutomationRow({
   })
   const pause = useApiMutation({
     mutationFn: () => api.updateAutomation(automation.id, { enabled: !automation.enabled }),
-    success: automation.enabled ? "Workflow paused" : "Workflow resumed",
+    success: automation.enabled ? "Workflow disabled" : "Workflow enabled",
     onSuccess: () => onDone(),
   })
   const remove = useApiMutation({
@@ -190,15 +126,11 @@ function AutomationRow({
         <span className="flex min-w-0 flex-wrap items-center gap-1.5">
           <span className="min-w-0 max-w-full truncate">{automation.instruction}</span>
           <Badge variant="outline">
-            {action
-              ? "Advanced · GitHub Action"
-              : automation.provider === "codex"
-                ? "Simple · Codex"
-                : "Simple · Claude Code"}
+            {action ? "GitHub Action" : automation.provider === "codex" ? "Codex" : "Claude Code"}
           </Badge>
           {automation.context_id && <Badge variant="outline">Context</Badge>}
           <Badge variant="secondary">{triggerLabel(automation.trigger)}</Badge>
-          {!automation.enabled && <Badge variant="outline">Paused</Badge>}
+          {!automation.enabled && <Badge variant="outline">Disabled</Badge>}
           {!automation.trigger.action ? (
             <ExecutorBadge seenAt={automation.executor_seen_at ?? null} />
           ) : null}
@@ -238,7 +170,7 @@ function AutomationRow({
               loading={pause.isPending}
               disabled={pause.isPending}
             >
-              {automation.enabled ? "Pause" : "Resume"}
+              {automation.enabled ? "Disable" : "Enable"}
             </Button>
           )}
           {canRemove && (
@@ -285,7 +217,7 @@ function AutomationRow({
   )
 }
 
-function RecentRuns({ automations }: { automations: Automation[] }) {
+export function RecentRuns({ automations }: { automations: Automation[] }) {
   const {
     data: runs,
     isPending,
@@ -300,7 +232,8 @@ function RecentRuns({ automations }: { automations: Automation[] }) {
   if (isPending) return null
   if (isError)
     return <p className="mt-6 text-sm text-muted-foreground">Couldn't load recent runs.</p>
-  if (!runs || runs.length === 0) return null
+  if (!runs || runs.length === 0)
+    return <SettingsEmpty>No runs yet. Open a workflow to start one.</SettingsEmpty>
   return (
     <div className="mt-6">
       <Eyebrow as="div" className="mb-1">
@@ -310,12 +243,14 @@ function RecentRuns({ automations }: { automations: Automation[] }) {
         {runs.slice(0, 12).map((run, index) => {
           const automation = automations.find((item) => item.id === run.automation_id)
           const presentation = presentAutomationRun(run, automation)
+          const cloud = runtimeReport(run.meta)
           const writes = runWrites(run.meta)
           const receipt = runExecutionReceipt(run.meta)
           const githubReceipt = githubActionRunReceipt(run.meta)
           const timeline = run.timeline
           const hasDetails = Boolean(
-            writes.length ||
+            cloud?.report_short_id ||
+              writes.length ||
               githubReceipt ||
               runOutcome(run.meta) ||
               receipt?.model ||
@@ -339,6 +274,26 @@ function RecentRuns({ automations }: { automations: Automation[] }) {
             >
               {hasDetails ? (
                 <div className="grid gap-2">
+                  {cloud?.report_short_id && (
+                    <Link
+                      to="/artifacts/$ref"
+                      params={{ ref: cloud.report_short_id }}
+                      className="text-sm text-primary underline"
+                      data-testid={`workflow-run-report-${run.id}`}
+                    >
+                      Open report
+                    </Link>
+                  )}
+                  {run.context_id && (
+                    <Link
+                      to="/workflows"
+                      search={{ workflow: run.context_id }}
+                      className="text-sm text-primary underline"
+                      data-testid={`workflow-run-detail-${run.id}`}
+                    >
+                      Open workflow
+                    </Link>
+                  )}
                   <RunOutcome meta={run.meta} />
                   <RunGithubAction meta={run.meta} />
                   <RunWrites meta={run.meta} />

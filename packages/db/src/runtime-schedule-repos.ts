@@ -11,7 +11,11 @@ export function runtimeScheduleRepos(execute: (statement: SQL) => Promise<unknow
       (input.revision !== null && (!Number.isSafeInteger(input.revision) || input.revision < 0))
     )
       throw new Error("Invalid schedule revision or timestamp")
-    const trigger = JSON.stringify({ kind: "schedule", cron: input.cron, tz: input.timezone })
+    const trigger = JSON.stringify(
+      input.cron === null
+        ? { kind: "manual" }
+        : { kind: "schedule", cron: input.cron, tz: input.timezone },
+    )
     return first(sql`
       INSERT INTO automation (id, org_id, agent_id, context_id, runtime_id, created_by,
         trigger, instruction, provider, enabled, revision, created_at, updated_at)

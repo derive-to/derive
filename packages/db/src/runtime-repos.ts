@@ -154,7 +154,7 @@ export function runtimeRepos(execute: (statement: SQL) => Promise<unknown[]>): R
         AND (rt.connection_id IS NOT NULL OR ${runtimeModelGrant(sql`rt.context_id`, sql`rt.org_id`, snapshot)})
         AND (r.automation_id IS NULL OR EXISTS (
           SELECT 1 FROM automation a WHERE a.id = r.automation_id AND a.org_id = r.org_id
-            AND a.runtime_id = r.runtime_id AND a.enabled = 1 AND (rt.connection_id IS NULL OR a.created_by = r.initiated_by)
+            AND a.runtime_id = r.runtime_id AND (a.enabled = 1 OR r.reason = 'manual:runtime') AND (rt.connection_id IS NULL OR a.created_by = r.initiated_by)
             AND a.revision = ${scheduleRevision ?? -1}))) RETURNING *`)
     },
     getContextRuntimeForContext: (contextId, orgId) =>
@@ -275,7 +275,7 @@ export function runtimeRepos(execute: (statement: SQL) => Promise<unknown[]>): R
           AND (cast(${input.automation_id ?? null} AS text) IS NULL OR EXISTS (
             SELECT 1 FROM automation a WHERE a.id = ${input.automation_id ?? null}
               AND a.org_id = rt.org_id AND a.agent_id = rt.agent_id
-              AND a.context_id = c.id AND a.enabled = 1
+              AND a.context_id = c.id AND (a.enabled = 1 OR ${input.reason} = 'manual:runtime')
               AND a.runtime_id = rt.id
               AND (rt.connection_id IS NULL OR a.created_by = ${input.initiated_by ?? null})
               AND a.revision = ${snapshot.schedule_revision ?? -1}
@@ -313,7 +313,7 @@ export function runtimeRepos(execute: (statement: SQL) => Promise<unknown[]>): R
           AND (rt.connection_id IS NOT NULL OR ${runtimeModelGrant(sql`c.id`, sql`rt.org_id`, snapshot)})
           AND (r.automation_id IS NULL OR EXISTS (
             SELECT 1 FROM automation a WHERE a.id = r.automation_id AND a.org_id = r.org_id
-              AND a.agent_id = r.agent_id AND a.context_id = c.id AND a.enabled = 1))
+              AND a.agent_id = r.agent_id AND a.context_id = c.id AND (a.enabled = 1 OR r.reason = 'manual:runtime')))
           AND NOT EXISTS (SELECT 1 FROM run_attempt a WHERE a.run_id = r.id
             AND (a.result_json IS NOT NULL OR a.launch_started_at IS NOT NULL))
         ON CONFLICT DO NOTHING RETURNING *`)

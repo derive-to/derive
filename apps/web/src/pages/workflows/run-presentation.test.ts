@@ -70,6 +70,34 @@ const githubWorkflowRun = (externalExecution: unknown, status = "dispatched"): W
   }) as unknown as WorkflowRunSummary
 
 describe("run presentation", () => {
+  it("presents cloud receipts without inventing a removed workflow or a missing output", () => {
+    const cloud = {
+      ...run,
+      workflow_name: "Daily integrity review",
+      runtime_id: "runtime",
+      meta: JSON.stringify({
+        runtime: {
+          report_short_id: "report",
+          save_status: "saved",
+          released_at: "2026-09-24T12:00:00Z",
+        },
+      }),
+    }
+    expect(presentAutomationRun(cloud, undefined)).toMatchObject({
+      title: "Daily integrity review",
+      summary: "Report ready.",
+      facts: expect.arrayContaining(["Files saved", "Workspace stopped"]),
+    })
+    expect(
+      presentAutomationRun(
+        { ...cloud, meta: JSON.stringify({ runtime: { report_short_id: null } }) },
+        undefined,
+      ).summary,
+    ).toBe("Run finished. No report is available to you here.")
+    expect(presentAutomationRun({ ...run, meta: "{}" }, undefined).title).toBe(
+      "Workflow unavailable",
+    )
+  })
   it("explains a standing Agent run without exposing its internal reason value", () => {
     expect(presentAutomationRun(run, automation)).toEqual({
       title: "Keep internal docs aligned with code changes",

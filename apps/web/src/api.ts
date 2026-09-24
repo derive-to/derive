@@ -506,6 +506,9 @@ export interface Automation {
 }
 /** One execution — the queue (queued/running) and the ledger (succeeded/failed) in one row. */
 export interface Run {
+  runtime_id?: string | null
+  workflow_name?: string
+  context_id?: string | null
   id: string
   automation_id: string | null
   agent_id: string
@@ -1488,6 +1491,24 @@ export const api = {
   setAgentOwnerLend: (agentId: string, enabled: boolean): Promise<{ ok: true }> =>
     f(`/v1/workspace/owner-lend/${agentId}`, { ...opts({ enabled }), method: "PUT" }).then(j),
 
+  workflowRuntimes: (): Promise<{
+    available: boolean
+    can_create: boolean
+    items: {
+      id: string
+      name: string
+      created_at: string
+      disabled: boolean
+      preparing: boolean
+      ready: boolean
+      can_open: boolean
+      schedule: { enabled: boolean; trigger: { kind: string; cron?: string; tz?: string } } | null
+    }[]
+  }> => f("/v1/workflow-runtimes", opts()).then(j),
+  createWorkflowRuntime: (body: {
+    name: string
+    model_connection_id: string
+  }): Promise<{ id: string }> => f("/v1/workflow-runtimes", opts(body)).then(j),
   // Contexts + sessions (the ask loop; see routes/contexts.ts server-side).
   listContexts: (): Promise<{ contexts: ContextInfo[] }> => f("/v1/contexts", opts()).then(j),
   getContextRuntime: (
@@ -1576,7 +1597,7 @@ export const api = {
     body: {
       instruction: string
       provider: "codex" | "claude-code"
-      cron: string
+      cron: string | null
       timezone: string
       enabled: boolean
       revision: number | null

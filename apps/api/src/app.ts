@@ -71,6 +71,7 @@ import { systemRoutes } from "./routes/system"
 import { templateLibraryRoutes } from "./routes/template-libraries"
 import { vitalsRoutes } from "./routes/vitals"
 import { webhookRoutes } from "./routes/webhooks"
+import { workflowRuntimeRoutes } from "./routes/workflow-runtimes"
 import { workflowRoutes } from "./routes/workflows"
 import { workspaceRoutes } from "./routes/workspace"
 import { workspaceDomainRoutes } from "./routes/workspace-domains"
@@ -525,6 +526,7 @@ export function createApp(deps: AppDeps): Hono {
     skillRoutes,
     artifactScanRoutes,
     workflowRoutes,
+    workflowRuntimeRoutes,
     reworkRoutes,
     commentRoutes,
     contextRoutes,

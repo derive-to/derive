@@ -1,9 +1,7 @@
-import type { RunAttemptPhase } from "@derive/core"
 import type { UseQueryResult } from "@tanstack/react-query"
 import { useState } from "react"
 import { api } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
-import { EmptyState } from "@/components/shared/empty-state"
 import { LoadError } from "@/components/shared/load-error"
 import { SectionHeading, SectionTitle } from "@/components/shared/section-title"
 import { StatusBadge } from "@/components/shared/status-badge"
@@ -12,17 +10,9 @@ import { Textarea } from "@/components/ui/textarea"
 import { contextRuntimeQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { ManagedRuntimeCard } from "./managed-runtime-card"
+import { RuntimeRunHistory } from "./runtime-run-history"
 import { RuntimeScheduleCard } from "./runtime-schedule-card"
 import { RuntimeSetup } from "./runtime-setup"
-
-const attemptLabel: Record<RunAttemptPhase, string> = {
-  starting: "Starting sandbox",
-  ready: "Sandbox ready",
-  launching: "Starting agent",
-  running: "Agent running",
-  stopping: "Waiting for shutdown confirmation",
-  released: "Sandbox stopped",
-}
 
 export function RuntimeRunCard({
   contextId,
@@ -139,75 +129,7 @@ export function RuntimeRunCard({
           )}
           <div className="flex flex-col gap-4">
             <SectionHeading count={state.data.runs.length}>Recent runs</SectionHeading>
-            {state.data.runs.length === 0 && (
-              <EmptyState
-                title="No runs yet"
-                description="Run a task or start a schedule. Reports and sandbox status will appear here."
-              />
-            )}
-            {state.data.runs.map((item) => {
-              const details = item.meta ? JSON.parse(item.meta).runtime : null
-              return (
-                <div
-                  key={item.id}
-                  className="flex flex-col gap-2 rounded-lg border bg-card p-4 text-sm"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <time
-                      dateTime={item.created_at}
-                      className="font-mono text-xs text-muted-foreground"
-                    >
-                      {new Date(item.created_at).toLocaleString()}
-                    </time>
-                    <StatusBadge
-                      tone={
-                        item.status === "succeeded"
-                          ? "ok"
-                          : item.status === "failed"
-                            ? "error"
-                            : item.status === "running"
-                              ? "busy"
-                              : "muted"
-                      }
-                    >
-                      {item.status === "succeeded"
-                        ? "Completed"
-                        : item.status.charAt(0).toUpperCase() + item.status.slice(1)}
-                    </StatusBadge>
-                  </div>
-                  {item.attempt && (
-                    <p className="text-sm text-muted-foreground">
-                      {item.attempt.result_json ? "Report received" : "Awaiting report"} ·{" "}
-                      {item.attempt.released_at
-                        ? "Sandbox stopped"
-                        : attemptLabel[item.attempt.phase]}
-                    </p>
-                  )}
-                  {item.attempt?.result_json && !details?.report_short_id && (
-                    <details>
-                      <summary
-                        className="cursor-pointer text-primary"
-                        data-testid={`context-runtime-receipt-${item.id}`}
-                      >
-                        Read received report
-                      </summary>
-                      <p className="mt-3 whitespace-pre-wrap text-sm">
-                        {JSON.parse(item.attempt.result_json).summary}
-                      </p>
-                    </details>
-                  )}
-                  {details?.report_short_id && (
-                    <a
-                      href={`/artifacts/${details.report_short_id}`}
-                      className="text-primary underline underline-offset-4"
-                      data-testid={`context-runtime-report-${item.id}`}
-                    >
-                      Open report
-                    </a>
-                  )}
-                </div>
-              )
-            })}
+            <RuntimeRunHistory runs={state.data.runs} />
           </div>
           {!runtime.disabled_at && (
             <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">

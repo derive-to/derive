@@ -5148,7 +5148,7 @@ export interface RuntimeStore {
     ownerId: string
     instruction: string
     provider: import("./execution").ExecutionProvider
-    cron: string
+    cron: string | null
     timezone: string
     enabled: boolean
     revision: number | null

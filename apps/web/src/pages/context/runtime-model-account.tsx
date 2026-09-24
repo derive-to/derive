@@ -49,7 +49,7 @@ export function RuntimeModelAccount({
       ),
     invalidate: [bindingKey(contextId), contextRuntimeQuery(contextId).queryKey],
     success: (_, remove) =>
-      remove ? "This job’s account access was removed" : "Model account selected",
+      remove ? "This workflow’s account access was removed" : "Model account selected",
     onSuccess: () => setDraft(null),
   })
   const create = useApiMutation({
@@ -66,7 +66,7 @@ export function RuntimeModelAccount({
       <SectionTitle>Model account</SectionTitle>
       {binding.isError && (
         <LoadError
-          title="Could not load the job’s account"
+          title="Could not load the workflow’s account"
           testId="context-model-binding-error"
           onRetry={() => binding.refetch()}
         />
@@ -77,15 +77,15 @@ export function RuntimeModelAccount({
             ? "Loading model account…"
             : selected
               ? `${selected.name} · ${selected.provider === "codex" ? "Codex" : "Claude Code"}${selected.revoked ? " · Disconnected" : ""}`
-              : "No account selected for this job."}
+              : "No account selected for this workflow."}
         </p>
       )}
       {canEdit && (
         <>
           <p className="text-sm text-muted-foreground">
-            Choose one of your accounts to let authorized teammates run this job. Other jobs can use
-            the same account while keeping separate files and tools. Changes take effect before the
-            next run; active work using the previous selection stops.
+            Choose one of your accounts to let authorized teammates run this workflow. Other
+            workflows can use the same account while keeping separate files and tools. Changes take
+            effect before the next run; active work using the previous selection stops.
           </p>
           {accounts.isError && (
             <LoadError
@@ -107,7 +107,9 @@ export function RuntimeModelAccount({
             >
               <option value="">Choose an account</option>
               {selected && !accounts.data?.items.some((item) => item.id === selected.id) && (
-                <option value={selected.id}>{selected.name} · Already shared with this job</option>
+                <option value={selected.id}>
+                  {selected.name} · Already shared with this workflow
+                </option>
               )}
               {accounts.data?.items.map((item) => (
                 <option key={item.id} value={item.id}>
@@ -133,15 +135,15 @@ export function RuntimeModelAccount({
                 disabled={save.isPending}
                 onClick={() => setConfirmRemove(true)}
               >
-                Remove this job’s access
+                Remove this workflow’s access
               </Button>
             )}
           </div>
           <ConfirmDialog
             open={confirmRemove}
             onOpenChange={setConfirmRemove}
-            title="Remove this job’s account access?"
-            description="Active work will stop and this job cannot run until an account is selected. Other jobs keep their access."
+            title="Remove this workflow’s account access?"
+            description="Active work will stop and this workflow cannot run until an account is selected. Other workflows keep their access."
             confirmLabel="Remove access"
             onConfirm={() => save.mutateAsync(true).then(() => undefined)}
           />
@@ -252,7 +254,7 @@ function ConnectionControls({
       bindingKey(contextId),
       contextRuntimeQuery(contextId).queryKey,
     ],
-    success: "Account disconnected for all jobs",
+    success: "Account disconnected for all workflows",
     onSuccess: () => {
       setAttempt(null)
       setCode("")
@@ -271,7 +273,7 @@ function ConnectionControls({
       )}
       <p className="text-sm">
         {revoked
-          ? "Disconnected from jobs."
+          ? "Disconnected from workflows."
           : status.data?.account?.status === "active"
             ? "Connected"
             : "Sign-in needed"}
@@ -294,15 +296,15 @@ function ConnectionControls({
             variant="outline"
             onClick={() => setConfirmDisconnect(true)}
           >
-            {revoked ? "Finish disconnect" : "Disconnect from all jobs…"}
+            {revoked ? "Finish disconnect" : "Disconnect from all workflows…"}
           </Button>
         )}
       </div>
       <ConfirmDialog
         open={confirmDisconnect}
         onOpenChange={setConfirmDisconnect}
-        title="Disconnect this account from all jobs?"
-        description="Every job using this account will lose access. To change only this job, use Remove this job’s access instead."
+        title="Disconnect this account from all workflows?"
+        description="Every workflow using this account will lose access. To change only this workflow, use Remove this workflow’s access instead."
         confirmLabel="Disconnect account"
         onConfirm={() => disconnect.mutateAsync().then(() => undefined)}
       />

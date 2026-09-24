@@ -40,7 +40,12 @@ async function enabled(
 ) {
   if (!claimed && !(await runtimeScheduleAllows(deps.meta, run))) return false
   if (!(await runtimeRunContext(deps.meta, deps.config, run, runtime))) return false
-  if (!claimed && run.automation_id && !(await deps.meta.getOrgSettings(run.org_id)).automateBeta)
+  if (
+    !claimed &&
+    run.automation_id &&
+    run.reason !== "manual:runtime" &&
+    !(await deps.meta.getOrgSettings(run.org_id)).automateBeta
+  )
     return false
   if (runtime.connection_id !== null) return true
   const input = JSON.parse(run.input_snapshot ?? "null") as RuntimeRunInput | null

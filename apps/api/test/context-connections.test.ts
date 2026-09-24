@@ -1814,6 +1814,151 @@ describe("runtime provisioning and shared model accounts", () => {
     return { ...f, model, runtime, sandbox: saved.sandbox, select, fire }
   }
 
+  it("creates a private cloud workflow from Workflows with a saved account and no runner token", async () => {
+    const f = await fixture()
+    const model = await modelAccount(f.context.id)
+    const response = await app.request(
+      "/v1/workflow-runtimes",
+      jsonAs(as(owner.email), { name: `Workflow ${count}`, model_connection_id: model.id }),
+    )
+    expect(response.status).toBe(201)
+    const created = await response.json()
+    expect(Object.keys(created)).toEqual(["id"])
+    const context = await meta.getContext(created.id)
+    expect(context).toMatchObject({ created_by: owner.id, ask_policy: "invited" })
+    expect(await meta.getRuntimeModelBinding(created.id, "default")).toMatchObject({
+      model_connection_id: model.id,
+    })
+    expect(await meta.getRuntimeSetup(created.id, "default")).toBeNull()
+    if (!context) throw new Error("Workflow Context was not saved")
+    const manifest = await meta.getArtifactById(context.manifest_artifact_id)
+    expect(manifest).toMatchObject({ workspace_access: "none", link_role: "none", listed: "none" })
+    const ownList = await (
+      await app.request("/v1/workflow-runtimes", { headers: as(owner.email) })
+    ).json()
+    expect(ownList.items).toContainEqual(expect.objectContaining({ id: created.id, ready: false }))
+    const otherList = await (
+      await app.request("/v1/workflow-runtimes", { headers: as(member.email) })
+    ).json()
+    expect(otherList.items.some((item: { id: string }) => item.id === created.id)).toBe(false)
+    expect(
+      (
+        await app.request(
+          "/v1/workflow-runtimes",
+          jsonAs(as(member.email), { name: "Stolen account", model_connection_id: model.id }),
+        )
+      ).status,
+    ).toBe(400)
+    config.managed.workspaceIds.clear()
+    expect(
+      (
+        await app.request(
+          "/v1/workflow-runtimes",
+          jsonAs(as(owner.email), { name: "Outside pilot", model_connection_id: model.id }),
+        )
+      ).status,
+    ).toBe(403)
+  })
+
+  it("runs a saved cloud workflow on demand with automation disabled and after pausing its schedule", async () => {
+    for (const cron of [null, "0 9 * * *"]) {
+      const f = await managedJob()
+      await meta.setOrgSettings("default", {
+        ...(await meta.getOrgSettings("default")),
+        automateBeta: false,
+      })
+      const saved = await app.request(`${f.path}/schedule`, {
+        ...jsonAs(as(owner.email), {
+          instruction: "Check saved files",
+          provider: "codex",
+          cron,
+          timezone: "UTC",
+          enabled: cron === null,
+          revision: 0,
+        }),
+        method: "PUT",
+      })
+      expect(saved.status).toBe(200)
+      const definition = await saved.json()
+      expect(JSON.parse(definition.schedule.trigger).kind).toBe(cron ? "schedule" : "manual")
+      expect(definition.schedule.enabled).toBe(0)
+      expect(definition.next_run_at).toBeNull()
+      const run = await f.fire()
+      const stored = await meta.getRun(run.id)
+      expect(stored).not.toBeNull()
+      if (!stored) throw new Error("Manual run was not saved")
+      expect(await runtimeScheduleAllows(meta, stored)).toBe(true)
+      await pass()
+      const task = launched.get(f.sandbox.id)
+      if (!task) throw new Error("Manual workflow did not launch")
+      const claim = await app.request(
+        `/v1/runtime-attempts/${task.attempt}/claim`,
+        jsonAs({ Authorization: `Bearer ${task.token}` }, {}),
+      )
+      expect(claim.status).toBe(200)
+      expect(await claim.json()).toMatchObject({ input: { instruction: "Check saved files" } })
+      // The selected account's access still governs a manual run.
+      expect((await f.select(null, 0)).status).toBe(200)
+      await pass()
+      expect((await meta.getRun(run.id))?.status).toBe("failed")
+    }
+  })
+
+  it("links private cloud reports only for their readers, including in workspace history", async () => {
+    const f = await managedJob()
+    const run = await f.fire()
+    await pass()
+    const task = launched.get(f.sandbox.id)
+    if (!task) throw new Error("Workflow did not launch")
+    const auth = { Authorization: `Bearer ${task.token}` }
+    expect(
+      (await app.request(`/v1/runtime-attempts/${task.attempt}/claim`, jsonAs(auth, {}))).status,
+    ).toBe(200)
+    expect(
+      (
+        await app.request(
+          `/v1/runtime-attempts/${task.attempt}/result`,
+          jsonAs(auth, {
+            version: 1,
+            outcome: "completed",
+            summary: "Private workflow findings",
+            outputs: [],
+          }),
+        )
+      ).status,
+    ).toBe(200)
+    for (let i = 0; i < 5; i++) await pass()
+    const saved = await meta.getRun(run.id)
+    const reportId = JSON.parse(saved?.meta ?? "{}").runtime.report_short_id
+    expect(reportId).toBeTruthy()
+    await app.request(
+      `/v1/contexts/${f.context.id}/access`,
+      jsonAs(as(owner.email), { ask_policy: "workspace" }),
+    )
+    const ownerState = await (await app.request(f.path, { headers: as(owner.email) })).json()
+    const ownRun = ownerState.runs.find((r: { id: string }) => r.id === run.id)
+    expect(JSON.parse(ownRun.meta).runtime.report_short_id).toBe(reportId)
+    const memberState = await (await app.request(f.path, { headers: as(member.email) })).json()
+    const otherRun = memberState.runs.find((r: { id: string }) => r.id === run.id)
+    expect(otherRun.attempt.result_json).toBeNull()
+    expect(JSON.parse(otherRun.meta).runtime.report_short_id).toBeNull()
+    expect(otherRun.input_snapshot).toBeNull()
+    const seat = await meta.getMembership("default", member.id)
+    if (!seat) throw new Error("Member seat missing")
+    await meta.setMembership({ ...seat, role: "owner" })
+    try {
+      const history = await (
+        await app.request("/v1/workspace/runs", { headers: as(member.email) })
+      ).json()
+      const listed = history.runs.find((r: { id: string }) => r.id === run.id)
+      expect(listed.workflow_name).toBe(f.context.name)
+      expect(JSON.parse(listed.meta).runtime.report_short_id).toBeNull()
+      expect(JSON.stringify(listed)).not.toContain("Private workflow findings")
+    } finally {
+      await meta.setMembership(seat)
+    }
+  })
+
   it("prepares a ready managed job in one pass while another installation is still pending", async () => {
     const waiting = await fixture()
     await modelAccount(waiting.context.id)

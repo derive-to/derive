@@ -21,6 +21,7 @@ import {
   looksLikeEmail,
 } from "../lib/invite"
 import { resolveUserRef } from "../lib/resolve-user"
+import { runtimeRunView } from "../lib/runtime-run-view"
 import { syncSeats } from "../lib/seats"
 import { armInviteAdmission } from "../lib/signup-policy"
 import { ArtifactMember, BrandprintSchema, roleEnum } from "../schemas"
@@ -957,7 +958,11 @@ export const workspaceRoutes = (ctx: AppContext) => {
     // Surfacing it here lets an operator answer "why hasn't this run started, and what happened
     // to it" without reading server logs — the difference between a hosted executor being
     // correct and being operable.
-    return c.json({ runs: runs.map(withTimeline) })
+    return c.json({
+      runs: await Promise.all(
+        runs.map(async (run) => withTimeline(await runtimeRunView(ctx, c, run))),
+      ),
+    })
   })
 
   return app

@@ -769,3 +769,10 @@ export const contextRuntimeQuery = (id: string) =>
     },
     meta: { persist: false },
   })
+
+export const workflowRuntimesQuery = () =>
+  queryOptions({
+    queryKey: ["workflow-runtimes"],
+    queryFn: api.workflowRuntimes,
+    refetchInterval: 15000,
+  })
