@@ -36,6 +36,17 @@ import {
   mentionTokens,
 } from "./mention-shared"
 import {
+  collectSourceOps,
+  FMT_ATTR,
+  GEN_ATTR,
+  HREF_ATTR,
+  releaseSource,
+  SRC_ATTR,
+  type SrcSnapshot,
+  snapshotSource,
+  srcOf,
+} from "./source-tokens"
+import {
   coachStructuralLayout,
   evaluateStructuralCapability,
   idleStructuralInteraction,
@@ -60,6 +71,7 @@ import {
   STRUCTURAL_ALIGN_PROPERTY,
   STRUCTURAL_GAP_PROPERTY,
   STRUCTURAL_HEIGHT_PROPERTY,
+  STRUCTURAL_LAYOUT,
   STRUCTURAL_WIDTH_PROPERTY,
   type StructuralAlignment,
   snapStructuralHeight,
@@ -67,6 +79,7 @@ import {
   structuralBlockResizeAxis,
   structuralResizeAxis,
 } from "./structural-width"
+import { updatedStyle } from "./style-attribute"
 
 // The element-anchor selector as it arrives from the host (mirrors core's ElementSelector).
 interface ElWire {
@@ -141,6 +154,91 @@ interface ElReg {
 
   // Narrow an event target to an Element (postMessage/DOM events hand us EventTargets).
   const asEl = (t: EventTarget | null): Element | null => (t instanceof Element ? t : null)
+
+  /* EDIT MODE OWNS INPUT. While editing, the page's own handlers never see a pointer,
+     mouse, key, wheel, focus, touch or drag event: a deck's click zones, key bindings
+     and swipe handlers can't flip a slide or keep focus in a block you clicked away
+     from. One capture listener on window, registered before any other, stops each
+     trusted event's propagation there and replays it to this client's own
+     window/document listeners (registered through `on`, which then skip the native
+     call) in the order the browser would have run them, honouring their own
+     stopPropagation. Only propagation stops, so window-level capture listeners added
+     after this one (a test driver's hit checks) still see it. Defaults are never
+     prevented here:
+     the browser still places the caret, types, and selects. Events aimed at our own
+     chrome reach its controls and stop at the chrome's root (`ownChrome`).
+     Synthetic events pass: the host's deck bar drives a deck with synthesized keys. */
+  const OWNED = new Set(
+    "pointerdown pointermove pointerup pointercancel mousedown mousemove mouseup click dblclick auxclick contextmenu keydown keypress keyup wheel focus blur focusin focusout dragstart dragover drop dragend touchstart touchmove touchend".split(
+      " ",
+    ),
+  )
+  /** Events the router already replayed to our listeners. */
+  const routed = new WeakSet<Event>()
+  const ownListeners: {
+    t: Window | Document
+    type: string
+    fn: (e: Event) => void
+    cap: boolean
+  }[] = []
+  const on = <K extends keyof DocumentEventMap>(
+    t: Window | Document,
+    type: K,
+    fn: (e: DocumentEventMap[K]) => void,
+    opts: boolean | AddEventListenerOptions = false,
+  ) => {
+    t.addEventListener(type, (e) => routed.has(e) || (fn as EventListener)(e), opts)
+    const cap = typeof opts === "boolean" ? opts : !!opts.capture
+    ownListeners.push({ t, type, fn: fn as (e: Event) => void, cap })
+  }
+  /** The server stamped source ids on this page (an editor opened an HTML/deck
+   *  version), so saves go as exact-source ops instead of text quotes. */
+  const stamped = () => document.documentElement.hasAttribute("data-derive-src-version")
+  const ownsInput = (e: Event): boolean => editOn && e.isTrusted && e.target instanceof Element
+  /** Run our listeners for `e` from `phase` on: 0 window capture, 1 document
+   *  capture, 2 document bubble, 3 window bubble. */
+  const replay = (e: Event, phase: number) => {
+    let stop = 0
+    const halt = (level: number) => () => {
+      stop = Math.max(stop, level)
+    }
+    Object.defineProperty(e, "stopPropagation", { value: halt(1), configurable: true })
+    Object.defineProperty(e, "stopImmediatePropagation", { value: halt(2), configurable: true })
+    // A focus or blur on an element never reaches bubble listeners (those are for the
+    // window's own focus).
+    const last = e.bubbles ? 4 : 2
+    for (; phase < last && !stop; phase++) {
+      const t = phase === 1 || phase === 2 ? document : window
+      for (const l of ownListeners)
+        if (l.t === t && l.type === e.type && l.cap === phase < 2 && stop < 2)
+          try {
+            l.fn.call(t, e)
+          } catch (_e) {}
+    }
+    delete (e as { stopPropagation?: unknown }).stopPropagation
+    delete (e as { stopImmediatePropagation?: unknown }).stopImmediatePropagation
+  }
+  for (const type of OWNED)
+    window.addEventListener(
+      type,
+      (e) => {
+        if (!ownsInput(e) || asEl(e.target)?.closest(".derive-edit-ui")) return
+        e.stopPropagation()
+        routed.add(e)
+        replay(e, 0)
+      },
+      true,
+    )
+  /** Our chrome's own controls hear their events; the page above them doesn't. */
+  const ownChrome = (el: Element) => {
+    for (const type of OWNED)
+      el.addEventListener(type, (e) => {
+        if (!ownsInput(e)) return
+        e.stopPropagation()
+        routed.add(e)
+        replay(e, 2)
+      })
+  }
 
   /* -- selection capture: a text selection becomes a TextQuoteSelector + the
         on-screen rect of the selection, so the host can float a button beside it -- */
@@ -220,7 +318,7 @@ interface ElReg {
       },
     })
   }
-  document.addEventListener("mouseup", () => setTimeout(emitSelection, 0))
+  on(document, "mouseup", () => setTimeout(emitSelection, 0))
 
   /* Touch makes "select a phrase, then find a tiny floating button" miserable, and
      iOS pops its own Copy/Look-Up menu over wherever we'd place one. So on touch we
@@ -259,7 +357,8 @@ interface ElReg {
     if (Date.now() - tapGuard < 600) return
     post({ type: "select", selector: null, rect: null })
   })
-  document.addEventListener(
+  on(
+    document,
     "touchstart",
     (e) => {
       const t = e.touches?.[0]
@@ -271,7 +370,8 @@ interface ElReg {
     },
     { passive: true },
   )
-  document.addEventListener(
+  on(
+    document,
     "touchmove",
     (e) => {
       const t = e.touches?.[0]
@@ -279,7 +379,8 @@ interface ElReg {
     },
     { passive: true },
   )
-  document.addEventListener(
+  on(
+    document,
     "touchend",
     (e) => {
       if (editOn) return
@@ -364,7 +465,7 @@ interface ElReg {
     post({ type, x: pX / w, y: (pY + scrollTop()) / dh })
   }
   let cT = 0
-  document.addEventListener("mousemove", (e) => {
+  on(document, "mousemove", (e) => {
     pX = e.clientX
     pY = e.clientY
     pIn = true
@@ -373,7 +474,7 @@ interface ElReg {
     cT = n
     postCursor("cursor")
   })
-  document.addEventListener("mousedown", (e) => {
+  on(document, "mousedown", (e) => {
     pX = e.clientX
     pY = e.clientY
     pIn = true
@@ -383,7 +484,7 @@ interface ElReg {
     pIn = false
     post({ type: "cursor-leave" })
   })
-  window.addEventListener("blur", () => {
+  on(window, "blur", () => {
     pIn = false
     post({ type: "cursor-leave" })
   })
@@ -408,38 +509,13 @@ interface ElReg {
   // its pending value before the host snapshots the document.
   let commitEditUi = (): boolean => true
 
-  /* THE KEYBOARD, and who owns it.
-   *
-   * Registered on `window` with CAPTURE, which is the only phase that runs before
-   * the artifact's own handlers: this client is a script tag appended AFTER the
-   * document, so every inline script in the page — including a deck's slide
-   * switcher — registered first, and in the bubble phase registration order wins.
-   *
-   * While the caret sits in an editable block, the page's own shortcuts are OFF.
-   * A deck binds Space, the arrows, PageUp/PageDown and Home/End to slide
-   * navigation (that is what our own scaffold and authoring guide tell people to
-   * write), so without this, typing a space in a headline advances the slide and
-   * pressing Home jumps the deck instead of moving the caret. stopImmediatePropagation
-   * hides the key from other listeners; it does NOT preventDefault, so the character
-   * still types and the caret still moves. With no caret in a block, the page keeps
-   * its keyboard — you can still walk to slide 7 and then click a line to edit.
-   */
-  /* THE RULE, whole: while a caret is in an editable block, the page is not
-     listening. Outside that one condition nothing here changes what the page gets.
-
-     Four properties this leans on, each deliberate:
-
-     • ONE gate. `editingCaret()` is the only thing that can silence the page, and
-       it is read once per event so a handler can never half-apply it.
-     • Propagation is stopped; the DEFAULT never is, except for the four chords we
-       answer ourselves. Stopping propagation hides a key from other LISTENERS —
-       preventing the default would stop the character being typed, which is the
-       one thing this must never do.
-     • A throw cannot wedge the keyboard. Everything runs inside `guard`, so a bug
-       in our chord handling degrades to "the shortcut did nothing", never to "this
-       document stopped accepting text".
-     • Composition is passed through untouched. Mid-IME keystrokes belong to the
-       input method; we neither interpret them nor let the page act on them. */
+  /* THE KEYBOARD. In edit mode the page hears no key at all (see OWNED): a deck's
+     Space, arrows, PageUp/PageDown and Home/End can't flip a slide, with or without
+     a caret in a block, and the host's deck bar still moves slides. What follows is
+     only what the editor itself does with keys: its chords (the default prevented,
+     since we answer them), Escape's two steps, and forwarding to the host. A throw
+     in here degrades to "the shortcut did nothing" (`guard`), never to "this
+     document stopped accepting text"; mid-IME keystrokes are left alone. */
   /** Run an interception so a throw inside it can never break input for the page. */
   const guard = (fn: () => void) => {
     try {
@@ -472,7 +548,24 @@ interface ElReg {
       return () => {
         if (!cancelStructuralGesture()) (e.shiftKey ? redo : undo)()
       }
+    if (!focused && editOn && structureSelected && !precisionFocused && !e.shiftKey) {
+      const selected = structureSelected.el
+      if (k === "d") return () => pasteStructure({ el: selected, copy: true })
+      if (k === "c" || k === "x") return () => clipStructure(k === "c")
+      if (k === "v" && structureClip) return () => pasteStructure(structureClip)
+    }
     if (!focused) return null
+    // ⌘A selects the block being edited, never the page: typing over a document-wide
+    // selection replaced one word and glued the rest of the block together.
+    if (k === "a" && !e.shiftKey)
+      return () => {
+        const range = document.createRange()
+        range.selectNodeContents(focused)
+        const selection = window.getSelection()
+        selection?.removeAllRanges()
+        selection?.addRange(range)
+        scheduleDirty()
+      }
     // ⌘B / ⌘I never fired here at all: a plaintext-only contenteditable drops every
     // format command, so these keys did nothing in a mode that looks like an editor.
     if (k === "b") return () => applyFmt("b")
@@ -496,11 +589,8 @@ interface ElReg {
       const active = asEl(document.activeElement)
       const editControlFocused = !!active?.closest(".derive-edit-ui")
       const precisionFocused = !!active?.closest(".derive-resize-panel")
-      // An IME is mid-word. Not ours to interpret, and not the page's to act on.
-      if (e.isComposing || e.keyCode === 229) {
-        if (focused) e.stopImmediatePropagation()
-        return
-      }
+      // An IME is mid-word. Not ours to interpret.
+      if (e.isComposing || e.keyCode === 229) return
       if (e.type === "keydown") {
         if (
           editOn &&
@@ -578,25 +668,13 @@ interface ElReg {
         }
         // `p` presents, for the same reason: one click into a document moves
         // keyboard focus in here and the host goes deaf. Forwarded, not swallowed,
-        // so a deck that binds `p` itself still gets it.
-        if (
-          e.key.toLowerCase() === "p" &&
-          !e.metaKey &&
-          !e.ctrlKey &&
-          !e.altKey &&
-          !focused &&
-          !editControlFocused
-        )
+        // so a deck that binds `p` itself still gets it. Not while editing: there a
+        // stray letter typed with no block armed must do nothing at all.
+        if (e.key.toLowerCase() === "p" && !e.metaKey && !e.ctrlKey && !e.altKey && !editOn)
           post({ type: "present" })
       }
-      if (focused) e.stopImmediatePropagation()
     })
-  // keypress/keyup as well: a page that binds either would still act on a key we
-  // let through here (our own deck template uses keydown, but nothing makes that a
-  // rule, and a half-silenced keyboard is worse than none).
-  window.addEventListener("keydown", ownKeys, true)
-  window.addEventListener("keypress", ownKeys, true)
-  window.addEventListener("keyup", ownKeys, true)
+  on(window, "keydown", ownKeys, true)
 
   /* -- highlight styles (mark's default yellow is overridden) -- */
   const st = document.createElement("style")
@@ -1001,7 +1079,7 @@ interface ElReg {
     setReviewMode(false)
     post({ type: "review-mode-ended" })
   }
-  document.addEventListener("mousemove", (e) => {
+  on(document, "mousemove", (e) => {
     if (!reviewOn) return
     setReviewHover(anchorEl(asEl(e.target)))
   })
@@ -1873,6 +1951,34 @@ interface ElReg {
     for (const m of slideMask) m.el.style.pointerEvents = m.prev
     slideMask = []
   }
+  /* Hit testing while editing. In a stamped (exact-source) document, what isn't in
+     the source — elements a script made — and what has no words to edit — a deck's
+     invisible prev/next zones, an empty button stretched over a card, a decorative
+     rule — leave hit testing, so a click lands on the words beneath and the browser
+     places the caret itself (Shift+click and word selection included). Structural
+     nodes, resizable boxes and media stay targets. Pure CSS keyed by the stamps:
+     the page's own elements are never touched. */
+  const editStyle = document.createElement("style")
+  const MEDIA = "img,svg,video,canvas,iframe,embed,object,picture,input,textarea,select"
+  const setEditHitTesting = (on: boolean) => {
+    editStyle.remove()
+    if (!on) return
+    // Our own boxes move as they paint; the browser must never scroll to follow them.
+    editStyle.textContent = "html{overflow-anchor:none}"
+    ;(document.head || document.documentElement).appendChild(editStyle)
+    if (!stamped()) return
+    const textless: string[] = []
+    for (const el of Array.from(document.body.querySelectorAll(`[${SRC_ATTR}]`)))
+      if (
+        !el.textContent?.trim() &&
+        !el.matches(`${MEDIA},[data-derive-node],[data-derive-resizable],[data-derive-slide]`) &&
+        !el.querySelector(MEDIA)
+      )
+        textless.push(`[${SRC_ATTR}="${el.getAttribute(SRC_ATTR)}"]`)
+    editStyle.textContent +=
+      `:where(body *):not([${SRC_ATTR}],[${FMT_ATTR}],.derive-mention,.derive-edit-ui,.derive-edit-ui *,.derive-el-hl,.derive-el-hl *):not(:has([${SRC_ATTR}])){pointer-events:none!important}` +
+      (textless.length ? `${textless.join(",")}{pointer-events:none!important}` : "")
+  }
   const maskOffscreenSlides = () => {
     const slides = slideEls()
     if (slides.length < 2) return
@@ -2111,7 +2217,7 @@ interface ElReg {
     hoverId = id
     post({ type: "anchor-hover", id })
   }
-  document.addEventListener("mousemove", (e) => {
+  on(document, "mousemove", (e) => {
     if (editOn) return
     if (hoverTick) return
     const x = e.clientX
@@ -2127,20 +2233,14 @@ interface ElReg {
   // hit-test it off). Without this a card stays lit after the mouse exits the iframe.
   document.addEventListener("mouseleave", () => setHover(null))
   /* clicking a highlight (text range or element badge) focuses its thread in the host */
-  document.addEventListener(
+  on(
+    document,
     "click",
     (e) => {
       // Edit mode swallows the whole click grammar: no thread focusing, no link
-      // navigation — a click places a caret (editClick handles link prevention).
-      // The PAGE's own click handlers are stopped too: a deck's invisible left/right
-      // "zones" cover the whole stage, so aiming at a headline to edit it would flip
-      // the slide out from under the caret. Capture + stopImmediatePropagation is
-      // what catches those, including handlers bound to the zone elements themselves.
+      // navigation — a click places a caret (editClick handles link prevention). The
+      // page's own click handlers never see it (see OWNED).
       if (editOn) {
-        // Our own overlay controls must reach their target listeners (Replace and
-        // the resize grip's synthesized click). They already stop propagation there.
-        if (asEl(e.target)?.closest(".derive-edit-ui")) return
-        e.stopImmediatePropagation()
         editClick(e)
         return
       }
@@ -2194,7 +2294,8 @@ interface ElReg {
     e.preventDefault()
     post({ type: "open-external", href: u.href })
   }
-  document.addEventListener(
+  on(
+    document,
     "auxclick",
     (e) => {
       if (editOn) {
@@ -2247,13 +2348,14 @@ interface ElReg {
   /* === Inline edit mode ======================================================
      Click-to-type text editing, host-driven ("edit-mode" on/off). A click lands a
      caret in the nearest text block (contenteditable, plaintext-only) — typing edits
-     in place. Every enabled block snapshots its text nodes FIRST, against a whole-
-     document text snapshot taken at mode entry, so on "edit-collect" each changed
-     node becomes a minimal {exact, prefix, suffix, new_text} quote built from the
-     PRE-EDIT text — which is what the server resolves against the stored source.
-     Text structure stays narrow: paste is flattened, Enter becomes one inline
-     break, and a changed block falls back to one whole-block span. Media and
-     opted-in boxes can also carry source-safe width/height intent. */
+     in place. On an HTML page the server stamped (see `stamped`), "edit-collect"
+     answers with exact-source ops: each changed element's new children, by source
+     id (source-tokens.ts). On Markdown and LaTeX every enabled block snapshots its
+     text nodes against a whole-document text snapshot taken at mode entry, and each
+     changed node becomes a minimal {exact, prefix, suffix, new_text} quote built
+     from the PRE-EDIT text, which the server resolves against the stored source.
+     Paste is flattened; Enter and formatting (HTML only) are editor spans. Media and
+     opted-in boxes can also carry width/height intent. */
   interface EditTarget {
     el: HTMLElement
     origHtml: string
@@ -2299,6 +2401,8 @@ interface ElReg {
   // whitespace there — matching the server projection, which renders a space for
   // every tag. A bare concat ("high.Set") could never context-match "high. Set".
   let editBase: { text: string; starts: Map<Text, number> } | null = null
+  /** Each stamped element's children at mode entry (stamped pages only). */
+  let srcSnap: SrcSnapshot | null = null
   let lastDirty = -1
   /** Everything the edit bar reads, as one comparable string — so a mode where four
    *  things can change (dirty count, undo, redo, a live selection) still posts only
@@ -2484,6 +2588,7 @@ interface ElReg {
     }
     for (const t of resizeTargets)
       if (document.contains(t.el) && rawStyle(t.el) !== t.origStyle) n++
+    for (const el of structureCopies) if (el.isConnected) n++
     return n + sceneEdits.length + structureDirtyCount()
   }
   /* ── Undo, for the whole session ──────────────────────────────────────────────
@@ -2611,6 +2716,15 @@ interface ElReg {
     for (const sizing of entry.entries)
       applyStructuralSizing({ kind: "structural-sizing", ...sizing })
   }
+  /** Put `order`'s nodes into the places those same nodes hold now, in that order.
+   *  Everything between them (whitespace, a footer, a subtitle) keeps its place, so a
+   *  move changes nothing else and moving back restores the page exactly. */
+  const reorderInPlace = (order: readonly HTMLElement[]) => {
+    const slots = [...order]
+      .sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1))
+      .map((el) => el.parentNode?.insertBefore(document.createComment(""), el))
+    for (const [i, el] of order.entries()) slots[i]?.replaceWith(el)
+  }
   const structuralOrderOf = (
     region: HTMLElement,
     nodes: readonly HTMLElement[],
@@ -2620,8 +2734,7 @@ interface ElReg {
     nodes: [...nodes],
   })
   const applyStructuralOrder = (entry: Extract<HistoryEntry, { kind: "structural-order" }>) => {
-    for (const node of entry.nodes)
-      if (node.parentElement === entry.region) entry.region.append(node)
+    reorderInPlace(entry.nodes.filter((node) => node.parentElement === entry.region))
   }
   const structuralAlignBatchOf = (
     entries: readonly StructuralAlignHistory[],
@@ -2796,7 +2909,8 @@ interface ElReg {
   const postDirty = () => {
     const n = countDirty()
     const range = formattableRange()
-    const canFormat = !!range
+    // Markup is only the language of an HTML page; Markdown and LaTeX write it as text.
+    const canFormat = !!range && !!srcSnap
     // A double-click can select a word just before its block is armed editable.
     // selectionchange sees the pre-armed block and cannot cache it, while this
     // settled state pass can. Preserve it here too so the host may safely ask an
@@ -2994,6 +3108,7 @@ interface ElReg {
   resizePanel.append(resizeFields, resizeLockLabel, resizeActions)
   resizeBox.append(resizeReplace, resizeSize, resizeHandle, resizePanel)
   ;(document.body || document.documentElement).appendChild(resizeBox)
+  ownChrome(resizeBox)
 
   let resizeHoverEl: ResizableElement | null = null
   let resizeSelectedEl: ResizableElement | null = null
@@ -3123,13 +3238,14 @@ interface ElReg {
       resizeWidth.select()
     })
   }
-  document.addEventListener("focusin", (e) => {
+  on(document, "focusin", (e) => {
     if (!editOn || !elementEditsOn) return
     const active = asEl(e.target)
     const target = resizableAt(active)
     if (active && target === active) selectResize(target)
   })
-  document.addEventListener(
+  on(
+    document,
     "keydown",
     (e) => {
       if (!editOn || !elementEditsOn || e.defaultPrevented || e.isComposing) return
@@ -3240,7 +3356,8 @@ interface ElReg {
   resizePanel.addEventListener("pointerdown", (e) => e.stopPropagation())
   for (const type of ["keydown", "keypress", "keyup"])
     resizePanel.addEventListener(type, (e) => e.stopPropagation())
-  document.addEventListener(
+  on(
+    document,
     "pointerdown",
     (e) => {
       if (!precisionOn) return
@@ -3326,7 +3443,8 @@ interface ElReg {
     postDirty()
   })
 
-  window.addEventListener(
+  on(
+    window,
     "pointermove",
     (e) => {
       const drag = resizeDrag
@@ -3367,18 +3485,15 @@ interface ElReg {
     paintResizeUi()
     postDirty()
   }
-  window.addEventListener("pointerup", (e) => finishResize(e, false))
-  window.addEventListener("pointercancel", (e) => finishResize(e, true))
+  on(window, "pointerup", (e) => finishResize(e, false))
+  on(window, "pointercancel", (e) => finishResize(e, true))
   window.addEventListener("scroll", paintResizeUi, true)
   window.addEventListener("resize", paintResizeUi)
 
   /* ── Authored structural regions ─────────────────────────────────────────────
      This editor is deliberately capability-based: no data attributes, no tools.
-     An ordered stack or row owns only its direct data-derive-node children. The live DOM is
-     an interaction preview; collect emits stable-id intent and the server projects
-     that intent back into exact source bytes. */
-  const STRUCTURE_SCHEMA = "derive.structural-edit/v1" as const
-  const MAX_STRUCTURAL_EDITS = 200
+     An ordered stack or row owns only its direct data-derive-node children. Offered on
+     stamped pages only: a save writes what the page shows, by source id. */
   const STRUCTURE_ID = /^[A-Za-z][A-Za-z0-9_-]{0,127}$/
   type StructureSize = "compact" | "standard" | "full"
   const STRUCTURE_SIZES = new Set<StructureSize>(["compact", "standard", "full"])
@@ -3406,7 +3521,9 @@ interface ElReg {
     prefix: StructurePrefix
     layout: StructureLayout
     nodes: StructureNode[]
+    /** The owning node when it is itself arrangeable; null for a top-level region. */
     owner: StructureNode | null
+    ownerEl: HTMLElement | null
     origOrder: string[]
     origGap: string | null
     origStyle: string | null
@@ -3653,6 +3770,8 @@ interface ElReg {
     structureHeightSnapGuide,
     structureToast,
   )
+  ownChrome(structureBox)
+  ownChrome(structureToast)
 
   const sourceChildren = (region: HTMLElement): HTMLElement[] =>
     Array.from(region.children).filter(
@@ -3765,43 +3884,6 @@ interface ElReg {
     }
     return true
   }
-  const structureIntegrityValid = (region: StructureRegion): boolean => {
-    const ownerEl = region.el.parentElement?.closest(structureNodeSelector)
-    if (
-      !document.contains(region.el) ||
-      region.el.getAttribute(structureAttribute(region.prefix, "region")) !== region.id ||
-      region.el.getAttribute(structureAttribute(region.prefix, "layout")) !== region.layout ||
-      region.el.getAttribute(structureAttribute(region.prefix, "owner")) !==
-        (region.owner?.id ?? null) ||
-      (region.owner?.el ?? null) !== (ownerEl instanceof HTMLElement ? ownerEl : null)
-    )
-      return false
-    const known = new Set(region.nodes.map((node) => node.el))
-    for (const node of region.nodes) {
-      const removed = structureExpectedRemoved.has(node)
-      if (node.el.getAttribute(structureAttribute(node.prefix, "node")) !== node.id) return false
-      if (!removed && node.el.parentElement !== region.el) return false
-      if (removed && node.el.parentElement === region.el) return false
-    }
-    for (const child of Array.from(region.el.children))
-      if (child instanceof HTMLElement && child.matches(structureNodeSelector) && !known.has(child))
-        return false
-    return true
-  }
-  const structureDocumentIntegrityValid = (): boolean => {
-    const currentRegions = Array.from(document.querySelectorAll(structureRegionSelector))
-    const currentNodes = Array.from(document.querySelectorAll(structureNodeSelector))
-    const expected = activeStructureRegions()
-    const expectedNodes = expected.flatMap((region) =>
-      region.nodes.filter((node) => !structureExpectedRemoved.has(node)).map((node) => node.el),
-    )
-    return (
-      currentRegions.length === expected.length &&
-      expected.every((region) => currentRegions.includes(region.el)) &&
-      currentNodes.length === expectedNodes.length &&
-      expectedNodes.every((node) => currentNodes.includes(node))
-    )
-  }
   const structuralNodeAt = (el: Element | null): StructureNode | null => {
     const candidate = el?.closest(structureNodeSelector)
     if (!(candidate instanceof HTMLElement)) return null
@@ -3809,37 +3891,26 @@ interface ElReg {
     const region = node ? regionForStructureNode(node) : null
     return node && candidate.parentElement === region?.el ? node : null
   }
+  /* Each region stands alone: one that breaks the contract gets no handles, and the
+     rest stay arrangeable. A save names elements by source id, so what the page shows
+     is what is saved; content around the nodes (a kicker, a footer, speaker notes)
+     keeps its place because a move only swaps nodes between their own slots. */
   const scanStructureRegions = (): StructureRegion[] => {
-    if (
-      (window as Window & { __deriveStructuralSourceValid?: boolean })
-        .__deriveStructuralSourceValid === false
-    )
-      return []
+    const allRegionEls = Array.from(document.querySelectorAll(structureRegionSelector))
     const regions: StructureRegion[] = []
-    const regionIds = new Set<string>()
-    const nodeIds = new Set<string>()
-    const handledNodes = new Set<Element>()
-    let invalid = false
-    const candidates = document.querySelectorAll(structureRegionSelector)
-    for (let i = 0; i < candidates.length; i++) {
-      const regionEl = candidates[i]
-      if (!(regionEl instanceof HTMLElement)) {
-        invalid = true
-        continue
-      }
+    for (const regionEl of allRegionEls) {
+      if (!(regionEl instanceof HTMLElement)) continue
       const hasCanonical = regionEl.hasAttribute("data-derive-region")
       const hasRuntime = regionEl.hasAttribute("data-derive-runtime-region")
       const prefix: StructurePrefix = hasRuntime ? "data-derive-runtime" : "data-derive"
       const layout = regionEl.getAttribute(structureAttribute(prefix, "layout"))
-      if (hasCanonical === hasRuntime || !STRUCTURE_LAYOUTS.has(layout as StructureLayout)) {
-        invalid = true
-        continue
-      }
       const id = regionEl.getAttribute(structureAttribute(prefix, "region")) || ""
-      if (!STRUCTURE_ID.test(id) || regionIds.has(id)) {
-        invalid = true
+      if (
+        hasCanonical === hasRuntime ||
+        !STRUCTURE_LAYOUTS.has(layout as StructureLayout) ||
+        !STRUCTURE_ID.test(id)
+      )
         continue
-      }
       const gap = regionEl.getAttribute(structureAttribute(prefix, "gap"))
       const customGap = regionEl.style.getPropertyValue(STRUCTURAL_GAP_PROPERTY).trim()
       if (
@@ -3849,79 +3920,51 @@ interface ElReg {
             Number.parseInt(gap, 10) > MAX_STRUCTURAL_GAP_PX ||
             customGap !== `${gap}px`)) ||
         (gap === null && !!customGap)
-      ) {
-        invalid = true
+      )
         continue
-      }
+      const nodeName = structureAttribute(prefix, "node")
       const children = sourceChildren(regionEl)
-      const directNodes = Array.from(regionEl.childNodes)
-      const firstOwnedNode = directNodes.findIndex(
-        (child) => child instanceof HTMLElement && children.includes(child),
-      )
-      const unsafeComment = directNodes.some(
-        (child, index) =>
-          child.nodeType === Node.COMMENT_NODE && (firstOwnedNode < 0 || index > firstOwnedNode),
-      )
+      // Authored and generated nodes never mix in one region.
       if (
-        Array.from(regionEl.childNodes).some(
-          (child) => child.nodeType === Node.TEXT_NODE && !!child.nodeValue?.trim(),
-        ) ||
-        unsafeComment ||
-        children.some((child) => !child.hasAttribute(structureAttribute(prefix, "node")))
-      ) {
-        invalid = true
+        children.some(
+          (child) => child.matches(structureNodeSelector) && !child.hasAttribute(nodeName),
+        )
+      )
         continue
-      }
+      const owned = children.filter((child) => child.hasAttribute(nodeName))
       const nodes: StructureNode[] = []
       let valid = true
-      for (const child of children) {
-        const nodeId = child.getAttribute(structureAttribute(prefix, "node")) || ""
-        if (!STRUCTURE_ID.test(nodeId) || nodeIds.has(nodeId)) {
-          valid = false
-          break
-        }
+      for (const child of owned) {
+        const nodeId = child.getAttribute(nodeName) || ""
         const size = child.getAttribute(structureAttribute(prefix, "size"))
-        if (size !== null && !STRUCTURE_SIZES.has(size as StructureSize)) {
-          valid = false
-          break
-        }
         const width = child.getAttribute(structureAttribute(prefix, "width"))
         const customWidth = child.style.getPropertyValue(STRUCTURAL_WIDTH_PROPERTY).trim()
+        const height = child.getAttribute(structureAttribute(prefix, "height"))
+        const customHeight = child.style.getPropertyValue(STRUCTURAL_HEIGHT_PROPERTY).trim()
+        const align = child.getAttribute(structureAttribute(prefix, "align"))
+        const customAlign = child.style.getPropertyValue(STRUCTURAL_ALIGN_PROPERTY).trim()
         if (
+          !STRUCTURE_ID.test(nodeId) ||
+          child.matches(structureRegionSelector) ||
+          (size !== null && !STRUCTURE_SIZES.has(size as StructureSize)) ||
           (width !== null &&
             (!/^(?:[1-9]|[1-9][0-9]|100)$/.test(width) ||
               Number.parseInt(width, 10) < MIN_STRUCTURAL_WIDTH_PCT ||
               customWidth !== `${width}%`)) ||
           (width === null && !!customWidth) ||
-          (size !== null && width !== null)
-        ) {
-          valid = false
-          break
-        }
-        const height = child.getAttribute(structureAttribute(prefix, "height"))
-        const customHeight = child.style.getPropertyValue(STRUCTURAL_HEIGHT_PROPERTY).trim()
-        if (
+          (size !== null && width !== null) ||
           (height !== null &&
             (!/^\d+$/.test(height) ||
               Number.parseInt(height, 10) < MIN_STRUCTURAL_HEIGHT_PX ||
               Number.parseInt(height, 10) > MAX_STRUCTURAL_HEIGHT_PX ||
               customHeight !== `${height}px`)) ||
-          (height === null && !!customHeight)
-        ) {
-          valid = false
-          break
-        }
-        const align = child.getAttribute(structureAttribute(prefix, "align"))
-        const customAlign = child.style.getPropertyValue(STRUCTURAL_ALIGN_PROPERTY).trim()
-        if (
+          (height === null && !!customHeight) ||
           (align !== null && (!/^(?:start|center|end)$/.test(align) || customAlign !== align)) ||
           (align === null && !!customAlign)
         ) {
           valid = false
           break
         }
-        nodeIds.add(nodeId)
-        handledNodes.add(child)
         nodes.push({
           el: child,
           id: nodeId,
@@ -3935,11 +3978,14 @@ interface ElReg {
           origTabindex: child.getAttribute("tabindex"),
         })
       }
-      if (!valid) {
-        invalid = true
-        continue
-      }
-      regionIds.add(id)
+      if (!valid) continue
+      // A region nested in a node declares that node as its owner.
+      const ownerEl = regionEl.parentElement?.closest(structureNodeSelector)
+      const ownerId = ownerEl
+        ? (ownerEl.getAttribute("data-derive-node") ??
+          ownerEl.getAttribute("data-derive-runtime-node"))
+        : null
+      if (regionEl.getAttribute(structureAttribute(prefix, "owner")) !== ownerId) continue
       regions.push({
         el: regionEl,
         id,
@@ -3947,35 +3993,20 @@ interface ElReg {
         layout: layout as StructureLayout,
         nodes,
         owner: null,
+        ownerEl: ownerEl instanceof HTMLElement ? ownerEl : null,
         origOrder: nodes.map((node) => node.id),
         origGap: gap,
         origStyle: rawStyle(regionEl),
       })
     }
-    for (const node of document.querySelectorAll(structureNodeSelector))
-      if (!handledNodes.has(node)) invalid = true
     const nodeByEl = new Map(
       regions.flatMap((region) => region.nodes.map((node) => [node.el, node] as const)),
     )
-    const claimedOwners = new Set<StructureNode>()
-    for (const region of regions) {
-      const ownerEl = region.el.parentElement?.closest(structureNodeSelector)
-      const owner = ownerEl instanceof HTMLElement ? (nodeByEl.get(ownerEl) ?? null) : null
-      const declared = region.el.getAttribute(structureAttribute(region.prefix, "owner"))
-      if (
-        (owner === null && declared !== null) ||
-        (owner !== null && declared !== owner.id) ||
-        (owner !== null && claimedOwners.has(owner))
-      ) {
-        invalid = true
-        continue
-      }
-      if (owner) {
-        claimedOwners.add(owner)
-        region.owner = owner
-      }
-    }
-    return invalid ? [] : regions
+    // An owner in a refused region is still the region's owner in source, but it has
+    // no handles of its own to select as a parent.
+    for (const region of regions)
+      region.owner = region.ownerEl ? (nodeByEl.get(region.ownerEl) ?? null) : null
+    return regions
   }
 
   const structureDirtyCount = (): number => {
@@ -4284,6 +4315,9 @@ interface ElReg {
   interface StructureHeightClipOverflow {
     top: number
     bottom: number
+    /** The ancestor's own hidden scroll overflow (CSS px). The node's footprint misses
+     *  what a taller node pushes out instead: later siblings, and container padding. */
+    scroll: number
   }
   type StructureHeightChainBaseline = Map<HTMLElement, StructureHeightClipOverflow>
   const structureHeightClipOverflow = (
@@ -4308,6 +4342,7 @@ interface ElReg {
     return {
       top: Math.max(0, clipTop - footprint.top),
       bottom: Math.max(0, footprint.bottom - clipBottom),
+      scroll: Math.max(0, ancestor.scrollHeight - ancestor.clientHeight),
     }
   }
   const structureHeightChainBaseline = (node: StructureNode): StructureHeightChainBaseline => {
@@ -4339,8 +4374,13 @@ interface ElReg {
       const overflowY = getComputedStyle(ancestor).overflowY
       if (overflowY === "hidden" || overflowY === "clip") {
         const overflow = structureHeightClipOverflow(node, ancestor)
-        const before = baseline?.get(ancestor) ?? { top: 0, bottom: 0 }
-        if (overflow.top > before.top + 1 || overflow.bottom > before.bottom + 1) return false
+        const before = baseline?.get(ancestor) ?? { top: 0, bottom: 0, scroll: 0 }
+        if (
+          overflow.top > before.top + 1 ||
+          overflow.bottom > before.bottom + 1 ||
+          overflow.scroll > before.scroll + 1
+        )
+          return false
       }
       ancestor = ancestor.parentElement
     }
@@ -4881,7 +4921,7 @@ interface ElReg {
         reordered[index + 1] = node
       }
     }
-    for (const node of reordered) region.el.append(node.el)
+    reorderInPlace(reordered.map((node) => node.el))
     let paintOrderChanged = false
     for (const [pair, topId] of initialPaintOrder) {
       const [chosenId, otherId] = pair.split("\u0000")
@@ -5240,6 +5280,31 @@ interface ElReg {
     selected.el.remove()
     selectStructure(null)
     showStructureToast(`Removed ${selected.id}`)
+    markStructureChanged()
+  }
+  /* Cut, copy, paste and duplicate a selected node, on stamped pages only: there a
+     save names a moved or copied element by its source id, so it can land on any
+     slide. Paste goes after the selected node; a pasted cut pastes copies after that. */
+  let structureClip: { el: HTMLElement; copy: boolean } | null = null
+  const structureCopies = new Set<HTMLElement>()
+  const clipStructure = (copy: boolean) => {
+    const selected = structureSelected
+    if (!selected) return
+    if (!copy) removeStructure()
+    if (copy || !selected.el.isConnected) structureClip = { el: selected.el, copy }
+  }
+  const pasteStructure = (clip: { el: HTMLElement; copy: boolean } | null) => {
+    const at = structureSelected?.el
+    if (!clip || !at?.parentElement || (at === clip.el && !clip.copy)) return
+    const el = clip.copy ? (clip.el.cloneNode(true) as HTMLElement) : clip.el
+    if (clip.copy) {
+      el.removeAttribute("tabindex")
+      structureCopies.add(el)
+    }
+    remember(clip.copy ? { kind: "placement", el, parent: null, next: null } : placementOf(el))
+    at.after(el)
+    structureClip = { el, copy: true }
+    showStructureToast(clip.copy ? "Pasted a copy" : "Moved here")
     markStructureChanged()
   }
   const selectAllStructureSiblings = () => {
@@ -5731,7 +5796,8 @@ interface ElReg {
   structureCornerHandle.addEventListener("pointerdown", (e) =>
     beginStructureResize(e, "both", structureCornerHandle),
   )
-  window.addEventListener(
+  on(
+    window,
     "pointermove",
     (e) => {
       const drag = structureResizeDrag
@@ -5944,8 +6010,8 @@ interface ElReg {
     settleStructureInteraction("commit")
     markStructureChanged()
   }
-  window.addEventListener("pointerup", (e) => finishStructureResize(e, false))
-  window.addEventListener("pointercancel", (e) => finishStructureResize(e, true))
+  on(window, "pointerup", (e) => finishStructureResize(e, false))
+  on(window, "pointercancel", (e) => finishStructureResize(e, true))
   cancelStructureResize = () => {
     const drag = structureResizeDrag
     if (!drag) return false
@@ -6056,7 +6122,7 @@ interface ElReg {
     pointerId: number
     node: StructureNode
     region: StructureRegion
-    initial: Extract<HistoryEntry, { kind: "placement" }>
+    initial: Extract<HistoryEntry, { kind: "structural-order" }>
     initialOrder: string[]
     initialGeometry: Map<string, DOMRect>
     initialPaintOrder: Map<string, string>
@@ -6113,7 +6179,10 @@ interface ElReg {
       pointerId: e.pointerId,
       node,
       region,
-      initial: placementOf(node.el),
+      initial: structuralOrderOf(
+        region.el,
+        connectedStructureNodes(region).map((candidate) => candidate.el),
+      ),
       initialOrder: connectedStructureNodes(region).map((candidate) => candidate.id),
       initialGeometry: structureGeometry(region),
       initialPaintOrder: structurePaintOrder(node, region),
@@ -6123,7 +6192,8 @@ interface ElReg {
     node.el.classList.add("derive-structure-dragging")
     structureGrip.setPointerCapture?.(e.pointerId)
   })
-  window.addEventListener(
+  on(
+    window,
     "pointermove",
     (e) => {
       const drag = structureDrag
@@ -6145,7 +6215,9 @@ interface ElReg {
       const before = target?.beforeId
         ? others.find((node) => node.id === target.beforeId)
         : undefined
-      drag.region.el.insertBefore(drag.node.el, before?.el ?? null)
+      const placed = others.map((node) => node.el)
+      placed.splice(before ? placed.indexOf(before.el) : placed.length, 0, drag.node.el)
+      reorderInPlace(placed)
       showStructureDropMarker(drag.region, before, axis, others)
       const order = connectedStructureNodes(drag.region).map((node) => node.id)
       drag.moved = order.some((id, index) => id !== drag.initialOrder[index])
@@ -6164,7 +6236,7 @@ interface ElReg {
       drag.moved &&
       (structureGeometryChanged(drag.initialGeometry, drag.region) ||
         structurePaintOrderChanged(drag.initialPaintOrder, drag.node, drag.region))
-    if (cancel || !visuallyMoved) applyPlacement(drag.initial)
+    if (cancel || !visuallyMoved) applyStructuralOrder(drag.initial)
     else remember(drag.initial)
     if (visuallyMoved && !cancel) {
       settleStructureInteraction("commit")
@@ -6189,18 +6261,18 @@ interface ElReg {
     structureDrag = null
     drag.node.el.classList.remove("derive-structure-dragging")
     hideStructureDropMarker()
-    applyPlacement(drag.initial)
+    applyStructuralOrder(drag.initial)
     updateStructureInteraction({ type: "cancel" })
     updateStructureInteraction({ type: "settle" })
     paintStructureUi()
     postDirty()
     return true
   }
-  window.addEventListener("pointerup", (e) => finishStructureDrag(e, false))
-  window.addEventListener("pointercancel", (e) => finishStructureDrag(e, true))
+  on(window, "pointerup", (e) => finishStructureDrag(e, false))
+  on(window, "pointercancel", (e) => finishStructureDrag(e, true))
   structureGrip.addEventListener("lostpointercapture", () => cancelStructureDrag())
   cancelStructuralGesture = () => cancelStructureResize() || cancelStructureDrag()
-  window.addEventListener("blur", () => cancelStructuralGesture())
+  on(window, "blur", () => cancelStructuralGesture())
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) cancelStructuralGesture()
   })
@@ -6219,7 +6291,8 @@ interface ElReg {
     structureGrip.focus()
     return true
   }
-  document.addEventListener(
+  on(
+    document,
     "mousedown",
     (e) => {
       const target = asEl(e.target)
@@ -6229,7 +6302,7 @@ interface ElReg {
     },
     true,
   )
-  document.addEventListener("focusin", (e) => {
+  on(document, "focusin", (e) => {
     if (!editOn) return
     const node = structuralNodeAt(asEl(e.target))
     if (node && e.target === node.el && structureNodeAvailable(node)) {
@@ -6237,12 +6310,16 @@ interface ElReg {
       structurePointerSelectionHandled = structurePointerExtend
     }
   })
-  document.addEventListener(
+  on(
+    document,
     "keydown",
     (e) => {
       if (!editOn || !structureSelected || e.defaultPrevented || e.isComposing) return
       const active = asEl(document.activeElement)
       if (active?.closest("[contenteditable],input,textarea,select")) return
+      // Only while the node (or its toolbar) holds focus: a Backspace after a click
+      // that landed nowhere must not delete a node selected a moment earlier.
+      if (active !== structureSelected.el && !active?.closest(".derive-edit-ui")) return
       if (e.key === "Enter" && active === structureSelected.el) {
         e.preventDefault()
         e.stopImmediatePropagation()
@@ -6269,7 +6346,7 @@ interface ElReg {
   )
 
   const enableStructuralEditing = () => {
-    setStructureRegions(elementEditsOn ? scanStructureRegions() : [])
+    setStructureRegions(elementEditsOn && srcSnap ? scanStructureRegions() : [])
     structureExpectedRemoved = new Set()
     syncStructuralPlacement = (el) => {
       const node = structureNodeByElement.get(el)
@@ -6345,6 +6422,8 @@ interface ElReg {
     paintStructureUi()
   }
   const settleStructuralEditing = (restore: boolean) => {
+    structureCopies.clear()
+    structureClip = null
     structureObserver?.disconnect()
     structureObserver = null
     if (restore)
@@ -6457,11 +6536,13 @@ interface ElReg {
       }
       full += "\n"
       editBase = { text: full, starts }
+      srcSnap = stamped() ? snapshotSource(document.body) : null
       sceneEdits = []
       enableStructuralEditing()
       setHover(null)
       // Off-screen slides stop catching clicks meant for the slide on screen.
       maskOffscreenSlides()
+      setEditHitTesting(true)
       // Entered FROM the document (Edit on a selection): land the caret on the words
       // the user already selected instead of making them click the same words a
       // second time. Deferred a frame so the host's chrome has settled and the
@@ -6481,8 +6562,11 @@ interface ElReg {
       if (keep) settleEdits()
       else restoreEdits()
       editBase = null
+      srcSnap = null
+      releaseSource(document.body)
       setEditHover(null)
       unmaskSlides()
+      setEditHitTesting(false)
       // History belongs to the session that made it. Carrying it across would offer
       // to undo into a document that has already been saved and reloaded.
       resetEditHistory()
@@ -6519,6 +6603,7 @@ interface ElReg {
     for (let i = sceneEdits.length - 1; i >= 0; i--) sceneEdits[i]?.undo()
     if (restoredScenes) restoreActiveVideoScene(activeSceneId)
     // Reconnect removed nodes before restoring text blocks nested inside them.
+    for (const el of structureCopies) el.remove()
     settleStructuralEditing(true)
     for (const t of editTargets) {
       if (document.contains(t.el)) {
@@ -6665,8 +6750,30 @@ interface ElReg {
       post({ type: "edit-blocked", reason: "readonly" })
       return
     }
-    const cand = editContainerFor(node)
+    let cand = editContainerFor(node)
     if (!cand) return
+    // One editing host per run of words: typing goes to a block already armed around
+    // them, and a block is never armed around an armed one (nested hosts let a run
+    // of Backspace walk out of the words clicked into the neighbour's). Take the
+    // largest piece of the block that holds the words and nothing armed.
+    const armed = node.parentElement?.closest("[data-derive-editable]")
+    if (armed instanceof HTMLElement) cand = armed
+    else if (cand.querySelector("[data-derive-editable]")) {
+      let el = node.parentElement as HTMLElement
+      while (
+        el.parentElement &&
+        el.parentElement !== cand &&
+        !el.parentElement.querySelector("[data-derive-editable]")
+      )
+        el = el.parentElement
+      cand = el
+    }
+    // A page script made it: its words aren't in the source, so there's nowhere to
+    // save them.
+    if (srcSnap && cand.closest(`[${GEN_ATTR}]`)) {
+      post({ type: "edit-blocked", reason: "dynamic" })
+      return
+    }
     // Belt and braces for the hidden-slide trap (see maskOffscreenSlides): if a
     // click still resolves into a slide that isn't the one on screen, say so
     // rather than putting a caret somewhere the typist can't see.
@@ -6745,42 +6852,30 @@ interface ElReg {
     const c = caretAt(x, y)
     return c && c.node.nodeType === 3 ? { node: c.node as Text, caret: c } : null
   }
-  /* The same question, asked through whatever is lying on top of the text.
-     Caret hit-testing returns the TOPMOST element at a point, and a deck covers its
-     stage with invisible click-catchers ("next slide" / "previous slide" zones), so
-     aiming at a headline resolves the zone and editing finds nothing to edit. Peel:
-     take the top element out of hit testing, ask again, repeat a few times, and put
-     every one of them back. Bounded to four layers — past that, whatever is up there
-     is the page's own UI and a click belongs to it.
-     Off-screen slides are masked for the same reason (they are stacked at inset:0
-     and stay hit-testable at opacity 0), so this resolves the text a reader can
-     actually see. */
+  /** Whether the text a caret hit resolved to is actually under the point. Caret hit
+   *  testing snaps to the NEAREST text when the point is over empty space or over an
+   *  overlay, so a click beside a slide's content could otherwise arm a block the
+   *  pointer is nowhere near — and the next keystrokes would land there. */
+  const textUnderPoint = (node: Text, x: number, y: number): boolean => {
+    const within = (r: DOMRect | DOMRectReadOnly, pad: number) =>
+      x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad
+    const block = editContainerFor(node)
+    if (block && within(block.getBoundingClientRect(), 2)) return true
+    // Text can overflow its block (nowrap in a narrow box); its own line boxes count.
+    const range = document.createRange()
+    range.selectNodeContents(node)
+    for (const r of Array.from(range.getClientRects())) if (within(r, 4)) return true
+    return false
+  }
+  /** The text a click or hover at a point would edit, or null. Overlays over the
+   *  words already left hit testing (setEditHitTesting); off-screen slides are
+   *  masked (maskOffscreenSlides). */
   const editNodeVisibleAt = (
     x: number,
     y: number,
   ): { node: Text; caret: { node: Node; offset: number } } | null => {
-    const peeled: { el: HTMLElement; prev: string }[] = []
-    const maskedHere = !editOn
-    if (maskedHere) maskOffscreenSlides()
-    try {
-      for (let pass = 0; pass < 4; pass++) {
-        const hit = editNodeAt(x, y)
-        if (hit) return hit
-        const top = document.elementFromPoint(x, y)
-        if (
-          !(top instanceof HTMLElement) ||
-          top === document.body ||
-          top === document.documentElement
-        )
-          return null
-        peeled.push({ el: top, prev: top.style.pointerEvents })
-        top.style.pointerEvents = "none"
-      }
-      return null
-    } finally {
-      for (const p of peeled) p.el.style.pointerEvents = p.prev
-      if (maskedHere) unmaskSlides()
-    }
+    const hit = editNodeAt(x, y)
+    return hit && textUnderPoint(hit.node, x, y) ? hit : null
   }
   /** An image under the pointer — the one editable thing here that isn't text. */
   const imageAt = (e: MouseEvent): HTMLImageElement | null => {
@@ -6860,39 +6955,25 @@ interface ElReg {
     editActivate(hit.node, e.detail <= 1 ? hit.caret : null)
   }
 
-  /* Focus follows the WORDS, not what's lying on top of them.
-     Focus moves on mousedown, before any click handler runs, and it moves to the
-     element actually hit — which over a deck is the invisible click zone, not the
-     heading beneath it. So the block was armed and immediately un-focused, and
-     typing went nowhere (the caret was in the block; the focus was on the body).
-     Taking the default away when an overlay is between the pointer and the text
-     leaves focus where the caret is going. Only in edit mode, and only when
-     something IS in the way — an ordinary click on ordinary text keeps every
-     native behaviour, including drag-select. */
-  document.addEventListener(
-    "mousedown",
-    (e) =>
-      guard(() => {
-        if (!editOn) return
-        if (asEl(e.target)?.closest(".derive-edit-ui")) return
-        const top = document.elementFromPoint(e.clientX, e.clientY)
-        // Nothing on top of the words? Then the browser's own behaviour is already
-        // right, and this must not touch it — drag-select depends on that default.
-        if (!top || top.closest("[data-derive-editable]")) return
-        const hit = editNodeVisibleAt(e.clientX, e.clientY)
-        if (hit && !top.contains(hit.node)) e.preventDefault()
-      }),
-    true,
-  )
-
   // Text context in the host follows focus as well as selection. This makes Inspect
   // useful as soon as someone clicks into a paragraph, before they select words to
   // format. Defer focusout by one turn so focus moving within the frame settles first.
-  document.addEventListener("focusin", () => {
+  on(document, "focusin", () => {
     if (editOn) scheduleDirty()
   })
-  document.addEventListener("focusout", () => {
-    if (editOn) window.setTimeout(scheduleDirty, 0)
+  // Typing follows the click: when focus leaves a block for anywhere else in the page
+  // (a link, a node, a handle, empty space), its caret goes too. Otherwise the
+  // selection stays behind, and text input lands wherever the selection is. Focus
+  // leaving the frame (the host's own buttons) keeps it.
+  on(document, "focusout", (e) => {
+    if (!editOn) return
+    const block = asEl(e.target)?.closest("[data-derive-editable]")
+    window.setTimeout(() => {
+      scheduleDirty()
+      if (!block || !document.hasFocus() || block.contains(document.activeElement)) return
+      const sel = window.getSelection()
+      if (sel?.anchorNode && block.contains(sel.anchorNode)) sel.removeAllRanges()
+    }, 0)
   })
 
   /* Bring the block being edited into view. On a phone the host shrinks the frame by
@@ -6919,7 +7000,7 @@ interface ElReg {
      hit-test, and skipped over controls/media that can't be edited anyway, so the
      invitation never appears where a click would be refused. */
   let editHoverTick = 0
-  document.addEventListener("mousemove", (e) => {
+  on(document, "mousemove", (e) => {
     if (!editOn || editHoverTick) return
     const x = e.clientX
     const y = e.clientY
@@ -7019,15 +7100,17 @@ interface ElReg {
 
      The wrap is the EDITOR's, not the document's: a `[data-derive-fmt]` span holds
      the intent (and shows what it will look like) until the save turns it into a
-     real tag. Nothing here touches the stored source; `collectEdits` reads these
-     spans and sends the block as one `new_html` edit, which the server sanitizes
-     down to five inline tags.
+     real tag. Nothing here touches the stored source; the save serializes these
+     spans as the server's inline-tag tokens (source-tokens.ts). HTML pages only:
+     Markdown and LaTeX write formatting as text.
 
      ⌘B/⌘I/⌘K, because those are the keys every writing tool binds. The frame owns
      the keyboard while a caret is in a block, so they can't reach the browser. */
-  const FMT_ATTR = "data-derive-fmt"
-  const HREF_ATTR = "data-derive-href"
   const applyFmt = (kind: "b" | "i" | "a", href?: string): void => {
+    if (!srcSnap) {
+      post({ type: "edit-blocked", reason: "format-text" })
+      return
+    }
     // The live selection, or the one stashed when the bar's button took focus out of
     // this frame (the link flow asks for a URL up in the host, and the answer arrives
     // after the selection here has gone).
@@ -7085,6 +7168,10 @@ interface ElReg {
    *  formatting uses (so one collect path handles all of it) and rendered by the
    *  real <br> inside it, so the line breaks on screen the moment it's typed. */
   const insertBreak = (): void => {
+    if (!srcSnap) {
+      post({ type: "edit-blocked", reason: "format-text" })
+      return
+    }
     const sel = window.getSelection()
     if (!sel || !sel.rangeCount) return
     const range = sel.getRangeAt(0)
@@ -7093,6 +7180,9 @@ interface ElReg {
       "[data-derive-editable]",
     )
     if (!(block instanceof HTMLElement)) return
+    // A word selection can end past the block (a double click at the end of an inline
+    // block); the break replaces only what is inside it.
+    if (!block.contains(range.endContainer)) range.setEnd(block, block.childNodes.length)
     checkpoint(block)
     const span = document.createElement("span")
     span.setAttribute(FMT_ATTR, "br")
@@ -7107,27 +7197,6 @@ interface ElReg {
     scheduleDirty()
   }
 
-  /** Serialize a block as inline markup: text escaped, editor spans as real tags,
-   *  anything else contributing its selected text only. */
-  const serializeFmtNode = (n: Node): string => {
-    if (n.nodeType === 3) return escapeText(n.nodeValue ?? "")
-    if (n.nodeType !== 1) return ""
-    const e = n as Element
-    const kind = e.getAttribute(FMT_ATTR)
-    const inner = serializeFmt(e)
-    if (kind === "b") return `<b>${inner}</b>`
-    if (kind === "i") return `<i>${inner}</i>`
-    if (kind === "br") return "<br>"
-    if (kind === "a") return `<a href="${escapeText(e.getAttribute(HREF_ATTR) || "")}">${inner}</a>`
-    return inner
-  }
-  const serializeFmt = (el: Node): string => {
-    let out = ""
-    for (let n = el.firstChild; n; n = n.nextSibling) out += serializeFmtNode(n)
-    return out
-  }
-  const escapeText = (s: string): string =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
   const hasFmt = (el: Element): boolean => !!el.querySelector(`[${FMT_ATTR}]`)
 
   const isHiSur = (ch: string | undefined): boolean =>
@@ -7205,7 +7274,7 @@ interface ElReg {
       new_text: newText,
     }
   }
-  /** The wire shape of one collected edit: text, or (formatting only) markup. */
+  /** The wire shape of one collected text edit (Markdown and LaTeX). */
   interface WireEdit {
     quote: {
       exact: string
@@ -7214,8 +7283,7 @@ interface ElReg {
       occurrence?: number
       match_count?: number
     }
-    new_text?: string
-    new_html?: string
+    new_text: string
   }
   interface WireElementEdit {
     op: "resize"
@@ -7223,55 +7291,7 @@ interface ElReg {
     width: number
     height: number | "auto"
   }
-  type WireStructuralEdit =
-    | {
-        schema: typeof STRUCTURE_SCHEMA
-        op: "structural-size"
-        region: string
-        node: string
-        size: StructureSize | null
-      }
-    | {
-        schema: typeof STRUCTURE_SCHEMA
-        op: "structural-width"
-        region: string
-        node: string
-        width_pct: number | null
-      }
-    | {
-        schema: typeof STRUCTURE_SCHEMA
-        op: "structural-dimensions"
-        region: string
-        node: string
-        width_pct: number | null
-        height_px: number | null
-      }
-    | {
-        schema: typeof STRUCTURE_SCHEMA
-        op: "structural-align"
-        region: string
-        node: string
-        align: StructuralAlignment | null
-      }
-    | {
-        schema: typeof STRUCTURE_SCHEMA
-        op: "structural-gap"
-        region: string
-        gap_px: number | null
-      }
-    | {
-        schema: typeof STRUCTURE_SCHEMA
-        op: "structural-order"
-        region: string
-        nodes: string[]
-      }
-    | {
-        schema: typeof STRUCTURE_SCHEMA
-        op: "structural-remove"
-        region: string
-        node: string
-      }
-  type WireChange = WireEdit | WireElementEdit | WireStructuralEdit | WireSceneEdit
+  type WireChange = WireEdit | WireElementEdit | WireSceneEdit
   const wireEdit = (qe: {
     exact: string
     prefix: string
@@ -7289,75 +7309,6 @@ interface ElReg {
     },
     new_text: qe.new_text,
   })
-  /* A block someone formatted goes as one markup edit. The wrap splits text
-     nodes, so the per-node text alignment cannot represent the format action. */
-  const targetedFormatEdit = (t: EditTarget): WireEdit | null => {
-    const base = editBase
-    if (!base) return null
-    const formatted = t.el.querySelectorAll(`[${FMT_ATTR}]`)
-    if (formatted.length !== 1) return null
-    const target = formatted[0] as Element
-    const exact = target.textContent ?? ""
-    if (!exact.trim()) return null
-    // Formatting keeps the rendered words unchanged. Their offset from the start
-    // of this block identifies a selection that spans several original text nodes.
-    if ((t.el.textContent ?? "") === t.origConcat) {
-      const before = document.createRange()
-      before.setStart(t.el, 0)
-      before.setEndBefore(target)
-      const start = (t.origStarts[0] ?? 0) + before.toString().length
-      if (base.text.slice(start, start + exact.length) === exact)
-        return {
-          quote: {
-            exact,
-            prefix: base.text.slice(Math.max(0, start - 40), start),
-            suffix: base.text.slice(start + exact.length, start + exact.length + 40),
-            ...occurrenceHint(exact, start),
-          },
-          new_html: serializeFmtNode(target),
-        }
-    }
-    const matches: { node: number; at: number }[] = []
-    for (let i = 0; i < t.origValues.length; i++) {
-      const value = t.origValues[i] as string
-      for (let at = value.indexOf(exact); at >= 0; at = value.indexOf(exact, at + 1))
-        matches.push({ node: i, at })
-    }
-    if (matches.length !== 1) return null
-    const match = matches[0] as { node: number; at: number }
-    const start = (t.origStarts[match.node] as number) + match.at
-    return {
-      quote: {
-        exact,
-        prefix: base.text.slice(Math.max(0, start - 40), start),
-        suffix: base.text.slice(start + exact.length, start + exact.length + 40),
-        ...occurrenceHint(exact, start),
-      },
-      new_html: serializeFmtNode(target),
-    }
-  }
-  const blockHtmlEdit = (t: EditTarget): WireEdit | null => {
-    const base = editBase
-    if (!base) return null
-    const targeted = targetedFormatEdit(t)
-    if (targeted) return targeted
-    // Whole-block serialization intentionally knows only editor-authored formatting.
-    // If the original block already carried elements, flattening it would lose source.
-    if (t.structSig) return null
-    const exact = t.origValues.join("\n")
-    if (!exact.trim()) return null
-    const start = t.origStarts[0] ?? 0
-    const end = start + exact.length
-    return {
-      quote: {
-        exact,
-        prefix: base.text.slice(Math.max(0, start - 40), start),
-        suffix: base.text.slice(end, end + 40),
-        ...occurrenceHint(exact, start),
-      },
-      new_html: serializeFmt(t.el).replace(/\s*\n\s*/g, " "),
-    }
-  }
   // The whole-block span: both sides joined with the same "\n" separators the
   // snapshot uses, so offsets line up with editBase.text; the replacement's seam
   // separators collapse to single spaces (typed content never contains newlines —
@@ -7365,136 +7316,6 @@ interface ElReg {
   const blockEdit = (t: EditTarget, curVals: string[]): WireEdit | null => {
     const qe = quoteEditFor(t.origValues.join("\n"), curVals.join("\n"), t.origStarts[0] ?? 0)
     return qe ? wireEdit({ ...qe, new_text: qe.new_text.replace(/\s*\n\s*/g, " ") }) : null
-  }
-  const collectStructuralEdits = (): { edits: WireStructuralEdit[]; invalid: boolean } => {
-    const edits: WireStructuralEdit[] = []
-    if (structureResizeDrag) return { edits, invalid: true }
-    // Text edits do not need a valid structural schema. Many authored decks mark
-    // only the movable parts of a slide and leave labels or footers unmarked.
-    // Their structural scanner has no regions, but their text still has a valid
-    // source quote. Check layout integrity only when a layout change is pending.
-    if (structureDirtyCount() === 0) return { edits, invalid: false }
-    if (!structureDocumentIntegrityValid()) return { edits, invalid: true }
-    for (const region of activeStructureRegions()) {
-      if (!structureIntegrityValid(region)) return { edits: [], invalid: true }
-      const gapRaw = region.el.getAttribute(structureAttribute(region.prefix, "gap"))
-      const gap = gapRaw === null ? null : Number.parseInt(gapRaw, 10)
-      if (
-        gap !== null &&
-        (!Number.isInteger(gap) || gap < MIN_STRUCTURAL_GAP_PX || gap > MAX_STRUCTURAL_GAP_PX)
-      )
-        return { edits: [], invalid: true }
-      if (gapRaw !== region.origGap)
-        edits.push({
-          schema: STRUCTURE_SCHEMA,
-          op: "structural-gap",
-          region: region.id,
-          gap_px: gap,
-        })
-      const current = connectedStructureNodes(region)
-      const ids = current.map((node) => node.id)
-      const present = new Set(ids)
-      // Remove first. The following order is then complete for the region that
-      // exists at that point, which keeps the server contract deterministic.
-      for (const node of region.nodes)
-        if (structureExpectedRemoved.has(node) && !present.has(node.id))
-          edits.push({
-            schema: STRUCTURE_SCHEMA,
-            op: "structural-remove",
-            region: region.id,
-            node: node.id,
-          })
-      const originalRemaining = region.origOrder.filter((id) => present.has(id))
-      if (ids.some((id, index) => id !== originalRemaining[index]))
-        edits.push({
-          schema: STRUCTURE_SCHEMA,
-          op: "structural-order",
-          region: region.id,
-          nodes: ids,
-        })
-      for (const node of current) {
-        const size = node.el.getAttribute(
-          structureAttribute(node.prefix, "size"),
-        ) as StructureSize | null
-        const widthRaw = node.el.getAttribute(structureAttribute(node.prefix, "width"))
-        const width = widthRaw === null ? null : Number.parseInt(widthRaw, 10)
-        if (
-          width !== null &&
-          (!Number.isInteger(width) ||
-            width < MIN_STRUCTURAL_WIDTH_PCT ||
-            width > MAX_STRUCTURAL_WIDTH_PCT)
-        )
-          return { edits: [], invalid: true }
-        const heightRaw = node.el.getAttribute(structureAttribute(node.prefix, "height"))
-        const height = heightRaw === null ? null : Number.parseInt(heightRaw, 10)
-        if (
-          height !== null &&
-          (!Number.isInteger(height) ||
-            height < MIN_STRUCTURAL_HEIGHT_PX ||
-            height > MAX_STRUCTURAL_HEIGHT_PX)
-        )
-          return { edits: [], invalid: true }
-        const widthChanged = widthRaw !== node.origWidth
-        const heightChanged = heightRaw !== node.origHeight
-        const align = node.el.getAttribute(
-          structureAttribute(node.prefix, "align"),
-        ) as StructuralAlignment | null
-        if (align !== null && !/^(?:start|center|end)$/.test(align))
-          return { edits: [], invalid: true }
-        const alignChanged = align !== node.origAlign
-        const sizeChanged = size !== node.origSize
-        if (heightChanged && sizeChanged && width === null)
-          edits.push({
-            schema: STRUCTURE_SCHEMA,
-            op: "structural-size",
-            region: region.id,
-            node: node.id,
-            size,
-          })
-        if (heightChanged)
-          edits.push({
-            schema: STRUCTURE_SCHEMA,
-            op: "structural-dimensions",
-            region: region.id,
-            node: node.id,
-            width_pct: width,
-            height_px: height,
-          })
-        else if (widthChanged && width !== null)
-          edits.push({
-            schema: STRUCTURE_SCHEMA,
-            op: "structural-width",
-            region: region.id,
-            node: node.id,
-            width_pct: width,
-          })
-        else if (sizeChanged)
-          edits.push({
-            schema: STRUCTURE_SCHEMA,
-            op: "structural-size",
-            region: region.id,
-            node: node.id,
-            size,
-          })
-        else if (widthChanged)
-          edits.push({
-            schema: STRUCTURE_SCHEMA,
-            op: "structural-width",
-            region: region.id,
-            node: node.id,
-            width_pct: null,
-          })
-        if (alignChanged)
-          edits.push({
-            schema: STRUCTURE_SCHEMA,
-            op: "structural-align",
-            region: region.id,
-            node: node.id,
-            align,
-          })
-      }
-    }
-    return { edits, invalid: false }
   }
   /* `uncaptured` counts blocks the user changed that produced NO edit — the host
      refuses to save a partial batch, because publishing some of the typing and
@@ -7507,16 +7328,6 @@ interface ElReg {
     let uncaptured = 0
     for (const t of editTargets) {
       if (!document.contains(t.el)) continue
-      // A formatted block is markup, whole. Checked BEFORE normalize(), which would
-      // merge the text either side of a wrap and lose nothing — but the html path
-      // doesn't need the per-node alignment normalize() exists to protect.
-      if (hasFmt(t.el)) {
-        dirty++
-        const he = blockHtmlEdit(t)
-        if (he) edits.push(he)
-        else uncaptured++
-        continue
-      }
       t.el.normalize()
       const curNodes = textNodes(t.el)
       const curVals = curNodes.map((n) => n.nodeValue ?? "")
@@ -7567,12 +7378,77 @@ interface ElReg {
     }
     for (const entry of sceneEdits) edits.push(entry.wire)
     dirty += sceneEdits.length
-    const structural = collectStructuralEdits()
-    if (structural.edits.length > MAX_STRUCTURAL_EDITS) uncaptured++
-    else edits.push(...structural.edits)
-    if (structural.invalid) uncaptured++
-    dirty += structureDirtyCount()
     return { edits, dirty, uncaptured }
+  }
+
+  /* The exact-source save (stamped pages), atomic: content ops from the DOM against
+     the entry snapshot, and one attrs op per element whose size or structural layout
+     changed — the properties the editor owns over the author's own style text, and
+     the layout attributes by their canonical names (a legacy deck's runtime ones
+     included: the server persists that structure with the save). */
+  const collectOps = (snap: SrcSnapshot) => {
+    const { ops, ok } = collectSourceOps(document.body, snap)
+    let uncaptured = ok && !structureResizeDrag ? 0 : 1
+    const changed = new Map<
+      Element,
+      {
+        orig: string | null
+        style: Record<string, string | null>
+        attrs: Record<string, string | null>
+      }
+    >()
+    const change = (el: Element, orig: string | null) => {
+      const entry = changed.get(el) ?? { orig, style: {}, attrs: {} }
+      changed.set(el, entry)
+      return entry
+    }
+    for (const t of resizeTargets) {
+      if (!document.contains(t.el) || rawStyle(t.el) === t.origStyle) continue
+      const { width, height } = t.el.style
+      Object.assign(change(t.el, t.origStyle).style, {
+        width: width || null,
+        height: height || null,
+      })
+    }
+    const layout = (
+      el: HTMLElement,
+      prefix: StructurePrefix,
+      origStyle: string | null,
+      was: Partial<Record<keyof typeof STRUCTURAL_LAYOUT, string | null>>,
+    ) => {
+      const keys = Object.keys(was) as (keyof typeof STRUCTURAL_LAYOUT)[]
+      if (keys.every((key) => el.getAttribute(structureAttribute(prefix, key)) === was[key])) return
+      const entry = change(el, origStyle)
+      for (const key of keys) {
+        entry.attrs[`data-derive-${key}`] = el.getAttribute(structureAttribute(prefix, key))
+        const property = STRUCTURAL_LAYOUT[key]?.[0]
+        if (property) entry.style[property] = el.style.getPropertyValue(property).trim() || null
+      }
+    }
+    for (const region of activeStructureRegions()) {
+      layout(region.el, region.prefix, region.origStyle, { gap: region.origGap })
+      for (const node of connectedStructureNodes(region))
+        layout(node.el, node.prefix, node.origStyle, {
+          size: node.origSize,
+          width: node.origWidth,
+          height: node.origHeight,
+          align: node.origAlign,
+        })
+    }
+    for (const [el, { orig, style, attrs }] of changed) {
+      const src = srcOf(el)
+      if (src === null) uncaptured++
+      else
+        ops.push({
+          op: "attrs",
+          src,
+          hash: "",
+          style: updatedStyle(orig ?? "", style) || null,
+          ...(Object.keys(attrs).length ? { attrs } : {}),
+        })
+    }
+    const { deriveSrcVersion, deriveSrcSha } = document.documentElement.dataset
+    return { ops, base: { version: Number(deriveSrcVersion), sha: deriveSrcSha ?? "" }, uncaptured }
   }
 
   window.addEventListener("message", (e: MessageEvent) => {
@@ -7632,8 +7508,9 @@ interface ElReg {
     } else if (d.type === "edit-collect") {
       // The nonce rides back untouched: a slow page can answer a TIMED-OUT collect
       // after the host started a new one, and stale edits must not resolve it.
-      const { edits, dirty, uncaptured } = collectEdits()
-      post({ type: "edit-edits", edits, dirty, uncaptured, nonce: d.nonce })
+      if (srcSnap)
+        post({ type: "edit-edits", ...collectOps(srcSnap), dirty: countDirty(), nonce: d.nonce })
+      else post({ type: "edit-edits", ...collectEdits(), nonce: d.nonce })
     } else if (d.type === "edit-restore") restoreEdits()
     else if (d.type === "scroll-by") window.scrollBy(0, d.dy || 0)
     else if (d.type === "review-mode") setReviewMode(!!d.on)

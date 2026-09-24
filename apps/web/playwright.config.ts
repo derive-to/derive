@@ -17,6 +17,9 @@ const WEB_PORT = Number(process.env.PW_WEB_PORT ?? 3300 + portSlot)
 const WEB = `http://localhost:${WEB_PORT}`
 const ORIGIN = `http://localhost:${API_PORT}`
 const isCI = !!process.env.CI
+// Where the editing fuzz writes per-seed failure artifacts and its summary. Playwright
+// empties a project's outputDir at the start of a run, so each run starts clean.
+const FUZZ_OUT = process.env.FUZZ_OUT ?? "test-results/fuzz"
 
 // Isolation model: every test signs up a fresh user, and the API runs with
 // DERIVE_MULTI_WORKSPACE=true so each of those users owns an isolated personal
@@ -59,7 +62,24 @@ export default defineConfig({
     // Editing has its own scenario corpus and an intentionally deeper browser pass.
     // Keep it independently selectable so the fast smoke gate stays short while the
     // self-improvement loop can exercise Markdown, HTML, and decks end to end.
-    { name: "editing-deep", testMatch: /deep\/editing\.deep\.spec\.ts$/ },
+    { name: "editing-deep", testMatch: /deep\/editing(?:-structure)?\.deep\.spec\.ts$/ },
+    // Seeded round-trip fuzz of inline deck editing (see e2e/fuzz/). Long-running, so
+    // never part of smoke; its specs self-skip unless FUZZ=1, which `pnpm test:fuzz`
+    // sets. No retries: a failing seed is a finding, replayed with FUZZ_SEED. The
+    // teardown project prints the failure summary once every session has run.
+    {
+      name: "editing-fuzz",
+      testMatch: /fuzz\/.*\.fuzz\.spec\.ts$/,
+      retries: 0,
+      outputDir: FUZZ_OUT,
+      use: { trace: "off", video: "off", screenshot: "off" },
+      teardown: "editing-fuzz-summary",
+    },
+    {
+      name: "editing-fuzz-summary",
+      testMatch: /fuzz\/summary\.teardown\.ts$/,
+      outputDir: FUZZ_OUT,
+    },
     // Visual-QA capture harness (not a test gate): seeds a realistic workspace and
     // screenshots the real, auth-walled dashboard across themes + viewports. Its
     // specs self-skip unless SHOTS=1, so a bare `playwright test` never runs them.

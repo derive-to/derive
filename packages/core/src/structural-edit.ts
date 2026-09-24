@@ -9,7 +9,7 @@
  * never serializes a browser DOM.
  */
 
-import { nextUnusedSlideId, sliceSlides } from "./decks"
+import { STRUCTURAL_ID as ID, nextUnusedSlideId, sliceSlides } from "./decks"
 import { EditError } from "./doc-text"
 import { attrValues, type HtmlTag, hasAttr, tags } from "./html-tags"
 import { injectArtifactRuntimeScripts } from "./shared-state-client"
@@ -23,6 +23,7 @@ import {
   STRUCTURAL_ALIGN_PROPERTY,
   STRUCTURAL_GAP_PROPERTY,
   STRUCTURAL_HEIGHT_PROPERTY,
+  STRUCTURAL_LAYOUT,
   STRUCTURAL_WIDTH_PROPERTY,
   type StructuralAlignment,
 } from "./structural-width"
@@ -182,7 +183,6 @@ export class StructuralEditError extends EditError {
 }
 
 const MAX_STRUCTURAL_EDITS = 200
-const ID = /^[A-Za-z][A-Za-z0-9_-]{0,127}$/
 const SIZES = new Set<StructuralSize>(["compact", "standard", "full"])
 const LAYOUTS = new Set<StructuralLayout>(["stack", "row"])
 const STRUCTURAL_ATTRIBUTES = [
@@ -277,6 +277,77 @@ const structuralGap = (value: string | null, label: string): number | null => {
   return gap
 }
 
+/** A canonical layout attribute's key in STRUCTURAL_LAYOUT, or null. */
+const layoutKey = (name: string): keyof typeof STRUCTURAL_LAYOUT | null => {
+  const key = name.replace(/^data-derive-/, "")
+  return key !== name && Object.hasOwn(STRUCTURAL_LAYOUT, key)
+    ? (key as keyof typeof STRUCTURAL_LAYOUT)
+    : null
+}
+
+/** Read and check an opening tag's layout contract: every value in range, size and width
+ * exclusive, and each value paired with exactly one matching inline custom property. */
+const layoutOf = (tag: HtmlTag, label: string) => {
+  const style = exactlyOne(tag, "style", label) ?? ""
+  const read = (name: string) => exactlyOne(tag, name, label)
+  const paired = (key: "width" | "height" | "align" | "gap", value: string | number | null) => {
+    const [property, unit] = STRUCTURAL_LAYOUT[key]
+    const custom = stylePropertyValues(style, property)
+    if (
+      custom.length !== (value === null ? 0 : 1) ||
+      (value !== null && custom[0] !== `${value}${unit}`)
+    )
+      fail(
+        "invalid-structure",
+        `${label} must pair data-derive-${key} with one matching ${property} inline property.`,
+      )
+  }
+  const size = read("data-derive-size")
+  if (size !== null && !SIZES.has(size as StructuralSize))
+    fail("invalid-structure", `${label} has unsupported size ${JSON.stringify(size)}.`)
+  const width = structuralWidth(read("data-derive-width"), `${label} data-derive-width`)
+  if (size !== null && width !== null)
+    fail(
+      "invalid-structure",
+      `${label} cannot declare both data-derive-size and data-derive-width.`,
+    )
+  paired("width", width)
+  const height = structuralHeight(read("data-derive-height"), `${label} data-derive-height`)
+  paired("height", height)
+  const align = read("data-derive-align")
+  if (align !== null && !/^(?:start|center|end)$/.test(align))
+    fail("invalid-structure", `${label} has unsupported alignment ${JSON.stringify(align)}.`)
+  paired("align", align)
+  const gap = structuralGap(read("data-derive-gap"), `${label} data-derive-gap`)
+  paired("gap", gap)
+  return {
+    size: size as StructuralSize | null,
+    width,
+    height,
+    align: align as StructuralAlignment | null,
+    gap,
+  }
+}
+
+/** Set layout attributes on one opening tag (after its style is final) and check the
+ * result by the same contract every node and region is inspected against. Values are
+ * keywords and whole numbers, so nothing else can reach the tag. */
+export const setLayoutAttributes = (
+  opening: string,
+  attrs: Readonly<Record<string, string | null>>,
+  label: string,
+): string => {
+  let out = opening
+  for (const [name, value] of Object.entries(attrs)) {
+    if (!layoutKey(name)) fail("invalid-operation", `${label} can't set ${name}.`)
+    if (value !== null && !/^[a-z0-9]{1,16}$/.test(value))
+      fail("invalid-operation", `${label} has an invalid ${name} value.`)
+    out = setAttribute(out, name, value)
+  }
+  layoutOf(tags(out)[0] as HtmlTag, label)
+  return out
+}
+
 interface SourceElement {
   tag: HtmlTag
   parentStart: number | null
@@ -287,8 +358,7 @@ interface SourceElement {
 
 /** Build browser-effective element ranges and parentage while retaining whether a
  * declared element has a matching authored close token. */
-const sourceElements = (html: string): SourceElement[] => {
-  const all = tags(html)
+export const sourceElements = (html: string, all: HtmlTag[] = tags(html)): SourceElement[] => {
   const closeFor = new Map<number, HtmlTag>()
   for (const tag of all) {
     if (!tag.closing) continue
@@ -406,20 +476,7 @@ const inspect = (html: string): Inspection => {
         "invalid-structure",
         `Structural region ${id} must declare data-derive-layout="stack" or data-derive-layout="row".`,
       )
-    const gap = structuralGap(
-      exactlyOne(element.tag, "data-derive-gap", `Structural region ${id}`),
-      `Structural region ${id} data-derive-gap`,
-    )
-    const inlineStyle = exactlyOne(element.tag, "style", `Structural region ${id}`) ?? ""
-    const customGaps = stylePropertyValues(inlineStyle, STRUCTURAL_GAP_PROPERTY)
-    if (
-      customGaps.length !== (gap === null ? 0 : 1) ||
-      (gap !== null && customGaps[0] !== `${gap}px`)
-    )
-      fail(
-        "invalid-structure",
-        `Structural region ${id} must pair data-derive-gap with one matching ${STRUCTURAL_GAP_PROPERTY} inline property.`,
-      )
+    const { gap } = layoutOf(element.tag, `Structural region ${id}`)
     const region: OwnedRegion = {
       id,
       layout: layout as StructuralLayout,
@@ -452,66 +509,14 @@ const inspect = (html: string): Inspection => {
         "invalid-structure",
         `Structural node ${id} must be a direct child of a declared ordered region.`,
       )
-    const rawSize = exactlyOne(element.tag, "data-derive-size", `Structural node ${id}`)
-    if (rawSize !== null && !SIZES.has(rawSize as StructuralSize))
-      fail(
-        "invalid-structure",
-        `Structural node ${id} has unsupported size ${JSON.stringify(rawSize)}.`,
-      )
-    const widthPct = structuralWidth(
-      exactlyOne(element.tag, "data-derive-width", `Structural node ${id}`),
-      `Structural node ${id} data-derive-width`,
-    )
-    if (rawSize !== null && widthPct !== null)
-      fail(
-        "invalid-structure",
-        `Structural node ${id} cannot declare both data-derive-size and data-derive-width.`,
-      )
-    const inlineStyle = exactlyOne(element.tag, "style", `Structural node ${id}`) ?? ""
-    const customWidths = stylePropertyValues(inlineStyle, STRUCTURAL_WIDTH_PROPERTY)
-    if (
-      customWidths.length !== (widthPct === null ? 0 : 1) ||
-      (widthPct !== null && customWidths[0] !== `${widthPct}%`)
-    )
-      fail(
-        "invalid-structure",
-        `Structural node ${id} must pair data-derive-width with one matching ${STRUCTURAL_WIDTH_PROPERTY} inline property.`,
-      )
-    const heightPx = structuralHeight(
-      exactlyOne(element.tag, "data-derive-height", `Structural node ${id}`),
-      `Structural node ${id} data-derive-height`,
-    )
-    const customHeights = stylePropertyValues(inlineStyle, STRUCTURAL_HEIGHT_PROPERTY)
-    if (
-      customHeights.length !== (heightPx === null ? 0 : 1) ||
-      (heightPx !== null && customHeights[0] !== `${heightPx}px`)
-    )
-      fail(
-        "invalid-structure",
-        `Structural node ${id} must pair data-derive-height with one matching ${STRUCTURAL_HEIGHT_PROPERTY} inline property.`,
-      )
-    const rawAlign = exactlyOne(element.tag, "data-derive-align", `Structural node ${id}`)
-    if (rawAlign !== null && !/^(?:start|center|end)$/.test(rawAlign))
-      fail(
-        "invalid-structure",
-        `Structural node ${id} has unsupported alignment ${JSON.stringify(rawAlign)}.`,
-      )
-    const customAlignments = stylePropertyValues(inlineStyle, STRUCTURAL_ALIGN_PROPERTY)
-    if (
-      customAlignments.length !== (rawAlign === null ? 0 : 1) ||
-      (rawAlign !== null && customAlignments[0] !== rawAlign)
-    )
-      fail(
-        "invalid-structure",
-        `Structural node ${id} must pair data-derive-align with one matching ${STRUCTURAL_ALIGN_PROPERTY} inline property.`,
-      )
+    const layout = layoutOf(element.tag, `Structural node ${id}`)
     const node: OwnedNode = {
       id,
       kind: exactlyOne(element.tag, "data-derive-kind", `Structural node ${id}`),
-      size: rawSize as StructuralSize | null,
-      width_pct: widthPct,
-      height_px: heightPx,
-      align: rawAlign as StructuralAlignment | null,
+      size: layout.size,
+      width_pct: layout.width,
+      height_px: layout.height,
+      align: layout.align,
       element,
       chunkEnd: element.end,
     }
@@ -743,7 +748,9 @@ const inferredKind = (name: string): string => {
  */
 export const backfillLegacyDeckStructure = (
   html: string,
-  options: { runtime?: boolean } = {},
+  /** `layout`: canonical layout attributes are an exact-source save's own (checked by
+   *  setLayoutAttributes), not a foreign contract, so they don't stop the backfill. */
+  options: { runtime?: boolean; layout?: boolean } = {},
 ): StructuralBackfillResult => {
   const runtime = options.runtime === true
   const structuralPrefix = runtime ? "data-derive-runtime" : "data-derive"
@@ -752,12 +759,15 @@ export const backfillLegacyDeckStructure = (
     allTags.some(
       (tag) =>
         !tag.closing &&
-        (STRUCTURAL_ATTRIBUTES.some((attribute) => hasAttr(tag.attrs, attribute)) ||
-          attrValues(tag.attrs, "style").some(
-            (style) =>
-              stylePropertyValues(style, STRUCTURAL_WIDTH_PROPERTY).length > 0 ||
-              stylePropertyValues(style, STRUCTURAL_HEIGHT_PROPERTY).length > 0,
-          )),
+        (STRUCTURAL_ATTRIBUTES.some(
+          (attribute) => hasAttr(tag.attrs, attribute) && !(options.layout && layoutKey(attribute)),
+        ) ||
+          (!options.layout &&
+            attrValues(tag.attrs, "style").some(
+              (style) =>
+                stylePropertyValues(style, STRUCTURAL_WIDTH_PROPERTY).length > 0 ||
+                stylePropertyValues(style, STRUCTURAL_HEIGHT_PROPERTY).length > 0,
+            ))),
     )
   )
     return { html, changed: false, regions: 0, nodes: 0, skipped: [] }

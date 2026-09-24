@@ -13,6 +13,7 @@ import { observability, redactPath } from "./lib/observability"
 import { inMemoryRateLimiters, ipRateLimit } from "./lib/rate-limit"
 import { serveContent } from "./lib/serve-content"
 import { isTemplateLibrarySchemaUnavailable } from "./lib/template-library-schema"
+import { mutableCacheFor, versionCacheControl } from "./lib/version-cache"
 import { log } from "./log"
 import { mountMcp } from "./mcp"
 import { activityRoutes } from "./routes/activity"
@@ -236,6 +237,8 @@ export function createApp(deps: AppDeps): Hono {
       n: number,
       prefix: string,
       rawPath: string,
+      /** The URL names no version (a host root, a bare `<ref>`): it means "current". */
+      currentAlias: boolean,
     ) => {
       if (!(await ctx.authorize(c, "read", a))) return c.text("not found", 404)
       if (a.removed_at) return c.text(TOMBSTONE, 410)
@@ -259,7 +262,15 @@ export function createApp(deps: AppDeps): Hono {
         a.title,
         prefix,
         rawPath,
-        a.expires_at ? "no-store" : cacheControlFor(a.link_role, !!a.password_hash),
+        // Only a version-pinned URL may be cached as immutable bytes: a current-version
+        // alias is the same URL after every publish, and a version an inline save may
+        // still replace in place changes under its own URL (as on the raw route).
+        versionCacheControl(
+          a,
+          version,
+          a.expires_at ? "no-store" : cacheControlFor(a.link_role, !!a.password_hash),
+          currentAlias,
+        ),
         undefined, // onMismatch: the raw route owns content-type self-healing
         true, // reflow
         // No anchor client: these hosts are top-level pages, never embedded by the
@@ -270,11 +281,7 @@ export function createApp(deps: AppDeps): Hono {
         // discovery chip: attribution + the expiry nudge, gone once claimed.
         a.expires_at ? draftChip(a.expires_at, deps.baseUrl) : "",
         dynamic,
-        a.expires_at
-          ? "no-store"
-          : a.link_role !== "none" && !a.password_hash
-            ? "no-cache"
-            : "private, no-cache",
+        a.expires_at ? "no-store" : mutableCacheFor(a),
       )
     }
     app.use("*", async (c, next) => {
@@ -310,6 +317,7 @@ export function createApp(deps: AppDeps): Hono {
           a.current_version,
           "/",
           decodeURIComponent(c.req.path.replace(/^\/+/, "")),
+          true,
         )
       }
       // Workspace domain: `<host>/<ref>/<sub>` → the workspace's artifact at <ref>,
@@ -326,8 +334,15 @@ export function createApp(deps: AppDeps): Hono {
       }
       const a = await ctx.meta.getByShortId(parseRef(ref).shortId)
       if (!a || a.org_id !== record.org_id) return c.text("not found", 404)
-      const n = parseRef(ref).version ?? a.current_version
-      return serveArtifact(c, a, n, `/${ref}/`, decodeURIComponent(segs.slice(1).join("/")))
+      const pinned = parseRef(ref).version
+      return serveArtifact(
+        c,
+        a,
+        pinned ?? a.current_version,
+        `/${ref}/`,
+        decodeURIComponent(segs.slice(1).join("/")),
+        pinned === undefined,
+      )
     })
   }
 

@@ -27,6 +27,7 @@ import {
 } from "../lib/http"
 import { verifyPreviewToken } from "../lib/preview-token"
 import { serveContent } from "../lib/serve-content"
+import { mutableCacheFor, versionCacheControl } from "../lib/version-cache"
 import { log } from "../log"
 import { safeJson } from "../mcp-util"
 
@@ -212,9 +213,18 @@ export const rawRoutes = (ctx: AppContext) => {
     log.info("fact_read", { name: slot, derived: isDerivedFactName(slot), surface: "raw" })
     return c.body(row.json, 200, {
       "Content-Type": "application/json; charset=utf-8",
-      // A version is immutable, so its slot is too — cache it hard. The current-version
-      // alias can't be, since the next publish changes what it points at.
-      "Cache-Control": n === null ? "no-cache" : slotCache(artifact, "max-age=31536000, immutable"),
+      // A settled version is immutable, so its slot is too — cache it hard. The
+      // current-version alias can't be, since the next publish changes what it points
+      // at; nor can a version an inline save may still replace in place (its facts are
+      // rewritten with its bytes).
+      "Cache-Control":
+        n === null
+          ? "no-cache"
+          : versionCacheControl(
+              artifact,
+              v === artifact.current_version ? await meta.getVersion(artifact.id, v) : null,
+              slotCache(artifact, "max-age=31536000, immutable"),
+            ),
       ...SLOT_CORS,
     })
   }
@@ -285,11 +295,6 @@ export const rawRoutes = (ctx: AppContext) => {
   //
   // Password-locked artifacts keep no-store: the lock is a per-view challenge, and
   // "cached until the token expires" is not the semantic anyone expects from it.
-  // A version that declares a dynamic slot is no longer immutable bytes: its table cells
-  // and figure images change without a new version, so it must not sit in any cache
-  // past the next request. `private` still keeps a gated artifact out of shared caches.
-  const mutableCache = (a: ArtifactRecord): string =>
-    a.link_role !== "none" && !a.password_hash ? "no-cache" : "private, no-cache"
   // Fail-soft: a page view never fails on dynamic data. A missing table (a preview deploy
   // ahead of its DDL) or a store hiccup renders the authored placeholder instead.
   const dynamicSlotsOf = async (artifactId: string, n: number): Promise<DynamicSlotRecord[]> => {
@@ -314,6 +319,8 @@ export const rawRoutes = (ctx: AppContext) => {
     n: number,
     prefix: string,
     cacheControl?: string,
+    /** The capability was minted for someone who may publish: stamp source ids. */
+    editor = false,
   ) => {
     if (artifact.removed_at) return c.text(TOMBSTONE, 410)
     const version = await meta.getVersion(artifact.id, n)
@@ -327,7 +334,13 @@ export const rawRoutes = (ctx: AppContext) => {
       artifact.title,
       prefix,
       path,
-      cacheControl ?? cacheControlFor(artifact.link_role, !!artifact.password_hash),
+      // An inline save inside the edit burst replaces the current version's bytes
+      // under the same URL, so until that window closes every cache revalidates.
+      versionCacheControl(
+        artifact,
+        version,
+        cacheControl ?? cacheControlFor(artifact.link_role, !!artifact.password_hash),
+      ),
       // Self-heal: this view just proved the bytes are HTML under a markdown label.
       // Fix the stored type off the hot path (waitUntil on edge, inline in tests) so
       // every view repairs it — the publish-time sniff stops new ones, this drains
@@ -340,8 +353,9 @@ export const rawRoutes = (ctx: AppContext) => {
       // A page that declares a binding is served mutable whether or not its rows exist
       // yet: serveContent decides from the document, so a version read in the seed
       // window (or after its last slot was deleted) is never cached as immutable bytes.
-      mutableCache(artifact),
+      mutableCacheFor(artifact),
       await sourceHiddenFrom(c, artifact),
+      editor ? { version: n } : undefined,
     )
   }
 
@@ -362,7 +376,7 @@ export const rawRoutes = (ctx: AppContext) => {
     const n = Number(c.req.param("n"))
     const artifact = await meta.getByShortId(shortId)
     if (!artifact || !Number.isInteger(n)) return c.text("not found", 404)
-    const claim = verifyState<{ rid: string; history?: boolean }>(
+    const claim = verifyState<{ rid: string; history?: boolean; edit?: boolean }>(
       c.req.param("token"),
       deps.encryptionKey ?? "",
       RAW_TOKEN_MAX_AGE_MS,
@@ -381,6 +395,7 @@ export const rawRoutes = (ctx: AppContext) => {
       n,
       `/raw/${shortId}/v/${c.req.param("n")}/t/${c.req.param("token")}/`,
       tokenRouteCache(artifact),
+      claim?.rid === artifact.id && claim.edit === true,
     )
   })
 

@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest"
+// A real 44-slide deck with its copy replaced by placeholder words; its markup and
+// structural identities are untouched.
+import REAL_DECK from "../test/fixtures/decks/structural-deck-44.html?raw"
 import { DECK_TEMPLATE } from "./deck-template.gen"
 import {
   applySlideOps,
@@ -8,6 +11,7 @@ import {
   sliceSlides,
   speaksDeckProtocol,
 } from "./decks"
+import { inspectStructuralDocument } from "./structural-edit"
 
 /** A minimal real deck: the protocol plus slides that carry the stable index. */
 const deck = (n = 3) =>
@@ -251,6 +255,40 @@ describe("applySlideOps", () => {
     expect(inserted.match(/class="slide on feature"/g)).toHaveLength(1)
   })
 
+  it("gives a duplicated slide fresh structural identities", () => {
+    // Slide 2 carries identity 1, region slide-1, and nodes s1-*; the deck's next identity is 45.
+    const out = applySlideOps(REAL_DECK, [{ op: "duplicate", at: 2 }])
+    const spans = sliceSlides(out)
+    const copy = out.slice(spans[2]?.start, spans[2]?.end)
+    expect(copy).toContain('data-derive-slide="45" data-derive-region="slide-45"')
+    expect(copy.match(/data-derive-node="[^"]+"/g)).toEqual([
+      'data-derive-node="s45-brand"',
+      'data-derive-node="s45-title"',
+      'data-derive-node="s45-main"',
+    ])
+    expect(out.slice(spans[1]?.start, spans[1]?.end)).toBe(
+      REAL_DECK.slice(sliceSlides(REAL_DECK)[1]?.start, sliceSlides(REAL_DECK)[1]?.end),
+    )
+  })
+
+  it("keeps a duplicated slide's nested ownership consistent", () => {
+    const html = spaced([
+      `<section class="slide" data-derive-slide="0" data-derive-region="slide-0" data-derive-layout="stack"><h2 data-derive-node="s0-title">a</h2><div data-derive-node="s0-group"><div data-derive-region="cards" data-derive-layout="row" data-derive-owner="s0-group"><p data-derive-node="card">A</p></div></div></section>`,
+      sl(1, "b"),
+    ])
+    const out = applySlideOps(html, [{ op: "duplicate", at: 1 }])
+    const span = sliceSlides(out)[1]
+    expect(out.slice(span?.start, span?.end)).toBe(
+      `<section class="slide" data-derive-slide="2" data-derive-region="slide-2" data-derive-layout="stack"><h2 data-derive-node="s2-title">a</h2><div data-derive-node="s2-group"><div data-derive-region="cards-copy-2" data-derive-layout="row" data-derive-owner="s2-group"><p data-derive-node="card-copy-2">A</p></div></div></section>`,
+    )
+    expect(inspectStructuralDocument(out).map((region) => region.id)).toEqual([
+      "slide-0",
+      "cards",
+      "slide-2",
+      "cards-copy-2",
+    ])
+  })
+
   it("inserts a blank slide in the deck's own outer shell with a fresh identity", () => {
     const out = applySlideOps(three(), [{ op: "insert", at: 2 }])
     expect(order(out)).toEqual(["a", "New slide", "b", "c"])
@@ -329,6 +367,16 @@ describe("applySlideOps", () => {
   it("refuses an out-of-range position and applies NOTHING", () => {
     expect(() => applySlideOps(three(), [{ op: "move", from: 9, to: 1 }])).toThrow(/out of range/i)
     expect(() => applySlideOps(three(), [{ op: "delete", at: 0 }])).toThrow(/out of range/i)
+  })
+
+  it("states the slide count and the insert range when an insert is out of range", () => {
+    expect(() => applySlideOps(REAL_DECK, [{ op: "insert", at: 46 }])).toThrow(
+      "slide_ops: at 46 is out of range — this deck has 44 slides, so an insert accepts positions 1–45.",
+    )
+    expect(() => applySlideOps(REAL_DECK, [{ op: "delete", at: 45 }])).toThrow(
+      "this deck has 44 slides (positions are 1-based)",
+    )
+    expect(sliceSlides(applySlideOps(REAL_DECK, [{ op: "insert", at: 45 }]))).toHaveLength(45)
   })
 
   it("refuses to delete the last slide standing", () => {

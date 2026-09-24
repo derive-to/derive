@@ -432,14 +432,14 @@ describe("applyQuoteEdits — html", () => {
         qe("typoo", "typo"),
         qe("title here A", "unsafe structural edit"),
       ]),
-    ).toThrow(/element boundary/)
+    ).toThrow(/crosses a <h1> boundary/)
     expect(doc).toContain("typoo")
   })
 
   it("still rejects a span across structural elements", () => {
     const doc = "<p>first part</p><p>second part</p>"
     expect(() => applyQuoteEdits(doc, HTML, [qe("part second", "x")])).toThrow(
-      /crosses an element boundary/,
+      /crosses a <p> boundary in the source/,
     )
   })
 
@@ -577,6 +577,48 @@ describe("applyQuoteEdits — line breaks", () => {
       { quote: { exact: "one two" }, new_html: "one<br>two" },
     ])
     expect(out).toBe("<p>one<br>two</p>")
+  })
+
+  it("retypes a two-line heading across its <br> as one line", () => {
+    const doc = "<h3>Extensions and<br>Integration</h3><p>Connect systems.</p>"
+    expect(
+      applyQuoteEdits(doc, HTML, [
+        qe("and\nIntegration", "and Integrations", { prefix: "Extensions ", suffix: "\nConnect" }),
+      ]),
+    ).toBe("<h3>Extensions and Integrations</h3><p>Connect systems.</p>")
+    // Self-closing and word-break voids are the same kind of seam.
+    expect(
+      applyQuoteEdits("<h3>Powerful<br/>Data <span>plat<wbr>form</span></h3>", HTML, [
+        qe("Powerful Data platform", "Data platform"),
+      ]),
+    ).toBe("<h3>Data platform</h3>")
+    // A break outside the selection stays where it is.
+    expect(applyQuoteEdits(doc, HTML, [qe("Integration", "Integrations")])).toBe(
+      "<h3>Extensions and<br>Integrations</h3><p>Connect systems.</p>",
+    )
+  })
+
+  it("round-trips a retype that keeps its line break as markup", () => {
+    const doc = "<h3>Extensions and<br>Integration</h3>"
+    expect(
+      applyQuoteEdits(doc, HTML, [
+        { quote: { exact: "Extensions and\nIntegration" }, new_html: "Text and<br>More" },
+      ]),
+    ).toBe("<h3>Text and<br>More</h3>")
+  })
+
+  it("still refuses a selection across an image or a rule, and says which", () => {
+    expect(() =>
+      applyQuoteEdits('<p>before <img src="a.png" alt=""> after</p>', HTML, [
+        qe("before after", "x"),
+      ]),
+    ).toThrow(/crosses a <img> boundary/)
+    expect(() =>
+      applyQuoteEdits("<p>before</p><hr><p>after</p>", HTML, [qe("before after", "x")]),
+    ).toThrow(/crosses a <p> boundary/)
+    expect(() => applyQuoteEdits("<td>a</td><td>b</td>", HTML, [qe("a b", "x")])).toThrow(
+      /crosses a <td> boundary/,
+    )
   })
 
   it("still drops block tags — a paragraph split is not an inline edit", () => {

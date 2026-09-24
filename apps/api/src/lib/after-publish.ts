@@ -342,9 +342,9 @@ const summarizeVersion = async (
 
 /** Extract a single-file HTML/markdown version's facts and persist them (see
  *  @derive/core data-facts). Decks may carry the one operational fact their export path
- *  consumes (`email-layout`); arbitrary authored deck facts stay excluded. Writes only when at
- *  least one slot parsed — a fresh version has no prior rows, so there is nothing to clear when
- *  it has none. */
+ *  consumes (`email-layout`); arbitrary authored deck facts stay excluded. Writes even when no
+ *  slot parsed: the write is a full replace, and a coalesced inline save replaces version n's
+ *  bytes in place, so n must never keep rows its current bytes do not carry. */
 const extractVersionData = async (
   meta: Pick<MetaStore, "setVersionData" | "getVersionData" | "getVersion">,
   blobs: BlobStore,
@@ -405,11 +405,11 @@ const extractVersionData = async (
       gen: s.gen,
     })),
   ]
-  if (rows.length === 0) return []
   // ONE setVersionData call: it is a full replace, so asserted and derived must land
   // together or the second write erases the first — the same union trap the backfill
   // below documents for itself.
   await meta.setVersionData(version.artifact_id, version.n, rows)
+  if (rows.length === 0) return []
   if (facts.length === 0) return rows
   // Off the hot path where the caller can: the walk-back costs a blob read per version.
   // ASSERTED names only — old versions get their derived rows lazily on first read, so a

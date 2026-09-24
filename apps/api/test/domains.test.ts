@@ -52,6 +52,30 @@ describe("vanity subdomains", () => {
     expect(html).not.toContain("data-derive-draft-chip")
   })
 
+  it("serves the host root as a revalidating alias for the current version", async () => {
+    // Named versions, so the inline-save window (which also revalidates) is not what
+    // keeps these responses out of the immutable cache.
+    const short = await publish("<h1>First cut</h1>", { visibility: "public", name: "First" })
+    expect((await setLabel(short, "alias")).status).toBe(201)
+    const first = await anon.request(`http://alias.${BASE}/`)
+    expect(await first.text()).toContain("First cut")
+    // The root is the same URL after every publish: a year-long immutable cache here
+    // would keep showing the first cut to anyone who had opened it.
+    expect(first.headers.get("cache-control")).toBe("no-cache")
+
+    const form = new FormData()
+    form.append("file", new Blob([new TextEncoder().encode("<h1>Second cut</h1>")]), "page.html")
+    form.append("name", "Second")
+    const next = await owner.request(`/v1/artifacts/${short}/versions`, {
+      method: "POST",
+      body: form,
+    })
+    expect(next.status).toBe(201)
+    const second = await anon.request(`http://alias.${BASE}/`)
+    expect(await second.text()).toContain("Second cut")
+    expect(second.headers.get("cache-control")).toBe("no-cache")
+  })
+
   it("409s a label already taken by another artifact", async () => {
     const a = await publish("<p>a</p>", { visibility: "public" })
     const b = await publish("<p>b</p>", { visibility: "public" })
@@ -279,6 +303,31 @@ describe("workspace subdomains (<label>.<base>/<ref>)", () => {
     const root = await anon.request(`https://acme.${BASE}/`)
     expect(root.status).toBe(302)
     expect(root.headers.get("location")).toBe("https://derive.test")
+  })
+
+  it("caches only settled pinned versions as immutable; bare refs and open pins revalidate", async () => {
+    const short = await publish("<h1>Pinned</h1>", { visibility: "public", name: "Pinned" })
+    const form = new FormData()
+    form.append("file", new Blob([new TextEncoder().encode("<h1>Later</h1>")]), "page.html")
+    form.append("name", "Later")
+    expect(
+      (await owner.request(`/v1/artifacts/${short}/versions`, { method: "POST", body: form }))
+        .status,
+    ).toBe(201)
+    const bare = await anon.request(`https://acme.${BASE}/${short}`)
+    expect(await bare.text()).toContain("Later")
+    expect(bare.headers.get("cache-control")).toBe("no-cache")
+    // v1 is superseded, so no save can change its bytes again: cache it hard.
+    const pinned = await anon.request(`https://acme.${BASE}/${short}@v1`)
+    expect(await pinned.text()).toContain("Pinned")
+    expect(pinned.headers.get("cache-control")).toBe("public, max-age=31536000, immutable")
+
+    // A pinned URL to an unnamed current web version is not final yet: an inline save
+    // inside the edit window rewrites its bytes under the same @v1, so it revalidates.
+    const open = await publish("<h1>Open</h1>", { visibility: "public" })
+    const live = await anon.request(`https://acme.${BASE}/${open}@v1`)
+    expect(await live.text()).toContain("Open")
+    expect(live.headers.get("cache-control")).toBe("no-cache")
   })
 
   it("is idempotent, rejects invalid + reserved labels, and 409s a taken label", async () => {

@@ -181,7 +181,11 @@ describe("security: raw token caching", () => {
     it("a PRIVATE artifact is cacheable only privately, and only for the token's lifetime", async () => {
       const { app } = makeAuthedApp("rawcache-private", [owner])
       const h = as(owner.email)
-      const pub = await (await publishAs(app, "<h1>private</h1>", { title: "Private" }, h)).json()
+      // Named, so no inline save can replace its bytes: a fresh unnamed web version
+      // revalidates until its coalescing window closes (pinned in artifacts.test.ts).
+      const pub = await (
+        await publishAs(app, "<h1>private</h1>", { title: "Private", name: "Final" }, h)
+      ).json()
 
       const res = await app.request(await tokenUrlFor(app, pub.short_id, h), { headers: h })
       expect(res.status).toBe(200)
@@ -321,8 +325,12 @@ describe("app-origin security headers", () => {
 // a viewer who never passed the gate: only fully-public content is immutable.
 describe("visibility-aware raw caching", () => {
   it("serves public bytes immutable, gated bytes no-store", async () => {
+    // Named: an unnamed web version revalidates while an inline save may still
+    // replace it (see artifacts.test.ts); a checkpoint is final bytes.
     const pub = (
-      await (await upload("p.html", "<h1>p</h1>", { title: "P", visibility: "public" })).json()
+      await (
+        await upload("p.html", "<h1>p</h1>", { title: "P", visibility: "public", name: "P1" })
+      ).json()
     ).short_id
     expect(
       (await app.request(`/raw/${pub}/v/1/index.html`)).headers.get("cache-control"),
