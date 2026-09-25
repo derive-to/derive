@@ -27,6 +27,13 @@ import { err, json, staleAwareNumber, staleSchemaNote } from "./mcp-util"
 // The raw per-request values buildServer resolves and hands to makeToolContext.
 export interface ToolContextBase {
   server: McpServer
+  /** In-process REST dispatch using this request’s original bearer; no token mint or network hop. */
+  requestApi?: (
+    path: string,
+    method: "GET" | "POST" | "PUT",
+    body: unknown,
+    workspace: string,
+  ) => Promise<Response>
   ctx: AppContext
   agent: AgentRecord
   actingFor: { id: string; name: string | null } | null

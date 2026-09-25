@@ -15,9 +15,9 @@ export const credentialRoutes = (ctx: AppContext) => {
     c.header("Cache-Control", "no-store")
     const org = await ctx.requireWorkspace(c, "read")
     if (org instanceof Response) return org
-    const user = await ctx.requireUser(c)
-    if (user instanceof Response) return user
-    return { org, userId: user.id }
+    const userId = await ctx.managementPrincipal(c)
+    if (!userId) return fail(c, 401, "A signed-in user or management grant is required")
+    return { org, userId }
   }
   const owned = async (c: Context) => {
     const auth = await principal(c)

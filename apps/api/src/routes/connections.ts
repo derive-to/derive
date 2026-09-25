@@ -37,14 +37,18 @@ const installMissing: Record<"slack", string> = {
 }
 
 export const connectionRoutes = (ctx: AppContext) => {
-  const { meta, requireUser, requireWorkspace, deps } = ctx
+  const { meta, requireWorkspace, deps } = ctx
+  const requireManager = async (c: Parameters<typeof ctx.managementPrincipal>[0]) => {
+    const id = await ctx.managementPrincipal(c)
+    return id ? { id } : fail(c, 401, "A signed-in user or management grant is required")
+  }
   const app = new Hono()
 
   app.get("/v1/connections", async (c) => {
     c.header("Cache-Control", "no-store")
     const org = await requireWorkspace(c, "read")
     if (org instanceof Response) return org
-    const me = await requireUser(c)
+    const me = await requireManager(c)
     if (me instanceof Response) return me
     // ?mine=1 → the caller's own PERSONAL connections (a workspace row they happened to
     // add is the org's, not theirs). ?scope=workspace|personal filters by scope alone.
@@ -67,7 +71,7 @@ export const connectionRoutes = (ctx: AppContext) => {
     c.header("Cache-Control", "no-store")
     const org = await requireWorkspace(c, "read")
     if (org instanceof Response) return org
-    const me = await requireUser(c)
+    const me = await requireManager(c)
     if (me instanceof Response) return me
     const b = await readJson(
       c,
@@ -326,7 +330,7 @@ export const connectionRoutes = (ctx: AppContext) => {
     c.header("Cache-Control", "no-store")
     const org = await requireWorkspace(c, "read")
     if (org instanceof Response) return org
-    const me = await requireUser(c)
+    const me = await requireManager(c)
     if (me instanceof Response) return me
     const cn = await meta.getConnection(c.req.param("id"))
     if (!cn || cn.org_id !== org) return fail(c, 404, "not found")

@@ -134,5 +134,74 @@ For a workflow that keeps working files, call `list_automations` with `workflow_
 codes, permitted actions, configuration revision and evaluation time as the web
 setup page. This is a read, not permission to execute. Editing and execution through
 the management API require a management grant; read-only connections cannot acquire
-those powers from a readiness result. Folder import and custom dependency setup
-are separate capabilities and are not implied by a Ready task-only workflow.
+those powers from a readiness result. Ready does not mean local project files have been transferred. The agent handles
+dependencies during ordinary execution; no separate setup feature is required.
+
+### Offload a local job to a persistent workflow
+
+Use the `workflow_*` actions below for a cloud agent that retains its working environment.
+`automate(create)` and `automate(run_now)` use the ordinary task path; attaching a Context
+there does not select a persistent sandbox. Do not create an ordinary task as a substitute.
+
+The caller needs an OAuth management grant (`derive:manage`) and a workspace seat permitted
+to publish. Registered runner tokens cannot manage workflows. Pass `workspace` by ID or name
+when it differs from the connection default. All operations reuse the web API's authorization,
+revision checks, live access checks and execution queue. No temporary bearer is exposed.
+
+Read with `list_automations(view: ..., workflow_id?: ..., workspace?: ...)`:
+
+| view | ID? | Returns |
+| --- | --- | --- |
+| `workflows` | no | Available workflows and whether creation is available |
+| `configuration` | yes | Draft or established schedule, selected source IDs, readiness and latest test request |
+| `runs` | yes | Existing run history, schedule and execution state |
+| `account` | yes | Assigned model account and its binding revision |
+| `environment` | yes | Environment variable names mapped to credential IDs; never values |
+| `accounts` | no | Your saved model accounts |
+| `credentials` | no | Available credential names, IDs and use/manage permissions; never values |
+| `connections` | no | Connected sources that can be assigned |
+
+Write with `automate(action: ..., context_id?: ..., workflow: {...}, workspace?: ...)`.
+Here `context_id` is the workflow ID. Omit it only for `workflow_create`. Put all operation
+fields inside `workflow`; do not mix them with ordinary automation parameters. Each read or
+write returns `{status, result}` with the HTTP result, including actionable failures.
+
+| action | workflow fields |
+| --- | --- |
+| `workflow_create` | `name`, optional `model_connection_id`, stable UUID `request_id` |
+| `workflow_save` | `instruction`, `provider` (`codex` or `claude-code`), numeric draft `revision` |
+| `workflow_account` | `connection_id` (or null to unassign), binding `revision` (null before first assignment) |
+| `workflow_environment` | `bindings`: complete map of environment variable names to saved credential IDs |
+| `workflow_connections` | `connection_ids`: complete list of source connections to allow |
+| `workflow_test` | `revision`: reviewed readiness hash; stable UUID `request_id` |
+| `workflow_schedule` | `instruction`, `provider`, `cron` (or null for manual), IANA `timezone`, `enabled`, numeric schedule `revision` |
+| `workflow_cancel_preparation` | empty object; cancels unfinished preparation through the existing cleanup path |
+| `workflow_disable` | empty object; disables future runs; this is not a pause/resume switch |
+
+1. Inspect the actual local job. Write self-contained instructions: the remote run does not
+   inherit local conversation history. Identify the files and access it actually needs.
+2. List workflows first so a resumed migration does not create a duplicate. Create a draft
+   with a stable request UUID; save instructions using its returned draft revision.
+3. List and assign a saved model account. If none exists, the human connects one in Derive.
+   Reuse saved credentials by ID and bind only the required environment variables/sources.
+   New secret values can be transferred through the management API using `stage(target:'api')`
+   and a shell, with the user's authorization. Never put them in workflow instructions,
+   artifacts, tool arguments, logs or an uploaded `.env` file.
+4. Arrange access to the required files. Artifact publishing does not automatically install
+   a project in the sandbox. Public Git repositories can be cloned by the running agent;
+   private Git access needs a credential that actually permits cloning. Derive's standard
+   GitHub source currently supports PR reads/comments and selected Actions operations, not
+   cloning, pushing branches or opening PRs. Do not promise repository access from that
+   connection alone. Local-only file transfer remains a separate gap.
+5. Read `configuration`, resolve its blockers, and submit `workflow_test` with the readiness
+   revision. Reuse the same request UUID after a lost response. This queues one durable run
+   and automatically prepares the environment if needed; closing the client does not lose it.
+   Poll configuration/runs to distinguish preparation, submission, actual success and saving.
+6. The remote agent installs missing dependencies as part of its ordinary first run. There
+   is no user-defined dependency setup stage. Later runs resume the saved environment.
+7. After checking the report and saved-state result, read the established schedule revision
+   and use `workflow_schedule` to set the authorized cadence. Setting `enabled:false` pauses
+   the schedule while preserving manual runs. Schedule editing also owns instruction updates
+   after preparation; `workflow_save` is only for the pre-runtime draft. A 409 means reread
+   and reconcile, never silently overwrite newer work. Cut over an existing local schedule
+   deliberately so both schedulers do not perform the job at once.
