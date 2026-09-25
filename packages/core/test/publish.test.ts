@@ -918,6 +918,7 @@ describe("publish: bundles (zip)", () => {
       { "a.py": "a", "A.py": "b" },
       { data: "a", "data/x.csv": "b" },
       { ".env": "secret fixture" },
+      { ".claude/.credentials.json": "secret fixture" },
       { "node_modules/a.js": "cache" },
     ]) {
       await expect(

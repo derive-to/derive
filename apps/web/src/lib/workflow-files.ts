@@ -14,7 +14,7 @@ const excludedPath = (path: string) =>
       (part) =>
         [".git", "node_modules", ".venv", "__pycache__", ".DS_Store", "__MACOSX"].includes(part) ||
         (/^\.env(?:\.|$)/i.test(part) && !/\.(example|sample|template)$/i.test(part)) ||
-        /^(auth\.json|credentials(?:\.json)?|id_(rsa|ed25519|ecdsa)(\.pub)?|.*\.(pem|p12|pfx|key))$/i.test(
+        /^(auth\.json|\.?credentials(?:\.json)?|id_(rsa|ed25519|ecdsa)(\.pub)?|.*\.(pem|p12|pfx|key))$/i.test(
           part,
         ),
     )

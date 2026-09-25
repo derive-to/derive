@@ -21,7 +21,7 @@ export function fileInputPathError(path: string): string | null {
   const name = parts.at(-1)?.toLowerCase() ?? ""
   if (
     (/^\.env(?:\.|$)/.test(name) && !/\.(example|sample|template)$/.test(name)) ||
-    /^(?:auth\.json|credentials(?:\.json)?|id_(?:rsa|ed25519|ecdsa)(?:\.pub)?|.*\.(?:pem|p12|pfx|key))$/.test(
+    /^(?:auth\.json|\.?credentials(?:\.json)?|id_(?:rsa|ed25519|ecdsa)(?:\.pub)?|.*\.(?:pem|p12|pfx|key))$/.test(
       name,
     )
   )
