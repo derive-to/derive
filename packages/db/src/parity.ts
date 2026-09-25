@@ -105,6 +105,7 @@ export interface TypedTables {
   contextRuntime: ContextRuntimeRecord
   runtimeModelConnection: RuntimeModelConnectionRecord
   runtimeModelBinding: RuntimeModelBindingRecord
+  workflowFiles: import("@derive/core").WorkflowFilesRecord
   workflowDraft: import("@derive/core").WorkflowDraftRecord
   workflowTest: import("@derive/core").WorkflowTestRecord
   runtimeSetup: RuntimeSetupRecord

@@ -3,6 +3,7 @@ import {
   type Actor,
   type AgentRecord,
   type ArtifactRecord,
+  artifactUserCan,
   type BillingState,
   type BlobStore,
   type BundleManifest,
@@ -1521,11 +1522,7 @@ export function buildContext(deps: AppDeps) {
     action: Action,
     a: ArtifactRecord,
   ): Promise<boolean> => {
-    const orgRole = (await meta.getMembership(a.org_id, userId))?.role ?? null
-    const am = await meta.getArtifactMember(a.id, userId)
-    const cRoles = await meta.collectionRolesForArtifact(a.id, userId)
-    const artifactRole = maxRole(am?.role ?? null, ...cRoles)
-    return can({ kind: "user", userId, artifactRole, orgRole }, action, a.workspace_access, "none")
+    return artifactUserCan(meta, userId, action, a)
   }
 
   /**

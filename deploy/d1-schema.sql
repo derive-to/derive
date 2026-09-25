@@ -394,6 +394,17 @@ CREATE TABLE IF NOT EXISTS workflow_draft (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS workflow_files (
+  context_id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  artifact_id TEXT,
+  blob_key TEXT,
+  version INTEGER,
+  granted_by TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS workflow_test (
   id TEXT PRIMARY KEY,
   context_id TEXT NOT NULL,

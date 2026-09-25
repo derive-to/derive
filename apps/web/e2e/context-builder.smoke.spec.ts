@@ -1,3 +1,7 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { zipSync } from "fflate"
 import { expect, publishArtifact, test } from "./fixtures"
 
 // The builder page's static promise: both doors render without a model.
@@ -769,4 +773,69 @@ test("credentials survive failed creation replies and assignments, then replace 
     body: await owner.screenshot({ fullPage: true }),
     contentType: "image/png",
   })
+})
+
+test("Workflow input files review folders, preserve private source access and survive reload", async ({
+  owner,
+}, testInfo) => {
+  const manifest = await publishArtifact(owner, "inputs.md", "# Integrity report")
+  const response = await owner.request.post("/v1/contexts", {
+    data: { name: "Integrity report files", manifest_short_id: manifest },
+  })
+  const context = await response.json()
+  // Only execution availability is simulated; upload, attachment, access and readback use real handlers.
+  await owner.route(`**/v1/contexts/${context.id}/runtime`, (route) =>
+    route.fulfill({
+      json: {
+        enabled: true,
+        managed: true,
+        can_edit: true,
+        runtime: null,
+        setup: null,
+        schedule: null,
+        runs: [],
+      },
+    }),
+  )
+  const root = await mkdtemp(join(tmpdir(), "workflow-inputs-"))
+  const folder = join(root, "integrity-report")
+  await mkdir(join(folder, "scripts"), { recursive: true })
+  await writeFile(join(folder, "scripts", "check.py"), "print('integrity report')")
+  await writeFile(join(folder, ".env"), "PRIVATE_FIXTURE=do-not-upload")
+  try {
+    await owner.goto(`/contexts/${context.id}`)
+    await owner.getByTestId("console-tab-cloud").click()
+    const card = owner.getByRole("region", { name: "Workflow input files" })
+    await owner.getByTestId("workflow-files-folder").setInputFiles(folder)
+    await expect(card.getByRole("list", { name: "Files to attach" })).toHaveText("scripts/check.py")
+    await expect(card.getByText("Excluded 1 credential or cache entry")).toBeVisible()
+    await card.screenshot({ path: testInfo.outputPath("input-review-desktop.png") })
+    await owner.setViewportSize({ width: 390, height: 844 })
+    await card.screenshot({ path: testInfo.outputPath("input-review-mobile.png") })
+    await owner.getByTestId("workflow-files-attach").click()
+    await expect(card.getByText("Version 1 · pinned for this workflow")).toBeVisible()
+    const config = await (await owner.request.get(`/v1/workflow-runtimes/${context.id}`)).json()
+    expect(config.files).toMatchObject({ version: 1, revision: 0 })
+    const artifact = await (
+      await owner.request.get(`/v1/artifacts/${config.files.short_id}`)
+    ).json()
+    expect(artifact).toMatchObject({ workspace_access: "none", link_role: "none" })
+    await owner.reload()
+    await owner.getByTestId("console-tab-cloud").click()
+    await expect(card.getByText("Version 1 · pinned for this workflow")).toBeVisible()
+    await card.screenshot({ path: testInfo.outputPath("input-attached-mobile.png") })
+    // ZIP bytes must retain original metadata until server validation, not be unpacked/repacked in the UI.
+    await owner.getByTestId("workflow-files-zip").setInputFiles({
+      name: "unsafe.zip",
+      mimeType: "application/zip",
+      buffer: Buffer.from(zipSync({ ".env": new TextEncoder().encode("private fixture") })),
+    })
+    await expect(card.getByRole("alert")).toContainText("Remove credentials and caches")
+    await owner.getByTestId("workflow-files-remove").click()
+    await expect(card.getByText(/Add a folder from your computer/)).toBeVisible()
+    const removed = await (await owner.request.get(`/v1/workflow-runtimes/${context.id}`)).json()
+    expect(removed.files).toMatchObject({ artifact_id: null, version: null, revision: 1 })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })

@@ -9,7 +9,8 @@ import type { AppDeps } from "../context"
 import { spendableConnections } from "./broker"
 import { credentialRevision } from "./credentials"
 import { runtimeModelSelection } from "./runtime-model-grant"
-import { workflowConfiguration } from "./workflow-readiness"
+import { workflowFilesAvailable } from "./workflow-files"
+import { workflowConfiguration, workflowRevision } from "./workflow-readiness"
 
 /** Live execution authority shared by dispatch, runner claims and every tool call.
  * Result receipts and shutdown deliberately do not depend on this grant. */
@@ -44,6 +45,9 @@ export async function runtimeRunContext(
     )
       return null
   }
+  // A new attachment affects future runs; this run retains its accepted pin.
+  // Removing the grantor's source access still revokes delivery immediately.
+  if (input?.files && !(await workflowFilesAvailable(meta, run.org_id, input.files))) return null
   const managed = runtime.connection_id === null
   if (
     managed
@@ -63,11 +67,14 @@ export async function runtimeRunContext(
     agent?.org_id !== run.org_id
   )
     return null
-  if (
-    input?.workflow_revision &&
-    (await workflowConfiguration(meta, context)).revision !== input.workflow_revision
-  )
-    return null
+  if (input?.workflow_revision) {
+    const current = (await workflowConfiguration(meta, context)).input
+    if (!current) return null
+    // Keep property order stable: files precedes the other snapshot fields.
+    const { files: _selectedFiles, ...rest } = current
+    const accepted = input.files ? { files: input.files, ...rest } : rest
+    if (workflowRevision(accepted, context.ask_policy) !== input.workflow_revision) return null
+  }
   if (runtime.connection_id === null) {
     if (!roleAllows(member.role, "publish")) return null
     const binding = await meta.getRuntimeModelBinding(context.id, run.org_id)

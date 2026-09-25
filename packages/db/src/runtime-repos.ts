@@ -43,6 +43,14 @@ const checkedInput = (value: string | null | undefined): RuntimeRunInput => {
       (!text(input.model_connection?.id) ||
         !Number.isSafeInteger(input.model_connection.revision) ||
         input.model_connection.revision < 0)) ||
+    (input.files !== undefined &&
+      (!text(input.files?.artifact_id) ||
+        !text(input.files?.granted_by) ||
+        !/^[a-f0-9]{64}$/.test(input.files?.blob_key ?? "") ||
+        !Number.isSafeInteger(input.files.version) ||
+        input.files.version < 1 ||
+        !Number.isSafeInteger(input.files.revision) ||
+        input.files.revision < 0)) ||
     !text(input.instruction) ||
     !text(input.context_id) ||
     !text(input.manifest?.artifact_id) ||
@@ -88,6 +96,17 @@ const checkedInput = (value: string | null | undefined): RuntimeRunInput => {
           model_connection: {
             id: input.model_connection.id,
             revision: input.model_connection.revision,
+          },
+        }
+      : {}),
+    ...(input.files
+      ? {
+          files: {
+            artifact_id: input.files.artifact_id,
+            version: input.files.version,
+            blob_key: input.files.blob_key,
+            granted_by: input.files.granted_by,
+            revision: input.files.revision,
           },
         }
       : {}),

@@ -341,7 +341,7 @@ DERIVE_MANAGED_RUNS_ALLOWLIST = "ws_5b0iz1wp99ksykr7,ws_abfxtkvjfijoyeau"
 # to a Context (docs/ortam-smoke.md). This path enables the controller; execution
 # still requires the workspace allowlist above and workspace opt-in. No VM is created
 # or package installed by this setting. Keep it set until all attempts release.
-DERIVE_ORTAM_RUNNER_PATH = "/home/ortam/derive-runtime/0.7.0/node_modules/@derive-to/cli/bin/derive.js"
+DERIVE_ORTAM_RUNNER_PATH = "/home/ortam/derive-runtime/0.7.1/node_modules/@derive-to/cli/bin/derive.js"
 # DERIVE_AUTH_SECRET is a secret (`wrangler secret put`). Workspaces are always multi.
 #
 # BASE_URL pins the app origin. It is REQUIRED once DERIVE_SUBDOMAIN_BASE is set:

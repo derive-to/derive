@@ -17,7 +17,7 @@ import { runtimeFailureReason } from "./runtime-diagnostics"
 import { prepareRuntimeModel } from "./runtime-model-attachment"
 import { runtimeModelReady } from "./runtime-model-grant"
 import { materializeRuntimeSchedules, runtimeScheduleAllows } from "./runtime-schedule"
-import { reconcileRuntimeSetups } from "./runtime-setup"
+import { INSTALL_RUNTIME_RUNNER, reconcileRuntimeSetups } from "./runtime-setup"
 import { signRuntimeToken } from "./runtime-token"
 import { materializeWorkflowTests } from "./workflow-test"
 
@@ -171,7 +171,9 @@ async function reconcile(
       runtime.sandbox_id,
       {
         argv: [
-          "node",
+          ...(runtime.connection_id === null
+            ? ["sh", "-c", `${INSTALL_RUNTIME_RUNNER}\nexec node "$@"`, "derive-runner"]
+            : ["node"]),
           deps.config.runnerPath,
           "runner",
           "run",

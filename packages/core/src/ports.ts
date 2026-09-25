@@ -5069,6 +5069,7 @@ export interface CommentListOpts {
 
 /** A bundle version's blob is this manifest; file versions point at content directly. */
 export interface BundleManifest {
+  /** A document path, or / for a file-only inventory. */
   entry: string
   spa: boolean
   /** Each file's blob key and content type, and its size in bytes on bundles published
@@ -5090,12 +5091,27 @@ export const LATEX_BUNDLE_CONTENT_TYPE = "derive/latex"
 /** Is this stored content a bundle (plain bundle, skill, OR paper)? Use everywhere that
  *  branches on "is this a multi-file bundle", so none of them is mistaken for a single file. */
 export const isBundleContentType = (contentType: string | null | undefined): boolean =>
+  contentType === "derive/files" ||
   contentType === BUNDLE_CONTENT_TYPE ||
   contentType === SKILL_CONTENT_TYPE ||
   contentType === LATEX_BUNDLE_CONTENT_TYPE
 
 /** Control-plane operations only. Runner APIs must not expose these mutations. */
 export interface RuntimeStore {
+  getWorkflowFiles(
+    contextId: string,
+    orgId: string,
+  ): Promise<import("./runtime").WorkflowFilesRecord | null>
+  saveWorkflowFiles(input: {
+    contextId: string
+    orgId: string
+    ownerId: string
+    artifactId: string | null
+    blobKey: string | null
+    version: number | null
+    revision: number | null
+    at: string
+  }): Promise<import("./runtime").WorkflowFilesRecord | null>
   projectWorkflowDraft(contextId: string, orgId: string, ownerId: string, at: string): Promise<void>
   getWorkflowDraft(
     contextId: string,

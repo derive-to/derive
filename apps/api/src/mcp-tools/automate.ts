@@ -202,7 +202,7 @@ export function registerAutomateTool(tc: ToolContext): void {
     "automate",
     {
       description:
-        "Manage work: workflow_* for persistent workflows; create/run_now for ordinary tasks. Read derive://skills/loop. List with list_automations.",
+        "Persistent workflows: workflow_*. Ordinary tasks: create/run_now. Read derive://skills/loop; list with list_automations.",
       // Every action here writes, which is now true of the whole tool — the read moved to
       // list_automations. Not destructive: no action deletes or disables an existing
       // automation or context, and every effect (rows in the automations/runs/contexts
@@ -219,11 +219,11 @@ export function registerAutomateTool(tc: ToolContext): void {
         // client for exactly this reason), and a cached client validates an enum locally —
         // so a newly-shipped action never even reaches the server. See lib/open-choice.ts.
         // Checked server-side below.
-        action: z.string().describe(choiceDescription(AUTOMATE_ACTIONS, "What to do.")),
+        action: z.string().describe(choiceDescription(AUTOMATE_ACTIONS, "Action.")),
         workflow: z
           .record(z.string(), z.unknown())
           .optional()
-          .describe("workflow_*: operation fields from derive://skills/loop. No secret values."),
+          .describe("Workflow fields: derive://skills/loop. Never include secrets."),
         workspace: tc.wsArg,
         // EVERY PARAM BELOW SHIPPED WITH NO DESCRIPTION. Five actions share one schema, so
         // which params an action even reads was unstated — an agent asked to schedule work
@@ -269,7 +269,7 @@ export function registerAutomateTool(tc: ToolContext): void {
           .string()
           .max(64)
           .optional()
-          .describe("create: optional Context. workflow_*: existing workflow’s Context ID."),
+          .describe("Context ID: optional for create; required for workflow_* updates."),
         connection_ids: z
           .array(z.string().max(64))
           .max(20)

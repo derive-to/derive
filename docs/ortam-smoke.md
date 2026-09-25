@@ -679,3 +679,27 @@ This MCP change does not change the manifest or any live App/installation permis
 
 Sources: [GitHub App permissions](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app),
 [create a pull request](https://docs.github.com/en/rest/pulls/pulls#create-a-pull-request).
+
+
+## Workflow file inputs (CLI 0.7.1)
+
+Publish CLI 0.7.1 to npm before deploying the API/configuration that selects it.
+Managed environments install the pinned runner into a separate version directory on
+initial provisioning or their next resumed attempt. The installer stages the complete
+package and atomically renames it; it does not touch `/home/ortam/work` or reinstall on
+every run. The same exclusive runtime lease covers upgrading and executing. Operator
+runtimes still use their configured runner path and require an operator upgrade.
+
+The runner advertises file-input support on claim. An older runner cannot claim a run
+with attached files. The accepted snapshot pins the source artifact, version and manifest
+digest. Active attempt capabilities fetch only listed files after live permission checks;
+no public URL or broad storage credential enters the sandbox. Both sides check file sizes
+and digests. Downloads complete in a temporary directory before atomic delivery into
+`/home/ortam/work/.derive-inputs/<artifact>-v<version>-<digest>`. Interrupted downloads can
+retry, but modified cached inputs fail rather than silently overwriting data. The agent
+copies/adapts inputs into its persistent working directory and installs dependencies itself.
+
+Validate first and second runs against an authorized disposable workflow before claiming
+live execution is verified. Check the input version, saved working-file changes, deliberate
+selection of a new input version, and failure after source access is revoked. Ordinary
+hosted tasks and workflow rollout remain unchanged.

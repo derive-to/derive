@@ -14,8 +14,25 @@ interface SetupDeps {
   now?: () => Date
 }
 
-export const SETUP_RUNNER_PATH =
-  "/home/ortam/derive-runtime/0.7.0/node_modules/@derive-to/cli/bin/derive.js"
+export const RUNNER_VERSION = "0.7.1"
+const RUNNER_DIRECTORY = `/home/ortam/derive-runtime/${RUNNER_VERSION}`
+export const SETUP_RUNNER_PATH = `${RUNNER_DIRECTORY}/node_modules/@derive-to/cli/bin/derive.js`
+
+/** Install once per saved environment, then atomically expose a complete runner. */
+export const INSTALL_RUNTIME_RUNNER = [
+  "set -eu",
+  "mkdir -p /home/ortam/derive-runtime /home/ortam/work",
+  `if [ ! -f ${RUNNER_DIRECTORY}/.ready ]; then`,
+  `  test ! -e ${RUNNER_DIRECTORY}`, // Never overwrite an unknown or incomplete installation.
+  `  stage=$(mktemp -d /home/ortam/derive-runtime/.install-${RUNNER_VERSION}-XXXXXX)`,
+  `  trap 'rm -rf "$stage"' EXIT`,
+  `  npm install --prefix "$stage" --omit=dev --ignore-scripts --no-audit --no-fund --save-exact @derive-to/cli@${RUNNER_VERSION}`,
+  `  node "$stage/node_modules/@derive-to/cli/bin/derive.js" --help >/dev/null`,
+  `  touch "$stage/.ready"`,
+  `  mv "$stage" ${RUNNER_DIRECTORY}`,
+  "  trap - EXIT",
+  "fi",
+].join("\n")
 export const SETUP_TIMEOUT_MS = 30 * 60_000
 
 /** This exact request is persisted before submission, including the version, for replay across deploys. */
@@ -24,12 +41,7 @@ export function runtimeSetupRequest(id: string) {
     name: `derive-${id.replaceAll("_", "-")}`,
     size: "small",
     auto_stop_after_seconds: 1200,
-    setup_script: [
-      "set -eu",
-      "mkdir -p /home/ortam/derive-runtime/0.7.0 /home/ortam/work",
-      "npm install --prefix /home/ortam/derive-runtime/0.7.0 --omit=dev --ignore-scripts --no-audit --no-fund --save-exact @derive-to/cli@0.7.0",
-      `node ${SETUP_RUNNER_PATH} --help`,
-    ].join("\n"),
+    setup_script: INSTALL_RUNTIME_RUNNER,
   }
 }
 

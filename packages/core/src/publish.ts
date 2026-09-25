@@ -2,6 +2,7 @@ import { unzipSync } from "fflate"
 import { isHtmlLike, isMarkdownLike } from "./content-types"
 import { isDeckDocument } from "./decks"
 import { dynamicSeedErrors } from "./dynamic-data"
+import { FILE_BUNDLE_CONTENT_TYPE, fileInputInventory, validateFileZip } from "./file-bundle"
 import { newId, newShortId, refFor, slugify } from "./ids"
 import { isLatexBundle, isLatexDocument, LATEX_CONTENT_TYPE } from "./latex"
 import { LINKED_BUNDLE_CONTENT_TYPE, linkedBundleOf } from "./linked-bundle"
@@ -132,6 +133,7 @@ export interface PublishInput {
   stored?: Record<string, { key: string; size: number }>
   /** The bundle's entry page when the publisher knows it (`/paper.tex`); the usual
    *  index/main/shallowest choice otherwise. Bundles only. */
+  fileBundle?: boolean
   entry?: string | null
   /** Raise the file and byte caps for a bundle that carries a paper's implementation.
    *  Clamped to MAX_BUNDLE_FILES_WITH_CODE / MAX_BUNDLE_UNZIPPED_BYTES_WITH_CODE, and
@@ -285,6 +287,7 @@ async function storeContent(
   preferredEntry?: string | null,
   limits?: { maxFiles?: number; maxBundleBytes?: number },
   stored?: Record<string, { key: string; size: number }>,
+  fileBundle = false,
 ): Promise<StoredContent> {
   let blobWriteMs = 0
   const put = async (data: Uint8Array): Promise<string> => {
@@ -299,6 +302,16 @@ async function storeContent(
     let unzipped: Record<string, Uint8Array>
     if (unpacked || stored) unzipped = unpacked ?? {}
     else {
+      if (fileBundle) {
+        try {
+          validateFileZip(bytes)
+        } catch (error) {
+          throw new PublishError(
+            400,
+            error instanceof Error ? error.message : "Invalid input archive",
+          )
+        }
+      }
       try {
         unzipped = unzipSync(bytes)
       } catch {
@@ -363,10 +376,17 @@ async function storeContent(
     }
     // Entry point: an HTML site enters at index/shallowest .html; a skill/doc
     // bundle with no HTML enters at SKILL.md / README.md / shallowest markdown.
-    const entry = pickBundleEntry(Object.keys(files), preferredEntry)
+    const entry = fileBundle ? "/" : pickBundleEntry(Object.keys(files), preferredEntry)
     if (!entry) throw new PublishError(400, "bundle has no html, markdown, or LaTeX entry point")
 
-    const manifest: BundleManifest = { entry, spa, files }
+    const manifest: BundleManifest = { entry, spa: fileBundle ? false : spa, files }
+    if (fileBundle) {
+      try {
+        fileInputInventory(manifest)
+      } catch (error) {
+        throw new PublishError(400, error instanceof Error ? error.message : "Invalid files")
+      }
+    }
     // A skill bundle (entry = SKILL.md) gets the distinct derive/skill content type — so
     // the library can badge it without opening the manifest — and is titled from its
     // frontmatter `name`, not the zip's filename, when no title is given.
@@ -391,11 +411,13 @@ async function storeContent(
     }
     return {
       blobKey: await put(new TextEncoder().encode(JSON.stringify(manifest))),
-      contentType: isSkill
-        ? SKILL_CONTENT_TYPE
-        : isLatexBundle(manifest)
-          ? LATEX_BUNDLE_CONTENT_TYPE
-          : BUNDLE_CONTENT_TYPE,
+      contentType: fileBundle
+        ? FILE_BUNDLE_CONTENT_TYPE
+        : isSkill
+          ? SKILL_CONTENT_TYPE
+          : isLatexBundle(manifest)
+            ? LATEX_BUNDLE_CONTENT_TYPE
+            : BUNDLE_CONTENT_TYPE,
       kind: "bundle",
       blobWriteMs,
       suggestedTitle,
@@ -569,6 +591,8 @@ export async function publish(
   input: PublishInput,
   shortId?: string,
 ): Promise<PublishResult> {
+  if (input.fileBundle && !input.isBundle)
+    throw new PublishError(400, "File inputs must be a bundle")
   if (input.workflow) {
     if (input.replaceCurrent)
       throw new PublishError(400, "Workflow publishes append immutable versions")
@@ -602,6 +626,7 @@ export async function publish(
         ? { maxFiles: input.maxFiles, maxBundleBytes: input.maxBundleBytes }
         : undefined,
       input.isBundle ? input.stored : undefined,
+      input.fileBundle,
     )
   const timings = { blobWriteMs, storeContentMs: performance.now() - storeStartedAt }
   const sizeBytes =
@@ -624,6 +649,8 @@ export async function publish(
     // writes must append a version rather than silently changing that evidence.
     const replaceCurrent =
       input.replaceCurrent &&
+      contentType !== FILE_BUNDLE_CONTENT_TYPE &&
+      artifact.current_content_type !== FILE_BUNDLE_CONTENT_TYPE &&
       !(await meta.workflowVersionIsPinned(artifact.id, input.replaceCurrent.n))
         ? input.replaceCurrent
         : undefined

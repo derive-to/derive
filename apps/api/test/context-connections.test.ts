@@ -1,7 +1,21 @@
+import { execFileSync } from "node:child_process"
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import {
   CONTEXT_ENVIRONMENT_LIMIT as SERVER_LIMIT,
   contextEnvironmentNameError as serverError,
 } from "@derive/core"
+import { zipSync } from "fflate"
 import { describe, expect, it, vi } from "vitest"
 import {
   CONTEXT_ENVIRONMENT_LIMIT,
@@ -17,7 +31,7 @@ import {
   nextRuntimeOccurrence,
   runtimeScheduleAllows,
 } from "../src/lib/runtime-schedule"
-import { SETUP_RUNNER_PATH } from "../src/lib/runtime-setup"
+import { INSTALL_RUNTIME_RUNNER, SETUP_RUNNER_PATH } from "../src/lib/runtime-setup"
 import { materializeAllDueRuns } from "../src/lib/schedule"
 import { log } from "../src/log"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
@@ -1504,7 +1518,7 @@ describe("runtime provisioning and shared model accounts", () => {
         const body = JSON.parse(String(init.body))
         expect(body).toMatchObject({ size: "small", auto_stop_after_seconds: 1200 })
         expect(body.name).toMatch(/^[a-z0-9][a-z0-9-]{0,62}$/)
-        expect(body.setup_script).toContain("--save-exact @derive-to/cli@0.7.0")
+        expect(body.setup_script).toContain("--save-exact @derive-to/cli@0.7.1")
         expect(body.agent_connections).toBe(subject ? true : undefined)
         saved = {
           body: String(init.body),
@@ -1870,6 +1884,122 @@ describe("runtime provisioning and shared model accounts", () => {
     }
     return { ...f, model, runtime, sandbox: saved.sandbox, select, fire }
   }
+
+  it("pins private file inputs through upload, attachment, claim and live delivery without overlaying a new selection", async () => {
+    const f = await managedJob()
+    const path = `/v1/workflow-runtimes/${f.context.id}`
+    const upload = async (source: string, shortId?: string) => {
+      const form = new FormData()
+      form.set(
+        "file",
+        new File(
+          [
+            zipSync({
+              "scripts/check.py": new TextEncoder().encode(source),
+            }) as Uint8Array<ArrayBuffer>,
+          ],
+          "integrity.zip",
+          { type: "application/zip" },
+        ),
+      )
+      form.set("file_bundle", "true")
+      form.set("workspace_access", "none")
+      form.set("link_role", "none")
+      const response = await app.request(
+        shortId ? `/v1/artifacts/${shortId}/versions` : "/v1/artifacts",
+        {
+          method: "POST",
+          headers: as(owner.email),
+          body: form,
+        },
+      )
+      expect(response.status).toBe(201)
+      return response.json()
+    }
+    const source = await upload("original script")
+    const select = (
+      shortId: string | null,
+      version: number | null,
+      revision: number | null,
+      email = owner.email,
+    ) =>
+      app.request(`${path}/files`, {
+        ...jsonAs(as(email), { short_id: shortId, version, revision }),
+        method: "PUT",
+      })
+    expect((await select(source.short_id, 1, null, member.email)).status).toBe(403)
+    expect((await select(source.short_id, 1, null)).status).toBe(200)
+    expect((await select(source.short_id, 1, null)).status).toBe(409)
+    const configuration = await (await app.request(path, { headers: as(owner.email) })).json()
+    expect(configuration.files).toMatchObject({
+      short_id: source.short_id,
+      version: 1,
+      revision: 0,
+    })
+    // The source's private access remains unchanged; workflow delegation is separate.
+    expect(
+      (await app.request(`/v1/artifacts/${source.short_id}`, { headers: as(member.email) })).status,
+    ).toBe(404)
+    const tested = await app.request(
+      `${path}/tests`,
+      jsonAs(as(owner.email), {
+        revision: configuration.readiness.revision,
+        request_id: crypto.randomUUID(),
+      }),
+    )
+    expect(tested.status).toBe(202)
+    const requested = (await tested.json()).request
+    for (let i = 0; i < 4; i++) await pass()
+    const run = await meta.getRun(requested.id)
+    expect(JSON.parse(run?.input_snapshot ?? "null").files).toMatchObject({
+      version: 1,
+      revision: 0,
+      granted_by: owner.id,
+    })
+    const process = launched.get(f.sandbox.id)
+    if (!process) throw new Error("Runner not launched")
+    const request = (action: string, body: unknown = {}, capable = true) =>
+      app.request(
+        `/v1/runtime-attempts/${process.attempt}/${action}`,
+        jsonAs(
+          {
+            Authorization: `Bearer ${process.token}`,
+            ...(capable ? { "X-Derive-File-Inputs": "1" } : {}),
+          },
+          body,
+        ),
+      )
+    expect((await request("files", { path: "scripts/check.py" })).status).toBe(409)
+    expect((await request("claim", {}, false)).status).toBe(409)
+    const claimed = await request("claim")
+    expect(claimed.status).toBe(200)
+    expect((await claimed.json()).files.files).toEqual([
+      expect.objectContaining({ path: "scripts/check.py", size: 15 }),
+    ])
+    expect(await (await request("files", { path: "scripts/check.py" })).text()).toBe(
+      "original script",
+    )
+    expect((await request("files", { path: "../escape" })).status).toBe(404)
+    await upload("replacement script", source.short_id)
+    expect((await select(source.short_id, 2, 0)).status).toBe(200)
+    expect(await (await request("files", { path: "scripts/check.py" })).text()).toBe(
+      "original script",
+    )
+    // An interrupted/repeated fetch reads the same bytes, with no extra delivery state.
+    expect(await (await request("files", { path: "scripts/check.py" })).text()).toBe(
+      "original script",
+    )
+    expect((await select(null, null, 1)).status).toBe(200)
+    expect(await (await request("files", { path: "scripts/check.py" })).text()).toBe(
+      "original script",
+    )
+    const artifact = await meta.getByShortId(source.short_id)
+    if (!artifact) throw new Error("Missing input artifact")
+    await meta.setArtifactRemoved(artifact.id, new Date().toISOString())
+    expect((await request("files", { path: "scripts/check.py" })).status).toBe(403)
+    await app.request(`${f.path}/disable`, jsonAs(as(owner.email), {}))
+    for (let i = 0; i < 4; i++) await pass()
+  })
 
   it("saves an accountless draft without compute, resumes it, and rejects stale edits", async () => {
     await fixture()
@@ -3178,4 +3308,43 @@ describe("reusable runtime model accounts", () => {
     }
     expect(requests).toHaveLength(before)
   })
+})
+
+it("installs the pinned runner atomically and reuses it without touching working files", () => {
+  const root = mkdtempSync(join(tmpdir(), "runtime-install-"))
+  const bin = join(root, "bin")
+  mkdirSync(bin)
+  mkdirSync(join(root, "work"))
+  writeFileSync(join(root, "work", "report"), "saved work")
+  writeFileSync(join(root, "fail"), "fail first install")
+  const npm = join(bin, "npm")
+  writeFileSync(
+    npm,
+    `#!/bin/sh
+set -eu
+[ ! -f "$FIXTURE_ROOT/fail" ] || exit 9
+[ "$1" = install ] && [ "$2" = --prefix ]
+printf 'install\n' >> "$FIXTURE_ROOT/installs"
+mkdir -p "$3/node_modules/@derive-to/cli/bin"
+printf 'console.log("runner ready")' > "$3/node_modules/@derive-to/cli/bin/derive.js"
+`,
+  )
+  chmodSync(npm, 0o755)
+  const script = INSTALL_RUNTIME_RUNNER.replaceAll("/home/ortam", root)
+  const run = () =>
+    execFileSync("sh", ["-c", script], {
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FIXTURE_ROOT: root },
+    })
+  try {
+    expect(run).toThrow()
+    expect(readdirSync(join(root, "derive-runtime"))).toEqual([])
+    rmSync(join(root, "fail"))
+    run()
+    run()
+    expect(readFileSync(join(root, "installs"), "utf8")).toBe("install\n")
+    expect(existsSync(SETUP_RUNNER_PATH.replace("/home/ortam", root))).toBe(true)
+    expect(readFileSync(join(root, "work", "report"), "utf8")).toBe("saved work")
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })

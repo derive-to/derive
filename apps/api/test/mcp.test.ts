@@ -276,6 +276,25 @@ describe("remote MCP endpoint (/mcp)", () => {
     ).toBe(200)
     expect((await read("environment")).result.bindings).toEqual({ DATABASE_URL: credential.id })
     expect((await control("workflow_connections", { connection_ids: [] })).status).toBe(200)
+    const files = await tool("publish", {
+      title: "Workflow source",
+      files: { "README.md": "# Input", "check.py": "print('ok')" },
+      workspace_access: "none",
+      link_role: "none",
+    })
+    expect(files.short_id).toBeTruthy()
+    expect(
+      (await control("workflow_files", { short_id: files.short_id, version: 1, revision: null }))
+        .status,
+    ).toBe(200)
+    expect((await read()).result.files).toMatchObject({ version: 1, revision: 0 })
+    expect(
+      (await control("workflow_files", { short_id: null, version: null, revision: 0 })).status,
+    ).toBe(200)
+    expect(
+      (await control("workflow_files", { short_id: files.short_id, version: 1, revision: 0 }))
+        .status,
+    ).toBe(409)
     const configuration = (await read()).result
     expect(configuration.readiness.blockers).toEqual([])
     expect(configuration.readiness.can_test).toBe(true)

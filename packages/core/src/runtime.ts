@@ -23,6 +23,25 @@ export type NewContextRuntime = Omit<
   "disabled_at" | "created_at" | "model_connection_id"
 >
 
+/** One explicitly delegated input. Clearing keeps its revision for concurrent editors. */
+export interface WorkflowFilesRecord {
+  context_id: string
+  org_id: string
+  artifact_id: string | null
+  blob_key: string | null
+  version: number | null
+  granted_by: string
+  revision: number
+  updated_at: string
+}
+export interface WorkflowFileInput {
+  artifact_id: string
+  version: number
+  blob_key: string
+  granted_by: string
+  revision: number
+}
+
 /** Accepted inputs. No tokens or environment values belong in this snapshot. */
 export interface RuntimeRunInput {
   version: 1
@@ -32,6 +51,7 @@ export interface RuntimeRunInput {
   instruction: string
   context_id: string
   manifest: { artifact_id: string; version: number; blob_key: string }
+  files?: WorkflowFileInput
   provider: ExecutionProvider
   model: string | null
   connection_ids: string[]

@@ -1015,6 +1015,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           bytes,
           filename,
           isBundle,
+          fileBundle: body["file_bundle"] === "true",
           title: str(body["title"]),
           slug: str(body["slug"]),
           spa: bundleSpa ?? (body["spa"] === "true" || body["spa"] === "1"),
