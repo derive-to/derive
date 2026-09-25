@@ -1,5 +1,3 @@
-import { unzip, zip } from "fflate"
-
 export type PreparedWorkflowFiles = {
   name: string
   entries: Record<string, Uint8Array>
@@ -28,6 +26,7 @@ export async function prepareWorkflowFiles(files: File[]): Promise<PreparedWorkf
   const excluded: string[] = []
   let total = 0
   const seen = new Set<string>()
+  const paths: string[] = []
   const take = (path: string, size: number) => {
     if (excludedPath(path)) {
       excluded.push(path)
@@ -44,6 +43,7 @@ export async function prepareWorkflowFiles(files: File[]): Promise<PreparedWorkf
       throw new Error(`Unsupported file path: ${path}`)
     if (seen.has(path.toLowerCase())) throw new Error(`Duplicate path: ${path}`)
     seen.add(path.toLowerCase())
+    paths.push(path)
     total += size
     if (total > MAX_BYTES || seen.size > 2000)
       throw new Error("Choose up to 2,000 files totaling 50 MB")
@@ -56,6 +56,7 @@ export async function prepareWorkflowFiles(files: File[]): Promise<PreparedWorkf
   if (files.length === 1 && !first.webkitRelativePath && /\.zip$/i.test(first.name)) {
     if (first.size > MAX_BYTES) throw new Error("Choose a ZIP smaller than 50 MB")
     name = first.name.replace(/\.zip$/i, "")
+    const { unzip } = await import("fflate")
     const bytes = new Uint8Array(await first.arrayBuffer())
     await new Promise<Record<string, Uint8Array>>((resolve, reject) => {
       let failure: unknown
@@ -92,12 +93,13 @@ export async function prepareWorkflowFiles(files: File[]): Promise<PreparedWorkf
       .filter(({ file, path }) => take(path, file.size))
     for (const { file, path } of kept) entries[path] = new Uint8Array(await file.arrayBuffer())
   }
-  const paths = [...seen].sort()
+  paths.sort()
   if (!paths.length) throw new Error("No files remain after excluding credentials and local caches")
   return { name, entries, paths, bytes: total, excluded, archive }
 }
 export async function workflowFilesZip(input: PreparedWorkflowFiles): Promise<File> {
   if (input.archive) return input.archive
+  const { zip } = await import("fflate")
   const bytes = await new Promise<Uint8Array>((resolve, reject) =>
     zip(input.entries, { level: 6 }, (err, data) => (err ? reject(err) : resolve(data))),
   )

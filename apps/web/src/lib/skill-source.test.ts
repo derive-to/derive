@@ -9,8 +9,8 @@ describe("Skill source editing", () => {
     )
   })
 
-  it("creates the portable two-file Skill bundle", () => {
-    const files = unzipSync(skillBundleBytes(NEW_SKILL_SOURCE))
+  it("creates the portable two-file Skill bundle", async () => {
+    const files = unzipSync(await skillBundleBytes(NEW_SKILL_SOURCE))
     expect(Object.keys(files).sort()).toEqual(["SKILL.md", "derive.skill.json"])
     expect(strFromU8(files["SKILL.md"] as Uint8Array)).toBe(NEW_SKILL_SOURCE)
     expect(JSON.parse(strFromU8(files["derive.skill.json"] as Uint8Array))).toMatchObject({
