@@ -15,6 +15,7 @@ import { exportJWK, generateKeyPair, SignJWT } from "jose"
 import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { sha256 } from "../src/lib/crypto"
+import { inMemoryLimiter, inMemoryRateLimiters } from "../src/lib/rate-limit"
 import { SETUP_RUNNER_PATH } from "../src/lib/runtime-setup"
 import { searchMatcher, searchWorkspace } from "../src/lib/search"
 import { PNG_BYTES } from "./fixtures"
@@ -103,6 +104,48 @@ describe("remote MCP endpoint (/mcp)", () => {
     const r = await rpc(app, null, initBody)
     expect(r.status).toBe(401)
     expect(r.wwwAuth).toContain("oauth-protected-resource")
+  })
+
+  it("keeps MCP workflow writes in the originating client's API rate-limit bucket", async () => {
+    const { app, token, meta } = appWithGrant(
+      dir,
+      "workflow-ip-limit",
+      "openid derive:read derive:publish derive:manage",
+      {
+        rateLimit: true,
+        rateLimiters: { ...inMemoryRateLimiters(), write: inMemoryLimiter(60_000, 1) },
+      },
+    )
+    await meta.setMembership({
+      id: "mcp-ip-owner",
+      org_id: "ws_p_u_o",
+      user_id: "u_o",
+      role: "owner",
+    })
+    const attempt = async (headers: Record<string, string>) =>
+      JSON.parse(
+        toolText(
+          await rpc(
+            app,
+            token,
+            {
+              jsonrpc: "2.0",
+              id: 9,
+              method: "tools/call",
+              params: {
+                name: "automate",
+                arguments: { action: "workflow_create", workflow: { name: "Rate limit check" } },
+              },
+            },
+            headers,
+          ),
+        ),
+      )
+    // No cloud configuration: admission returns 403, but the HTTP write limiter still runs.
+    expect((await attempt({ "x-forwarded-for": "192.0.2.1, 192.0.2.254" })).status).toBe(403)
+    expect((await attempt({ "x-forwarded-for": "192.0.2.1" })).status).toBe(429)
+    expect((await attempt({ "x-real-ip": "192.0.2.2" })).status).toBe(403)
+    expect((await attempt({ "x-forwarded-for": "192.0.2.2" })).status).toBe(429)
   })
 
   it("manages persistent workflows through MCP using the HTTP lifecycle and saved credentials", async () => {

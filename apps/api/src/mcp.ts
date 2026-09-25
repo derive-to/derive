@@ -90,6 +90,7 @@ import type { AppContext } from "./context"
 import { resolveActorBrandprint, resolveBrandprintContext } from "./lib/brandprint"
 import type { Sandbox } from "./lib/code-sandbox"
 import { latexTemplateBundle } from "./lib/latex-templates"
+import { clientIp } from "./lib/rate-limit"
 import { makeToolContext, type ToolContext, type ToolContextBase } from "./mcp-tool-context"
 import { registerAutomateTool, registerListAutomationsTool } from "./mcp-tools/automate"
 import { registerCallTool } from "./mcp-tools/call"
@@ -770,7 +771,10 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
       async (path, method, body, workspace) => {
         // Keep all REST middleware, live authorization and admission checks. Only
         // server-owned tool mappings supply paths; the model never supplies a URL.
-        const headers = new Headers({ "X-Derive-Workspace": workspace })
+        const headers = new Headers({
+          "X-Derive-Workspace": workspace,
+          "X-Forwarded-For": clientIp(c),
+        })
         const bearer = c.req.header("Authorization")
         if (bearer) headers.set("Authorization", bearer)
         if (body !== undefined) headers.set("Content-Type", "application/json")
