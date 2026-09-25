@@ -2,12 +2,13 @@ import { newId, type RuntimeModelConnectionRecord } from "@derive/core"
 import { type Context, Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
+import { sha256 } from "../lib/crypto"
 import { fail, readJson } from "../lib/http"
 import { modelConnections, modelHarness, modelSignIn } from "../lib/ortam-client"
 import { managedModelClient } from "../lib/runtime-controller"
 
 const name = z.string().trim().min(1).max(100)
-const view = (connection: RuntimeModelConnectionRecord) => ({
+const view = (connection: RuntimeModelConnectionRecord, apiUrl: string | undefined) => ({
   id: connection.id,
   name: connection.name,
   provider: connection.provider,
@@ -15,6 +16,11 @@ const view = (connection: RuntimeModelConnectionRecord) => ({
   revoked_at: connection.revoked_at,
   created_at: connection.created_at,
   updated_at: connection.updated_at,
+  unavailable_reason: connection.revoked_at
+    ? "Disconnected. Add an account and select it on the affected workflows."
+    : connection.api_url !== apiUrl
+      ? "This account can no longer run workflows in this workspace. Connect a new account."
+      : null,
 })
 
 /** Reusable account management. Owning a job or knowing a connection ID does not
@@ -65,14 +71,23 @@ export const runtimeModelConnectionRoutes = (ctx: AppContext) => {
   app.get(path, async (c) => {
     const auth = await principal(c)
     if (auth instanceof Response) return auth
+    const unavailableReason = !ctx.deps.runtime?.managed?.workspaceIds.has(auth.org)
+      ? "Workflows that retain files are not available in this workspace."
+      : !(await ctx.workspaceCan(c, "publish"))
+        ? "Publish access is required to connect a workflow account."
+        : !ctx.deps.runtime.managed.apiKey
+          ? "Workflow account sign-in is not configured. Contact your workspace administrator."
+          : null
     return c.json({
+      can_create: unavailableReason === null,
+      unavailable_reason: unavailableReason,
       items: (
         await ctx.meta.listRuntimeModelConnections(
           auth.org,
           auth.owner,
           c.req.query("include_revoked") === "true",
         )
-      ).map(view),
+      ).map((connection) => view(connection, ctx.deps.runtime?.apiUrl)),
     })
   })
   app.post(path, async (c) => {
@@ -80,31 +95,69 @@ export const runtimeModelConnectionRoutes = (ctx: AppContext) => {
     if (auth instanceof Response) return auth
     const config = await available(c, auth.org)
     if (config instanceof Response) return config
-    const body = await readJson(c, z.object({ name, provider: z.enum(["codex", "claude-code"]) }))
+    const body = await readJson(
+      c,
+      z.object({
+        name,
+        provider: z.enum(["codex", "claude-code"]),
+        request_id: z.string().uuid().optional(),
+      }),
+    )
     if (body instanceof Response) return body
-    const reference = { id: newId("rmc"), org_id: auth.org, api_url: config.apiUrl }
+    // A retried create must resolve to the same provider identity, including when
+    // the response was lost. Scope the client key to owner/workspace and payload.
+    const id = body.request_id
+      ? `rmc_${sha256(JSON.stringify([auth.org, auth.owner, body.request_id, body.name, body.provider])).slice(0, 40)}`
+      : newId("rmc")
+    const existing = await ctx.meta.getRuntimeModelConnection(id, auth.org)
+    if (existing) return c.json(view(existing, config.apiUrl))
+    const reference = { id, org_id: auth.org, api_url: config.apiUrl }
     let account: { organization_id: string; user_id: string }
     try {
       account = await managedModelClient(config, reference, ctx.deps.runtimeFetch).authenticate()
     } catch {
       return fail(c, 502, "Could not verify the cloud connection")
     }
-    const connection = await ctx.meta.createRuntimeModelConnection(
-      {
-        ...reference,
-        ...body,
-        created_by: auth.owner,
-        ortam_org_id: account.organization_id,
-        ortam_user_id: account.user_id,
-      },
-      new Date().toISOString(),
-    )
-    return c.json(view(connection), 201)
+    const connection = await ctx.meta
+      .createRuntimeModelConnection(
+        {
+          ...reference,
+          name: body.name,
+          provider: body.provider,
+          created_by: auth.owner,
+          ortam_org_id: account.organization_id,
+          ortam_user_id: account.user_id,
+        },
+        new Date().toISOString(),
+      )
+      .catch(async (error: unknown) => {
+        // A concurrent retry may have inserted this exact identity first.
+        const winner = await ctx.meta.getRuntimeModelConnection(id, auth.org)
+        if (winner) return winner
+        throw error
+      })
+    return c.json(view(connection, ctx.deps.runtime?.apiUrl), 201)
   })
   app.get(`${path}/:connection`, async (c) => {
     const connection = await owned(c)
     if (connection instanceof Response) return connection
-    return c.json(view(connection))
+    return c.json(view(connection, ctx.deps.runtime?.apiUrl))
+  })
+  // Only the owner may inspect account usage. A grant can outlive their access
+  // to the workflow; count that impact without revealing its name or identifier.
+  app.get(`${path}/:connection/usage`, async (c) => {
+    const connection = await owned(c)
+    if (connection instanceof Response) return connection
+    const workflows: { id: string; name: string }[] = []
+    let otherWorkflowCount = 0
+    for (const context of await ctx.meta.contextsWithManifests(connection.org_id)) {
+      const binding = await ctx.meta.getRuntimeModelBinding(context.id, connection.org_id)
+      if (binding?.model_connection_id !== connection.id) continue
+      if (await ctx.canUserAskContext(connection.created_by, context))
+        workflows.push({ id: context.id, name: context.name })
+      else otherWorkflowCount++
+    }
+    return c.json({ workflows, other_workflow_count: otherWorkflowCount })
   })
   app.patch(`${path}/:connection`, async (c) => {
     const connection = await owned(c)
@@ -119,7 +172,7 @@ export const runtimeModelConnectionRoutes = (ctx: AppContext) => {
       new Date().toISOString(),
     )
     return updated
-      ? c.json(view(updated))
+      ? c.json(view(updated, ctx.deps.runtime?.apiUrl))
       : fail(c, 409, "Model connection changed; reload and try again")
   })
   app.delete(`${path}/:connection`, async (c) => {

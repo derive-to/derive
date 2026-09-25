@@ -132,3 +132,10 @@ export const queryClient = new QueryClient({
 // feed itself stays on the 30s default: it is the thing that changes constantly.
 for (const key of [["summary"], ["collections"], ["workspaces"]] as const)
   queryClient.setQueryDefaults(key, { staleTime: 5 * 60_000 })
+
+// Account creation may seed the sign-in result before its controls mount. Mark
+// this key memory-only at creation, so device codes never enter IndexedDB.
+queryClient.setQueryDefaults(["runtime-model-sign-in"], {
+  meta: { persist: false },
+  gcTime: typeof window === "undefined" ? 5_000 : 30 * 60_000,
+})

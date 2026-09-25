@@ -84,9 +84,14 @@ export function ModelPlanManager({ scope }: { scope: Scope }) {
 
   return (
     <>
-      <div className="rounded-lg bg-secondary p-4">
-        <ConnectForm connect={connect} prefix={prefix} onConnected={reload} />
-      </div>
+      <details className="rounded-lg border p-4">
+        <summary className="cursor-pointer text-sm font-medium" data-testid={`${prefix}-import`}>
+          Import or replace a login (advanced)
+        </summary>
+        <div className="mt-4">
+          <ConnectForm connect={connect} prefix={prefix} onConnected={reload} />
+        </div>
+      </details>
 
       {isPending ? (
         <SettingsListSkeleton />
@@ -193,6 +198,8 @@ function ConnectForm({
           placeholder="Paste the contents of ~/.codex/auth.json"
           value={token}
           onChange={(e) => setToken(e.target.value)}
+          autoComplete="off"
+          spellCheck={false}
           rows={4}
           className="font-mono text-2xs"
         />
@@ -250,7 +257,7 @@ function CredentialRow({
           <Badge variant="outline">{kindLabel(cred.provider, cred.kind)}</Badge>
         </span>
       }
-      meta={<span className="font-mono">connected · ••••{cred.hint}</span>}
+      meta={<span className="font-mono">imported · ••••{cred.hint} · health not checked</span>}
       actions={
         <>
           <Button
@@ -265,7 +272,7 @@ function CredentialRow({
             open={confirming}
             onOpenChange={setConfirming}
             title="Disconnect this plan?"
-            description="Runs that relied on it will stop until it is reconnected."
+            description="Future tasks and conversations that rely on this login may need another account or a workspace fallback. Accounts assigned to workflows that retain files are unchanged."
             confirmLabel="Disconnect"
             onConfirm={() => remove.mutate()}
           />

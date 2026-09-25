@@ -777,7 +777,7 @@ export function AutomationForm({
                 </Select>
                 <div className="rounded-md border bg-muted/30 px-2.5 py-2 text-xs text-muted-foreground">
                   {modelCredentials.isPending ? (
-                    <span>Checking your connected model plans…</span>
+                    <span>Checking your connected accounts…</span>
                   ) : personalPlan ? (
                     <span>
                       {provider === "codex" ? "Codex" : "Claude"} plan connected ·{" "}
@@ -791,7 +791,7 @@ export function AutomationForm({
                       An agent owner or shared workspace plan may still cover this run, or you can{" "}
                       <Link
                         to="/settings/$section"
-                        params={{ section: "model-plans" }}
+                        params={{ section: "accounts" }}
                         target="_blank"
                         rel="noreferrer"
                         className="font-medium text-foreground underline underline-offset-2"

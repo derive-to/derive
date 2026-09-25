@@ -1535,13 +1535,23 @@ export const api = {
   }> => f(`/v1/contexts/${id}/runtime`, opts()).then(j),
   setupContextRuntime: (id: string, connection_id?: string): Promise<unknown> =>
     f(`/v1/contexts/${id}/runtime/setup`, opts({ connection_id })).then(j),
-  runtimeModelConnections: (): Promise<{ items: CloudModelConnection[] }> =>
-    f("/v1/runtime-model-connections?include_revoked=true", opts()).then(j),
+  runtimeModelConnections: (): Promise<{
+    items: CloudModelConnection[]
+    can_create: boolean
+    unavailable_reason: string | null
+  }> => f("/v1/runtime-model-connections?include_revoked=true", opts()).then(j),
+  runtimeModelUsage: (
+    id: string,
+  ): Promise<{
+    workflows: { id: string; name: string }[]
+    other_workflow_count: number
+  }> => f(`/v1/runtime-model-connections/${id}/usage`, opts()).then(j),
   createRuntimeModelConnection: (
     name: string,
     provider: "codex" | "claude-code",
+    request_id: string,
   ): Promise<CloudModelConnection> =>
-    f("/v1/runtime-model-connections", opts({ name, provider })).then(j),
+    f("/v1/runtime-model-connections", opts({ name, provider, request_id })).then(j),
   runtimeModelStatus: (
     id: string,
   ): Promise<{
@@ -2300,6 +2310,7 @@ export const api = {
 }
 
 export interface CloudModelConnection {
+  unavailable_reason: string | null
   id: string
   name: string
   provider: "codex" | "claude-code"

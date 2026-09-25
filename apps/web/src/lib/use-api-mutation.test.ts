@@ -1,6 +1,6 @@
 import { QueryClient } from "@tanstack/react-query"
 import { describe, expect, it } from "vitest"
-import { shouldOpenPaywall } from "./query-client"
+import { queryClient, shouldOpenPaywall, shouldPersistQuery } from "./query-client"
 import { invalidateKeys, snapshot } from "./use-api-mutation"
 
 // The global MutationCache turns a 402 into the upgrade dialog. That is wrong for a write
@@ -78,4 +78,13 @@ describe("snapshot", () => {
     rollback()
     expect(qc.getQueryData(key)).toEqual([1, 2, 3])
   })
+})
+
+it("does not persist sign-in results seeded by a mutation before controls mount", () => {
+  const key = ["runtime-model-sign-in", "account-fixture"]
+  queryClient.setQueryData(key, { state: "pending", user_code: "sample" })
+  const query = queryClient.getQueryCache().find({ queryKey: key })
+  expect(query).toBeDefined()
+  expect(shouldPersistQuery(query?.meta)).toBe(false)
+  queryClient.removeQueries({ queryKey: key })
 })
