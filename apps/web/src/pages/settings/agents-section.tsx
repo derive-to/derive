@@ -82,7 +82,7 @@ export function AgentsSection({ meId }: { meId: string }) {
 
       {/* How agent runs get billed, in order: the person who triggered the run (their own
           plan), then the agent OWNER's plan (only for agents lent above), then the shared
-          workspace pool. The personal plan lives under You → Model plans and is linked
+          workspace pool. The personal plan lives under You → Accounts and is linked
           here; only the workspace pool is managed in place. */}
       <div className="flex flex-col gap-8">
         <SettingsGroup>
@@ -91,8 +91,8 @@ export function AgentsSection({ meId }: { meId: string }) {
             description="Runs you start bill your own connected plan first."
           >
             <Button data-testid="agents-manage-plans" variant="outline" size="sm" asChild>
-              <Link to="/settings/$section" params={{ section: "model-plans" }}>
-                Manage in Model plans
+              <Link to="/settings/$section" params={{ section: "accounts" }}>
+                Manage in Accounts
               </Link>
             </Button>
           </SettingRow>
@@ -307,7 +307,7 @@ function AgentConnectionRow({
               />
               {hasPersonalPlan
                 ? "Fall back to my plan when a run has none of its own"
-                : "Connect your plan under You → Model plans to lend it here"}
+                : "Connect your plan under You → Accounts to lend it here"}
             </label>
           )}
           {rotated && (

@@ -2584,9 +2584,11 @@ describe("reusable runtime model accounts", () => {
     expect(JSON.stringify(list)).not.toMatch(/ortam|api_url|created_by|integration/)
     expect(await (await app.request(path, { headers: as(member.email) })).json()).toEqual({
       items: [],
+      can_create: true,
+      unavailable_reason: null,
     })
     const before = requests.length
-    for (const suffix of ["", "/status", "/sign-in/sign-in-fixture"]) {
+    for (const suffix of ["", "/status", "/usage", "/sign-in/sign-in-fixture"]) {
       expect(
         (await app.request(`${path}/${first.id}${suffix}`, { headers: as(member.email) })).status,
       ).toBe(404)
@@ -2619,6 +2621,117 @@ describe("reusable runtime model accounts", () => {
     ).toBe(404)
     expect(requests).toHaveLength(before)
     expect((await app.request(path)).status).toBe(403)
+  })
+  it("retries account creation without duplicating identities and scopes keys to the owner", async () => {
+    const body = {
+      name: "Retried account",
+      provider: "codex",
+      request_id: "7d02fe3c-9774-47dd-a81b-24ad1ac018be",
+    }
+    const responses = await Promise.all([
+      app.request(path, jsonAs(as(owner.email), body)),
+      app.request(path, jsonAs(as(owner.email), body)),
+    ])
+    const [first, second] = await Promise.all(responses.map((response) => response.json()))
+    expect(first.id).toBeTruthy()
+    expect(second.id).toBe(first.id)
+    const before = requests.length
+    const retry = await (await app.request(path, jsonAs(as(owner.email), body))).json()
+    expect(retry.id).toBe(first.id)
+    expect(requests).toHaveLength(before)
+    const other = await (await app.request(path, jsonAs(as(member.email), body))).json()
+    expect(other.id).not.toBe(first.id)
+    await app.request(`${path}/${first.id}`, { headers: as(owner.email), method: "DELETE" })
+    const revoked = await (await app.request(path, jsonAs(as(owner.email), body))).json()
+    expect(revoked.revoked_at).toBeTruthy()
+    expect(revoked.id).toBe(first.id)
+  })
+  it("reports sign-in availability without hiding existing accounts or leaking service details", async () => {
+    const account = await create()
+    const membership = await meta.getMembership("default", owner.id)
+    if (!membership) throw new Error("Missing membership")
+    try {
+      config.managed.workspaceIds.clear()
+      let list = await (await app.request(path, { headers: as(owner.email) })).json()
+      expect(list).toMatchObject({
+        can_create: false,
+        unavailable_reason: expect.stringContaining("not available"),
+      })
+      expect(list.items.some((item: { id: string }) => item.id === account.id)).toBe(true)
+      config.managed.workspaceIds.add("default")
+      await meta.setMembership({ ...membership, role: "viewer" })
+      list = await (await app.request(path, { headers: as(owner.email) })).json()
+      expect(list).toMatchObject({
+        can_create: false,
+        unavailable_reason: expect.stringContaining("Publish access"),
+      })
+      expect(JSON.stringify(list)).not.toMatch(/ortam|api_url|private_token/)
+    } finally {
+      config.managed.workspaceIds.add("default")
+      await meta.setMembership(membership)
+    }
+  })
+  it("shows account impact only to its owner and redacts workflows they cannot read", async () => {
+    const account = await create()
+    const visible = await (
+      await app.request(
+        "/v1/workflow-runtimes",
+        jsonAs(as(owner.email), {
+          name: "Account impact",
+          model_connection_id: account.id,
+        }),
+      )
+    ).json()
+    expect(visible.id).toBeTruthy()
+    const manifest = await publishAs(
+      app,
+      "# Private instructions",
+      { title: "Private workflow" },
+      as(member.email),
+    )
+    const { short_id } = await manifest.json()
+    const hidden = await (
+      await app.request(
+        "/v1/contexts",
+        jsonAs(as(member.email), {
+          name: "Private workflow",
+          manifest_short_id: short_id,
+        }),
+      )
+    ).json()
+    // A retained account grant after the owner's workflow access was removed.
+    await meta.saveRuntimeModelBinding({
+      contextId: hidden.id,
+      orgId: "default",
+      ownerId: owner.id,
+      connectionId: account.id,
+      revision: null,
+      at: new Date().toISOString(),
+    })
+    await meta.setContextAskPolicy(hidden.id, "invited")
+    const response = await app.request(`${path}/${account.id}/usage`, { headers: as(owner.email) })
+    expect(response.headers.get("Cache-Control")).toBe("no-store")
+    expect(await response.json()).toEqual({
+      workflows: [{ id: visible.id, name: "Account impact" }],
+      other_workflow_count: 1,
+    })
+    expect(
+      (await app.request(`${path}/${account.id}/usage`, { headers: as(member.email) })).status,
+    ).toBe(404)
+    await app.request(`${path}/${account.id}`, { headers: as(owner.email), method: "DELETE" })
+    const list = await (
+      await app.request(`${path}?include_revoked=true`, { headers: as(owner.email) })
+    ).json()
+    expect(
+      list.items.find((item: { id: string }) => item.id === account.id).unavailable_reason,
+    ).toContain("Disconnected")
+    expect(
+      (
+        await (
+          await app.request(`${path}/${account.id}/usage`, { headers: as(owner.email) })
+        ).json()
+      ).workflows,
+    ).toHaveLength(1)
   })
   it("keeps one provider identity through reconnect, sign-in and name edits", async () => {
     const connection = await create("claude-code")

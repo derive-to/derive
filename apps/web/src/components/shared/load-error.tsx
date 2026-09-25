@@ -29,7 +29,7 @@ export function LoadError({
   className?: string
 }) {
   const retry = (
-    <Button variant="outline" size="sm" data-testid={testId} onClick={onRetry}>
+    <Button type="button" variant="outline" size="sm" data-testid={testId} onClick={onRetry}>
       Try again
     </Button>
   )

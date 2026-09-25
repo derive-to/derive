@@ -599,6 +599,11 @@ test("settings destinations and their retired paths resolve", async ({ owner }) 
   await owner.goto("/settings/brandprint")
   await expect(owner.getByTestId("settings-tab-brandprint")).toHaveAttribute("aria-current", "page")
 
+  await owner.goto("/settings/model-plans")
+  await expect(owner).toHaveURL(/\/settings\/accounts$/)
+  await expect(owner.getByTestId("settings-tab-accounts")).toHaveAttribute("aria-current", "page")
+  await expect(owner.getByTestId("model-plan-import")).toBeVisible()
+
   // People is a standalone directory page; its retired settings path redirects out.
   await owner.goto("/people")
   await expect(owner).toHaveURL(/\/people$/)
@@ -616,7 +621,9 @@ test("settings destinations and their retired paths resolve", async ({ owner }) 
   await owner.goto("/settings/github")
   await expect(owner).toHaveURL(/\/settings\/integrations$/)
   await expect(owner.getByRole("heading", { name: "GitHub", exact: true })).toBeVisible()
-  await expect(owner.getByTestId("github-setup")).toBeVisible()
+  await expect(
+    owner.getByText("Ask an instance operator to configure the shared GitHub App."),
+  ).toBeVisible()
   await expect(owner.getByTestId("toggle-github-post")).toHaveCount(0)
   await expect(owner.getByTestId("toggle-github-mirror")).toHaveCount(0)
   await expect(owner.getByTestId("toggle-github-preview-link")).toHaveCount(0)
@@ -1096,5 +1103,142 @@ test("cloud workflows keep manual runs available after pausing and link their re
     path: testInfo.outputPath("workflow-task-mobile.png"),
     fullPage: true,
     animations: "disabled",
+  })
+})
+
+test("workflow accounts connect in place and preserve imported task logins", async ({
+  owner,
+}, testInfo) => {
+  const accounts: {
+    id: string
+    name: string
+    provider: string
+    revision: number
+    revoked_at: string | null
+    unavailable_reason: null
+  }[] = []
+  let creates = 0
+  let signIns = 0
+  let workflowCreates = 0
+  let signInState = "pending"
+  await owner.route("**/v1/me/model-credentials", (route) =>
+    route.fulfill({
+      json: {
+        credentials: [
+          { provider: "codex", kind: "login", hint: "demo", updated_at: "2026-09-25T00:00:00Z" },
+        ],
+      },
+    }),
+  )
+  await owner.route("**/v1/runtime-model-connections**", async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith("/runtime-model-connections")) {
+      if (route.request().method() === "POST") {
+        creates++
+        const input = route.request().postDataJSON()
+        expect(input.request_id).toBeTruthy()
+        const account = {
+          id: creates === 1 ? "rmc_browser_fixture" : `rmc_browser_fixture_${creates}`,
+          name: input.name,
+          provider: input.provider,
+          revision: 0,
+          revoked_at: null,
+          unavailable_reason: null,
+        }
+        accounts.push(account)
+        await route.fulfill({ status: 201, json: account })
+      } else
+        await route.fulfill({
+          json: { items: accounts, can_create: true, unavailable_reason: null },
+        })
+    } else if (path.endsWith("/status")) {
+      await route.fulfill({ json: { account: null, revoked: false } })
+    } else if (path.endsWith("/usage")) {
+      await route.fulfill({
+        json: { workflows: [{ id: "ctx_usage", name: "Daily review" }], other_workflow_count: 1 },
+      })
+    } else if (path.includes("/sign-in")) {
+      if (path.endsWith("/sign-in")) {
+        signIns++
+        signInState = "pending"
+      }
+      if (path.endsWith("/cancel")) signInState = "cancelled"
+      await route.fulfill({
+        json: {
+          id: "signin_fixture",
+          state: signInState,
+          user_code: "DEMO-CODE",
+          verification_url: "https://example.test/device",
+          authorize_url: null,
+          expires_at: "2099-01-01T00:00:00Z",
+        },
+      })
+    } else await route.fallback()
+  })
+  await owner.goto("/settings/model-plans")
+  await expect(owner).toHaveURL(/\/settings\/accounts$/)
+  await expect(owner.getByTestId("model-plan-row-codex")).toContainText("imported")
+  await expect(owner.getByTestId("model-plan-token")).toBeHidden()
+  await owner.getByTestId("context-model-account-add").click()
+  await owner.getByTestId("context-model-account-name").fill("Review account")
+  await owner.getByTestId("context-model-account-create").click()
+  await expect(owner.getByTestId("context-managed-model-authorize")).toBeVisible()
+  await expect(owner.getByTestId("model-account-select")).toHaveValue("rmc_browser_fixture")
+  await owner.getByTestId("context-managed-model-cancel").click()
+  await expect(owner.getByText("Sign-in cancelled. Your setup is unchanged.")).toBeVisible()
+  await owner.getByTestId("context-managed-model-connect").click()
+  await expect(owner.getByTestId("context-managed-model-authorize")).toBeVisible()
+  expect(creates).toBe(1)
+  expect(signIns).toBe(2)
+  await expect(owner.getByTestId("model-account-workflow-ctx_usage")).toHaveText("Daily review")
+  await owner.getByTestId("context-managed-model-disconnect").click()
+  await expect(owner.getByRole("dialog")).toContainText("2 affected workflow(s)")
+  await expect(owner.getByRole("dialog")).toContainText("Daily review")
+  await owner.getByTestId("confirm-dialog-cancel").click()
+  await owner.getByTestId("settings-tab-profile").click()
+  await owner.getByTestId("settings-tab-accounts").click()
+  await owner.getByTestId("model-account-select").selectOption("rmc_browser_fixture")
+  await expect(owner.getByTestId("context-managed-model-authorize")).toBeVisible()
+  expect(creates).toBe(1)
+  expect(signIns).toBe(2)
+  await testInfo.attach("Accounts", {
+    body: await owner.screenshot({ fullPage: true, animations: "disabled" }),
+    contentType: "image/png",
+  })
+
+  await owner.route("**/v1/workflow-runtimes", (route) => {
+    if (route.request().method() === "POST") workflowCreates++
+    return route.fulfill({ json: { available: true, can_create: true, items: [] } })
+  })
+  await owner.getByRole("link", { name: "Workflows", exact: true }).click()
+  await owner.getByTestId("workflows-new").click()
+  await owner.getByTestId("workflow-create-name").fill("Daily integrity review")
+  await owner.getByTestId("model-account-select").selectOption("rmc_browser_fixture")
+  await owner.getByTestId("context-managed-model-cancel").click()
+  await expect(owner.getByText("Sign-in cancelled. Your setup is unchanged.")).toBeVisible()
+  await expect(owner.getByTestId("workflow-create-name")).toHaveValue("Daily integrity review")
+  await expect(owner.getByTestId("workflow-create-submit")).toBeVisible()
+  // Connecting and cancelling inside the creation form must never submit it.
+  await owner.getByTestId("context-managed-model-connect").click()
+  await expect(owner.getByTestId("context-managed-model-authorize")).toBeVisible()
+  expect(creates).toBe(1)
+  expect(signIns).toBe(3)
+  await owner.getByTestId("context-model-account-add").click()
+  await owner.getByTestId("context-model-account-name").fill("Second review account")
+  await owner.getByTestId("context-model-account-name").press("Enter")
+  await expect(owner.getByTestId("model-account-select")).toHaveValue("rmc_browser_fixture_2")
+  await expect(owner.getByTestId("context-managed-model-authorize")).toBeVisible()
+  await expect(owner.getByTestId("workflow-create-name")).toHaveValue("Daily integrity review")
+  expect(creates).toBe(2)
+  expect(workflowCreates).toBe(0)
+  await owner.getByTestId("context-model-account-add").click()
+  await testInfo.attach("Workflow setup", {
+    body: await owner.screenshot({ fullPage: true, animations: "disabled" }),
+    contentType: "image/png",
+  })
+  await owner.setViewportSize({ width: 390, height: 844 })
+  await testInfo.attach("Workflow setup narrow", {
+    body: await owner.screenshot({ fullPage: true, animations: "disabled" }),
+    contentType: "image/png",
   })
 })

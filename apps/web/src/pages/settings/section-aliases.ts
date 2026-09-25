@@ -7,6 +7,7 @@
 // pages/settings/index.tsx would drag every settings section into the entry
 // chunk (it did — the bundle budget caught it).
 export const SECTION_ALIASES: Record<string, string> = {
+  "model-plans": "accounts",
   // The id was never `brand`; links that guessed it used to strand on Profile.
   brand: "brandprint",
   // GitHub is a standard workspace integration now; old bookmarks land on the single

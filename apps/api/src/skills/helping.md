@@ -51,7 +51,7 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 | `/settings/profile` | Their name, handle, avatar. |
 | `/settings/security` | Password and sessions. |
 | `/settings/notifications` | Slack DMs, account linking, and what opens automatically for you. |
-| `/settings/model-plans` | Their own model login, so their agent runs on their key. |
+| `/settings/accounts` | Codex and Claude accounts: provider sign-in for workflows that retain files, and existing manual imports for tasks and conversations. |
 | `/settings/appearance` | Theme. |
 | `/settings/general` | Workspace name and its defaults. |
 | `/settings/members` | Invite people, change roles, remove them. Admin only. |
@@ -131,7 +131,7 @@ on that same screen. Derive can also send direct messages. Each person controls 
 
 **Schedule agent work.** `/workflows`.
 
-**Use my own model key.** `/settings/model-plans`.
+**Connect a model account.** `/settings/accounts`, or connect in workflow setup. Provider sign-in connects an account for workflows that retain files. Existing imported JSON/token accounts remain available for tasks and conversations; they are not silently converted. Only the account owner can manage sign-in or disconnect it.
 
 **Turn chat off for the workspace.** `/settings/general`. Admin only.
 

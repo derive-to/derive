@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { useAuth } from "@/ctx"
 import { modelLibraryQuery, reportsQuery } from "@/lib/queries"
 import { useDocumentTitle } from "@/lib/use-document-title"
+import { AccountsSection } from "./accounts-section"
 import { AgentsSection } from "./agents-section"
 import { AppearanceSection } from "./appearance-section"
 import { BillingSection } from "./billing-section"
@@ -14,7 +15,6 @@ import { CustomDomainsSection } from "./custom-domains-section"
 import { GeneralSection } from "./general-section"
 import { IntegrationsSection } from "./integrations-section"
 import { MembersSection } from "./members-section"
-import { ModelPlansSection } from "./model-plans-section"
 import { ModelsSection } from "./models-section"
 import { NotificationsSection } from "./notifications-section"
 import { ProfileSection } from "./profile-section"
@@ -44,7 +44,7 @@ const SECTIONS: { id: string; label: string; group: (typeof GROUP_ORDER)[number]
   { id: "profile", label: "Profile", group: "You" },
   { id: "security", label: "Security", group: "You" },
   { id: "notifications", label: "Notifications", group: "You" },
-  { id: "model-plans", label: "Model plans", group: "You" },
+  { id: "accounts", label: "Accounts", group: "You" },
   { id: "appearance", label: "Appearance", group: "You" },
   { id: "general", label: "General", group: "Workspace" },
   { id: "members", label: "Members", group: "Workspace" },
@@ -141,7 +141,7 @@ export function Settings() {
             {active === "profile" && <ProfileSection />}
             {active === "security" && <SecuritySection />}
             {active === "notifications" && <NotificationsSection />}
-            {active === "model-plans" && <ModelPlansSection />}
+            {active === "accounts" && <AccountsSection />}
             {active === "appearance" && <AppearanceSection />}
             {active === "general" && <GeneralSection />}
             {active === "members" && <MembersSection meId={me.id} />}

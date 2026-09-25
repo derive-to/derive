@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { useState } from "react"
 import { api } from "@/api"
+import { ModelAccountPicker } from "@/components/accounts/model-account-picker"
 import { EmptyState } from "@/components/shared/empty-state"
 import { LoadError } from "@/components/shared/load-error"
 import { StatusBadge } from "@/components/shared/status-badge"
@@ -10,7 +11,6 @@ import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { runtimeModelConnectionsQuery, workflowRuntimesQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
-import { NewModelAccount } from "../context/runtime-model-account"
 
 export function CloudWorkflows() {
   const query = useQuery(workflowRuntimesQuery())
@@ -92,6 +92,8 @@ export function NewCloudWorkflow({ onCreated }: { onCreated: (id: string) => voi
   const accounts = useQuery(runtimeModelConnectionsQuery())
   const [name, setName] = useState("")
   const [accountId, setAccountId] = useState("")
+  const selected = accounts.data?.items.find((account) => account.id === accountId)
+  const canCreate = !!selected && !selected.unavailable_reason
   const create = useApiMutation({
     mutationFn: () =>
       api.createWorkflowRuntime({ name: name.trim(), model_connection_id: accountId }),
@@ -103,7 +105,7 @@ export function NewCloudWorkflow({ onCreated }: { onCreated: (id: string) => voi
       className="flex flex-col gap-4"
       onSubmit={(e) => {
         e.preventDefault()
-        if (name.trim() && accountId) create.mutate()
+        if (name.trim() && canCreate && !create.isPending) create.mutate()
       }}
     >
       <p className="text-sm text-muted-foreground">
@@ -121,45 +123,15 @@ export function NewCloudWorkflow({ onCreated }: { onCreated: (id: string) => voi
           required
         />
       </label>
-      {accounts.isError ? (
-        <LoadError
-          title="Couldn’t load accounts"
-          testId="workflow-accounts-retry"
-          onRetry={() => accounts.refetch()}
-        />
-      ) : (
-        <label className="flex flex-col gap-1.5 text-sm">
-          Agent account
-          <select
-            data-testid="workflow-create-account"
-            className="h-9 rounded-lg border bg-background px-2 text-sm"
-            value={accountId}
-            onChange={(e) => setAccountId(e.target.value)}
-            disabled={accounts.isPending}
-            required
-          >
-            <option value="">Choose an account</option>
-            {accounts.data?.items
-              .filter((a) => !a.revoked_at)
-              .map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name} · {a.provider === "codex" ? "Codex" : "Claude Code"}
-                </option>
-              ))}
-          </select>
-        </label>
-      )}
-      <NewModelAccount
+      <ModelAccountPicker
+        value={accountId}
         disabled={create.isPending}
-        onCreated={(account) => setAccountId(account.id)}
+        onChange={(account) => setAccountId(account.id)}
       />
-      <p className="text-xs text-muted-foreground">
-        You’ll sign in on the workflow’s Configuration page.
-      </p>
       <Button
         data-testid="workflow-create-submit"
         type="submit"
-        disabled={!name.trim() || !accountId || create.isPending}
+        disabled={!name.trim() || !canCreate || create.isPending}
         loading={create.isPending}
       >
         Create workflow
