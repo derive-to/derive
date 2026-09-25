@@ -636,3 +636,46 @@ retried only after the existing setup saga has confirmed cleanup.
 Validation belongs in the existing context-connections HTTP suite, MCP suite,
 portable store contract and workflow browser smoke suites. No broad rollout or live
 customer compute is part of this change.
+
+## Persistent workflow management through MCP
+
+`automate` exposes `workflow_create`, `workflow_save`, `workflow_account`,
+`workflow_environment`, `workflow_connections`, `workflow_test`, `workflow_schedule`,
+`workflow_cancel_preparation`, and `workflow_disable`. `list_automations(view:...)`
+reads workflows, configuration, runs, account selection, environment bindings,
+model accounts, credentials, and source connections. The protocol and example sequence
+live in `derive://skills/loop`; the existing workflow-ID-only readiness read is retained.
+
+These are fixed mappings to the web API, dispatched in-process with the original
+MCP bearer and selected workspace. Every HTTP middleware and endpoint authorization,
+revision, ownership, rollout and live-access check still runs. No new bearer is minted,
+no credentials are returned, and no external URL can be supplied. A management-scoped
+human grant is required; registered runner tokens cannot configure their own access.
+Credential management and connection endpoints now accept that same principal as
+workflow management, instead of unnecessarily requiring a browser session.
+
+The MCP contract test covers accountless idempotent creation, saved instructions,
+stale edits, model-account selection, write-only secret creation through REST, native
+credential/environment reads, test admission and replay, schedule enable/pause against
+a persistent runtime, disable, and refusal of weak grants and foreign workspaces.
+Provisioning is simulated; tests do not start production jobs or machines.
+
+There is no separate dependency-setup feature. The agent installs what it needs during
+ordinary execution and resumes the saved environment on later runs. Getting local-only
+files into that environment remains a separate handoff gap.
+
+### GitHub repository access is a separate capability
+
+The current App manifest requests Metadata read, Pull requests write and Actions write.
+Derive's server policy narrows that to PR reads/comments and selected Actions operations.
+It does not expose clone credentials, pushes, branch creation or PR creation. Therefore
+an existing GitHub source connection alone cannot supply a private project checkout.
+
+GitHub requires Contents permission for Git-over-HTTPS access (read for cloning, write
+for pushing), and Pull requests write for creating a PR. Before expanding the live App,
+build an explicit repository-scoped access path and its token handling; then have the
+App owner update the permission request and installation owners approve the change.
+This MCP change does not change the manifest or any live App/installation permissions.
+
+Sources: [GitHub App permissions](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app),
+[create a pull request](https://docs.github.com/en/rest/pulls/pulls#create-a-pull-request).

@@ -19,6 +19,12 @@ import { scopeGapMessage } from "../lib/scope-gap"
 import { workflowReadiness } from "../lib/workflow-readiness"
 import type { ToolContext } from "../mcp-tool-context"
 import { json } from "../mcp-util"
+import {
+  controlWorkflow,
+  readWorkflow,
+  WORKFLOW_ACTIONS,
+  WORKFLOW_VIEWS,
+} from "./workflow-controls"
 
 // The AUTOMATE tool: stand up and drive standing instructions over MCP — the setup surface for
 // both driving scenarios (keep-an-artifact-fresh, and the context-bound QA runner). One tool,
@@ -38,7 +44,13 @@ import { json } from "../mcp-util"
  *  `list` is absent deliberately — reading is `list_automations`, which is what lets this
  *  tool declare itself a write. A caller still passing it is answered by name below, not
  *  by badChoice's generic refusal. */
-const AUTOMATE_ACTIONS = ["create", "run_now", "record", "create_context"] as const
+const AUTOMATE_ACTIONS = [
+  "create",
+  "run_now",
+  "record",
+  "create_context",
+  ...WORKFLOW_ACTIONS,
+] as const
 
 const TRIGGER = z.object({
   kind: z.enum(["manual", "schedule", "event"]),
@@ -109,9 +121,16 @@ export function registerListAutomationsTool(tc: ToolContext): void {
       },
       inputSchema: {
         workflow_id: z.string().optional(),
+        view: z
+          .string()
+          .optional()
+          .describe(`Cloud workflow reads: ${WORKFLOW_VIEWS.join(", ")}.`),
+        workspace: tc.wsArg,
       },
     },
-    async ({ workflow_id }) => {
+    async ({ workflow_id, view, workspace }) => {
+      if (view) return readWorkflow(tc, view, workflow_id, workspace)
+      if (workspace) return json({ error: "workspace requires a cloud workflow view" })
       if (workflow_id) {
         if (!tc.ownerId || tc.registered)
           return json({ error: "Sign in as a workspace member to read workflow readiness" })
@@ -183,7 +202,7 @@ export function registerAutomateTool(tc: ToolContext): void {
     "automate",
     {
       description:
-        "Scheduled and triggered work: create or run_now an automation, record an outcome, or create_context. Listing them is `list_automations`. See derive://skills/loop.",
+        "Manage work: workflow_* for persistent workflows; create/run_now for ordinary tasks. Read derive://skills/loop. List with list_automations.",
       // Every action here writes, which is now true of the whole tool — the read moved to
       // list_automations. Not destructive: no action deletes or disables an existing
       // automation or context, and every effect (rows in the automations/runs/contexts
@@ -201,13 +220,18 @@ export function registerAutomateTool(tc: ToolContext): void {
         // so a newly-shipped action never even reaches the server. See lib/open-choice.ts.
         // Checked server-side below.
         action: z.string().describe(choiceDescription(AUTOMATE_ACTIONS, "What to do.")),
+        workflow: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe("workflow_*: operation fields from derive://skills/loop. No secret values."),
+        workspace: tc.wsArg,
         // EVERY PARAM BELOW SHIPPED WITH NO DESCRIPTION. Five actions share one schema, so
         // which params an action even reads was unstated — an agent asked to schedule work
         // had to call list() and infer the shape from what came back. Each one leads with the
         // action that reads it, then says the thing that silently goes wrong.
         trigger: TRIGGER.optional()
           .describe(
-            'create: {kind:"manual"|"schedule"|"event"}. schedule needs cron+tz. event: only on:"webhook" is dispatched today, and mints a fire secret returned ONCE.',
+            'create: schedule needs cron+tz. Only event on:"webhook" works; returns its secret ONCE.',
           )
           // Which sibling fields a `kind` requires is conditional, and a flat object schema
           // cannot express that. One example per kind says it without prose.
@@ -223,13 +247,11 @@ export function registerAutomateTool(tc: ToolContext): void {
           .min(1)
           .max(4000)
           .optional()
-          .describe(
-            "create: the standing instruction, re-run verbatim. Name the target artifact — a run has no chat history to infer it from.",
-          ),
+          .describe("create: self-contained instruction; runs have no chat history."),
         provider: z
           .enum(EXECUTION_PROVIDERS)
           .optional()
-          .describe("create: which coding agent executes it. Default claude-code."),
+          .describe("create: runner; default claude-code."),
         refs: z
           .array(
             z.union([
@@ -241,26 +263,24 @@ export function registerAutomateTool(tc: ToolContext): void {
           .max(100)
           .optional()
           .describe(
-            'create: what the run acts on — short ids, {kind:"artifact",id}, or {kind:"tag",tag}. A run\'s write publishes as a new version of its target (kept, restorable, with the publish fan-out). Duplicates are dropped.',
+            'create: target artifact short IDs, {kind:"artifact",id} or {kind:"tag",tag}. Writes publish new versions.',
           ),
         context_id: z
           .string()
           .max(64)
           .optional()
-          .describe(
-            "create: bind the run to a context, whose agent then acts. Omit and a managed agent is minted for it.",
-          ),
+          .describe("create: optional Context. workflow_*: existing workflow’s Context ID."),
         connection_ids: z
           .array(z.string().max(64))
           .max(20)
           .optional()
-          .describe("create: connected sources the run may call. An unbound id is refused by id."),
+          .describe("create: source connection IDs to allow."),
         automation_id: z
           .string()
           .max(64)
           .optional()
           .describe(
-            "run_now: which automation to fire. record: what to attribute to — an id outside this workspace records unattributed.",
+            "run_now/record: automation ID. record outside this workspace is unattributed.",
           ),
         // `record` only — what a LOCALLY executed run did, so it lands in the same ledger.
         wrote: z
@@ -271,26 +291,16 @@ export function registerAutomateTool(tc: ToolContext): void {
         outcome: z
           .enum(["published", "answered", "failed"])
           .optional()
-          .describe("record: how it ended. Only 'failed' marks the run failed."),
-        note: z
-          .string()
-          .max(500)
-          .optional()
-          .describe("record: one line on why, kept with the run."),
+          .describe("record: outcome; only failed marks failure."),
+        note: z.string().max(500).optional().describe("record: outcome note."),
         // `create_context` only — wire a new context to a manifest artifact.
-        name: z
-          .string()
-          .trim()
-          .min(1)
-          .max(80)
-          .optional()
-          .describe("create_context: display name; a collision takes a numeric suffix."),
+        name: z.string().trim().min(1).max(80).optional().describe("create_context: display name."),
         manifest_short_id: z
           .string()
           .max(64)
           .optional()
           .describe(
-            "create_context: the manifest artifact. Skills load ONLY from its frontmatter `skills:` list — naming one in prose pins nothing.",
+            "create_context: manifest artifact. Skills load ONLY from frontmatter skills:, never prose.",
           ),
         // Coerced for the same reason as publish.wait: added after clients connected, so a
         // stale schema sends these as strings.
@@ -320,6 +330,16 @@ export function registerAutomateTool(tc: ToolContext): void {
 
       const wrongAction = badChoice("action", input.action, AUTOMATE_ACTIONS)
       if (wrongAction) return json({ error: wrongAction })
+      if (WORKFLOW_ACTIONS.includes(input.action)) {
+        const extras = Object.keys(input).filter(
+          (key) => !["action", "context_id", "workflow", "workspace"].includes(key),
+        )
+        if (extras.length)
+          return json({ error: "workflow_* uses only context_id, workflow and workspace" })
+        return controlWorkflow(tc, input.action, input.context_id, input.workflow, input.workspace)
+      }
+      if (input.workflow || input.workspace)
+        return json({ error: "workflow and workspace require a workflow_* action" })
       const refusal = await ownerRefusal(tc)
       if (refusal) return json({ error: refusal })
       const org = defaultOrg

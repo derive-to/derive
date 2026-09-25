@@ -3,6 +3,7 @@ import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
 import { afterPublish } from "../lib/after-publish"
+import { parseConnectionIds } from "../lib/broker"
 import { manageableContext } from "../lib/context-access"
 import { ContextConflictError, createContextCore } from "../lib/create-context"
 import { sha256 } from "../lib/crypto"
@@ -200,6 +201,8 @@ export const workflowRuntimeRoutes = (ctx: AppContext) => {
     const configuration = await workflowConfiguration(ctx.meta, context)
     return c.json({
       draft: configuration.schedule ? null : configuration.draft,
+      schedule: configuration.schedule,
+      connection_ids: parseConnectionIds(context.connection_ids),
       test: await ctx.meta
         .latestWorkflowTest(context.id, org, user)
         .then((value) => value && { id: value.id, status: value.status }),

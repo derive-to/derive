@@ -150,6 +150,7 @@ async function buildServer(
   // refuses to chain off one (it would renew its own TTL indefinitely).
   mintedToken: boolean,
   workflowScope: string | null,
+  requestApi: NonNullable<ToolContextBase["requestApi"]>,
   // The default workspace's Brandprint inputs can ride the opaque OAuth grant query.
   // Header re-homing passes undefined, which preserves the live workspace lookup.
   brandprintContext?: Parameters<typeof resolveBrandprintContext>[0],
@@ -197,6 +198,7 @@ async function buildServer(
       clientId,
       mintedToken,
       workflowScope,
+      requestApi,
       defaultOrg: agent.org_id,
       defaultRole: agent.role,
       pendingRequests: [],
@@ -578,6 +580,7 @@ async function buildServer(
     clientId,
     mintedToken,
     workflowScope,
+    requestApi,
     defaultOrg,
     defaultRole,
     pendingRequests,
@@ -764,6 +767,23 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
       grant?.clientId ?? "",
       mintedToken,
       workflowScope,
+      async (path, method, body, workspace) => {
+        // Keep all REST middleware, live authorization and admission checks. Only
+        // server-owned tool mappings supply paths; the model never supplies a URL.
+        const headers = new Headers({ "X-Derive-Workspace": workspace })
+        const bearer = c.req.header("Authorization")
+        if (bearer) headers.set("Authorization", bearer)
+        if (body !== undefined) headers.set("Content-Type", "application/json")
+        return app.request(
+          new Request(new URL(path, c.req.url), {
+            method,
+            headers,
+            body: body === undefined ? undefined : JSON.stringify(body),
+          }),
+          undefined,
+          c.env,
+        )
+      },
       grant?.orgContext?.orgId === agent.org_id ? grant.orgContext : undefined,
       isInitialize,
     )
