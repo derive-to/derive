@@ -29,6 +29,7 @@ import { runtimeModelReady } from "../lib/runtime-model-grant"
 import { runtimeRunView } from "../lib/runtime-run-view"
 import { nextRuntimeOccurrence, runtimeScheduleAllows } from "../lib/runtime-schedule"
 import { verifyRuntimeToken } from "../lib/runtime-token"
+import { workflowReadiness } from "../lib/workflow-readiness"
 
 export const contextRuntimeRoutes = (ctx: AppContext) => {
   const { meta, deps } = ctx
@@ -189,15 +190,18 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
             }),
           )
     if (body instanceof Response) return body
-    if (managed && deps.runtime) {
-      try {
-        if (
-          !(await runtimeModelReady(meta, deps.runtime, runtime, body.provider, deps.runtimeFetch))
-        )
-          return fail(c, 409, "The job’s model account needs to be connected")
-      } catch {
-        return fail(c, 502, "Could not verify the job’s model account")
-      }
+    if (managed) {
+      const readiness = await workflowReadiness(
+        meta,
+        deps.runtime,
+        context,
+        (await ctx.managementPrincipal(c)) ?? "",
+        deps.runtimeFetch,
+      )
+      if (!readiness.can_test)
+        return fail(c, 409, readiness.blockers[0]?.message ?? "Workflow is preparing", {
+          readiness,
+        })
     }
     const input = await runtimeInput(meta, context, body)
     if (!input) return fail(c, 409, "Context manifest is unavailable")
@@ -253,6 +257,16 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
         403,
         "Workflow access or credentials changed. Review access and start a new run.",
       )
+    if (runtime?.connection_id === null && deps.runtime) {
+      try {
+        if (
+          !(await runtimeModelReady(meta, deps.runtime, runtime, input.provider, deps.runtimeFetch))
+        )
+          return fail(c, 409, "The workflow account needs to sign in again")
+      } catch {
+        return fail(c, 502, "Could not verify the workflow account")
+      }
+    }
     const current = readEnvironmentBindings(context.environment_bindings)
     const environment: Record<string, string> = {}
     const connections = await spendableConnections(

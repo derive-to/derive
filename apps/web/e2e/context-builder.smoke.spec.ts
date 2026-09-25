@@ -543,7 +543,10 @@ test("Cloud managed jobs connect a provider and run the saved agent without infr
   )
   await owner.route("**/v1/runtime-model-connections?include_revoked=true", (route) =>
     route.fulfill({
-      json: { items: [{ ...account, revoked_at: disconnected ? "2026-09-23T12:00:00Z" : null }] },
+      json: {
+        can_create: true,
+        items: [{ ...account, revoked_at: disconnected ? "2026-09-23T12:00:00Z" : null }],
+      },
     }),
   )
   await owner.route(`**/v1/contexts/${context.id}/runtime/model-connection`, async (route) => {
@@ -582,19 +585,39 @@ test("Cloud managed jobs connect a provider and run the saved agent without infr
   await owner.route("**/v1/runtime-model-connections/model-demo/sign-in/login-demo", (route) =>
     route.fulfill({ json: { ...attempt, state: connected ? "complete" : "pending" } }),
   )
-  await owner.route(`**/v1/contexts/${context.id}/runtime/setup`, async (route) => {
-    expect(route.request().postDataJSON()).toEqual({})
-    prepared = true
-    await route.fulfill({ status: 202, json: { setup: { phase: "queued" } } })
-  })
-  await owner.route(`**/v1/contexts/${context.id}/runtime/runs`, async (route) => {
+  await owner.route(`**/v1/workflow-runtimes/${context.id}`, (route) =>
+    route.fulfill({
+      json: {
+        draft: prepared ? null : { instruction: job.instruction, provider: "codex", revision: 0 },
+        readiness: {
+          state: selected && connected && !disconnected ? "ready" : "needs_account",
+          revision: "a".repeat(64),
+          evaluated_at: new Date().toISOString(),
+          blockers: selected
+            ? []
+            : [
+                {
+                  code: "account_required",
+                  message: "Select a model account",
+                  action: editable ? "account" : null,
+                },
+              ],
+          can_edit: editable,
+          can_test: selected && connected && !disconnected,
+        },
+        test: null,
+      },
+    }),
+  )
+  await owner.route(`**/v1/workflow-runtimes/${context.id}/tests`, async (route) => {
     fired = route.request().postDataJSON()
-    await route.fulfill({ status: 201, json: { run: { id: "run-demo" } } })
+    prepared = true
+    await route.fulfill({ status: 202, json: { request: { id: "run-demo" } } })
   })
   await owner.goto(`/contexts/${context.id}`)
   await owner.getByTestId("console-tab-cloud").click()
-  await expect(owner.getByTestId("context-managed-setup")).toBeDisabled()
-  await owner.getByTestId("context-model-account-select").selectOption(account.id)
+  await expect(owner.getByTestId("context-managed-run")).toBeDisabled()
+  await owner.getByTestId("model-account-select").selectOption(account.id)
   await owner.getByTestId("context-managed-model-connect").click()
   await expect(owner.getByText("ABCD-1234", { exact: true })).toBeVisible()
   await expect(owner.getByTestId("context-managed-model-authorize")).toHaveAttribute(
@@ -604,26 +627,28 @@ test("Cloud managed jobs connect a provider and run the saved agent without infr
   await expect(owner.getByTestId("context-runtime-connection")).toHaveCount(0)
   await expect(owner.getByText(/Ortam|sandbox ID|controller key/i)).toHaveCount(0)
   connected = true
-  await expect(owner.getByText("Account connected.", { exact: true })).toBeVisible({
+  await expect(owner.getByText(/Sign-in completed\./)).toBeVisible({
     timeout: 15000,
   })
   await owner.getByTestId("context-model-account-use").click()
-  await owner.getByTestId("context-managed-setup").click()
+  await owner.getByTestId("context-managed-run").click()
   await expect(owner.getByTestId("context-runtime-schedule-provider")).toBeDisabled()
   await expect(owner.getByTestId("context-managed-run")).toBeVisible()
   await owner.getByTestId("context-managed-run").click()
-  expect(fired).toEqual({})
+  expect(fired).toMatchObject({ revision: "a".repeat(64), request_id: expect.any(String) })
   await owner.getByTestId("context-model-account-remove").click()
-  await expect(owner.getByText("Remove this job’s account access?", { exact: true })).toBeVisible()
+  await expect(
+    owner.getByText("Remove this workflow’s account access?", { exact: true }),
+  ).toBeVisible()
   await owner.getByTestId("confirm-dialog-confirm").click()
   await expect(owner.getByTestId("context-managed-run")).toBeDisabled()
   expect(disconnected).toBe(false)
-  await owner.getByTestId("context-model-account-select").selectOption(account.id)
+  await owner.getByTestId("model-account-select").selectOption(account.id)
   await owner.getByTestId("context-model-account-use").click()
   await expect(owner.getByTestId("context-managed-run")).toBeEnabled()
   await owner.getByTestId("context-managed-model-disconnect").click()
   await expect(
-    owner.getByText("Disconnect this account from all jobs?", { exact: true }),
+    owner.getByText("Disconnect this account from all workflows?", { exact: true }),
   ).toBeVisible()
   await owner.getByTestId("confirm-dialog-cancel").click()
   expect(disconnected).toBe(false)

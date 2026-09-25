@@ -1871,6 +1871,200 @@ describe("runtime provisioning and shared model accounts", () => {
     return { ...f, model, runtime, sandbox: saved.sandbox, select, fire }
   }
 
+  it("saves an accountless draft without compute, resumes it, and rejects stale edits", async () => {
+    await fixture()
+    config.managed.workspaceIds.add("default")
+    const body = { name: `Draft ${++count}`, request_id: crypto.randomUUID() }
+    const create = () => app.request("/v1/workflow-runtimes", jsonAs(as(owner.email), body))
+    const response = await create()
+    expect(response.status).toBe(201)
+    const { id } = await response.json()
+    expect(await (await create()).json()).toEqual({ id })
+    const read = async () =>
+      (await app.request(`/v1/workflow-runtimes/${id}`, { headers: as(owner.email) })).json()
+    const initial = await read()
+    expect(initial.draft).toMatchObject({ instruction: "", revision: 0 })
+    expect(initial.readiness).toMatchObject({ state: "draft", can_edit: true, can_test: false })
+    expect(initial.readiness.blockers.map((b: { code: string }) => b.code)).toContain(
+      "account_required",
+    )
+    const edit = { instruction: "Inspect the integrity report", provider: "codex", revision: 0 }
+    const save = () =>
+      app.request(`/v1/workflow-runtimes/${id}`, {
+        ...jsonAs(as(owner.email), edit),
+        method: "PUT",
+      })
+    expect((await save()).status).toBe(200)
+    expect((await save()).status).toBe(409)
+    expect((await read()).draft).toMatchObject({ instruction: edit.instruction, revision: 1 })
+    expect(await meta.getRuntimeSetup(id, "default")).toBeNull()
+    expect(await meta.getContextRuntimeForContext(id, "default")).toBeNull()
+    expect((await meta.listAutomations("default")).some((a) => a.context_id === id)).toBe(false)
+    const hidden = await app.request(`/v1/workflow-runtimes/${id}`, { headers: as(member.email) })
+    expect(hidden.status).toBe(404)
+    config.managed.workspaceIds.clear()
+    const unavailable = await read()
+    expect(unavailable.draft.instruction).toBe(edit.instruction)
+    expect(unavailable.readiness.blockers.map((b: { code: string }) => b.code)).toContain(
+      "workspace_unavailable",
+    )
+  })
+
+  it("prepares and tests the reviewed draft once across reloads, then keeps the existing schedule as sole task owner", async () => {
+    const f = await fixture()
+    await modelAccount(f.context.id)
+    const path = `/v1/workflow-runtimes/${f.context.id}`
+    const save = await app.request(path, {
+      ...jsonAs(as(owner.email), {
+        instruction: "Inspect retained files",
+        provider: "codex",
+        revision: null,
+      }),
+      method: "PUT",
+    })
+    expect(save.status).toBe(200)
+    const read = async () => (await app.request(path, { headers: as(owner.email) })).json()
+    const ready = await read()
+    expect(ready.readiness).toMatchObject({ state: "ready", can_test: true })
+    const input = { revision: ready.readiness.revision, request_id: crypto.randomUUID() }
+    const test = () => app.request(`${path}/tests`, jsonAs(as(owner.email), input))
+    expect(
+      (
+        await app.request(
+          `${path}/tests`,
+          jsonAs(as(owner.email), { ...input, revision: "0".repeat(64) }),
+        )
+      ).status,
+    ).toBe(409)
+    const accepted = await test()
+    expect(accepted.status).toBe(202)
+    const request = (await accepted.json()).request
+    expect((await read()).readiness.state).toBe("preparing")
+    expect((await test()).status).toBe(200)
+    expect(
+      (
+        await app.request(
+          `${path}/tests`,
+          jsonAs(as(owner.email), { ...input, request_id: crypto.randomUUID() }),
+        )
+      ).status,
+    ).toBe(409)
+    for (let i = 0; i < 12; i++) await pass()
+    const runtime = await meta.getContextRuntimeForContext(f.context.id, "default")
+    expect(runtime).not.toBeNull()
+    expect((await meta.getRun(request.id))?.input_snapshot).toContain("Inspect retained files")
+    expect((await meta.getWorkflowTest(request.id, "default"))?.status).toBe("submitted")
+    expect(await meta.getWorkflowDraft(f.context.id, "default")).toBeNull()
+    const schedule = runtime && (await meta.getRuntimeSchedule(runtime.id, "default"))
+    expect(schedule).toMatchObject({
+      instruction: "Inspect retained files",
+      enabled: 0,
+      trigger: '{"kind":"manual"}',
+    })
+    expect((await read()).readiness.revision).toBe(input.revision)
+    const process = launched.get(runtime?.sandbox_id ?? "")
+    if (!process) throw new Error("Test runner was not launched")
+    modelActive = false
+    const deniedClaim = await app.request(
+      `/v1/runtime-attempts/${process.attempt}/claim`,
+      jsonAs({ Authorization: `Bearer ${process.token}` }, {}),
+    )
+    expect(deniedClaim.status).toBe(409)
+    expect((await meta.getLatestRunAttempt(request.id, "default"))?.runner_claimed_at).toBeNull()
+    modelActive = true
+
+    expect((await test()).status).toBe(200)
+    expect((await meta.listRuns("default", 1000)).filter((r) => r.id === request.id)).toHaveLength(
+      1,
+    )
+    // The now-established task cannot be overwritten through the obsolete draft endpoint.
+    expect(
+      (
+        await app.request(path, {
+          ...jsonAs(as(owner.email), { instruction: "stale", provider: "codex", revision: 0 }),
+          method: "PUT",
+        })
+      ).status,
+    ).toBe(409)
+    await app.request(`${f.path}/disable`, jsonAs(as(owner.email), {}))
+    for (let i = 0; i < 4; i++) await pass()
+  })
+
+  it("cancels a prepared test when its reviewed configuration or account changes", async () => {
+    for (const change of ["instructions", "account"]) {
+      const f = await fixture()
+      await modelAccount(f.context.id)
+      const path = `/v1/workflow-runtimes/${f.context.id}`
+      await app.request(path, {
+        ...jsonAs(as(owner.email), {
+          instruction: "Original task",
+          provider: "codex",
+          revision: null,
+        }),
+        method: "PUT",
+      })
+      const { readiness } = await (await app.request(path, { headers: as(owner.email) })).json()
+      const response = await app.request(
+        `${path}/tests`,
+        jsonAs(as(owner.email), { revision: readiness.revision, request_id: crypto.randomUUID() }),
+      )
+      expect(response.status).toBe(202)
+      const { request } = await response.json()
+      if (change === "instructions")
+        await app.request(path, {
+          ...jsonAs(as(owner.email), {
+            instruction: "Changed task",
+            provider: "codex",
+            revision: 0,
+          }),
+          method: "PUT",
+        })
+      else modelActive = false
+      await pass()
+      expect((await meta.getWorkflowTest(request.id, "default"))?.status).toBe("failed")
+      expect(await meta.getRun(request.id)).toBeNull()
+      expect(await meta.getRuntimeSetup(f.context.id, "default")).toBeNull()
+    }
+  })
+
+  it("recovers failed preparation without replacing the draft or reusing the failed sandbox", async () => {
+    const f = await fixture()
+    await modelAccount(f.context.id)
+    const path = `/v1/workflow-runtimes/${f.context.id}`
+    await app.request(path, {
+      ...jsonAs(as(owner.email), {
+        instruction: "Recover this task",
+        provider: "codex",
+        revision: null,
+      }),
+      method: "PUT",
+    })
+    const read = async () => (await app.request(path, { headers: as(owner.email) })).json()
+    const test = async () =>
+      app.request(
+        `${path}/tests`,
+        jsonAs(as(owner.email), {
+          revision: (await read()).readiness.revision,
+          request_id: crypto.randomUUID(),
+        }),
+      )
+    failSetup = true
+    const first = (await (await test()).json()).request
+    for (let i = 0; i < 12; i++) await pass()
+    expect((await meta.getWorkflowTest(first.id, "default"))?.status).toBe("failed")
+    const failed = await f.state()
+    expect(failed?.phase).toBe("failed")
+    expect((await read()).readiness).toMatchObject({ state: "needs_attention", can_test: true })
+    failSetup = false
+    const retry = await test()
+    expect(retry.status).toBe(202)
+    for (let i = 0; i < 12; i++) await pass()
+    expect((await f.state())?.id).not.toBe(failed?.id)
+    expect(await meta.getContextRuntimeForContext(f.context.id, "default")).not.toBeNull()
+    await app.request(`${f.path}/disable`, jsonAs(as(owner.email), {}))
+    for (let i = 0; i < 4; i++) await pass()
+  })
+
   it("creates a private cloud workflow from Workflows with a saved account and no runner token", async () => {
     const f = await fixture()
     const model = await modelAccount(f.context.id)

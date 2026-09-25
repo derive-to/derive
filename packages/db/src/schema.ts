@@ -448,6 +448,26 @@ export const runtimeModelBinding = sqliteTable("runtime_model_binding", {
   updated_at: text("updated_at").notNull(),
 })
 
+export const workflowDraft = sqliteTable("workflow_draft", {
+  context_id: text("context_id").primaryKey(),
+  org_id: text("org_id").notNull(),
+  instruction: text("instruction").notNull(),
+  sealed_at: text("sealed_at"),
+  provider: text("provider").$type<"codex" | "claude-code">().notNull(),
+  revision: integer("revision").notNull().default(0),
+  updated_at: text("updated_at").notNull(),
+})
+export const workflowTest = sqliteTable("workflow_test", {
+  id: text("id").primaryKey(),
+  context_id: text("context_id").notNull(),
+  org_id: text("org_id").notNull(),
+  initiated_by: text("initiated_by").notNull(),
+  config_revision: text("config_revision").notNull(),
+  input_snapshot: text("input_snapshot").notNull(),
+  status: text("status").$type<"pending" | "submitted" | "failed">().notNull(),
+  created_at: text("created_at").notNull(),
+})
+
 export const runtimeOwner = sqliteTable("runtime_owner", {
   context_id: text("context_id").primaryKey(),
   org_id: text("org_id").notNull(),
@@ -1898,6 +1918,8 @@ const TABLES = [
   runtimeOwner,
   runtimeModelConnection,
   runtimeModelBinding,
+  workflowDraft,
+  workflowTest,
   runAttempt,
   workflowRun,
   workflowStepAttempt,

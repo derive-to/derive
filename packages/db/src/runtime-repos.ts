@@ -14,6 +14,7 @@ import { runtimeModelBindingRepos, runtimeModelGrant } from "./runtime-model-bin
 import { runtimeModelRepos } from "./runtime-model-repos"
 import { runtimeScheduleRepos } from "./runtime-schedule-repos"
 import { claimRuntimeOwner, runtimeSetupRepos } from "./runtime-setup-repos"
+import { workflowDraftRepos } from "./workflow-draft-repos"
 
 const instant = (value: string): string => {
   if (new Date(value).toISOString() !== value) throw new Error("Expected a canonical UTC timestamp")
@@ -35,6 +36,7 @@ const checkedInput = (value: string | null | undefined): RuntimeRunInput => {
   const input = JSON.parse(value ?? "null") as RuntimeRunInput | null
   if (
     input?.version !== 1 ||
+    (input.workflow_revision !== undefined && !/^[a-f0-9]{64}$/.test(input.workflow_revision)) ||
     (input.schedule_revision !== undefined &&
       (!Number.isSafeInteger(input.schedule_revision) || input.schedule_revision < 0)) ||
     (input.model_connection !== undefined &&
@@ -77,6 +79,7 @@ const checkedInput = (value: string | null | undefined): RuntimeRunInput => {
   // Copy the accepted shape; accidental caller fields must not turn this into secret storage.
   return {
     version: 1,
+    ...(input.workflow_revision ? { workflow_revision: input.workflow_revision } : {}),
     ...(input.schedule_revision === undefined
       ? {}
       : { schedule_revision: input.schedule_revision }),
@@ -153,6 +156,7 @@ export function runtimeRepos(execute: (statement: SQL) => Promise<unknown[]>): R
   const getRunAttempt: RuntimeStore["getRunAttempt"] = (id, orgId) =>
     first<RunAttemptRecord>(sql`SELECT * FROM run_attempt WHERE id = ${id} AND org_id = ${orgId}`)
   return {
+    ...workflowDraftRepos(execute),
     ...runtimeScheduleRepos(execute),
     ...runtimeSetupRepos(execute),
     ...runtimeModelRepos(execute),
@@ -302,8 +306,18 @@ export function runtimeRepos(execute: (statement: SQL) => Promise<unknown[]>): R
             SELECT 1 FROM run busy WHERE busy.runtime_id = rt.id AND busy.status IN ('queued', 'running')))
           AND c.id = ${snapshot.context_id} AND v.artifact_id = ${snapshot.manifest.artifact_id}
           AND v.n = ${snapshot.manifest.version} AND v.blob_key = ${snapshot.manifest.blob_key}
-        RETURNING *`)
-      if (!row) throw new Error("Runtime or pinned Context is unavailable to this run")
+        ON CONFLICT DO NOTHING RETURNING *`)
+      if (!row) {
+        const prior =
+          await first<RunRecord>(sql`SELECT * FROM run WHERE id = ${input.id} AND org_id = ${input.org_id}
+          AND runtime_id = ${input.runtime_id} AND initiated_by = ${input.initiated_by ?? null}
+          AND agent_id = ${input.agent_id} AND reason = ${input.reason}
+          AND coalesce(automation_id, '') = ${input.automation_id ?? ""}
+          AND coalesce(scheduled_for, '') = ${input.scheduled_for ?? ""}
+          AND input_snapshot = ${JSON.stringify(snapshot)}`)
+        if (prior) return prior
+        throw new Error("Runtime or pinned Context is unavailable to this run")
+      }
       return row
     },
     async reserveRunAttempt(input) {

@@ -16,6 +16,7 @@ import { parseManifestSkillPins } from "../lib/manifest-pins"
 import { badChoice, choiceDescription } from "../lib/open-choice"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import { scopeGapMessage } from "../lib/scope-gap"
+import { workflowReadiness } from "../lib/workflow-readiness"
 import type { ToolContext } from "../mcp-tool-context"
 import { json } from "../mcp-util"
 
@@ -99,16 +100,54 @@ export function registerListAutomationsTool(tc: ToolContext): void {
     "list_automations",
     {
       description:
-        "The workspace's automations, and whether automations are on for it. Creating and running them is `automate`.",
+        "List automations or pass workflow_id (Context ID) for cloud workflow readiness. Create and run with `automate`.",
       annotations: {
         title: "List automations",
         readOnlyHint: true,
         destructiveHint: false,
         openWorldHint: false,
       },
-      inputSchema: {},
+      inputSchema: {
+        workflow_id: z.string().optional(),
+      },
     },
-    async () => {
+    async ({ workflow_id }) => {
+      if (workflow_id) {
+        if (!tc.ownerId || tc.registered)
+          return json({ error: "Sign in as a workspace member to read workflow readiness" })
+        const context = await ctx.meta.getContext(workflow_id)
+        if (
+          !context ||
+          context.org_id !== defaultOrg ||
+          !(await ctx.canUserAskContext(tc.ownerId, context))
+        )
+          return json({ error: "not found" })
+        const readiness = await workflowReadiness(
+          ctx.meta,
+          ctx.deps.runtime,
+          context,
+          tc.ownerId,
+          ctx.deps.runtimeFetch,
+        )
+        if (tc.scopeForCap !== "owner" || !roleAllows(tc.agent.role, "publish"))
+          return json({
+            readiness: {
+              ...readiness,
+              can_test: false,
+              can_edit: false,
+              blockers: [
+                {
+                  code: "scope_required",
+                  message: "Reconnect with workflow management permission.",
+                  action: null,
+                },
+                ...readiness.blockers.map((b) => ({ ...b, action: null })),
+              ],
+              state: "needs_attention",
+            },
+          })
+        return json({ readiness })
+      }
       const refusal = await ownerRefusal(tc)
       if (refusal) return json({ error: refusal })
       // The gate state rides along with the read: a bare `count: 0` in a gated workspace

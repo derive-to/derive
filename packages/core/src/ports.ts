@@ -5096,6 +5096,37 @@ export const isBundleContentType = (contentType: string | null | undefined): boo
 
 /** Control-plane operations only. Runner APIs must not expose these mutations. */
 export interface RuntimeStore {
+  projectWorkflowDraft(contextId: string, orgId: string, ownerId: string, at: string): Promise<void>
+  getWorkflowDraft(
+    contextId: string,
+    orgId: string,
+  ): Promise<import("./workflow-draft").WorkflowDraftRecord | null>
+  saveWorkflowDraft(input: {
+    contextId: string
+    orgId: string
+    ownerId: string
+    instruction: string
+    provider: "codex" | "claude-code"
+    revision: number | null
+    at: string
+  }): Promise<import("./workflow-draft").WorkflowDraftRecord | null>
+  createWorkflowTest(
+    input: Omit<import("./workflow-draft").WorkflowTestRecord, "status" | "created_at">,
+    at: string,
+  ): Promise<import("./workflow-draft").WorkflowTestRecord | null>
+  latestWorkflowTest(
+    contextId: string,
+    orgId: string,
+    viewer: string,
+  ): Promise<import("./workflow-draft").WorkflowTestRecord | null>
+  getWorkflowTest(
+    id: string,
+    orgId: string,
+  ): Promise<import("./workflow-draft").WorkflowTestRecord | null>
+  listPendingWorkflowTests(): Promise<import("./workflow-draft").WorkflowTestRecord[]>
+  settleWorkflowTest(id: string, orgId: string, status: "submitted" | "failed"): Promise<void>
+  retryRuntimeSetup(contextId: string, orgId: string, revision: number): Promise<boolean>
+
   getRuntimeModelBinding(
     contextId: string,
     orgId: string,

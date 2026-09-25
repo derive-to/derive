@@ -1,6 +1,6 @@
 import type { AutomationRecord } from "@derive/core"
 import { useQueryClient } from "@tanstack/react-query"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { api } from "@/api"
 import { ExecutionReadiness } from "@/components/shared/execution-readiness"
 import { SectionTitle } from "@/components/shared/section-title"
@@ -16,10 +16,12 @@ export function RuntimeScheduleCard({
   schedule,
   nextRunAt,
   fixedProvider,
+  onDirtyChange,
 }: {
   contextId: string
   schedule: AutomationRecord | null
   nextRunAt: string | null
+  onDirtyChange?: (dirty: boolean) => void
   fixedProvider?: "codex" | "claude-code"
 }) {
   const queryClient = useQueryClient()
@@ -35,6 +37,10 @@ export function RuntimeScheduleCard({
   // Capture the revision on the first edit. Polling may refresh the saved definition,
   // but must neither erase the draft nor silently authorize overwriting another edit.
   const [draft, setDraft] = useState<typeof saved | null>(null)
+  useEffect(() => {
+    onDirtyChange?.(draft !== null)
+    return () => onDirtyChange?.(false)
+  }, [draft, onDirtyChange])
   const values = { ...(draft ?? saved), ...(fixedProvider ? { provider: fixedProvider } : {}) }
   const { instruction, provider, cron, timezone } = values
   const stale = draft !== null && draft.revision !== saved.revision

@@ -9,6 +9,7 @@ import type { AppDeps } from "../context"
 import { spendableConnections } from "./broker"
 import { credentialRevision } from "./credentials"
 import { runtimeModelSelection } from "./runtime-model-grant"
+import { workflowConfiguration } from "./workflow-readiness"
 
 /** Live execution authority shared by dispatch, runner claims and every tool call.
  * Result receipts and shutdown deliberately do not depend on this grant. */
@@ -60,6 +61,11 @@ export async function runtimeRunContext(
     context?.org_id !== run.org_id ||
     context.agent_id !== run.agent_id ||
     agent?.org_id !== run.org_id
+  )
+    return null
+  if (
+    input?.workflow_revision &&
+    (await workflowConfiguration(meta, context)).revision !== input.workflow_revision
   )
     return null
   if (runtime.connection_id === null) {

@@ -2,6 +2,7 @@ import { type ContextRecord, type MetaStore, newId } from "@derive/core"
 import { mintToken, sha256 } from "./crypto"
 
 export interface CreateContextCoreInput {
+  contextId?: string
   orgId: string
   userId: string
   name: string
@@ -73,7 +74,7 @@ export async function createContextCore(
 
   try {
     const context = await meta.createContext({
-      id: newId("ctx"),
+      id: input.contextId ?? newId("ctx"),
       org_id: input.orgId,
       name: input.name,
       agent_id: agentId,

@@ -296,9 +296,11 @@ import {
   webhook,
   webhookDelivery,
   workflowArtifactActivity,
+  workflowDraft,
   workflowPublishReceipt,
   workflowRun,
   workflowStepAttempt,
+  workflowTest,
   workspace,
   workspaceJoinLink,
 } from "./pg-schema"
@@ -351,6 +353,8 @@ export const schema = {
   runtimeOwner,
   runtimeModelConnection,
   runtimeModelBinding,
+  workflowDraft,
+  workflowTest,
   runAttempt,
   workflowRun,
   workflowStepAttempt,
@@ -422,6 +426,8 @@ const _schemaShapes: Shapes<typeof schema> = {
   runtimeSetup: true,
   runtimeModelConnection: true,
   runtimeModelBinding: true,
+  workflowDraft: true,
+  workflowTest: true,
   runAttempt: true,
   workflowRun: true,
   workflowStepAttempt: true,
@@ -729,6 +735,15 @@ export class PgMetaStore implements MetaStore {
   revokeRuntimeModelConnection = this.runtimes.revokeRuntimeModelConnection
   getRuntimeSchedule = this.runtimes.getRuntimeSchedule
   listRuntimeSchedules = this.runtimes.listRuntimeSchedules
+  projectWorkflowDraft = this.runtimes.projectWorkflowDraft
+  getWorkflowDraft = this.runtimes.getWorkflowDraft
+  saveWorkflowDraft = this.runtimes.saveWorkflowDraft
+  createWorkflowTest = this.runtimes.createWorkflowTest
+  latestWorkflowTest = this.runtimes.latestWorkflowTest
+  getWorkflowTest = this.runtimes.getWorkflowTest
+  listPendingWorkflowTests = this.runtimes.listPendingWorkflowTests
+  settleWorkflowTest = this.runtimes.settleWorkflowTest
+  retryRuntimeSetup = this.runtimes.retryRuntimeSetup
   saveRuntimeSchedule = this.runtimes.saveRuntimeSchedule
   cancelQueuedRuntimeRun = this.runtimes.cancelQueuedRuntimeRun
   getContextRuntimeForContext = this.runtimes.getContextRuntimeForContext
@@ -3137,6 +3152,8 @@ export class PgMetaStore implements MetaStore {
     // encrypted token is orphaned (the pool row would otherwise have no API path left to
     // delete once memberships are gone). One predicate covers members and the pool.
     await this.db.delete(modelCredential).where(eq(modelCredential.org_id, orgId))
+    await this.db.delete(workflowDraft).where(eq(workflowDraft.org_id, orgId))
+    await this.db.delete(workflowTest).where(eq(workflowTest.org_id, orgId))
     await this.db.delete(workspace).where(eq(workspace.id, orgId))
   }
   listWorkspaces(userId: string): Promise<(WorkspaceRecord & { role: Role })[]> {
@@ -4905,6 +4922,8 @@ export class PgMetaStore implements MetaStore {
     // parent row. Deleting the job is how a running import learns it was cancelled.
     await this.db.delete(contextAsker).where(eq(contextAsker.context_id, id))
     await this.db.delete(importJob).where(eq(importJob.context_id, id))
+    await this.db.delete(workflowDraft).where(eq(workflowDraft.context_id, id))
+    await this.db.delete(workflowTest).where(eq(workflowTest.context_id, id))
     await this.db.delete(context).where(eq(context.id, id))
   }
   // A no-op on an unknown id, deliberately: the caller already 404'd before

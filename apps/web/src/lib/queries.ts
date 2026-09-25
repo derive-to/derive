@@ -807,3 +807,11 @@ export const credentialUsageQuery = (id: string) =>
     meta: { persist: false },
     staleTime: 0,
   })
+
+export const workflowConfigurationQuery = (id: string) =>
+  queryOptions({
+    queryKey: ["workflow-runtimes", id, "configuration"],
+    queryFn: () => api.workflowConfiguration(id),
+    staleTime: 0,
+    meta: { persist: false },
+  })
