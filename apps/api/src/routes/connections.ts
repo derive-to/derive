@@ -4,7 +4,7 @@ import { z } from "@hono/zod-openapi"
 import { Hono } from "hono"
 import type { AppContext } from "../context"
 import { brokerFor, isDirect } from "../lib/broker"
-import { encryptSecret } from "../lib/crypto"
+import { encryptSecret, sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 
 // WO3 — connected external accounts (Sources). Connect once (OAuth via the broker), then
@@ -41,6 +41,7 @@ export const connectionRoutes = (ctx: AppContext) => {
   const app = new Hono()
 
   app.get("/v1/connections", async (c) => {
+    c.header("Cache-Control", "no-store")
     const org = await requireWorkspace(c, "read")
     if (org instanceof Response) return org
     const me = await requireUser(c)
@@ -55,10 +56,15 @@ export const connectionRoutes = (ctx: AppContext) => {
           ? "personal"
           : undefined
     const scoped = c.req.query("mine") === "1" ? me.id : undefined
-    return c.json({ connections: (await meta.listConnections(org, scoped, scope)).map(present) })
+    return c.json({
+      connections: (await meta.listConnections(org, scoped, scope))
+        .filter((cn) => cn.kind !== "secret" || cn.scope === "workspace" || cn.user_id === me.id)
+        .map(present),
+    })
   })
 
   app.post("/v1/connections", async (c) => {
+    c.header("Cache-Control", "no-store")
     const org = await requireWorkspace(c, "read")
     if (org instanceof Response) return org
     const me = await requireUser(c)
@@ -96,6 +102,7 @@ export const connectionRoutes = (ctx: AppContext) => {
         // stores no credential of its own. GitHub connections are created only by the
         // dedicated verified installation flow under /v1/github.
         kind: z.enum(["oauth", "secret", "slack"]).default("oauth"),
+        request_id: z.string().uuid().optional(),
         // kind "secret" only:
         secret: z.string().min(1).max(4096).optional(),
         // nullish, not optional: GET /v1/connections renders an absent host as `base_url: null`,
@@ -173,26 +180,37 @@ export const connectionRoutes = (ctx: AppContext) => {
       if (b.base_url && !isAllowedOutboundUrl(b.base_url))
         return fail(c, 400, "base_url must be https (or http://localhost for dev)")
       if (!deps.encryptionKey) return fail(c, 502, "secret connections need an encryption key")
-      const rec = await meta.createConnection({
-        id: newId("conn"),
-        org_id: org,
-        user_id: me.id,
-        scope: b.scope,
-        kind: "secret",
-        secret_enc: encryptSecret(b.secret, deps.encryptionKey),
-        // Stored without a trailing slash; executeHttpTool adds one when it resolves a path.
-        base_url: b.base_url ? b.base_url.replace(/\/+$/, "") : null,
-        broker: "none",
-        toolkit: b.toolkit,
-        // There is no vendor account behind this, but a run still identifies its tools by
-        // ref, so mint a synthetic one. Nothing parses it — routing is on `kind`.
-        broker_ref: newId("sref"),
-        // Only long credentials get a suffix hint; short environment values must stay hidden.
-        scopes_label:
-          b.scopes_label ?? (b.secret.length > 8 ? `…${b.secret.slice(-4)}` : "Stored secret"),
-        // Nothing to authorize, so it is usable immediately.
-        status: "active",
-      })
+      if (b.secret.includes("\0")) return fail(c, 400, "Value cannot contain a null character")
+      const id = b.request_id
+        ? `conn_${sha256(JSON.stringify([org, me.id, b.request_id])).slice(0, 40)}`
+        : newId("conn")
+      const existing = await meta.getConnection(id)
+      if (existing) return c.json(present(existing))
+      const rec = await meta
+        .createConnection({
+          id,
+          org_id: org,
+          user_id: me.id,
+          scope: b.scope,
+          kind: "secret",
+          secret_enc: encryptSecret(b.secret, deps.encryptionKey),
+          // Stored without a trailing slash; executeHttpTool adds one when it resolves a path.
+          base_url: b.base_url ? b.base_url.replace(/\/+$/, "") : null,
+          broker: "none",
+          toolkit: b.toolkit,
+          // There is no vendor account behind this, but a run still identifies its tools by
+          // ref, so mint a synthetic one. Nothing parses it — routing is on `kind`.
+          broker_ref: newId("sref"),
+          // Labels identify credentials without disclosing any portion of their value.
+          scopes_label: b.scopes_label?.trim() || "Stored secret",
+          // Nothing to authorize, so it is usable immediately.
+          status: "active",
+        })
+        .catch(async (error: unknown) => {
+          const winner = await meta.getConnection(id)
+          if (winner) return winner
+          throw error
+        })
       return c.json(present(rec), 201)
     }
     // An MCP connection routes on its OWN URL rather than the workspace's broker plan, and is
@@ -305,12 +323,15 @@ export const connectionRoutes = (ctx: AppContext) => {
   })
 
   app.delete("/v1/connections/:id", async (c) => {
+    c.header("Cache-Control", "no-store")
     const org = await requireWorkspace(c, "read")
     if (org instanceof Response) return org
     const me = await requireUser(c)
     if (me instanceof Response) return me
     const cn = await meta.getConnection(c.req.param("id"))
     if (!cn || cn.org_id !== org) return fail(c, 404, "not found")
+    if (cn.kind === "secret" && cn.scope === "personal" && cn.user_id !== me.id)
+      return fail(c, 404, "not found")
     // Personal: the owner may revoke their own; anyone else's needs manage.
     // Workspace: admin-managed — always manage, even for whoever added it.
     if (cn.scope === "workspace" || cn.user_id !== me.id) {
@@ -334,6 +355,7 @@ export const connectionRoutes = (ctx: AppContext) => {
       }
     }
     await meta.setConnectionStatus(cn.id, org, "revoked")
+    if (cn.kind === "secret") deps.pokeRuntime?.()
     return c.body(null, 204)
   })
 

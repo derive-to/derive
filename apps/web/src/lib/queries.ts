@@ -791,3 +791,19 @@ export const runtimeModelBindingQuery = (id: string) =>
     refetchInterval: 15000,
     meta: { persist: false },
   })
+
+export const credentialsQuery = () =>
+  queryOptions({
+    queryKey: ["credentials"] as const,
+    queryFn: () => api.credentials(),
+    meta: { persist: false },
+    staleTime: 0,
+    refetchOnMount: "always",
+  })
+export const credentialUsageQuery = (id: string) =>
+  queryOptions({
+    queryKey: ["credentials", id, "usage"] as const,
+    queryFn: () => api.credentialUsage(id),
+    meta: { persist: false },
+    staleTime: 0,
+  })

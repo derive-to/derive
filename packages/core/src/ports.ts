@@ -2500,6 +2500,7 @@ export interface AgentStore {
    * reply would otherwise overwrite the newer token with an older one — invalidating a grant that
    * was working. A mismatch returns null and the caller re-reads instead of guessing. The same
    * guard the model-credential PUT already uses, for the same reason.
+   * `expectStatus` additionally fences a replacement against concurrent revocation.
    */
   updateConnectionCredential(
     id: string,
@@ -2511,6 +2512,7 @@ export interface AgentStore {
       scopes_label?: string | null
     },
     expectSecretEnc?: string | null,
+    expectStatus?: ConnectionStatus,
   ): Promise<ConnectionRecord | null>
   /** Resolve an agent from its bearer token (the agent's identity). */
   getAgentByToken(token: string): Promise<AgentRecord | null>

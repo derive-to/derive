@@ -19,6 +19,7 @@ import {
   runtimePilotAllowed,
 } from "../lib/context-access"
 import { readEnvironmentBindings } from "../lib/context-environment"
+import { credentialRevision } from "../lib/credentials"
 import { decryptSecret } from "../lib/crypto"
 import { fail, readJson } from "../lib/http"
 import { OrtamClient } from "../lib/ortam-client"
@@ -247,7 +248,11 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
     const input = JSON.parse(run.input_snapshot) as RuntimeRunInput
     const context = await runtimeRunContext(meta, deps.runtime, run, runtime)
     if (!context || context.id !== input.context_id || !(await runtimeScheduleAllows(meta, run)))
-      return fail(c, 403, "Runtime access has been revoked")
+      return fail(
+        c,
+        403,
+        "Workflow access or credentials changed. Review access and start a new run.",
+      )
     const current = readEnvironmentBindings(context.environment_bindings)
     const environment: Record<string, string> = {}
     const connections = await spendableConnections(
@@ -259,6 +264,11 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
       const connection = connections.find((cn) => cn.id === id)
       if (current[name] !== id || connection?.kind !== "secret" || !connection.secret_enc)
         return fail(c, 409, "The selected environment changed; queue a new run")
+      if (
+        input.credential_revisions &&
+        input.credential_revisions[id] !== credentialRevision(connection)
+      )
+        return fail(c, 409, "A selected credential changed; queue a new run")
       const value = decryptSecret(connection.secret_enc, deps.encryptionKey)
       if (value === connection.secret_enc || value.includes("\0"))
         return fail(c, 503, "A selected secret is unreadable")
@@ -309,7 +319,12 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
       return fail(c, 409, "Attempt is not running")
     const runtime = await meta.getContextRuntime(attempt.runtime_id, run.org_id)
     const context = await runtimeRunContext(meta, deps.runtime, run, runtime)
-    if (!context) return fail(c, 403, "Runtime access has been revoked")
+    if (!context)
+      return fail(
+        c,
+        403,
+        "Workflow access or credentials changed. Review access and start a new run.",
+      )
     const body = await readJson(
       c,
       z.object({ tool: z.string().max(200), args: z.unknown().optional() }),

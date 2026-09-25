@@ -1,12 +1,11 @@
 import type { RuntimeSetupRecord } from "@derive/core"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
-import { api, type Connection } from "@/api"
-import { LoadError } from "@/components/shared/load-error"
+import { api } from "@/api"
+import { CredentialPicker } from "@/components/credentials/credential-picker"
 import { SectionTitle } from "@/components/shared/section-title"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { automationConnectionsQuery, contextRuntimeQuery } from "@/lib/queries"
+import { contextRuntimeQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 
 export function RuntimeSetup({
@@ -87,13 +86,9 @@ function RuntimeSetupProgress({
 }
 
 function RuntimeSetupForm({ contextId }: { contextId: string }) {
-  const qc = useQueryClient()
   const query = contextRuntimeQuery(contextId)
-  const connectionsQuery = automationConnectionsQuery()
-  const connections = useQuery(connectionsQuery)
   const [sandbox, setSandbox] = useState("")
   const [connection, setConnection] = useState("")
-  const [key, setKey] = useState("")
   const bind = useApiMutation({
     mutationFn: () => api.bindContextRuntime(contextId, connection, sandbox.trim()),
     invalidate: [query.queryKey],
@@ -104,26 +99,6 @@ function RuntimeSetupForm({ contextId }: { contextId: string }) {
     invalidate: [query.queryKey],
     success: "Sandbox setup queued",
   })
-  const saveKey = useApiMutation({
-    mutationFn: async () => {
-      await qc.cancelQueries({ queryKey: connectionsQuery.queryKey, exact: true })
-      return api.createSecretConnection({
-        toolkit: "ortam",
-        secret: key.trim(),
-        scopes_label: "Ortam controller",
-      })
-    },
-    invalidate: [connectionsQuery.queryKey],
-    success: "Ortam key saved",
-    onSuccess: (saved) => {
-      qc.setQueryData<Connection[]>(connectionsQuery.queryKey, (current) => [
-        ...(current ?? []).filter((item) => item.id !== saved.id),
-        saved,
-      ])
-      setConnection(saved.id)
-      setKey("")
-    },
-  })
   return (
     <div className="grid gap-8 rounded-xl border bg-card p-5 sm:grid-cols-2 sm:p-6">
       <div className="flex min-w-0 flex-col gap-4">
@@ -131,65 +106,15 @@ function RuntimeSetupForm({ contextId }: { contextId: string }) {
         <p className="text-sm text-muted-foreground">
           Choose a saved key or add one from your Ortam account.
         </p>
-        {connections.isError && (
-          <LoadError
-            title="Couldn’t load saved connections"
-            testId="context-runtime-connections-retry"
-            onRetry={() => void connections.refetch()}
-          />
-        )}
-        <label className="flex flex-col gap-1.5 text-sm">
-          Ortam API connection
-          <select
-            data-testid="context-runtime-connection"
-            className="h-8 min-w-0 rounded-lg border border-input bg-transparent px-2 text-sm focus-visible:outline-2 focus-visible:outline-ring"
-            value={connection}
-            onChange={(e) => setConnection(e.target.value)}
-            disabled={
-              connections.isPending ||
-              connections.isError ||
-              bind.isPending ||
-              provision.isPending ||
-              saveKey.isPending
-            }
-          >
-            <option value="">Choose a secret connection</option>
-            {(connections.data ?? [])
-              .filter((c) => c.kind === "secret" && c.status === "active")
-              .map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.scopes_label ?? c.toolkit}
-                </option>
-              ))}
-          </select>
-        </label>
-        <label className="flex flex-col gap-1.5 text-sm">
-          New Ortam API key
-          <Input
-            data-testid="context-runtime-key"
-            type="password"
-            autoComplete="new-password"
-            maxLength={4096}
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-            disabled={bind.isPending || provision.isPending || saveKey.isPending}
-          />
-        </label>
+        <CredentialPicker
+          value={connection}
+          onChange={setConnection}
+          disabled={bind.isPending || provision.isPending}
+        />
         <p className="text-sm text-muted-foreground">
           Derive uses this key to start and stop your sandbox. It is stored encrypted and is not
           added to the agent’s environment.
         </p>
-        <Button
-          variant="outline"
-          size="sm"
-          className="self-start"
-          loading={saveKey.isPending}
-          data-testid="context-runtime-key-save"
-          disabled={!key.trim() || bind.isPending || provision.isPending || saveKey.isPending}
-          onClick={() => saveKey.mutate()}
-        >
-          {saveKey.isPending ? "Saving…" : "Save Ortam key"}
-        </Button>
       </div>
       <div className="flex min-w-0 flex-col gap-4">
         <SectionTitle>Create a sandbox</SectionTitle>
@@ -201,13 +126,7 @@ function RuntimeSetupForm({ contextId }: { contextId: string }) {
           className="self-start"
           data-testid="context-runtime-provision"
           loading={provision.isPending}
-          disabled={
-            !connection ||
-            !!key.trim() ||
-            provision.isPending ||
-            bind.isPending ||
-            saveKey.isPending
-          }
+          disabled={!connection || provision.isPending || bind.isPending}
           onClick={() => provision.mutate()}
         >
           Create sandbox
@@ -238,14 +157,7 @@ function RuntimeSetupForm({ contextId }: { contextId: string }) {
           className="self-start"
           loading={bind.isPending}
           data-testid="context-runtime-bind"
-          disabled={
-            !connection ||
-            !sandbox.trim() ||
-            !!key.trim() ||
-            bind.isPending ||
-            provision.isPending ||
-            saveKey.isPending
-          }
+          disabled={!connection || !sandbox.trim() || bind.isPending || provision.isPending}
           onClick={() => bind.mutate()}
         >
           {bind.isPending ? "Connecting…" : "Connect sandbox"}

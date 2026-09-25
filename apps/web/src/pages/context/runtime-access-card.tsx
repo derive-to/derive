@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { useState } from "react"
 import { api, type Connection, type ContextDetail } from "@/api"
+import { CredentialPicker } from "@/components/credentials/credential-picker"
 import { LoadError } from "@/components/shared/load-error"
 import { SectionTitle } from "@/components/shared/section-title"
 import { Button } from "@/components/ui/button"
@@ -97,7 +98,7 @@ function AccessForm({
 }) {
   const qc = useQueryClient()
   const [name, setName] = useState("")
-  const [value, setValue] = useState("")
+  const [credentialId, setCredentialId] = useState("")
   const contextKey = contextQuery(context.id).queryKey
   const environmentKey = contextEnvironmentQuery(context.id).queryKey
   const variable = name.trim()
@@ -130,30 +131,12 @@ function AccessForm({
     invalidate: [environmentKey],
     success: "Environment updated",
   })
-  const add = useApiMutation({
-    mutationFn: async () => {
-      if (nameError) throw new Error(nameError)
-      if (atLimit) throw new Error(`At most ${CONTEXT_ENVIRONMENT_LIMIT} environment variables`)
-      const connection = await api.createSecretConnection({
-        toolkit: "environment",
-        secret: value,
-        scopes_label: variable,
-      })
-      // If binding fails, keep the encrypted connection available in the existing-secret picker.
-      setValue("")
-      return persistEnvironment({ ...bindings, [variable]: connection.id })
-    },
-    invalidate: [environmentKey, automationConnectionsQuery().queryKey],
-    onSuccess: () => setName(""),
-    success: "Environment variable saved",
-  })
-  const busy = saveEnvironment.isPending || add.isPending
+  const busy = saveEnvironment.isPending
   const canBind = !busy && !nameError && !atLimit
   const sources = connections.filter(
     (c) => c.kind !== "secret" || !!c.base_url || context.connection_ids.includes(c.id),
   )
   const activeIds = new Set(connections.filter((c) => c.status === "active").map((c) => c.id))
-  const secrets = connections.filter((c) => c.kind === "secret" && c.status === "active")
   return (
     <div className="flex flex-col gap-5">
       <section className="flex flex-col gap-2">
@@ -209,7 +192,7 @@ function AccessForm({
         </Link>
       </section>
       <section className="flex flex-col gap-3">
-        <SectionTitle>Environment variables</SectionTitle>
+        <SectionTitle>Credentials</SectionTitle>
         <p className="text-xs text-muted-foreground">
           Selected secrets are given to this Context’s CLI runner at the start of each run. The
           agent can read and use them. In-app chat tools do not receive these values. Removing
@@ -221,8 +204,8 @@ function AccessForm({
               <code className="text-sm">{variable}</code>
               <p className="text-xs text-muted-foreground">
                 {connections.find((c) => c.id === id)?.status === "active"
-                  ? "Value stored encrypted"
-                  : "Connection unavailable"}
+                  ? (connections.find((c) => c.id === id)?.scopes_label ?? "Value stored encrypted")
+                  : "Credential unavailable"}
               </p>
             </div>
             <Button
@@ -273,47 +256,14 @@ function AccessForm({
             {atLimit ? `At most ${CONTEXT_ENVIRONMENT_LIMIT} environment variables` : nameError}
           </p>
         ) : null}
-        <label className="flex flex-col gap-1 text-sm">
-          New value
-          <Input
-            data-testid="context-env-value"
-            type="password"
-            maxLength={4096}
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            autoComplete="new-password"
-            disabled={busy}
-          />
-        </label>
+        <CredentialPicker value={credentialId} onChange={setCredentialId} disabled={busy} />
         <Button
           data-testid="context-env-add"
-          disabled={!canBind || !value || value.includes("\0")}
-          onClick={() => add.mutate()}
+          disabled={!canBind || !credentialId}
+          onClick={() => saveEnvironment.mutate({ ...bindings, [variable]: credentialId })}
         >
-          {add.isPending ? "Saving…" : "Save variable"}
+          {busy ? "Assigning…" : "Use credential"}
         </Button>
-        {secrets.length > 0 && (
-          <label className="flex flex-col gap-1 text-sm">
-            Or use an existing secret
-            <select
-              className="rounded-md border bg-background p-2 text-sm"
-              data-testid="context-env-existing"
-              value=""
-              disabled={!canBind}
-              onChange={(e) => {
-                if (e.target.value)
-                  saveEnvironment.mutate({ ...bindings, [variable]: e.target.value })
-              }}
-            >
-              <option value="">Choose a secret for this variable</option>
-              {secrets.map((secret) => (
-                <option key={secret.id} value={secret.id}>
-                  {secret.scopes_label ?? secret.toolkit}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
       </section>
     </div>
   )

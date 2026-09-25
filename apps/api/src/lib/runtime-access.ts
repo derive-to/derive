@@ -7,6 +7,7 @@ import {
 } from "@derive/core"
 import type { AppDeps } from "../context"
 import { spendableConnections } from "./broker"
+import { credentialRevision } from "./credentials"
 import { runtimeModelSelection } from "./runtime-model-grant"
 
 /** Live execution authority shared by dispatch, runner claims and every tool call.
@@ -26,6 +27,22 @@ export async function runtimeRunContext(
     !run.initiated_by
   )
     return null
+  const input = JSON.parse(run.input_snapshot ?? "null") as RuntimeRunInput | null
+  if (input?.credential_revisions) {
+    const revisions = Object.entries(input.credential_revisions)
+    const credentials = await spendableConnections(
+      meta,
+      run.org_id,
+      revisions.map(([id]) => id),
+    )
+    if (
+      revisions.some(([id, revision]) => {
+        const credential = credentials.find((cn) => cn.id === id)
+        return !credential || credentialRevision(credential) !== revision
+      })
+    )
+      return null
+  }
   const managed = runtime.connection_id === null
   if (
     managed
@@ -48,7 +65,6 @@ export async function runtimeRunContext(
   if (runtime.connection_id === null) {
     if (!roleAllows(member.role, "publish")) return null
     const binding = await meta.getRuntimeModelBinding(context.id, run.org_id)
-    const input = JSON.parse(run.input_snapshot ?? "null") as RuntimeRunInput | null
     if (binding || input?.model_connection) {
       const selected = await runtimeModelSelection(meta, context.id, run.org_id)
       if (

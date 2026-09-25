@@ -990,6 +990,58 @@ describe("Ortam runtime lifecycle", () => {
     }
   })
 
+  it.each([
+    "replace",
+    "revoke",
+  ])("%s fences queued claims while a fresh run uses the current credential", async (action) => {
+    const f = await setup(true)
+    for (let i = 0; i < 3; i++) await pass()
+    const input = JSON.parse(f.run.input_snapshot)
+    const id = input.environment_bindings.APP_INPUT
+    expect(input.credential_revisions[id]).toMatch(/^[a-f0-9]{64}$/)
+    const catalog = await (
+      await app.request("/v1/credentials", { headers: as(owner.email) })
+    ).json()
+    const credential = catalog.items.find((item: { id: string }) => item.id === id)
+    const response =
+      action === "replace"
+        ? await app.request(
+            `/v1/credentials/${id}`,
+            jsonAs(
+              as(owner.email),
+              {
+                name: "Runtime input",
+                secret: "updated-runtime-fixture",
+                revision: credential.revision,
+              },
+              "PUT",
+            ),
+          )
+        : await app.request(`/v1/connections/${id}`, { method: "DELETE", headers: as(owner.email) })
+    expect(response.ok).toBe(true)
+    const claim = await attemptRequest(f.sandbox, "claim")
+    expect(claim.status).toBe(403)
+    expect(await claim.text()).toContain("start a new run")
+    expect((await meta.getLatestRunAttempt(f.run.id, "default"))?.runner_claimed_at).toBeNull()
+    for (let i = 0; i < 5; i++) await pass()
+    expect((await meta.getRun(f.run.id))?.status).toBe("failed")
+    if (action === "replace") {
+      const next = await app.request(
+        `/v1/contexts/${f.context.id}/runtime/runs`,
+        jsonAs(as(owner.email), { instruction: "Retry with current access", provider: "codex" }),
+      )
+      expect(next.status).toBe(201)
+      for (let i = 0; i < 3; i++) await pass()
+      const fresh = await attemptRequest(f.sandbox, "claim")
+      expect(fresh.status).toBe(200)
+      expect(await fresh.json()).toMatchObject({
+        environment: { APP_INPUT: "updated-runtime-fixture" },
+      })
+      await attemptRequest(f.sandbox, "result", result)
+      for (let i = 0; i < 5; i++) await pass()
+    }
+  })
+
   it("cancels queued work when pilot access is removed without reviving it on restoration", async () => {
     const f = await setup()
     config.pilotWorkspaceIds.clear()
@@ -1032,7 +1084,7 @@ describe("Ortam runtime lifecycle", () => {
       expect((await attemptRequest(f.sandbox, "claim")).status).toBe(403)
       const denied = await attemptRequest(f.sandbox, "tool", { tool: "anything" })
       expect(denied.status).toBe(403)
-      expect(await denied.text()).toContain("Runtime access has been revoked")
+      expect(await denied.text()).toContain("Review access and start a new run")
       expect((await attemptRequest(f.sandbox, "result", result)).status).toBe(200)
       for (let i = 0; i < 5; i++) await pass()
       expect(f.sandbox.state).toBe("stopped")
@@ -2350,7 +2402,7 @@ describe("runtime provisioning and shared model accounts", () => {
     )
     const restricted = await callManagedTool()
     expect(restricted.status).toBe(403)
-    expect(await restricted.text()).toContain("Runtime access has been revoked")
+    expect(await restricted.text()).toContain("Review access and start a new run")
     await app.request(
       `/v1/contexts/${f.context.id}/access`,
       jsonAs(as(owner.email), { ask_policy: "workspace" }),
@@ -2363,7 +2415,7 @@ describe("runtime provisioning and shared model accounts", () => {
     })
     const demoted = await callManagedTool()
     expect(demoted.status).toBe(403)
-    expect(await demoted.text()).toContain("Runtime access has been revoked")
+    expect(await demoted.text()).toContain("Review access and start a new run")
     await meta.setMembership({
       id: "setup-member-seat",
       org_id: "default",
@@ -2390,7 +2442,7 @@ describe("runtime provisioning and shared model accounts", () => {
       body: JSON.stringify({ tool: "anything" }),
     })
     expect(deniedTool.status).toBe(403)
-    expect(await deniedTool.text()).toContain("Runtime access has been revoked")
+    expect(await deniedTool.text()).toContain("Review access and start a new run")
     const result = await app.request(`/v1/runtime-attempts/${task.attempt}/result`, {
       method: "POST",
       headers,

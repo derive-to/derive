@@ -98,7 +98,6 @@ test("Context access saves secrets and connections and removes unavailable grant
   await owner.getByTestId(`context-source-${source.id}`).click()
   await expect(owner.getByTestId(`context-source-${source.id}`)).toBeChecked()
   await owner.getByTestId("context-env-name").fill("DERIVE_TOKEN")
-  await owner.getByTestId("context-env-value").fill("invalid-name-fixture")
   await expect(owner.getByRole("alert")).toHaveText("This name is reserved for the runner")
   await expect(owner.getByTestId("context-env-add")).toBeDisabled()
 
@@ -115,12 +114,19 @@ test("Context access saves secrets and connections and removes unavailable grant
   })
   try {
     await owner.getByTestId("context-env-name").fill("DATABASE_URL")
-    await owner.getByTestId("context-env-value").fill("browser-fixture-value")
+    await owner.getByTestId("credential-picker-add").click()
+    await owner.getByTestId("credential-name").fill("Reporting database")
+    await owner.getByTestId("credential-value").fill("browser-fixture-value")
+    await owner.getByTestId("credential-save").click()
+    await expect(owner.getByTestId("credential-value")).toHaveCount(0)
     await owner.getByTestId("context-env-add").click()
     await expect(owner.getByTestId("context-env-remove-DATABASE_URL")).toBeVisible()
-    await expect(owner.getByTestId("context-env-value")).toHaveValue("")
     await owner.getByTestId("context-env-name").fill("REPORT_BUCKET")
-    await owner.getByTestId("context-env-value").fill("bucket-fixture")
+    await owner.getByTestId("credential-picker-add").click()
+    await owner.getByTestId("credential-name").fill("Report bucket")
+    await owner.getByTestId("credential-value").fill("bucket-fixture")
+    await owner.getByTestId("credential-save").click()
+    await expect(owner.getByTestId("credential-value")).toHaveCount(0)
     await owner.getByTestId("context-env-add").click()
     await expect(owner.getByTestId("context-env-remove-REPORT_BUCKET")).toBeVisible()
   } finally {
@@ -131,7 +137,7 @@ test("Context access saves secrets and connections and removes unavailable grant
   await owner.getByTestId("context-runtime-access").click()
   await expect(owner.getByTestId(`context-source-${source.id}`)).toBeChecked()
   await expect(owner.getByTestId("context-env-remove-DATABASE_URL")).toBeVisible()
-  await expect(owner.getByTestId("context-env-value")).toHaveValue("")
+  await expect(owner.getByTestId("credential-value")).toHaveCount(0)
   await expect(owner.getByTestId("context-env-remove-REPORT_BUCKET")).toBeVisible()
   await owner.getByTestId("context-env-remove-REPORT_BUCKET").click()
   await expect(owner.getByTestId("context-env-remove-REPORT_BUCKET")).toHaveCount(0)
@@ -632,4 +638,110 @@ test("Cloud managed jobs connect a provider and run the saved agent without infr
   await expect(owner.getByText("Work account · Codex", { exact: true })).toBeVisible()
   await owner.setViewportSize({ width: 390, height: 844 })
   await owner.screenshot({ path: testInfo.outputPath("managed-job-mobile.png"), fullPage: true })
+})
+
+test("credentials survive failed creation replies and assignments, then replace and revoke in Settings", async ({
+  owner,
+}, testInfo) => {
+  const manifest = await publishArtifact(owner, "report.md", "# Integrity report")
+  const context = await (
+    await owner.request.post("/v1/contexts", {
+      data: { name: "Integrity report", manifest_short_id: manifest },
+    })
+  ).json()
+  await owner.goto(`/contexts/${context.id}`)
+  await owner.getByTestId("context-runtime-access").click()
+  await owner.getByTestId("context-env-name").fill("DATABASE_URL")
+  await owner.getByTestId("credential-picker-add").click()
+  await owner.getByTestId("credential-name").fill("Integrity database")
+  await owner.getByTestId("credential-value").fill("browser-only-fixture")
+  let loseReply = true
+  await owner.route("**/v1/connections", async (route) => {
+    if (route.request().method() === "POST" && loseReply) {
+      loseReply = false
+      await route.fetch()
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Temporary failure; retry" }),
+      })
+    } else await route.continue()
+  })
+  await owner.getByTestId("credential-save").click()
+  await expect(owner.getByText("Temporary failure; retry", { exact: true })).toBeVisible()
+  await expect(owner.getByTestId("credential-name")).toHaveValue("Integrity database")
+  await expect(owner.getByTestId("credential-value")).toHaveValue("browser-only-fixture")
+  await owner.getByTestId("credential-save").click()
+  await expect(owner.getByTestId("credential-value")).toHaveCount(0)
+  const list = await (await owner.request.get("/v1/credentials")).json()
+  expect(list.items).toHaveLength(1)
+  const credential = list.items[0]
+  await expect(owner.getByTestId("credential-picker")).toHaveValue(credential.id)
+  let failBinding = true
+  await owner.route(`**/v1/contexts/${context.id}/environment`, async (route) => {
+    if (route.request().method() === "PUT" && failBinding) {
+      failBinding = false
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Assignment failed; retry" }),
+      })
+    } else await route.continue()
+  })
+  await owner.getByTestId("context-env-add").click()
+  await expect(owner.getByText("Assignment failed; retry", { exact: true })).toBeVisible()
+  await expect(owner.getByTestId("context-env-name")).toHaveValue("DATABASE_URL")
+  await expect(owner.getByTestId("credential-picker")).toHaveValue(credential.id)
+  await owner.getByTestId("context-env-add").click()
+  await expect(owner.getByTestId("context-env-remove-DATABASE_URL")).toBeVisible()
+  const secondContext = await (
+    await owner.request.post("/v1/contexts", {
+      data: { name: "Weekly report", manifest_short_id: manifest },
+    })
+  ).json()
+  expect(
+    (
+      await owner.request.put(`/v1/contexts/${secondContext.id}/environment`, {
+        data: { bindings: { DATABASE_URL: credential.id } },
+      })
+    ).ok(),
+  ).toBeTruthy()
+  await owner.goto("/settings/credentials")
+  await expect(owner.getByText("Personal · you · Not checked", { exact: true })).toBeVisible()
+  await testInfo.attach("Credentials", {
+    body: await owner.screenshot({ fullPage: true }),
+    contentType: "image/png",
+  })
+  await owner.getByTestId(`credential-manage-${credential.id}`).click()
+  await expect(
+    owner.getByRole("dialog").getByText("Integrity report", { exact: true }),
+  ).toBeVisible()
+  await expect(owner.getByRole("dialog").getByText("Weekly report", { exact: true })).toBeVisible()
+  await owner.setViewportSize({ width: 390, height: 844 })
+  await owner.getByTestId("credential-replace").click()
+  await expect(owner.getByTestId("credential-value")).toHaveValue("")
+  await testInfo.attach("Replace credential on mobile", {
+    body: await owner.screenshot({ fullPage: true }),
+    contentType: "image/png",
+  })
+  await owner.getByTestId("credential-value").fill("replacement-browser-fixture")
+  await owner.getByTestId("credential-save").click()
+  await expect(owner.getByRole("dialog")).toHaveCount(0)
+  expect(
+    (await (await owner.request.get(`/v1/contexts/${context.id}/environment`)).json()).bindings,
+  ).toEqual({ DATABASE_URL: credential.id })
+  await owner.getByTestId(`credential-manage-${credential.id}`).click()
+  await expect(
+    owner.getByRole("dialog").getByText("Integrity report", { exact: true }),
+  ).toBeVisible()
+  await testInfo.attach("Credential impact", {
+    body: await owner.screenshot({ fullPage: true }),
+    contentType: "image/png",
+  })
+  await owner.getByTestId("credential-revoke").click()
+  await expect(owner.getByText("Personal · you · Revoked", { exact: true })).toBeVisible()
+  await testInfo.attach("Credentials on mobile", {
+    body: await owner.screenshot({ fullPage: true }),
+    contentType: "image/png",
+  })
 })

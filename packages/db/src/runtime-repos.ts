@@ -60,6 +60,20 @@ const checkedInput = (value: string | null | undefined): RuntimeRunInput => {
     )
   )
     throw new Error("Invalid runtime run input snapshot")
+  if (
+    input.credential_revisions !== undefined &&
+    (!input.credential_revisions ||
+      typeof input.credential_revisions !== "object" ||
+      Array.isArray(input.credential_revisions) ||
+      !Object.entries(input.credential_revisions).every(
+        ([id, revision]) =>
+          (input.connection_ids.includes(id) ||
+            Object.values(input.environment_bindings).includes(id)) &&
+          typeof revision === "string" &&
+          /^[a-f0-9]{64}$/.test(revision),
+      ))
+  )
+    throw new Error("Invalid runtime credential revisions")
   // Copy the accepted shape; accidental caller fields must not turn this into secret storage.
   return {
     version: 1,
@@ -85,6 +99,9 @@ const checkedInput = (value: string | null | undefined): RuntimeRunInput => {
     model: input.model,
     connection_ids: [...input.connection_ids],
     environment_bindings: { ...input.environment_bindings },
+    ...(input.credential_revisions === undefined
+      ? {}
+      : { credential_revisions: { ...input.credential_revisions } }),
   }
 }
 

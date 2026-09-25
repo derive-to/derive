@@ -63,13 +63,23 @@ export function RuntimeRunHistory({ runs }: { runs: RuntimeRun[] }) {
             </div>
             <p className="text-xs text-muted-foreground">
               {item.reason === "schedule" ? "Scheduled run" : "Manual run"}
-              {item.attempt ? ` · ${phases[item.attempt.phase]}` : " · Waiting to start"}
+              {item.attempt
+                ? ` · ${phases[item.attempt.phase]}`
+                : item.status === "failed"
+                  ? " · Did not start"
+                  : " · Waiting to start"}
               {item.attempt?.save_status === "saved"
                 ? " · Files saved"
                 : item.attempt?.save_status === "failed"
                   ? " · File saving failed"
                   : ""}
             </p>
+            {item.status === "failed" && !item.attempt && (
+              <p className="text-sm text-muted-foreground">
+                This run could not start. Review the workflow’s account, credentials and schedule,
+                then start a new run.
+              </p>
+            )}
             {report?.report_short_id ? (
               <a
                 data-testid={`context-runtime-report-${item.id}`}

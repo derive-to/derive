@@ -5808,6 +5808,28 @@ export function runStoreContract(
       expect(await store.createContextRuntime({ ...f.binding, id: uuid() }, at)).toBeNull()
     })
 
+    it("preserves opaque credential versions and rejects unrelated or malformed versions", async () => {
+      const f = await fixture()
+      const revisions = { connection: "a".repeat(64) }
+      const snapshot = {
+        ...f.input,
+        environment_bindings: { APP_INPUT: "connection" },
+        credential_revisions: revisions,
+      }
+      const run = await f.enqueue({ input_snapshot: JSON.stringify(snapshot) })
+      expect(JSON.parse(run.input_snapshot ?? "{}").credential_revisions).toEqual(revisions)
+      for (const credential_revisions of [
+        null,
+        [],
+        { unrelated: "a".repeat(64) },
+        { connection: "plaintext" },
+      ]) {
+        await expect(
+          f.enqueue({ input_snapshot: JSON.stringify({ ...snapshot, credential_revisions }) }),
+        ).rejects.toThrow("Invalid runtime credential revisions")
+      }
+    })
+
     it("rechecks the Ortam credential before enqueue and reservation, while preserving cleanup", async () => {
       const f = await fixture()
       const r = await f.enqueue()
@@ -8622,6 +8644,27 @@ export function runStoreContract(
       )
       expect(slow, "the stale write is refused, not applied").toBeNull()
       expect((await store.getConnection(cn.id))?.secret_enc).toBe("v1.fresh")
+    })
+
+    it("an in-flight replacement cannot write after revocation", async () => {
+      const cn = await mkConn({ status: "active" })
+      await store.setConnectionStatus(cn.id, ORG, "revoked")
+      expect(
+        await store.updateConnectionCredential(
+          cn.id,
+          ORG,
+          {
+            secret_enc: "v1.replacement",
+            status: "active",
+          },
+          cn.secret_enc,
+          "active",
+        ),
+      ).toBeNull()
+      expect(await store.getConnection(cn.id)).toMatchObject({
+        status: "revoked",
+        secret_enc: cn.secret_enc,
+      })
     })
 
     it("the swap guard matches a NULL credential too, so a first write is safe", async () => {

@@ -58,6 +58,7 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 | `/people` | The workspace people directory. |
 | `/settings/billing` | Plan, seats, invoices. Admin only. |
 | `/settings/integrations` | Connect Slack and GitHub; manage workspace email notifications. |
+| `/settings/credentials` | Named personal or workspace secrets. Add, replace or revoke values and see assignments. Values are write-only; “Not checked” does not promise remote access. Assign credentials under a workflow’s Agent access. |
 | `/settings/sources` | Connect an MCP server so an agent can read from it. |
 | `/settings/brandprint` | The workspace's brand: what published pages look like. |
 | `/settings/webhooks` | Send Derive events to a URL. |

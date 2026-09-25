@@ -35,6 +35,8 @@ export interface RuntimeRunInput {
   model: string | null
   connection_ids: string[]
   environment_bindings: Record<string, string>
+  /** Opaque secret versions pinned at enqueue; absent on legacy runs. */
+  credential_revisions?: Record<string, string>
 }
 
 export type RunAttemptPhase =
