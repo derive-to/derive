@@ -113,10 +113,16 @@ export function appWithGrant(
 
 // POST one JSON-RPC message and return the parsed response, handling both a plain
 // JSON body and an SSE-framed (text/event-stream) response.
-export async function rpc(app: McpApp, token: string | null, body: unknown) {
+export async function rpc(
+  app: McpApp,
+  token: string | null,
+  body: unknown,
+  requestHeaders: Record<string, string> = {},
+) {
   const headers: Record<string, string> = {
     "content-type": "application/json",
     accept: "application/json, text/event-stream",
+    ...requestHeaders,
   }
   if (token) headers.authorization = `Bearer ${token}`
   const res = await app.request("/mcp", { method: "POST", headers, body: JSON.stringify(body) })
