@@ -884,6 +884,64 @@ describe("publish: bundles (zip)", () => {
     })
   })
 
+  it("publishes file-only inputs without inventing an entry document", async () => {
+    const blobs = makeBlobs()
+    const { version } = await publish(
+      makeMeta(),
+      blobs,
+      bundle(
+        {
+          "scripts/check.py": "print('ok')",
+          "data/input.csv": "a,b\n1,2",
+        },
+        { fileBundle: true },
+      ),
+    )
+    expect(version.content_type).toBe("derive/files")
+    const manifest = JSON.parse(
+      new TextDecoder().decode((await blobs.get(version.blob_key)) ?? undefined),
+    )
+    expect(manifest.entry).toBe("/")
+    expect(manifest.spa).toBe(false)
+    expect(Object.keys(manifest.files)).toEqual(["/scripts/check.py", "/data/input.csv"])
+    expect(
+      new TextDecoder().decode(
+        (await blobs.get(manifest.files["/scripts/check.py"].key)) ?? undefined,
+      ),
+    ).toBe("print('ok')")
+  })
+
+  it("rejects unsafe file inputs before paths or archive metadata can be normalized away", async () => {
+    for (const files of [
+      { "../escape.py": "bad" },
+      { "/absolute.py": "bad" },
+      { "a.py": "a", "A.py": "b" },
+      { data: "a", "data/x.csv": "b" },
+      { ".env": "secret fixture" },
+      { ".claude/.credentials.json": "secret fixture" },
+      { "node_modules/a.js": "cache" },
+    ]) {
+      await expect(
+        publish(makeMeta(), makeBlobs(), bundle(files, { fileBundle: true })),
+      ).rejects.toMatchObject({ statusCode: 400 })
+    }
+    const bytes = zip({ "link.py": "../outside" })
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+    for (let offset = 0; offset < bytes.length - 46; offset++) {
+      if (view.getUint32(offset, true) !== 0x02014b50) continue
+      view.setUint32(offset + 38, 0xa1ff0000, true) // Unix symlink, never a regular input file.
+      break
+    }
+    await expect(
+      publish(makeMeta(), makeBlobs(), {
+        bytes,
+        filename: "link.zip",
+        isBundle: true,
+        fileBundle: true,
+      }),
+    ).rejects.toMatchObject({ statusCode: 400 })
+  })
+
   it("publishes a skill folder (SKILL.md + scripts, no HTML), entry = /SKILL.md", async () => {
     const blobs = makeBlobs()
     const { artifact, version } = await publish(

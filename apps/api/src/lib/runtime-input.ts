@@ -18,7 +18,19 @@ export async function runtimeInput(
   const connections = await meta.getConnectionsByIds([
     ...new Set([...connectionIds, ...Object.values(environment)]),
   ])
+  const files = await meta.getWorkflowFiles(context.id, context.org_id)
   return {
+    ...(files?.artifact_id && files.version
+      ? {
+          files: {
+            artifact_id: files.artifact_id,
+            version: files.version,
+            blob_key: files.blob_key ?? "",
+            granted_by: files.granted_by,
+            revision: files.revision,
+          },
+        }
+      : {}),
     credential_revisions: Object.fromEntries(
       connections
         .filter((cn) => cn.org_id === context.org_id && cn.kind === "secret")

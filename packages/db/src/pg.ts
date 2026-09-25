@@ -297,6 +297,7 @@ import {
   webhookDelivery,
   workflowArtifactActivity,
   workflowDraft,
+  workflowFiles,
   workflowPublishReceipt,
   workflowRun,
   workflowStepAttempt,
@@ -354,6 +355,7 @@ export const schema = {
   runtimeModelConnection,
   runtimeModelBinding,
   workflowDraft,
+  workflowFiles,
   workflowTest,
   runAttempt,
   workflowRun,
@@ -427,6 +429,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   runtimeModelConnection: true,
   runtimeModelBinding: true,
   workflowDraft: true,
+  workflowFiles: true,
   workflowTest: true,
   runAttempt: true,
   workflowRun: true,
@@ -738,6 +741,8 @@ export class PgMetaStore implements MetaStore {
   projectWorkflowDraft = this.runtimes.projectWorkflowDraft
   getWorkflowDraft = this.runtimes.getWorkflowDraft
   saveWorkflowDraft = this.runtimes.saveWorkflowDraft
+  getWorkflowFiles = this.runtimes.getWorkflowFiles
+  saveWorkflowFiles = this.runtimes.saveWorkflowFiles
   createWorkflowTest = this.runtimes.createWorkflowTest
   latestWorkflowTest = this.runtimes.latestWorkflowTest
   getWorkflowTest = this.runtimes.getWorkflowTest
@@ -3152,6 +3157,7 @@ export class PgMetaStore implements MetaStore {
     // encrypted token is orphaned (the pool row would otherwise have no API path left to
     // delete once memberships are gone). One predicate covers members and the pool.
     await this.db.delete(modelCredential).where(eq(modelCredential.org_id, orgId))
+    await this.db.delete(workflowFiles).where(eq(workflowFiles.org_id, orgId))
     await this.db.delete(workflowDraft).where(eq(workflowDraft.org_id, orgId))
     await this.db.delete(workflowTest).where(eq(workflowTest.org_id, orgId))
     await this.db.delete(workspace).where(eq(workspace.id, orgId))
@@ -4922,6 +4928,7 @@ export class PgMetaStore implements MetaStore {
     // parent row. Deleting the job is how a running import learns it was cancelled.
     await this.db.delete(contextAsker).where(eq(contextAsker.context_id, id))
     await this.db.delete(importJob).where(eq(importJob.context_id, id))
+    await this.db.delete(workflowFiles).where(eq(workflowFiles.context_id, id))
     await this.db.delete(workflowDraft).where(eq(workflowDraft.context_id, id))
     await this.db.delete(workflowTest).where(eq(workflowTest.context_id, id))
     await this.db.delete(context).where(eq(context.id, id))

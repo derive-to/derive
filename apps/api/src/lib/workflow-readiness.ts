@@ -1,6 +1,7 @@
 import {
   type ContextRecord,
   type MetaStore,
+  type RuntimeRunInput,
   roleAllows,
   type WorkflowReadiness,
 } from "@derive/core"
@@ -11,6 +12,10 @@ import { managedModelClient } from "./runtime-controller"
 import { runtimeInput } from "./runtime-input"
 import { runtimeModelSelection } from "./runtime-model-grant"
 import { SETUP_RUNNER_PATH } from "./runtime-setup"
+import { workflowFilesAvailable } from "./workflow-files"
+
+export const workflowRevision = (input: RuntimeRunInput | null, askPolicy: string) =>
+  sha256(JSON.stringify([input, askPolicy]))
 
 /** A revision of the task and its existing references, not another owner for those records. */
 export async function workflowConfiguration(meta: MetaStore, context: ContextRecord) {
@@ -23,7 +28,7 @@ export async function workflowConfiguration(meta: MetaStore, context: ContextRec
     provider: task?.provider ?? "codex",
     model: null,
   })
-  const revision = sha256(JSON.stringify([input, context.ask_policy]))
+  const revision = workflowRevision(input, context.ask_policy)
   return { draft, runtime, schedule, input, revision }
 }
 
@@ -118,6 +123,12 @@ export async function workflowReadiness(
   }
   if (!input && selected)
     add("files_unavailable", "The workflow’s instruction file is unavailable.", "edit")
+  if (input?.files && !(await workflowFilesAvailable(meta, context.org_id, input.files)))
+    add(
+      "input_files_unavailable",
+      "The selected input files are no longer available. Review the attachment.",
+      "files",
+    )
   if (input) {
     const required = [
       ...new Set([...input.connection_ids, ...Object.values(input.environment_bindings)]),

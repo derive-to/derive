@@ -59,6 +59,7 @@ export function artifactTypeLabel(a: Artifact): string {
   if (a.import_source === "arxiv") return "arXiv"
   // A skill rides the denormalized content type (derive/skill), so the grid badges it
   // without opening the bundle — string mirrored from @derive/core SKILL_CONTENT_TYPE.
+  if (a.current_content_type === "derive/files") return "Files"
   if (a.current_content_type === "derive/skill") return "Skill"
   // A paper bundle (entry main.tex) likewise: derive/latex mirrors LATEX_BUNDLE_CONTENT_TYPE.
   // Badged by language like MD and HTML, single file or bundle.

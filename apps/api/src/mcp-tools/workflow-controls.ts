@@ -7,6 +7,7 @@ import { json } from "../mcp-util"
 const operations = {
   workflow_create: ["POST", "/v1/workflow-runtimes", ["name", "model_connection_id", "request_id"]],
   workflow_save: ["PUT", "/v1/workflow-runtimes/:id", ["instruction", "provider", "revision"]],
+  workflow_files: ["PUT", "/v1/workflow-runtimes/:id/files", ["short_id", "version", "revision"]],
   workflow_test: ["POST", "/v1/workflow-runtimes/:id/tests", ["request_id", "revision"]],
   workflow_schedule: [
     "PUT",

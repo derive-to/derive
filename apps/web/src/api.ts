@@ -17,6 +17,7 @@ import type {
   SortMode,
   SourceOp,
   WorkflowDraftRecord,
+  WorkflowFilesRecord,
   WorkflowReadiness,
   WorkspaceAccess,
 } from "@derive/core"
@@ -1519,9 +1520,15 @@ export const api = {
     id: string,
   ): Promise<{
     draft: WorkflowDraftRecord | null
+    files: (WorkflowFilesRecord & { title?: string; short_id?: string }) | null
     test: { id: string; status: string } | null
     readiness: WorkflowReadiness
   }> => f(`/v1/workflow-runtimes/${id}`, opts()).then(j),
+  saveWorkflowFiles: (
+    id: string,
+    body: { short_id: string | null; version: number | null; revision: number | null },
+  ): Promise<unknown> =>
+    f(`/v1/workflow-runtimes/${id}/files`, { ...opts(body), method: "PUT" }).then(j),
   saveWorkflowDraft: (
     id: string,
     body: { instruction: string; provider: "codex" | "claude-code"; revision: number | null },

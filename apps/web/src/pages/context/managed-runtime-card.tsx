@@ -16,6 +16,7 @@ import { useApiMutation } from "@/lib/use-api-mutation"
 import { RuntimeModelAccount } from "./runtime-model-account"
 import { RuntimeRunHistory } from "./runtime-run-history"
 import { RuntimeScheduleCard } from "./runtime-schedule-card"
+import { WorkflowFilesCard } from "./workflow-files-card"
 
 type RuntimeState = Awaited<ReturnType<typeof api.getContextRuntime>>
 export function ManagedRuntimeCard({
@@ -138,7 +139,9 @@ export function ManagedRuntimeCard({
                   ? "workflow-account"
                   : nextAction?.action === "access"
                     ? "workflow-access"
-                    : "workflow-instructions"
+                    : nextAction?.action === "files"
+                      ? "workflow-files"
+                      : "workflow-instructions"
               }
               className="text-sm text-primary underline"
               data-testid="workflow-next-action"
@@ -147,7 +150,9 @@ export function ManagedRuntimeCard({
                 ? "Review model account"
                 : nextAction?.action === "access"
                   ? "Review access"
-                  : "Edit instructions"}
+                  : nextAction?.action === "files"
+                    ? "Review input files"
+                    : "Edit instructions"}
             </Link>
           )}
           <Button
@@ -243,21 +248,9 @@ export function ManagedRuntimeCard({
               onDirtyChange={setScheduleDirty}
             />
           )}
-          <div className="flex flex-col gap-2 rounded-xl border bg-card p-5">
-            <SectionTitle>Files</SectionTitle>
-            <p className="text-sm text-muted-foreground">
-              Start with instructions alone. Files created by this workflow are retained between
-              runs. Uploading a local project and custom setup commands are not available yet.
-            </p>
-            <Link
-              to="/contexts/$id"
-              params={{ id: contextId }}
-              className="text-sm text-primary underline"
-              data-testid="workflow-files-skills"
-            >
-              Manage supporting artifacts and skills
-            </Link>
-          </div>
+          {configuration.data && (
+            <WorkflowFilesCard contextId={contextId} configuration={configuration.data} />
+          )}
           <SectionTitle>Account &amp; access</SectionTitle>
           {state.enabled && (readiness?.can_edit || state.model_connection) && (
             <div id="workflow-account">

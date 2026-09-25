@@ -1,4 +1,4 @@
-import { newId, publish } from "@derive/core"
+import { artifactUserCan, isBundleContentType, newId, publish } from "@derive/core"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
@@ -9,6 +9,7 @@ import { ContextConflictError, createContextCore } from "../lib/create-context"
 import { sha256 } from "../lib/crypto"
 import { fail, readJson } from "../lib/http"
 import { deleteArtifactAndUnindex } from "../lib/search"
+import { workflowFileManifest } from "../lib/workflow-files"
 import { workflowConfiguration, workflowReadiness } from "../lib/workflow-readiness"
 
 /** A workflow view over existing execution records; Context and artifact contracts stay intact. */
@@ -199,10 +200,15 @@ export const workflowRuntimeRoutes = (ctx: AppContext) => {
     )
       return fail(c, 404, "not found")
     const configuration = await workflowConfiguration(ctx.meta, context)
+    const files = await ctx.meta.getWorkflowFiles(context.id, org)
+    const source = files?.artifact_id ? await ctx.meta.getArtifactById(files.artifact_id) : null
     return c.json({
       draft: configuration.schedule ? null : configuration.draft,
       schedule: configuration.schedule,
       connection_ids: parseConnectionIds(context.connection_ids),
+      files: files
+        ? { ...files, title: source?.title ?? "Input files", short_id: source?.short_id }
+        : null,
       test: await ctx.meta
         .latestWorkflowTest(context.id, org, user)
         .then((value) => value && { id: value.id, status: value.status }),
@@ -214,6 +220,68 @@ export const workflowRuntimeRoutes = (ctx: AppContext) => {
         ctx.deps.runtimeFetch,
       ),
     })
+  })
+  app.put("/v1/workflow-runtimes/:id/files", async (c) => {
+    const org = await ctx.requireWorkspace(c, "publish")
+    if (org instanceof Response) return org
+    const context = await manageableContext(ctx, c)
+    if (context instanceof Response) return context
+    const user = await ctx.managementPrincipal(c)
+    if (!user) return fail(c, 401, "unauthenticated")
+    const body = await readJson(
+      c,
+      z
+        .object({
+          short_id: z.string().min(1).max(64).nullable(),
+          version: z.number().int().positive().nullable(),
+          revision: z.number().int().nonnegative().nullable(),
+        })
+        .strict(),
+    )
+    if (body instanceof Response) return body
+    if ((body.short_id === null) !== (body.version === null))
+      return fail(c, 400, "Choose an artifact version or remove the attachment")
+    let artifactId: string | null = null
+    let blobKey: string | null = null
+    if (body.short_id && body.version) {
+      const artifact = await ctx.meta.getByShortId(body.short_id)
+      if (
+        !artifact ||
+        artifact.org_id !== org ||
+        artifact.removed_at ||
+        artifact.archived_at ||
+        !(await artifactUserCan(ctx.meta, user, "share", artifact))
+      )
+        return fail(c, 403, "You need permission to share these files with the workflow")
+      const version = await ctx.meta.getVersion(artifact.id, body.version)
+      if (!version || !isBundleContentType(version.content_type))
+        return fail(c, 400, "Choose an uploaded file bundle")
+      artifactId = artifact.id
+      blobKey = version.blob_key
+      try {
+        await workflowFileManifest(ctx.blobs, {
+          artifact_id: artifact.id,
+          version: version.n,
+          blob_key: version.blob_key,
+          granted_by: user,
+          revision: 0,
+        })
+      } catch {
+        return fail(c, 400, "The bundle contains unavailable or unsupported files")
+      }
+    }
+    const files = await ctx.meta.saveWorkflowFiles({
+      contextId: context.id,
+      orgId: org,
+      ownerId: user,
+      artifactId,
+      blobKey,
+      version: body.version,
+      revision: body.revision,
+      at: new Date().toISOString(),
+    })
+    if (!files) return fail(c, 409, "The file attachment changed. Reload before saving.")
+    return c.json({ files })
   })
   app.put("/v1/workflow-runtimes/:id", async (c) => {
     const org = await ctx.requireWorkspace(c, "publish")

@@ -386,6 +386,17 @@ export const runtimeModelBinding = pgTable("runtime_model_binding", {
   updated_at: text("updated_at").notNull(),
 })
 
+export const workflowFiles = pgTable("workflow_files", {
+  context_id: text("context_id").primaryKey(),
+  org_id: text("org_id").notNull(),
+  artifact_id: text("artifact_id"),
+  blob_key: text("blob_key"),
+  version: integer("version"),
+  granted_by: text("granted_by").notNull(),
+  revision: integer("revision").notNull().default(0),
+  updated_at: text("updated_at").notNull(),
+})
+
 export const workflowDraft = pgTable("workflow_draft", {
   context_id: text("context_id").primaryKey(),
   org_id: text("org_id").notNull(),
@@ -1655,6 +1666,7 @@ const TABLES = [
   runtimeModelConnection,
   runtimeModelBinding,
   workflowDraft,
+  workflowFiles,
   workflowTest,
   runAttempt,
   workflowRun,

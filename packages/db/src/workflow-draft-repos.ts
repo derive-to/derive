@@ -1,8 +1,15 @@
-import type { RuntimeStore, WorkflowDraftRecord, WorkflowTestRecord } from "@derive/core"
+import type {
+  RuntimeStore,
+  WorkflowDraftRecord,
+  WorkflowFilesRecord,
+  WorkflowTestRecord,
+} from "@derive/core"
 import { type SQL, sql } from "drizzle-orm"
 
 type Store = Pick<
   RuntimeStore,
+  | "getWorkflowFiles"
+  | "saveWorkflowFiles"
   | "projectWorkflowDraft"
   | "getWorkflowDraft"
   | "saveWorkflowDraft"
@@ -17,6 +24,35 @@ export function workflowDraftRepos(execute: (statement: SQL) => Promise<unknown[
   const first = async <T>(statement: SQL) =>
     ((await execute(statement))[0] as T | undefined) ?? null
   return {
+    getWorkflowFiles: (id, org) =>
+      first<WorkflowFilesRecord>(
+        sql`SELECT * FROM workflow_files WHERE context_id = ${id} AND org_id = ${org}`,
+      ),
+    saveWorkflowFiles: (i) => {
+      if (
+        new Date(i.at).toISOString() !== i.at ||
+        (i.revision !== null && (!Number.isSafeInteger(i.revision) || i.revision < 0)) ||
+        (i.artifactId === null
+          ? i.blobKey !== null || i.version !== null
+          : !i.artifactId ||
+            !/^[a-f0-9]{64}$/.test(i.blobKey ?? "") ||
+            !Number.isSafeInteger(i.version) ||
+            (i.version ?? 0) < 1)
+      )
+        throw new Error("Invalid workflow file selection")
+      return first<WorkflowFilesRecord>(sql`
+      INSERT INTO workflow_files (context_id, org_id, artifact_id, blob_key, version, granted_by, revision, updated_at)
+      SELECT c.id, c.org_id, ${i.artifactId}, ${i.blobKey}, ${i.version}, ${i.ownerId}, 0, ${i.at} FROM context c
+      JOIN membership m ON m.org_id = c.org_id AND m.user_id = ${i.ownerId}
+      WHERE c.id = ${i.contextId} AND c.org_id = ${i.orgId} AND c.import_source IS NULL
+        AND m.role IN ('owner', 'editor')
+        AND (c.created_by = ${i.ownerId} OR m.role = 'owner')
+        AND (cast(${i.revision} AS integer) IS NULL OR EXISTS (SELECT 1 FROM workflow_files f WHERE f.context_id = c.id))
+      ON CONFLICT (context_id) DO UPDATE SET artifact_id = excluded.artifact_id, blob_key = excluded.blob_key, version = excluded.version,
+        granted_by = excluded.granted_by, revision = workflow_files.revision + 1, updated_at = excluded.updated_at
+      WHERE workflow_files.org_id = excluded.org_id AND workflow_files.revision = ${i.revision ?? -1}
+      RETURNING *`)
+    },
     projectWorkflowDraft: async (id, org, owner, at) => {
       // The existing Automation becomes the sole instruction/schedule owner once a runtime exists.
       // Freeze the source before projection. An edit's CAS checks this same row, so even

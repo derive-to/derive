@@ -5673,6 +5673,43 @@ export function runStoreContract(
       expect((await store.getRuntimeSchedule(runtime.id, ORG))?.created_by).toBe("owner")
     })
 
+    it("serializes workflow input selection, including removal, without crossing workspaces", async () => {
+      const f = await fixture()
+      await store.setMembership({ id: uuid(), org_id: ORG, user_id: "owner", role: "owner" })
+      const input = {
+        contextId: f.context.id,
+        orgId: ORG,
+        ownerId: "owner",
+        artifactId: "input-artifact",
+        blobKey: "a".repeat(64),
+        version: 1,
+        revision: null,
+        at,
+      }
+      expect(await store.saveWorkflowFiles({ ...input, orgId: "foreign" })).toBeNull()
+      expect(await store.saveWorkflowFiles(input)).toMatchObject({ revision: 0, version: 1 })
+      expect(await store.saveWorkflowFiles(input)).toBeNull()
+      const results = await Promise.all([
+        store.saveWorkflowFiles({ ...input, version: 2, revision: 0 }),
+        store.saveWorkflowFiles({ ...input, version: 3, revision: 0 }),
+      ])
+      expect(results.filter(Boolean)).toHaveLength(1)
+      expect(await store.getWorkflowFiles(f.context.id, "foreign")).toBeNull()
+      expect(
+        await store.saveWorkflowFiles({
+          ...input,
+          artifactId: null,
+          blobKey: null,
+          version: null,
+          revision: 1,
+        }),
+      ).toMatchObject({ artifact_id: null, revision: 2 })
+      expect(await store.saveWorkflowFiles({ ...input, revision: 0 })).toBeNull()
+      expect(await store.saveWorkflowFiles(input)).toBeNull()
+      await store.deleteContext(f.context.id, ORG)
+      expect(await store.getWorkflowFiles(f.context.id, ORG)).toBeNull()
+    })
+
     it("serializes draft edits with handover to the existing disabled schedule", async () => {
       const f = await fixture()
       await store.setMembership({ id: uuid(), org_id: ORG, user_id: "owner", role: "owner" })

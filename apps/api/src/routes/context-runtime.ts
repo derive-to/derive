@@ -1,5 +1,5 @@
 import { refRouter } from "@derive/broker"
-import { newId, type RuntimeRunInput } from "@derive/core"
+import { newId, type RuntimeRunInput, sha256Hex } from "@derive/core"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
@@ -21,7 +21,7 @@ import {
 import { readEnvironmentBindings } from "../lib/context-environment"
 import { credentialRevision } from "../lib/credentials"
 import { decryptSecret } from "../lib/crypto"
-import { fail, readJson } from "../lib/http"
+import { fail, readJson, toBody } from "../lib/http"
 import { OrtamClient } from "../lib/ortam-client"
 import { runtimeRunContext } from "../lib/runtime-access"
 import { runtimeInput } from "../lib/runtime-input"
@@ -29,6 +29,7 @@ import { runtimeModelReady } from "../lib/runtime-model-grant"
 import { runtimeRunView } from "../lib/runtime-run-view"
 import { nextRuntimeOccurrence, runtimeScheduleAllows } from "../lib/runtime-schedule"
 import { verifyRuntimeToken } from "../lib/runtime-token"
+import { workflowFileManifest } from "../lib/workflow-files"
 import { workflowReadiness } from "../lib/workflow-readiness"
 
 export const contextRuntimeRoutes = (ctx: AppContext) => {
@@ -296,6 +297,16 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
     if (!bytes || bytes.byteLength > 256_000)
       return fail(c, 409, "Pinned manifest is unavailable or too large")
 
+    if (input.files && c.req.header("X-Derive-File-Inputs") !== "1")
+      return fail(c, 409, "This environment needs a runner update before it can receive files")
+    let files = null
+    if (input.files) {
+      try {
+        files = { ...input.files, ...(await workflowFileManifest(deps.blobs, input.files)) }
+      } catch {
+        return fail(c, 409, "The uploaded input files are unavailable")
+      }
+    }
     const selected = input.connection_ids.filter((id) =>
       (JSON.parse(context.connection_ids ?? "[]") as string[]).includes(id),
     )
@@ -311,12 +322,49 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
     if (!claimed) return c.json({ claimed: false })
     return c.json({
       claimed: true,
+      files,
       input,
       tools,
       manifest: new TextDecoder().decode(bytes),
       environment,
       deadline_at: attempt.deadline_at,
     })
+  })
+  // authz-exempt: signed attempt capability, active claim and live delegated artifact access; pinned files only.
+  app.post("/v1/runtime-attempts/:id/files", async (c) => {
+    c.header("Cache-Control", "no-store")
+    const work = await authenticate(c)
+    if (!work) return fail(c, 401, "Invalid attempt token")
+    const { attempt, run } = work
+    if (
+      !attempt.runner_claimed_at ||
+      attempt.result_json ||
+      attempt.released_at ||
+      !["launching", "running"].includes(attempt.phase) ||
+      attempt.deadline_at <= new Date().toISOString()
+    )
+      return fail(c, 409, "Attempt is not running")
+    const runtime = await meta.getContextRuntime(attempt.runtime_id, run.org_id)
+    if (!(await runtimeRunContext(meta, deps.runtime, run, runtime)))
+      return fail(c, 403, "Workflow file access changed")
+    const input = JSON.parse(run.input_snapshot ?? "null") as RuntimeRunInput | null
+    if (!input?.files) return fail(c, 404, "No input files for this run")
+    const body = await readJson(c, z.object({ path: z.string().min(1).max(512) }).strict())
+    if (body instanceof Response) return body
+    try {
+      const inventory = await workflowFileManifest(deps.blobs, input.files)
+      const file = inventory.files.find((file) => file.path === body.path)
+      if (!file) return fail(c, 404, "File not found in this input version")
+      const bytes = await deps.blobs.get(file.sha256)
+      if (!bytes || bytes.byteLength !== file.size || (await sha256Hex(bytes)) !== file.sha256)
+        return fail(c, 409, "An input file is missing or corrupt")
+      return c.body(toBody(bytes), 200, {
+        "Content-Type": "application/octet-stream",
+        "X-Content-Type-Options": "nosniff",
+      })
+    } catch {
+      return fail(c, 409, "Input files are unavailable")
+    }
   })
   // authz-exempt: attempt capability plus live Context grant intersection bounds each broker call.
   app.post("/v1/runtime-attempts/:id/tool", async (c) => {

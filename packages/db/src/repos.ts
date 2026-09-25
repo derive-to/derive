@@ -284,6 +284,7 @@ import {
   webhookDelivery,
   workflowArtifactActivity,
   workflowDraft,
+  workflowFiles,
   workflowPublishReceipt,
   workflowRun,
   workflowStepAttempt,
@@ -475,6 +476,7 @@ export const schema = {
   runtimeModelConnection,
   runtimeModelBinding,
   workflowDraft,
+  workflowFiles,
   workflowTest,
   runAttempt,
   workflowRun,
@@ -548,6 +550,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   runtimeModelConnection: true,
   runtimeModelBinding: true,
   workflowDraft: true,
+  workflowFiles: true,
   workflowTest: true,
   runAttempt: true,
   workflowRun: true,
@@ -2265,6 +2268,7 @@ export function makeRepos(db: SqliteDb) {
     // encrypted token is orphaned (the pool row would otherwise have no API path left to
     // delete once memberships are gone). One predicate covers members and the pool.
     await db.delete(modelCredential).where(eq(modelCredential.org_id, orgId)).run()
+    await db.delete(workflowFiles).where(eq(workflowFiles.org_id, orgId)).run()
     await db.delete(workflowDraft).where(eq(workflowDraft.org_id, orgId)).run()
     await db.delete(workflowTest).where(eq(workflowTest.org_id, orgId)).run()
     await db.delete(workspace).where(eq(workspace.id, orgId)).run()
@@ -3930,6 +3934,7 @@ export function makeRepos(db: SqliteDb) {
     // parent row. Deleting the job is how a running import learns it was cancelled.
     await db.delete(contextAsker).where(eq(contextAsker.context_id, id)).run()
     await db.delete(importJob).where(eq(importJob.context_id, id)).run()
+    await db.delete(workflowFiles).where(eq(workflowFiles.context_id, id)).run()
     await db.delete(workflowDraft).where(eq(workflowDraft.context_id, id)).run()
     await db.delete(workflowTest).where(eq(workflowTest.context_id, id)).run()
     await db.delete(context).where(eq(context.id, id)).run()

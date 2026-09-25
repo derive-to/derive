@@ -1,3 +1,4 @@
+import { FILE_BUNDLE_CONTENT_TYPE } from "./file-bundle"
 import { LATEX_CONTENT_TYPE } from "./latex"
 import { escapeHtml } from "./md"
 import { LATEX_BUNDLE_CONTENT_TYPE, SKILL_CONTENT_TYPE } from "./ports"
@@ -12,6 +13,7 @@ export const kindLabel = (
   importSource?: string | null,
 ): string => {
   if (importSource === "arxiv") return "arXiv"
+  if (contentType === FILE_BUNDLE_CONTENT_TYPE) return "Files"
   if (contentType === SKILL_CONTENT_TYPE) return "Skill"
   if (contentType === LATEX_BUNDLE_CONTENT_TYPE) return "LaTeX"
   if (isBundle) return "Site"

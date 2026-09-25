@@ -1,9 +1,11 @@
 import { execSync } from "node:child_process"
+import { createHash } from "node:crypto"
 import {
   chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -32,6 +34,7 @@ import {
   serveSession,
   syncRepos,
 } from "../src/runner.js"
+import { prepareRuntimeFiles } from "../src/runtime-files.js"
 import { materializeSkills, skillDigest, skillSlug, writeSkill } from "../src/skills.js"
 
 describe("parseAnswer", () => {
@@ -993,6 +996,53 @@ console.log(JSON.stringify({type:"result",result:'<answer>{"body_md":"done"}</an
 })
 
 describe("persistent runtime runner", () => {
+  it("delivers verified versions once, keeps agent work, and fails closed on corrupt or unsafe inputs", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "derive-files-"))
+    const sha = (bytes) => createHash("sha256").update(bytes).digest("hex")
+    const content = Buffer.from("print('original')")
+    const input = {
+      artifact_id: "art_files",
+      version: 1,
+      blob_key: sha("manifest"),
+      files: [{ path: "scripts/check.py", sha256: sha(content), size: content.length }],
+    }
+    const downloads = vi.fn(async () => new Response(content))
+    try {
+      writeFileSync(join(cwd, "working.py"), "agent changes")
+      const first = await prepareRuntimeFiles(cwd, input, downloads)
+      expect(readFileSync(join(first, "scripts/check.py"), "utf8")).toBe(content.toString())
+      expect(await prepareRuntimeFiles(cwd, input, downloads)).toBe(first)
+      expect(downloads).toHaveBeenCalledTimes(1)
+      const second = await prepareRuntimeFiles(cwd, { ...input, version: 2 }, downloads)
+      expect(second).not.toBe(first)
+      expect(readFileSync(join(cwd, "working.py"), "utf8")).toBe("agent changes")
+      await expect(
+        prepareRuntimeFiles(cwd, { ...input, version: 3 }, async () => new Response("corrupt")),
+      ).rejects.toThrow(/verification|declared size/)
+      expect(
+        readdirSync(join(cwd, ".derive-inputs")).filter((name) => name.startsWith(".staging")),
+      ).toEqual([])
+      // A failed transfer is safely retried; a completed but modified input is never overwritten.
+      await prepareRuntimeFiles(cwd, { ...input, version: 3 }, downloads)
+      chmodSync(join(first, "scripts/check.py"), 0o600)
+      writeFileSync(join(first, "scripts/check.py"), "edited")
+      await expect(prepareRuntimeFiles(cwd, input, downloads)).rejects.toThrow(/modified/)
+      for (const path of ["../outside", "/absolute", "a/../b", "a\\b"]) {
+        await expect(
+          prepareRuntimeFiles(cwd, { ...input, files: [{ ...input.files[0], path }] }, downloads),
+        ).rejects.toThrow(/unsafe/)
+      }
+      const unsafe = join(cwd, "unsafe")
+      mkdirSync(unsafe)
+      symlinkSync(cwd, join(unsafe, ".derive-inputs"))
+      await expect(prepareRuntimeFiles(unsafe, input, downloads)).rejects.toThrow(/unsafe/)
+    } finally {
+      for (const name of readdirSync(join(cwd, ".derive-inputs")))
+        chmodSync(join(cwd, ".derive-inputs", name), 0o700)
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
   it("runs the provider once, preserves working files, and replays only the receipt after a lost response", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "derive-attempt-"))
     const bin = join(cwd, "agent.cjs")
@@ -1001,6 +1051,7 @@ describe("persistent runtime runner", () => {
       bin,
       `#!/usr/bin/env node
 const fs = require("node:fs");
+fs.readFileSync(".derive-inputs/" + fs.readdirSync(".derive-inputs")[0] + "/check.py");
 fs.appendFileSync("launches", "one\\n");
 fs.writeFileSync("environment.json", JSON.stringify({ value: process.env.SELECTED_VALUE, token: process.env.DERIVE_TOKEN, previous: fs.readFileSync("previous-work", "utf8") }));
 console.log(JSON.stringify({ type: "result", result: "# Report\\nEverything checked." }));
@@ -1013,6 +1064,8 @@ console.log(JSON.stringify({ type: "result", result: "# Report\\nEverything chec
       bin: process.env.AGENT_BIN,
     }
     const receipts = []
+    const fileBytes = Buffer.from("uploaded script")
+    const filePin = { artifact_id: "art_test", version: 1, blob_key: "a".repeat(64) }
     let claims = 0
     globalThis.fetch = async (url, init) => {
       if (String(url).endsWith("/claim")) {
@@ -1021,7 +1074,22 @@ console.log(JSON.stringify({ type: "result", result: "# Report\\nEverything chec
           claims === 1
             ? {
                 claimed: true,
-                input: { provider: "claude-code", model: null, instruction: "Inspect the files" },
+                input: {
+                  provider: "claude-code",
+                  model: null,
+                  instruction: "Inspect the files",
+                  files: filePin,
+                },
+                files: {
+                  ...filePin,
+                  files: [
+                    {
+                      path: "check.py",
+                      sha256: createHash("sha256").update(fileBytes).digest("hex"),
+                      size: fileBytes.length,
+                    },
+                  ],
+                },
                 manifest: "Use the existing script",
                 environment: { SELECTED_VALUE: "task value" },
                 deadline_at: new Date(Date.now() + 60000).toISOString(),
@@ -1029,6 +1097,10 @@ console.log(JSON.stringify({ type: "result", result: "# Report\\nEverything chec
               }
             : { claimed: false },
         )
+      }
+      if (String(url).endsWith("/files")) {
+        expect(JSON.parse(init.body)).toEqual({ path: "check.py" })
+        return new Response(fileBytes)
       }
       expect(String(url)).toMatch(/\/result$/)
       receipts.push(JSON.parse(init.body))
@@ -1046,6 +1118,12 @@ console.log(JSON.stringify({ type: "result", result: "# Report\\nEverything chec
         timeoutMs: 5000,
       }
       expect(await runOnce(cfg)).toEqual({ served: 1, failed: 0 })
+      expect(
+        readFileSync(
+          join(cwd, ".derive-inputs", `art_test-v1-${filePin.blob_key}`, "check.py"),
+          "utf8",
+        ),
+      ).toBe("uploaded script")
       expect(receipts).toHaveLength(2)
       expect(receipts[0]).toEqual(receipts[1])
       expect(receipts[0].summary).toContain("Everything checked")
@@ -1056,6 +1134,10 @@ console.log(JSON.stringify({ type: "result", result: "# Report\\nEverything chec
       expect(await runOnce(cfg)).toEqual({ served: 0, failed: 0 })
       expect(readFileSync(join(cwd, "launches"), "utf8")).toBe("one\n")
     } finally {
+      if (existsSync(join(cwd, ".derive-inputs"))) {
+        for (const name of readdirSync(join(cwd, ".derive-inputs")))
+          chmodSync(join(cwd, ".derive-inputs", name), 0o700)
+      }
       globalThis.fetch = original.fetch
       for (const [name, value] of [
         ["DERIVE_ATTEMPT_ID", original.id],

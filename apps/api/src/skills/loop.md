@@ -172,6 +172,7 @@ write returns `{status, result}` with the HTTP result, including actionable fail
 | `workflow_save` | `instruction`, `provider` (`codex` or `claude-code`), numeric draft `revision` |
 | `workflow_account` | `connection_id` (or null to unassign), binding `revision` (null before first assignment) |
 | `workflow_environment` | `bindings`: complete map of environment variable names to saved credential IDs |
+| `workflow_files` | `short_id`, exact numeric `version`, attachment `revision` (null before first selection); set both `short_id` and `version` to null to remove |
 | `workflow_connections` | `connection_ids`: complete list of source connections to allow |
 | `workflow_test` | `revision`: reviewed readiness hash; stable UUID `request_id` |
 | `workflow_schedule` | `instruction`, `provider`, `cron` (or null for manual), IANA `timezone`, `enabled`, numeric schedule `revision` |
@@ -187,18 +188,28 @@ write returns `{status, result}` with the HTTP result, including actionable fail
    New secret values can be transferred through the management API using `stage(target:'api')`
    and a shell, with the user's authorization. Never put them in workflow instructions,
    artifacts, tool arguments, logs or an uploaded `.env` file.
-4. Arrange access to the required files. Artifact publishing does not automatically install
-   a project in the sandbox. Public Git repositories can be cloned by the running agent;
+4. Transfer local scripts/data as a ZIP with `stage(target:'doc')` and multipart
+   `file_bundle=true`; see the publishing skill. Keep credentials and local caches out.
+   Read `configuration.files.revision` (null before first selection), then attach the
+   upload’s `short_id` and exact version with `workflow_files`. Uploading alone does not
+   attach files. People allowed to run this workflow can use the selected files; the source
+   artifact’s sharing stays unchanged. Share standing on the source is required.
+   Public Git repositories can also be cloned by the running agent;
    private Git access needs a credential that actually permits cloning. Derive's standard
    GitHub source currently supports PR reads/comments and selected Actions operations, not
    cloning, pushing branches or opening PRs. Do not promise repository access from that
-   connection alone. Local-only file transfer remains a separate gap.
+   connection alone.
 5. Read `configuration`, resolve its blockers, and submit `workflow_test` with the readiness
    revision. Reuse the same request UUID after a lost response. This queues one durable run
    and automatically prepares the environment if needed; closing the client does not lose it.
    Poll configuration/runs to distinguish preparation, submission, actual success and saving.
 6. The remote agent installs missing dependencies as part of its ordinary first run. There
-   is no user-defined dependency setup stage. Later runs resume the saved environment.
+   is no user-defined dependency setup stage. Inputs arrive in a verified version-specific
+   directory before the agent starts. The agent copies/adapts files into its working directory;
+   later runs resume those working files. A new upload or removal affects future accepted
+   runs, never overlays working files, and cannot erase copies already made. Explicitly
+   select a new version to update an input. Revoking the grantor’s source access blocks
+   further delivery, including for an accepted run.
 7. After checking the report and saved-state result, read the established schedule revision
    and use `workflow_schedule` to set the authorized cadence. Setting `enabled:false` pauses
    the schedule while preserving manual runs. Schedule editing also owns instruction updates

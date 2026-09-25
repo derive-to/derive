@@ -460,7 +460,7 @@ export function createApp(deps: AppDeps): Hono {
   // OPTIONS preflights pass through to CORS. All three allowed actions are
   // ephemeral and identity-safe (the server, not the client, names the viewer).
   const ANON_WRITE_ALLOW = [
-    /^\/v1\/runtime-attempts\/[^/]+\/(?:claim|result|tool)$/, // signed attempt capability checked by each route; no general agent principal
+    /^\/v1\/runtime-attempts\/[^/]+\/(?:claim|result|tool|files)$/, // signed attempt capability checked by each route; no general agent principal
 
     /^\/v1\/artifacts\/[^/]+\/presence$/, // ephemeral "I'm viewing" heartbeat
     /^\/v1\/artifacts\/[^/]+\/cursor$/, // ephemeral live cursor (viral viewing)

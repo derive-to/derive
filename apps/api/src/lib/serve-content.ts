@@ -6,6 +6,8 @@ import {
   DYNAMIC_DATA_SCRIPT,
   type DynamicSlotRecord,
   type DynamicValue,
+  escapeHtml,
+  FILE_BUNDLE_CONTENT_TYPE,
   injectArtifactRuntimeScripts,
   injectSharedStateScript,
   isBundleContentType,
@@ -169,6 +171,27 @@ export const serveContent = async (
     if (!manifestBytes) return c.text("blob missing", 500)
     const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
 
+    if (
+      content.content_type === FILE_BUNDLE_CONTENT_TYPE &&
+      (path === "" || path === "index.html")
+    ) {
+      const inventory = Object.entries(manifest.files)
+        .map(
+          ([name, file]) =>
+            `<li><code>${escapeHtml(name.slice(1))}</code> — ${file.size ?? 0} bytes</li>`,
+        )
+        .join("\n")
+      return c.html(
+        withSharedState(
+          await renderMarkdown(
+            `# Files\n\n${Object.keys(manifest.files).length} files · versioned input bundle\n\n<ul>${inventory}</ul>`,
+            title,
+          ),
+        ),
+        200,
+        headers,
+      )
+    }
     if (path === "" || path === "index.html") path = manifest.entry.slice(1)
     let lookup = `/${path}`
     if (lookup.endsWith("/")) lookup += "index.html"

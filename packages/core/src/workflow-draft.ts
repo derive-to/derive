@@ -25,7 +25,7 @@ export interface WorkflowReadiness {
   blockers: {
     code: string
     message: string
-    action: "edit" | "account" | "access" | "settings" | "retry" | null
+    action: "edit" | "files" | "account" | "access" | "settings" | "retry" | null
   }[]
   can_edit: boolean
   can_test: boolean

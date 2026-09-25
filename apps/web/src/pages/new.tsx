@@ -1,6 +1,5 @@
 import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useBlocker, useNavigate, useSearch } from "@tanstack/react-router"
-import { zipSync } from "fflate"
 import { useEffect, useRef, useState } from "react"
 import { type Artifact, api, type LatexTemplateId } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
@@ -92,7 +91,7 @@ export function NewArtifact() {
   })
 
   const publishMut = useApiMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       const name = title.trim() || "Untitled"
       const ext = format === "md" ? "md" : format === "tex" ? "tex" : "html"
       const type =
@@ -100,13 +99,14 @@ export function NewArtifact() {
       const fields: Record<string, string> = { title: name }
       if (message.trim()) fields.message = message.trim()
       if (isSkill) {
-        const bundle = new Uint8Array(skillBundleBytes(src)).buffer
+        const bundle = new Uint8Array(await skillBundleBytes(src)).buffer
         return api.publish(new File([bundle], "skill.zip", { type: "application/zip" }), fields)
       }
       if (paperId) {
         if (!paper.data) throw new Error("the paper starter has not loaded yet")
         const encoder = new TextEncoder()
         const files = { ...paper.data.files, "main.tex": src }
+        const { zipSync } = await import("fflate")
         const zip = zipSync(
           Object.fromEntries(Object.entries(files).map(([p, t]) => [p, encoder.encode(t)])),
         )

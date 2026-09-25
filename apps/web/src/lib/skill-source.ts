@@ -1,5 +1,3 @@
-import { zipSync } from "fflate"
-
 const FRONTMATTER = /^﻿?---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n)*/
 
 export const NEW_SKILL_SOURCE = `---
@@ -23,8 +21,9 @@ export const skillDisplayName = (title: string | null, name: string): string => 
 export const skillPreviewSource = (source: string): string => source.replace(FRONTMATTER, "")
 
 /** A browser-created Skill uses the same portable two-file bundle as every agent client. */
-export const skillBundleBytes = (source: string): Uint8Array =>
-  zipSync({
+export const skillBundleBytes = async (source: string): Promise<Uint8Array> => {
+  const { zipSync } = await import("fflate")
+  return zipSync({
     "SKILL.md": new TextEncoder().encode(source),
     "derive.skill.json": new TextEncoder().encode(
       JSON.stringify({
@@ -34,3 +33,4 @@ export const skillBundleBytes = (source: string): Uint8Array =>
       }),
     ),
   })
+}
