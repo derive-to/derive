@@ -126,3 +126,13 @@ When `catch_up` returns `review.state === 'sent_back'`, read the open threads an
 If the note says it's good, stop: that is the go-signal. Otherwise revise and publish with
 `request_review:true` to send the new version back. Include fixed thread ids in `addresses`
 on that publish; the publish resolves those threads.
+
+### Cloud workflow readiness
+
+For a workflow that keeps working files, call `list_automations` with `workflow_id`
+(the workflow’s Context ID). It returns the same readiness state, ordered reason
+codes, permitted actions, configuration revision and evaluation time as the web
+setup page. This is a read, not permission to execute. Editing and execution through
+the management API require a management grant; read-only connections cannot acquire
+those powers from a readiness result. Folder import and custom dependency setup
+are separate capabilities and are not implied by a Ready task-only workflow.

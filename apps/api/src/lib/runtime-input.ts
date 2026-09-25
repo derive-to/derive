@@ -22,6 +22,7 @@ export async function runtimeInput(
     credential_revisions: Object.fromEntries(
       connections
         .filter((cn) => cn.org_id === context.org_id && cn.kind === "secret")
+        .sort((a, b) => a.id.localeCompare(b.id))
         .map((cn) => [cn.id, credentialRevision(cn)]),
     ),
     version: 1,

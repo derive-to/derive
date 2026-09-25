@@ -384,6 +384,27 @@ CREATE TABLE IF NOT EXISTS runtime_model_binding (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS workflow_draft (
+  context_id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  instruction TEXT NOT NULL,
+  sealed_at TEXT,
+  provider TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS workflow_test (
+  id TEXT PRIMARY KEY,
+  context_id TEXT NOT NULL,
+  org_id TEXT NOT NULL,
+  initiated_by TEXT NOT NULL,
+  config_revision TEXT NOT NULL,
+  input_snapshot TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS run_attempt (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,
@@ -1167,6 +1188,8 @@ CREATE INDEX IF NOT EXISTS context_session_asker ON context_session (asker_id, c
 CREATE INDEX IF NOT EXISTS session_message_session ON session_message (session_id, created_at);
 
 CREATE INDEX IF NOT EXISTS asset_org ON asset (org_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS workflow_test_pending ON workflow_test (context_id) WHERE status = 'pending';
 
 CREATE UNIQUE INDEX IF NOT EXISTS run_runtime_schedule_pending ON run (runtime_id) WHERE runtime_id IS NOT NULL AND reason = 'schedule' AND status IN ('queued', 'running');
 

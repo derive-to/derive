@@ -966,6 +966,17 @@ test("cloud workflows keep manual runs available after pausing and link their re
     enabled: 1,
     revision: 0,
   }
+  const readiness = {
+    state: "ready",
+    revision: "a".repeat(64),
+    evaluated_at: new Date().toISOString(),
+    blockers: [],
+    can_edit: true,
+    can_test: true,
+  }
+  await owner.route(`**/v1/workflow-runtimes/${id}`, (route) =>
+    route.fulfill({ json: { draft: null, readiness, test: null } }),
+  )
   let runRequests = 0
   let created: { name: string; model_connection_id: string } | null = null
   await owner.route("**/v1/workflow-runtimes", (route) => {
@@ -980,6 +991,7 @@ test("cloud workflows keep manual runs available after pausing and link their re
         items: [
           {
             ...context,
+            readiness,
             ready: true,
             disabled: false,
             preparing: false,
@@ -1048,19 +1060,18 @@ test("cloud workflows keep manual runs available after pausing and link their re
     }
     await route.fulfill({ json: { schedule, next_run_at: null } })
   })
-  await owner.route(`**/v1/contexts/${id}/runtime/runs`, async (route) => {
+  await owner.route(`**/v1/workflow-runtimes/${id}/tests`, async (route) => {
     runRequests++
     await route.fulfill({ json: { run: { id: "queued_ui" } } })
   })
   await owner.goto("/workflows")
   await owner.getByTestId("workflows-new").click()
   await owner.getByTestId("workflow-create-name").fill(context.name)
-  await owner.getByTestId("context-model-account-add").click()
-  await owner.getByTestId("context-model-account-name").fill(account.name)
-  await owner.getByTestId("context-model-account-create").click()
-  await expect(owner.getByTestId("workflow-create-account")).toHaveValue(account.id)
+  await owner.getByTestId("model-account-select").selectOption(account.id)
   await owner.getByTestId("workflow-create-submit").click()
-  await expect.poll(() => created).toEqual({ name: context.name, model_connection_id: account.id })
+  await expect
+    .poll(() => created)
+    .toMatchObject({ name: context.name, model_connection_id: account.id })
   await expect(owner.getByTestId("workflow-detail-configuration")).toHaveAttribute(
     "data-state",
     "active",
@@ -1241,4 +1252,55 @@ test("workflow accounts connect in place and preserve imported task logins", asy
     body: await owner.screenshot({ fullPage: true, animations: "disabled" }),
     contentType: "image/png",
   })
+})
+
+test("workflow drafts save without an account and preserve edits on a revision conflict", async ({
+  owner,
+}, testInfo) => {
+  const manifest = await publishArtifact(owner, "draft.md", "# Saved task")
+  const context = await (
+    await owner.request.post("/v1/contexts", {
+      data: { name: "Integrity report draft", manifest_short_id: manifest },
+    })
+  ).json()
+  const path = `/v1/workflow-runtimes/${context.id}`
+  expect(
+    (
+      await owner.request.put(path, {
+        data: { instruction: "", provider: "codex", revision: null },
+      })
+    ).ok(),
+  ).toBeTruthy()
+  await owner.goto(`/workflows?workflow=${context.id}&tab=configuration`)
+  await expect(owner.getByTestId("workflow-draft-instruction")).toBeVisible()
+  await owner
+    .getByTestId("workflow-draft-instruction")
+    .fill("Check the integrity report and save the findings")
+  await owner.getByTestId("workflow-draft-save").click()
+  await expect(owner.getByText("Draft saved", { exact: true })).toBeVisible()
+  await owner.reload()
+  await expect(owner.getByTestId("workflow-draft-instruction")).toHaveValue(
+    "Check the integrity report and save the findings",
+  )
+  await expect(owner.getByTestId("context-managed-run")).toBeDisabled()
+  await expect(owner.getByTestId("context-managed-setup")).toHaveCount(0)
+  const saved = await (await owner.request.get(path)).json()
+  expect(saved.draft.revision).toBe(1)
+  await owner.getByTestId("workflow-draft-instruction").fill("My unsaved edits")
+  expect(
+    (
+      await owner.request.put(path, {
+        data: { instruction: "Another editor’s version", provider: "codex", revision: 1 },
+      })
+    ).ok(),
+  ).toBeTruthy()
+  await owner.getByTestId("workflow-draft-save").click()
+  await expect(owner.getByTestId("workflow-draft-instruction")).toHaveValue("My unsaved edits")
+  await expect(owner.getByTestId("workflow-draft-reload")).toBeVisible()
+  await owner.getByTestId("workflow-draft-reload").click()
+  await expect(owner.getByTestId("workflow-draft-instruction")).toHaveValue(
+    "Another editor’s version",
+  )
+  await owner.setViewportSize({ width: 390, height: 844 })
+  await owner.screenshot({ path: testInfo.outputPath("workflow-draft-mobile.png"), fullPage: true })
 })

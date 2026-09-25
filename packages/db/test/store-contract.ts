@@ -5673,6 +5673,58 @@ export function runStoreContract(
       expect((await store.getRuntimeSchedule(runtime.id, ORG))?.created_by).toBe("owner")
     })
 
+    it("serializes draft edits with handover to the existing disabled schedule", async () => {
+      const f = await fixture()
+      await store.setMembership({ id: uuid(), org_id: ORG, user_id: "owner", role: "owner" })
+      const draft = {
+        contextId: f.context.id,
+        orgId: ORG,
+        ownerId: "owner",
+        instruction: "Draft task",
+        provider: "codex" as const,
+        revision: null,
+        at,
+      }
+      expect(await store.saveWorkflowDraft(draft)).toMatchObject({ revision: 0 })
+      const [edit] = await Promise.all([
+        store.saveWorkflowDraft({ ...draft, instruction: "New task", revision: 0 }),
+        store.projectWorkflowDraft(f.context.id, ORG, "owner", at),
+      ])
+      const schedule = await store.getRuntimeSchedule(f.runtime.id, ORG)
+      expect(schedule).toMatchObject({ instruction: edit ? "New task" : "Draft task", enabled: 0 })
+      expect(await store.getWorkflowDraft(f.context.id, ORG)).toBeNull()
+      expect(await store.saveWorkflowDraft({ ...draft, revision: null })).toBeNull()
+      await store.projectWorkflowDraft(f.context.id, ORG, "owner", at)
+      expect(await store.getRuntimeSchedule(f.runtime.id, ORG)).toEqual(schedule)
+    })
+    it("admits one pending test per workflow and replays its receipt after submission", async () => {
+      const f = await fixture()
+      const input = {
+        id: uuid(),
+        context_id: f.context.id,
+        org_id: ORG,
+        initiated_by: "owner",
+        config_revision: "a".repeat(64),
+        input_snapshot: JSON.stringify(f.input),
+      }
+      const [first, other] = await Promise.all([
+        store.createWorkflowTest(input, at),
+        store.createWorkflowTest({ ...input, id: uuid() }, at),
+      ])
+      expect([first, other].filter(Boolean)).toHaveLength(1)
+      const accepted = first ?? other
+      if (!accepted) throw new Error("No admitted test")
+      expect(await store.getWorkflowTest(accepted.id, "foreign")).toBeNull()
+      await store.settleWorkflowTest(accepted.id, ORG, "submitted")
+      expect(await store.createWorkflowTest({ ...input, id: accepted.id }, at)).toMatchObject({
+        id: accepted.id,
+        status: "submitted",
+      })
+      expect(await store.createWorkflowTest({ ...input, id: uuid() }, at)).toMatchObject({
+        status: "pending",
+      })
+    })
+
     it("saves runtime schedules with revision checks and admits one current occurrence at a time", async () => {
       const f = await fixture()
       await store.setMembership({ id: uuid(), org_id: ORG, user_id: "owner", role: "owner" })

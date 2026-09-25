@@ -19,6 +19,7 @@ import { runtimeModelReady } from "./runtime-model-grant"
 import { materializeRuntimeSchedules, runtimeScheduleAllows } from "./runtime-schedule"
 import { reconcileRuntimeSetups } from "./runtime-setup"
 import { signRuntimeToken } from "./runtime-token"
+import { materializeWorkflowTests } from "./workflow-test"
 
 export interface RuntimeDispatchDeps {
   meta: MetaStore
@@ -308,6 +309,7 @@ export async function runtimeDispatchPass(deps: RuntimeDispatchDeps) {
     }
   }
   await reconcileRuntimeSetups(deps)
+  await materializeWorkflowTests(deps)
   // Repair active work before scanning schedules. Admission can wait; shutdown cannot.
   try {
     const admission = await materializeRuntimeSchedules(

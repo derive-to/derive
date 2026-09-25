@@ -63,24 +63,14 @@ export function CloudWorkflows() {
           </div>
           <StatusBadge
             tone={
-              item.disabled || !item.can_open
-                ? "muted"
-                : item.preparing
+              item.readiness.state === "ready"
+                ? "ok"
+                : item.readiness.state === "preparing"
                   ? "busy"
-                  : item.ready
-                    ? "ok"
-                    : "attention"
+                  : "attention"
             }
           >
-            {item.disabled
-              ? "Disabled"
-              : !item.can_open
-                ? "Execution unavailable"
-                : item.preparing
-                  ? "Preparing"
-                  : item.ready
-                    ? "Configured"
-                    : "Setup needed"}
+            {item.readiness.state.replaceAll("_", " ")}
           </StatusBadge>
         </div>
       ))}
@@ -93,10 +83,15 @@ export function NewCloudWorkflow({ onCreated }: { onCreated: (id: string) => voi
   const [name, setName] = useState("")
   const [accountId, setAccountId] = useState("")
   const selected = accounts.data?.items.find((account) => account.id === accountId)
-  const canCreate = !!selected && !selected.unavailable_reason
+  const canCreate = !accountId || (!!selected && !selected.unavailable_reason)
+  const [requestId] = useState(() => crypto.randomUUID())
   const create = useApiMutation({
     mutationFn: () =>
-      api.createWorkflowRuntime({ name: name.trim(), model_connection_id: accountId }),
+      api.createWorkflowRuntime({
+        name: name.trim(),
+        model_connection_id: accountId || undefined,
+        request_id: requestId,
+      }),
     invalidate: [workflowRuntimesQuery().queryKey],
     onSuccess: (value) => onCreated(value.id),
   })
@@ -123,6 +118,9 @@ export function NewCloudWorkflow({ onCreated }: { onCreated: (id: string) => voi
           required
         />
       </label>
+      <p className="text-sm text-muted-foreground">
+        Model account is optional. You can connect it after saving.
+      </p>
       <ModelAccountPicker
         value={accountId}
         disabled={create.isPending}
@@ -134,7 +132,7 @@ export function NewCloudWorkflow({ onCreated }: { onCreated: (id: string) => voi
         disabled={!name.trim() || !canCreate || create.isPending}
         loading={create.isPending}
       >
-        Create workflow
+        Save draft
       </Button>
     </form>
   )

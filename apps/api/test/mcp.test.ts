@@ -104,6 +104,65 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(r.wwwAuth).toContain("oauth-protected-resource")
   })
 
+  it("reads the same workflow readiness through MCP and HTTP without widening a read-only grant", async () => {
+    const { app, token, meta, blobs, teammate } = appWithGrant(
+      dir,
+      "workflow-readiness",
+      "openid derive:read derive:publish derive:manage",
+    )
+    await meta.setMembership({
+      id: "readiness-owner",
+      org_id: "ws_p_u_o",
+      user_id: "u_o",
+      role: "owner",
+    })
+    const manifest = await publishVersion(meta, blobs, {
+      bytes: new TextEncoder().encode("Check files"),
+      filename: "manifest.md",
+      isBundle: false,
+      orgId: "ws_p_u_o",
+      authorId: "u_o",
+    })
+    const context = await meta.createContext({
+      id: "ctx_readiness",
+      org_id: "ws_p_u_o",
+      name: "Readiness",
+      agent_id: "agent_readiness",
+      manifest_artifact_id: manifest.artifact.id,
+      created_by: "u_o",
+    })
+    const web = await (
+      await app.request(`/v1/workflow-runtimes/${context.id}`, {
+        headers: { authorization: `Bearer ${token}` },
+      })
+    ).json()
+    const mcp = JSON.parse(
+      toolText(await call(app, token, "list_automations", { workflow_id: context.id })),
+    )
+    expect(mcp).toHaveProperty("readiness")
+    expect(web).toHaveProperty("readiness")
+    expect(mcp.readiness).toEqual({ ...web.readiness, evaluated_at: expect.any(String) })
+    expect(mcp.readiness.blockers.map((b: { code: string }) => b.code)).toContain(
+      "workspace_unavailable",
+    )
+    expect(mcp.readiness.can_test).toBe(false)
+    const readToken = teammate("u_o", "readiness-read-only", "openid derive:read")
+    const readOnly = JSON.parse(
+      toolText(await call(app, readToken, "list_automations", { workflow_id: context.id })),
+    )
+    expect(readOnly.readiness).toMatchObject({ can_test: false, can_edit: false })
+    expect(readOnly.readiness.blockers[0].code).toBe("scope_required")
+    expect(readOnly.readiness.blockers.every((b: { action: unknown }) => b.action === null)).toBe(
+      true,
+    )
+
+    expect(
+      JSON.parse(
+        toolText(await call(app, token, "list_automations", { workflow_id: "unrelated" })),
+      ),
+    ).toEqual({ error: "not found" })
+  })
+
   it("initializes (identity in instructions) and lists the consolidated tools", async () => {
     const { app, token } = appWithGrant(dir, "init", "openid derive:read derive:publish")
     const init = await rpc(app, token, initBody)

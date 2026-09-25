@@ -16,6 +16,8 @@ import type {
   SharedStateResult,
   SortMode,
   SourceOp,
+  WorkflowDraftRecord,
+  WorkflowReadiness,
   WorkspaceAccess,
 } from "@derive/core"
 import type { components, paths } from "./api-types"
@@ -1503,14 +1505,30 @@ export const api = {
       disabled: boolean
       preparing: boolean
       ready: boolean
+      readiness: WorkflowReadiness
       can_open: boolean
       schedule: { enabled: boolean; trigger: { kind: string; cron?: string; tz?: string } } | null
     }[]
   }> => f("/v1/workflow-runtimes", opts()).then(j),
   createWorkflowRuntime: (body: {
     name: string
-    model_connection_id: string
+    model_connection_id?: string
+    request_id?: string
   }): Promise<{ id: string }> => f("/v1/workflow-runtimes", opts(body)).then(j),
+  workflowConfiguration: (
+    id: string,
+  ): Promise<{
+    draft: WorkflowDraftRecord | null
+    test: { id: string; status: string } | null
+    readiness: WorkflowReadiness
+  }> => f(`/v1/workflow-runtimes/${id}`, opts()).then(j),
+  saveWorkflowDraft: (
+    id: string,
+    body: { instruction: string; provider: "codex" | "claude-code"; revision: number | null },
+  ): Promise<{ draft: WorkflowDraftRecord }> =>
+    f(`/v1/workflow-runtimes/${id}`, { ...opts(body), method: "PUT" }).then(j),
+  testWorkflow: (id: string, revision: string, request_id: string): Promise<unknown> =>
+    f(`/v1/workflow-runtimes/${id}/tests`, opts({ revision, request_id })).then(j),
   // Contexts + sessions (the ask loop; see routes/contexts.ts server-side).
   listContexts: (): Promise<{ contexts: ContextInfo[] }> => f("/v1/contexts", opts()).then(j),
   getContextRuntime: (

@@ -26,6 +26,7 @@ export type NewContextRuntime = Omit<
 /** Accepted inputs. No tokens or environment values belong in this snapshot. */
 export interface RuntimeRunInput {
   version: 1
+  workflow_revision?: string
   schedule_revision?: number
   model_connection?: { id: string; revision: number }
   instruction: string

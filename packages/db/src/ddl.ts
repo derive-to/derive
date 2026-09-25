@@ -149,6 +149,7 @@ export const placeholderTables = (iso: string): string[] => [
 /** Performance indexes (identical SQL across dialects; the unique ones are inline
  *  in each table's CREATE). Applied after every table + placeholder exists. */
 export const PERF_INDEXES: string[] = [
+  `CREATE UNIQUE INDEX IF NOT EXISTS workflow_test_pending ON workflow_test (context_id) WHERE status = 'pending'`,
   `CREATE UNIQUE INDEX IF NOT EXISTS run_runtime_schedule_pending ON run (runtime_id) WHERE runtime_id IS NOT NULL AND reason = 'schedule' AND status IN ('queued', 'running')`,
   `CREATE UNIQUE INDEX IF NOT EXISTS automation_runtime ON automation (runtime_id)`,
   // Ownership persists until compute release, regardless of worker deadlines.

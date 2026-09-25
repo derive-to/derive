@@ -598,3 +598,41 @@ acceptance check pass in the isolated pilot. Qualify one account on two machines
 reconnect, a stopped-machine account switch, one-job removal, shared disconnect,
 collaborator execution and confirmed shutdown. Earlier operator-pilot evidence
 and local contracts do not establish live qualification of this account flow.
+
+
+## Draft setup and readiness (A4/A5)
+
+`POST /v1/workflow-runtimes` accepts an optional account and optional UUID
+`request_id`. Replaying that request returns the same Context ID. Saving a draft
+never provisions a sandbox or enables an automation.
+
+- Identity, owner, manifest, tools and environment bindings remain on Context.
+- Model account consent remains in `runtime_model_binding` with its own revision.
+- Before preparation, `workflow_draft` stores only instructions, runner and edit
+  revision. `PUT /v1/workflow-runtimes/:id` uses that revision for optimistic edits.
+- Once the runtime exists, the source draft is frozen, projected into the existing
+  disabled manual Automation and removed. Later instructions/schedule edits use the
+  existing runtime schedule endpoint. The draft cannot overwrite an established task.
+- Working directory and bootstrap remain the pinned runtime defaults. Project
+  import/version pins, user setup scripts and required-variable discovery await B1–B3.
+- Reports retain the existing visibility: manual reports belong to the requester;
+  scheduled reports belong to the schedule editor. No new visibility settings.
+
+`GET /v1/workflow-runtimes/:id` derives readiness from current records and a live
+provider check. Its opaque revision covers instructions, manifest, account grant,
+selected access and credential versions. It is not a durable authorization token.
+The read is also available as `list_automations(workflow_id=...)` over MCP.
+
+`POST /v1/workflow-runtimes/:id/tests` accepts the reviewed revision and a UUID
+`request_id`. A durable `workflow_test` receipt owns preparation and then submits
+one run with a stable ID into the existing queue. One pending test per Context is
+admitted by a unique index. Browser closure and ambiguous HTTP replies do not create
+extra machines or runs. The worker rechecks authorization before preparation and
+submission; dispatch, claim and tool use recheck pinned configuration and access.
+Changing configuration before submission cancels the request instead of running
+unreviewed inputs. Transient provider failures defer it. Failed provisioning can be
+retried only after the existing setup saga has confirmed cleanup.
+
+Validation belongs in the existing context-connections HTTP suite, MCP suite,
+portable store contract and workflow browser smoke suites. No broad rollout or live
+customer compute is part of this change.
