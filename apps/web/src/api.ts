@@ -1630,11 +1630,31 @@ export const api = {
     connection_ids: string[],
   ): Promise<{ connection_ids: string[] }> =>
     f(`/v1/contexts/${id}/connections`, opts({ connection_ids })).then(j),
-  createSecretConnection: (input: {
-    toolkit: string
+  credentials: (): Promise<{ items: Credential[]; can_create_workspace: boolean }> =>
+    f("/v1/credentials", opts()).then(j),
+  credentialUsage: (id: string): Promise<CredentialUsage> =>
+    f(`/v1/credentials/${id}/usage`, opts()).then(j),
+  createCredential: (input: {
+    name: string
     secret: string
-    scopes_label: string
-  }): Promise<Connection> => f("/v1/connections", opts({ ...input, kind: "secret" })).then(j),
+    scope: "personal" | "workspace"
+    request_id: string
+  }): Promise<Connection> =>
+    f(
+      "/v1/connections",
+      opts({
+        kind: "secret",
+        toolkit: "environment",
+        scopes_label: input.name,
+        secret: input.secret,
+        scope: input.scope,
+        request_id: input.request_id,
+      }),
+    ).then(j),
+  replaceCredential: (
+    id: string,
+    input: { name: string; secret: string; revision: string },
+  ): Promise<Credential> => f(`/v1/credentials/${id}`, { ...opts(input), method: "PUT" }).then(j),
   getContext: (id: string): Promise<ContextDetail> => f(`/v1/contexts/${id}`, opts()).then(j),
   // An imported paper's implementation analysis, written by an agent, with the prompts a person
   // copies into theirs to start or update it.
@@ -2325,4 +2345,21 @@ export interface RuntimeModelSignIn {
   verification_url: string | null
   authorize_url: string | null
   expires_at: string
+}
+
+export interface Credential {
+  id: string
+  name: string
+  owner_id: string | null
+  scope: "personal" | "workspace"
+  status: "active" | "pending" | "revoked"
+  created_at: string
+  revision: string
+  health: "not_checked"
+  can_manage: boolean
+  can_use: boolean
+}
+export interface CredentialUsage {
+  items: { id: string; name: string; kind: "context" | "workflow" | "automation" }[]
+  hidden_count: number
 }

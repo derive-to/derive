@@ -1,5 +1,6 @@
 import type { ContextRecord, MetaStore, RuntimeRunInput } from "@derive/core"
 import { readEnvironmentBindings } from "./context-environment"
+import { credentialRevision } from "./credentials"
 
 export async function runtimeInput(
   meta: MetaStore,
@@ -12,7 +13,17 @@ export async function runtimeInput(
   if (!manifest) return null
   const binding = await meta.getRuntimeModelBinding(context.id, context.org_id)
   if (binding && !binding.model_connection_id) return null
+  const environment = readEnvironmentBindings(context.environment_bindings)
+  const connectionIds = JSON.parse(context.connection_ids ?? "[]") as string[]
+  const connections = await meta.getConnectionsByIds([
+    ...new Set([...connectionIds, ...Object.values(environment)]),
+  ])
   return {
+    credential_revisions: Object.fromEntries(
+      connections
+        .filter((cn) => cn.org_id === context.org_id && cn.kind === "secret")
+        .map((cn) => [cn.id, credentialRevision(cn)]),
+    ),
     version: 1,
     ...(binding?.model_connection_id
       ? { model_connection: { id: binding.model_connection_id, revision: binding.revision } }
@@ -24,7 +35,7 @@ export async function runtimeInput(
       version: manifest.n,
       blob_key: manifest.blob_key,
     },
-    connection_ids: JSON.parse(context.connection_ids ?? "[]"),
-    environment_bindings: readEnvironmentBindings(context.environment_bindings),
+    connection_ids: connectionIds,
+    environment_bindings: environment,
   }
 }

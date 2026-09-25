@@ -539,7 +539,9 @@ export const connectionBindError = async (
     if (cn.scope === "workspace") {
       if (!actor.canManage) return `attaching workspace connection "${cn.toolkit}" needs manage`
     } else if (!actor.userId || cn.user_id !== actor.userId) {
-      return `personal connection "${cn.toolkit}" can only be attached by its owner`
+      return cn.kind === "secret"
+        ? "personal credential can only be attached by its owner"
+        : `personal connection "${cn.toolkit}" can only be attached by its owner`
     }
   }
   return null

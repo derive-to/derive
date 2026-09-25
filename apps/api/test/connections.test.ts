@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
+import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // WO3 — per-user connected accounts (Sources). Connect once via the broker (the LocalBroker
 // auto-authorizes in dev/test), then instructions name the tool. Always bound to one person;
@@ -7,7 +7,7 @@ import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 describe("connections (Sources — per-user connected accounts)", () => {
   const owner: TestUser = { id: "u_conn_own", email: "connown@derive.test", name: "Owner" }
   const member: TestUser = { id: "u_conn_mem", email: "connmem@derive.test", name: "Member" }
-  const { app } = makeAuthedApp("connections", [owner, member], "commenter", {
+  const { app, meta } = makeAuthedApp("connections", [owner, member], "commenter", {
     deps: { encryptionKey: "test-encryption-key" },
   })
   const connect = (who: string, toolkit: string) =>
@@ -190,7 +190,7 @@ describe("connections (Sources — per-user connected accounts)", () => {
       broker: "none",
       status: "active",
       base_url: "https://api.17-0.game/admin",
-      scopes_label: `…${secret.slice(-4)}`, // hint only, never the credential
+      scopes_label: "Stored secret",
     })
     // The list route is equally silent about it.
     const list = await (
@@ -210,6 +210,175 @@ describe("connections (Sources — per-user connected accounts)", () => {
     expect(body.scopes_label).toBe("Stored secret")
     expect(body).not.toHaveProperty("secret")
     expect(body).not.toHaveProperty("secret_enc")
+  })
+
+  it("credential management protects personal metadata, scope permissions and write-only values", async () => {
+    const create = async (email: string, scope = "personal") => {
+      const response = await app.request(
+        "/v1/connections",
+        jsonAs(as(email), {
+          kind: "secret",
+          toolkit: "environment",
+          scopes_label: "Database",
+          scope,
+          secret: "credential-test-fixture",
+        }),
+      )
+      expect(response.status).toBe(201)
+      return response.json()
+    }
+    const mine = await create(member.email)
+    const workspace = await create(owner.email, "workspace")
+    for (const path of ["/v1/credentials", "/v1/connections", "/v1/connections?scope=personal"]) {
+      const response = await app.request(path, { headers: as(owner.email) })
+      expect(response.headers.get("cache-control")).toBe("no-store")
+      const body = await response.text()
+      expect(body).not.toContain(mine.id)
+      expect(body).not.toContain("credential-test-fixture")
+      expect(body).not.toContain("secret_enc")
+    }
+    for (const method of ["GET", "PUT", "DELETE"]) {
+      const path =
+        method === "DELETE"
+          ? `/v1/connections/${mine.id}`
+          : `/v1/credentials/${mine.id}${method === "GET" ? "/usage" : ""}`
+      expect((await app.request(path, { method, headers: as(owner.email) })).status).toBe(404)
+    }
+    const catalog = await (
+      await app.request("/v1/credentials", { headers: as(member.email) })
+    ).json()
+    expect(catalog).toMatchObject({ can_create_workspace: false })
+    expect(catalog.items.find((item: { id: string }) => item.id === workspace.id)).toMatchObject({
+      can_manage: false,
+      can_use: false,
+      health: "not_checked",
+    })
+    expect(
+      (await app.request(`/v1/credentials/${workspace.id}`, jsonAs(as(member.email), {}, "PUT")))
+        .status,
+    ).toBe(403)
+    expect(
+      (
+        await app.request(
+          "/v1/connections",
+          jsonAs(as(member.email), {
+            kind: "secret",
+            toolkit: "environment",
+            secret: "fixture",
+            scope: "workspace",
+          }),
+        )
+      ).status,
+    ).toBe(403)
+  })
+
+  it("creation retries reuse one credential, including concurrent replies and after revocation", async () => {
+    const body = {
+      kind: "secret",
+      toolkit: "environment",
+      scopes_label: "Retry fixture",
+      secret: "retry-fixture",
+      request_id: crypto.randomUUID(),
+    }
+    const [a, b] = await Promise.all([
+      app.request("/v1/connections", jsonAs(as(owner.email), body)),
+      app.request("/v1/connections", jsonAs(as(owner.email), body)),
+    ])
+    const first = await a.json()
+    expect((await b.json()).id).toBe(first.id)
+    const list = await meta.listConnections("default")
+    expect(list.filter((item) => item.scopes_label === "Retry fixture")).toHaveLength(1)
+    await app.request(`/v1/connections/${first.id}`, { method: "DELETE", headers: as(owner.email) })
+    const retry = await app.request("/v1/connections", jsonAs(as(owner.email), body))
+    expect(await retry.json()).toMatchObject({ id: first.id, status: "revoked" })
+  })
+
+  it("replacement keeps assignments, refuses stale versions and revocation, and limits usage disclosure", async () => {
+    const created = await app.request(
+      "/v1/connections",
+      jsonAs(as(member.email), {
+        kind: "secret",
+        toolkit: "environment",
+        scopes_label: "Private reporting DB",
+        secret: "first-fixture",
+      }),
+    )
+    const credential = await created.json()
+    const manifest = await publishAs(
+      app,
+      "# Report",
+      { title: "Report instructions" },
+      as(owner.email),
+    )
+    const context = await (
+      await app.request(
+        "/v1/contexts",
+        jsonAs(as(owner.email), {
+          name: "Confidential report",
+          manifest_short_id: (await manifest.json()).short_id,
+        }),
+      )
+    ).json()
+    // A prior grant remains usable after the context becomes private to this credential owner.
+    await meta.setContextEnvironment(context.id, JSON.stringify({ DATABASE_URL: credential.id }))
+    await app.request(
+      `/v1/contexts/${context.id}/access`,
+      jsonAs(as(owner.email), { ask_policy: "invited" }),
+    )
+    const usage = await app.request(`/v1/credentials/${credential.id}/usage`, {
+      headers: as(member.email),
+    })
+    expect(await usage.json()).toEqual({ items: [], hidden_count: 1 })
+    const catalog = await (
+      await app.request("/v1/credentials", { headers: as(member.email) })
+    ).json()
+    const original = catalog.items.find((item: { id: string }) => item.id === credential.id)
+    const replace = () =>
+      app.request(
+        `/v1/credentials/${credential.id}`,
+        jsonAs(
+          as(member.email),
+          {
+            name: "Reporting DB",
+            secret: "replacement-fixture",
+            revision: original.revision,
+          },
+          "PUT",
+        ),
+      )
+    const [a, b] = await Promise.all([replace(), replace()])
+    expect([a.status, b.status].sort()).toEqual([200, 409])
+    const updated = await (a.status === 200 ? a : b).json()
+    expect(updated).toMatchObject({
+      id: credential.id,
+      name: "Reporting DB",
+      health: "not_checked",
+    })
+    expect(updated.revision).not.toBe(original.revision)
+    expect(JSON.stringify(updated)).not.toMatch(/replacement-fixture|secret_enc/)
+    expect(JSON.parse((await meta.getContext(context.id))?.environment_bindings ?? "{}")).toEqual({
+      DATABASE_URL: credential.id,
+    })
+    await app.request(`/v1/connections/${credential.id}`, {
+      method: "DELETE",
+      headers: as(member.email),
+    })
+    expect(
+      (
+        await app.request(
+          `/v1/credentials/${credential.id}`,
+          jsonAs(
+            as(member.email),
+            {
+              name: "Revive",
+              secret: "revive-fixture",
+              revision: updated.revision,
+            },
+            "PUT",
+          ),
+        )
+      ).status,
+    ).toBe(409)
   })
 
   it("a secret connection refuses http bases and missing fields", async () => {

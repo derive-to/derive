@@ -7240,6 +7240,7 @@ export class PgMetaStore implements MetaStore {
       scopes_label?: string | null
     },
     expectSecretEnc?: string | null,
+    expectStatus?: ConnectionStatus,
   ): Promise<ConnectionRecord | null> {
     const set: Record<string, unknown> = {}
     if (fields.secret_enc !== undefined) set.secret_enc = fields.secret_enc
@@ -7259,9 +7260,12 @@ export class PgMetaStore implements MetaStore {
       .update(connection)
       .set(set)
       .where(
-        guard
-          ? and(eq(connection.id, id), eq(connection.org_id, orgId), guard)
-          : and(eq(connection.id, id), eq(connection.org_id, orgId)),
+        and(
+          eq(connection.id, id),
+          eq(connection.org_id, orgId),
+          guard,
+          expectStatus ? eq(connection.status, expectStatus) : undefined,
+        ),
       )
       .returning()
     return rows[0] ?? null

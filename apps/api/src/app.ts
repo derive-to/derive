@@ -38,6 +38,7 @@ import { contextRuntimeModelBindingRoutes } from "./routes/context-runtime-model
 import { contextRuntimeScheduleRoutes } from "./routes/context-runtime-schedule"
 import { contextRuntimeSetupRoutes } from "./routes/context-runtime-setup"
 import { contextRoutes } from "./routes/contexts"
+import { credentialRoutes } from "./routes/credentials"
 import { domainRoutes } from "./routes/domains"
 import { dynamicDataRoutes } from "./routes/dynamic-data"
 import { embedRoutes } from "./routes/embeds"
@@ -520,6 +521,7 @@ export function createApp(deps: AppDeps): Hono {
     automationRoutes,
     planRoutes,
     connectionRoutes,
+    credentialRoutes,
     mcpOauthRoutes,
     modelCredentialRoutes,
     conciergeRoutes,

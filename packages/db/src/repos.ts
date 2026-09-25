@@ -5912,6 +5912,7 @@ export function makeRepos(db: SqliteDb) {
       scopes_label?: string | null
     },
     expectSecretEnc?: string | null,
+    expectStatus?: ConnectionStatus,
   ): Promise<ConnectionRecord | null> => {
     const set: Record<string, unknown> = {}
     if (fields.secret_enc !== undefined) set.secret_enc = fields.secret_enc
@@ -5932,9 +5933,12 @@ export function makeRepos(db: SqliteDb) {
         .update(connection)
         .set(set)
         .where(
-          guard
-            ? and(eq(connection.id, id), eq(connection.org_id, orgId), guard)
-            : and(eq(connection.id, id), eq(connection.org_id, orgId)),
+          and(
+            eq(connection.id, id),
+            eq(connection.org_id, orgId),
+            guard,
+            expectStatus ? eq(connection.status, expectStatus) : undefined,
+          ),
         )
         .returning()
         .get()) ?? null
