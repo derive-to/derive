@@ -110,7 +110,7 @@ export const ARTIFACT_PATTERNS: [string, RegExp][] = [
   ["data-derive-id", /data-derive-id\b/g],
   ["data-interaction-state", /data-interaction-state/g],
   ["editor class (derive-edit*/derive-edited)", /\bderive-edit(?:ed|-[a-z-]+|able)?\b/g],
-  ["editor class (derive-structure-*)", /\bderive-structure-[a-z-]+/g],
+  ["editor class (derive-block-*/derive-structure-*)", /\bderive-(?:block|structure)-[a-z-]+/g],
   ["editor class (derive-el-*/derive-hl)", /\bderive-(?:el-[a-z]+|hl)\b/g],
   ["editor class (derive-resize-*)", /\bderive-resize-[a-z-]+/g],
   ["zero-width placeholder", /\u200b|\u200c|\u200d|\ufeff|&#8203;|&#x200b;|&ZeroWidthSpace;/gi],

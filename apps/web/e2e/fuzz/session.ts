@@ -37,6 +37,7 @@ export type ActionType =
   | "selectAll"
   | "nonText"
   | "move"
+  | "moveSibling"
   | "resize"
   | "switchSlide"
   | "arrange:up"
@@ -57,7 +58,8 @@ const EDIT_WEIGHTS = {
   format: 7,
   selectAll: 5,
   nonText: 8,
-  move: 11,
+  move: 8,
+  moveSibling: 6,
 } as const
 /** One slide, many changes: the same gestures plus resizing a block's box. */
 const ONE_SLIDE_WEIGHTS = { ...EDIT_WEIGHTS, resize: 5 } as const
@@ -254,10 +256,10 @@ async function finish(ctx: Ctx, detail: Record<string, unknown>) {
 }
 
 /**
- * Put a caret at a text point the way a person does in a deck. One click on text
- * inside a structural node selects the node (by design); a double click arms the
- * text. So: an already-armed block takes a plain click, anything else a double click
- * and then an arrow to collapse the word selection (or keep it, to type over it).
+ * Put a caret at a text point the way a person does. One click on words always
+ * places a caret, inside a structural node or a card too; sometimes a person double
+ * clicks instead and then collapses the word selection with an arrow (or keeps it,
+ * to type over it).
  */
 async function placeCaret(
   ctx: Ctx,
@@ -266,7 +268,7 @@ async function placeCaret(
   detail: Record<string, unknown>,
 ) {
   const armed = await probe<boolean>(await artifactFrame(ctx.page), "armedAt", pt.x, pt.y)
-  if (armed) {
+  if (armed || ctx.rng.chance(0.6)) {
     detail.arm = "click"
     await clickAt(ctx, view, pt)
     return
@@ -275,6 +277,64 @@ async function placeCaret(
   detail.arm = `dblclick+${collapse}`
   await clickAt(ctx, view, pt, { count: 2 })
   if (collapse !== "keep") await ctx.page.keyboard.press(collapse)
+}
+
+/**
+ * Move the selected block: Option+arrows, the pill's arrow buttons, or a drag of the
+ * pill's name onto a sibling. Returns false (with `detail.skipped`) when nothing was
+ * selected to move.
+ */
+async function moveSelected(
+  ctx: Ctx,
+  view: { w: number; h: number },
+  detail: Record<string, unknown>,
+) {
+  const { page, rng } = ctx
+  const k = page.keyboard
+  await settle(page, 150)
+  const frame = await artifactFrame(page)
+  if (!(await probe<boolean>(frame, "pill"))) {
+    detail.skipped = "block did not select"
+    return
+  }
+  const how = rng.weighted({ key: 5, button: 3, drag: 2 })
+  const back = rng.chance(0.5)
+  Object.assign(detail, { how, back })
+  if (how === "key") {
+    const times = rng.int(1, 2)
+    const key = rng.pick(
+      back ? ["Alt+ArrowUp", "Alt+ArrowLeft"] : ["Alt+ArrowDown", "Alt+ArrowRight"],
+    )
+    Object.assign(detail, { times, key })
+    for (let i = 0; i < times; i++) await k.press(key)
+  } else if (how === "button") {
+    const button = page
+      .frameLocator("iframe[title]")
+      .getByRole("button", { name: back ? "Move earlier" : "Move later" })
+    if (await button.isEnabled({ timeout: 2000 }).catch(() => false)) await button.click()
+    else detail.skipped = "move button disabled"
+  } else {
+    const grip = await probe<Rect | null>(frame, "grip")
+    const siblings = await probe<Rect[]>(frame, "siblingRects")
+    if (!grip || !siblings.length) {
+      detail.skipped = "no grip or drop target"
+      return
+    }
+    const dest = rng.pick(siblings)
+    detail.onto = dest
+    const from = await toPage(ctx, view, grip.x + grip.w / 2, grip.y + grip.h / 2)
+    const to = await toPage(
+      ctx,
+      view,
+      dest.x + dest.w * (back ? 0.25 : 0.75),
+      dest.y + dest.h * (back ? 0.25 : 0.75),
+    )
+    await page.mouse.move(from.x, from.y)
+    await page.mouse.down()
+    await page.mouse.move(to.x, to.y, { steps: 10 })
+    await page.mouse.up()
+  }
+  await settle(page, 150)
 }
 
 async function settle(page: Page, ms = 120) {
@@ -324,7 +384,7 @@ async function editAction(ctx: Ctx, type: ActionType, n: number) {
   const entry: ActionLog = { n, phase: "edit", type, slide: ctx.slide + 1, detail }
   ctx.log.push(entry)
   const k = page.keyboard
-  if (type !== "nonText" && type !== "move" && !t.text.length) {
+  if (type !== "nonText" && type !== "move" && type !== "moveSibling" && !t.text.length) {
     detail.skipped = "no visible text on this slide"
     return
   }
@@ -338,8 +398,7 @@ async function editAction(ctx: Ctx, type: ActionType, n: number) {
       const { pt, label } = aimText()
       const text = typedText(rng)
       Object.assign(detail, { at: label, text })
-      // Sometimes just one click, as people do: on text that isn't armed yet that
-      // selects its structural node, and the typing must go nowhere.
+      // Sometimes just one click, as people do: on words that places the caret too.
       const single = rng.chance(0.2)
       await withLeakCheck(ctx, pt, type, async () => {
         if (single) {
@@ -462,6 +521,8 @@ async function editAction(ctx: Ctx, type: ActionType, n: number) {
       return
     }
     case "move": {
+      // An author-declared node, picked up by a point inside it away from its words
+      // (which may land in a repeated card inside it: that is a block too).
       const nodes = t.nodes.filter((node) => node.grab)
       if (nodes.length < 2) {
         detail.skipped = "fewer than two grabbable nodes"
@@ -470,47 +531,20 @@ async function editAction(ctx: Ctx, type: ActionType, n: number) {
       const node = rng.pick(nodes)
       detail.node = node.id
       await clickAt(ctx, t.view, node.grab as { x: number; y: number })
-      await settle(page, 150)
-      const frame = await artifactFrame(page)
-      if (!(await probe<boolean>(frame, "structureToolbar"))) {
-        detail.skipped = "node did not select"
+      await moveSelected(ctx, t.view, detail)
+      return
+    }
+    case "moveSibling": {
+      // A card, item or column with no author markup: movable because it repeats.
+      const repeats = t.repeats.filter((r) => r.grab)
+      if (!repeats.length) {
+        detail.skipped = "no repeated siblings with room to grab"
         return
       }
-      const how = rng.weighted({ key: 5, button: 3, drag: 2 })
-      const up = rng.chance(0.5)
-      Object.assign(detail, { how, up })
-      if (how === "key") {
-        const times = rng.int(1, 2)
-        detail.times = times
-        for (let i = 0; i < times; i++) await k.press(up ? "Alt+ArrowUp" : "Alt+ArrowDown")
-      } else if (how === "button") {
-        const button = page.frameLocator("iframe[title]").getByRole("button", {
-          name: up ? "Move earlier (Option+Up)" : "Move later (Option+Down)",
-        })
-        if (await button.isEnabled({ timeout: 2000 }).catch(() => false)) await button.click()
-        else detail.skipped = "move button disabled"
-      } else {
-        const grip = await probe<Rect | null>(frame, "grip")
-        const other = rng.pick(nodes.filter((x) => x.id !== node.id))
-        const dest = await probe<Rect | null>(frame, "nodeRect", other.id)
-        if (!grip || !dest) {
-          detail.skipped = "no grip or drop target"
-          return
-        }
-        detail.onto = other.id
-        const from = await toPage(ctx, t.view, grip.x + grip.w / 2, grip.y + grip.h / 2)
-        const to = await toPage(
-          ctx,
-          t.view,
-          dest.x + dest.w / 2,
-          dest.y + dest.h * (up ? 0.25 : 0.75),
-        )
-        await page.mouse.move(from.x, from.y)
-        await page.mouse.down()
-        await page.mouse.move(to.x, to.y, { steps: 10 })
-        await page.mouse.up()
-      }
-      await settle(page, 150)
+      const target = rng.pick(repeats)
+      detail.block = target.label
+      await clickAt(ctx, t.view, target.grab as { x: number; y: number })
+      await moveSelected(ctx, t.view, detail)
       return
     }
     case "resize": {
@@ -523,11 +557,7 @@ async function editAction(ctx: Ctx, type: ActionType, n: number) {
       detail.node = node.id
       await clickAt(ctx, t.view, node.grab as { x: number; y: number })
       await settle(page, 150)
-      const handle = rng.pick([
-        "derive-structure-resize-handle",
-        "derive-structure-resize-height",
-        "derive-structure-resize-corner",
-      ])
+      const handle = rng.pick(["derive-block-rz-e", "derive-block-rz-se"])
       const box = await probe<Rect | null>(await artifactFrame(page), "handle", handle)
       if (!box) {
         detail.skipped = "no enabled resize handle"
@@ -812,7 +842,9 @@ async function editPhase(
 
   ctx.slide = slides[0] as number
   await probe(frame, "show", ctx.slide)
-  await page.getByTestId("deck-edit").click()
+  // After a save the session picks back up by itself, on the same slide.
+  if (!(await page.getByTestId("inline-edit-bar").isVisible()))
+    await page.getByTestId("deck-edit").click()
   await expect(page.getByTestId("inline-edit-bar")).toBeVisible()
   frame = await artifactFrame(page)
   const token = await probe<string>(frame, "snapshot")
@@ -841,6 +873,7 @@ async function editPhase(
   ctx.stats.reorderedSlides = dom.filter(
     (d) => d.chunks.join("|") !== d.originalChunks.join("|"),
   ).length
+  const served = await probe<string | null>(frame, "srcSha")
   const outcome = await awaitSave(
     page,
     shortId,
@@ -887,14 +920,24 @@ async function editPhase(
       signature: `partial save skipped edits: ${genericize(outcome.skipped[0]?.message ?? "")}`,
       message: outcome.skipped.map((s) => `#${s.index}: ${s.message}`).join(" / "),
     })
+  // The page reloads on the saved source and the session picks back up there.
+  await expect
+    .poll(
+      async () => probe<string | null>(await artifactFrame(page), "srcSha").catch(() => served),
+      {
+        timeout: 20_000,
+      },
+    )
+    .not.toBe(served)
+    .catch(() => {})
   await expect(page.getByTestId("inline-edit-bar"))
-    .toBeHidden({ timeout: 15_000 })
+    .toBeVisible({ timeout: 15_000 })
     .catch(() => {
       ctx.failures.push({
         phase: "edit",
         oracle: "save",
-        signature: "edit mode stayed open after a successful save",
-        message: "inline-edit-bar still visible 15s after the save response",
+        signature: "the session did not pick back up after a successful save",
+        message: "inline-edit-bar not visible 15s after the save response",
       })
     })
   const after = await contentOf(page, shortId)
