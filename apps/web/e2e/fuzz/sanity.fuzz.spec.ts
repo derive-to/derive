@@ -291,6 +291,29 @@ test("markdown oracles: an in-place edit passes, damage outside it is caught", a
   expect(checkMarkdownDiff(before, split, second, html).map((f) => f.signature)).toEqual([
     "an edit split a Markdown block (new block in the source)",
   ])
+  // What an edited block may become: a hard break in its item, a paragraph Enter split
+  // (the page split it too), an emptied paragraph gone.
+  const itemAt = main.chunks.findIndex((c) => c.node.tag === "ul")
+  const broken = before.replace("- Sweep the **track bed**.", "- Sweep the\\\n  **track bed**.")
+  expect(checkMarkdownDiff(before, broken, cap({ [keys[itemAt] as string]: [[1]] }), html)).toEqual(
+    [],
+  )
+  const holding = (words: string) =>
+    main.chunks.findIndex((c) => html.slice(c.start, c.end).includes(words))
+  const paraAt = holding("carries early crews")
+  const paraKey = keys[paraAt] as string
+  const splitPage = { ...cap({ [paraKey]: [[]] }), chunks: [...keys, "p.#new"] }
+  const enter = before.replace("carries early crews to", "carries early crews\n\nto")
+  expect(checkMarkdownDiff(before, enter, splitPage, html)).toEqual([])
+  const captionAt = holding("before the first rail came up")
+  const emptied = before.replace("*A crew at the depot, before the first rail came up.*\n\n", "")
+  expect(
+    checkMarkdownDiff(before, emptied, cap({ [keys[captionAt] as string]: [[]] }), html),
+  ).toEqual([])
+  // …but a block nobody touched may not go.
+  expect(checkMarkdownDiff(before, emptied, second, html).map((f) => f.signature)).toEqual([
+    "untouched Markdown block changed",
+  ])
   // Typed markup stored as markup.
   expect(
     checkMarkdownHtml(before, before.replace("fish market", "fish <b> market")).map(
