@@ -5623,11 +5623,8 @@ interface ElReg {
     const after = document.createRange()
     after.setStartAfter(span)
     after.setEnd(block, block.childNodes.length)
-    if (blankRange(after) && !after.cloneContents().querySelector(`[${HOLD_ATTR}]`)) {
-      const br = document.createElement("br")
-      br.setAttribute(HOLD_ATTR, "")
-      span.after(br)
-    }
+    if (blankRange(after) && !after.cloneContents().querySelector(`[${HOLD_ATTR}]`))
+      span.after(holdBreak())
     // Caret after the break, so typing continues on the new line.
     range.setStartAfter(span)
     range.collapse(true)
@@ -5639,16 +5636,12 @@ interface ElReg {
   const hasFmt = (el: Element): boolean => !!el.querySelector(`[${FMT_ATTR}]`)
 
   /* ── Enter: a new paragraph ───────────────────────────────────────────────────
-     Enter splits the paragraph or list item the caret is in; Shift+Enter breaks the
-     line (insertBreak). The second half is a COPY of the same element, so the new
-     paragraph keeps the author's tag, class and attributes: on save its parent's
-     children name that element twice (keep twice = a copy with fresh identities; see
-     source-edit.ts), each with its own half of the words. Only a stamped p or li whose
-     parent is stamped splits, and not an author's structural node. A heading does
-     not split: Enter at its end moves the caret to the next block, and mid-heading
-     breaks the line. Anything else (a cell, a caption, a text box) breaks the line.
-     Backspace at the start of a paragraph Enter made (Delete at the end of the one
-     before it) joins the two again. */
+     Enter splits the stamped p or li the caret is in (under a stamped parent, and not
+     an author's structural node); Shift+Enter breaks the line (insertBreak). The second
+     half is a copy of the element, so the save names it twice (a copy with fresh
+     identities; source-edit.ts), each with its half of the words. At a heading's end
+     Enter goes to the next block; anywhere else that doesn't split, it breaks the line.
+     Backspace or Delete at the seam of a split joins it again. */
   const SPLITS = "p,li"
   /** What Enter made this session, and the whitespace it set before each. */
   const madeBy = new WeakMap<HTMLElement, Text | null>()
@@ -5656,21 +5649,19 @@ interface ElReg {
   const blankRange = (range: Range): boolean =>
     !range.toString().trim() &&
     !range.cloneContents().querySelector(`br:not([${HOLD_ATTR}]),img,svg,[data-derive-readonly]`)
+  const holdBreak = () => {
+    const br = document.createElement("br")
+    br.setAttribute(HOLD_ATTR, "")
+    return br
+  }
+  const dropHolds = (el: HTMLElement) => {
+    for (const b of Array.from(el.querySelectorAll(`:scope > br[${HOLD_ATTR}]`))) b.remove()
+  }
   /** An emptied block keeps a line to type on. */
   const hold = (el: HTMLElement) => {
-    if (el.textContent?.trim() || el.querySelector(`br:not([${HOLD_ATTR}]),img,svg`)) {
-      for (const b of Array.from(el.querySelectorAll(`:scope > br[${HOLD_ATTR}]`))) b.remove()
-    } else if (!el.querySelector(`[${HOLD_ATTR}]`)) {
-      const br = document.createElement("br")
-      br.setAttribute(HOLD_ATTR, "")
-      el.append(br)
-    }
+    if (el.textContent?.trim() || el.querySelector(`br:not([${HOLD_ATTR}]),img,svg`)) dropHolds(el)
+    else if (!el.querySelector(`[${HOLD_ATTR}]`)) el.append(holdBreak())
   }
-  const emptyInline = (n: Node): boolean =>
-    n instanceof HTMLElement &&
-    !n.textContent &&
-    !n.matches(`br,img,svg,hr,input,${READONLY}`) &&
-    !n.querySelector("br,img,svg")
   /** The inline wrappers a split cut through (a <b> the caret was in) are cloned into
    *  the second half; where that leaves either copy empty, it goes. `depth` is how
    *  many wrappers the cut crossed, so an author's own empty element (an icon) stays. */
@@ -5684,7 +5675,11 @@ interface ElReg {
         continue
       }
       if (!(n instanceof HTMLElement)) return
-      if (emptyInline(n)) {
+      if (
+        !n.textContent &&
+        !n.matches(`br,img,svg,hr,input,${READONLY}`) &&
+        !n.querySelector("br,img,svg")
+      ) {
         n.remove()
         return
       }
@@ -5734,8 +5729,7 @@ interface ElReg {
     if (!host || !sel?.rangeCount) return
     const range = sel.getRangeAt(0)
     if (!host.contains(range.startContainer)) return
-    const at = range.startContainer
-    const inner = (at.nodeType === 1 ? (at as Element) : at.parentElement)?.closest(BLOCKS)
+    const inner = rangeStartEl(range)?.closest(BLOCKS)
     const blk = inner instanceof HTMLElement && host.contains(inner) ? inner : host
     // A selection that runs past the block is replaced only up to the block's end.
     if (!blk.contains(range.endContainer)) range.setEnd(blk, blk.childNodes.length)
@@ -5814,8 +5808,7 @@ interface ElReg {
     const sel = window.getSelection()
     if (!host || !sel?.rangeCount || !sel.isCollapsed) return false
     const range = sel.getRangeAt(0)
-    const at = range.startContainer
-    const blk = (at.nodeType === 1 ? (at as Element) : at.parentElement)?.closest(SPLITS)
+    const blk = rangeStartEl(range)?.closest(SPLITS)
     if (!(blk instanceof HTMLElement) || !host.contains(blk)) return false
     const sibling = (el: Element) => {
       let n = forward ? el.nextSibling : el.previousSibling
@@ -5826,14 +5819,10 @@ interface ElReg {
     const other = sibling(blk)
     const [keep, gone] = forward ? [blk, other] : [other, blk]
     if (!keep || !gone || !madeBy.has(gone) || srcOf(keep) !== srcOf(gone)) return false
-    const edge = document.createRange()
-    if (forward) {
-      edge.setStart(range.startContainer, range.startOffset)
-      edge.setEnd(blk, blk.childNodes.length)
-    } else {
-      edge.setStart(blk, 0)
-      edge.setEnd(range.startContainer, range.startOffset)
-    }
+    // Nothing but space between the caret and the seam.
+    const edge = range.cloneRange()
+    if (forward) edge.setEnd(blk, blk.childNodes.length)
+    else edge.setStart(blk, 0)
     if (!blankRange(edge)) return false
     const parent = keep.parentElement as HTMLElement
     const own = host === blk
@@ -5850,8 +5839,8 @@ interface ElReg {
       })
     } else checkpoint(host)
     lastBurst = null
-    for (const el of [keep, gone])
-      for (const b of Array.from(el.querySelectorAll(`:scope > br[${HOLD_ATTR}]`))) b.remove()
+    dropHolds(keep)
+    dropHolds(gone)
     const offset = keep.childNodes.length
     keep.append(...Array.from(gone.childNodes))
     const sep = madeBy.get(gone)

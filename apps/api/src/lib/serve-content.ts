@@ -119,10 +119,15 @@ export const serveContent = async (
   // table or figure tag (every carrier emits one for a declared name, rows or not), or a
   // slot row was substituted. Tag-anchored, so prose about the feature cannot match.
   const bound = (doc: string): boolean => slots.size > 0 || BOUND_TAG.test(doc)
-  const hdrs = (isBound: boolean) => ({
-    ...RAW_HEADERS,
-    "Cache-Control": isBound && boundCacheControl ? boundCacheControl : cacheControl,
-  })
+  const hdrs = (isBound: boolean, stamped = false) => {
+    const cache = isBound && boundCacheControl ? boundCacheControl : cacheControl
+    // Stamped bytes are the editors' view: same lifetime as the page, never in a shared cache.
+    const editorOnly = stamped && !/private|no-store/.test(cache)
+    return {
+      ...RAW_HEADERS,
+      "Cache-Control": editorOnly ? `private, ${cache.replace(/^public,\s*/, "")}` : cache,
+    }
+  }
   const headers = hdrs(false)
   const runtimeScripts = (isBound: boolean) =>
     SHARED_STATE_SCRIPT + (isBound ? DYNAMIC_DATA_SCRIPT : "")
@@ -303,11 +308,10 @@ export const serveContent = async (
       : await renderMarkdown(text, title, { dynamic: slots })
     const isBound = bound(rendered)
     const html = withSharedState(rendered, isBound) + append
-    const pageHeaders = hdrs(isBound)
-    const cache = pageHeaders["Cache-Control"]
-    if (editor && !/private|no-store/.test(cache))
-      pageHeaders["Cache-Control"] = `private, ${cache.replace(/^public,\s*/, "")}`
-    return c.body(html, 200, { ...pageHeaders, "Content-Type": "text/html; charset=utf-8" })
+    return c.body(html, 200, {
+      ...hdrs(isBound, !!editor),
+      "Content-Type": "text/html; charset=utf-8",
+    })
   }
 
   if (isLatexLike(content.content_type)) {
@@ -336,12 +340,7 @@ export const serveContent = async (
     if (stamp) text = stampSourceIds(text, { version: editor.version, sha: await sourceSha(text) })
     const doc = applyDynamicBindings(withDeckStructure(text), slots)
     const isBound = bound(doc)
-    const pageHeaders = hdrs(isBound)
-    // Stamped bytes are the editors' view: same lifetime as the page, never in a shared cache.
-    const cache = pageHeaders["Cache-Control"]
-    if (stamp && !/private|no-store/.test(cache))
-      pageHeaders["Cache-Control"] = `private, ${cache.replace(/^public,\s*/, "")}`
-    return c.body(htmlBody(doc, isBound), 200, { ...pageHeaders, "Content-Type": ct })
+    return c.body(htmlBody(doc, isBound), 200, { ...hdrs(isBound, stamp), "Content-Type": ct })
   }
   return c.body(toBody(data), 200, { ...headers, "Content-Type": ct })
 }

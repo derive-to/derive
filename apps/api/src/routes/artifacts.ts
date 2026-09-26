@@ -753,10 +753,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         }
         if (sourceOps) {
           const applied = await materializeSourceOps(deps, existing, parsed)
-          opChanges = applied.changes.map((change) => ({
-            ...change,
-            contentType: applied.contentType,
-          }))
+          opChanges = applied.changes
           materialized = applied
         } else
           materialized = structural

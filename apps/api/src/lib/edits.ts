@@ -287,20 +287,20 @@ export async function materializeSourceOps(
   artifact: Pick<ArtifactRecord, "id" | "short_id" | "kind" | "current_version">,
   ops: unknown,
 ): Promise<
-  MaterializedEdits & { changes: { before: string; after: string }[]; contentType: string }
+  MaterializedEdits & { changes: { before: string; after: string; contentType: string }[] }
 > {
   const { src, contentType } = await currentSource(deps, artifact, undefined, "ops")
   if (!isSourceEditable(contentType ?? ""))
     throw new EditError(
       `"${artifact.short_id}" isn't an HTML page, deck or Markdown document; \`ops\` edit those only.`,
     )
+  const filename = preservingFilename(contentType)
   if (isMarkdownLike(contentType ?? "")) {
     const { markdown, changes } = await applyMarkdownOps(src, ops)
     return {
       content: markdown,
-      filename: preservingFilename(contentType),
-      changes,
-      contentType: "text/markdown",
+      filename,
+      changes: changes.map((c) => ({ ...c, contentType: "text/markdown" })),
     }
   }
   let { html, changes } = await applySourceOps(src, ops)
@@ -313,9 +313,8 @@ export async function materializeSourceOps(
     html = backfillLegacyDeckStructure(html, { layout: true }).html
   return {
     content: html,
-    filename: preservingFilename(contentType),
-    changes,
-    contentType: "text/html",
+    filename,
+    changes: changes.map((c) => ({ ...c, contentType: "text/html" })),
   }
 }
 
