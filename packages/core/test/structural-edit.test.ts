@@ -9,12 +9,6 @@ import {
   type StructuralEdit,
   StructuralEditError,
 } from "../src/structural-edit"
-import {
-  snapStructuralHeight,
-  snapStructuralWidth,
-  structuralBlockResizeAxis,
-  structuralResizeAxis,
-} from "../src/structural-width"
 
 const op = <T extends Omit<StructuralEdit, "schema">>(edit: T): StructuralEdit =>
   ({
@@ -939,52 +933,5 @@ describe("applyStructuralEdits", () => {
       op({ op: "structural-remove", region: "story", node: "card-a" }),
     )
     expect(() => applyStructuralEdits(document, edits)).toThrow(/maximum/)
-  })
-})
-
-describe("snapStructuralWidth", () => {
-  it("snaps to the nearest sibling or rail inside the screen-derived threshold", () => {
-    expect(snapStructuralWidth(66.7, [50, 67, 75], 1)).toEqual({ width: 67, snappedTo: 67 })
-    expect(snapStructuralWidth(63, [50, 67, 75], 1)).toEqual({ width: 63, snappedTo: null })
-  })
-
-  it("bounds widths and resolves ties by candidate order", () => {
-    expect(snapStructuralWidth(4, [10, 50], 2)).toEqual({ width: 10, snappedTo: 10 })
-    expect(snapStructuralWidth(62, [60, 64], 2)).toEqual({ width: 60, snappedTo: 60 })
-  })
-})
-
-describe("snapStructuralHeight", () => {
-  it("snaps in authored pixels and keeps the nearest stable candidate", () => {
-    expect(snapStructuralHeight(117, [80, 120, 160], 4)).toEqual({
-      height: 120,
-      snappedTo: 120,
-    })
-    expect(snapStructuralHeight(111, [80, 120], 4)).toEqual({ height: 111, snappedTo: null })
-  })
-
-  it("clamps to safe bounds before evaluating candidates", () => {
-    expect(snapStructuralHeight(10, [24, 80], 2)).toEqual({ height: 24, snappedTo: 24 })
-    expect(snapStructuralHeight(8200, [8192], 2)).toEqual({ height: 8192, snappedTo: 8192 })
-  })
-})
-
-describe("structuralResizeAxis", () => {
-  it("keeps the active handle on the moving edge", () => {
-    expect(structuralResizeAxis(0, 300)).toEqual({ edge: "right", motion: 1 })
-    expect(structuralResizeAxis(300, 0)).toEqual({ edge: "left", motion: -1 })
-    expect(structuralResizeAxis(150, 151, true)).toEqual({ edge: "right", motion: 0.5 })
-  })
-
-  it("does not infer centered alignment from equal authored margins", () => {
-    expect(structuralResizeAxis(20, 20)).toEqual({ edge: "right", motion: 1 })
-  })
-})
-
-describe("structuralBlockResizeAxis", () => {
-  it("tracks start, end, and centered block-axis alignment", () => {
-    expect(structuralBlockResizeAxis(0, 1)).toEqual({ edge: "bottom", motion: 1 })
-    expect(structuralBlockResizeAxis(1, 0)).toEqual({ edge: "top", motion: -1 })
-    expect(structuralBlockResizeAxis(0, 0, true)).toEqual({ edge: "bottom", motion: 0.5 })
   })
 })

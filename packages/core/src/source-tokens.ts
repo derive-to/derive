@@ -7,6 +7,8 @@
  * start of an edit session the frame records each stamped element's children (text,
  * and which stamped elements, in order). At save, every element whose children
  * differ from that record becomes one `content` op: its new children as tokens.
+ * Given the elements the person touched, only those can: the page's own scripts keep
+ * running while you edit, and what they change is not an edit.
  * `keep(N)` copies element N's source bytes verbatim, so moved, untouched, or merely
  * re-parented elements keep every attribute, entity, and comment inside them. Only
  * the outermost changed element carries an op; changes inside it ride along as
@@ -121,22 +123,25 @@ export function releaseSource(root: Element): void {
 }
 
 /**
- * The `content` ops that turn the snapshot's source into what `root` shows now.
- * `ok` is false when a change can't be expressed (a script-made element holding
- * source, a parser-duplicated id): the caller must not save a partial picture.
- * Ops carry no hashes; the host fills them from the source map.
+ * The `content` ops that turn the snapshot's source into what `root` shows now,
+ * limited to `touched` elements when given. `ok` is false when a change can't be
+ * expressed (a script-made element holding source, a parser-duplicated id): the
+ * caller must not save a partial picture. Ops carry no hashes; the host fills them
+ * from the source map.
  */
 export function collectSourceOps(
   root: Element,
   snap: SrcSnapshot,
+  touched?: ReadonlySet<Element>,
 ): { ops: SourceOp[]; ok: boolean } {
-  let ok = srcOf(root) !== null || sigOf(root) === snap.sigs.get(-1)
+  const mine = (el: Element) => !touched || touched.has(el)
+  let ok = srcOf(root) !== null || !mine(root) || sigOf(root) === snap.sigs.get(-1)
   // Stamped elements whose own children changed, and every ancestor of one.
   const changed = new Set<Element>()
   const dirty = new Set<Element>()
   for (const el of Array.from(root.querySelectorAll(`[${SRC_ATTR}]`))) {
     const n = srcOf(el)
-    if (n === null || sigOf(el) === snap.sigs.get(n)) continue
+    if (n === null || !mine(el) || sigOf(el) === snap.sigs.get(n)) continue
     changed.add(el)
     for (let a: Element | null = el; a && !dirty.has(a); a = a.parentElement) dirty.add(a)
   }

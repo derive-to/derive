@@ -37,6 +37,9 @@ export interface ProbeTargets {
   empty: { x: number; y: number }[]
   /** Structural nodes on the visible slide, each with a point inside it away from text. */
   nodes: { id: string; rect: Rect; grab: { x: number; y: number } | null }[]
+  /** Repeated siblings (look-alike cards, items, columns) on the visible slide: movable
+   *  with no author markup. Each with a point inside it away from text. */
+  repeats: { label: string; rect: Rect; grab: { x: number; y: number } | null }[]
 }
 
 export function installProbe(): void {
@@ -253,7 +256,7 @@ export function installProbe(): void {
     }
     const view = { w: window.innerWidth, h: window.innerHeight }
     const slide = visibleSlide()
-    if (!slide) return { view, slideRect: null, text: [], empty: [], nodes: [] }
+    if (!slide) return { view, slideRect: null, text: [], empty: [], nodes: [], repeats: [] }
     const sr = slide.getBoundingClientRect()
     const text = glyphRects(slide)
     const boxes = text.map((t) => t.rect)
@@ -267,22 +270,48 @@ export function installProbe(): void {
       const y = y0 + rand() * (y1 - y0)
       if (farFromText(x, y, boxes, 10)) empty.push({ x, y })
     }
-    const nodes = Array.from(
-      slide.querySelectorAll<HTMLElement>("[data-derive-region] > [data-derive-node]"),
-    ).map((el) => {
+    const grabIn = (el: Element) => {
       const r = el.getBoundingClientRect()
-      let grab: { x: number; y: number } | null = null
-      for (let i = 0; i < 80 && !grab; i++) {
+      for (let i = 0; i < 80; i++) {
         const x = r.left + 2 + rand() * Math.max(0, r.width - 4)
         const y = r.top + 2 + rand() * Math.max(0, r.height - 4)
         if (x < 2 || y < 2 || x > view.w - 2 || y > view.h - 2) continue
         if (!farFromText(x, y, boxes, 6)) continue
         const hit = document.elementFromPoint(x, y)
-        if (hit && el.contains(hit)) grab = { x, y }
+        if (hit && el.contains(hit)) return { x, y }
       }
-      return { id: el.getAttribute("data-derive-node") ?? "", rect: rectOf(r), grab }
-    })
-    return { view, slideRect: rectOf(sr), text, empty, nodes }
+      return null
+    }
+    const nodes = Array.from(
+      slide.querySelectorAll<HTMLElement>("[data-derive-region] > [data-derive-node]"),
+    ).map((el) => ({
+      id: el.getAttribute("data-derive-node") ?? "",
+      rect: rectOf(el.getBoundingClientRect()),
+      grab: grabIn(el),
+    }))
+    const sig = (el: Element) => `${el.localName}.${classKey(el)}`
+    const repeats = Array.from(slide.querySelectorAll<HTMLElement>("[data-derive-src]"))
+      .filter((el) => {
+        const parent = el.parentElement
+        if (!parent?.hasAttribute("data-derive-src") || el.hasAttribute("data-derive-node"))
+          return false
+        if (/^(?:p|h[1-6]|blockquote|pre|figcaption|dd|dt|td|th)$/.test(el.localName)) return false
+        const d = getComputedStyle(el).display
+        if (!/^(?:block|flex|grid|list-item|table|table-row|flow-root)$/.test(d)) return false
+        const r = el.getBoundingClientRect()
+        if (!(r.width > 8 && r.height > 8)) return false
+        return (
+          Array.from(parent.children).filter(
+            (c) => c.hasAttribute("data-derive-src") && sig(c) === sig(el),
+          ).length > 1
+        )
+      })
+      .map((el) => ({
+        label: `${sig(el)}:${(el.textContent ?? "").trim().slice(0, 24)}`,
+        rect: rectOf(el.getBoundingClientRect()),
+        grab: grabIn(el),
+      }))
+    return { view, slideRect: rectOf(sr), text, empty, nodes, repeats }
   }
 
   /** An element's box grown to cover its own content, which may overflow it. */
@@ -380,17 +409,40 @@ export function installProbe(): void {
     const o = (el: Element): string => `${el.localName}(${kids(el).map(o).join(",")})`
     return topSlides().map(o)
   }
-  const structureToolbar = (): boolean => {
-    const bar = document.querySelector<HTMLElement>(".derive-structure-toolbar")
+  /** The block actions pill is up (a block is selected and nothing is typing). */
+  const pill = (): boolean => {
+    const bar = document.querySelector<HTMLElement>(".derive-block-pill")
     if (!bar) return false
     const r = bar.getBoundingClientRect()
-    return r.width > 0 && r.height > 0 && getComputedStyle(bar).visibility !== "hidden"
+    return r.width > 0 && r.height > 0 && getComputedStyle(bar).display !== "none"
   }
+  /** The pill's name: the selected block's drag handle. */
   const grip = (): Rect | null => {
-    const g = document.querySelector<HTMLElement>(".derive-structure-grip")
+    const g = document.querySelector<HTMLElement>(".derive-block-name")
     if (!g) return null
     const r = g.getBoundingClientRect()
     return r.width > 0 && r.height > 0 ? rectOf(r) : null
+  }
+  /** Where the selected block's siblings are (the selection box names the block). */
+  const siblingRects = (): Rect[] => {
+    const box = document.querySelector<HTMLElement>(".derive-block-box")?.getBoundingClientRect()
+    if (!box || !box.width) return []
+    const near = (a: DOMRect) =>
+      Math.abs(a.left - box.left) < 1.5 &&
+      Math.abs(a.top - box.top) < 1.5 &&
+      Math.abs(a.width - box.width) < 1.5
+    const el = Array.from(document.querySelectorAll("[data-derive-src]")).find((e) =>
+      near(e.getBoundingClientRect()),
+    )
+    const parent = el?.parentElement
+    if (!el || !parent) return []
+    const same = (c: Element) =>
+      el.hasAttribute("data-derive-node")
+        ? c.hasAttribute("data-derive-node")
+        : c.localName === el.localName && classKey(c) === classKey(el)
+    return Array.from(parent.children)
+      .filter((c) => c !== el && same(c))
+      .map((c) => rectOf(c.getBoundingClientRect()))
   }
   const nodeRect = (id: string): Rect | null => {
     const el = document.querySelector(`[data-derive-node="${CSS.escape(id)}"]`)
@@ -435,8 +487,9 @@ export function installProbe(): void {
     changedBlocks,
     activeBlock,
     show,
-    structureToolbar,
+    pill,
     grip,
+    siblingRects,
     nodeRect,
     armedAt,
     slideCount,

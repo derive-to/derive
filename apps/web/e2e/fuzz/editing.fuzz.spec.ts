@@ -7,9 +7,9 @@ import { fuzzSeeds, runSession } from "./session"
  * Each seed is one session on a freshly published copy of the 44-slide fixture. By
  * default (one-slide mode) it stays on one slide: 8–15 random gestures (clicks,
  * cross-element selections, typing, retypes across <br>, Backspace/Delete runs, Enter,
- * ⌘B/⌘I, ⌘A, clicks on empty space, block moves by Option+arrow, toolbar, or grip
- * drag, box resizes) and a save, then 5–8 more on the reloaded slide and a second
- * save. Classic mode sometimes starts with a Rearrange-panel pass (move / drag /
+ * ⌘B/⌘I, ⌘A, clicks on empty space, moves of author nodes and of repeated cards by
+ * Option+arrow, the pill's arrows or a drag of its name, box resizes) and a save,
+ * then 5–8 more on the slide the session picks back up on, and a second save. Classic mode sometimes starts with a Rearrange-panel pass (move / drag /
  * duplicate / delete, then save) and spreads 5–10 gestures over one to three slides
  * with one save. After every
  * save the oracles in oracles.ts judge the stored source. A failing seed writes its

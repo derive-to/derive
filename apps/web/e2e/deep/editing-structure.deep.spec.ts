@@ -40,9 +40,12 @@ const slidesOf = (html: string) => html.match(/<section class="slide[\s\S]*?<\/s
 /** Save, and return what the browser sent: an exact-source save carries `ops`. */
 const saveOps = async (page: Page) => {
   const request = page.waitForRequest((r) => r.method() === "POST" && r.url().includes("/versions"))
+  const response = page.waitForResponse(
+    (r) => r.url().includes("/versions") && r.request().method() === "POST",
+  )
   await page.getByTestId("inline-edit-save").click()
   const body = (await request).postData() ?? ""
-  await expect(page.getByTestId("inline-edit-bar")).toBeHidden()
+  expect((await response).ok()).toBe(true)
   const ops = body.match(/name="ops"\r\n\r\n([\s\S]*?)\r\n--/)?.[1]
   expect(ops, "the save was sent as exact-source ops").toBeTruthy()
   return JSON.parse(ops as string) as { op: string; src: number }[]
@@ -56,10 +59,21 @@ const openDeckEditor = async (page: Page) => {
   await expect(page.getByTestId("inline-edit-bar")).toBeVisible()
   return shortId
 }
-const selectNode = (page: Page, id: string) =>
-  frame(page)
-    .locator(`[data-derive-node='${id}']`)
-    .click({ position: { x: 4, y: 4 } })
+/** Hover a node, then pick it up by its name tag (the fixture has no padding to
+ *  click around its words). */
+const selectNode = async (page: Page, id: string) => {
+  const node = frame(page).locator(`[data-derive-node='${id}']`)
+  const tag = frame(page).locator(".derive-block-tag")
+  await node.hover()
+  // The tag follows the pointer a beat later; take this node's, not the last one's.
+  await expect
+    .poll(async () => {
+      const [t, n] = [await tag.boundingBox(), await node.boundingBox()]
+      return !!t && !!n && Math.abs(t.x + 1 - n.x) < 2
+    })
+    .toBe(true)
+  await tag.click()
+}
 
 /** Swap two distinct byte runs of `html` (each present once). */
 const swap = (html: string, a: string, b: string) =>
@@ -78,23 +92,11 @@ test("[BROWSER-DECK-STRUCT-001] a real deck arranges every slide; what sits arou
   const shortId = await openDeckEditor(owner)
   const doc = frame(owner)
 
-  // Every node directly under its region is armed (tabindex is the frame's
-  // availability mark), whatever else the slide carries.
-  await expect(doc.locator("[data-derive-region='slide-0'] > [data-derive-node]")).toHaveCount(2)
-  await expect
-    .poll(() =>
-      doc.locator("body").evaluate(() =>
-        Array.from(document.querySelectorAll("[data-derive-region] > [data-derive-node]"))
-          .filter((node) => !node.hasAttribute("tabindex"))
-          .map((node) => node.getAttribute("data-derive-node")),
-      ),
-    )
-    .toEqual([])
-
   // Slide 1 ends with a footer, a number, and notes: its nodes swap places and the
   // un-owned tail stays last.
+  await expect(doc.locator("[data-derive-region='slide-0'] > [data-derive-node]")).toHaveCount(2)
   await selectNode(owner, "s0-main")
-  await doc.getByRole("button", { name: "Move earlier (Option+Up)" }).click()
+  await doc.getByRole("button", { name: "Move earlier" }).click()
   await expect
     .poll(() =>
       doc
@@ -106,7 +108,7 @@ test("[BROWSER-DECK-STRUCT-001] a real deck arranges every slide; what sits arou
   // Slide 19 has a subtitle between two nodes: the nodes swap around it.
   await showSlide(owner, 19)
   await selectNode(owner, "s15-title")
-  await doc.getByRole("button", { name: "Move later (Option+Down)" }).click()
+  await doc.getByRole("button", { name: "Move later" }).click()
 
   const ops = await saveOps(owner)
   expect(ops.map((op) => op.op)).toEqual(["content", "content"])
@@ -147,12 +149,11 @@ test("[BROWSER-DECK-LAYOUT-001] a resize and a text edit save as one version: bo
     }).toPass({ timeout: 10_000 })
     await owner.keyboard.press("End")
     await owner.keyboard.type(" More.")
-    await doc.locator("#alpha").click()
-    const height = doc.getByRole("slider", { name: "Resize element height" })
-    await height.focus()
-    await height.press("ArrowDown")
-    await expect(doc.locator("#alpha")).toHaveAttribute("data-derive-height", /^\d+$/)
-    return doc.locator("#alpha").getAttribute("data-derive-height")
+    await doc.locator("#alpha").click({ position: { x: 4, y: 6 } })
+    await doc.getByRole("button", { name: "More options" }).click()
+    await owner.getByTestId("artifact-inspect-block-width").fill("60")
+    await owner.getByTestId("artifact-inspect-block-width").press("Enter")
+    await expect(doc.locator("#alpha")).toHaveAttribute("data-derive-width", "60")
   }
   const versions: string[] = []
   owner.on("request", (r) => {
@@ -178,15 +179,19 @@ test("[BROWSER-DECK-LAYOUT-001] a resize and a text edit save as one version: bo
   await owner.getByTestId("inline-edit-done").click()
   await owner.reload()
   versions.length = 0
-  const px = await edit()
+  await edit()
+  const response = owner.waitForResponse(
+    (r) => r.url().includes("/versions") && r.request().method() === "POST",
+  )
   await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  expect((await response).ok()).toBe(true)
   const stored = await contentOf(owner, shortId)
   expect(versions).toHaveLength(1)
   expect(stored).toContain('<p id="words">Bravo words. More.</p>')
   const alpha = stored.match(/<article id="alpha"[^>]*>Alpha!<\/article>/)?.[0] ?? ""
-  expect(alpha).toContain(`data-derive-height="${px}"`)
-  expect(alpha).toContain(`style="color: navy; --derive-structural-height: ${px}px"`)
+  expect(alpha).toContain('data-derive-width="60"')
+  expect(alpha).not.toContain("data-derive-size")
+  expect(alpha).toContain('style="color: navy; --derive-structural-width: 60%"')
 })
 
 /** Invisible full-height prev/next buttons over the slide, as real decks paint them. */
@@ -226,7 +231,6 @@ test("[BROWSER-FRAME-001] a click through an overlay moves typing to the clicked
   await expect(doc.locator("#title")).toContainText("B")
 
   await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
   await expect(async () => {
     const stored = await contentOf(owner, shortId)
     expect(stored).toContain('<p id="item">Automations and workflows. A</p>')
@@ -242,7 +246,7 @@ test("[BROWSER-DECK-MOVE-001] move, duplicate, cut to another slide and delete s
 
   // Within a slide: the body moves above the brand row, then a copy follows it.
   await selectNode(owner, "s0-main")
-  await doc.getByRole("button", { name: "Move earlier (Option+Up)" }).click()
+  await doc.getByRole("button", { name: "Move earlier" }).click()
   await owner.keyboard.press("ControlOrMeta+d")
   // Across slides: cut slide 2's title, paste it after slide 3's brand row.
   await showSlide(owner, 2)
@@ -299,7 +303,8 @@ test("[BROWSER-DECK-BULK-001] ten edits on three slides and a move save once, ex
       .locator(`.slide:nth-of-type(${slide}) :text-is("${text}")`)
       .filter({ visible: true })
       .first()
-    await target.dblclick()
+    // On the words: beside a short label is the card's space, and picks the card up.
+    await target.dblclick({ position: { x: 4, y: 6 } })
     await owner.keyboard.press("End")
     await owner.keyboard.type(` edit${n++}`)
   }

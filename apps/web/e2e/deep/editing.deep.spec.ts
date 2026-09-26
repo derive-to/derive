@@ -12,6 +12,14 @@ import type { Page } from "@playwright/test"
 import { buildSync } from "esbuild"
 import { expect, openArtifact, publishArtifact, test } from "../fixtures"
 
+/** Save, and wait for the server to take it. */
+const saveEdits = async (page: Page) => {
+  const response = page.waitForResponse(
+    (r) => r.url().includes("/versions") && r.request().method() === "POST",
+  )
+  await page.getByTestId("inline-edit-save").click()
+  expect((await response).ok()).toBe(true)
+}
 const frame = (page: Page) => page.frameLocator("iframe[title]")
 
 const contentOf = async (page: Page, shortId: string): Promise<string> => {
@@ -57,8 +65,7 @@ test("[BROWSER-MD-001] Markdown multi-run selection stores valid source", async 
   })
   await owner.keyboard.type("person")
   await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await saveEdits(owner)
 
   const stored = await contentOf(owner, shortId)
   expect(stored).toBe(
@@ -88,8 +95,7 @@ test("[BROWSER-MD-002] a rendered GFM list selection maps back through emphasis"
     selection?.addRange(range)
   })
   await owner.keyboard.type("raw item")
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await saveEdits(owner)
 
   expect(await contentOf(owner, shortId)).toBe("# GFM\n\n- raw **item**\n- [x] task **done**\n")
   await expect(frame(owner).getByRole("listitem").first()).toHaveText("raw item")
@@ -138,8 +144,7 @@ test("[BROWSER-HTML-001] formatting, resize, undo/redo, and authored bytes survi
   await sizeForm.getByRole("button", { name: "Apply" }).click()
   await expect(owner.getByTestId("inline-edit-bar")).toContainText("2 unsaved changes")
 
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await saveEdits(owner)
   const stored = await contentOf(owner, shortId)
   expect(stored).toContain(
     '<p id="plain"><mark data-note="keep">Authored</mark> and format <b>target</b> beside <a href="https://derive.to?x=1&amp;y=2">this link</a>.</p>',
@@ -169,8 +174,7 @@ test("[BROWSER-DECK-001] a slide edit preserves deck position behavior and ident
   await owner.keyboard.type(" Updated.")
   await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
   await expect(owner.getByTestId("deck-position")).toHaveText("2 / 3")
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await saveEdits(owner)
 
   const stored = await contentOf(owner, shortId)
   expect(stored).toContain("The stage is fixed. Only the scale changes. Updated.")
@@ -241,8 +245,7 @@ test("[BROWSER-VIDEO-001] moving a scene keeps that stable scene active", async 
   await expect(frame(owner).locator("[data-derive-video-active]")).toHaveText("B")
   await expect(owner.getByTestId("artifact-inspect-scene")).toContainText("Scene 1 of 3")
 
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await saveEdits(owner)
   const stored = await contentOf(owner, shortId)
   expect(
     sliceScenes(stored).map((scene) =>
@@ -319,6 +322,8 @@ test("[BROWSER-CONCURRENCY-001] a concurrent publish elsewhere merges; one to th
   await frame(owner).locator("#mine").click()
   await owner.keyboard.press("End")
   await owner.keyboard.type(" Pending edit.")
+  const sha = () => frame(owner).locator("html").getAttribute("data-derive-src-sha")
+  const served = await sha()
 
   // Another line changed under the save: the paragraph it names is byte-identical at
   // head, so the save lands there and keeps both.
@@ -327,7 +332,6 @@ test("[BROWSER-CONCURRENCY-001] a concurrent publish elsewhere merges; one to th
     shortId,
     publish(v1.replace("Original external line.", "Changed externally.")),
   )
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
   await expect(async () => {
     const stored = await contentOf(owner, shortId)
     expect(stored).toContain("My paragraph. Pending edit.")
@@ -339,7 +343,9 @@ test("[BROWSER-CONCURRENCY-001] a concurrent publish elsewhere merges; one to th
   // the page, and saving again says which element conflicts.
   await expect(frame(owner).locator("#mine")).toHaveText("My paragraph. Pending edit.")
   const head = await contentOf(owner, shortId)
-  await enterEditMode(owner)
+  // The session picks back up on the saved page.
+  await expect.poll(() => sha().catch(() => served)).not.toBe(served)
+  await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
   await frame(owner).locator("#mine").click()
   await owner.keyboard.press("End")
   await owner.keyboard.type(" Mine again.")
