@@ -931,6 +931,35 @@ describe("Markdown exact-source ops", () => {
     )
   })
 
+  it("keeps a table cell and a link intact when typed text ends in a backslash", async () => {
+    const md = "Lay the rail.\n\n| Task | Crew |\n| --- | --- |\n| Lift | Night |\n"
+    const { hashes: h } = await markdownSourceMap(md)
+    const page = await renderMarkdownForEditor(md, null, { version: 1 })
+    const id = (tag: string) =>
+      Number(new RegExp(`<${tag} data-derive-src="(\\d+)"`).exec(page)?.[1])
+    const [p, td] = ["p", "td"].map(id) as number[]
+    const { markdown } = await applyMarkdownOps(md, [
+      { op: "content", src: td, hash: h[td] as string, children: [{ text: "Lift \\| tamp" }] },
+      {
+        op: "content",
+        src: p,
+        hash: h[p] as string,
+        children: [
+          { text: "Lay the " },
+          { tag: "a", href: "https://example.test/a(b)\\", children: [{ text: "rail" }] },
+          { text: "." },
+        ],
+      },
+    ])
+    const html = await renderMarkdown(markdown, null)
+    // The row still has two cells, and the typed backslash and pipe read as typed.
+    expect(html.match(/<td[\s>]/g)).toHaveLength(2)
+    expect(html).toContain("Lift \\| tamp")
+    // The link destination's trailing backslash can't swallow its closing `>`.
+    expect(markdown).toContain("[rail](<https://example.test/a(b)\\\\>)")
+    expect(html).toMatch(/<a [^>]*>rail<\/a>\./)
+  })
+
   it("edits a loose list's items, and splits a paragraph inside one as the page shows it", async () => {
     const md = "- Lift the rail\n\n- Lay the rail\n"
     const page = await renderMarkdownForEditor(md, null, { version: 1 })

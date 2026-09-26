@@ -578,8 +578,18 @@ const buildModel = (source: string, tokens: Token[]): Model => {
 
 // ── Rendering ───────────────────────────────────────────────────────────────────────
 
+/** Visible text of rendered HTML, for comparison only. Tags are stripped until none
+ *  remain, so a nested `<<b>b>` can't leave a partial tag behind. */
+const stripTags = (html: string): string => {
+  let out = html
+  for (let prev = ""; prev !== out; ) {
+    prev = out
+    out = out.replace(/<[^>]*>/g, "")
+  }
+  return out
+}
 const textOf = (html: string): string =>
-  decodeEntities(html.replace(/\n$/, "").replace(/<[^>]*>/g, "")).replaceAll("\u00a0", " ")
+  decodeEntities(stripTags(html.replace(/\n$/, ""))).replaceAll("\u00a0", " ")
 const predicted = (n: MdNode): string =>
   n.seq
     .map((x) => (isUnit(x) ? x.r : (x.rendered ?? predicted(x))))
@@ -856,8 +866,10 @@ const typed = (text: string, n: MdNode): string => {
   let t = text.replace(/\u00a0/g, " ")
   if (n.ctx.code === "block") return t.replace(/\n/g, `\n${n.prefix}`)
   t = t.replace(/\n/g, " ")
-  if (n.ctx.cell) t = t.replace(/\|/g, "\\|")
-  if (n.ctx.link && !n.ctx.code) t = t.replace(/[[\]]/g, "\\$&")
+  // A backslash is escaped with the character it would otherwise escape, so a typed
+  // `\` can't swallow the escape that keeps the cell or the link text intact.
+  if (n.ctx.cell) t = t.replace(/[\\|]/g, "\\$&")
+  if (n.ctx.link && !n.ctx.code) t = t.replace(/[\\[\]]/g, "\\$&")
   return t
 }
 
@@ -1117,7 +1129,7 @@ const emitTag = (z: Serializer, n: MdNode, t: TagToken): string | null => {
     pseudo.ctx.link = true
     const inner = serializeInline(z, pseudo, t.children ?? [])
     const href = t.href ?? ""
-    const dest = /[\s()<>]/.test(href) ? `<${href.replace(/[<>]/g, "\\$&")}>` : href
+    const dest = /[\s()<>]/.test(href) ? `<${href.replace(/[\\<>]/g, "\\$&")}>` : href
     return inner.trim() ? `[${inner}](${dest})` : inner
   }
   const inner = finishInline(pseudo, inlinePieces(z, pseudo, t.children ?? []))
