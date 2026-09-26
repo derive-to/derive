@@ -1958,6 +1958,13 @@ interface ElReg {
     lastRects = sig
     post({ type: "anchor-rects", tops })
   }
+  /** Back to where the reader was before a save reloaded the page. Late images and
+   *  fonts can still be growing the page, so it keeps trying for about a second. */
+  const scrollBack = (y: number, tries = 20) => {
+    window.scrollTo({ top: y, behavior: "instant" as ScrollBehavior })
+    if (Math.abs(scrollTop() - y) > 1 && tries > 0)
+      window.setTimeout(() => scrollBack(y, tries - 1), 50)
+  }
   const reportScroll = () =>
     post({
       type: "scroll",
@@ -5939,6 +5946,7 @@ interface ElReg {
           : null,
       )
     else if (d.type === "scroll-by") window.scrollBy(0, d.dy || 0)
+    else if (d.type === "scroll-to") scrollBack(Number(d.y) || 0)
     else if (d.type === "review-mode") setReviewMode(!!d.on)
     else if (d.type === "focus-review") {
       const target = typeof d.id === "string" ? document.getElementById(d.id) : null
