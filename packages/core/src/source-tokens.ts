@@ -34,6 +34,10 @@ export const GEN_ATTR = "data-derive-generated"
 /** The editor's own formatting spans (see applyFmt / insertBreak in the client). */
 export const FMT_ATTR = "data-derive-fmt"
 export const HREF_ATTR = "data-derive-href"
+/** A line break the editor adds to hold a line open (a paragraph Enter left empty, a
+ *  break at the end of a block). It saves as a <br> only while it is what holds that
+ *  line (nothing before it, or a break right before it); beside words it is redundant. */
+export const HOLD_ATTR = "data-derive-hold"
 /** Editor chrome that lives in the page but never in the source. */
 const CHROME = ".derive-edit-ui,.derive-el-hl"
 /** Editor wraps around source text (mention chips): transparent. */
@@ -162,6 +166,11 @@ export function collectSourceOps(
         if (n.nodeType === 8) out.push({ comment: (n as Comment).data })
         if (n.nodeType !== 1) continue
         const c = n as Element
+        if (c.hasAttribute(HOLD_ATTR)) {
+          const last = [...out].reverse().find((t) => !("text" in t) || t.text.trim())
+          if (!last || ("tag" in last && last.tag === "br")) out.push({ tag: "br" })
+          continue
+        }
         const k = kindOf(c)
         if (k === "chrome") continue
         if (k === "wrap") walk(c)

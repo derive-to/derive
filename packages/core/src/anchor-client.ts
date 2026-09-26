@@ -39,6 +39,7 @@ import {
   collectSourceOps,
   FMT_ATTR,
   GEN_ATTR,
+  HOLD_ATTR,
   HREF_ATTR,
   releaseSource,
   SRC_ATTR,
@@ -588,6 +589,20 @@ interface ElReg {
           post({ type: "edit-mention-key", key: e.key })
           if (e.key === "Escape") clearEditMention()
           return
+        }
+        // Enter is a new paragraph, Shift+Enter a line break (see newParagraph), and
+        // Backspace/Delete at the seam of a paragraph Enter made joins it again.
+        const seam = (e.key === "Backspace" || e.key === "Delete") && !e.shiftKey
+        if (focused && !e.metaKey && !e.ctrlKey && !e.altKey && (e.key === "Enter" || seam)) {
+          let handled = true
+          if (seam) handled = joinSplit(e.key === "Delete")
+          else if (e.shiftKey) insertBreak()
+          else newParagraph()
+          if (handled) {
+            e.preventDefault()
+            e.stopImmediatePropagation()
+            return
+          }
         }
         if (e.key === "Escape") {
           if (cancelStructuralGesture()) {
@@ -2282,6 +2297,9 @@ interface ElReg {
     /** Cached origValues.join("") — the dirty compare runs per keystroke tick. */
     origConcat: string
     structSig: string
+    /** Made this session by Enter (a paragraph's second half): it has no words of its
+     *  own to compare, and the change is its parent's new child. */
+    made?: boolean
   }
   type ResizableElement = HTMLElement | SVGElement
   interface ResizeTarget {
@@ -2494,16 +2512,17 @@ interface ElReg {
     for (const n of textNodes(el)) out += n.nodeValue
     return out
   }
+  /** A text block differs from how the session found it: its words, its formatting
+   *  (bolding a word is a real edit even when not one character changed), or, on an
+   *  exact-source page, its shape (Enter split a paragraph inside it). */
+  const targetEdited = (t: EditTarget): boolean =>
+    concatText(t.el) !== t.origConcat ||
+    hasFmt(t.el) ||
+    (!!srcSnap && structSigOf(t.el) !== t.structSig)
   /** The session's changes (see `changes`), marking each edited text block. */
   const changeList = () => {
-    // Formatting counts even when not one character changed: bolding a word is a
-    // real edit, and the text-only compare called that block clean — so Save
-    // stayed hidden and the work was discardable without a warning.
     for (const t of editTargets)
-      t.el.classList.toggle(
-        "derive-edited",
-        document.contains(t.el) && (concatText(t.el) !== t.origConcat || hasFmt(t.el)),
-      )
+      t.el.classList.toggle("derive-edited", document.contains(t.el) && targetEdited(t))
     return changes()
   }
   const countDirty = () => changeList().length
@@ -2540,6 +2559,9 @@ interface ElReg {
     /** Parents' child lists before a move, duplicate, delete, paste or revert. */
     | { kind: "children"; lists: ChildList[] }
     | { kind: "scene"; entry: SceneHistory; activeAfter: boolean }
+    /** One step made of several (Enter splits a block: its parent's children and its
+     *  own words), undone in reverse. */
+    | { kind: "multi"; entries: HistoryEntry[] }
   let undoStack: HistoryEntry[] = []
   let redoStack: HistoryEntry[] = []
   let lastBurst: { el: HTMLElement; at: number } | null = null
@@ -2613,9 +2635,13 @@ interface ElReg {
     for (let i = 0; i < fresh.length; i++)
       editBase.starts.set(fresh[i] as Text, t.origStarts[i] as number)
   }
-  const stepHistory = (from: typeof undoStack, to: typeof undoStack) => {
-    const entry = from.pop()
-    if (!entry) return
+  /** Put one entry back; what it returns puts it forward again. */
+  const applyHistory = (entry: HistoryEntry): HistoryEntry | null => {
+    if (entry.kind === "multi") {
+      // Undone last-first; the inverse, stored in that order, replays first-first.
+      const back = [...entry.entries].reverse().map(applyHistory)
+      return { kind: "multi", entries: back.filter((e): e is HistoryEntry => !!e) }
+    }
     if (entry.kind === "scene") {
       if (entry.activeAfter) {
         entry.entry.redo()
@@ -2626,22 +2652,38 @@ interface ElReg {
         sceneEdits = sceneEdits.filter((candidate) => candidate !== entry.entry)
         restoreActiveVideoScene(entry.entry.activeBefore)
       }
-      to.push({ ...entry, activeAfter: !entry.activeAfter })
-    } else if (entry.kind === "children") {
-      to.push({ kind: "children", lists: entry.lists.map(({ el }) => ({ el, nodes: kidsOf(el) })) })
+      return { ...entry, activeAfter: !entry.activeAfter }
+    }
+    if (entry.kind === "children") {
+      const back: HistoryEntry = {
+        kind: "children",
+        lists: entry.lists.map(({ el }) => ({ el, nodes: kidsOf(el) })),
+      }
       for (const { el, nodes } of entry.lists) setKids(el, nodes)
-    } else if (!document.contains(entry.el)) return
-    else if (entry.kind === "structural-sizing") {
-      to.push(structuralSizingOf(entry.el, entry.sizeName, entry.widthName, entry.heightName))
+      return back
+    }
+    if (!document.contains(entry.el)) return null
+    if (entry.kind === "structural-sizing") {
+      const back = structuralSizingOf(entry.el, entry.sizeName, entry.widthName, entry.heightName)
       applyStructuralSizing(entry)
-    } else if (entry.kind === "html") {
-      to.push({ kind: "html", el: entry.el, html: entry.el.innerHTML })
+      return back
+    }
+    if (entry.kind === "html") {
+      const back: HistoryEntry = { kind: "html", el: entry.el, html: entry.el.innerHTML }
       entry.el.innerHTML = entry.html
       reregister(targetFor(entry.el), entry.el)
-    } else if (entry.kind === "style") {
-      to.push({ kind: "style", el: entry.el, style: rawStyle(entry.el) })
-      restoreStyle(entry.el, entry.style)
+      return back
     }
+    const back: HistoryEntry = { kind: "style", el: entry.el, style: rawStyle(entry.el) }
+    restoreStyle(entry.el, entry.style)
+    return back
+  }
+  const stepHistory = (from: typeof undoStack, to: typeof undoStack) => {
+    const entry = from.pop()
+    if (!entry) return
+    const back = applyHistory(entry)
+    if (!back) return
+    to.push(back)
     lastBurst = null
     refreshResizeUi()
     postDirty()
@@ -4633,7 +4675,9 @@ interface ElReg {
     for (const el of after)
       if (!before.includes(el))
         parts.push(
-          `${before.some((b) => srcOf(b) === srcOf(el)) ? "Duplicated" : "Added"} ${titleOf(el)}`,
+          madeBy.has(el)
+            ? `New ${el.localName === "li" ? "item" : "paragraph"}`
+            : `${before.some((b) => srcOf(b) === srcOf(el)) ? "Duplicated" : "Added"} ${titleOf(el)}`,
         )
     for (const el of before) if (!after.includes(el)) parts.push(`Deleted ${titleOf(el)}`)
     const was = before.filter((el) => after.includes(el))
@@ -4655,14 +4699,14 @@ interface ElReg {
   const changes = (): Change[] => {
     const out: Change[] = []
     for (const t of editTargets) {
-      if (!t.el.isConnected || (concatText(t.el) === t.origConcat && !hasFmt(t.el))) continue
+      if (t.made || !t.el.isConnected || !targetEdited(t)) continue
       const was = htmlPlain(t.origHtml)
       const now = plainOf(t.el)
       const [from, to] = clipPair(was, now)
       out.push({
         id: changeId(t),
         where: whereOf(t.el, true),
-        ...(was !== now ? { from, to } : { what: "Formatting" }),
+        ...(was !== now ? { from, to } : { what: hasFmt(t.el) ? "Formatting" : "Split" }),
         at: t.el,
         revert: () => {
           checkpoint(t.el)
@@ -5005,7 +5049,7 @@ interface ElReg {
     settleBlocks(true)
     for (const t of editTargets) {
       if (document.contains(t.el)) {
-        if (concatText(t.el) !== t.origConcat || hasFmt(t.el)) {
+        if (targetEdited(t)) {
           t.el.innerHTML = t.origHtml
           // innerHTML rebuilt the block's text nodes as NEW objects — re-register
           // them at their original offsets, or a Discarded block would refuse every
@@ -5428,19 +5472,18 @@ interface ElReg {
         post({ type: "edit-blocked", reason: "readonly" })
         return
       }
+      // The keys arrive at keydown (ownKeys); these are the same two from an input
+      // method that sends no key: a new paragraph, and a line break (a <br> on save,
+      // riding the same editor-span grammar as bold and italic).
+      if (it === "insertParagraph" || it === "insertLineBreak") {
+        e.preventDefault()
+        if (it === "insertParagraph") newParagraph()
+        else insertBreak()
+        return
+      }
       // Before the mutation, not after: this is the only place we can capture what
       // the block looked like a keystroke ago.
       if (t instanceof HTMLElement) checkpointTyping(t)
-      // Enter breaks the line. Blocking it outright made the mode feel broken —
-      // pressing Enter mid-sentence is reflexive — while a real paragraph SPLIT
-      // stays out: that changes the document's structure, and this editor only ever
-      // rewrites the inside of one block. The break rides the same editor-span
-      // grammar as bold and italic and becomes a <br> on save.
-      if (it === "insertParagraph" || it === "insertLineBreak") {
-        e.preventDefault()
-        insertBreak()
-        return
-      }
       // Formatting commands (⌘B and friends) don't reach a plaintext-only field
       // anyway; the client applies its own (see applyFmt).
       if (it.indexOf("format") === 0) {
@@ -5575,6 +5618,16 @@ interface ElReg {
     span.appendChild(document.createElement("br"))
     range.deleteContents()
     range.insertNode(span)
+    // A break with nothing after it in its block shows no new line (the browser folds a
+    // trailing <br>), and typing would land before it: hold the line open.
+    const after = document.createRange()
+    after.setStartAfter(span)
+    after.setEnd(block, block.childNodes.length)
+    if (blankRange(after) && !after.cloneContents().querySelector(`[${HOLD_ATTR}]`)) {
+      const br = document.createElement("br")
+      br.setAttribute(HOLD_ATTR, "")
+      span.after(br)
+    }
     // Caret after the break, so typing continues on the new line.
     range.setStartAfter(span)
     range.collapse(true)
@@ -5584,6 +5637,234 @@ interface ElReg {
   }
 
   const hasFmt = (el: Element): boolean => !!el.querySelector(`[${FMT_ATTR}]`)
+
+  /* ── Enter: a new paragraph ───────────────────────────────────────────────────
+     Enter splits the paragraph or list item the caret is in; Shift+Enter breaks the
+     line (insertBreak). The second half is a COPY of the same element, so the new
+     paragraph keeps the author's tag, class and attributes: on save its parent's
+     children name that element twice (keep twice = a copy with fresh identities; see
+     source-edit.ts), each with its own half of the words. Only a stamped p or li whose
+     parent is stamped splits, and not an author's structural node. A heading does
+     not split: Enter at its end moves the caret to the next block, and mid-heading
+     breaks the line. Anything else (a cell, a caption, a text box) breaks the line.
+     Backspace at the start of a paragraph Enter made (Delete at the end of the one
+     before it) joins the two again. */
+  const SPLITS = "p,li"
+  /** What Enter made this session, and the whitespace it set before each. */
+  const madeBy = new WeakMap<HTMLElement, Text | null>()
+  /** Nothing but whitespace (and a placeholder) in `range`: the caret is at an edge. */
+  const blankRange = (range: Range): boolean =>
+    !range.toString().trim() &&
+    !range.cloneContents().querySelector(`br:not([${HOLD_ATTR}]),img,svg,[data-derive-readonly]`)
+  /** An emptied block keeps a line to type on. */
+  const hold = (el: HTMLElement) => {
+    if (el.textContent?.trim() || el.querySelector(`br:not([${HOLD_ATTR}]),img,svg`)) {
+      for (const b of Array.from(el.querySelectorAll(`:scope > br[${HOLD_ATTR}]`))) b.remove()
+    } else if (!el.querySelector(`[${HOLD_ATTR}]`)) {
+      const br = document.createElement("br")
+      br.setAttribute(HOLD_ATTR, "")
+      el.append(br)
+    }
+  }
+  const emptyInline = (n: Node): boolean =>
+    n instanceof HTMLElement &&
+    !n.textContent &&
+    !n.matches(`br,img,svg,hr,input,${READONLY}`) &&
+    !n.querySelector("br,img,svg")
+  /** The inline wrappers a split cut through (a <b> the caret was in) are cloned into
+   *  the second half; where that leaves either copy empty, it goes. `depth` is how
+   *  many wrappers the cut crossed, so an author's own empty element (an icon) stays. */
+  const dropEmptyEdge = (el: HTMLElement, last: boolean, depth: number) => {
+    let n: ChildNode | null = last ? el.lastChild : el.firstChild
+    for (let level = 0; n && level < depth; ) {
+      if (n.nodeType === 3 && !n.nodeValue) {
+        const empty: ChildNode = n
+        n = last ? n.previousSibling : n.nextSibling
+        empty.remove()
+        continue
+      }
+      if (!(n instanceof HTMLElement)) return
+      if (emptyInline(n)) {
+        n.remove()
+        return
+      }
+      n = last ? n.lastChild : n.firstChild
+      level++
+    }
+  }
+  const caretInto = (host: HTMLElement, node: Node, offset: number) => {
+    host.focus({ preventScroll: true })
+    const r = document.createRange()
+    r.setStart(node, offset)
+    r.collapse(true)
+    const sel = window.getSelection()
+    sel?.removeAllRanges()
+    sel?.addRange(r)
+  }
+  /** The first visible words after `el`, where Enter at a heading's end goes. */
+  const nextWords = (el: Element): Text | null => {
+    const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+    w.currentNode = el
+    for (let n = w.nextNode(); n; n = w.nextNode()) {
+      const t = n as Text
+      const parent = t.parentElement
+      if (el.contains(t) || !t.data.trim() || !parent) continue
+      if (parent.closest(`.derive-edit-ui,script,style,${READONLY},[${GEN_ATTR}]`)) continue
+      const r = document.createRange()
+      r.selectNodeContents(t)
+      if (r.getClientRects().length) return t
+    }
+    return null
+  }
+  const splittable = (el: HTMLElement): boolean => {
+    const parent = el.parentElement
+    return (
+      !!srcSnap &&
+      el.matches(SPLITS) &&
+      srcOf(el) !== null &&
+      !!parent &&
+      srcOf(parent) !== null &&
+      !el.matches(`${structureNodeSelector},${structureRegionSelector}`) &&
+      !readonlyAt(el)
+    )
+  }
+  const newParagraph = (): void => {
+    const host = editingCaret()
+    const sel = window.getSelection()
+    if (!host || !sel?.rangeCount) return
+    const range = sel.getRangeAt(0)
+    if (!host.contains(range.startContainer)) return
+    const at = range.startContainer
+    const inner = (at.nodeType === 1 ? (at as Element) : at.parentElement)?.closest(BLOCKS)
+    const blk = inner instanceof HTMLElement && host.contains(inner) ? inner : host
+    // A selection that runs past the block is replaced only up to the block's end.
+    if (!blk.contains(range.endContainer)) range.setEnd(blk, blk.childNodes.length)
+    const tail = document.createRange()
+    tail.setStart(range.endContainer, range.endOffset)
+    tail.setEnd(blk, blk.childNodes.length)
+    if (/^h[1-6]$/.test(blk.localName)) {
+      const next = range.collapsed && blankRange(tail) ? nextWords(blk) : undefined
+      if (next === undefined) insertBreak()
+      else if (next) editActivate(next, { node: next, offset: Math.max(0, next.data.search(/\S/)) })
+      return
+    }
+    if (!splittable(blk)) {
+      insertBreak()
+      return
+    }
+    const parent = blk.parentElement as HTMLElement
+    const own = blk === host
+    if (own) {
+      snapKids(parent)
+      remember({
+        kind: "multi",
+        entries: [
+          { kind: "children", lists: [{ el: parent, nodes: kidsOf(parent) }] },
+          { kind: "html", el: blk, html: blk.innerHTML },
+        ],
+      })
+    } else checkpoint(host)
+    lastBurst = null
+    if (!range.collapsed) range.deleteContents()
+    tail.setStart(range.startContainer, range.startOffset)
+    let depth = 0
+    for (let n: Node | null = range.startContainer; n && n !== blk; n = n.parentNode)
+      if (n.nodeType === 1) depth++
+    const rest = tail.extractContents()
+    const copy = blk.cloneNode(false) as HTMLElement
+    copy.classList.remove("derive-edited", "derive-edit-hover", "derive-block-flash")
+    if (!own) {
+      copy.removeAttribute("contenteditable")
+      copy.removeAttribute("data-derive-editable")
+    }
+    copy.append(rest)
+    dropEmptyEdge(blk, true, depth)
+    dropEmptyEdge(copy, false, depth)
+    hold(blk)
+    hold(copy)
+    // Written on its own line like its neighbours, when the source puts them so.
+    const gap = blk.previousSibling
+    const sep =
+      gap?.nodeType === 3 && !gap.nodeValue?.trim() && gap.nodeValue
+        ? document.createTextNode(gap.nodeValue)
+        : null
+    blk.after(...(sep ? [sep, copy] : [copy]))
+    madeBy.set(copy, sep)
+    if (own) {
+      editTargets.push({
+        el: copy,
+        origHtml: "",
+        origValues: [],
+        origStarts: [],
+        origConcat: "",
+        structSig: "",
+        made: true,
+      })
+      markBlocksChanged()
+    }
+    const first = document.createTreeWalker(copy, NodeFilter.SHOW_TEXT).nextNode()
+    caretInto(own ? copy : host, first && !readonlyAt(first.parentElement) ? first : copy, 0)
+    revealBlock(copy)
+    scheduleDirty()
+  }
+  /** Backspace at the start of a paragraph Enter made, or Delete at the end of the one
+   *  before it: the two are one paragraph again. False when this key is not that. */
+  const joinSplit = (forward: boolean): boolean => {
+    const host = editingCaret()
+    const sel = window.getSelection()
+    if (!host || !sel?.rangeCount || !sel.isCollapsed) return false
+    const range = sel.getRangeAt(0)
+    const at = range.startContainer
+    const blk = (at.nodeType === 1 ? (at as Element) : at.parentElement)?.closest(SPLITS)
+    if (!(blk instanceof HTMLElement) || !host.contains(blk)) return false
+    const sibling = (el: Element) => {
+      let n = forward ? el.nextSibling : el.previousSibling
+      while (n?.nodeType === 3 && !n.nodeValue?.trim())
+        n = forward ? n.nextSibling : n.previousSibling
+      return n instanceof HTMLElement ? n : null
+    }
+    const other = sibling(blk)
+    const [keep, gone] = forward ? [blk, other] : [other, blk]
+    if (!keep || !gone || !madeBy.has(gone) || srcOf(keep) !== srcOf(gone)) return false
+    const edge = document.createRange()
+    if (forward) {
+      edge.setStart(range.startContainer, range.startOffset)
+      edge.setEnd(blk, blk.childNodes.length)
+    } else {
+      edge.setStart(blk, 0)
+      edge.setEnd(range.startContainer, range.startOffset)
+    }
+    if (!blankRange(edge)) return false
+    const parent = keep.parentElement as HTMLElement
+    const own = host === blk
+    if (own) {
+      snapKids(parent)
+      // Undone last-first: the removed half returns before its words do.
+      remember({
+        kind: "multi",
+        entries: [
+          { kind: "html", el: keep, html: keep.innerHTML },
+          { kind: "html", el: gone, html: gone.innerHTML },
+          { kind: "children", lists: [{ el: parent, nodes: kidsOf(parent) }] },
+        ],
+      })
+    } else checkpoint(host)
+    lastBurst = null
+    for (const el of [keep, gone])
+      for (const b of Array.from(el.querySelectorAll(`:scope > br[${HOLD_ATTR}]`))) b.remove()
+    const offset = keep.childNodes.length
+    keep.append(...Array.from(gone.childNodes))
+    const sep = madeBy.get(gone)
+    if (sep && sep.nextSibling === gone) sep.remove()
+    gone.remove()
+    hold(keep)
+    const target = own ? keep : host
+    if (!target.hasAttribute("data-derive-editable")) return true
+    caretInto(target, keep, offset)
+    if (own) markBlocksChanged()
+    scheduleDirty()
+    return true
+  }
 
   const isHiSur = (ch: string | undefined): boolean =>
     !!ch && ch.charCodeAt(0) >= 0xd800 && ch.charCodeAt(0) <= 0xdbff

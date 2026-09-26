@@ -310,7 +310,7 @@ test.describe("deck", () => {
   const DECK = `<!doctype html><html><head><meta charset="utf-8"><title>Deck</title>
   <style>.slide{position:absolute;inset:0;opacity:0}.slide.on{opacity:1}</style></head><body>
   <section class="slide on" data-derive-slide="0"><h1 id="s1">First slide</h1></section>
-  <section class="slide" data-derive-slide="1"><h1 id="s2">Second slide</h1></section>
+  <section class="slide" data-derive-slide="1"><h1 id="s2">Second slide</h1><ul class="points"><li>Point one</li></ul></section>
   <section class="slide" data-derive-slide="2"><h1 id="s3">Third slide</h1></section>
   <script>
     var slides = [].slice.call(document.querySelectorAll('.slide')), i = 0
@@ -544,12 +544,23 @@ test.describe("deck", () => {
     // A space is the tell: this deck binds Space to "next slide".
     await owner.keyboard.type(" and a half")
 
+    // Enter starts the next item, Shift+Enter breaks its line: neither turns a page.
+    await doc(owner).locator(".points li").click({ force: true })
+    await owner.keyboard.press("End")
+    await owner.keyboard.press("Enter")
+    await owner.keyboard.type("Point two")
+    await owner.keyboard.press("Shift+Enter")
+    await owner.keyboard.type("in two lines")
+
     await expect(owner.getByTestId("deck-position")).toHaveText("2 / 3")
     await saveEdits(owner)
 
     const res = await owner.request.get(`/v1/artifacts/${shortId}/content`)
     const src = await res.text()
     expect(src).toContain("Second slide and a half")
+    expect(src).toContain(
+      '<ul class="points"><li>Point one</li><li>Point two<br>in two lines</li></ul>',
+    )
     expect(src).toContain("Third slide")
   })
 

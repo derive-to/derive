@@ -69,6 +69,15 @@ body{font-family:sans-serif;margin:24px}.agenda{display:flex;gap:16px}
 <div class="agenda-item" id="c3"><span class="index">03</span><h3 id="h3">Review<br>the results</h3><p>Third.</p></div>
 </div></div></section></body></html>`
 
+// A long page, so a save has a scroll position to keep.
+const PARAGRAPHS_DOC = `<style>body{font:16px/1.5 sans-serif;margin:24px;max-width:640px}.intro{height:1500px}</style>
+<main>
+<p class="intro">Scroll down to the crew notes.</p>
+<h2 id="head">Crew notes</h2>
+<p class="note">Night crews lift the old rail between the depot and the second stop, section by section. Day crews lay the new rail.</p>
+<ul class="tasks"><li>Check the gauge</li></ul>
+<p class="intro">The end of the notes.</p>
+</main>`
 const ROWS_DOC = `<style>body{font:16px/1.5 sans-serif;margin:96px 24px}table{border-collapse:collapse;width:360px}td{padding:6px 10px;border:1px solid #ccc}</style>
 <table><tbody><tr><td>Survey</td><td>4</td></tr><tr><td>Rails</td><td>18</td></tr><tr><td>Overhead</td><td>9</td></tr></tbody></table>`
 
@@ -207,6 +216,25 @@ async function typeAtLineEnd(page: Page, selector: string, text: string) {
   await el.click({ position: { x: box.width - 2, y: box.height - 4 } })
   await page.keyboard.press("End")
   await page.keyboard.type(text)
+}
+/** Arm a block with a click, then put the caret just before `before` in its words. */
+async function caretBefore(page: Page, selector: string, before: string) {
+  const el = doc(page).locator(selector)
+  await el.click()
+  await el.evaluate((node, text) => {
+    const walk = document.createTreeWalker(node, NodeFilter.SHOW_TEXT)
+    for (let t = walk.nextNode(); t; t = walk.nextNode()) {
+      const i = (t.nodeValue ?? "").indexOf(text)
+      if (i < 0) continue
+      const range = document.createRange()
+      range.setStart(t, i)
+      const selection = window.getSelection()
+      selection?.removeAllRanges()
+      selection?.addRange(range)
+      return
+    }
+    throw new Error(`"${text}" is not in the block`)
+  }, before)
 }
 /** The actions pill beside the selected block. */
 const pill = (page: Page) => doc(page).locator(".derive-block-pill")
@@ -954,6 +982,77 @@ test("the changes list says where and what changed, shows it, and reverts just o
     expect(saved.indexOf('id="c2"')).toBeLessThan(saved.indexOf('id="c1"'))
     expect(saved).toContain('<h3 id="h2">Ship<br>the work</h3>')
   }).toPass({ timeout: 10_000 })
+})
+
+test("Enter starts a new paragraph of the same kind, Shift+Enter breaks the line, a save keeps your place", async ({
+  owner,
+}) => {
+  const shortId = await publishArtifact(owner, "notes.html", PARAGRAPHS_DOC, "text/html")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+  const frame = doc(owner)
+  const notes = frame.locator("p.note")
+
+  // Enter splits the paragraph at the caret; the second half is the same element.
+  await caretBefore(owner, "p.note", " Day crews")
+  await owner.keyboard.press("Enter")
+  await expect(notes).toHaveCount(2)
+  await expect(notes.nth(1)).toHaveText(" Day crews lay the new rail.")
+  // Backspace at its start makes them one paragraph again; Enter splits them again.
+  await owner.keyboard.press("Backspace")
+  await expect(notes).toHaveCount(1)
+  await owner.keyboard.press("Enter")
+  await expect(notes).toHaveCount(2)
+  // Enter at the end of the last one leaves an empty paragraph, a line of its own.
+  await typeAtLineEnd(owner, "p.note >> nth=1", "")
+  await owner.keyboard.press("Enter")
+  await expect(notes).toHaveCount(3)
+
+  // A change far into a long paragraph is listed where it happened.
+  await typeAtLineEnd(owner, "p.note >> nth=0", " Slowly.")
+  await owner.getByTestId("inline-edit-changes").click()
+  await expect(owner.getByTestId("inline-edit-changes-list")).toContainText("section. Slowly.")
+  await owner.getByTestId("inline-edit-changes").click()
+
+  // In a list: Shift+Enter breaks the line inside the item, Enter starts the next item.
+  await typeAtLineEnd(owner, "ul.tasks li", "")
+  await owner.keyboard.press("Shift+Enter")
+  await owner.keyboard.type("and level")
+  await owner.keyboard.press("Enter")
+  await owner.keyboard.type("Sweep the bed")
+  await expect(frame.locator("ul.tasks li")).toHaveCount(2)
+
+  // A heading doesn't split: Enter at its end goes on to the words after it.
+  await typeAtLineEnd(owner, "#head", "")
+  await owner.keyboard.press("Enter")
+  await owner.keyboard.type("Tonight: ")
+  await expect(frame.locator("h2")).toHaveCount(1)
+  await expect(notes.nth(0)).toHaveText(/^Tonight: Night crews/)
+
+  const scrollY = () => frame.locator("body").evaluate(() => window.scrollY)
+  // Where the reader is, once the page has finished bringing the words into view.
+  let was = -1
+  await expect
+    .poll(
+      async () => {
+        const now = await scrollY()
+        const settled = now === was
+        was = now
+        return settled
+      },
+      { intervals: [300] },
+    )
+    .toBe(true)
+  expect(was).toBeGreaterThan(500)
+  await saveEdits(owner, true)
+  // The saved page opens where the reader was, and this save isn't someone else's news.
+  await expect.poll(async () => Math.abs((await scrollY()) - was)).toBeLessThan(3)
+  await expect(owner.getByText(/was just published/)).toHaveCount(0)
+  const saved = await contentOf(owner, shortId)
+  expect(saved).toContain(
+    '<p class="note">Tonight: Night crews lift the old rail between the depot and the second stop, section by section. Slowly.</p>\n<p class="note"> Day crews lay the new rail.</p>\n<p class="note"><br></p>\n<ul class="tasks"><li>Check the gauge<br>and level</li><li>Sweep the bed</li></ul>',
+  )
+  expect(saved).not.toContain("data-derive")
 })
 
 test("the block pill stays off the neighbouring rows and never keeps the keyboard", async ({
