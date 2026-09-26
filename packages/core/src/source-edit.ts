@@ -16,7 +16,7 @@
  * kept element's bytes are its stored bytes.
  */
 
-import { DECK_CONTENT_TYPE, HTML_CONTENT_TYPE } from "./content-types"
+import { DECK_CONTENT_TYPE, HTML_CONTENT_TYPE, isMarkdownLike } from "./content-types"
 import {
   type CopyIdentities,
   copyIdentitiesOf,
@@ -66,10 +66,11 @@ export class SourceConflictError extends EditError {
   }
 }
 
-/** The stored types the rendered editor saves as ops (and is served stamped for). */
+/** The stored types the rendered editor saves as ops (and is served stamped for).
+ *  Markdown names rendered elements by markdown-source.ts's ids instead of start tags. */
 export const isSourceEditable = (contentType: string): boolean => {
   const base = contentType.split(";")[0]?.trim()
-  return base === HTML_CONTENT_TYPE || base === DECK_CONTENT_TYPE
+  return base === HTML_CONTENT_TYPE || base === DECK_CONTENT_TYPE || isMarkdownLike(contentType)
 }
 
 const MAX_SOURCE_OPS = 500
@@ -193,7 +194,7 @@ const isId = (v: unknown): v is number => typeof v === "number" && Number.isSafe
 const isHash = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{16}$/.test(v)
 
 /** Shape-check an untrusted `ops` payload. Every failure is a 400 naming the position. */
-const parseOps = (raw: unknown): SourceOp[] => {
+export const parseSourceOps = (raw: unknown): SourceOp[] => {
   if (!Array.isArray(raw) || raw.length === 0)
     throw new EditError("`ops` must be a non-empty JSON array of ops.")
   if (raw.length > MAX_SOURCE_OPS)
@@ -293,7 +294,7 @@ export interface AppliedSourceOps {
  * names is byte-identical at the same source id.
  */
 export const applySourceOps = async (html: string, raw: unknown): Promise<AppliedSourceOps> => {
-  const ops = parseOps(raw)
+  const ops = parseSourceOps(raw)
   const els = indexElements(html)
   let slides: { position: number; start: number; end: number }[] | null = null
   const place = (n: number): string => {

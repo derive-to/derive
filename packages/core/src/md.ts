@@ -12,31 +12,40 @@ import { MERMAID_HEAD } from "./mermaid"
 
 const { FilterXSS, whiteList } = xssPkg as unknown as typeof import("xss")
 
-const sanitizer = new FilterXSS({
-  whiteList: {
-    ...whiteList,
-    img: ["src", "alt", "title", "width", "height"],
-    a: ["href", "name", "target", "rel", "title"],
-    code: ["class"],
-    pre: ["class", "data-derive-readonly"],
-    input: ["type", "checked", "disabled"],
-    th: ["align"],
-    td: ["align"],
-    // The two dynamic-data bindings (dynamic-data.ts). A data attribute carries no
-    // execution; keeping it is what lets the in-frame runtime find the element a live
-    // update belongs to. Nothing else about the whitelist changes: the cells a slot
-    // renders pass through this same sanitizer.
-    table: [...(whiteList.table ?? []), "data-derive-table"],
-    figure: [...(whiteList.figure ?? []), "data-derive-figure"],
-    figcaption: whiteList.figcaption ?? [],
-    details: [],
-    summary: [],
-    ins: [],
-    del: [],
-    sup: [],
-    sub: [],
-  },
-})
+const WHITE_LIST = {
+  ...whiteList,
+  img: ["src", "alt", "title", "width", "height"],
+  a: ["href", "name", "target", "rel", "title"],
+  code: ["class"],
+  pre: ["class", "data-derive-readonly"],
+  input: ["type", "checked", "disabled"],
+  th: ["align"],
+  td: ["align"],
+  // The two dynamic-data bindings (dynamic-data.ts). A data attribute carries no
+  // execution; keeping it is what lets the in-frame runtime find the element a live
+  // update belongs to. Nothing else about the whitelist changes: the cells a slot
+  // renders pass through this same sanitizer.
+  table: [...(whiteList.table ?? []), "data-derive-table"],
+  figure: [...(whiteList.figure ?? []), "data-derive-figure"],
+  figcaption: whiteList.figcaption ?? [],
+  details: [],
+  summary: [],
+  ins: [],
+  del: [],
+  sup: [],
+  sub: [],
+}
+const sanitizer = new FilterXSS({ whiteList: WHITE_LIST })
+
+/** The content sanitizer, keeping one more attribute name on any tag: the editor's
+ *  source stamp (markdown-source.ts), which carries a per-render nonce so nothing an
+ *  author wrote can pose as one. Values are ids, optionally `r` (read-only). */
+export const stampSanitizer = (attr: string): { process: (html: string) => string } =>
+  new FilterXSS({
+    whiteList: WHITE_LIST,
+    onIgnoreTagAttr: (_tag, name, value) =>
+      name === attr && /^\d*r?$/.test(value) ? `${name}="${value}"` : undefined,
+  })
 
 // The rendered-artifact stylesheet (markdown + Reader view). Standalone — it ships
 // inside the sandboxed iframe, so it can't read the app's [data-theme] tokens (or
@@ -163,6 +172,26 @@ export interface RenderMarkdownOptions {
   dynamic?: ReadonlyMap<string, DynamicValue>
 }
 
+/** A fenced code block the renderer draws itself: a mermaid diagram (read-only), or a
+ *  dynamic-data fence's current value or seed. `false` for an ordinary code block. */
+export const renderSpecialFence = (
+  token: { text: string; lang?: string },
+  opts: RenderMarkdownOptions,
+  onMermaid: () => void,
+): string | false => {
+  const { text, lang } = token
+  if (lang?.trim().split(/\s+/)[0]?.toLowerCase() === "mermaid") {
+    onMermaid()
+    return `<pre class="derive-mermaid" data-derive-readonly><code>${escapeHtml(text)}</code></pre>`
+  }
+  const fence = parseDynamicFence(lang)
+  if (!fence) return false
+  const slot = opts.dynamic?.get(fence.name)
+  return slot && slot.kind === fence.kind
+    ? renderDynamicValue(fence.name, slot)
+    : renderDynamicSeed(fence.kind, fence.name, text)
+}
+
 export async function renderMarkdown(
   source: string,
   title: string | null,
@@ -174,17 +203,10 @@ export async function renderMarkdown(
   const md = new Marked({
     gfm: true,
     renderer: {
-      code({ text, lang }) {
-        if (lang?.trim().split(/\s+/)[0]?.toLowerCase() === "mermaid") {
+      code(token) {
+        return renderSpecialFence(token, opts, () => {
           hasMermaid = true
-          return `<pre class="derive-mermaid" data-derive-readonly><code>${escapeHtml(text)}</code></pre>`
-        }
-        const fence = parseDynamicFence(lang)
-        if (!fence) return false
-        const slot = opts.dynamic?.get(fence.name)
-        return slot && slot.kind === fence.kind
-          ? renderDynamicValue(fence.name, slot)
-          : renderDynamicSeed(fence.kind, fence.name, text)
+        })
       },
     },
   })
