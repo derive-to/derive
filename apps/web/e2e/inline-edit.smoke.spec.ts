@@ -55,23 +55,19 @@ body{font-family:sans-serif}.root{display:flex;flex-direction:column;gap:12px}.b
   <p id="footer" data-derive-node="footer">Recovery stays available.</p>
 </main></body></html>`
 
-const STRUCTURAL_RESIZE_DOC = `<style>
-.stage { width: 720px; transform: scale(.75); transform-origin: top left }
-.stack { width: 600px; padding: 20px; display: flex; flex-direction: column; gap: 16px }
-.stack > [data-derive-node] { min-height: 80px; padding: 16px; border: 1px solid #ccd; box-sizing: border-box }
-.stack > [data-derive-node][data-derive-size="compact"] { width: 50%; max-width: none }
-.stack > [data-derive-node][data-derive-size="standard"] { width: 75%; max-width: none }
-.stack > [data-derive-node][data-derive-size="full"] { width: 100%; max-width: none }
-.stack > [data-derive-node][data-derive-width] { width: var(--derive-structural-width); max-width: none }
-.stack > [data-derive-node][data-derive-height] { height: var(--derive-structural-height); box-sizing: border-box }
-.stack > [data-derive-node][data-derive-align] { align-self: var(--derive-structural-align) }
-</style>
-<div class="stage">
-  <section class="stack" data-derive-ready data-derive-region="story" data-derive-layout="stack">
-    <article id="alpha" data-derive-node="alpha" data-derive-kind="card" data-derive-size="compact" style="transition: width 2s ease, height 2s ease; color: navy">Alpha</article>
-    <article id="bravo" data-derive-node="bravo" data-derive-kind="card" data-derive-width="68" style="--derive-structural-width: 68%; height: 128px">Bravo</article>
-  </section>
-</div>`
+// Three look-alike cards inside one authored node, with no markup of their own: they
+// are movable because they repeat.
+const AGENDA_DOC = `<!doctype html><html><head><meta charset="utf-8"><style>
+body{font-family:sans-serif;margin:24px}.agenda{display:flex;gap:16px}
+.agenda-item{flex:1 1 0;padding:18px;border-top:4px solid #0ca678}
+</style></head><body>
+<section data-derive-region="page" data-derive-layout="stack">
+<h2 id="title" data-derive-node="title" data-derive-kind="heading">Agenda</h2>
+<div id="main" data-derive-node="main" data-derive-kind="composition"><div class="agenda">
+<div class="agenda-item" id="c1"><span class="index">01</span><h3 id="h1">Plan<br>the week</h3><p>First.</p></div>
+<div class="agenda-item" id="c2"><span class="index">02</span><h3 id="h2">Ship<br>the work</h3><p>Second.</p></div>
+<div class="agenda-item" id="c3"><span class="index">03</span><h3 id="h3">Review<br>the results</h3><p>Third.</p></div>
+</div></div></section></body></html>`
 
 const STRUCTURAL_MULTISELECT_DOC = `<style>
 body { font-family: sans-serif }
@@ -91,18 +87,6 @@ body { font-family: sans-serif }
 </section>
 <section class="stack" data-derive-region="other" data-derive-layout="stack">
   <article id="echo" data-derive-node="echo">Echo</article>
-</section>`
-
-const STRUCTURAL_DISTRIBUTE_DOC = `<style>
-body { font-family: sans-serif }
-.stack { width: 560px; height: 500px; padding: 12px; display: flex; flex-direction: column; gap: 12px; box-sizing: border-box }
-.stack[data-derive-gap] { gap: var(--derive-structural-gap) }
-.stack > [data-derive-node] { height: 80px; flex: 0 0 80px; padding: 10px; border: 1px solid #ccd; box-sizing: border-box }
-</style>
-<section id="distributed" class="stack" data-derive-ready data-derive-region="distributed" data-derive-layout="stack">
-  <article id="one" data-derive-node="one">One</article>
-  <article id="two" data-derive-node="two">Two</article>
-  <article id="three" data-derive-node="three">Three</article>
 </section>`
 
 const STRUCTURAL_RESIZE_EDGE_DOC = `<style>
@@ -188,8 +172,45 @@ async function seed(page: Page) {
   return shortId
 }
 
+const frameSha = (page: Page) =>
+  page.frameLocator("iframe[title]").locator("html").getAttribute("data-derive-src-sha")
+/** Save, and wait until it landed. With `resume`, also wait for the session to pick
+ *  back up on the reloaded page (an HTML save does), to keep editing there. */
+async function saveEdits(page: Page, resume = false) {
+  const sha = resume ? await frameSha(page) : null
+  const response = page.waitForResponse(
+    (r) => r.url().includes("/versions") && r.request().method() === "POST",
+  )
+  await page.getByTestId("inline-edit-save").click()
+  expect((await response).ok()).toBe(true)
+  if (!resume) return
+  await expect.poll(() => frameSha(page).catch(() => sha), { timeout: 15_000 }).not.toBe(sha)
+  await expect(page.getByTestId("inline-edit-bar")).toBeVisible()
+}
+
 /** The artifact's rendered document — a real cross-origin sandboxed iframe. */
 const doc = (page: Page) => page.frameLocator("iframe[title]")
+
+/** Pick a block up by its corner: around its words, not on them. */
+const pickBlock = (page: Page, selector: string) =>
+  doc(page)
+    .locator(selector)
+    .click({ position: { x: 4, y: 6 } })
+/** Click at the end of an element's last line (its words, not its box) and type. */
+async function typeAtLineEnd(page: Page, selector: string, text: string) {
+  const el = doc(page).locator(selector)
+  const box = await el.boundingBox()
+  if (!box) throw new Error("not laid out")
+  await el.click({ position: { x: box.width - 2, y: box.height - 4 } })
+  await page.keyboard.press("End")
+  await page.keyboard.type(text)
+}
+/** The actions pill beside the selected block. */
+const pill = (page: Page) => doc(page).locator(".derive-block-pill")
+const order = (page: Page) =>
+  doc(page)
+    .locator(".agenda-item")
+    .evaluateAll((els) => els.map((el) => el.id))
 
 async function enterEditMode(page: Page) {
   await page.getByTestId("artifact-inline-edit").click()
@@ -232,8 +253,7 @@ test("type in the document and save — the edit lands in the stored source", as
   // The strip counts the touched block, which is how the user knows anything took.
   await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
 
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await saveEdits(owner)
 
   await expect(async () => {
     // The owner's own web publish is minutes old, so the inline save coalesces into
@@ -275,8 +295,7 @@ test("replaces deck text when its partial layout schema cannot be scanned", asyn
   await appendToParagraph(owner, "subtitle", " Ready for review.")
   await expect(owner.getByTestId("inline-edit-bar")).toContainText("2 unsaved changes")
 
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await saveEdits(owner)
   await expect(async () => {
     const saved = await contentOf(owner, shortId)
     expect(saved).toContain('<h1 id="title">AI-native social</h1>')
@@ -301,8 +320,7 @@ test("saves the selected occurrence when cards repeat the same wording", async (
     selection?.addRange(range)
   })
   await owner.keyboard.type("Updated title")
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await saveEdits(owner)
   await expect(async () => {
     const saved = await contentOf(owner, shortId)
     expect(saved).toContain('<h2 id="repeated-0">Repeated title</h2>')
@@ -366,8 +384,7 @@ test("a resolved collaborator becomes a portable chip; code and unknown handles 
   await owner.keyboard.press("Enter")
   await expect(doc(owner).locator("[data-derive-mention]")).toHaveText(`@${handle}`)
 
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await saveEdits(owner)
   await expect(async () => {
     const stored = await contentOf(owner, shortId)
     expect(stored).toContain(`@${handle}`)
@@ -498,8 +515,7 @@ test("typing follows the click: a click off the active block takes the keyboard 
   await owner.getByTestId("confirm-dialog-cancel").click()
   await expect(owner.getByTestId("inline-edit-exit-confirm")).toBeHidden()
 
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await saveEdits(owner)
   // The success toast clears itself while the page is visible.
   const saved = owner.getByText(/^Saved v\d+$/)
   await expect(saved).toBeVisible()
@@ -519,8 +535,7 @@ test("Shift+click through an overlay extends the selection, and Bold reaches it"
   await item.click()
   await item.click({ position: { x: 5, y: 8 }, force: true, modifiers: ["Shift"] })
   await owner.keyboard.press("ControlOrMeta+b")
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await saveEdits(owner)
   const stored = await contentOf(owner, shortId)
   expect(stored).toMatch(/<p id="item">A?<b>[^<]*workflows\.<\/b><\/p>/)
   expect(stored.replace(/<\/?b>/g, "")).toContain('<p id="item">Automations and workflows.</p>')
@@ -543,8 +558,7 @@ test("⌘A selects the block being edited, and a retype across a heading's <br> 
   await owner.keyboard.type("Extensions & Integrations")
   await expect(owner.getByTestId("inline-edit-bar")).toContainText("2 unsaved changes")
 
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await saveEdits(owner)
   const stored = await contentOf(owner, shortId)
   expect(stored).toContain('<p id="other">Replaced.</p>')
   expect(stored).toContain('<h3 id="card">Extensions &amp; Integrations</h3>')
@@ -641,8 +655,7 @@ test("the bar's controls: undo, redo, and a format that reaches the source", asy
   await expect(owner.getByTestId("artifact-inspect-text")).toContainText(/“[^”]+”/)
   await owner.getByTestId("artifact-inspect-bold").click()
   await expect(owner.getByTestId("artifact-inspect-bold")).toBeDisabled()
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await saveEdits(owner)
 
   const src = await contentOf(owner, shortId)
   expect(src).toContain("First paragraph. Typed.")
@@ -690,8 +703,11 @@ test("Inspect preserves a text selection while asking for a link", async ({ owne
   await owner.getByTestId("artifact-inspect-link-input").fill("https://derive.to")
   await owner.getByTestId("artifact-inspect-link-input").press("Enter")
   await expect(owner.getByTestId("artifact-inspect-status")).toContainText("1 unsaved change")
+  const response = owner.waitForResponse(
+    (r) => r.url().includes("/versions") && r.request().method() === "POST",
+  )
   await owner.getByTestId("artifact-inspect-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  expect((await response).ok()).toBe(true)
 
   const src = await contentOf(owner, shortId)
   expect(src).toMatch(/<p id=one>[\s\S]*<a href="https:\/\/derive\.to">[^<]+<\/a>[\s\S]*<\/p>/)
@@ -737,8 +753,7 @@ test("resize an image and box, then undo/redo and save", async ({ owner }) => {
   await expect(box).toHaveCSS("height", "118px")
   await expect(owner.getByTestId("inline-edit-bar")).toContainText("2 unsaved changes")
 
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await saveEdits(owner)
   const src = await contentOf(owner, shortId)
   expect(src).toContain('style="display:block; width: 200px; height: auto"')
   expect(src).toContain(
@@ -755,33 +770,31 @@ test("nested cards and their owning group move independently, undo, and save saf
 
   const frame = doc(owner)
   const cards = frame.locator("#cards > [data-derive-node]")
-  await frame.locator("#card-a").click()
-  const parent = frame.getByRole("button", { name: "Select containing group (Escape)" })
-  await expect(parent).toBeVisible()
-  await frame.getByRole("button", { name: "Drag to reorder" }).dragTo(frame.locator("#card-b"))
+  // Around a card's words (not on them) picks the card up; its name leads the pill.
+  await pickBlock(owner, "#card-a")
+  await expect(pill(owner)).toContainText("Card 1")
+  await frame.getByRole("button", { name: "Drag to move" }).dragTo(frame.locator("#card-b"))
   await expect(cards.nth(0)).toHaveAttribute("id", "card-b")
   await expect(cards.nth(1)).toHaveAttribute("id", "card-a")
 
-  // The explicit level control selects the board itself; its next move operates in
-  // the page region and carries the already-reordered child region along unchanged.
-  await parent.click()
-  await expect(parent).toBeHidden()
-  await frame.getByRole("button", { name: "Move earlier (Option+Up)" }).click()
+  // Escape selects the board around it; its next move operates in the page region
+  // and carries the already-reordered child region along unchanged.
+  await owner.keyboard.press("Escape")
+  await expect(frame.locator(".derive-block-box")).toHaveCSS("display", "block")
+  await frame.getByRole("button", { name: "Move earlier" }).click()
   expect(
     await frame.locator("#board").evaluate((el) => el.parentElement?.firstElementChild === el),
   ).toBe(true)
 
-  // Removing a parent temporarily disconnects its child region. That is expected,
-  // not corruption: one shared Undo restores the complete live subtree and both
-  // region-local moves remain representable.
-  await frame.getByRole("button", { name: "Remove element (Delete)" }).click()
+  // Deleting a parent takes its child region with it; one shared Undo restores the
+  // complete live subtree and both region-local moves remain representable.
+  await frame.getByRole("button", { name: "Delete" }).click()
   await expect(frame.locator("#board")).toHaveCount(0)
   await owner.getByTestId("inline-edit-undo").click()
   await expect(frame.locator("#board")).toHaveCount(1)
   await expect(cards.nth(0)).toHaveAttribute("id", "card-b")
 
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await saveEdits(owner, true)
   const saved = await contentOf(owner, shortId)
   expect(saved.indexOf('data-derive-node="board"')).toBeLessThan(
     saved.indexOf('data-derive-node="title"'),
@@ -791,14 +804,13 @@ test("nested cards and their owning group move independently, undo, and save saf
   )
   expect(saved).toContain('data-derive-owner="board"')
 
-  // Discard walks both levels back to the just-saved hierarchy without publishing.
-  await enterEditMode(owner)
-  await frame.locator("#card-b").click()
-  await frame.getByRole("button", { name: "Move later (Option+Down)" }).click()
+  // The session picks back up on the saved page. Discard walks a new move back
+  // without publishing, and keeps the mode open; Done is the way out.
+  await pickBlock(owner, "#card-b")
+  await owner.keyboard.press("Alt+ArrowRight")
   await expect(cards.nth(0)).toHaveAttribute("id", "card-a")
   await owner.getByTestId("inline-edit-discard").click()
   await expect(cards.nth(0)).toHaveAttribute("id", "card-b")
-  // Discard reverts but keeps the mode open; Done is the way out.
   await expect(owner.getByTestId("inline-edit-bar")).toContainText("click text to edit")
   await owner.getByTestId("inline-edit-done").click()
   await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
@@ -806,297 +818,262 @@ test("nested cards and their owning group move independently, undo, and save saf
   // If the final intent removes the parent, child-region changes are superseded by
   // that atomic subtree removal instead of producing a dangling operation.
   await enterEditMode(owner)
-  await frame.locator("#card-b").click()
-  await frame.getByRole("button", { name: "Move later (Option+Down)" }).click()
-  await frame.getByRole("button", { name: "Select containing group (Escape)" }).click()
-  await frame.getByRole("button", { name: "Remove element (Delete)" }).click()
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await pickBlock(owner, "#card-b")
+  await owner.keyboard.press("Alt+ArrowRight")
+  await owner.keyboard.press("Escape")
+  await owner.keyboard.press("Delete")
+  await saveEdits(owner)
   expect(await contentOf(owner, shortId)).not.toContain('data-derive-node="board"')
 })
 
-test("structural diagonal and vertical resize snap on a scaled canvas and save atomically", async ({
+test("words take a caret, even in a node; around them picks the block; Escape walks out", async ({
+  owner,
+}) => {
+  const shortId = await publishArtifact(owner, "agenda.html", AGENDA_DOC, "text/html")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+  const frame = doc(owner)
+
+  // One click on a card's words types there: no box selection from text.
+  await typeAtLineEnd(owner, "#h2", " now")
+  await expect(frame.locator("#h2")).toContainText("the work now")
+  await expect(pill(owner)).toBeHidden()
+
+  // Escape: the caret gives way to its card, the card to the node around it, then
+  // to nothing. The pill names each level and follows the layout (a row: ← →).
+  await owner.keyboard.press("Escape")
+  await expect(pill(owner)).toBeVisible()
+  await expect(pill(owner).getByRole("button", { name: "Drag to move" })).toHaveText("⠿Card 2")
+  await expect(pill(owner).getByRole("button", { name: "Move earlier" })).toHaveText("←")
+  await owner.keyboard.press("Escape")
+  await expect(pill(owner).getByRole("button", { name: "Drag to move" })).toHaveText("⠿Section")
+  await owner.keyboard.press("Escape")
+  await expect(pill(owner)).toBeHidden()
+
+  // Hover names a block before any click; its tag selects it.
+  await frame.locator("#c3").hover({ position: { x: 6, y: 8 } })
+  await expect(frame.locator(".derive-block-tag")).toHaveText("⠿ Card 3")
+  await frame.locator(".derive-block-tag").click()
+  await expect(pill(owner).getByRole("button", { name: "Drag to move" })).toHaveText("⠿Card 3")
+  await expect(pill(owner).getByRole("button", { name: "Move later" })).toBeDisabled()
+
+  // Three clicks take the whole heading, across its line break.
+  await frame.locator("#h1").click({ clickCount: 3 })
+  await owner.keyboard.type("Plan ahead")
+  await expect(frame.locator("#h1")).toHaveText("Plan ahead")
+
+  await saveEdits(owner)
+  await expect(async () => {
+    const saved = await contentOf(owner, shortId)
+    expect(saved).toContain('<h3 id="h1">Plan ahead</h3>')
+    expect(saved).toContain('<h3 id="h2">Ship<br>the work now</h3>')
+  }).toPass({ timeout: 10_000 })
+})
+
+test("repeated cards move without author markup: drag, ⌥ arrows, duplicate and delete", async ({
+  owner,
+}) => {
+  const shortId = await publishArtifact(owner, "agenda.html", AGENDA_DOC, "text/html")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+  const frame = doc(owner)
+
+  await pickBlock(owner, "#c1")
+  await expect(pill(owner).getByRole("button", { name: "Move earlier" })).toBeDisabled()
+  await owner.keyboard.press("Alt+ArrowRight")
+  await expect.poll(() => order(owner)).toEqual(["c2", "c1", "c3"])
+
+  // The pill's name is the drag handle; siblings reflow along the row as it moves.
+  const handle = pill(owner).getByRole("button", { name: "Drag to move" })
+  const from = await handle.boundingBox()
+  const to = await frame.locator("#c3").boundingBox()
+  if (!from || !to) throw new Error("not laid out")
+  await owner.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
+  await owner.mouse.down()
+  await owner.mouse.move(to.x + to.width * 0.9, to.y + to.height / 2, { steps: 8 })
+  await owner.mouse.up()
+  await expect.poll(() => order(owner)).toEqual(["c2", "c3", "c1"])
+
+  // ⌘D copies the selected card after itself and selects the copy; Delete removes it.
+  await owner.keyboard.press("ControlOrMeta+d")
+  await expect(frame.locator(".agenda-item")).toHaveCount(4)
+  await owner.keyboard.press("Delete")
+  await expect(frame.locator(".agenda-item")).toHaveCount(3)
+  await pickBlock(owner, "#c3")
+  await pill(owner).getByRole("button", { name: "Duplicate" }).click()
+  await expect(frame.locator(".agenda-item")).toHaveCount(4)
+
+  await saveEdits(owner)
+  await expect(async () => {
+    const saved = await contentOf(owner, shortId)
+    // The copy keeps its source's bytes but not its id: ids stay unique.
+    const ids = [...saved.matchAll(/<div class="agenda-item" id="(c\d)([^"]*)">/g)]
+    expect(ids.map((m) => m[1])).toEqual(["c2", "c3", "c3", "c1"])
+    expect(new Set(ids.map((m) => m[0])).size).toBe(4)
+    expect(saved).not.toContain("derive-block")
+  }).toPass({ timeout: 10_000 })
+})
+
+test("the changes list says where and what changed, shows it, and reverts just one", async ({
+  owner,
+}) => {
+  const shortId = await publishArtifact(owner, "agenda.html", AGENDA_DOC, "text/html")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+  const frame = doc(owner)
+
+  await typeAtLineEnd(owner, "#h2", " now")
+  await pickBlock(owner, "#c1")
+  await owner.keyboard.press("Alt+ArrowRight")
+  await expect.poll(() => order(owner)).toEqual(["c2", "c1", "c3"])
+
+  await owner.getByTestId("inline-edit-changes").click()
+  const rows = owner.getByTestId("inline-edit-change")
+  await expect(rows).toHaveCount(2)
+  await expect(rows.nth(0)).toContainText("Section")
+  await expect(rows.nth(0)).toContainText("Moved Plan the week from 1 → 2")
+  await expect(rows.nth(1)).toContainText("Card 1 · Heading")
+  await expect(rows.nth(1)).toContainText("Ship the work → Ship the work now")
+
+  // A row shows its element in the document.
+  await rows.nth(1).click()
+  await expect(frame.locator("#h2")).toHaveClass(/derive-block-flash/)
+
+  // ↺ puts back only that change: the words return, the move stays.
+  await owner.getByTestId("inline-edit-change-revert").nth(1).click()
+  await expect(frame.locator("#h2")).not.toContainText("now")
+  await expect(owner.getByTestId("inline-edit-changes")).toHaveText(/^1 unsaved change/)
+  await expect.poll(() => order(owner)).toEqual(["c2", "c1", "c3"])
+
+  await saveEdits(owner)
+  await expect(async () => {
+    const saved = await contentOf(owner, shortId)
+    expect(saved.indexOf('id="c2"')).toBeLessThan(saved.indexOf('id="c1"'))
+    expect(saved).toContain('<h3 id="h2">Ship<br>the work</h3>')
+  }).toPass({ timeout: 10_000 })
+})
+
+test("resize from the edge or corner with a readout; double-click resets; ⋯ sets it exactly", async ({
   owner,
 }) => {
   const shortId = await publishArtifact(
     owner,
-    "structural-resize.html",
-    STRUCTURAL_RESIZE_DOC,
+    "structural-resize-edges.html",
+    STRUCTURAL_RESIZE_EDGE_DOC,
     "text/html",
   )
   await openArtifact(owner, shortId)
-  await expect(
-    doc(owner).getByRole("button", { name: "Resize element width and height" }),
-  ).toBeHidden()
-  await expect(doc(owner).getByRole("slider", { name: "Resize element width" })).toBeHidden()
-  await expect(doc(owner).getByRole("slider", { name: "Resize element height" })).toBeHidden()
   await enterEditMode(owner)
+  const frame = doc(owner)
+  const edge = frame.getByRole("button", { name: "Resize width (double-click for auto)" })
+  const corner = frame.getByRole("button", {
+    name: "Resize width and height (double-click for auto)",
+  })
 
-  const alpha = doc(owner).locator("#alpha")
-  const bravo = doc(owner).locator("#bravo")
-  await alpha.click()
-  const widthHandle = doc(owner).getByRole("slider", { name: "Resize element width" })
-  const heightHandle = doc(owner).getByRole("slider", { name: "Resize element height" })
-  const corner = doc(owner).getByRole("button", { name: "Resize element width and height" })
-  await expect(corner).toBeVisible()
-  await expect(widthHandle).toHaveAttribute("aria-valuenow", "50")
-  await expect(heightHandle).toHaveAttribute("aria-valuenow", "80")
-
-  const grip = await corner.boundingBox()
-  const start = await alpha.boundingBox()
-  const target = await bravo.boundingBox()
-  expect(grip).not.toBeNull()
-  expect(start).not.toBeNull()
-  expect(target).not.toBeNull()
-  if (!grip || !start || !target) return
-  await owner.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
-  await owner.mouse.down()
-  await owner.mouse.move(
-    target.x + target.width,
-    grip.y + grip.height / 2 + target.height - start.height,
-  )
-  await expect(doc(owner).locator(".derive-structure-snap-guide")).toHaveAttribute(
-    "data-label",
-    "Match bravo",
-  )
-  await expect(doc(owner).locator(".derive-structure-height-snap-guide")).toHaveAttribute(
-    "data-label",
-    "Match bravo height",
-  )
-  await owner.mouse.up()
-
-  await expect(alpha).toHaveAttribute("data-derive-width", "68")
-  await expect(alpha).toHaveAttribute("data-derive-height", "128")
-  await expect(alpha).not.toHaveAttribute("data-derive-size")
-  await expect(widthHandle).toHaveAttribute("aria-valuenow", "68")
-  await expect(heightHandle).toHaveAttribute("aria-valuenow", "128")
-  expect(await alpha.evaluate((element) => getComputedStyle(element).transitionDuration)).toBe(
-    "2s, 2s",
-  )
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
-
-  await owner.getByTestId("inline-edit-undo").click()
-  await expect(alpha).toHaveAttribute("data-derive-size", "compact")
-  await expect(alpha).not.toHaveAttribute("data-derive-width")
-  await expect(alpha).not.toHaveAttribute("data-derive-height")
-  await expect(owner.getByTestId("inline-edit-redo")).toBeEnabled()
-  // A tap/focus with no resize is not a transaction and must not fork history.
-  await corner.click()
-  await expect(owner.getByTestId("inline-edit-redo")).toBeEnabled()
-  await owner.getByTestId("inline-edit-redo").click()
-  await expect(alpha).toHaveAttribute("data-derive-width", "68")
-  await expect(alpha).toHaveAttribute("data-derive-height", "128")
-
-  // The dedicated vertical slider shares the same source model and history.
-  await heightHandle.focus()
-  await heightHandle.press("ArrowDown")
-  await expect(alpha).toHaveAttribute("data-derive-height", "129")
-  await owner.getByTestId("inline-edit-undo").click()
-  await expect(alpha).toHaveAttribute("data-derive-height", "128")
-
-  await owner.setViewportSize({ width: 390, height: 844 })
-  for (const control of [widthHandle, heightHandle, corner]) {
-    const box = await control.boundingBox()
-    expect(box).not.toBeNull()
-    if (!box) continue
-    expect(box.x).toBeGreaterThanOrEqual(0)
-    expect(box.y).toBeGreaterThanOrEqual(0)
-    expect(box.x + box.width).toBeLessThanOrEqual(390)
-    expect(box.y + box.height).toBeLessThanOrEqual(844)
-    expect(box.width).toBeGreaterThanOrEqual(24)
-    expect(box.height).toBeGreaterThanOrEqual(24)
+  // Only a layout a save can honour offers handles; every other node just moves.
+  for (const selector of [
+    "#reverse-a",
+    "#grid-a",
+    "#wrapped-a",
+    "#absolute-a",
+    "#overlap-a",
+    "#columns-a",
+  ]) {
+    await pickBlock(owner, selector)
+    await expect(pill(owner)).toBeVisible()
+    await expect(edge).toBeHidden()
   }
 
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
-  await expect(async () => {
-    const source = await contentOf(owner, shortId)
-    const opening = source.match(/<article id="alpha"[^>]*>/)?.[0]
-    expect(opening).toContain('data-derive-width="68"')
-    expect(opening).toContain('data-derive-height="128"')
-    expect(opening).toContain("transition: width 2s ease, height 2s ease")
-    expect(opening).toContain("--derive-structural-width: 68%")
-    expect(opening).toContain("--derive-structural-height: 128px")
-    expect(opening).not.toContain("data-derive-size")
-  }).toPass({ timeout: 10_000 })
-})
-
-test("structural multi-select equalizes and reorders as atomic safe actions", async ({ owner }) => {
-  const shortId = await publishArtifact(
-    owner,
-    "structural-multiselect.html",
-    STRUCTURAL_MULTISELECT_DOC,
-    "text/html",
-  )
-  await openArtifact(owner, shortId)
-  const frame = doc(owner)
-  await expect(frame.getByRole("button", { name: "Select all siblings" })).toBeHidden()
-  await enterEditMode(owner)
-
-  const alpha = frame.locator("#alpha")
-  const bravo = frame.locator("#bravo")
-  const nodes = frame.locator("#multi > [data-derive-node]")
-  await bravo.click()
-  const reorderGrip = frame.getByRole("button", { name: "Drag to reorder" })
-  const gripBox = await reorderGrip.boundingBox()
-  const charlieBox = await frame.locator("#charlie").boundingBox()
-  expect(gripBox).not.toBeNull()
-  expect(charlieBox).not.toBeNull()
-  if (!gripBox || !charlieBox) return
-  await owner.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2)
+  const safe = frame.locator("#safe-a")
+  await pickBlock(owner, "#safe-a")
+  await expect(edge).toBeVisible()
+  await expect(corner).toBeVisible()
+  const grip = await edge.boundingBox()
+  const region = await frame.locator("#safe-region").boundingBox()
+  if (!grip || !region) throw new Error("not laid out")
+  await owner.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
   await owner.mouse.down()
-  await owner.mouse.move(charlieBox.x + charlieBox.width / 2, charlieBox.y + 2)
-  await expect(frame.locator(".derive-structure-drop-marker")).toBeVisible()
-  await expect(frame.locator(".derive-structure-drop-marker")).toHaveAttribute(
-    "data-label",
-    "Before charlie",
-  )
+  await owner.mouse.move(grip.x + grip.width / 2 + region.width * 0.12, grip.y + grip.height / 2)
+  // The readout speaks while the handle moves; the pill steps aside.
+  await expect(frame.locator(".derive-block-size")).toHaveText("62% wide")
+  await expect(pill(owner)).toBeHidden()
   await owner.mouse.up()
-  await expect(frame.locator(".derive-structure-drop-marker")).toBeHidden()
-  await expect(nodes.nth(0)).toHaveAttribute("id", "alpha")
-  await alpha.click({ modifiers: ["Shift"] })
-  await expect(frame.locator(".derive-structure-label")).toHaveText("2 selected · alpha")
-  await expect(frame.locator(".derive-structure-multi-box:visible")).toHaveCount(1)
-  await expect(frame.getByRole("button", { name: "Drag to reorder" })).toBeDisabled()
-  await expect(frame.getByRole("button", { name: "Remove element (Delete)" })).toBeDisabled()
-  await expect(frame.getByRole("button", { name: "Compact size" })).toBeDisabled()
-  await owner.keyboard.press("Delete")
-  await expect(nodes).toHaveCount(4)
+  await expect(safe).toHaveAttribute("data-derive-width", "62")
 
-  await frame.getByRole("button", { name: "Open selected layout actions" }).click()
-  await frame.getByRole("button", { name: "Match selected widths to the active element" }).click()
-  await expect(bravo).toHaveAttribute("data-derive-width", "52")
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
-  await owner.getByTestId("inline-edit-undo").click()
-  await expect(bravo).toHaveAttribute("data-derive-width", "68")
-  await owner.getByTestId("inline-edit-redo").click()
-  await expect(bravo).toHaveAttribute("data-derive-width", "52")
-  await frame.getByRole("button", { name: "Align selected to center" }).click()
-  await expect(alpha).toHaveAttribute("data-derive-align", "center")
-  await expect(bravo).toHaveAttribute("data-derive-align", "center")
-  await expect(alpha).toHaveCSS("align-self", "center")
-  await owner.getByTestId("inline-edit-undo").click()
-  await expect(alpha).not.toHaveAttribute("data-derive-align")
-  await expect(bravo).not.toHaveAttribute("data-derive-align")
-  await owner.getByTestId("inline-edit-redo").click()
-  await expect(alpha).toHaveAttribute("data-derive-align", "center")
+  // Double-click puts the width back to auto.
+  await edge.dblclick()
+  await expect(safe).not.toHaveAttribute("data-derive-width")
 
-  // A non-contiguous selection advances stably as one action and one Undo restores
-  // the complete sibling order instead of peeling off one member at a time.
-  await bravo.click()
-  await frame.locator("#delta").click({ modifiers: ["Shift"] })
-  await frame.getByRole("button", { name: "Move earlier (Option+Up)" }).click()
-  await expect(nodes.nth(0)).toHaveAttribute("id", "bravo")
-  await expect(nodes.nth(1)).toHaveAttribute("id", "alpha")
-  await expect(nodes.nth(2)).toHaveAttribute("id", "delta")
-  await expect(nodes.nth(3)).toHaveAttribute("id", "charlie")
-  await owner.getByTestId("inline-edit-undo").click()
-  await expect(nodes.nth(0)).toHaveAttribute("id", "alpha")
-  await expect(nodes.nth(1)).toHaveAttribute("id", "bravo")
-  await expect(nodes.nth(2)).toHaveAttribute("id", "charlie")
-  await expect(nodes.nth(3)).toHaveAttribute("id", "delta")
+  // ⋯ opens the edit panel on the block: its path, and an exact width.
+  await pill(owner).getByRole("button", { name: "More options" }).click()
+  const panel = owner.getByTestId("artifact-inspect-block")
+  await expect(panel).toBeVisible()
+  await expect(owner.getByTestId("artifact-inspect-crumb-0")).toHaveText("Card 1")
+  await owner.getByTestId("artifact-inspect-block-width").fill("70")
+  await owner.getByTestId("artifact-inspect-block-width").press("Enter")
+  await expect(safe).toHaveAttribute("data-derive-width", "70")
+  await owner.getByTestId("artifact-inspect-block-auto").click()
+  await expect(safe).not.toHaveAttribute("data-derive-width")
+  await owner.getByTestId("artifact-inspect-block-width").fill("64")
+  await owner.getByTestId("artifact-inspect-block-width").press("Enter")
+  await expect(safe).toHaveAttribute("data-derive-width", "64")
 
-  // Equal-height is all-or-nothing. Delta's authored minimum makes Alpha's height
-  // unsafe, so no peer may retain a partial preview from the rejected batch.
-  await alpha.click()
-  await frame.getByRole("button", { name: "Select all siblings" }).click()
-  await frame.getByRole("button", { name: "Open selected layout actions" }).click()
-  await frame.getByRole("button", { name: "Match selected heights to the active element" }).click()
-  await expect(bravo).toHaveAttribute("data-derive-height", "112")
-  await expect(frame.locator("#charlie")).not.toHaveAttribute("data-derive-height")
-  await expect(frame.locator("#delta")).not.toHaveAttribute("data-derive-height")
-  await expect(frame.locator(".derive-structure-toast")).toContainText(
-    "Content or authored constraints prevent matching these heights",
-  )
-
-  // Escape collapses the group before navigating hierarchy. A safe two-node batch
-  // then becomes one undoable height action.
-  await owner.keyboard.press("Escape")
-  await bravo.click()
-  await alpha.click({ modifiers: ["Shift"] })
-  await frame.getByRole("button", { name: "Open selected layout actions" }).click()
-  await frame.getByRole("button", { name: "Match selected heights to the active element" }).click()
-  await expect(bravo).toHaveAttribute("data-derive-height", "96")
-  await owner.getByTestId("inline-edit-undo").click()
-  await expect(bravo).toHaveAttribute("data-derive-height", "112")
-  await owner.getByTestId("inline-edit-redo").click()
-  await expect(bravo).toHaveAttribute("data-derive-height", "96")
-  await frame.getByRole("button", { name: "Fit selected heights to their content" }).click()
-  await expect(alpha).not.toHaveAttribute("data-derive-height")
-  await expect(bravo).not.toHaveAttribute("data-derive-height")
-  await owner.getByTestId("inline-edit-undo").click()
-  await expect(alpha).toHaveAttribute("data-derive-height", "96")
-  await expect(bravo).toHaveAttribute("data-derive-height", "96")
-  await owner.getByTestId("inline-edit-redo").click()
-  await expect(alpha).not.toHaveAttribute("data-derive-height")
-
-  // Modifier selection cannot leak across authored regions.
-  await frame.locator("#echo").click({ modifiers: ["Shift"] })
-  await expect(frame.locator(".derive-structure-label")).toHaveText("echo")
-  await expect(frame.locator(".derive-structure-multi-box:visible")).toHaveCount(0)
-
-  // Keep the batch toolbar reachable on the compact canvas where it is densest.
-  await owner.setViewportSize({ width: 390, height: 844 })
-  await bravo.evaluate((el) => (el as HTMLElement).focus())
-  await alpha.click({ modifiers: ["Shift"] })
-  const toolbar = await frame.locator(".derive-structure-toolbar").boundingBox()
-  expect(toolbar).not.toBeNull()
-  if (!toolbar) return
-  expect(toolbar.x).toBeGreaterThanOrEqual(0)
-  expect(toolbar.x + toolbar.width).toBeLessThanOrEqual(390)
-  expect(toolbar.y).toBeGreaterThanOrEqual(0)
-  expect(toolbar.y + toolbar.height).toBeLessThanOrEqual(844)
-
-  await frame.getByRole("button", { name: "Move later (Option+Down)" }).click()
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await saveEdits(owner)
   await expect(async () => {
-    const source = await contentOf(owner, shortId)
-    expect(source.indexOf('data-derive-node="charlie"')).toBeLessThan(
-      source.indexOf('data-derive-node="alpha"'),
-    )
-    const bravoOpening = source.match(/<article id="bravo"[^>]*>/)?.[0]
-    expect(bravoOpening).toContain('data-derive-width="52"')
-    expect(bravoOpening).toContain('data-derive-align="center"')
-    expect(bravoOpening).toContain("--derive-structural-width: 52%")
-    expect(bravoOpening).toContain("--derive-structural-align: center")
-    expect(bravoOpening).not.toContain("data-derive-height")
-    expect(bravoOpening).not.toContain("--derive-structural-height")
+    const opening = (await contentOf(owner, shortId)).match(/<article id="safe-a"[^>]*>/)?.[0]
+    expect(opening).toContain('data-derive-width="64"')
+    expect(opening).toContain("--derive-structural-width: 64%")
   }).toPass({ timeout: 10_000 })
 })
 
-test("structural health coach explains a blocked layout action and applies the safe fix", async ({
+test("a resize the layout can't honour, or one cut short, leaves the block as it was", async ({
   owner,
 }) => {
   const shortId = await publishArtifact(
     owner,
-    "structural-health-coach.html",
-    STRUCTURAL_MULTISELECT_DOC,
+    "structural-resize-transactions.html",
+    STRUCTURAL_RESIZE_TRANSACTION_DOC,
     "text/html",
   )
   await openArtifact(owner, shortId)
   await enterEditMode(owner)
   const frame = doc(owner)
-  await frame.locator("#alpha").click()
-  await frame.locator("#bravo").click({ modifiers: ["Shift"] })
-  await expect(frame.locator(".derive-structure-box")).toHaveAttribute(
-    "data-interaction-state",
-    "selected",
-  )
-  await frame.getByRole("button", { name: "Open selected layout actions" }).click()
-  await frame
-    .getByRole("button", { name: "Check layout health and suggest the nearest safe fix" })
-    .click()
-  await expect(frame.locator(".derive-structure-toast")).toContainText(
-    "Select all 4 siblings to distribute spacing",
-  )
-  await frame.getByRole("button", { name: "Select all", exact: true }).click()
-  await expect(frame.locator(".derive-structure-label")).toContainText("4 selected")
+  const corner = frame.getByRole("button", {
+    name: "Resize width and height (double-click for auto)",
+  })
+
+  // Growing a child inside a fixed-height, clipping owner would clip it: refused.
+  const child = frame.locator("#css-child")
+  await pickBlock(owner, "#css-child")
+  const grip = await corner.boundingBox()
+  if (!grip) throw new Error("not laid out")
+  await owner.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
+  await owner.mouse.down()
+  await owner.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2 + 160, { steps: 4 })
+  await owner.mouse.up()
+  await expect(child).toHaveAttribute("data-derive-height", "60")
+  await expect(owner.getByText("The page's own layout decides that")).toBeVisible()
+
+  // ⌘S mid-drag ends the drag rather than saving a half-made size.
+  await owner.keyboard.press("Escape")
+  await owner.keyboard.press("Escape")
+  await expect(pill(owner)).toBeHidden()
+  const guarded = frame.locator("#guarded")
+  await pickBlock(owner, "#guarded")
+  const edge = frame.getByRole("button", { name: "Resize width (double-click for auto)" })
+  const e = await edge.boundingBox()
+  if (!e) throw new Error("not laid out")
+  await owner.mouse.move(e.x + e.width / 2, e.y + e.height / 2)
+  await owner.mouse.down()
+  await owner.mouse.move(e.x + e.width / 2 - 60, e.y + e.height / 2)
+  await owner.keyboard.press("ControlOrMeta+s")
+  await owner.mouse.up()
+  await expect(guarded).toHaveAttribute("data-derive-width", "50")
+  expect(await versionOf(owner, shortId)).toBe(1)
+  await expect(owner.getByTestId("inline-edit-changes")).toBeHidden()
 })
 
-test("responsive edit previews use the real iframe viewport and label health checks", async ({
-  owner,
-}) => {
+test("responsive edit previews use the real iframe viewport", async ({ owner }) => {
   const shortId = await publishArtifact(
     owner,
     "structural-responsive-preview.html",
@@ -1120,13 +1097,9 @@ test("responsive edit previews use the real iframe viewport and label health che
     )
     .toBe("mobile")
 
-  await frame.locator("#alpha").click()
-  await frame.locator("#bravo").click({ modifiers: ["Shift"] })
-  await frame.getByRole("button", { name: "Open selected layout actions" }).click()
-  await frame
-    .getByRole("button", { name: "Check layout health and suggest the nearest safe fix" })
-    .click()
-  await expect(frame.locator(".derive-structure-toast")).toContainText("Mobile · 390px:")
+  // Blocks stay pickable at the preview width: the pill fits inside the frame.
+  await pickBlock(owner, "#alpha")
+  await expect(pill(owner)).toBeInViewport({ ratio: 1 })
 
   await owner.getByTestId("inline-edit-viewport-tablet").click()
   await expect(iframe).toHaveAttribute("data-preview-width", "768")
@@ -1140,417 +1113,6 @@ test("responsive edit previews use the real iframe viewport and label health che
     .toBe("")
   await owner.getByTestId("inline-edit-done").click()
   await expect(owner.getByTestId("inline-edit-viewports")).toBeHidden()
-})
-
-test("design intent previews exact operations and applies as one reversible transaction", async ({
-  owner,
-}) => {
-  const shortId = await publishArtifact(
-    owner,
-    "structural-design-intent.html",
-    STRUCTURAL_MULTISELECT_DOC,
-    "text/html",
-  )
-  await openArtifact(owner, shortId)
-  await enterEditMode(owner)
-  const frame = doc(owner)
-  const alpha = frame.locator("#alpha")
-  const bravo = frame.locator("#bravo")
-
-  await alpha.click()
-  await bravo.click({ modifiers: ["Shift"] })
-  await frame.getByRole("button", { name: "Open selected layout actions" }).click()
-  await frame.getByRole("button", { name: "Preview a safe design-intent plan" }).click()
-  await expect(frame.locator(".derive-structure-intent-receipt")).toContainText(
-    "50% local rail · fit 2 fixed heights · center alignment",
-  )
-  await expect(alpha).toHaveAttribute("data-derive-width", "52")
-  await expect(bravo).toHaveAttribute("data-derive-width", "68")
-
-  await frame.getByRole("button", { name: "Make the active element dominant" }).click()
-  await expect(frame.locator(".derive-structure-intent-receipt")).toContainText(
-    "active 75% · 1 peer 50% · fit content · start alignment",
-  )
-  await frame.getByRole("button", { name: "Apply this design intent plan" }).click()
-  await expect(alpha).toHaveAttribute("data-derive-width", "50")
-  await expect(bravo).toHaveAttribute("data-derive-width", "75")
-  await expect(alpha).not.toHaveAttribute("data-derive-height")
-  await expect(bravo).not.toHaveAttribute("data-derive-height")
-  await expect(alpha).toHaveAttribute("data-derive-align", "start")
-  await expect(bravo).toHaveAttribute("data-derive-align", "start")
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
-
-  await owner.getByTestId("inline-edit-undo").click()
-  await expect(alpha).toHaveAttribute("data-derive-width", "52")
-  await expect(bravo).toHaveAttribute("data-derive-width", "68")
-  await expect(alpha).toHaveAttribute("data-derive-height", "96")
-  await expect(bravo).toHaveAttribute("data-derive-height", "112")
-  await expect(alpha).not.toHaveAttribute("data-derive-align")
-  await expect(bravo).not.toHaveAttribute("data-derive-align")
-
-  await owner.getByTestId("inline-edit-redo").click()
-  await expect(alpha).toHaveAttribute("data-derive-width", "50")
-  await expect(bravo).toHaveAttribute("data-derive-width", "75")
-  await expect(alpha).not.toHaveAttribute("data-derive-height")
-  await expect(bravo).not.toHaveAttribute("data-derive-height")
-  await expect(alpha).toHaveAttribute("data-derive-align", "start")
-  await expect(bravo).toHaveAttribute("data-derive-align", "start")
-
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(async () => {
-    const source = await contentOf(owner, shortId)
-    const alphaOpening = source.match(/<article id="alpha"[^>]*>/)?.[0]
-    const bravoOpening = source.match(/<article id="bravo"[^>]*>/)?.[0]
-    expect(alphaOpening).toContain('data-derive-width="50"')
-    expect(bravoOpening).toContain('data-derive-width="75"')
-    expect(alphaOpening).toContain('data-derive-align="start"')
-    expect(bravoOpening).toContain('data-derive-align="start"')
-    expect(alphaOpening).not.toContain("data-derive-height")
-    expect(bravoOpening).not.toContain("data-derive-height")
-  }).toPass({ timeout: 10_000 })
-})
-
-test("structural exact sizing commits both axes as one source-safe action", async ({ owner }) => {
-  const shortId = await publishArtifact(
-    owner,
-    "structural-exact-size.html",
-    STRUCTURAL_MULTISELECT_DOC,
-    "text/html",
-  )
-  await openArtifact(owner, shortId)
-  await enterEditMode(owner)
-  const frame = doc(owner)
-  const bravo = frame.locator("#bravo")
-  await bravo.click()
-  await frame.getByRole("button", { name: "Set exact width and height" }).click()
-  await frame.locator(".derive-structure-precision-field").nth(0).locator("input").fill("63")
-  await frame.locator(".derive-structure-precision-field").nth(1).locator("input").fill("118")
-  await frame.getByRole("button", { name: "Apply exact width and height" }).click()
-  await expect(bravo).toHaveAttribute("data-derive-width", "63")
-  await expect(bravo).toHaveAttribute("data-derive-height", "118")
-  await owner.getByTestId("inline-edit-undo").click()
-  await expect(bravo).toHaveAttribute("data-derive-width", "68")
-  await expect(bravo).toHaveAttribute("data-derive-height", "112")
-  await owner.getByTestId("inline-edit-redo").click()
-  await expect(bravo).toHaveAttribute("data-derive-width", "63")
-  await expect(bravo).toHaveAttribute("data-derive-height", "118")
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(async () => {
-    const source = await contentOf(owner, shortId)
-    const opening = source.match(/<article id="bravo"[^>]*>/)?.[0]
-    expect(opening).toContain('data-derive-width="63"')
-    expect(opening).toContain('data-derive-height="118"')
-    expect(opening).toContain("--derive-structural-width: 63%")
-    expect(opening).toContain("--derive-structural-height: 118px")
-  }).toPass({ timeout: 10_000 })
-})
-
-test("structural distribution fills a bounded stack as one reversible action", async ({
-  owner,
-}) => {
-  const shortId = await publishArtifact(
-    owner,
-    "structural-distribution.html",
-    STRUCTURAL_DISTRIBUTE_DOC,
-    "text/html",
-  )
-  await openArtifact(owner, shortId)
-  await enterEditMode(owner)
-  const frame = doc(owner)
-  const region = frame.locator("#distributed")
-  await frame.locator("#one").click()
-  await frame.getByRole("button", { name: "Select all siblings" }).click()
-  await frame.getByRole("button", { name: "Open selected layout actions" }).click()
-  await frame.getByRole("button", { name: "Distribute all siblings vertically" }).click()
-  await expect(region).toHaveAttribute("data-derive-gap", "118")
-  await expect(region).toHaveCSS("row-gap", "118px")
-  await owner.getByTestId("inline-edit-undo").click()
-  await expect(region).not.toHaveAttribute("data-derive-gap")
-  await expect(region).toHaveCSS("row-gap", "12px")
-  await owner.getByTestId("inline-edit-redo").click()
-  await expect(region).toHaveAttribute("data-derive-gap", "118")
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(async () => {
-    const source = await contentOf(owner, shortId)
-    const opening = source.match(/<section id="distributed"[^>]*>/)?.[0]
-    expect(opening).toContain('data-derive-gap="118"')
-    expect(opening).toContain("--derive-structural-gap: 118px")
-  }).toPass({ timeout: 10_000 })
-})
-
-test("structural resize fails closed for ambiguous layouts and unsafe snap targets", async ({
-  owner,
-}) => {
-  const shortId = await publishArtifact(
-    owner,
-    "structural-resize-edges.html",
-    STRUCTURAL_RESIZE_EDGE_DOC,
-    "text/html",
-  )
-  await openArtifact(owner, shortId)
-  await enterEditMode(owner)
-
-  const widthHandle = doc(owner).getByRole("slider", { name: "Resize element width" })
-  const heightHandle = doc(owner).getByRole("slider", { name: "Resize element height" })
-  const corner = doc(owner).getByRole("button", { name: "Resize element width and height" })
-
-  await doc(owner).locator("#reverse-a").click()
-  await expect(widthHandle).toBeDisabled()
-  await expect(heightHandle).toBeDisabled()
-  await expect(corner).toBeDisabled()
-  await widthHandle.press("ArrowRight")
-  await expect(doc(owner).locator("#reverse-a")).not.toHaveAttribute("data-derive-width")
-
-  await doc(owner).locator("#grid-a").click()
-  await expect(widthHandle).toBeDisabled()
-  await expect(heightHandle).toBeDisabled()
-  await expect(corner).toBeDisabled()
-
-  for (const selector of ["#wrapped-a", "#absolute-a", "#overlap-a", "#columns-a"]) {
-    await doc(owner).locator(selector).click()
-    await expect(widthHandle).toBeDisabled()
-    await expect(heightHandle).toBeDisabled()
-    await expect(corner).toBeDisabled()
-  }
-
-  const selected = doc(owner).locator("#safe-a")
-  await selected.click()
-  await expect(widthHandle).toBeEnabled()
-  await expect(heightHandle).toBeEnabled()
-  await expect(corner).toBeEnabled()
-  const grip = await widthHandle.boundingBox()
-  const region = await doc(owner).locator("#safe-region").boundingBox()
-  expect(grip).not.toBeNull()
-  expect(region).not.toBeNull()
-  if (!grip || !region) return
-  await owner.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
-  await owner.mouse.down()
-  await owner.mouse.move(grip.x + grip.width / 2 + region.width * 0.12, grip.y + grip.height / 2)
-  await expect(doc(owner).locator(".derive-structure-snap-guide")).toBeHidden()
-  await owner.mouse.up()
-  await expect(selected).toHaveAttribute("data-derive-width", "62")
-
-  // If applying a tentative same-axis snap invalidates that target, use the
-  // rounded unsnapped value for the event instead of committing a hidden snap.
-  await owner.getByTestId("inline-edit-undo").click()
-  await expect(selected).toHaveAttribute("data-derive-width", "50")
-  const contentWidth = await doc(owner)
-    .locator("#safe-region")
-    .evaluate((element) => {
-      const html = element as HTMLElement
-      const style = getComputedStyle(html)
-      return (
-        html.clientWidth -
-        (Number.parseFloat(style.paddingLeft) || 0) -
-        (Number.parseFloat(style.paddingRight) || 0)
-      )
-    })
-  const volatileGrip = await widthHandle.boundingBox()
-  expect(volatileGrip).not.toBeNull()
-  if (!volatileGrip) return
-  await owner.mouse.move(
-    volatileGrip.x + volatileGrip.width / 2,
-    volatileGrip.y + volatileGrip.height / 2,
-  )
-  await owner.mouse.down()
-  await owner.mouse.move(
-    volatileGrip.x + volatileGrip.width / 2 + contentWidth * 0.128,
-    volatileGrip.y + volatileGrip.height / 2,
-  )
-  await expect(doc(owner).locator(".derive-structure-snap-guide")).toBeHidden()
-  await owner.mouse.up()
-  await expect(selected).toHaveAttribute("data-derive-width", "63")
-
-  // Height-dependent CSS can invalidate an earlier width snap in the same
-  // diagonal event; final-state reconciliation must fall back symmetrically.
-  await owner.getByTestId("inline-edit-undo").click()
-  await expect(selected).toHaveAttribute("data-derive-width", "50")
-  const heightVolatileTarget = doc(owner).locator("#height-volatile-target")
-  const symmetricGrip = await corner.boundingBox()
-  const symmetricStart = await selected.boundingBox()
-  const symmetricHeight = await doc(owner).locator("#reflow-target").boundingBox()
-  expect(symmetricGrip).not.toBeNull()
-  expect(symmetricStart).not.toBeNull()
-  expect(symmetricHeight).not.toBeNull()
-  if (!symmetricGrip || !symmetricStart || !symmetricHeight) return
-  await owner.mouse.move(
-    symmetricGrip.x + symmetricGrip.width / 2,
-    symmetricGrip.y + symmetricGrip.height / 2,
-  )
-  await owner.mouse.down()
-  await owner.mouse.move(
-    symmetricGrip.x + symmetricGrip.width / 2 + contentWidth * 0.154,
-    symmetricGrip.y + symmetricGrip.height / 2 + symmetricHeight.height - symmetricStart.height,
-  )
-  await expect(doc(owner).locator(".derive-structure-snap-guide")).toBeHidden()
-  await expect(doc(owner).locator(".derive-structure-height-snap-guide")).toHaveAttribute(
-    "data-label",
-    "Match reflow-target height",
-  )
-  await owner.mouse.up()
-  await expect(selected).toHaveAttribute("data-derive-width", "65")
-  await expect(selected).toHaveAttribute("data-derive-height", "96")
-  await expect(heightVolatileTarget).toHaveCSS("width", "432px")
-
-  // A width snap can reflow a height target during the same diagonal move. The
-  // old height must not remain a stale snap candidate or leave a false guide.
-  await owner.getByTestId("inline-edit-undo").click()
-  await expect(selected).toHaveAttribute("data-derive-width", "50")
-  const reflowTarget = doc(owner).locator("#reflow-target")
-  const beforeReflow = await reflowTarget.boundingBox()
-  const diagonalGrip = await corner.boundingBox()
-  const selectedBox = await selected.boundingBox()
-  expect(beforeReflow).not.toBeNull()
-  expect(diagonalGrip).not.toBeNull()
-  expect(selectedBox).not.toBeNull()
-  if (!beforeReflow || !diagonalGrip || !selectedBox) return
-  await owner.mouse.move(
-    diagonalGrip.x + diagonalGrip.width / 2,
-    diagonalGrip.y + diagonalGrip.height / 2,
-  )
-  await owner.mouse.down()
-  await owner.mouse.move(
-    diagonalGrip.x + diagonalGrip.width / 2 + region.width * 0.2,
-    diagonalGrip.y + diagonalGrip.height / 2 + beforeReflow.height - selectedBox.height,
-  )
-  await expect(doc(owner).locator(".derive-structure-snap-guide")).toHaveAttribute(
-    "data-label",
-    "Match reflow-target",
-  )
-  await expect(doc(owner).locator(".derive-structure-height-snap-guide")).toBeHidden()
-  await owner.mouse.up()
-  await expect(selected).toHaveAttribute("data-derive-width", "70")
-  await expect(selected).toHaveAttribute("data-derive-height", "96")
-  await expect(reflowTarget).toHaveCSS("height", "144px")
-})
-
-test("structural resize transactions cancel safely and preserve nested constraints", async ({
-  owner,
-}) => {
-  const shortId = await publishArtifact(
-    owner,
-    "structural-resize-transactions.html",
-    STRUCTURAL_RESIZE_TRANSACTION_DOC,
-    "text/html",
-  )
-  await openArtifact(owner, shortId)
-  await enterEditMode(owner)
-
-  const frame = doc(owner)
-  const ownerNode = frame.locator("#owner")
-  const guarded = frame.locator("#guarded")
-  const widthHandle = frame.getByRole("slider", { name: "Resize element width" })
-  const heightHandle = frame.getByRole("slider", { name: "Resize element height" })
-
-  // Discard must restore the height attribute as well as its custom property,
-  // otherwise the next structural scan fails closed on a mismatched source pair.
-  await frame.locator("#nested-child").click()
-  await frame.getByRole("button", { name: "Select containing group (Escape)" }).click()
-  await heightHandle.focus()
-  await heightHandle.press("ArrowDown")
-  await expect(ownerNode).toHaveAttribute("data-derive-height", "121")
-  await owner.getByTestId("inline-edit-discard").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("click text to edit")
-  await owner.getByTestId("inline-edit-done").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
-  await enterEditMode(owner)
-  await frame.locator("#nested-child").click()
-  await frame.getByRole("button", { name: "Select containing group (Escape)" }).click()
-  await expect(heightHandle).toBeVisible()
-  await expect(ownerNode).toHaveAttribute("data-derive-height", "120")
-
-  // A constrained temporary preview must never be serialized by a keyboard save
-  // while its pointer transaction is still active.
-  // The owner's toolbar sits directly over the next sibling. Select the guarded
-  // node from its unobscured lower edge, matching how a user can reach it.
-  const guardedBox = await guarded.boundingBox()
-  expect(guardedBox).not.toBeNull()
-  if (!guardedBox) return
-  await owner.mouse.click(guardedBox.x + 8, guardedBox.y + guardedBox.height - 8)
-  const grip = await widthHandle.boundingBox()
-  const outer = await frame.locator("#outer").boundingBox()
-  expect(grip).not.toBeNull()
-  expect(outer).not.toBeNull()
-  if (!grip || !outer) return
-  await owner.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
-  await owner.mouse.down()
-  await owner.mouse.move(grip.x + grip.width / 2 + outer.width * 0.2, grip.y + grip.height / 2)
-  await owner.keyboard.press("Control+s")
-  await expect(guarded).toHaveAttribute("data-derive-width", "50")
-  await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
-  await owner.mouse.up()
-
-  // Secondary-button starts are ignored.
-  await owner.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
-  await owner.mouse.down({ button: "right" })
-  await owner.mouse.move(grip.x + grip.width / 2 + outer.width * 0.1, grip.y + grip.height / 2)
-  await owner.mouse.up({ button: "right" })
-  await expect(guarded).toHaveAttribute("data-derive-width", "50")
-
-  // Lost capture and a newly unsupported transform both restore the transaction.
-  await owner.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
-  await owner.mouse.down()
-  await owner.mouse.move(grip.x + grip.width / 2 + outer.width * 0.1, grip.y + grip.height / 2)
-  await widthHandle.evaluate((element) =>
-    element.dispatchEvent(new PointerEvent("lostpointercapture")),
-  )
-  await owner.mouse.up()
-  await expect(guarded).toHaveAttribute("data-derive-width", "50")
-
-  await owner.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
-  await owner.mouse.down()
-  await owner.mouse.move(grip.x + grip.width / 2 + outer.width * 0.1, grip.y + grip.height / 2)
-  await guarded.evaluate((element) => element.classList.add("mutated-during-resize"))
-  await owner.mouse.up()
-  await expect(guarded).toHaveAttribute("data-derive-width", "50")
-  await guarded.evaluate((element) => element.classList.remove("mutated-during-resize"))
-
-  await guarded.evaluate((element) => (element as HTMLElement).blur())
-  await guarded.focus()
-  await expect(widthHandle).toBeVisible()
-  const mutationGrip = await widthHandle.boundingBox()
-  expect(mutationGrip).not.toBeNull()
-  if (!mutationGrip) return
-  await owner.mouse.move(
-    mutationGrip.x + mutationGrip.width / 2,
-    mutationGrip.y + mutationGrip.height / 2,
-  )
-  await owner.mouse.down()
-  await owner.mouse.move(
-    mutationGrip.x + mutationGrip.width / 2 + outer.width * 0.1,
-    mutationGrip.y + mutationGrip.height / 2,
-  )
-  await expect(guarded).not.toHaveAttribute("data-derive-width", "50")
-  await guarded.evaluate((element) => element.setAttribute("data-derive-width", "90"))
-  await owner.mouse.up()
-  await expect(guarded).toHaveAttribute("data-derive-width", "50")
-
-  // Growing a nested child may not make an already-sized owner clip. Accepted
-  // steps remain undoable; the first clipping step rolls back by itself.
-  const child = frame.locator("#nested-child")
-  await child.click()
-  await heightHandle.focus()
-  for (let i = 0; i < 12; i++) await heightHandle.press("Shift+ArrowDown")
-  const clips = await ownerNode.evaluate((element) => {
-    const html = element as HTMLElement
-    return html.scrollHeight > html.clientHeight + 1
-  })
-  expect(clips).toBe(false)
-  expect(Number(await child.getAttribute("data-derive-height"))).toBeLessThan(156)
-
-  // CSS-authored fixed-height ancestors are equally capable of clipping a
-  // nested resize and must fail closed even without data-derive-height.
-  const cssOwner = frame.locator("#css-owner")
-  const cssChild = frame.locator("#css-child")
-  await cssChild.click()
-  await heightHandle.focus()
-  for (let i = 0; i < 12; i++) await heightHandle.press("Shift+ArrowDown")
-  const cssClips = await cssOwner.evaluate((element) => {
-    const html = element as HTMLElement
-    return html.scrollHeight > html.clientHeight + 1
-  })
-  expect(cssClips).toBe(false)
-  expect(Number(await cssChild.getAttribute("data-derive-height"))).toBeLessThan(156)
 })
 
 test("set exact dimensions, constrain a box, and reset to the authored size", async ({ owner }) => {
@@ -1689,8 +1251,7 @@ test("Markdown saves a selection across consecutive bold subtitle lines", async 
   })
   await owner.keyboard.type("person")
   await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await saveEdits(owner)
 
   await expect(async () => {
     const stored = await contentOf(owner, shortId)
@@ -1734,8 +1295,7 @@ test("replacing selected linked and annotated text saves the user's replacement"
   })
   await owner.keyboard.type("Rewritten content")
   await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await saveEdits(owner)
   await expect(async () => {
     expect(await contentOf(owner, shortId)).toBe('<p class="target">Rewritten content</p>')
   }).toPass()
@@ -1766,8 +1326,7 @@ test("formats a selection that starts inside a link and crosses an annotation", 
   })
   await expect(owner.getByTestId("inline-edit-bold")).toBeEnabled()
   await owner.getByTestId("inline-edit-bold").click()
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await saveEdits(owner)
   await expect(async () => {
     const saved = await contentOf(owner, shortId)
     // What the page shows is what's saved: the bold run keeps the link's second half
@@ -1890,8 +1449,7 @@ test("LaTeX: typing beside a formula edits the prose and leaves the math alone",
   await owner.keyboard.press("End")
   await owner.keyboard.type(" Amended.")
   await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await saveEdits(owner)
   // The owner published v1 moments ago, so the edit coalesces into it: read the source.
   await expect(async () => {
     expect(await contentOf(owner, shortId)).toContain("after it. Amended.")
@@ -1917,8 +1475,7 @@ test("LaTeX: a formula and a table cell are refused, a caption edits like prose"
   await expect(caption.locator(".derive-caption-label")).toHaveAttribute("contenteditable", "false")
   await owner.keyboard.press("End")
   await owner.keyboard.type(" More.")
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await saveEdits(owner)
   await expect(async () => {
     expect(await contentOf(owner, shortId)).toContain("\\caption{A caption to edit. More.}")
   }).toPass()
@@ -2003,8 +1560,7 @@ test("LaTeX: a paper bundle edits main.tex on the page and keeps its other files
   await p.click({ position: { x: 6, y: 8 } })
   await owner.keyboard.press("End")
   await owner.keyboard.type(" Amended.")
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await saveEdits(owner)
   const mainOf = async () =>
     (
       (await (await owner.request.get(`/v1/artifacts/${shortId}/files/main.tex`)).json()) as {

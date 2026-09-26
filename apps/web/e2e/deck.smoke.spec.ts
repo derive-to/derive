@@ -18,6 +18,15 @@ import { expect, openArtifact, publishArtifact, test } from "./fixtures"
  * so it doubles as the guard that what we hand people is a working deck.
  */
 
+/** Save, and wait for the server to take it. */
+async function saveEdits(page: Page) {
+  const response = page.waitForResponse(
+    (r) => r.url().includes("/versions") && r.request().method() === "POST",
+  )
+  await page.getByTestId("inline-edit-save").click()
+  expect((await response).ok()).toBe(true)
+}
+
 /** Publish the canonical deck and open it with the workbench interactive. */
 async function seedDeck(page: Page) {
   const shortId = await publishArtifact(page, "deck.html", DECK_TEMPLATE, "text/html")
@@ -373,19 +382,22 @@ test.describe("deck", () => {
 
     const frame = doc(owner)
     const beta = frame.locator("#beta")
-    await beta.click()
-    await expect(
-      frame.getByRole("button", { name: "Select containing group (Escape)" }),
-    ).toBeVisible()
+    const pill = frame.locator(".derive-block-pill")
+    // Around a card's words picks it up; the pill names it and points along the row.
+    await beta.click({ position: { x: 4, y: 6 } })
+    await expect(pill.getByRole("button", { name: "Drag to move" })).toHaveText("⠿Card 2")
+    await expect(pill.getByRole("button", { name: "Move earlier" })).toHaveText("←")
 
     // Row order changes locally; the outer hierarchy and inactive slide stay intact.
-    await frame.getByRole("button", { name: "Move earlier (Option+Up)" }).click()
+    await pill.getByRole("button", { name: "Move earlier" }).click()
     await expect(frame.locator("#cards > [data-derive-node]").nth(0)).toHaveAttribute(
       "data-derive-node",
       "s1-beta",
     )
-    await frame.getByRole("button", { name: "Select containing group (Escape)" }).click()
-    await frame.getByRole("button", { name: "Move earlier (Option+Up)" }).click()
+    // Escape selects the group around it; the slide's stack flows down (↑ ↓).
+    await owner.keyboard.press("Escape")
+    await expect(pill.getByRole("button", { name: "Move earlier" })).toHaveText("↑")
+    await pill.getByRole("button", { name: "Move earlier" }).click()
     await expect(
       frame.locator("[data-derive-region='slide-1'] > [data-derive-node]").nth(0),
     ).toHaveAttribute("data-derive-node", "s1-board")
@@ -415,45 +427,87 @@ test.describe("deck", () => {
     await owner.getByTestId("inline-edit-undo").click()
     await owner.getByTestId("inline-edit-undo").click()
 
-    // Two-axis sizing remains one transaction inside the scaled stage. Pointer-scale
-    // math has its own focused E2E; this deck regression pins the deck integration,
-    // row authority, and shared history without making the proof depend on CDP's
-    // cross-frame pointer-capture timing.
-    await beta.click()
-    await frame.getByRole("button", { name: "Set exact width and height" }).click()
-    const dimensions = frame.locator(".derive-structure-precision-input")
-    await dimensions.nth(0).fill("36")
-    await dimensions.nth(1).fill("128")
-    await frame.getByRole("button", { name: "Apply exact width and height" }).click()
+    // An exact width from ⋯, in the scaled stage, shares the one history.
+    await beta.click({ position: { x: 4, y: 6 } })
+    await pill.getByRole("button", { name: "More options" }).click()
+    await expect(owner.getByTestId("artifact-inspect-crumb-0")).toHaveText("Slide 2")
+    await expect(owner.getByTestId("artifact-inspect-crumb-1")).toHaveText("Section")
+    await owner.getByTestId("artifact-inspect-block-width").fill("36")
+    await owner.getByTestId("artifact-inspect-block-width").press("Enter")
     await expect(beta).toHaveAttribute("data-derive-width", "36")
-    await expect(beta).toHaveAttribute("data-derive-height", "128")
-
-    // Unrelated stage overflow must not block a valid edit, while new clipping from
-    // the selected subtree still fails closed and creates no history entry.
-    await frame.getByRole("button", { name: "Set exact width and height" }).click()
-    await dimensions.nth(0).fill("36")
-    await dimensions.nth(1).fill("600")
-    await frame.getByRole("button", { name: "Apply exact width and height" }).click()
-    await expect(beta).toHaveAttribute("data-derive-height", "128")
-    await expect(frame.getByText("Authored content or constraints control this size")).toBeVisible()
-
     await owner.getByTestId("inline-edit-undo").click()
     await expect(beta).toHaveAttribute("data-derive-width", "32")
-    await expect(beta).toHaveAttribute("data-derive-height", "112")
     await expect(owner.getByTestId("inline-edit-redo")).toBeEnabled()
     await owner.getByTestId("inline-edit-redo").click()
     await expect(beta).toHaveAttribute("data-derive-width", "36")
-    await expect(beta).toHaveAttribute("data-derive-height", "128")
 
-    await owner.getByTestId("inline-edit-save").click()
-    await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+    await saveEdits(owner)
     await expect(async () => {
       const src = await (await owner.request.get(`/v1/artifacts/${shortId}/content`)).text()
       expect(src).toContain('data-derive-layout="row"')
       expect(src.match(/<article id="beta"[^>]*>/)?.[0]).toContain('data-derive-width="36"')
-      expect(src.match(/<article id="beta"[^>]*>/)?.[0]).toContain('data-derive-height="128"')
+      expect(src.match(/<article id="beta"[^>]*>/)?.[0]).toContain('data-derive-height="112"')
       expect(src).toContain("Nothing on slide two may mutate this slide.")
     }).toPass({ timeout: 10_000 })
+  })
+
+  test("a save keeps the slide and the selected block, and editing carries on", async ({
+    owner,
+  }) => {
+    const shortId = await publishArtifact(
+      owner,
+      "structural-deck.html",
+      STRUCTURAL_DECK,
+      "text/html",
+    )
+    await openArtifact(owner, shortId)
+    await owner.getByTestId("deck-next").click()
+    await expect(owner.getByTestId("deck-position")).toHaveText("2 / 3")
+    await owner.getByTestId("deck-edit").click()
+    const frame = doc(owner)
+    const pill = frame.locator(".derive-block-pill")
+    await frame.locator("#beta").click({ position: { x: 4, y: 6 } })
+    await pill.getByRole("button", { name: "Move earlier" }).click()
+
+    const sha = await frame.locator("html").getAttribute("data-derive-src-sha")
+    await saveEdits(owner)
+    // The page reloads on the saved source, and the session picks back up there:
+    // same slide, the same card selected.
+    await expect.poll(() => frame.locator("html").getAttribute("data-derive-src-sha")).not.toBe(sha)
+    await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
+    await expect(owner.getByTestId("deck-position")).toHaveText("2 / 3")
+    await expect(pill.getByRole("button", { name: "Drag to move" })).toHaveText("⠿Card 1")
+    await owner.keyboard.press("Alt+ArrowRight")
+    await expect(frame.locator("#cards > [data-derive-node]").nth(1)).toHaveAttribute("id", "beta")
+  })
+
+  test("a save writes what the person changed, never what the deck's own script did", async ({
+    owner,
+  }) => {
+    const shortId = await seedDeck(owner)
+    const content = async () => (await owner.request.get(`/v1/artifacts/${shortId}/content`)).text()
+    const before = await content()
+    await owner.getByTestId("deck-edit").click()
+    await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
+    // The template writes "N / M" into its counter on every slide change, and the bar
+    // still navigates while editing.
+    await owner.getByTestId("deck-next").click()
+    await owner.getByTestId("deck-next").click()
+    await expect(doc(owner).locator("#count")).toHaveText("3 / 3")
+    await owner.getByTestId("deck-prev").click()
+    await expect(doc(owner).locator("#count")).toHaveText("2 / 3")
+
+    const heading = doc(owner).getByRole("heading", { name: "The stage is fixed" })
+    const box = await heading.boundingBox()
+    if (!box) throw new Error("not laid out")
+    await heading.click({ position: { x: box.width - 2, y: box.height - 6 } })
+    await owner.keyboard.press("End")
+    await owner.keyboard.type(" Always.")
+    await saveEdits(owner)
+
+    await expect
+      .poll(content)
+      .toBe(before.replace("Only the scale changes.</h2>", "Only the scale changes. Always.</h2>"))
   })
 
   test("a deck that never announced itself still gets the bar, and the bar drives it", async ({
@@ -491,8 +545,7 @@ test.describe("deck", () => {
     await owner.keyboard.type(" and a half")
 
     await expect(owner.getByTestId("deck-position")).toHaveText("2 / 3")
-    await owner.getByTestId("inline-edit-save").click()
-    await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+    await saveEdits(owner)
 
     const res = await owner.request.get(`/v1/artifacts/${shortId}/content`)
     const src = await res.text()
