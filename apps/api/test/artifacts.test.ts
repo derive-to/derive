@@ -846,7 +846,7 @@ describe("exact-source inline saves (ops)", () => {
     expect(stored).toContain("data-derive-structural-backfill")
   })
 
-  it("gives the source map to publishers only, and only for HTML pages and decks", async () => {
+  it("gives the source map to publishers only, and only for pages, decks and Markdown", async () => {
     const { short_id } = await publish()
     const url = `/v1/artifacts/${short_id}/source-map`
     expect((await opsApp.request(url)).status).toBe(404)
@@ -869,7 +869,127 @@ describe("exact-source inline saves (ops)", () => {
     const notes = await opsApp.request(`/v1/artifacts/${md.short_id}/source-map`, {
       headers: as(owner.email),
     })
-    expect(notes.status).toBe(404)
+    expect(notes.status).toBe(200)
+    expect((await notes.json()).hashes).toHaveLength(2)
+
+    const form2 = new FormData()
+    form2.append("file", new Blob(["\\documentclass{article}"]), "paper.tex")
+    const tex = await (
+      await opsApp.request("/v1/artifacts", {
+        method: "POST",
+        body: form2,
+        headers: as(owner.email),
+      })
+    ).json()
+    const paper = await opsApp.request(`/v1/artifacts/${tex.short_id}/source-map`, {
+      headers: as(owner.email),
+    })
+    expect(paper.status).toBe(404)
+  })
+
+  it("saves a Markdown document's ops exactly: untouched bytes, typed Markdown, a split", async () => {
+    const md =
+      "# Plan\n\nThe *first* step &mdash; today.\n\n> Keep it  \n> short.\n\n- One\n- Two\n"
+    const form = new FormData()
+    form.append("file", new Blob([md]), "plan.md")
+    const { short_id } = await (
+      await opsApp.request("/v1/artifacts", {
+        method: "POST",
+        body: form,
+        headers: as(owner.email),
+      })
+    ).json()
+    // Editors get the rendered page with source ids; readers the page as always.
+    const editorPage = await framePage(short_id, 1, as(owner.email))
+    const stamped = await editorPage.text()
+    const { sha, hashes } = await sourceMapOf(short_id)
+    expect(stamped).toContain(`data-derive-src-version="1" data-derive-src-sha="${sha}"`)
+    expect(editorPage.headers.get("cache-control")).toMatch(/^private,/)
+    expect(await (await framePage(short_id, 1, {})).text()).not.toContain("data-derive-src")
+
+    const [p, em, bq, ul, one, two] = [
+      idOf(stamped, "p"),
+      idOf(stamped, "em"),
+      idOf(stamped, "p", 1),
+      idOf(stamped, "ul"),
+      idOf(stamped, "li"),
+      idOf(stamped, "li", 1),
+    ]
+    const br = Number(/<br data-derive-src="(\d+)"/.exec(stamped)?.[1])
+    const k = (n: number, children?: unknown[]) => ({ keep: n, hash: hashes[n], children })
+    const saved = await saveOps(
+      short_id,
+      [
+        // The page's words: the entity reads as its character. Typed Markdown is source.
+        {
+          op: "content",
+          src: p,
+          hash: hashes[p],
+          children: [{ text: "The " }, k(em), { text: " step — today, **really**." }],
+        },
+        // A line break the page showed: a hard break, under the quote's own prefix.
+        {
+          op: "content",
+          src: bq,
+          hash: hashes[bq],
+          children: [{ text: "Keep" }, { tag: "br" }, { text: " it" }, k(br), { text: "short." }],
+        },
+        // Enter in a list item: the list names it twice, each copy with its half.
+        {
+          op: "content",
+          src: ul,
+          hash: hashes[ul],
+          children: [k(one), k(two, [{ text: "Tw" }]), k(two, [{ text: "o" }])],
+        },
+      ],
+      1,
+    )
+    expect(saved.status).toBe(201)
+    expect(await content(short_id)).toBe(
+      "# Plan\n\nThe *first* step &mdash; today, **really**.\n\n> Keep\\\n> it  \n> short.\n\n- One\n- Tw\n- o\n",
+    )
+
+    // A save based on the version it was served lands; one still naming bytes that have
+    // since changed is refused and says which; one naming only unchanged parts lands.
+    const other = new FormData()
+    other.append("edits", JSON.stringify([{ old_str: "- One", new_str: "- Uno" }]))
+    await opsApp.request(`/v1/artifacts/${short_id}/versions`, {
+      method: "POST",
+      body: other,
+      headers: as(colleague.email),
+    })
+    const reopened = await (await framePage(short_id, 2, as(owner.email))).text()
+    const map2 = await sourceMapOf(short_id, 2)
+    const [heading, first] = [idOf(reopened, "h1"), idOf(reopened, "li")]
+    const mine = await saveOps(
+      short_id,
+      [{ op: "content", src: first, hash: map2.hashes[first], children: [{ text: "Mine" }] }],
+      2,
+    )
+    expect(mine.status).toBe(201)
+    const stale = await saveOps(
+      short_id,
+      [{ op: "content", src: first, hash: map2.hashes[first], children: [{ text: "Again" }] }],
+      2,
+    )
+    expect(stale.status).toBe(409)
+    expect(await stale.json()).toMatchObject({ code: "source_conflict", conflicts: [first] })
+    const title = await saveOps(
+      short_id,
+      [{ op: "content", src: heading, hash: map2.hashes[heading], children: [{ text: "Plan B" }] }],
+      2,
+    )
+    expect(title.status).toBe(201)
+    expect(await content(short_id)).toBe(
+      "# Plan B\n\nThe *first* step &mdash; today, **really**.\n\n> Keep\\\n> it  \n> short.\n\n- Mine\n- Tw\n- o\n",
+    )
+    // Layout belongs to HTML: a Markdown save carries none.
+    const layout = await saveOps(
+      short_id,
+      [{ op: "attrs", src: heading, hash: map2.hashes[heading], style: null }],
+      2,
+    )
+    expect(layout.status).toBe(400)
   })
 })
 

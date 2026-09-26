@@ -21,6 +21,7 @@ import {
   reflowHtml,
   renderLatex,
   renderMarkdown,
+  renderMarkdownForEditor,
   SELECTION_SCRIPT,
   SHARED_STATE_SCRIPT,
   sourceSha,
@@ -107,9 +108,10 @@ export const serveContent = async (
    *  render it, never hand back its `.tex`/`.bib`/`.sty` bytes. Images still serve, and
    *  the renderer resolves the paper's own files server-side, so the page is unchanged. */
   sourceHidden = false,
-  /** The caller may publish this version: serve an HTML page or deck with source ids
-   *  stamped for the inline editor (@derive/core source-edit). Never for a reader, and
-   *  never cached where a reader could be handed it. */
+  /** The caller may publish this version: serve an HTML page, deck or Markdown document
+   *  with source ids stamped for the inline editor (@derive/core source-edit,
+   *  markdown-source). Never for a reader, and never cached where a reader could be
+   *  handed it. */
   editor?: { version: number },
 ) => {
   const slots = slotValuesOf(dynamic)
@@ -295,10 +297,17 @@ export const serveContent = async (
         "Content-Type": "text/html; charset=utf-8",
       })
     }
-    const rendered = await renderMarkdown(text, title, { dynamic: slots })
+    // An editor gets the same page with source ids (markdown-source.ts), for exact saves.
+    const rendered = editor
+      ? await renderMarkdownForEditor(text, title, editor, { dynamic: slots })
+      : await renderMarkdown(text, title, { dynamic: slots })
     const isBound = bound(rendered)
     const html = withSharedState(rendered, isBound) + append
-    return c.body(html, 200, { ...hdrs(isBound), "Content-Type": "text/html; charset=utf-8" })
+    const pageHeaders = hdrs(isBound)
+    const cache = pageHeaders["Cache-Control"]
+    if (editor && !/private|no-store/.test(cache))
+      pageHeaders["Cache-Control"] = `private, ${cache.replace(/^public,\s*/, "")}`
+    return c.body(html, 200, { ...pageHeaders, "Content-Type": "text/html; charset=utf-8" })
   }
 
   if (isLatexLike(content.content_type)) {
