@@ -809,10 +809,11 @@ const BLOCK_START: [RegExp, (m: RegExpExecArray) => number][] = [
 ]
 const SETEXT = /^(?:=+|-+)[ \t]*$/
 
-/** How emphasis is spelled: `*`/`**` (new) and the author's own delimiters (kept);
- *  `_`/`__` for both (a delimiter next to another `*` run); HTML tags for both (a
- *  delimiter that can't close where it sits, like `**x.**y`). The save takes the first
- *  that reads back as the page showed. */
+/** How emphasis is spelled. "md": `**`/`*` for new formatting, the author's own
+ *  delimiters kept. The others re-spell every run in the op — `__` with `*`, `**` with
+ *  `_`, `__`/`_` (a delimiter meeting another run), then `<strong>`/`<em>` (one that can't
+ *  close where it sits, like `**x.**y`). The save takes the first that reads back as the
+ *  page showed. */
 type Spelling = "md" | "mixA" | "mixB" | "alt" | "html"
 /** The delimiter character a spelling writes for strong and for emphasis. */
 const DELIM: Record<Exclude<Spelling, "html">, { strong: string; em: string }> = {
@@ -988,7 +989,7 @@ const joined = (pieces: Piece[]): string => pieces.map((p) => p.s).join("")
 
 /** An inline container's new content, as Markdown. */
 const serializeInline = (z: Serializer, n: MdNode, tokens: SourceToken[]): string => {
-  const out = joined(finishInline(z, n, inlinePieces(z, n, tokens)))
+  const out = joined(finishInline(n, inlinePieces(z, n, tokens)))
   // An ATX heading drops a closing run of #s: keep a typed one as text.
   return n.ctx.atx && n.kind === "h" ? out.replace(/(^|[ \t])(#+[ \t]*)$/, "$1\\$2") : out
 }
@@ -1069,7 +1070,7 @@ const emitWith = (z: Serializer, k: MdNode, children: SourceToken[]): string => 
   if (!k.editable) fail("Part of that edit is inside something that can't be edited inline.")
   if (k.kind === "codespan") return codespan(serializeInline(z, k, children))
   if (WRAPPERS.has(k.kind) && k.kind !== "a")
-    return emphasis(z, k, finishInline(z, k, inlinePieces(z, k, children)))
+    return emphasis(z, k, finishInline(k, inlinePieces(z, k, children)))
   const inner = serializeContent(z, k, children)
   const open = src.slice(k.start, k.cStart)
   const close = src.slice(k.cEnd, k.end)
@@ -1113,7 +1114,7 @@ const emitTag = (z: Serializer, n: MdNode, t: TagToken): string | null => {
     const dest = /[\s()<>]/.test(href) ? `<${href.replace(/[<>]/g, "\\$&")}>` : href
     return inner.trim() ? `[${inner}](${dest})` : inner
   }
-  const inner = finishInline(z, pseudo, inlinePieces(z, pseudo, t.children ?? []))
+  const inner = finishInline(pseudo, inlinePieces(z, pseudo, t.children ?? []))
   const strong = t.tag === "b" || t.tag === "strong"
   if (z.spelling === "html")
     return wrapPieces(inner, strong ? "<strong>" : "<em>", strong ? "</strong>" : "</em>")
@@ -1123,7 +1124,7 @@ const emitTag = (z: Serializer, n: MdNode, t: TagToken): string | null => {
 
 /** Settle an inline container's pieces: nothing typed may start a new block at a line
  *  start, a break needs text after it, and typed space at the edges of a block is dropped. */
-const finishInline = (z: Serializer, n: MdNode, pieces: Piece[]): Piece[] => {
+const finishInline = (n: MdNode, pieces: Piece[]): Piece[] => {
   if (n.ctx.code) return pieces
   const block = n.kind === "p" || n.kind === "tb" || n.kind === "cell" || n.kind === "h"
   if (block) {
@@ -1189,7 +1190,6 @@ const finishInline = (z: Serializer, n: MdNode, pieces: Piece[]): Piece[] => {
       off += p.s.length
     }
   }
-  void z
   return pieces
 }
 
