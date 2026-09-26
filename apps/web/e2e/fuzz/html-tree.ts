@@ -207,36 +207,54 @@ export interface SourceDeck {
   slides: SourceSlide[]
 }
 
-/** Top-level slides (elements carrying data-derive-slide) in document order. */
+const slideOf = (c: HNode): SourceSlide => {
+  const keys = chunkKeys(
+    c.children.map((k) => ({
+      tag: k.tag,
+      nodeId: attr(k, "data-derive-node"),
+      classes: attr(k, "class") ?? "",
+    })),
+  )
+  return {
+    node: c,
+    region: attr(c, "data-derive-region"),
+    start: c.start,
+    end: c.end,
+    chunks: c.children.map((k, i) => ({
+      key: keys[i] as string,
+      node: k,
+      start: k.start,
+      end: k.end,
+    })),
+  }
+}
+
+const firstTag = (n: HNode, tag: string): HNode | null => {
+  for (const c of n.children) {
+    if (c.tag === tag) return c
+    const hit = firstTag(c, tag)
+    if (hit) return hit
+  }
+  return null
+}
+
+/** Top-level slides (elements carrying data-derive-slide) in document order. A page
+ *  with none (an article) is one slide: its <main>, else its <body> — the same root
+ *  the in-frame probe reads. */
 export function deckOf(src: string): SourceDeck {
   const root = parseHtml(src)
   const slides: SourceSlide[] = []
   const walk = (n: HNode) => {
     for (const c of n.children) {
-      if (attr(c, "data-derive-slide") !== null) {
-        const keys = chunkKeys(
-          c.children.map((k) => ({
-            tag: k.tag,
-            nodeId: attr(k, "data-derive-node"),
-            classes: attr(k, "class") ?? "",
-          })),
-        )
-        slides.push({
-          node: c,
-          region: attr(c, "data-derive-region"),
-          start: c.start,
-          end: c.end,
-          chunks: c.children.map((k, i) => ({
-            key: keys[i] as string,
-            node: k,
-            start: k.start,
-            end: k.end,
-          })),
-        })
-      } else walk(c)
+      if (attr(c, "data-derive-slide") !== null) slides.push(slideOf(c))
+      else walk(c)
     }
   }
   walk(root)
+  if (!slides.length) {
+    const doc = firstTag(root, "main") ?? firstTag(root, "body")
+    if (doc) slides.push(slideOf(doc))
+  }
   return { src, slides }
 }
 
