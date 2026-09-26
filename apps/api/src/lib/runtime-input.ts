@@ -1,4 +1,5 @@
 import type { ContextRecord, MetaStore, RuntimeRunInput } from "@derive/core"
+import { readWorkflowRepositories } from "@derive/core"
 import { readEnvironmentBindings } from "./context-environment"
 import { credentialRevision } from "./credentials"
 
@@ -28,6 +29,14 @@ export async function runtimeInput(
             blob_key: files.blob_key ?? "",
             granted_by: files.granted_by,
             revision: files.revision,
+          },
+        }
+      : {}),
+    ...(context.repository_bindings
+      ? {
+          repositories: {
+            revision: context.repository_revision,
+            grants: readWorkflowRepositories(context.repository_bindings),
           },
         }
       : {}),

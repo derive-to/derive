@@ -5,6 +5,7 @@ import { z } from "zod"
 import type { AppContext } from "../context"
 import { parseTrigger } from "../lib/automation"
 import {
+  bearerFor,
   brokerFor,
   callTool,
   connectionBindError,
@@ -297,6 +298,8 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
     if (!bytes || bytes.byteLength > 256_000)
       return fail(c, 409, "Pinned manifest is unavailable or too large")
 
+    if (input.repositories?.grants.length && c.req.header("X-Derive-Repositories") !== "1")
+      return fail(c, 409, "This environment needs a runner update before it can use repositories")
     if (input.files && c.req.header("X-Derive-File-Inputs") !== "1")
       return fail(c, 409, "This environment needs a runner update before it can receive files")
     let files = null
@@ -307,12 +310,28 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
         return fail(c, 409, "The uploaded input files are unavailable")
       }
     }
-    const selected = input.connection_ids.filter((id) =>
-      (JSON.parse(context.connection_ids ?? "[]") as string[]).includes(id),
-    )
+    const selected = [
+      ...new Set([
+        ...input.connection_ids.filter((id) =>
+          (JSON.parse(context.connection_ids ?? "[]") as string[]).includes(id),
+        ),
+        ...(input.repositories?.grants.map((r) => r.connection_id) ?? []),
+      ]),
+    ]
     const broker = await brokerFor(meta, run.org_id, null, deps.encryptionKey, deps.allowEchoStub)
     const router = refRouter(broker, mcpAuthFor(meta, run.org_id, deps.encryptionKey))
     const tools = await toolsForRun(meta, broker, run.org_id, selected, router, deps.encryptionKey)
+    if (input.repositories)
+      for (const tool of tools) {
+        if (tool.kind === "github_app")
+          tool.def = {
+            ...tool.def,
+            description:
+              tool.def.name === "github.post"
+                ? "Create a pull request (title, head, base, optional body/draft), or comment on a PR, in a workflow repository with write access. Pass the source ref."
+                : "Read metadata, pull requests, files and PR comments for a granted workflow repository. Pass the source ref.",
+          }
+      }
     const claimed = await meta.claimRunAttempt(
       attempt.id,
       run.org_id,
@@ -366,6 +385,57 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
       return fail(c, 409, "Input files are unavailable")
     }
   })
+  // authz-exempt: active signed attempt and live repository grant; one repository-scoped Git credential only.
+  app.post("/v1/runtime-attempts/:id/git-credential", async (c) => {
+    c.header("Cache-Control", "no-store")
+    const work = await authenticate(c)
+    if (!work) return fail(c, 401, "Invalid attempt token")
+    const { attempt, run } = work
+    if (
+      !attempt.runner_claimed_at ||
+      attempt.result_json ||
+      attempt.released_at ||
+      !["launching", "running"].includes(attempt.phase) ||
+      attempt.deadline_at <= new Date().toISOString()
+    )
+      return fail(c, 409, "Attempt is not running")
+    const runtime = await meta.getContextRuntime(attempt.runtime_id, run.org_id)
+    if (!(await runtimeRunContext(meta, deps.runtime, run, runtime)))
+      return fail(c, 403, "Workflow repository access changed")
+    const body = await readJson(c, z.object({ repository: z.string().min(1).max(201) }).strict())
+    if (body instanceof Response) return body
+    const input = JSON.parse(run.input_snapshot ?? "null") as RuntimeRunInput | null
+    const grant = input?.repositories?.grants.find(
+      (r) => r.repository.toLowerCase() === body.repository.toLowerCase(),
+    )
+    if (!grant) return fail(c, 403, "Repository not granted to this workflow")
+    const connection = await meta.getConnection(grant.connection_id)
+    if (
+      !connection ||
+      connection.org_id !== run.org_id ||
+      connection.status !== "active" ||
+      connection.kind !== "github_app" ||
+      connection.broker_ref !== grant.installation_id ||
+      !deps.encryptionKey
+    )
+      return fail(c, 403, "GitHub connection unavailable")
+    try {
+      const token = await bearerFor(
+        meta,
+        connection,
+        deps.encryptionKey,
+        grant.access === "write" ? "contents-write" : "contents-read",
+        grant.repository_id,
+      )
+      return c.json({ username: "x-access-token", password: token })
+    } catch {
+      return fail(
+        c,
+        502,
+        "GitHub access is unavailable. Check the installation’s repository selection and permissions.",
+      )
+    }
+  })
   // authz-exempt: attempt capability plus live Context grant intersection bounds each broker call.
   app.post("/v1/runtime-attempts/:id/tool", async (c) => {
     const work = await authenticate(c)
@@ -389,12 +459,23 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
       )
     const body = await readJson(
       c,
-      z.object({ tool: z.string().max(200), args: z.unknown().optional() }),
+      z
+        .object({
+          tool: z.string().max(200),
+          args: z.unknown().optional(),
+          ref: z.string().max(200).optional(),
+        })
+        .strict(),
     )
     if (body instanceof Response) return body
     const input = JSON.parse(run.input_snapshot ?? "null") as RuntimeRunInput
     const current = JSON.parse(context.connection_ids ?? "[]") as string[]
-    const selected = input.connection_ids.filter((id) => current.includes(id))
+    const selected = [
+      ...new Set([
+        ...input.connection_ids.filter((id) => current.includes(id)),
+        ...(input.repositories?.grants.map((r) => r.connection_id) ?? []),
+      ]),
+    ]
     const broker = await brokerFor(meta, run.org_id, null, deps.encryptionKey, deps.allowEchoStub)
     const route = refRouter(broker, mcpAuthFor(meta, run.org_id, deps.encryptionKey))
     const allowed = await toolsForRun(meta, broker, run.org_id, selected, route, deps.encryptionKey)
@@ -408,6 +489,8 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
       subject: "this attempt",
       tool: body.tool,
       args: body.args,
+      ref: body.ref,
+      repositories: input.repositories?.grants,
     })
     return out.ok ? c.json({ result: out.result }) : fail(c, out.status, out.message)
   })

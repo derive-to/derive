@@ -1,4 +1,10 @@
-import { artifactUserCan, isBundleContentType, newId, publish } from "@derive/core"
+import {
+  artifactUserCan,
+  isBundleContentType,
+  newId,
+  publish,
+  readWorkflowRepositories,
+} from "@derive/core"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
@@ -11,10 +17,12 @@ import { fail, readJson } from "../lib/http"
 import { deleteArtifactAndUnindex } from "../lib/search"
 import { workflowFileManifest } from "../lib/workflow-files"
 import { workflowConfiguration, workflowReadiness } from "../lib/workflow-readiness"
+import { workflowRepositoryRoutes } from "./workflow-repositories"
 
 /** A workflow view over existing execution records; Context and artifact contracts stay intact. */
 export const workflowRuntimeRoutes = (ctx: AppContext) => {
   const app = new Hono()
+  app.route("/", workflowRepositoryRoutes(ctx))
   app.get("/v1/workflow-runtimes", async (c) => {
     c.header("Cache-Control", "no-store")
     const org = await ctx.requireWorkspace(c, "read")
@@ -206,6 +214,9 @@ export const workflowRuntimeRoutes = (ctx: AppContext) => {
       draft: configuration.schedule ? null : configuration.draft,
       schedule: configuration.schedule,
       connection_ids: parseConnectionIds(context.connection_ids),
+      repositories: readWorkflowRepositories(context.repository_bindings),
+      repository_revision: context.repository_revision,
+      can_manage_repositories: await ctx.workspaceCan(c, "manage"),
       files: files
         ? { ...files, title: source?.title ?? "Input files", short_id: source?.short_id }
         : null,

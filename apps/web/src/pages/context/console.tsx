@@ -373,7 +373,7 @@ function Console({ id }: { id: string }) {
               <SkillsCard skills={context.skills ?? []} onSeeManifest={() => setTab("manifest")} />
             )}
             {isOwner ? (
-              <RuntimeAccessCard context={context} />
+              <RuntimeAccessCard context={context} workflow={runtimeState.data?.enabled === true} />
             ) : sourcesCount > 0 ? (
               <SourcesCard count={sourcesCount} />
             ) : null}

@@ -20,7 +20,7 @@ import { esc, brandShell as SHELL } from "./brand-page"
 // `pull_requests:write` is necessary because GitHub's top-level PR conversation endpoint is
 // an Issues route that accepts either Issues:write or Pull requests:write. The latter also
 // covers every PR read this source performs. Derive's server-side request policy narrows the
-// effective write to comment creation only.
+// ordinary source write to comment creation; explicit workflow repository grants also allow PR creation.
 export const REQUIRED_PERMISSIONS: Record<string, string> = {
   metadata: "read",
   pull_requests: "write",
@@ -29,6 +29,8 @@ export const ACTIONS_PERMISSION = { actions: "write" } as const
 export const MANIFEST_PERMISSIONS: Record<string, string> = {
   ...REQUIRED_PERMISSIONS,
   ...ACTIONS_PERMISSION,
+  // Workflow grants narrow each Git credential to one repository and read/write choice.
+  contents: "write",
 }
 // Completion events let Derive react when an external workflow finishes. The receiver accepts
 // only signed payloads and ignores every event except the narrow workflow-run contract.

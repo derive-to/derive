@@ -131,7 +131,11 @@ export async function workflowReadiness(
     )
   if (input) {
     const required = [
-      ...new Set([...input.connection_ids, ...Object.values(input.environment_bindings)]),
+      ...new Set([
+        ...input.connection_ids,
+        ...(input.repositories?.grants.map((r) => r.connection_id) ?? []),
+        ...Object.values(input.environment_bindings),
+      ]),
     ]
     const active = await spendableConnections(meta, context.org_id, required)
     if (required.some((id) => !active.some((item) => item.id === id)))

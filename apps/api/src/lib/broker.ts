@@ -1,9 +1,9 @@
 import type { BrokerToolDef, ToolBroker } from "@derive/broker"
 import { type McpAuthResolver, makeBroker, quietReason, refRouter } from "@derive/broker"
-import type { ConnectionKind, ConnectionRecord, MetaStore } from "@derive/core"
+import type { ConnectionKind, ConnectionRecord, MetaStore, WorkflowRepository } from "@derive/core"
 import { decryptSecret } from "./crypto"
 import { GitHubError, type GitHubTokenProfile, installationToken } from "./github-app"
-import { githubSourcePolicy } from "./github-source-policy"
+import { githubSourcePolicy, workflowGithubPolicy } from "./github-source-policy"
 import { ResponseTooLargeError, readCappedBytes } from "./http"
 import { liveBearer } from "./mcp-oauth"
 
@@ -268,7 +268,7 @@ export const bearerFor = async (
   cn: ConnectionRecord,
   encryptionKey: string,
   githubProfile: GitHubTokenProfile = "standard-read",
-  githubRepository?: string,
+  githubRepository?: string | number,
 ): Promise<string> => {
   if (cn.kind === "secret") {
     if (!cn.secret_enc) throw new Error("secret connection is missing its secret")
@@ -290,7 +290,10 @@ export const bearerFor = async (
       // Installation removal/suspension must stop being advertised after the first live call.
       // A 403 can also mean a primary or secondary rate limit. It must never revoke a healthy
       // installation. Only invalid credentials and a missing installation are definitive.
-      if (err instanceof GitHubError && (err.status === 401 || err.status === 404)) {
+      if (
+        err instanceof GitHubError &&
+        (err.status === 401 || (err.status === 404 && githubRepository === undefined))
+      ) {
         await meta.setConnectionStatus(cn.id, cn.org_id, "revoked")
         throw new Error("GitHub is no longer authorized; reconnect it in Settings → Integrations")
       }
@@ -314,6 +317,14 @@ export const bearerFor = async (
       )
         throw new Error(
           "GitHub Actions is not enabled for this App; update its permissions in Settings → Integrations",
+        )
+      if (
+        err instanceof GitHubError &&
+        [403, 404, 422].includes(err.status) &&
+        githubRepository !== undefined
+      )
+        throw new Error(
+          "Repository access is unavailable. Check the GitHub installation’s selected repositories and approve its permissions in Settings → Integrations.",
         )
       throw err
     }
@@ -363,6 +374,7 @@ export const executeHttpTool = async (
   args: unknown,
   encryptionKey: string,
   fetchImpl: typeof fetch = fetch,
+  repositories?: WorkflowRepository[],
 ): Promise<{ status: number; body: unknown }> => {
   if (!cn.base_url) throw new Error("connection is missing its base_url")
   const a = (args ?? {}) as { path?: unknown; body?: unknown }
@@ -372,10 +384,15 @@ export const executeHttpTool = async (
   const url = new URL(`.${path}`, base)
   if (!url.href.startsWith(base.href)) throw new Error("path escapes the connection's base_url")
   const verb = tool.endsWith(".post") ? "POST" : "GET"
-  // GitHub's vendor permission is necessarily write-level for PR comments. Constrain the
-  // effective surface before minting that token, so a prompt can never turn github.post into
-  // a branch/PR mutation. Other direct integrations retain the generic confined HTTP surface.
-  const githubPolicy = cn.kind === "github_app" ? githubSourcePolicy(tool, url, a.body) : null
+  // Check the effective surface before minting a token. Explicit workflow repository grants
+  // replace the ordinary GitHub source policy; write grants add PR creation, never merges.
+  // Other direct integrations retain the generic confined HTTP surface.
+  const githubPolicy =
+    cn.kind === "github_app"
+      ? repositories !== undefined
+        ? workflowGithubPolicy(tool, url, a.body, repositories)
+        : githubSourcePolicy(tool, url, a.body)
+      : null
   const bearer = await bearerFor(
     meta,
     cn,
@@ -397,6 +414,7 @@ export const executeHttpTool = async (
   if (githubPolicy?.prPreflightPath) {
     const preflight = new URL(`.${githubPolicy.prPreflightPath}`, base)
     const check = await fetchImpl(preflight.href, {
+      redirect: "error",
       headers,
       signal: AbortSignal.timeout(20_000),
     })
@@ -407,6 +425,7 @@ export const executeHttpTool = async (
       }
   }
   const res = await fetchImpl(url.href, {
+    ...(cn.kind === "github_app" ? { redirect: "error" as const } : {}),
     method: verb,
     headers,
     body: verb === "POST" ? JSON.stringify(a.body ?? {}) : undefined,
@@ -463,6 +482,7 @@ export const callTool = async (opts: {
   encryptionKey: string | undefined
   allowed: RunTool[]
   subject: string
+  repositories?: WorkflowRepository[]
   tool: string
   args?: unknown
   ref?: string
@@ -494,7 +514,11 @@ export const callTool = async (opts: {
         return { ok: false, status: 502, message: "direct connections need an encryption key" }
       const cn = await meta.getConnection(match.connectionId)
       if (!cn || cn.org_id !== orgId) return { ok: false, status: 404, message: "not found" }
-      return { ok: true, result: await executeHttpTool(meta, cn, tool, args ?? {}, encryptionKey) }
+      const grants = opts.repositories?.filter((r) => r.connection_id === cn.id)
+      return {
+        ok: true,
+        result: await executeHttpTool(meta, cn, tool, args ?? {}, encryptionKey, fetch, grants),
+      }
     }
     if (!broker) return { ok: false, status: 502, message: "no broker for this workspace" }
     // Execute must spend the SAME connection's credential the listing used, so it addresses by

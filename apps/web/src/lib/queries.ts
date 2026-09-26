@@ -815,3 +815,11 @@ export const workflowConfigurationQuery = (id: string) =>
     staleTime: 0,
     meta: { persist: false },
   })
+
+export const workflowRepositoriesQuery = (id: string, connectionId: string, page: number) =>
+  queryOptions({
+    queryKey: ["workflow-runtimes", id, "repositories", connectionId, page],
+    queryFn: () => api.workflowRepositories(id, connectionId, page),
+    staleTime: 0,
+    meta: { persist: false },
+  })

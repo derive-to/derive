@@ -592,6 +592,9 @@ test("Cloud managed jobs connect a provider and run the saved agent without infr
   await owner.route(`**/v1/workflow-runtimes/${context.id}`, (route) =>
     route.fulfill({
       json: {
+        repositories: [],
+        repository_revision: 0,
+        can_manage_repositories: editable,
         draft: prepared ? null : { instruction: job.instruction, provider: "codex", revision: 0 },
         readiness: {
           state: selected && connected && !disconnected ? "ready" : "needs_account",
@@ -839,4 +842,102 @@ test("Workflow input files review folders, preserve private source access and su
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+})
+
+test("workflow repository access defaults to read, updates explicitly and preserves grants on conflict", async ({
+  owner,
+}, testInfo) => {
+  const manifest = await publishArtifact(owner, "repositories.md", "# Inspect a private repository")
+  const context = await (
+    await owner.request.post("/v1/contexts", {
+      data: { name: "Repository access", manifest_short_id: manifest },
+    })
+  ).json()
+  await owner.route(`**/v1/contexts/${context.id}/runtime`, (route) =>
+    route.fulfill({
+      json: {
+        enabled: true,
+        managed: true,
+        can_edit: true,
+        runtime: null,
+        setup: null,
+        schedule: null,
+        runs: [],
+      },
+    }),
+  )
+  const connection = {
+    id: "repo-install",
+    kind: "github_app",
+    scope: "workspace",
+    toolkit: "github",
+    status: "active",
+    scopes_label: "acme",
+  }
+  let repositories: {
+    connection_id: string
+    repository: string
+    access: string
+    repository_id: number
+    installation_id: string
+  }[] = []
+  let revision = 0
+  let conflict = false
+  await owner.route("**/v1/connections?scope=workspace", (route) =>
+    route.fulfill({ json: { connections: [connection] } }),
+  )
+  await owner.route(`**/v1/workflow-runtimes/${context.id}`, async (route) => {
+    const response = await route.fetch()
+    await route.fulfill({
+      json: {
+        ...(await response.json()),
+        repositories,
+        repository_revision: revision,
+        can_manage_repositories: true,
+      },
+    })
+  })
+  await owner.route(`**/v1/workflow-runtimes/${context.id}/repositories?*`, (route) =>
+    route.fulfill({
+      json: { repositories: [{ id: 42, repository: "acme/private" }], next_page: null },
+    }),
+  )
+  await owner.route(`**/v1/workflow-runtimes/${context.id}/repositories`, async (route) => {
+    const body = route.request().postDataJSON()
+    expect(body.revision).toBe(revision)
+    if (conflict)
+      return route.fulfill({
+        status: 409,
+        json: { error: "Repository access changed. Reload before saving." },
+      })
+    repositories = body.repositories.map((r: object) => ({
+      ...r,
+      repository_id: 42,
+      installation_id: "123",
+    }))
+    revision++
+    await route.fulfill({ json: { repositories, repository_revision: revision } })
+  })
+  await owner.goto(`/contexts/${context.id}`)
+  await owner.getByTestId("context-runtime-access").click()
+  await owner.getByTestId("workflow-repository-connection").selectOption(connection.id)
+  await owner.getByTestId("workflow-repository-picker").selectOption("acme/private")
+  await expect(owner.getByTestId("workflow-repository-permission")).toHaveValue("read")
+  await owner.getByTestId("workflow-repository-add").click()
+  await expect(owner.getByTestId("workflow-repository-access-42")).toHaveValue("read")
+  await owner.getByTestId("workflow-repository-access-42").selectOption("write")
+  await expect(owner.getByTestId("workflow-repository-access-42")).toHaveValue("write")
+  await owner.reload()
+  await owner.getByTestId("context-runtime-access").click()
+  await expect(owner.getByTestId("workflow-repository-access-42")).toHaveValue("write")
+  await owner.screenshot({ path: testInfo.outputPath("workflow-repositories.png"), fullPage: true })
+  conflict = true
+  await owner.getByTestId("workflow-repository-remove-42").click()
+  await expect(
+    owner.getByText("Repository access changed. Reload before saving.", { exact: true }),
+  ).toBeVisible()
+  await expect(owner.getByTestId("workflow-repository-access-42")).toHaveValue("write")
+  conflict = false
+  await owner.getByTestId("workflow-repository-remove-42").click()
+  await expect(owner.getByTestId("workflow-repository-access-42")).toHaveCount(0)
 })

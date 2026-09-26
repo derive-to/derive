@@ -19,13 +19,23 @@ import { CONTEXT_ENVIRONMENT_LIMIT, contextEnvironmentNameError } from "@/lib/co
 import { automationConnectionsQuery, contextEnvironmentQuery, contextQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 
-export function RuntimeAccessCard({ context }: { context: ContextDetail }) {
+import { WorkflowRepositories } from "./workflow-repositories"
+
+export function RuntimeAccessCard({
+  context,
+  workflow = false,
+}: {
+  context: ContextDetail
+  workflow?: boolean
+}) {
   const [open, setOpen] = useState(false)
   return (
     <div className="flex flex-col gap-2 rounded-xl border bg-card p-3.5">
       <SectionTitle>Agent access</SectionTitle>
       <p className="text-xs text-muted-foreground">
-        Choose connections and environment variables for this Context.
+        {workflow
+          ? "Choose repositories, tools and credentials for this workflow."
+          : "Choose connections and environment variables for this Context."}
       </p>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogTrigger asChild>
@@ -37,14 +47,14 @@ export function RuntimeAccessCard({ context }: { context: ContextDetail }) {
           <DialogHeader>
             <DialogTitle>Agent access</DialogTitle>
           </DialogHeader>
-          {open && <AccessEditor contextId={context.id} />}
+          {open && <AccessEditor contextId={context.id} workflow={workflow} />}
         </DialogContent>
       </Dialog>
     </div>
   )
 }
 
-function AccessEditor({ contextId }: { contextId: string }) {
+function AccessEditor({ contextId, workflow }: { contextId: string; workflow: boolean }) {
   // Permission edits must start from the server's current grants, not a persisted page cache.
   const details = useQuery({
     ...contextQuery(contextId),
@@ -83,6 +93,7 @@ function AccessEditor({ contextId }: { contextId: string }) {
       context={details.data}
       connections={connections.data}
       bindings={environment.data.bindings}
+      workflow={workflow}
     />
   )
 }
@@ -91,10 +102,12 @@ function AccessForm({
   context,
   connections,
   bindings,
+  workflow,
 }: {
   context: ContextDetail
   connections: Connection[]
   bindings: Record<string, string>
+  workflow: boolean
 }) {
   const qc = useQueryClient()
   const [name, setName] = useState("")
@@ -134,63 +147,70 @@ function AccessForm({
   const busy = saveEnvironment.isPending
   const canBind = !busy && !nameError && !atLimit
   const sources = connections.filter(
-    (c) => c.kind !== "secret" || !!c.base_url || context.connection_ids.includes(c.id),
+    (c) =>
+      (c.kind !== "secret" || !!c.base_url || context.connection_ids.includes(c.id)) &&
+      (!workflow || c.kind !== "github_app" || context.connection_ids.includes(c.id)),
   )
   const activeIds = new Set(connections.filter((c) => c.status === "active").map((c) => c.id))
   return (
     <div className="flex flex-col gap-5">
-      <section className="flex flex-col gap-2">
-        <SectionTitle>Connections</SectionTitle>
-        <p className="text-xs text-muted-foreground">
-          GitHub uses the repositories and actions allowed by the connected installation. This does
-          not grant shell access to clone or push.
-        </p>
-        {sources.map((source) => (
-          <label key={source.id} className="flex items-center gap-2 text-sm">
-            <Checkbox
-              data-testid={`context-source-${source.id}`}
-              checked={context.connection_ids.includes(source.id)}
-              disabled={
-                saveSources.isPending ||
-                (source.status !== "active" && !context.connection_ids.includes(source.id))
+      {workflow && <WorkflowRepositories contextId={context.id} connections={connections} />}
+      {(!workflow || sources.length > 0) && (
+        <section className="flex flex-col gap-2">
+          <SectionTitle>Connections</SectionTitle>
+          <p className="text-xs text-muted-foreground">
+            Connected tools are available during runs. Repository access above limits GitHub tools
+            for cloud runs.
+          </p>
+          {sources.map((source) => (
+            <label key={source.id} className="flex items-center gap-2 text-sm">
+              <Checkbox
+                data-testid={`context-source-${source.id}`}
+                checked={context.connection_ids.includes(source.id)}
+                disabled={
+                  saveSources.isPending ||
+                  (source.status !== "active" && !context.connection_ids.includes(source.id))
+                }
+                onCheckedChange={(checked) =>
+                  saveSources.mutate(
+                    checked
+                      ? [...context.connection_ids, source.id]
+                      : context.connection_ids.filter((id) => id !== source.id),
+                  )
+                }
+              />
+              <span>
+                {workflow && source.kind === "github_app" ? "GitHub API tools" : source.toolkit}
+                {source.scopes_label ? ` · ${source.scopes_label}` : ""}
+                {source.status !== "active" ? ` (${source.status})` : ""}
+              </span>
+            </label>
+          ))}
+          {context.connection_ids.some((id) => !activeIds.has(id)) && (
+            <Button
+              size="sm"
+              variant="outline"
+              data-testid="context-sources-remove-unavailable"
+              disabled={saveSources.isPending}
+              onClick={() =>
+                saveSources.mutate(context.connection_ids.filter((id) => activeIds.has(id)))
               }
-              onCheckedChange={(checked) =>
-                saveSources.mutate(
-                  checked
-                    ? [...context.connection_ids, source.id]
-                    : context.connection_ids.filter((id) => id !== source.id),
-                )
-              }
-            />
-            <span>
-              {source.toolkit}
-              {source.scopes_label ? ` · ${source.scopes_label}` : ""}
-              {source.status !== "active" ? ` (${source.status})` : ""}
-            </span>
-          </label>
-        ))}
-        {context.connection_ids.some((id) => !activeIds.has(id)) && (
-          <Button
-            size="sm"
-            variant="outline"
-            data-testid="context-sources-remove-unavailable"
-            disabled={saveSources.isPending}
-            onClick={() =>
-              saveSources.mutate(context.connection_ids.filter((id) => activeIds.has(id)))
-            }
-          >
-            Remove unavailable connections
-          </Button>
-        )}
-        <Link
-          to="/settings/$section"
-          params={{ section: "github" }}
-          data-testid="context-connect-github"
-          className="text-sm text-primary underline"
-        >
-          Connect GitHub
-        </Link>
-      </section>
+            >
+              Remove unavailable connections
+            </Button>
+          )}
+          {!workflow && (
+            <Link
+              to="/settings/$section"
+              params={{ section: "github" }}
+              data-testid="context-connect-github"
+              className="text-sm text-primary underline"
+            >
+              Connect GitHub
+            </Link>
+          )}
+        </section>
+      )}
       <section className="flex flex-col gap-3">
         <SectionTitle>Credentials</SectionTitle>
         <p className="text-xs text-muted-foreground">

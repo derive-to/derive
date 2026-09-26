@@ -82,12 +82,16 @@ export interface InstallationToken {
 }
 
 export type GitHubTokenProfile =
+  | "contents-read"
+  | "contents-write"
   | "standard-read"
   | "pr-comment"
   | "workflow-read"
   | "workflow-dispatch"
 
 const PROFILE_PERMISSIONS: Record<GitHubTokenProfile, Record<string, string>> = {
+  "contents-read": { metadata: "read", contents: "read" },
+  "contents-write": { metadata: "read", contents: "write" },
   "standard-read": { metadata: "read", pull_requests: "read" },
   "pr-comment": { metadata: "read", pull_requests: "write" },
   "workflow-read": { actions: "read", metadata: "read" },
@@ -152,29 +156,37 @@ export async function installationToken(
   privateKeyPem: string,
   installationId: string,
   profile: GitHubTokenProfile = "standard-read",
-  repository?: string,
+  repository?: string | number,
   apiBaseUrl = API,
 ): Promise<string> {
   if (!/^[1-9][0-9]{0,19}$/.test(installationId)) throw new Error("invalid GitHub installation id")
-  if ((profile === "workflow-read" || profile === "workflow-dispatch") && !repository)
+  if ((profile.startsWith("workflow-") || profile.startsWith("contents-")) && !repository)
     throw new Error("a workflow token must name one repository")
-  if (repository && !/^[A-Za-z0-9_.-]{1,100}$/.test(repository))
+  if (typeof repository === "number" && (!Number.isSafeInteger(repository) || repository < 1))
+    throw new Error("invalid GitHub repository id")
+  if (typeof repository === "string" && !/^[A-Za-z0-9_.-]{1,100}$/.test(repository))
     throw new Error("invalid GitHub repository name")
   const base = apiBaseUrl.replace(/\/$/, "")
-  const cacheKey = `${base}:${appId}:${installationId}:${profile}:${repository ?? "*"}`
+  const cacheKey = `${base}:${appId}:${installationId}:${profile}:${typeof repository}:${repository ?? "*"}`
   const cached = tokenCache.get(cacheKey)
   if (cached && Date.parse(cached.expiresAt) - 60_000 > Date.now()) return cached.token
 
   const jwt = appJwt(appId, privateKeyPem)
   const res = await fetch(`${base}/app/installations/${installationId}/access_tokens`, {
     method: "POST",
+    redirect: "error",
+    signal: AbortSignal.timeout(20_000),
     headers: {
       ...ghHeaders(`Bearer ${jwt}`),
       "content-type": "application/json",
     },
     body: JSON.stringify({
       permissions: PROFILE_PERMISSIONS[profile],
-      ...(repository ? { repositories: [repository] } : {}),
+      ...(typeof repository === "number"
+        ? { repository_ids: [repository] }
+        : repository
+          ? { repositories: [repository] }
+          : {}),
     }),
   })
   if (!res.ok) return raise(res, "minting an installation token")

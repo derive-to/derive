@@ -14,7 +14,7 @@ interface SetupDeps {
   now?: () => Date
 }
 
-export const RUNNER_VERSION = "0.7.1"
+export const RUNNER_VERSION = "0.7.2"
 const RUNNER_DIRECTORY = `/home/ortam/derive-runtime/${RUNNER_VERSION}`
 export const SETUP_RUNNER_PATH = `${RUNNER_DIRECTORY}/node_modules/@derive-to/cli/bin/derive.js`
 

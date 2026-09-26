@@ -5673,6 +5673,40 @@ export function runStoreContract(
       expect((await store.getRuntimeSchedule(runtime.id, ORG))?.created_by).toBe("owner")
     })
 
+    it("serializes repository grants and rejects cross-workspace and non-owner writes", async () => {
+      const f = await fixture()
+      await store.setMembership({ id: uuid(), org_id: ORG, user_id: "owner", role: "owner" })
+      const input = {
+        contextId: f.context.id,
+        orgId: ORG,
+        ownerId: "owner",
+        revision: 0,
+        repositories: [
+          {
+            connection_id: "github",
+            installation_id: "123",
+            repository_id: 42,
+            repository: "acme/private",
+            access: "read" as const,
+          },
+        ],
+      }
+      expect(await store.saveWorkflowRepositories({ ...input, orgId: "foreign" })).toBeNull()
+      const writes = await Promise.all([
+        store.saveWorkflowRepositories(input),
+        store.saveWorkflowRepositories(input),
+      ])
+      expect(writes.filter(Boolean)).toHaveLength(1)
+      expect(writes.find(Boolean)).toMatchObject({ repository_revision: 1 })
+      await store.setMembership({ id: uuid(), org_id: ORG, user_id: "owner", role: "editor" })
+      expect(await store.saveWorkflowRepositories({ ...input, revision: 1 })).toBeNull()
+      await store.setMembership({ id: uuid(), org_id: ORG, user_id: "owner", role: "owner" })
+      expect(
+        await store.saveWorkflowRepositories({ ...input, revision: 1, repositories: [] }),
+      ).toMatchObject({ repository_bindings: "[]", repository_revision: 2 })
+      expect(await store.saveWorkflowRepositories(input)).toBeNull()
+    })
+
     it("serializes workflow input selection, including removal, without crossing workspaces", async () => {
       const f = await fixture()
       await store.setMembership({ id: uuid(), org_id: ORG, user_id: "owner", role: "owner" })

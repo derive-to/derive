@@ -311,7 +311,7 @@ export function IntegrationsSection() {
               }
               meta={
                 github.app_permissions_state === "update_required"
-                  ? `${github.app_owner_login ? `@${github.app_owner_login} owns this App. ` : ""}An App owner or manager must grant Actions read and write and enable workflow run events.`
+                  ? `${github.app_owner_login ? `@${github.app_owner_login} owns this App. ` : ""}An App owner or manager must grant Contents, Pull requests and Actions read and write, and enable workflow run events. Workflow repository tokens are limited to the selected repositories and access level.`
                   : github.app_permissions_state === "ready"
                     ? `${github.app_owner_login ? `Owned by @${github.app_owner_login}. ` : ""}The App permissions and events are current.`
                     : "Derive could not confirm the App settings. Existing connections remain available."
