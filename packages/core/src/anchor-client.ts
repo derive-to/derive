@@ -5549,12 +5549,28 @@ interface ElReg {
     },
     new_text: qe.new_text,
   })
-  // The whole-block span: both sides joined with the same "\n" separators the
-  // snapshot uses, so offsets line up with editBase.text; the replacement's seam
-  // separators collapse to single spaces (typed content never contains newlines —
-  // Enter is blocked and paste is flattened).
-  const blockEdit = (t: EditTarget, curVals: string[]): WireEdit | null => {
-    const qe = quoteEditFor(t.origValues.join("\n"), curVals.join("\n"), t.origStarts[0] ?? 0)
+  // The whole-block span. The original is the snapshot's own slice over the block, so
+  // "\n" sits exactly where the server projection has whitespace (a block seam) and
+  // offsets line up with editBase.text; the current nodes are joined by the same rule.
+  // An inline seam (a <b> inside a word, a link before its period) joins with nothing:
+  // a separator there made the quote unmatchable. The replacement's seam separators
+  // collapse to single spaces (typed content never contains newlines).
+  const blockEdit = (t: EditTarget, curNodes: Text[]): WireEdit | null => {
+    const base = editBase
+    const start = t.origStarts[0]
+    const last = t.origValues.length - 1
+    if (!base || start === undefined || last < 0) return null
+    const orig = base.text.slice(
+      start,
+      (t.origStarts[last] ?? start) + (t.origValues[last] ?? "").length,
+    )
+    let cur = ""
+    curNodes.forEach((n, i) => {
+      const prev = curNodes[i - 1]
+      if (prev && blockSeam(prev, n)) cur += "\n"
+      cur += n.nodeValue ?? ""
+    })
+    const qe = quoteEditFor(orig, cur, start)
     return qe ? wireEdit({ ...qe, new_text: qe.new_text.replace(/\s*\n\s*/g, " ") }) : null
   }
   /* `uncaptured` counts blocks the user changed that produced NO edit — the host
@@ -5595,7 +5611,7 @@ interface ElReg {
       }
       // Structure changed, or a per-node edit was unrepresentable: one whole-block
       // span. The server refuses it if the span would cross markup in the source.
-      const be = blockEdit(t, curVals)
+      const be = blockEdit(t, curNodes)
       if (be) edits.push(be)
       else uncaptured++
     }

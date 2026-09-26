@@ -1260,6 +1260,24 @@ test("Markdown saves a selection across consecutive bold subtitle lines", async 
   }).toPass({ timeout: 10_000 })
 })
 
+test("Markdown saves a retyped list item whose bold runs into its full stop", async ({ owner }) => {
+  // The whole-item span has to read the item the way the stored text does: nothing
+  // between "bed" and "." where the bold closes.
+  const markdown = "# Crews\n\n- Sweep the **track bed**.\n- Log the weak joints.\n"
+  const shortId = await publishArtifact(owner, "crews.md", markdown, "text/markdown")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+
+  await doc(owner).locator("li").first().click({ clickCount: 3 })
+  await owner.keyboard.type("Sweep the yard.")
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+  await saveEdits(owner)
+  await expect(async () => {
+    const stored = await contentOf(owner, shortId)
+    expect(stored).toContain("- Sweep the yard.\n- Log the weak joints.\n")
+  }).toPass({ timeout: 10_000 })
+})
+
 test("replacing selected linked and annotated text saves the user's replacement", async ({
   owner,
 }) => {
