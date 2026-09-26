@@ -23,11 +23,13 @@ import {
   isLatexBundle,
   isLatexLike,
   isMarkdownBundle,
+  isMarkdownLike,
   isSourceEditable,
   LATEX_BUNDLE_CONTENT_TYPE,
   LINKED_BUNDLE_CONTENT_TYPE,
   type LinkedBundleManifest,
   latexTextParts,
+  markdownSourceMap,
   maxRole,
   missingBlobAdvisory,
   newId,
@@ -737,7 +739,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         )
       }
       let materialized: MaterializedEdits
-      let opChanges: { before: string; after: string }[] | undefined
+      let opChanges: { before: string; after: string; contentType: string }[] | undefined
       try {
         const baseVersion = parseBaseVersion(str(body["base_version"]))
         const deps = {
@@ -784,7 +786,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       }
       if (opChanges?.length)
         editSummary = summarizeTextEdits({
-          edits: opChanges.map((change) => ({ ...change, contentType: "text/html" })),
+          edits: opChanges,
           fromVersion: existing.current_version,
           toVersion: existing.current_version + 1,
           note: str(body["message"]),
@@ -2756,12 +2758,15 @@ export const artifactRoutes = (ctx: AppContext) => {
     const version = await meta.getVersion(artifact.id, v)
     if (!version) return fail(c, 404, `no version ${v}`)
     if (!isSourceEditable(version.content_type))
-      return fail(c, 404, "only HTML pages and decks have a source map")
+      return fail(c, 404, "only HTML pages, decks and Markdown documents have a source map")
     const src = await sourceText(version)
     if (src === null) return fail(c, 500, "blob missing")
     // An inline save may replace this version's bytes in place, so never reuse a copy.
     c.header("Cache-Control", "private, no-cache")
-    return c.json({ version: v, ...(await sourceMap(src)) })
+    const map = isMarkdownLike(version.content_type)
+      ? await markdownSourceMap(src)
+      : await sourceMap(src)
+    return c.json({ version: v, ...map })
   })
 
   // Source read-back for machines: returns an artifact's text content for any

@@ -623,6 +623,8 @@ export function useArtifactFrame(p: {
     anchorConf,
     anchorTops,
     subscribeGeom,
+    /** Where the document is scrolled to now (the last position the frame reported). */
+    frameScrollY: () => geomRef.current.scrollY,
     runtimeError,
     runtimeReady,
   }

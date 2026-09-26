@@ -69,6 +69,18 @@ body{font-family:sans-serif;margin:24px}.agenda{display:flex;gap:16px}
 <div class="agenda-item" id="c3"><span class="index">03</span><h3 id="h3">Review<br>the results</h3><p>Third.</p></div>
 </div></div></section></body></html>`
 
+// A long page, so a save has a scroll position to keep.
+const PARAGRAPHS_DOC = `<style>body{font:16px/1.5 sans-serif;margin:24px;max-width:640px}.intro{height:1500px}</style>
+<main>
+<p class="intro">Scroll down to the crew notes.</p>
+<h2 id="head">Crew notes</h2>
+<p class="note">Night crews lift the old rail between the depot and the second stop, section by section. Day crews lay the new rail.</p>
+<ul class="tasks"><li>Check the gauge</li></ul>
+<p class="intro">The end of the notes.</p>
+</main>`
+const ROWS_DOC = `<style>body{font:16px/1.5 sans-serif;margin:96px 24px}table{border-collapse:collapse;width:360px}td{padding:6px 10px;border:1px solid #ccc}</style>
+<table><tbody><tr><td>Survey</td><td>4</td></tr><tr><td>Rails</td><td>18</td></tr><tr><td>Overhead</td><td>9</td></tr></tbody></table>`
+
 const STRUCTURAL_MULTISELECT_DOC = `<style>
 body { font-family: sans-serif }
 @media (max-width: 420px) { body { --dogfood-breakpoint: mobile } }
@@ -204,6 +216,25 @@ async function typeAtLineEnd(page: Page, selector: string, text: string) {
   await el.click({ position: { x: box.width - 2, y: box.height - 4 } })
   await page.keyboard.press("End")
   await page.keyboard.type(text)
+}
+/** Arm a block with a click, then put the caret just before `before` in its words. */
+async function caretBefore(page: Page, selector: string, before: string) {
+  const el = doc(page).locator(selector)
+  await el.click()
+  await el.evaluate((node, text) => {
+    const walk = document.createTreeWalker(node, NodeFilter.SHOW_TEXT)
+    for (let t = walk.nextNode(); t; t = walk.nextNode()) {
+      const i = (t.nodeValue ?? "").indexOf(text)
+      if (i < 0) continue
+      const range = document.createRange()
+      range.setStart(t, i)
+      const selection = window.getSelection()
+      selection?.removeAllRanges()
+      selection?.addRange(range)
+      return
+    }
+    throw new Error(`"${text}" is not in the block`)
+  }, before)
 }
 /** The actions pill beside the selected block. */
 const pill = (page: Page) => doc(page).locator(".derive-block-pill")
@@ -953,6 +984,221 @@ test("the changes list says where and what changed, shows it, and reverts just o
   }).toPass({ timeout: 10_000 })
 })
 
+test("Enter starts a new paragraph of the same kind, Shift+Enter breaks the line, a save keeps your place", async ({
+  owner,
+}) => {
+  const shortId = await publishArtifact(owner, "notes.html", PARAGRAPHS_DOC, "text/html")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+  const frame = doc(owner)
+  const notes = frame.locator("p.note")
+
+  // Enter splits the paragraph at the caret; the second half is the same element.
+  await caretBefore(owner, "p.note", " Day crews")
+  await owner.keyboard.press("Enter")
+  await expect(notes).toHaveCount(2)
+  await expect(notes.nth(1)).toHaveText(" Day crews lay the new rail.")
+  // Backspace at its start makes them one paragraph again; Enter splits them again.
+  await owner.keyboard.press("Backspace")
+  await expect(notes).toHaveCount(1)
+  await owner.keyboard.press("Enter")
+  await expect(notes).toHaveCount(2)
+  // Enter at the end of the last one leaves an empty paragraph, a line of its own.
+  await typeAtLineEnd(owner, "p.note >> nth=1", "")
+  await owner.keyboard.press("Enter")
+  await expect(notes).toHaveCount(3)
+
+  // A change far into a long paragraph is listed where it happened.
+  await typeAtLineEnd(owner, "p.note >> nth=0", " Slowly.")
+  await owner.getByTestId("inline-edit-changes").click()
+  await expect(owner.getByTestId("inline-edit-changes-list")).toContainText("section. Slowly.")
+  await owner.getByTestId("inline-edit-changes").click()
+
+  // In a list: Shift+Enter breaks the line inside the item, Enter starts the next item.
+  await typeAtLineEnd(owner, "ul.tasks li", "")
+  await owner.keyboard.press("Shift+Enter")
+  await owner.keyboard.type("and level")
+  await owner.keyboard.press("Enter")
+  await owner.keyboard.type("Sweep the bed")
+  await expect(frame.locator("ul.tasks li")).toHaveCount(2)
+
+  // A heading doesn't split: Enter at its end goes on to the words after it.
+  await typeAtLineEnd(owner, "#head", "")
+  await owner.keyboard.press("Enter")
+  await owner.keyboard.type("Tonight: ")
+  await expect(frame.locator("h2")).toHaveCount(1)
+  await expect(notes.nth(0)).toHaveText(/^Tonight: Night crews/)
+
+  const scrollY = () => frame.locator("body").evaluate(() => window.scrollY)
+  // Where the reader is, once the page has finished bringing the words into view.
+  let was = -1
+  await expect
+    .poll(
+      async () => {
+        const now = await scrollY()
+        const settled = now === was
+        was = now
+        return settled
+      },
+      { intervals: [300] },
+    )
+    .toBe(true)
+  expect(was).toBeGreaterThan(500)
+  await saveEdits(owner, true)
+  // The saved page opens where the reader was, and this save isn't someone else's news.
+  await expect.poll(async () => Math.abs((await scrollY()) - was)).toBeLessThan(3)
+  await expect(owner.getByText(/was just published/)).toHaveCount(0)
+  const saved = await contentOf(owner, shortId)
+  expect(saved).toContain(
+    '<p class="note">Tonight: Night crews lift the old rail between the depot and the second stop, section by section. Slowly.</p>\n<p class="note"> Day crews lay the new rail.</p>\n<p class="note"><br></p>\n<ul class="tasks"><li>Check the gauge<br>and level</li><li>Sweep the bed</li></ul>',
+  )
+  expect(saved).not.toContain("data-derive")
+})
+
+test("the block pill stays off the neighbouring rows and never keeps the keyboard", async ({
+  owner,
+}) => {
+  const shortId = await publishArtifact(owner, "rows.html", ROWS_DOC, "text/html")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+  const frame = doc(owner)
+  const rows = frame.locator("tr")
+
+  // Escape steps out of the words to the row around them.
+  await frame.getByText("Rails").click()
+  await owner.keyboard.press("Escape")
+  const name = pill(owner).getByRole("button", { name: "Drag to move" })
+  await expect(name).toHaveText("⠿Row 2")
+  const box = await pill(owner).boundingBox()
+  if (!box) throw new Error("not laid out")
+  for (const i of [0, 2]) {
+    const row = await rows.nth(i).boundingBox()
+    if (!row) throw new Error("not laid out")
+    const apart =
+      box.x >= row.x + row.width ||
+      row.x >= box.x + box.width ||
+      box.y >= row.y + row.height ||
+      row.y >= box.y + box.height
+    expect(apart, `the pill covers row ${i + 1}`).toBe(true)
+  }
+
+  // A pill button acts once: the keyboard stays with the document, so Space typed
+  // next presses nothing.
+  await pill(owner).getByRole("button", { name: "Duplicate" }).click()
+  await expect(rows).toHaveCount(4)
+  await owner.keyboard.press(" ")
+  await expect(rows).toHaveCount(4)
+  expect(await frame.locator("body").evaluate(() => document.activeElement?.localName)).not.toBe(
+    "button",
+  )
+
+  // With a block selected, a click on words still puts the caret there.
+  await typeAtLineEnd(owner, "tr >> nth=0 >> td >> nth=0", "!")
+  await expect(frame.locator("td").first()).toHaveText("Survey!")
+  await expect(pill(owner)).toBeHidden()
+
+  await saveEdits(owner)
+  await expect(async () => {
+    const saved = await contentOf(owner, shortId)
+    expect(saved.match(/<td>Rails<\/td>/g)).toHaveLength(2)
+    expect(saved).toContain("<td>Survey!</td>")
+  }).toPass({ timeout: 10_000 })
+})
+
+// A copy shares its original's source id; what is typed into one must never be
+// saved as the other's words.
+const COPIES_DOC = `<style>body{font:16px/1.5 sans-serif;margin:96px 24px}td{padding:6px 10px;border:1px solid #ccc}.card{padding:12px;margin:8px 0;border:1px solid #ccc}</style>
+<table><tbody><tr><td>Survey</td><td>4</td></tr><tr><td>Rails</td><td>18</td></tr></tbody></table>
+<ul class="tasks"><li>Check the gauge</li><li>Sweep the bed</li></ul>
+<ol class="steps"><li>Lift the rail</li><li>Lay the rail</li></ol>
+<div class="cards"><div class="card"><h3>Plan</h3><p>First.</p></div><div class="card"><h3>Ship</h3><p>Second.</p></div></div>`
+
+test("a duplicate and its original each save their own words", async ({ owner }) => {
+  const shortId = await publishArtifact(owner, "copies.html", COPIES_DOC, "text/html")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+  const frame = doc(owner)
+  const duplicate = async () => {
+    await pill(owner).getByRole("button", { name: "Duplicate" }).click()
+  }
+
+  // A row: only the copy is edited.
+  await frame.getByText("Rails").click()
+  await owner.keyboard.press("Escape")
+  await duplicate()
+  await expect(frame.locator("tr")).toHaveCount(3)
+  await typeAtLineEnd(owner, "tr >> nth=2 >> td >> nth=0", " copy")
+  await expect(frame.locator("tr").nth(2)).toContainText("Rails copy")
+
+  // A list item: only the original is edited, after the copy is made.
+  await frame.getByText("Check the gauge").click()
+  await owner.keyboard.press("Escape")
+  await duplicate()
+  await expect(frame.locator("ul.tasks li")).toHaveCount(3)
+  await typeAtLineEnd(owner, "ul.tasks li >> nth=0", " first")
+  await expect(frame.locator("ul.tasks li").nth(1)).toHaveText("Check the gauge")
+
+  // A list item edited, then copied: the copy carries the words it shows.
+  await typeAtLineEnd(owner, "ol.steps li >> nth=0", " again")
+  await owner.keyboard.press("Escape")
+  await duplicate()
+  await expect(frame.locator("ol.steps li")).toHaveText([
+    "Lift the rail again",
+    "Lift the rail again",
+    "Lay the rail",
+  ])
+
+  // A card: both it and its copy are edited, differently.
+  await pickBlock(owner, ".card >> nth=1")
+  await duplicate()
+  await expect(frame.locator(".card")).toHaveCount(3)
+  await typeAtLineEnd(owner, ".card >> nth=1 >> p", " A")
+  await typeAtLineEnd(owner, ".card >> nth=2 >> p", " B")
+  await expect(frame.locator(".card p")).toHaveText(["First.", "Second. A", "Second. B"])
+
+  await saveEdits(owner)
+  await expect(async () => {
+    const saved = await contentOf(owner, shortId)
+    expect(saved).toContain(
+      "<tr><td>Rails</td><td>18</td></tr><tr><td>Rails copy</td><td>18</td></tr>",
+    )
+    expect(saved).toContain(
+      '<ul class="tasks"><li>Check the gauge first</li><li>Check the gauge</li><li>Sweep the bed</li></ul>',
+    )
+    expect(saved).toContain(
+      '<ol class="steps"><li>Lift the rail again</li><li>Lift the rail again</li><li>Lay the rail</li></ol>',
+    )
+    expect(saved).toContain(
+      '<div class="card"><h3>Ship</h3><p>Second. A</p></div><div class="card"><h3>Ship</h3><p>Second. B</p></div>',
+    )
+    expect(saved).not.toContain("data-derive")
+  }).toPass({ timeout: 10_000 })
+})
+
+test("the second half of an Enter split saves what is typed into it later", async ({ owner }) => {
+  const shortId = await publishArtifact(owner, "split.html", PARAGRAPHS_DOC, "text/html")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+  const notes = doc(owner).locator("p.note")
+
+  await caretBefore(owner, "p.note", " Day crews")
+  await owner.keyboard.press("Enter")
+  await expect(notes).toHaveCount(2)
+  // Somewhere else first, then back into the second half.
+  await typeAtLineEnd(owner, "#head", " tonight")
+  await typeAtLineEnd(owner, "p.note >> nth=1", " Quickly.")
+  await expect(notes.nth(1)).toHaveText(" Day crews lay the new rail. Quickly.")
+
+  await saveEdits(owner)
+  await expect(async () => {
+    const saved = await contentOf(owner, shortId)
+    expect(saved).toContain(
+      '<p class="note">Night crews lift the old rail between the depot and the second stop, section by section.</p>\n<p class="note"> Day crews lay the new rail. Quickly.</p>',
+    )
+    expect(saved).toContain('<h2 id="head">Crew notes tonight</h2>')
+  }).toPass({ timeout: 10_000 })
+})
+
 test("resize from the edge or corner with a readout; double-click resets; ⋯ sets it exactly", async ({
   owner,
 }) => {
@@ -1258,6 +1504,123 @@ test("Markdown saves a selection across consecutive bold subtitle lines", async 
     expect(stored).toContain("**San Francisco · Full-time · In person**")
     expect(stored).not.toContain("$150,000")
   }).toPass({ timeout: 10_000 })
+})
+
+test("Markdown saves a retyped list item whose bold runs into its full stop", async ({ owner }) => {
+  // The whole-item span has to read the item the way the stored text does: nothing
+  // between "bed" and "." where the bold closes.
+  const markdown = "# Crews\n\n- Sweep the **track bed**.\n- Log the weak joints.\n"
+  const shortId = await publishArtifact(owner, "crews.md", markdown, "text/markdown")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+
+  await doc(owner).locator("li").first().click({ clickCount: 3 })
+  await owner.keyboard.type("Sweep the yard.")
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+  await saveEdits(owner)
+  await expect(async () => {
+    const stored = await contentOf(owner, shortId)
+    expect(stored).toContain("- Sweep the yard.\n- Log the weak joints.\n")
+  }).toPass({ timeout: 10_000 })
+})
+
+test("Markdown saves exactly: typed Markdown is source, code takes a caret, Shift+Enter breaks the line", async ({
+  owner,
+}) => {
+  const markdown = "# Notes\n\nThe *first* step &mdash; see `v1` today.\n\n- One\n- Two\n"
+  const shortId = await publishArtifact(owner, "notes.md", markdown, "text/markdown")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+
+  // Markdown is source: typed `**now**` is saved as written, and reads as bold.
+  await typeAtLineEnd(owner, "p", " **now**")
+  // Inside a code span the words take a caret like any other.
+  await doc(owner)
+    .locator("p code")
+    .evaluate((el) => {
+      const text = el.firstChild as Text
+      const range = document.createRange()
+      range.setStart(text, text.length)
+      range.collapse(true)
+      window.getSelection()?.removeAllRanges()
+      window.getSelection()?.addRange(range)
+    })
+  await owner.keyboard.type("2")
+  // Shift+Enter in a list item: a hard break, the next line under the item's indent.
+  await typeAtLineEnd(owner, "li >> nth=1", "")
+  await owner.keyboard.press("ArrowLeft")
+  await owner.keyboard.press("Shift+Enter")
+  await saveEdits(owner, true)
+  // Every byte the edits didn't touch is as it was: the entity, the markers, the blank lines.
+  expect(await contentOf(owner, shortId)).toBe(
+    "# Notes\n\nThe *first* step &mdash; see `v12` today. **now**\n\n- One\n- Tw\\\n  o\n",
+  )
+  await expect(doc(owner).locator("p strong")).toHaveText("now")
+
+  // The session picked back up on the saved page: the next edit saves the same way.
+  await typeAtLineEnd(owner, "h1", " B")
+  await saveEdits(owner, true)
+  expect(await contentOf(owner, shortId)).toBe(
+    "# Notes B\n\nThe *first* step &mdash; see `v12` today. **now**\n\n- One\n- Tw\\\n  o\n",
+  )
+})
+
+test("Markdown Enter starts a new paragraph or item, Shift+Enter breaks the line, and both save exactly", async ({
+  owner,
+}) => {
+  const markdown =
+    "# Crew notes\n\nNight crews lift the old rail. Day crews lay the new rail.\n\n* Check the gauge\n* Sweep the bed\n\n| Task | Crew |\n| --- | --- |\n| Lift | Night |\n"
+  const shortId = await publishArtifact(owner, "crew.md", markdown, "text/markdown")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+  const frame = doc(owner)
+  const paras = frame.locator("main > p")
+  const items = frame.locator("li")
+
+  // Enter splits the paragraph at the caret; Backspace at the new one's start joins it back.
+  await caretBefore(owner, "main > p", "Day crews")
+  await owner.keyboard.press("Enter")
+  await expect(paras).toHaveCount(2)
+  await expect(paras.nth(1)).toHaveText("Day crews lay the new rail.")
+  await owner.keyboard.press("Backspace")
+  await expect(paras).toHaveCount(1)
+  await owner.keyboard.press("Enter")
+  await expect(paras).toHaveCount(2)
+  // Shift+Enter is a hard break inside the paragraph.
+  await typeAtLineEnd(owner, "main > p >> nth=1", "")
+  await owner.keyboard.press("Shift+Enter")
+  await owner.keyboard.type("By noon.")
+  // Enter in a list item starts the next item.
+  await typeAtLineEnd(owner, "li >> nth=0", "")
+  await owner.keyboard.press("Enter")
+  await owner.keyboard.type("Level the rail")
+  await expect(items).toHaveCount(3)
+  // A table cell is one line: Enter breaks it.
+  await typeAtLineEnd(owner, "td >> nth=0", "")
+  await owner.keyboard.press("Enter")
+  await owner.keyboard.type("and tamp")
+  await expect(frame.locator("tr")).toHaveCount(2)
+
+  await saveEdits(owner, true)
+  // A blank line between the halves, the item's own marker, a hard break, a <br> in the
+  // cell; every other byte as it was.
+  expect(await contentOf(owner, shortId)).toBe(
+    "# Crew notes\n\nNight crews lift the old rail. \n\nDay crews lay the new rail.\\\nBy noon.\n\n* Check the gauge\n* Level the rail\n* Sweep the bed\n\n| Task | Crew |\n| --- | --- |\n| Lift<br>and tamp | Night |\n",
+  )
+  await expect(paras).toHaveCount(2)
+  await expect(items).toHaveCount(3)
+
+  // The session picked back up on the saved page, and splits again the same way.
+  await typeAtLineEnd(owner, "li >> nth=2", "")
+  await owner.keyboard.press("Enter")
+  await owner.keyboard.type("Oil the points")
+  await typeAtLineEnd(owner, "main > p >> nth=0", "")
+  await owner.keyboard.press("Enter")
+  await owner.keyboard.type("Then:")
+  await saveEdits(owner, true)
+  expect(await contentOf(owner, shortId)).toBe(
+    "# Crew notes\n\nNight crews lift the old rail.\n\nThen: \n\nDay crews lay the new rail.\\\nBy noon.\n\n* Check the gauge\n* Level the rail\n* Sweep the bed\n* Oil the points\n\n| Task | Crew |\n| --- | --- |\n| Lift<br>and tamp | Night |\n",
+  )
 })
 
 test("replacing selected linked and annotated text saves the user's replacement", async ({

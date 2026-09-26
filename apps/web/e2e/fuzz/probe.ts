@@ -10,6 +10,12 @@
  *    at the start of the session — the minimal-diff oracle turns those into the only
  *    source byte ranges allowed to change;
  *  - where on screen there is text, empty space, or a structural node to aim at.
+ *
+ * A page with no `[data-derive-slide]` (an HTML article, a rendered Markdown doc) is
+ * one "slide": its <main> (else <body>). Its sections — each sectioning child of the
+ * root, or else the run of blocks from one h1/h2 to the next — play the part a deck's
+ * slides play for aiming: `show(i)` scrolls section i to the top and scopes `targets`
+ * to it.
  */
 
 export type Rect = { x: number; y: number; w: number; h: number }
@@ -31,8 +37,9 @@ export interface DomSlideCapture {
 export interface ProbeTargets {
   view: { w: number; h: number }
   slideRect: Rect | null
-  /** Text glyph boxes on the visible slide, in frame viewport coordinates. */
-  text: { rect: Rect; label: string }[]
+  /** Text glyph boxes on the visible slide, in frame viewport coordinates, with the
+   *  nearest text block that holds them (li, td, p, h2 …). */
+  text: { rect: Rect; label: string; block: string }[]
   /** Points on the slide at least 10px from any glyph box. */
   empty: { x: number; y: number }[]
   /** Structural nodes on the visible slide, each with a point inside it away from text. */
@@ -71,12 +78,28 @@ export function installProbe(): void {
   const isHold = (el: Element): boolean =>
     el.localName === "br" && el.hasAttribute("data-derive-hold")
 
-  const topSlides = (): HTMLElement[] =>
+  const deckSlides = (): HTMLElement[] =>
     Array.from(document.querySelectorAll<HTMLElement>("[data-derive-slide]")).filter(
       (el) => !el.parentElement?.closest("[data-derive-slide]"),
     )
+  const docRoot = (): HTMLElement => document.querySelector("main") ?? document.body
+  const isDoc = (): boolean => deckSlides().length === 0
+  const topSlides = (): HTMLElement[] => (isDoc() ? [docRoot()] : deckSlides())
   const kids = (el: Element): Element[] =>
     Array.from(el.children).filter((c) => !isUi(c) && !isHold(c))
+  const SECTIONING = new Set(["section", "header", "footer", "article", "aside", "nav"])
+  /** A doc's sections: each sectioning child of the root, or runs split at h1/h2. */
+  const sections = (): Element[][] => {
+    const all = kids(docRoot())
+    if (all.length && all.every((k) => SECTIONING.has(k.localName))) return all.map((k) => [k])
+    const out: Element[][] = []
+    for (const k of all) {
+      if (!out.length || /^h[12]$/.test(k.localName)) out.push([])
+      ;(out[out.length - 1] as Element[]).push(k)
+    }
+    return out
+  }
+  let scope: Element[] | null = null
 
   const classKey = (el: Element): string =>
     Array.from(el.classList)
@@ -216,13 +239,16 @@ export function installProbe(): void {
 
   const rectOf = (r: DOMRect): Rect => ({ x: r.left, y: r.top, w: r.width, h: r.height })
   const visibleSlide = (): HTMLElement | null =>
-    topSlides().find((s) => {
-      const r = s.getBoundingClientRect()
-      return r.width > 0 && r.height > 0
-    }) ?? null
+    isDoc()
+      ? docRoot()
+      : (topSlides().find((s) => {
+          const r = s.getBoundingClientRect()
+          return r.width > 0 && r.height > 0
+        }) ?? null)
 
-  const glyphRects = (root: Element): { rect: Rect; label: string }[] => {
-    const out: { rect: Rect; label: string }[] = []
+  const TEXT_BLOCK = "li,td,th,h1,h2,h3,h4,h5,h6,p,blockquote,figcaption,pre,dt,dd,caption"
+  const glyphRects = (root: Element): { rect: Rect; label: string; block: string }[] => {
+    const out: { rect: Rect; label: string; block: string }[] = []
     const vw = window.innerWidth
     const vh = window.innerHeight
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
@@ -239,6 +265,7 @@ export function installProbe(): void {
         out.push({
           rect: rectOf(r),
           label: `${parent.localName}${parent.className ? `.${String(parent.className).split(" ")[0]}` : ""}:${t.data.trim().slice(0, 24)}`,
+          block: parent.closest(TEXT_BLOCK)?.localName ?? "",
         })
       }
     }
@@ -257,8 +284,23 @@ export function installProbe(): void {
     const view = { w: window.innerWidth, h: window.innerHeight }
     const slide = visibleSlide()
     if (!slide) return { view, slideRect: null, text: [], empty: [], nodes: [], repeats: [] }
-    const sr = slide.getBoundingClientRect()
-    const text = glyphRects(slide)
+    // A doc aims inside its current section only: the section's box stands in for the
+    // slide's, and only its words are targets.
+    const scoped = isDoc() && scope ? scope.filter((el) => el.isConnected) : null
+    const unionRect = (els: Element[]) => {
+      const rs = els.map((el) => el.getBoundingClientRect())
+      const left = Math.min(...rs.map((r) => r.left))
+      const top = Math.min(...rs.map((r) => r.top))
+      return new DOMRect(
+        left,
+        top,
+        Math.max(...rs.map((r) => r.right)) - left,
+        Math.max(...rs.map((r) => r.bottom)) - top,
+      )
+    }
+    const sr = scoped?.length ? unionRect(scoped) : slide.getBoundingClientRect()
+    const text = scoped ? scoped.flatMap((el) => glyphRects(el)) : glyphRects(slide)
+    const inScope = (el: Element) => !scoped || scoped.some((s) => s.contains(el))
     const boxes = text.map((t) => t.rect)
     const empty: { x: number; y: number }[] = []
     const x0 = Math.max(4, sr.left)
@@ -292,6 +334,7 @@ export function installProbe(): void {
     const sig = (el: Element) => `${el.localName}.${classKey(el)}`
     const repeats = Array.from(slide.querySelectorAll<HTMLElement>("[data-derive-src]"))
       .filter((el) => {
+        if (!inScope(el)) return false
         const parent = el.parentElement
         if (!parent?.hasAttribute("data-derive-src") || el.hasAttribute("data-derive-node"))
           return false
@@ -363,7 +406,18 @@ export function installProbe(): void {
         if (!isUi(el) && !el.closest(".derive-edit-ui"))
           marked.set(el, { text: directText(el), parent: el.parentElement })
   }
-  const changedBlocks = (): { rect: Rect; label: string; atPoint: boolean }[] => {
+  /** `b` is the next words after `a`: nothing but whitespace between them. */
+  const followsDirectly = (a: Element, b: Element): boolean => {
+    if (a.contains(b) || !(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING))
+      return false
+    const between = document.createRange()
+    between.setStartAfter(a)
+    between.setEndBefore(b)
+    return !between.toString().trim()
+  }
+  /** `next`: Enter at a heading's end moves the caret on to the words after it, so the
+   *  block right after the clicked one counts as where the typing went. */
+  const changedBlocks = (next = false): { rect: Rect; label: string; atPoint: boolean }[] => {
     const hits = new Set<Element>()
     for (const [el, was] of marked) {
       if (!el.isConnected) {
@@ -382,7 +436,8 @@ export function installProbe(): void {
       while (at && !at.isConnected) at = pointParents.get(at) ?? null
       const pointBlock = at ? at.closest("[data-derive-editable]") : null
       return {
-        atPoint: !!pointBlock && pointBlock === block,
+        atPoint:
+          !!pointBlock && (pointBlock === block || (next && followsDirectly(pointBlock, block))),
         rect: extentOf(block),
         label: `${block.localName}.${classKey(block)}:${(block.textContent ?? "").trim().slice(0, 40)}`,
       }
@@ -399,10 +454,26 @@ export function installProbe(): void {
   }
 
   const show = (index: number) => {
+    if (isDoc()) {
+      // Scroll the section's top to the top of the frame, and aim inside it from now on.
+      scope = sections()[index] ?? null
+      const first = scope?.[0]
+      if (first) {
+        const top = first.getBoundingClientRect().top + window.scrollY - 8
+        window.scrollTo({ top: Math.max(0, top), behavior: "instant" as ScrollBehavior })
+      }
+      return
+    }
     topSlides().forEach((slide, i) => {
       slide.classList.toggle("on", i === index)
     })
   }
+  const sectionCount = () => (isDoc() ? sections().length : topSlides().length)
+  /** Changes whenever the frame reloads: the stamped source sha where there is one,
+   *  else an id this probe drew when it was installed in this document. */
+  const fid = Math.random().toString(36).slice(2)
+  const reloadSig = () => document.documentElement.getAttribute("data-derive-src-sha") ?? fid
+  const scrollY = () => window.scrollY
 
   const texts = (): string[] => topSlides().map((s) => textOf(s))
   const outlines = (): string[] => {
@@ -497,5 +568,8 @@ export function installProbe(): void {
     handle,
     layoutSig,
     visibleIndex,
+    sectionCount,
+    reloadSig,
+    scrollY,
   }
 }

@@ -1,4 +1,11 @@
-import { deckOf, nodeAtPath, type SourceChunk, type SourceSlide } from "./html-tree"
+import {
+  deckOf,
+  type HNode,
+  nodeAtPath,
+  parseHtml,
+  type SourceChunk,
+  type SourceSlide,
+} from "./html-tree"
 import type { DomSlideCapture } from "./probe"
 
 /**
@@ -12,6 +19,11 @@ import type { DomSlideCapture } from "./probe"
  *  artifacts     no editor-only markup (contenteditable, data-derive-editable, …)
  *                entered the source
  *  save          the save itself was refused, partial, or never sent
+ *  markdown      (Markdown docs) the same questions asked of Markdown source: bytes
+ *                outside the edited blocks — and, in a list or table, outside the
+ *                edited items or rows — are identical and in order; a block appears
+ *                only where the page split one, and disappears only where it was
+ *                edited; no HTML but the editor's own spellings enters the prose
  *  leak          (checked live during the session) typing landed in a block the
  *                person did not click
  */
@@ -450,4 +462,274 @@ export function checkArrange(
       message: `region ids appear twice after the save: ${[...new Set(fresh)].join(", ")}`,
     })
   return out
+}
+
+// ---------------------------------------------------------------------------------
+// Markdown
+
+/** A top-level Markdown block: a run of non-blank lines (a fenced code block may hold
+ *  blank lines). Deliberately naive and independent of the renderer's parser — the doc
+ *  fixture keeps one blank line between blocks, so its blocks map 1:1 onto the
+ *  rendered page's top-level elements (the sanity spec checks that). */
+export function mdBlocks(src: string): { start: number; end: number }[] {
+  const out: { start: number; end: number }[] = []
+  let at = 0
+  let open: { start: number; end: number } | null = null
+  let fence: string | null = null
+  while (at < src.length) {
+    const nl = src.indexOf("\n", at)
+    const end = nl < 0 ? src.length : nl
+    const line = src.slice(at, end)
+    const f = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1]
+    if (fence) {
+      if (f && f[0] === fence[0] && f.length >= fence.length) fence = null
+      if (open) open.end = end
+    } else if (!line.trim()) open = null
+    else {
+      if (!open) {
+        open = { start: at, end }
+        out.push(open)
+      } else open.end = end
+      if (f) fence = f
+    }
+    at = end + 1
+  }
+  return out
+}
+
+/** Lines of a block, with their offsets. */
+const linesOf = (src: string, b: { start: number; end: number }) => {
+  const out: { start: number; end: number }[] = []
+  let at = b.start
+  while (at <= b.end) {
+    const nl = src.indexOf("\n", at)
+    const end = nl < 0 || nl > b.end ? b.end : nl
+    out.push({ start: at, end })
+    at = end + 1
+  }
+  return out
+}
+
+/** A list's or table's units as source text: a list item from its marker line through
+ *  its continuation lines (a hard break, a wrapped line), a table row per line with
+ *  the delimiter row skipped. In the doc fixture the i-th unit is the i-th <li> (depth
+ *  first) or <tr>. */
+const unitsOf = (src: string, b: { start: number; end: number }, table: boolean): string[] => {
+  const lines = linesOf(src, b).map((l) => src.slice(l.start, l.end))
+  if (table) return lines.filter((_, i) => i !== 1)
+  const out: string[] = []
+  for (const line of lines)
+    if (/^\s*(?:[-+*]|\d{1,9}[.)])(?:\s|$)/.test(line) || !out.length) out.push(line)
+    else out[out.length - 1] += `\n${line}`
+  return out
+}
+
+/**
+ * Which units (list items, table rows) of a list or table block an edited element may
+ * touch: the unit that holds each edited element. `null` means the whole block (the
+ * edit reached the list or table element itself, or the block is prose).
+ */
+function allowedUnits(chunk: HNode, paths: number[][]): Set<number> | null {
+  const kind = chunk.tag === "ul" || chunk.tag === "ol" ? "li" : chunk.tag === "table" ? "tr" : null
+  if (!kind) return null
+  const units: HNode[] = []
+  const walk = (n: HNode) => {
+    for (const c of n.children) {
+      if (c.tag === kind) units.push(c)
+      walk(c)
+    }
+  }
+  walk(chunk)
+  const out = new Set<number>()
+  for (const p of paths) {
+    let n = nodeAtPath(chunk, p)
+    while (n && n !== chunk && n.tag !== kind) n = n.parent
+    if (!n || n === chunk) return null
+    const i = units.indexOf(n)
+    if (i < 0) return null
+    out.add(i)
+  }
+  return out
+}
+
+/** Every entry of `before` not in `free` must appear in `after`, unchanged and in order,
+ *  and whatever else `after` holds must sit where a free entry was. Returns where each
+ *  kept entry landed (-1 for a free one) and the first entry that broke the rule. */
+function keptInOrder(
+  before: string[],
+  after: string[],
+  free: Set<number>,
+): { at: number[]; broke: number } {
+  const at = before.map(() => -1)
+  let j = 0
+  let pending = false
+  for (let i = 0; i < before.length; i++) {
+    if (free.has(i)) {
+      pending = true
+      continue
+    }
+    const k = after.indexOf(before[i] as string, j)
+    if (k < 0 || (k > j && !pending)) return { at, broke: i }
+    at[i] = k
+    j = k + 1
+    pending = false
+  }
+  return { at, broke: j < after.length && !pending ? before.length : -1 }
+}
+
+/**
+ * Minimal diff for an inline edit on a Markdown doc. `renderedBefore` is the served
+ * render of `before` (its <main> children are the page's top-level blocks), used only
+ * to find which list item or table row an edited element path names.
+ *
+ * An edited block may be rewritten, split by Enter (the page shows the new block too),
+ * or vanish (its words were all deleted: Markdown has no empty paragraph). Every block
+ * nobody touched keeps its bytes, its order and the blank lines around it; inside an
+ * edited list or table, every item or row nobody touched does too.
+ */
+export function checkMarkdownDiff(
+  before: string,
+  after: string,
+  cap: DomSlideCapture,
+  renderedBefore: string,
+): Failure[] {
+  const out: Failure[] = []
+  const bb = mdBlocks(before)
+  const ba = mdBlocks(after)
+  if (cap.originalChunks.length !== bb.length) {
+    out.push({
+      oracle: "harness",
+      signature: "markdown blocks do not map 1:1 onto the rendered page",
+      message: `source has ${bb.length} blocks, the page showed ${cap.originalChunks.length}`,
+    })
+    return out
+  }
+  const touched = new Set(
+    bb.map((_, i) => i).filter((i) => cap.changed[cap.originalChunks[i] as string]),
+  )
+  const expected = bb.length + cap.chunks.length - cap.originalChunks.length
+  if (ba.length > expected || ba.length < expected - touched.size) {
+    const d = diffWindow(before, after, 80)
+    out.push({
+      oracle: "minimal-diff",
+      signature:
+        ba.length > expected
+          ? "an edit split a Markdown block (new block in the source)"
+          : "an edit merged or removed a Markdown block",
+      message: `source had ${bb.length} blocks, now ${ba.length}; the page shows ${cap.chunks.length} (loaded ${cap.originalChunks.length})`,
+      excerpt: `before: ${d.a}\nafter : ${d.b}`,
+    })
+    return out
+  }
+  const bytes = (src: string, bs: { start: number; end: number }[]) =>
+    bs.map((b) => src.slice(b.start, b.end))
+  const kept = keptInOrder(bytes(before, bb), bytes(after, ba), touched)
+  if (kept.broke >= 0) {
+    const i = Math.min(kept.broke, bb.length - 1)
+    const b = bb[i] as { start: number; end: number }
+    out.push(
+      bytesDiff(
+        "untouched Markdown block changed",
+        before.slice(b.start, b.end),
+        after.slice(ba[i]?.start ?? after.length, ba[i]?.end ?? after.length),
+        `block ${i + 1} (${cap.originalChunks[i]})`,
+      ),
+    )
+    return out
+  }
+  // The blank lines between two untouched neighbours, and at either end, stay.
+  const gap = (src: string, bs: { start: number; end: number }[], k: number) =>
+    src.slice(k < 0 ? 0 : (bs[k] as { end: number }).end, bs[k + 1]?.start ?? src.length)
+  for (let i = -1; i < bb.length; i++) {
+    const a = i < 0 ? -1 : (kept.at[i] as number)
+    const b = i + 1 < bb.length ? (kept.at[i + 1] as number) : ba.length
+    if ((i >= 0 && a < 0) || (i + 1 < bb.length && b < 0) || b !== a + 1) continue
+    if (gap(before, bb, i) !== gap(after, ba, a))
+      out.push(
+        bytesDiff(
+          "blank lines between Markdown blocks changed",
+          gap(before, bb, i),
+          gap(after, ba, a),
+          `after block ${i + 1}`,
+        ),
+      )
+  }
+
+  const main = (() => {
+    const find = (n: HNode): HNode | null => {
+      for (const c of n.children) {
+        if (c.tag === "main") return c
+        const hit = find(c)
+        if (hit) return hit
+      }
+      return null
+    }
+    return find(parseHtml(renderedBefore))
+  })()
+  // Inside an edited list or table: the items and rows nobody touched.
+  for (const i of touched) {
+    const chunk = main?.children[i]
+    const units = chunk
+      ? allowedUnits(chunk, cap.changed[cap.originalChunks[i] as string] ?? [])
+      : null
+    if (!chunk || !units) continue
+    const table = chunk.tag === "table"
+    const b = bb[i] as { start: number; end: number }
+    const ub = unitsOf(before, b, table)
+    // The after blocks this one became: between where its untouched neighbours landed.
+    let lo = -1
+    for (let k = i - 1; k >= 0 && lo < 0; k--) lo = kept.at[k] ?? -1
+    let hi = ba.length
+    for (let k = i + 1; k < bb.length && hi === ba.length; k++)
+      if ((kept.at[k] ?? -1) >= 0) hi = kept.at[k] as number
+    // Of those, the one holding most of its untouched items or rows.
+    const keep = ub.filter((_, k) => !units.has(k))
+    let ua: string[] = []
+    let most = 0
+    for (const a of ba.slice(lo + 1, hi)) {
+      const got = unitsOf(after, a, table)
+      const n = keep.filter((u) => got.includes(u)).length
+      if (n > most) [ua, most] = [got, n]
+    }
+    if (!most && !keep.length) continue
+    const brokeUnit = keptInOrder(ub, ua, new Set(units)).broke
+    if (brokeUnit >= 0)
+      out.push(
+        bytesDiff(
+          table ? "an edit reached another table row" : "an edit reached another list item",
+          ub[Math.min(brokeUnit, ub.length - 1)] ?? "",
+          ua[Math.min(brokeUnit, ua.length - 1)] ?? "",
+          `block ${i + 1} (${cap.originalChunks[i]}) ${table ? "row" : "item"} ${brokeUnit + 1}`,
+        ),
+      )
+  }
+  return out
+}
+
+/** Markdown with code (fenced or inline) blanked out, so tags shown as code don't count. */
+const proseOf = (md: string) =>
+  md.replace(/^(\s{0,3})(`{3,}|~{3,})[\s\S]*?^\s{0,3}\2[^\n]*$/gm, "").replace(/(`+)[^`]*?\1/g, "")
+const TAG = /<\/?[a-zA-Z][a-zA-Z0-9-]*(?:\s[^<>]*)?\/?>/g
+
+/** No markup the editor didn't mean: the Markdown fuzz types no HTML (typed Markdown is
+ *  source, so typed `<b>` would be live on purpose — see the inline-edit smoke), so an
+ *  HTML tag that appears in the prose after a save came from the editor. */
+export function checkMarkdownHtml(before: string, after: string): Failure[] {
+  // The editor's own spellings where Markdown has none: a line break in a table cell
+  // or a heading, and emphasis whose delimiters can't close where it sits (`**x.**y`).
+  const tags = (md: string) =>
+    (proseOf(md).match(TAG) ?? []).filter((t) => !/^<\/?(?:br|strong|em|del)\s*\/?>$/i.test(t))
+  const was: string[] = tags(before)
+  const now: string[] = tags(after)
+  if (now.length <= was.length) return []
+  const extra = now.filter((t) => !was.includes(t))
+  const at = after.indexOf(extra[0] ?? now[now.length - 1] ?? "")
+  return [
+    {
+      oracle: "artifacts",
+      signature: "HTML entered the Markdown source as live markup",
+      message: `${was.length} tag(s) in the prose before the save, ${now.length} after: ${extra.slice(0, 4).join(" ")}`,
+      excerpt: after.slice(Math.max(0, at - 100), at + 100),
+    },
+  ]
 }

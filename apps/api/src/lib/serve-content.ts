@@ -21,6 +21,7 @@ import {
   reflowHtml,
   renderLatex,
   renderMarkdown,
+  renderMarkdownForEditor,
   SELECTION_SCRIPT,
   SHARED_STATE_SCRIPT,
   sourceSha,
@@ -107,9 +108,10 @@ export const serveContent = async (
    *  render it, never hand back its `.tex`/`.bib`/`.sty` bytes. Images still serve, and
    *  the renderer resolves the paper's own files server-side, so the page is unchanged. */
   sourceHidden = false,
-  /** The caller may publish this version: serve an HTML page or deck with source ids
-   *  stamped for the inline editor (@derive/core source-edit). Never for a reader, and
-   *  never cached where a reader could be handed it. */
+  /** The caller may publish this version: serve an HTML page, deck or Markdown document
+   *  with source ids stamped for the inline editor (@derive/core source-edit,
+   *  markdown-source). Never for a reader, and never cached where a reader could be
+   *  handed it. */
   editor?: { version: number },
 ) => {
   const slots = slotValuesOf(dynamic)
@@ -117,10 +119,15 @@ export const serveContent = async (
   // table or figure tag (every carrier emits one for a declared name, rows or not), or a
   // slot row was substituted. Tag-anchored, so prose about the feature cannot match.
   const bound = (doc: string): boolean => slots.size > 0 || BOUND_TAG.test(doc)
-  const hdrs = (isBound: boolean) => ({
-    ...RAW_HEADERS,
-    "Cache-Control": isBound && boundCacheControl ? boundCacheControl : cacheControl,
-  })
+  const hdrs = (isBound: boolean, stamped = false) => {
+    const cache = isBound && boundCacheControl ? boundCacheControl : cacheControl
+    // Stamped bytes are the editors' view: same lifetime as the page, never in a shared cache.
+    const editorOnly = stamped && !/private|no-store/.test(cache)
+    return {
+      ...RAW_HEADERS,
+      "Cache-Control": editorOnly ? `private, ${cache.replace(/^public,\s*/, "")}` : cache,
+    }
+  }
   const headers = hdrs(false)
   const runtimeScripts = (isBound: boolean) =>
     SHARED_STATE_SCRIPT + (isBound ? DYNAMIC_DATA_SCRIPT : "")
@@ -295,10 +302,16 @@ export const serveContent = async (
         "Content-Type": "text/html; charset=utf-8",
       })
     }
-    const rendered = await renderMarkdown(text, title, { dynamic: slots })
+    // An editor gets the same page with source ids (markdown-source.ts), for exact saves.
+    const rendered = editor
+      ? await renderMarkdownForEditor(text, title, editor, { dynamic: slots })
+      : await renderMarkdown(text, title, { dynamic: slots })
     const isBound = bound(rendered)
     const html = withSharedState(rendered, isBound) + append
-    return c.body(html, 200, { ...hdrs(isBound), "Content-Type": "text/html; charset=utf-8" })
+    return c.body(html, 200, {
+      ...hdrs(isBound, !!editor),
+      "Content-Type": "text/html; charset=utf-8",
+    })
   }
 
   if (isLatexLike(content.content_type)) {
@@ -327,12 +340,7 @@ export const serveContent = async (
     if (stamp) text = stampSourceIds(text, { version: editor.version, sha: await sourceSha(text) })
     const doc = applyDynamicBindings(withDeckStructure(text), slots)
     const isBound = bound(doc)
-    const pageHeaders = hdrs(isBound)
-    // Stamped bytes are the editors' view: same lifetime as the page, never in a shared cache.
-    const cache = pageHeaders["Cache-Control"]
-    if (stamp && !/private|no-store/.test(cache))
-      pageHeaders["Cache-Control"] = `private, ${cache.replace(/^public,\s*/, "")}`
-    return c.body(htmlBody(doc, isBound), 200, { ...pageHeaders, "Content-Type": ct })
+    return c.body(htmlBody(doc, isBound), 200, { ...hdrs(isBound, stamp), "Content-Type": ct })
   }
   return c.body(toBody(data), 200, { ...headers, "Content-Type": ct })
 }

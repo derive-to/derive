@@ -25,6 +25,12 @@ import { fuzzSeeds, runSession } from "./session"
  *   FUZZ_ARRANGE=off|on …                                     # force the Rearrange pass
  *   FUZZ_MODE=classic …   # 5–10 changes over 1–3 slides, one save (default: one-slide,
  *                         # 8–15 changes on one slide, save, 5–8 more, save again)
+ *   FUZZ_MODE=html-doc …  # the same round trip on a plain HTML article (docs/article.html):
+ *                         # one section, 8–15 changes (text gestures, list items, table
+ *                         # cells, ⌘Z, moving repeated items), save, 5 more, save again
+ *   FUZZ_MODE=markdown …  # the equivalent Markdown doc (docs/article.md), judged on its
+ *                         # Markdown source: rendered text, blocks/lines outside the
+ *                         # edit untouched, no HTML typed into it
  */
 
 test.skip(!FUZZ_ON, "fuzz runs only with FUZZ=1 (pnpm test:fuzz)")
@@ -32,7 +38,9 @@ test.describe.configure({ mode: "parallel" })
 
 const maxActions = process.env.FUZZ_MAX_ACTIONS ? Number(process.env.FUZZ_MAX_ACTIONS) : undefined
 const arrange = (process.env.FUZZ_ARRANGE as "on" | "off" | undefined) ?? "auto"
-const mode = (process.env.FUZZ_MODE as "one-slide" | "classic" | undefined) ?? "one-slide"
+const mode =
+  (process.env.FUZZ_MODE as "one-slide" | "classic" | "html-doc" | "markdown" | undefined) ??
+  "one-slide"
 
 for (const seed of fuzzSeeds()) {
   test(`seed ${seed}`, async ({ fuzz }) => {

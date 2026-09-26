@@ -1,7 +1,14 @@
 import { decodeHTML } from "entities"
 import { describe, expect, it } from "vitest"
+// The synthetic Markdown article the editing fuzz's Markdown mode drives.
+import ARTICLE from "../../../apps/web/e2e/fuzz/docs/article.md?raw"
 import { attrValues, tags } from "../src/html-tags"
-import { escapeHtml } from "../src/md"
+import {
+  applyMarkdownOps,
+  markdownSourceMap,
+  renderMarkdownForEditor,
+} from "../src/markdown-source"
+import { escapeHtml, renderMarkdown } from "../src/md"
 import {
   applySourceOps,
   SourceConflictError,
@@ -611,5 +618,369 @@ describe("applySourceOps", () => {
     expect(error).toBeInstanceOf(SourceConflictError)
     expect((error as SourceConflictError).conflicts).toEqual([at("section", 1)])
     expect((error as Error).message).toMatch(/slide 2 \(element \d+\)/)
+  })
+})
+
+// ── Markdown ─────────────────────────────────────────────────────────────────────────
+
+/** The editor's view of a Markdown page as a tree: what the frame walks to build ops. */
+interface MdEl {
+  tag: string
+  src: number | null
+  ro: boolean
+  kids: (string | MdEl)[]
+  parent: MdEl | null
+}
+const VOID = new Set(["br", "img", "hr", "input"])
+const BLOCKS = /^(?:p|h[1-6]|li|ul|ol|blockquote|pre|table|thead|tbody|tr|td|th|hr|main)$/
+const parseStamped = (page: string): MdEl => {
+  const html = page.slice(page.indexOf("<main"), page.indexOf("</main>") + 7)
+  const root: MdEl = { tag: "#root", src: null, ro: false, kids: [], parent: null }
+  let at = root
+  for (const m of html.matchAll(/<(\/?)([a-zA-Z][a-zA-Z0-9]*)([^>]*)>|[^<]+/g)) {
+    const [whole, close, tag, attrs] = m
+    if (!tag) {
+      at.kids.push(decodeHTML(whole))
+      continue
+    }
+    if (close) {
+      at = at.parent ?? root
+      continue
+    }
+    const el: MdEl = {
+      tag,
+      src: /data-derive-src="(\d+)"/.test(attrs ?? "")
+        ? Number(/data-derive-src="(\d+)"/.exec(attrs ?? "")?.[1])
+        : null,
+      ro: (attrs ?? "").includes("data-derive-readonly"),
+      kids: [],
+      parent: at,
+    }
+    at.kids.push(el)
+    if (!VOID.has(tag)) at = el
+  }
+  return root.kids[0] as MdEl
+}
+const readsAs = (kids: (string | MdEl)[]): string =>
+  kids
+    .map((k) =>
+      typeof k === "string"
+        ? k
+        : k.tag === "br"
+          ? " "
+          : BLOCKS.test(k.tag)
+            ? ` ${readsAs(k.kids)} `
+            : readsAs(k.kids),
+    )
+    .join("")
+const squash = (s: string) => s.replace(/\s+/g, " ").trim()
+/** The words of `root` with `target` reading as `words`. */
+const readsWith = (root: MdEl, target: MdEl, words: string): string => {
+  const walk = (el: MdEl): string => {
+    if (el === target) return words
+    if (el.tag === "br") return " "
+    const inner = el.kids.map((k) => (typeof k === "string" ? k : walk(k))).join("")
+    return BLOCKS.test(el.tag) ? ` ${inner} ` : inner
+  }
+  return squash(walk(root))
+}
+/** The words a reader sees in a Markdown document. */
+const mdText = async (md: string) =>
+  squash(readsAs(parseStamped(await renderMarkdown(md, null)).kids))
+/** Top-level blocks: runs of non-blank lines, a fence holding its blank lines. */
+const mdBlocks = (md: string): string[] => {
+  const out: string[] = []
+  let block: string[] = []
+  let fence = false
+  for (const line of md.split("\n")) {
+    if (/^\s{0,3}(```|~~~)/.test(line)) fence = !fence
+    if (!fence && !line.trim()) {
+      if (block.length) out.push(block.join("\n"))
+      block = []
+    } else block.push(line)
+  }
+  if (block.length) out.push(block.join("\n"))
+  return out
+}
+
+describe("Markdown exact-source ops", () => {
+  const plain = (page: string) =>
+    page.replace(/ data-derive-src(?:-version|-sha)?="[^"]*"| data-derive-readonly/g, "")
+
+  it("stamps the reader's page with ids the source map hashes", async () => {
+    const page = await renderMarkdownForEditor(ARTICLE, "Doc", { version: 4 })
+    expect(plain(page)).toBe(await renderMarkdown(ARTICLE, "Doc"))
+    const map = await markdownSourceMap(ARTICLE)
+    expect(page).toContain(`data-derive-src-version="4" data-derive-src-sha="${map.sha}"`)
+    expect(page).toContain('<main data-derive-ready data-derive-src="0">')
+    const ids = [...page.matchAll(/data-derive-src="(\d+)"/g)].map((m) => Number(m[1]))
+    expect(ids).toEqual(ids.map((_, i) => i))
+    expect(map.hashes).toHaveLength(ids.length)
+    expect(map.hashes.every((h) => /^[0-9a-f]{16}$/.test(h))).toBe(true)
+    // Everything with words in it is editable in place: the article has no HTML blocks.
+    expect(page).not.toContain("data-derive-readonly")
+    // A construct whose text can't be mapped back exactly is served read-only.
+    const odd = await renderMarkdownForEditor("Plain <sup>raw</sup> tag.\n\n- [ ] a task\n", null, {
+      version: 1,
+    })
+    expect(odd).toMatch(/<p data-derive-src="\d+" data-derive-readonly>/)
+    expect(odd).toMatch(/<li data-derive-src="\d+" data-derive-readonly>/)
+  })
+
+  it("round-trips 300 random editing sessions over the Markdown article", async () => {
+    const { hashes: h } = await markdownSourceMap(ARTICLE)
+    const tree = parseStamped(await renderMarkdownForEditor(ARTICLE, null, { version: 1 }))
+    const all: MdEl[] = []
+    const walk = (el: MdEl) => {
+      all.push(el)
+      for (const k of el.kids) if (typeof k !== "string") walk(k)
+    }
+    walk(tree)
+    const keepOf = (el: MdEl, children?: SourceToken[]): SourceToken =>
+      children
+        ? { keep: el.src as number, hash: h[el.src as number] as string, children }
+        : { keep: el.src as number, hash: h[el.src as number] as string }
+    const tokensOf = (el: MdEl): SourceToken[] =>
+      el.kids.map((k) => (typeof k === "string" ? { text: k } : keepOf(k)))
+    const readsTokens = (list: SourceToken[]): string =>
+      list
+        .map((t) => {
+          if ("text" in t) return t.text
+          if ("tag" in t) return t.tag === "br" ? " " : readsTokens(t.children ?? [])
+          if ("comment" in t) return ""
+          const el = all.find((x) => x.src === t.keep) as MdEl
+          if (el.tag === "br") return " "
+          const inner = t.children ? readsTokens(t.children) : readsAs(el.kids)
+          return BLOCKS.test(el.tag) ? ` ${inner} ` : inner
+        })
+        .join("")
+    const TARGETS = /^(?:p|h[1-6]|li|td|th)$/
+    const targets = all.filter((el) => TARGETS.test(el.tag) && el.src !== null)
+    const inlineKeeps = (list: SourceToken[]) =>
+      list.flatMap((t, i) => {
+        if (!("keep" in t)) return []
+        const el = all.find((x) => x.src === t.keep) as MdEl
+        return /^(?:strong|em|a|code)$/.test(el.tag) ? [i] : []
+      })
+    // Typed words, including what would start a block or end a table cell if written
+    // as is: the save must keep them words.
+    const WORDS = [
+      "zulu",
+      "Quark",
+      "42.",
+      "- x",
+      "# y",
+      "> q",
+      "1)",
+      "a | b",
+      "naïve 🙂",
+      "—",
+      "it's",
+      "3 < 4 > 2",
+      "e.g.",
+      "Tab?",
+    ]
+    const r = rng(0x3d0c)
+    const pick = <T>(xs: T[]): T => xs[Math.floor(r() * xs.length)] as T
+    const edit = (list: SourceToken[]): SourceToken[] => {
+      const out = [...list]
+      const texts = out.flatMap((t, i) => ("text" in t && t.text.trim() ? [i] : []))
+      const kind = r()
+      if (kind < 0.15 && inlineKeeps(out).length) {
+        // Type inside a kept construct (a link's words, a code span, bold).
+        const i = pick(inlineKeeps(out))
+        const el = all.find((x) => x.src === (out[i] as { keep: number }).keep) as MdEl
+        out[i] = keepOf(el, edit(tokensOf(el)))
+        return out
+      }
+      if (kind < 0.22 && inlineKeeps(out).length) {
+        out.splice(pick(inlineKeeps(out)), 1)
+        return out
+      }
+      if (!texts.length) return [...out, { text: ` ${pick(WORDS)}` }]
+      const i = pick(texts)
+      const text = (out[i] as { text: string }).text
+      const a = Math.floor(r() * (text.length + 1))
+      const b = Math.min(text.length, a + Math.floor(r() * 12))
+      if (kind < 0.55) out[i] = { text: text.slice(0, a) + pick(WORDS) + text.slice(a) }
+      else if (kind < 0.75) out[i] = { text: text.slice(0, a) + text.slice(b) }
+      else if (kind < 0.9 && b > a) {
+        const tag = pick(["b", "i"] as const)
+        out.splice(
+          i,
+          1,
+          { text: text.slice(0, a) },
+          { tag, children: [{ text: text.slice(a, b) }] },
+          { text: text.slice(b) },
+        )
+      } else out.splice(i, 1, { text: text.slice(0, a) }, { tag: "br" }, { text: text.slice(a) })
+      return out
+    }
+    let sessions = 0
+    for (let trial = 0; trial < 300; trial++) {
+      const target = pick(targets)
+      const ops: SourceOp[] = []
+      let expectText = ""
+      const parent = target.parent as MdEl
+      const splittable = /^(?:p|li)$/.test(target.tag) && parent.src !== null && r() < 0.25
+      if (splittable) {
+        // Enter: the parent names the block twice, each copy with its half of the words.
+        const list = tokensOf(target)
+        const texts = list.flatMap((t, i) => ("text" in t && t.text.length > 1 ? [i] : []))
+        if (!texts.length) continue
+        const i = pick(texts)
+        const text = (list[i] as { text: string }).text
+        const at = 1 + Math.floor(r() * (text.length - 1))
+        const first = [...list.slice(0, i), { text: text.slice(0, at) }]
+        const second = [{ text: text.slice(at) }, ...list.slice(i + 1)]
+        const children = parent.kids.flatMap((k): SourceToken[] =>
+          typeof k === "string"
+            ? [{ text: k }]
+            : k === target
+              ? [keepOf(k, first), keepOf(k, second)]
+              : [keepOf(k)],
+        )
+        ops.push({
+          op: "content",
+          src: parent.src as number,
+          hash: h[parent.src as number] as string,
+          children,
+        })
+        expectText = readsWith(tree, target, ` ${readsTokens(first)} ${readsTokens(second)} `)
+      } else {
+        const children = edit(tokensOf(target))
+        ops.push({
+          op: "content",
+          src: target.src as number,
+          hash: h[target.src as number] as string,
+          children,
+        })
+        expectText = readsWith(tree, target, ` ${readsTokens(children)} `)
+      }
+      const label = `trial ${trial}: ${JSON.stringify(ops).slice(0, 600)}`
+      let markdown: string
+      try {
+        ;({ markdown } = await applyMarkdownOps(ARTICLE, ops))
+      } catch (e) {
+        expect(String(e), label).toMatch(/nothing to save/)
+        continue
+      }
+      sessions++
+      // It reads as the edited page did: typed words stay words, escaped where needed.
+      expect(await mdText(markdown), label).toBe(expectText)
+      // Every block the edit didn't reach is its stored bytes, in order.
+      let top: MdEl = target
+      while (top.parent && top.parent !== tree) top = top.parent
+      const reached = tree.kids.filter((k): k is MdEl => typeof k !== "string").indexOf(top)
+      const before = mdBlocks(ARTICLE)
+      const after = mdBlocks(markdown)
+      let j = 0
+      before.forEach((block, i) => {
+        if (i === reached) return
+        const at = after.indexOf(block, j)
+        expect(at, `${label}\nblock ${i}`).toBeGreaterThanOrEqual(0)
+        j = at + 1
+      })
+      // Inside a list or table, the lines of other items and rows too.
+      const lines = (before[reached] as string).split("\n")
+      const now = (after.find((b, i) => i >= reached && !before.includes(b)) ?? "").split("\n")
+      if (/^(?:li|td|th)$/.test(target.tag) && !splittable && now.length) {
+        let p = 0
+        while (p < lines.length && lines[p] === now[p]) p++
+        let q = 0
+        while (q < lines.length - p && lines[lines.length - 1 - q] === now[now.length - 1 - q]) q++
+        expect(lines.length - p - q, `${label}\n${now.join("\n")}`).toBeLessThanOrEqual(1)
+      }
+    }
+    expect(sessions).toBeGreaterThan(250)
+  }, 120_000)
+
+  it("writes a table's edited cell where a split names the table inside its container", async () => {
+    // Enter at the root makes the root's op carry every changed block, a cell included.
+    const md = "Lift the rail. Lay the rail.\n\n| Task | Crew |\n| --- | --- |\n| Lift | Night |\n"
+    const { hashes: h } = await markdownSourceMap(md)
+    const page = await renderMarkdownForEditor(md, null, { version: 1 })
+    const id = (tag: string) =>
+      Number(new RegExp(`<${tag} data-derive-src="(\\d+)"`).exec(page)?.[1])
+    const k = (n: number, children?: SourceToken[]): SourceToken =>
+      children ? { keep: n, hash: h[n] as string, children } : { keep: n, hash: h[n] as string }
+    const [p, table, thead, tbody, td] = ["p", "table", "thead", "tbody", "td"].map(id) as number[]
+    const row = td - 1
+    const { markdown } = await applyMarkdownOps(md, [
+      {
+        op: "content",
+        src: 0,
+        hash: h[0] as string,
+        children: [
+          k(p, [{ text: "Lift the rail. " }]),
+          { text: "\n" },
+          k(p, [{ text: "Lay the rail." }]),
+          { text: "\n" },
+          k(table, [
+            k(thead),
+            { text: "\n" },
+            k(tbody, [
+              k(row, [k(td, [{ text: "Lift" }, { tag: "br" }, { text: "and tamp" }]), k(td + 1)]),
+            ]),
+          ]),
+        ],
+      },
+    ])
+    expect(markdown).toBe(
+      "Lift the rail. \n\nLay the rail.\n\n| Task | Crew |\n| --- | --- |\n| Lift<br>and tamp | Night |\n",
+    )
+  })
+
+  it("keeps a table cell and a link intact when typed text ends in a backslash", async () => {
+    const md = "Lay the rail.\n\n| Task | Crew |\n| --- | --- |\n| Lift | Night |\n"
+    const { hashes: h } = await markdownSourceMap(md)
+    const page = await renderMarkdownForEditor(md, null, { version: 1 })
+    const id = (tag: string) =>
+      Number(new RegExp(`<${tag} data-derive-src="(\\d+)"`).exec(page)?.[1])
+    const [p, td] = ["p", "td"].map(id) as number[]
+    const { markdown } = await applyMarkdownOps(md, [
+      { op: "content", src: td, hash: h[td] as string, children: [{ text: "Lift \\| tamp" }] },
+      {
+        op: "content",
+        src: p,
+        hash: h[p] as string,
+        children: [
+          { text: "Lay the " },
+          { tag: "a", href: "https://example.test/a(b)\\", children: [{ text: "rail" }] },
+          { text: "." },
+        ],
+      },
+    ])
+    const html = await renderMarkdown(markdown, null)
+    // The row still has two cells, and the typed backslash and pipe read as typed.
+    expect(html.match(/<td[\s>]/g)).toHaveLength(2)
+    expect(html).toContain("Lift \\| tamp")
+    // The link destination's trailing backslash can't swallow its closing `>`.
+    expect(markdown).toContain("[rail](<https://example.test/a(b)\\\\>)")
+    expect(html).toMatch(/<a [^>]*>rail<\/a>\./)
+  })
+
+  it("edits a loose list's items, and splits a paragraph inside one as the page shows it", async () => {
+    const md = "- Lift the rail\n\n- Lay the rail\n"
+    const page = await renderMarkdownForEditor(md, null, { version: 1 })
+    // Every item takes a caret, not just the last (whose text has no blank line after it).
+    expect(page).not.toContain("data-derive-readonly")
+    const { hashes: h } = await markdownSourceMap(md)
+    const k = (n: number, children?: SourceToken[]): SourceToken =>
+      children ? { keep: n, hash: h[n] as string, children } : { keep: n, hash: h[n] as string }
+    const [li, p] = [2, 3]
+    expect(page).toContain(
+      `<li data-derive-src="${li}"><p data-derive-src="${p}">Lift the rail</p>`,
+    )
+    const { markdown } = await applyMarkdownOps(md, [
+      {
+        op: "content",
+        src: li,
+        hash: h[li] as string,
+        children: [k(p, [{ text: "Lift " }]), { text: "\n" }, k(p, [{ text: "the rail" }])],
+      },
+    ])
+    // A blank line between the halves: one line after the other would be one paragraph.
+    expect(markdown).toBe("- Lift \n\n  the rail\n\n- Lay the rail\n")
   })
 })

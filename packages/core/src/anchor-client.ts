@@ -39,6 +39,7 @@ import {
   collectSourceOps,
   FMT_ATTR,
   GEN_ATTR,
+  HOLD_ATTR,
   HREF_ATTR,
   releaseSource,
   SRC_ATTR,
@@ -589,6 +590,20 @@ interface ElReg {
           if (e.key === "Escape") clearEditMention()
           return
         }
+        // Enter is a new paragraph, Shift+Enter a line break (see newParagraph), and
+        // Backspace/Delete at the seam of a paragraph Enter made joins it again.
+        const seam = (e.key === "Backspace" || e.key === "Delete") && !e.shiftKey
+        if (focused && !e.metaKey && !e.ctrlKey && !e.altKey && (e.key === "Enter" || seam)) {
+          let handled = true
+          if (seam) handled = joinSplit(e.key === "Delete")
+          else if (e.shiftKey) insertBreak()
+          else newParagraph()
+          if (handled) {
+            e.preventDefault()
+            e.stopImmediatePropagation()
+            return
+          }
+        }
         if (e.key === "Escape") {
           if (cancelStructuralGesture()) {
             e.preventDefault()
@@ -726,6 +741,7 @@ interface ElReg {
     ".derive-block-box{box-shadow:0 0 0 2px rgba(79,70,229,.9);z-index:2147483643}" +
     ".derive-block-tag{position:absolute;left:-1px;bottom:100%;margin-bottom:2px;padding:2px 7px;border-radius:5px 5px 5px 0;background:rgba(79,70,229,.78);color:#fff;font:600 11px/1.45 system-ui,sans-serif;white-space:nowrap;cursor:grab;pointer-events:auto;user-select:none;touch-action:none}" +
     ".derive-block-tag-in .derive-block-tag{top:0;bottom:auto;margin:0;border-radius:5px 0 5px 0}" +
+    ".derive-block-tag-below .derive-block-tag{top:100%;bottom:auto;margin:2px 0 0;border-radius:0 5px 5px 5px}" +
     ".derive-block-rz{position:absolute;display:none;padding:0;box-sizing:border-box;border:2px solid rgba(79,70,229,.95);background:#fff;box-shadow:0 1px 4px rgba(15,23,42,.25);pointer-events:auto;touch-action:none}" +
     ".derive-block-rz-e{right:-6px;top:50%;width:10px;height:28px;margin-top:-14px;border-radius:5px;cursor:ew-resize}" +
     ".derive-block-rz-se{right:-7px;bottom:-7px;width:12px;height:12px;border-radius:3px;cursor:nwse-resize}" +
@@ -1957,6 +1973,13 @@ interface ElReg {
     lastRects = sig
     post({ type: "anchor-rects", tops })
   }
+  /** Back to where the reader was before a save reloaded the page. Late images and
+   *  fonts can still be growing the page, so it keeps trying for about a second. */
+  const scrollBack = (y: number, tries = 20) => {
+    window.scrollTo({ top: y, behavior: "instant" as ScrollBehavior })
+    if (Math.abs(scrollTop() - y) > 1 && tries > 0)
+      window.setTimeout(() => scrollBack(y, tries - 1), 50)
+  }
   const reportScroll = () =>
     post({
       type: "scroll",
@@ -2258,13 +2281,13 @@ interface ElReg {
   /* === Inline edit mode ======================================================
      Click-to-type text editing, host-driven ("edit-mode" on/off). A click lands a
      caret in the nearest text block (contenteditable, plaintext-only) — typing edits
-     in place. On an HTML page the server stamped (see `stamped`), "edit-collect"
-     answers with exact-source ops: each changed element's new children, by source
-     id (source-tokens.ts). On Markdown and LaTeX every enabled block snapshots its
+     in place. On a page the server stamped (see `stamped`: HTML, a deck, Markdown),
+     "edit-collect" answers with exact-source ops: each changed element's new children,
+     by source id (source-tokens.ts). On LaTeX every enabled block snapshots its
      text nodes against a whole-document text snapshot taken at mode entry, and each
      changed node becomes a minimal {exact, prefix, suffix, new_text} quote built
      from the PRE-EDIT text, which the server resolves against the stored source.
-     Paste is flattened; Enter and formatting (HTML only) are editor spans. Media and
+     Paste is flattened; Enter and formatting (stamped pages only) are editor spans. Media and
      opted-in boxes can also carry width/height intent. */
   interface EditTarget {
     el: HTMLElement
@@ -2274,6 +2297,9 @@ interface ElReg {
     /** Cached origValues.join("") — the dirty compare runs per keystroke tick. */
     origConcat: string
     structSig: string
+    /** Made this session by Enter (a paragraph's second half): it has no words of its
+     *  own to compare, and the change is its parent's new child. */
+    made?: boolean
   }
   type ResizableElement = HTMLElement | SVGElement
   interface ResizeTarget {
@@ -2486,16 +2512,17 @@ interface ElReg {
     for (const n of textNodes(el)) out += n.nodeValue
     return out
   }
+  /** A text block differs from how the session found it: its words, its formatting
+   *  (bolding a word is a real edit even when not one character changed), or, on an
+   *  exact-source page, its shape (Enter split a paragraph inside it). */
+  const targetEdited = (t: EditTarget): boolean =>
+    concatText(t.el) !== t.origConcat ||
+    hasFmt(t.el) ||
+    (!!srcSnap && structSigOf(t.el) !== t.structSig)
   /** The session's changes (see `changes`), marking each edited text block. */
   const changeList = () => {
-    // Formatting counts even when not one character changed: bolding a word is a
-    // real edit, and the text-only compare called that block clean — so Save
-    // stayed hidden and the work was discardable without a warning.
     for (const t of editTargets)
-      t.el.classList.toggle(
-        "derive-edited",
-        document.contains(t.el) && (concatText(t.el) !== t.origConcat || hasFmt(t.el)),
-      )
+      t.el.classList.toggle("derive-edited", document.contains(t.el) && targetEdited(t))
     return changes()
   }
   const countDirty = () => changeList().length
@@ -2532,6 +2559,9 @@ interface ElReg {
     /** Parents' child lists before a move, duplicate, delete, paste or revert. */
     | { kind: "children"; lists: ChildList[] }
     | { kind: "scene"; entry: SceneHistory; activeAfter: boolean }
+    /** One step made of several (Enter splits a block: its parent's children and its
+     *  own words), undone in reverse. */
+    | { kind: "multi"; entries: HistoryEntry[] }
   let undoStack: HistoryEntry[] = []
   let redoStack: HistoryEntry[] = []
   let lastBurst: { el: HTMLElement; at: number } | null = null
@@ -2605,9 +2635,13 @@ interface ElReg {
     for (let i = 0; i < fresh.length; i++)
       editBase.starts.set(fresh[i] as Text, t.origStarts[i] as number)
   }
-  const stepHistory = (from: typeof undoStack, to: typeof undoStack) => {
-    const entry = from.pop()
-    if (!entry) return
+  /** Put one entry back; what it returns puts it forward again. */
+  const applyHistory = (entry: HistoryEntry): HistoryEntry | null => {
+    if (entry.kind === "multi") {
+      // Undone last-first; the inverse, stored in that order, replays first-first.
+      const back = [...entry.entries].reverse().map(applyHistory)
+      return { kind: "multi", entries: back.filter((e): e is HistoryEntry => !!e) }
+    }
     if (entry.kind === "scene") {
       if (entry.activeAfter) {
         entry.entry.redo()
@@ -2618,22 +2652,38 @@ interface ElReg {
         sceneEdits = sceneEdits.filter((candidate) => candidate !== entry.entry)
         restoreActiveVideoScene(entry.entry.activeBefore)
       }
-      to.push({ ...entry, activeAfter: !entry.activeAfter })
-    } else if (entry.kind === "children") {
-      to.push({ kind: "children", lists: entry.lists.map(({ el }) => ({ el, nodes: kidsOf(el) })) })
+      return { ...entry, activeAfter: !entry.activeAfter }
+    }
+    if (entry.kind === "children") {
+      const back: HistoryEntry = {
+        kind: "children",
+        lists: entry.lists.map(({ el }) => ({ el, nodes: kidsOf(el) })),
+      }
       for (const { el, nodes } of entry.lists) setKids(el, nodes)
-    } else if (!document.contains(entry.el)) return
-    else if (entry.kind === "structural-sizing") {
-      to.push(structuralSizingOf(entry.el, entry.sizeName, entry.widthName, entry.heightName))
+      return back
+    }
+    if (!document.contains(entry.el)) return null
+    if (entry.kind === "structural-sizing") {
+      const back = structuralSizingOf(entry.el, entry.sizeName, entry.widthName, entry.heightName)
       applyStructuralSizing(entry)
-    } else if (entry.kind === "html") {
-      to.push({ kind: "html", el: entry.el, html: entry.el.innerHTML })
+      return back
+    }
+    if (entry.kind === "html") {
+      const back: HistoryEntry = { kind: "html", el: entry.el, html: entry.el.innerHTML }
       entry.el.innerHTML = entry.html
       reregister(targetFor(entry.el), entry.el)
-    } else if (entry.kind === "style") {
-      to.push({ kind: "style", el: entry.el, style: rawStyle(entry.el) })
-      restoreStyle(entry.el, entry.style)
+      return back
     }
+    const back: HistoryEntry = { kind: "style", el: entry.el, style: rawStyle(entry.el) }
+    restoreStyle(entry.el, entry.style)
+    return back
+  }
+  const stepHistory = (from: typeof undoStack, to: typeof undoStack) => {
+    const entry = from.pop()
+    if (!entry) return
+    const back = applyHistory(entry)
+    if (!back) return
+    to.push(back)
     lastBurst = null
     refreshResizeUi()
     postDirty()
@@ -2668,7 +2718,7 @@ interface ElReg {
     const list = changeList()
     const n = list.length
     const range = formattableRange()
-    // Markup is only the language of an HTML page; Markdown and LaTeX write it as text.
+    // Formatting needs a stamped page (HTML, a deck, Markdown); LaTeX writes it as text.
     const canFormat = !!range && !!srcSnap
     // A double-click can select a word just before its block is armed editable.
     // selectionchange sees the pre-armed block and cannot cache it, while this
@@ -3778,14 +3828,23 @@ interface ElReg {
     media: "Image",
     image: "Image",
   }
+  /** A block that opens with a heading (an article's section) is called by it. */
+  const headingName = (el: HTMLElement): string => {
+    const first = Array.from(el.children).find((c) => !c.classList.contains("derive-edit-ui"))
+    return first?.matches("h1,h2,h3,h4,h5,h6,[role=heading]") ? clipText(plainOf(first), 40) : ""
+  }
   const nameOf = (el: HTMLElement): string => {
     const slides = slideEls()
     if (slides.includes(el)) return `Slide ${slides.indexOf(el) + 1}`
     const kind = nodeOf(el)?.kind
-    if (kind) return KIND_NAMES[kind] ?? "Section"
+    if (kind) return KIND_NAMES[kind] ?? (headingName(el) || "Section")
     const same = lookAlikes(el)
-    if (same.length < 2) return "Block"
     const tag = el.localName
+    if (tag !== "li" && tag !== "tr") {
+      const heading = headingName(el)
+      if (heading) return heading
+    }
+    if (same.length < 2) return "Block"
     const noun =
       tag === "li"
         ? "Item"
@@ -3811,6 +3870,20 @@ interface ElReg {
     return s.replace(/\s+/g, " ").trim()
   }
   const clipText = (s: string, n = 60) => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
+  /** Before and after of a text change, each clipped to `n` around where they first
+   *  differ: a change past the first words of a long paragraph still shows. */
+  const clipPair = (a: string, b: string, n = 60): [string, string] => {
+    let p = 0
+    while (p < a.length && p < b.length && a[p] === b[p]) p++
+    const cut = (s: string) => {
+      if (s.length <= n) return s
+      const from = Math.max(0, Math.min(p - 20, s.length - n + 1))
+      if (!from) return `${s.slice(0, n - 1)}…`
+      if (from + n - 1 >= s.length) return `…${s.slice(from)}`
+      return `…${s.slice(from, from + n - 2)}…`
+    }
+    return [cut(a), cut(b)]
+  }
   /** How a change names a block: its heading's words, else its name. */
   const titleOf = (el: HTMLElement) =>
     clipText(plainOf(el.querySelector("h1,h2,h3,h4,h5,h6") ?? document.createElement("i")), 40) ||
@@ -3860,6 +3933,13 @@ interface ElReg {
   const pillDel = pillButton("Delete", "Delete (⌫)", "Delete", "derive-block-del")
   const pillMore = pillButton("More options", "Path and exact width", "⋯")
   const pillDiv = () => chromeEl("span", "derive-block-div")
+  // Nothing in the pill takes focus: the keyboard stays with the document (⌥ arrows,
+  // Delete), and a key typed next can never press a pill button again.
+  pill.addEventListener("pointerdown", (e) => {
+    e.preventDefault()
+    window.focus()
+  })
+  pill.addEventListener("mousedown", (e) => e.preventDefault())
   pill.append(
     pillName,
     pillDiv(),
@@ -3871,6 +3951,7 @@ interface ElReg {
     pillDiv(),
     pillMore,
   )
+  for (const b of Array.from(pill.querySelectorAll("button"))) b.tabIndex = -1
   ;(document.body || document.documentElement).append(blockHoverBox, blockBox, pill)
   for (const el of [blockHoverBox, blockBox, pill]) ownChrome(el)
 
@@ -3885,6 +3966,8 @@ interface ElReg {
   /** The block a person last moved within each parent, to name the move. */
   let lastMoved = new Map<HTMLElement, HTMLElement>()
   let blockClip: { el: HTMLElement; copy: boolean } | null = null
+  /** Blocks this session copied (Duplicate, a pasted copy). */
+  const copies = new WeakSet<Element>()
   interface BlockDrag {
     el: HTMLElement
     pointerId: number
@@ -3941,8 +4024,7 @@ interface ElReg {
     placeBox(blockHoverBox, hover?.isConnected ? hover : null)
     if (hover?.isConnected) {
       blockTag.textContent = `⠿ ${nameOf(hover)}`
-      // No room above the block: the tag tucks inside its corner.
-      blockHoverBox.classList.toggle("derive-block-tag-in", hover.getBoundingClientRect().top < 24)
+      placeTag(hover)
     }
     const sel = editOn && blockSel?.isConnected ? blockSel : null
     placeBox(blockBox, sel)
@@ -3963,16 +4045,123 @@ interface ElReg {
     pillPrev.disabled = i <= 0
     pillNext.disabled = i < 0 || i >= siblings.length - 1
     pill.style.display = "flex"
-    // Just outside the block: above it, or below when there's no room; always on screen.
+    const spot = pillSpot(sel)
+    pill.style.left = `${spot.x + (window.scrollX || 0)}px`
+    pill.style.top = `${spot.y + scrollTop()}px`
+  }
+  /** Line boxes of words on screen within `area` (viewport coordinates). */
+  const textBoxesNear = (area: DOMRect): DOMRect[] => {
+    const out: DOMRect[] = []
+    const near = new Map<Element, boolean>()
+    const range = document.createRange()
+    const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+      const parent = n.parentElement
+      if (!parent || !n.nodeValue?.trim()) continue
+      let hit = near.get(parent)
+      if (hit === undefined) {
+        const r = parent.getBoundingClientRect()
+        hit =
+          !parent.closest(".derive-edit-ui") &&
+          r.right > area.left &&
+          r.left < area.right &&
+          r.bottom > area.top &&
+          r.top < area.bottom
+        near.set(parent, hit)
+      }
+      if (!hit) continue
+      range.selectNodeContents(n)
+      for (const r of Array.from(range.getClientRects())) if (r.width && r.height) out.push(r)
+    }
+    return out
+  }
+  /** How much of `r` lies over words. */
+  const coversWords = (r: DOMRect, words: readonly DOMRect[]): number => {
+    let area = 0
+    for (const b of words) {
+      const w = Math.min(r.right, b.right) - Math.max(r.left, b.left)
+      const h = Math.min(r.bottom, b.bottom) - Math.max(r.top, b.top)
+      if (w > 0 && h > 0) area += w * h
+    }
+    return area
+  }
+  let pillAt: { key: string; x: number; y: number } | null = null
+  let tagAt: { key: string; at: string } | null = null
+  /** The hover tag sits on the block's top edge, above it where there's room; where
+   *  that covers words (a neighbour's, or the block's own first line when tucked
+   *  inside), it goes inside the corner or under the block instead, so a click on
+   *  words reaches them. */
+  const placeTag = (hover: HTMLElement) => {
+    const r = hover.getBoundingClientRect()
+    const key = [r.left, r.top, r.width, r.height, innerWidth, innerHeight].join()
+    const spots = ["", "derive-block-tag-in", "derive-block-tag-below"]
+    const set = (at: string) => {
+      for (const c of spots) if (c) blockHoverBox.classList.toggle(c, c === at)
+    }
+    if (tagAt?.key !== key) {
+      const fits = spots.filter((at) => at || r.top >= 24)
+      let at = fits[0] ?? "derive-block-tag-in"
+      for (const spot of fits) {
+        set(spot)
+        const tag = blockTag.getBoundingClientRect()
+        if (tag.bottom > innerHeight) continue
+        if (!coversWords(tag, textBoxesNear(tag))) {
+          at = spot
+          break
+        }
+      }
+      tagAt = { key, at }
+    }
+    set(tagAt.at)
+  }
+  /** Where the pill goes: beside the block, on screen, and never over words a person
+   *  might click next (a list's next item, a table's next row, the block's own). Just
+   *  above the block when that's clear; else beside the block's parent (outside its
+   *  flow), below the block, or past the parent's top or bottom edge; failing all of
+   *  them, whichever covers the fewest words. */
+  const pillSpot = (sel: HTMLElement): { x: number; y: number } => {
     const r = sel.getBoundingClientRect()
+    const flow = sel.parentElement?.getBoundingClientRect() ?? r
     const w = pill.offsetWidth
     const h = pill.offsetHeight
-    let top = r.top - h - 10
-    if (top < 4) top = r.bottom + 10
-    top = Math.max(4, Math.min(innerHeight - h - 4, top))
-    const left = Math.max(4, Math.min(innerWidth - w - 4, r.left - 1))
-    pill.style.left = `${left + (window.scrollX || 0)}px`
-    pill.style.top = `${top + scrollTop()}px`
+    const key = [r.left, r.top, r.width, r.height, w, h, innerWidth, innerHeight].join()
+    if (pillAt?.key === key) return pillAt
+    const gap = 8
+    const spots = [
+      [r.left - 1, r.top - h - gap],
+      [flow.left - w - gap, r.top],
+      [flow.right + gap, r.top],
+      [r.left - 1, r.bottom + gap],
+      [flow.left, flow.top - h - gap],
+      [flow.left, flow.bottom + gap],
+    ].map(([x = 0, y = 0]) => {
+      const cx = Math.max(4, Math.min(innerWidth - w - 4, x))
+      const cy = Math.max(4, Math.min(innerHeight - h - 4, y))
+      return new DOMRect(cx, cy, w, h)
+    })
+    const area = spots.reduce((u, s) => {
+      const left = Math.min(u.left, s.left)
+      const top = Math.min(u.top, s.top)
+      return new DOMRect(
+        left,
+        top,
+        Math.max(u.right, s.right) - left,
+        Math.max(u.bottom, s.bottom) - top,
+      )
+    })
+    const words = textBoxesNear(area)
+    let best = spots[0] as DOMRect
+    let least = Number.POSITIVE_INFINITY
+    for (const s of spots) {
+      const covered = coversWords(s, words)
+      if (covered < least) {
+        least = covered
+        best = s
+      }
+      if (!covered) break
+    }
+    pillAt = { key, x: best.left, y: best.top }
+    return pillAt
   }
   const schedulePaintBlocks = () => {
     if (blockPaintTick) return
@@ -4096,17 +4285,27 @@ interface ElReg {
     if (rearrange([parent], () => reorderInPlace(order), true)) lastMoved.set(parent, el)
     paintBlocks()
   }
+  /** A copy of a block, typeable like any block: its words aren't in the entry
+   *  snapshot, but the save compares it with its original's (source-tokens). */
+  const copyOf = (el: HTMLElement): HTMLElement => {
+    const copy = el.cloneNode(true) as HTMLElement
+    copy.classList.remove("derive-edited", "derive-edit-hover", "derive-block-dragging")
+    // The block itself may be armed too: a copy is armed when it is typed in.
+    const armed = Array.from(copy.querySelectorAll("[data-derive-editable]"))
+    if (copy.hasAttribute("data-derive-editable")) armed.push(copy)
+    for (const a of armed) {
+      a.removeAttribute("contenteditable")
+      a.removeAttribute("data-derive-editable")
+      a.classList.remove("derive-edited")
+    }
+    copies.add(copy)
+    return copy
+  }
   const duplicateBlock = () => {
     const el = blockSel
     const parent = el?.parentElement
     if (!el || !parent) return
-    const copy = el.cloneNode(true) as HTMLElement
-    copy.classList.remove("derive-edited", "derive-edit-hover", "derive-block-dragging")
-    for (const armed of Array.from(copy.querySelectorAll("[data-derive-editable]"))) {
-      armed.removeAttribute("contenteditable")
-      armed.removeAttribute("data-derive-editable")
-      armed.classList.remove("derive-edited")
-    }
+    const copy = copyOf(el)
     rearrange([parent], () => el.after(copy))
     selectBlock(copy)
   }
@@ -4130,7 +4329,7 @@ interface ElReg {
     const clip = blockClip
     const parent = at?.parentElement
     if (!clip || !at || !parent || (at === clip.el && !clip.copy)) return
-    const el = clip.copy ? (clip.el.cloneNode(true) as HTMLElement) : clip.el
+    const el = clip.copy ? copyOf(clip.el) : clip.el
     const from = clip.el.parentElement
     rearrange(from && from !== parent && !clip.copy ? [parent, from] : [parent], () => at.after(el))
     blockClip = { el, copy: true }
@@ -4488,7 +4687,9 @@ interface ElReg {
     for (const el of after)
       if (!before.includes(el))
         parts.push(
-          `${before.some((b) => srcOf(b) === srcOf(el)) ? "Duplicated" : "Added"} ${titleOf(el)}`,
+          madeBy.has(el)
+            ? `New ${el.localName === "li" ? "item" : "paragraph"}`
+            : `${before.some((b) => srcOf(b) === srcOf(el)) ? "Duplicated" : "Added"} ${titleOf(el)}`,
         )
     for (const el of before) if (!after.includes(el)) parts.push(`Deleted ${titleOf(el)}`)
     const was = before.filter((el) => after.includes(el))
@@ -4510,13 +4711,14 @@ interface ElReg {
   const changes = (): Change[] => {
     const out: Change[] = []
     for (const t of editTargets) {
-      if (!t.el.isConnected || (concatText(t.el) === t.origConcat && !hasFmt(t.el))) continue
-      const from = clipText(htmlPlain(t.origHtml))
-      const to = clipText(plainOf(t.el))
+      if (t.made || !t.el.isConnected || !targetEdited(t)) continue
+      const was = htmlPlain(t.origHtml)
+      const now = plainOf(t.el)
+      const [from, to] = clipPair(was, now)
       out.push({
         id: changeId(t),
         where: whereOf(t.el, true),
-        ...(from === to ? { what: "Formatting" } : { from, to }),
+        ...(was !== now ? { from, to } : { what: hasFmt(t.el) ? "Formatting" : "Split" }),
         at: t.el,
         revert: () => {
           checkpoint(t.el)
@@ -4859,7 +5061,7 @@ interface ElReg {
     settleBlocks(true)
     for (const t of editTargets) {
       if (document.contains(t.el)) {
-        if (concatText(t.el) !== t.origConcat || hasFmt(t.el)) {
+        if (targetEdited(t)) {
           t.el.innerHTML = t.origHtml
           // innerHTML rebuilt the block's text nodes as NEW objects — re-register
           // them at their original offsets, or a Discarded block would refuse every
@@ -5040,15 +5242,19 @@ interface ElReg {
       const nodes = textNodes(cand)
       if (!nodes.length) return
       const origStarts: number[] = []
+      // A copy's words are new too, but they are the person's: its save needs no
+      // offsets (copies exist only on stamped pages).
+      let copied = false
+      for (let e: Element | null = cand; e && !copied; e = e.parentElement) copied = copies.has(e)
       for (const n of nodes) {
         const s = base.starts.get(n)
-        if (s === undefined) {
+        if (s !== undefined) origStarts.push(s)
+        else if (!copied) {
           // This part of the page was re-rendered by its own script after the
           // snapshot — its text can't be mapped back to the stored source.
           post({ type: "edit-blocked", reason: "dynamic" })
           return
         }
-        origStarts.push(s)
       }
       const origValues = nodes.map((n) => n.nodeValue ?? "")
       target = {
@@ -5282,19 +5488,18 @@ interface ElReg {
         post({ type: "edit-blocked", reason: "readonly" })
         return
       }
+      // The keys arrive at keydown (ownKeys); these are the same two from an input
+      // method that sends no key: a new paragraph, and a line break (a <br> on save,
+      // riding the same editor-span grammar as bold and italic).
+      if (it === "insertParagraph" || it === "insertLineBreak") {
+        e.preventDefault()
+        if (it === "insertParagraph") newParagraph()
+        else insertBreak()
+        return
+      }
       // Before the mutation, not after: this is the only place we can capture what
       // the block looked like a keystroke ago.
       if (t instanceof HTMLElement) checkpointTyping(t)
-      // Enter breaks the line. Blocking it outright made the mode feel broken —
-      // pressing Enter mid-sentence is reflexive — while a real paragraph SPLIT
-      // stays out: that changes the document's structure, and this editor only ever
-      // rewrites the inside of one block. The break rides the same editor-span
-      // grammar as bold and italic and becomes a <br> on save.
-      if (it === "insertParagraph" || it === "insertLineBreak") {
-        e.preventDefault()
-        insertBreak()
-        return
-      }
       // Formatting commands (⌘B and friends) don't reach a plaintext-only field
       // anyway; the client applies its own (see applyFmt).
       if (it.indexOf("format") === 0) {
@@ -5341,8 +5546,8 @@ interface ElReg {
      The wrap is the EDITOR's, not the document's: a `[data-derive-fmt]` span holds
      the intent (and shows what it will look like) until the save turns it into a
      real tag. Nothing here touches the stored source; the save serializes these
-     spans as the server's inline-tag tokens (source-tokens.ts). HTML pages only:
-     Markdown and LaTeX write formatting as text.
+     spans as the server's inline-tag tokens (source-tokens.ts). Stamped pages only
+     (HTML, a deck, Markdown): LaTeX writes formatting as text.
 
      ⌘B/⌘I/⌘K, because those are the keys every writing tool binds. The frame owns
      the keyboard while a caret is in a block, so they can't reach the browser. */
@@ -5429,6 +5634,13 @@ interface ElReg {
     span.appendChild(document.createElement("br"))
     range.deleteContents()
     range.insertNode(span)
+    // A break with nothing after it in its block shows no new line (the browser folds a
+    // trailing <br>), and typing would land before it: hold the line open.
+    const after = document.createRange()
+    after.setStartAfter(span)
+    after.setEnd(block, block.childNodes.length)
+    if (blankRange(after) && !after.cloneContents().querySelector(`[${HOLD_ATTR}]`))
+      span.after(holdBreak())
     // Caret after the break, so typing continues on the new line.
     range.setStartAfter(span)
     range.collapse(true)
@@ -5438,6 +5650,226 @@ interface ElReg {
   }
 
   const hasFmt = (el: Element): boolean => !!el.querySelector(`[${FMT_ATTR}]`)
+
+  /* ── Enter: a new paragraph ───────────────────────────────────────────────────
+     Enter splits the stamped p or li the caret is in (under a stamped parent, and not
+     an author's structural node); Shift+Enter breaks the line (insertBreak). The second
+     half is a copy of the element, so the save names it twice (a copy with fresh
+     identities; source-edit.ts), each with its half of the words. At a heading's end
+     Enter goes to the next block; anywhere else that doesn't split, it breaks the line.
+     Backspace or Delete at the seam of a split joins it again. */
+  const SPLITS = "p,li"
+  /** What Enter made this session, and the whitespace it set before each. */
+  const madeBy = new WeakMap<HTMLElement, Text | null>()
+  /** Nothing but whitespace (and a placeholder) in `range`: the caret is at an edge. */
+  const blankRange = (range: Range): boolean =>
+    !range.toString().trim() &&
+    !range.cloneContents().querySelector(`br:not([${HOLD_ATTR}]),img,svg,[data-derive-readonly]`)
+  const holdBreak = () => {
+    const br = document.createElement("br")
+    br.setAttribute(HOLD_ATTR, "")
+    return br
+  }
+  const dropHolds = (el: HTMLElement) => {
+    for (const b of Array.from(el.querySelectorAll(`:scope > br[${HOLD_ATTR}]`))) b.remove()
+  }
+  /** An emptied block keeps a line to type on. */
+  const hold = (el: HTMLElement) => {
+    if (el.textContent?.trim() || el.querySelector(`br:not([${HOLD_ATTR}]),img,svg`)) dropHolds(el)
+    else if (!el.querySelector(`[${HOLD_ATTR}]`)) el.append(holdBreak())
+  }
+  /** The inline wrappers a split cut through (a <b> the caret was in) are cloned into
+   *  the second half; where that leaves either copy empty, it goes. `depth` is how
+   *  many wrappers the cut crossed, so an author's own empty element (an icon) stays. */
+  const dropEmptyEdge = (el: HTMLElement, last: boolean, depth: number) => {
+    let n: ChildNode | null = last ? el.lastChild : el.firstChild
+    for (let level = 0; n && level < depth; ) {
+      if (n.nodeType === 3 && !n.nodeValue) {
+        const empty: ChildNode = n
+        n = last ? n.previousSibling : n.nextSibling
+        empty.remove()
+        continue
+      }
+      if (!(n instanceof HTMLElement)) return
+      if (
+        !n.textContent &&
+        !n.matches(`br,img,svg,hr,input,${READONLY}`) &&
+        !n.querySelector("br,img,svg")
+      ) {
+        n.remove()
+        return
+      }
+      n = last ? n.lastChild : n.firstChild
+      level++
+    }
+  }
+  const caretInto = (host: HTMLElement, node: Node, offset: number) => {
+    host.focus({ preventScroll: true })
+    const r = document.createRange()
+    r.setStart(node, offset)
+    r.collapse(true)
+    const sel = window.getSelection()
+    sel?.removeAllRanges()
+    sel?.addRange(r)
+  }
+  /** The first visible words after `el`, where Enter at a heading's end goes. */
+  const nextWords = (el: Element): Text | null => {
+    const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+    w.currentNode = el
+    for (let n = w.nextNode(); n; n = w.nextNode()) {
+      const t = n as Text
+      const parent = t.parentElement
+      if (el.contains(t) || !t.data.trim() || !parent) continue
+      if (parent.closest(`.derive-edit-ui,script,style,${READONLY},[${GEN_ATTR}]`)) continue
+      const r = document.createRange()
+      r.selectNodeContents(t)
+      if (r.getClientRects().length) return t
+    }
+    return null
+  }
+  const splittable = (el: HTMLElement): boolean => {
+    const parent = el.parentElement
+    return (
+      !!srcSnap &&
+      el.matches(SPLITS) &&
+      srcOf(el) !== null &&
+      !!parent &&
+      srcOf(parent) !== null &&
+      !el.matches(`${structureNodeSelector},${structureRegionSelector}`) &&
+      !readonlyAt(el)
+    )
+  }
+  const newParagraph = (): void => {
+    const host = editingCaret()
+    const sel = window.getSelection()
+    if (!host || !sel?.rangeCount) return
+    const range = sel.getRangeAt(0)
+    if (!host.contains(range.startContainer)) return
+    const inner = rangeStartEl(range)?.closest(BLOCKS)
+    const blk = inner instanceof HTMLElement && host.contains(inner) ? inner : host
+    // A selection that runs past the block is replaced only up to the block's end.
+    if (!blk.contains(range.endContainer)) range.setEnd(blk, blk.childNodes.length)
+    const tail = document.createRange()
+    tail.setStart(range.endContainer, range.endOffset)
+    tail.setEnd(blk, blk.childNodes.length)
+    if (/^h[1-6]$/.test(blk.localName)) {
+      const next = range.collapsed && blankRange(tail) ? nextWords(blk) : undefined
+      if (next === undefined) insertBreak()
+      else if (next) editActivate(next, { node: next, offset: Math.max(0, next.data.search(/\S/)) })
+      return
+    }
+    if (!splittable(blk)) {
+      insertBreak()
+      return
+    }
+    const parent = blk.parentElement as HTMLElement
+    const own = blk === host
+    if (own) {
+      snapKids(parent)
+      remember({
+        kind: "multi",
+        entries: [
+          { kind: "children", lists: [{ el: parent, nodes: kidsOf(parent) }] },
+          { kind: "html", el: blk, html: blk.innerHTML },
+        ],
+      })
+    } else checkpoint(host)
+    lastBurst = null
+    if (!range.collapsed) range.deleteContents()
+    tail.setStart(range.startContainer, range.startOffset)
+    let depth = 0
+    for (let n: Node | null = range.startContainer; n && n !== blk; n = n.parentNode)
+      if (n.nodeType === 1) depth++
+    const rest = tail.extractContents()
+    const copy = blk.cloneNode(false) as HTMLElement
+    copy.classList.remove("derive-edited", "derive-edit-hover", "derive-block-flash")
+    if (!own) {
+      copy.removeAttribute("contenteditable")
+      copy.removeAttribute("data-derive-editable")
+    }
+    copy.append(rest)
+    dropEmptyEdge(blk, true, depth)
+    dropEmptyEdge(copy, false, depth)
+    hold(blk)
+    hold(copy)
+    // Written on its own line like its neighbours, when the source puts them so.
+    const gap = blk.previousSibling
+    const sep =
+      gap?.nodeType === 3 && !gap.nodeValue?.trim() && gap.nodeValue
+        ? document.createTextNode(gap.nodeValue)
+        : null
+    blk.after(...(sep ? [sep, copy] : [copy]))
+    madeBy.set(copy, sep)
+    if (own) {
+      editTargets.push({
+        el: copy,
+        origHtml: "",
+        origValues: [],
+        origStarts: [],
+        origConcat: "",
+        structSig: "",
+        made: true,
+      })
+      markBlocksChanged()
+    }
+    const first = document.createTreeWalker(copy, NodeFilter.SHOW_TEXT).nextNode()
+    caretInto(own ? copy : host, first && !readonlyAt(first.parentElement) ? first : copy, 0)
+    revealBlock(copy)
+    scheduleDirty()
+  }
+  /** Backspace at the start of a paragraph Enter made, or Delete at the end of the one
+   *  before it: the two are one paragraph again. False when this key is not that. */
+  const joinSplit = (forward: boolean): boolean => {
+    const host = editingCaret()
+    const sel = window.getSelection()
+    if (!host || !sel?.rangeCount || !sel.isCollapsed) return false
+    const range = sel.getRangeAt(0)
+    const blk = rangeStartEl(range)?.closest(SPLITS)
+    if (!(blk instanceof HTMLElement) || !host.contains(blk)) return false
+    const sibling = (el: Element) => {
+      let n = forward ? el.nextSibling : el.previousSibling
+      while (n?.nodeType === 3 && !n.nodeValue?.trim())
+        n = forward ? n.nextSibling : n.previousSibling
+      return n instanceof HTMLElement ? n : null
+    }
+    const other = sibling(blk)
+    const [keep, gone] = forward ? [blk, other] : [other, blk]
+    if (!keep || !gone || !madeBy.has(gone) || srcOf(keep) !== srcOf(gone)) return false
+    // Nothing but space between the caret and the seam.
+    const edge = range.cloneRange()
+    if (forward) edge.setEnd(blk, blk.childNodes.length)
+    else edge.setStart(blk, 0)
+    if (!blankRange(edge)) return false
+    const parent = keep.parentElement as HTMLElement
+    const own = host === blk
+    if (own) {
+      snapKids(parent)
+      // Undone last-first: the removed half returns before its words do.
+      remember({
+        kind: "multi",
+        entries: [
+          { kind: "html", el: keep, html: keep.innerHTML },
+          { kind: "html", el: gone, html: gone.innerHTML },
+          { kind: "children", lists: [{ el: parent, nodes: kidsOf(parent) }] },
+        ],
+      })
+    } else checkpoint(host)
+    lastBurst = null
+    dropHolds(keep)
+    dropHolds(gone)
+    const offset = keep.childNodes.length
+    keep.append(...Array.from(gone.childNodes))
+    const sep = madeBy.get(gone)
+    if (sep && sep.nextSibling === gone) sep.remove()
+    gone.remove()
+    hold(keep)
+    const target = own ? keep : host
+    if (!target.hasAttribute("data-derive-editable")) return true
+    caretInto(target, keep, offset)
+    if (own) markBlocksChanged()
+    scheduleDirty()
+    return true
+  }
 
   const isHiSur = (ch: string | undefined): boolean =>
     !!ch && ch.charCodeAt(0) >= 0xd800 && ch.charCodeAt(0) <= 0xdbff
@@ -5514,7 +5946,7 @@ interface ElReg {
       new_text: newText,
     }
   }
-  /** The wire shape of one collected text edit (Markdown and LaTeX). */
+  /** The wire shape of one collected text edit (an unstamped page: LaTeX). */
   interface WireEdit {
     quote: {
       exact: string
@@ -5549,12 +5981,28 @@ interface ElReg {
     },
     new_text: qe.new_text,
   })
-  // The whole-block span: both sides joined with the same "\n" separators the
-  // snapshot uses, so offsets line up with editBase.text; the replacement's seam
-  // separators collapse to single spaces (typed content never contains newlines —
-  // Enter is blocked and paste is flattened).
-  const blockEdit = (t: EditTarget, curVals: string[]): WireEdit | null => {
-    const qe = quoteEditFor(t.origValues.join("\n"), curVals.join("\n"), t.origStarts[0] ?? 0)
+  // The whole-block span. The original is the snapshot's own slice over the block, so
+  // "\n" sits exactly where the server projection has whitespace (a block seam) and
+  // offsets line up with editBase.text; the current nodes are joined by the same rule.
+  // An inline seam (a <b> inside a word, a link before its period) joins with nothing:
+  // a separator there made the quote unmatchable. The replacement's seam separators
+  // collapse to single spaces (typed content never contains newlines).
+  const blockEdit = (t: EditTarget, curNodes: Text[]): WireEdit | null => {
+    const base = editBase
+    const start = t.origStarts[0]
+    const last = t.origValues.length - 1
+    if (!base || start === undefined || last < 0) return null
+    const orig = base.text.slice(
+      start,
+      (t.origStarts[last] ?? start) + (t.origValues[last] ?? "").length,
+    )
+    let cur = ""
+    curNodes.forEach((n, i) => {
+      const prev = curNodes[i - 1]
+      if (prev && blockSeam(prev, n)) cur += "\n"
+      cur += n.nodeValue ?? ""
+    })
+    const qe = quoteEditFor(orig, cur, start)
     return qe ? wireEdit({ ...qe, new_text: qe.new_text.replace(/\s*\n\s*/g, " ") }) : null
   }
   /* `uncaptured` counts blocks the user changed that produced NO edit — the host
@@ -5595,7 +6043,7 @@ interface ElReg {
       }
       // Structure changed, or a per-node edit was unrepresentable: one whole-block
       // span. The server refuses it if the span would cross markup in the source.
-      const be = blockEdit(t, curVals)
+      const be = blockEdit(t, curNodes)
       if (be) edits.push(be)
       else uncaptured++
     }
@@ -5784,6 +6232,7 @@ interface ElReg {
           : null,
       )
     else if (d.type === "scroll-by") window.scrollBy(0, d.dy || 0)
+    else if (d.type === "scroll-to") scrollBack(Number(d.y) || 0)
     else if (d.type === "review-mode") setReviewMode(!!d.on)
     else if (d.type === "focus-review") {
       const target = typeof d.id === "string" ? document.getElementById(d.id) : null

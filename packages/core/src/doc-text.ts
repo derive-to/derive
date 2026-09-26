@@ -13,7 +13,13 @@ import { decodeEntities, pageText } from "./anchor"
 import { isHtmlLike, isLatexLike } from "./content-types"
 import { latexHeadings } from "./latex-render"
 
-export { DECK_CONTENT_TYPE, isAuthoredFactType, isHtmlLike, isLatexLike } from "./content-types"
+export {
+  DECK_CONTENT_TYPE,
+  isAuthoredFactType,
+  isHtmlLike,
+  isLatexLike,
+  isMarkdownLike,
+} from "./content-types"
 
 const safeLinkHref = (raw: string | null): string | null => {
   if (!raw) return null

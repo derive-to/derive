@@ -456,6 +456,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
     active: boolean
     canEdit: boolean
     dirty: number
+    saving: boolean
     requestExit: () => void
     save: () => void
     start: (entry?: { select?: number[] | null }) => void
@@ -463,6 +464,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
     active: false,
     canEdit: false,
     dirty: 0,
+    saving: false,
     requestExit: () => {},
     save: () => {},
     start: () => {},
@@ -472,10 +474,15 @@ export function Artifact({ template = false }: { template?: boolean }) {
   const [blockAttention, setBlockAttention] = useState(0)
   const pinnedRef = useRef(version)
   pinnedRef.current = version
+  // Versions this page's own inline saves published. Their live event is no news
+  // (the save already said "Saved vN"), and it can land while the save is still in
+  // flight or after the session resumed, where it would read as someone else's.
+  const ownSaves = useRef(new Set<number>())
   const onVersionLive = useCallback(
     (n?: number) => {
       load()
       if (pinnedRef.current !== undefined) return
+      if (inlineEditRef.current.saving || (n !== undefined && ownSaves.current.has(n))) return
       const v = n !== undefined ? `v${n}` : "A new version"
       if (inlineEditRef.current.active) {
         toast.warning(`${v} was just published. Saving will re-check your edits against it.`, {
@@ -624,6 +631,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
     anchorConf,
     anchorTops,
     subscribeGeom,
+    frameScrollY,
     runtimeError,
     runtimeReady,
   } = useArtifactFrame({
@@ -861,17 +869,23 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // slide with no session. Pick the session back up where it was: armed by the save,
   // run on the first load of that version. The deck goes back to its slide first;
   // messages to the frame arrive in order, so edit mode opens on that slide.
-  const resume = useRef<{ version: number; slide: number | null; select: number[] | null } | null>(
-    null,
-  )
+  // The reader's place comes back for every format: the scroll position, and where
+  // element edits reopen the session, the deck's slide and the selected block.
+  const resume = useRef<{
+    version: number
+    scrollY: number
+    session: { slide: number | null; select: number[] | null } | null
+  } | null>(null)
   const [resumeLoad, setResumeLoad] = useState(0)
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs once per resumed load.
   useEffect(() => {
     const r = resume.current
     if (!r || !resumeLoad) return
     resume.current = null
-    if (r.slide !== null) deckCmd("goto", r.slide)
-    inlineEditRef.current.start({ select: r.select })
+    if (r.scrollY > 0) post({ type: "scroll-to", y: r.scrollY })
+    if (!r.session) return
+    if (r.session.slide !== null) deckCmd("goto", r.session.slide)
+    inlineEditRef.current.start({ select: r.session.select })
   }, [resumeLoad])
 
   // Inline (click-to-type) editing: the frame owns the caret and the diffs, this
@@ -899,8 +913,15 @@ export function Artifact({ template = false }: { template?: boolean }) {
     onOpenSourceEditor: () => startEdit(),
     reloadFrame,
     onSaved: ({ version: saved, resume: select }) => {
-      if (!inlineEdit.allowElementEdits) return
-      resume.current = { version: saved, slide: deck?.i ?? null, select }
+      ownSaves.current.add(saved)
+      // Exact-source saves pick the session back up: element edits, and Markdown.
+      const resumes =
+        inlineEdit.allowElementEdits || !!art?.current_content_type?.startsWith("text/markdown")
+      resume.current = {
+        version: saved,
+        scrollY: frameScrollY(),
+        session: resumes ? { slide: deck?.i ?? null, select } : null,
+      }
       setResumeLoad(0)
       // A load that never comes (the save was superseded) must not resume later.
       window.setTimeout(() => {
@@ -925,6 +946,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
     active: inlineEdit.active,
     canEdit: inlineEdit.canEdit,
     dirty: inlineEdit.dirty,
+    saving: inlineEdit.saving,
     requestExit: inlineEdit.requestExit,
     save: inlineEdit.save,
     start: inlineEdit.start,

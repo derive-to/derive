@@ -16,7 +16,7 @@
  * kept element's bytes are its stored bytes.
  */
 
-import { DECK_CONTENT_TYPE, HTML_CONTENT_TYPE } from "./content-types"
+import { DECK_CONTENT_TYPE, HTML_CONTENT_TYPE, isMarkdownLike } from "./content-types"
 import {
   type CopyIdentities,
   copyIdentitiesOf,
@@ -66,10 +66,11 @@ export class SourceConflictError extends EditError {
   }
 }
 
-/** The stored types the rendered editor saves as ops (and is served stamped for). */
+/** The stored types the rendered editor saves as ops (and is served stamped for).
+ *  Markdown names rendered elements by markdown-source.ts's ids instead of start tags. */
 export const isSourceEditable = (contentType: string): boolean => {
   const base = contentType.split(";")[0]?.trim()
-  return base === HTML_CONTENT_TYPE || base === DECK_CONTENT_TYPE
+  return base === HTML_CONTENT_TYPE || base === DECK_CONTENT_TYPE || isMarkdownLike(contentType)
 }
 
 const MAX_SOURCE_OPS = 500
@@ -144,8 +145,12 @@ const escapeText = (text: string): string =>
 /** The sha256 of stored source text, as the editor's page and source map report it. */
 export const sourceSha = (html: string): Promise<string> => sha256Hex(encode(html))
 
+/** The hash an op names a source slice by. */
+export const hashSource = async (text: string): Promise<SourceHash> =>
+  (await sha256Hex(encode(text))).slice(0, 16)
+
 const hashOf = async (html: string, el: SourceNode | undefined): Promise<SourceHash> =>
-  usable(el) ? (await sha256Hex(encode(html.slice(el.tag.start, el.end)))).slice(0, 16) : ""
+  usable(el) ? hashSource(html.slice(el.tag.start, el.end)) : ""
 
 /** The hash for every source id (array index = N). "" marks an element no op may name
  *  or keep: not stamped, or markup whose end the source does not state. */
@@ -193,7 +198,7 @@ const isId = (v: unknown): v is number => typeof v === "number" && Number.isSafe
 const isHash = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{16}$/.test(v)
 
 /** Shape-check an untrusted `ops` payload. Every failure is a 400 naming the position. */
-const parseOps = (raw: unknown): SourceOp[] => {
+export const parseSourceOps = (raw: unknown): SourceOp[] => {
   if (!Array.isArray(raw) || raw.length === 0)
     throw new EditError("`ops` must be a non-empty JSON array of ops.")
   if (raw.length > MAX_SOURCE_OPS)
@@ -279,6 +284,35 @@ interface Segment {
   text: string
 }
 
+/** The ids a save names (as targets or keeps) whose source no longer hashes as the
+ *  editor was served it, in order. One id sent with two different hashes is a 400. */
+export const staleSourceIds = async (
+  ops: SourceOp[],
+  hash: (n: number) => Promise<SourceHash>,
+  place: (n: number) => string,
+): Promise<number[]> => {
+  const expected = new Map<number, SourceHash>()
+  const expect = (n: number, hash: SourceHash): void => {
+    if ((expected.get(n) ?? hash) !== hash)
+      throw new EditError(`${place(n)} is sent with two different hashes.`)
+    expected.set(n, hash)
+  }
+  const walk = (list: SourceToken[]): void => {
+    for (const t of list) {
+      if ("keep" in t) expect(t.keep, t.hash)
+      if ("children" in t && t.children) walk(t.children)
+    }
+  }
+  for (const op of ops) {
+    expect(op.src, op.hash)
+    if (op.op === "content") walk(op.children)
+  }
+  const stale = await Promise.all(
+    [...expected].map(async ([n, want]) => ((await hash(n)) === want ? -1 : n)),
+  )
+  return stale.filter((n) => n >= 0).sort((a, b) => a - b)
+}
+
 export interface AppliedSourceOps {
   html: string
   /** Each content op's inner source before and after, for the review summary. */
@@ -293,7 +327,7 @@ export interface AppliedSourceOps {
  * names is byte-identical at the same source id.
  */
 export const applySourceOps = async (html: string, raw: unknown): Promise<AppliedSourceOps> => {
-  const ops = parseOps(raw)
+  const ops = parseSourceOps(raw)
   const els = indexElements(html)
   let slides: { position: number; start: number; end: number }[] | null = null
   const place = (n: number): string => {
@@ -312,29 +346,11 @@ export const applySourceOps = async (html: string, raw: unknown): Promise<Applie
   }
 
   // 1. Every element the save names must still be the bytes the editor was served.
-  const expected = new Map<number, SourceHash>()
-  const expect = (n: number, hash: SourceHash): void => {
-    if ((expected.get(n) ?? hash) !== hash) fail(`${place(n)} is sent with two different hashes.`)
-    expected.set(n, hash)
-  }
-  const walk = (list: SourceToken[]): void => {
-    for (const t of list) {
-      if ("keep" in t) expect(t.keep, t.hash)
-      if ("children" in t && t.children) walk(t.children)
-    }
-  }
-  for (const op of ops) {
-    expect(op.src, op.hash)
-    if (op.op === "content") walk(op.children)
-  }
-  const actual = await Promise.all(
-    [...expected].map(async ([n, h]) => [n, h, await hashOf(html, els[n])] as const),
-  )
-  const conflicts = actual.filter(([, want, got]) => want !== got).map(([n]) => n)
+  const conflicts = await staleSourceIds(ops, (n) => hashOf(html, els[n]), place)
   if (conflicts.length)
     throw new SourceConflictError(
       `${conflicts.length === 1 ? "An element" : `${conflicts.length} elements`} changed since this page was loaded: ${conflicts.map(place).join(", ")}. Reload to see the latest version, then redo ${conflicts.length === 1 ? "that edit" : "those edits"}.`,
-      conflicts.sort((a, b) => a - b),
+      conflicts,
     )
   const at = (n: number): SourceNode => els[n] as SourceNode // hash-verified above, so usable
 
