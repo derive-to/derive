@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { renderMarkdown } from "@derive/core"
 import { expect, type Frame, type Page } from "@playwright/test"
 import { publishArtifact } from "../helpers"
 import {
@@ -8,6 +9,8 @@ import {
   checkArrange,
   checkArtifacts,
   checkEditDiff,
+  checkMarkdownDiff,
+  checkMarkdownHtml,
   checkWysiwyg,
   type Failure,
 } from "./oracles"
@@ -21,6 +24,24 @@ export const FIXTURE = readFileSync(
   join(here, "../../../../packages/core/test/fixtures/decks/structural-deck-44.html"),
   "utf8",
 )
+/** The document modes' fixtures: one synthetic article, as an HTML page and as the
+ *  equivalent Markdown (docs/). */
+export const DOC_FIXTURES = {
+  "html-doc": {
+    name: "article.html",
+    mime: "text/html",
+    src: readFileSync(join(here, "docs/article.html"), "utf8"),
+  },
+  markdown: {
+    name: "article.md",
+    mime: "text/markdown",
+    src: readFileSync(join(here, "docs/article.md"), "utf8"),
+  },
+} as const
+export type DocMode = keyof typeof DOC_FIXTURES
+export const isDocMode = (mode: string | undefined): mode is DocMode =>
+  mode === "html-doc" || mode === "markdown"
+
 /** Session results live under the fuzz project's outputDir (FUZZ_OUT in the config). */
 export const resultsDir = (outDir: string) => join(outDir, "results")
 
@@ -40,6 +61,9 @@ export type ActionType =
   | "moveSibling"
   | "resize"
   | "switchSlide"
+  | "listItem"
+  | "tableCell"
+  | "undo"
   | "arrange:up"
   | "arrange:down"
   | "arrange:drag"
@@ -63,6 +87,30 @@ const EDIT_WEIGHTS = {
 } as const
 /** One slide, many changes: the same gestures plus resizing a block's box. */
 const ONE_SLIDE_WEIGHTS = { ...EDIT_WEIGHTS, resize: 5 } as const
+/** One section of a document: the text gestures, plus edits aimed at list items and
+ *  table cells and ⌘Z/⌘⇧Z. No author nodes to move or resize on an article; repeated
+ *  list items and table rows move on an HTML page (the block pill), and Markdown has
+ *  no moves at all. */
+const DOC_TEXT_WEIGHTS = {
+  type: 16,
+  dblclick: 8,
+  tripleclick: 5,
+  shiftClick: 10,
+  shiftArrows: 10,
+  backspaceRun: 8,
+  deleteRun: 6,
+  enter: 6,
+  format: 7,
+  selectAll: 5,
+  nonText: 4,
+  listItem: 7,
+  tableCell: 7,
+  undo: 3,
+} as const
+const DOC_WEIGHTS: Record<DocMode, { [K in ActionType]?: number }> = {
+  "html-doc": { ...DOC_TEXT_WEIGHTS, moveSibling: 6 },
+  markdown: DOC_TEXT_WEIGHTS,
+}
 
 export interface ActionLog {
   n: number
@@ -96,7 +144,7 @@ export interface SessionOptions {
   /** "one-slide" (default): 8–15 changes on one slide, save, then 5–8 more on the same
    *  slide and a second save (stale ids after a save show up there). "classic": 5–10
    *  changes over one to three slides and one save. */
-  mode?: "one-slide" | "classic"
+  mode?: "one-slide" | "classic" | DocMode
 }
 
 export interface FuzzPages {
@@ -135,6 +183,17 @@ export async function openDeck(page: Page, shortId: string): Promise<void> {
   await expect(page.getByTestId("deck-position")).toBeVisible()
 }
 
+/** Open an article or Markdown doc and wait for its rendered frame. */
+export async function openDoc(page: Page, shortId: string): Promise<void> {
+  await page.goto(`/artifacts/${shortId}`)
+  await expect(page.getByTestId("artifact-inline-edit")).toBeVisible()
+  await expect
+    .poll(async () => probe<number>(await artifactFrame(page), "sectionCount").catch(() => 0), {
+      timeout: 15_000,
+    })
+    .toBeGreaterThan(1)
+}
+
 export async function contentOf(page: Page, shortId: string): Promise<string> {
   const res = await page.request.get(`/v1/artifacts/${shortId}/content`)
   expect(res.ok(), `content fetch failed: ${res.status()}`).toBeTruthy()
@@ -161,6 +220,8 @@ type Ctx = {
   slide: number
   phase: "arrange" | "edit"
   stats: SessionResult["stats"]
+  /** Set on a document session: which fixture, and so which oracles and gestures. */
+  doc: DocMode | null
 }
 
 const inside = (r: Rect, x: number, y: number, pad = 0) =>
@@ -384,7 +445,13 @@ async function editAction(ctx: Ctx, type: ActionType, n: number) {
   const entry: ActionLog = { n, phase: "edit", type, slide: ctx.slide + 1, detail }
   ctx.log.push(entry)
   const k = page.keyboard
-  if (type !== "nonText" && type !== "move" && type !== "moveSibling" && !t.text.length) {
+  if (
+    type !== "nonText" &&
+    type !== "move" &&
+    type !== "moveSibling" &&
+    type !== "undo" &&
+    !t.text.length
+  ) {
     detail.skipped = "no visible text on this slide"
     return
   }
@@ -544,7 +611,60 @@ async function editAction(ctx: Ctx, type: ActionType, n: number) {
       const target = rng.pick(repeats)
       detail.block = target.label
       await clickAt(ctx, t.view, target.grab as { x: number; y: number })
+      // In an article the space beside a list item or a row is still its line, so the
+      // click lands a caret; Escape then steps out of the words to their block.
+      if (ctx.doc) {
+        await settle(page, 150)
+        for (let i = 0; i < 2 && !(await probe<boolean>(await artifactFrame(page), "pill")); i++) {
+          await k.press("Escape")
+          detail.escapes = i + 1
+          await settle(page, 150)
+        }
+      }
       await moveSelected(ctx, t.view, detail)
+      return
+    }
+    case "listItem":
+    case "tableCell": {
+      // Words in a list item or a table cell: type into them, retype a word, or delete.
+      const want = type === "listItem" ? ["li"] : ["td", "th"]
+      const pool = t.text.filter((x) => want.includes(x.block))
+      if (!pool.length) {
+        detail.skipped = `no ${type === "listItem" ? "list item" : "table cell"} in this section`
+        return
+      }
+      const target = rng.pick(pool)
+      const pt = textPoint(rng, target.rect)
+      const how = rng.weighted({ type: 4, retype: 3, backspace: 2, end: 2 })
+      Object.assign(detail, { at: target.label, how })
+      await withLeakCheck(ctx, pt, type, async () => {
+        if (how === "retype") {
+          await clickAt(ctx, t.view, pt, { count: 2 })
+          detail.text = typedText(rng)
+          await k.type(detail.text as string, { delay: 5 })
+          return
+        }
+        await placeCaret(ctx, t.view, pt, detail)
+        if (how === "end") {
+          await k.press("End")
+          detail.text = typedText(rng)
+          await k.type(detail.text as string, { delay: 5 })
+        } else if (how === "type") {
+          detail.text = typedText(rng)
+          await k.type(detail.text as string, { delay: 5 })
+        } else {
+          detail.count = rng.int(1, 8)
+          for (let i = 0; i < (detail.count as number); i++) await k.press("Backspace")
+        }
+      })
+      return
+    }
+    case "undo": {
+      const times = rng.int(1, 3)
+      const redo = rng.chance(0.4)
+      Object.assign(detail, { times, redo })
+      for (let i = 0; i < times; i++) await k.press("ControlOrMeta+z")
+      if (redo) await k.press("ControlOrMeta+Shift+z")
       return
     }
     case "resize": {
@@ -834,7 +954,11 @@ async function editPhase(
     if (!slides.includes(s)) slides.push(s)
   }
   let nActions = round?.actions ?? rng.int(5, 10)
-  const weights = round ? ONE_SLIDE_WEIGHTS : EDIT_WEIGHTS
+  const weights: Record<string, number> = ctx.doc
+    ? DOC_WEIGHTS[ctx.doc]
+    : round
+      ? ONE_SLIDE_WEIGHTS
+      : EDIT_WEIGHTS
   const plan = Array.from({ length: nActions }, () => rng.weighted(weights) as ActionType)
   const switches = new Set<number>()
   while (switches.size < slideSpan - 1) switches.add(rng.int(1, nActions - 1))
@@ -844,9 +968,11 @@ async function editPhase(
   await probe(frame, "show", ctx.slide)
   // After a save the session picks back up by itself, on the same slide.
   if (!(await page.getByTestId("inline-edit-bar").isVisible()))
-    await page.getByTestId("deck-edit").click()
+    await page.getByTestId(ctx.doc ? "artifact-inline-edit" : "deck-edit").click()
   await expect(page.getByTestId("inline-edit-bar")).toBeVisible()
   frame = await artifactFrame(page)
+  // A doc: back to the section's top once the mode's chrome has settled.
+  if (ctx.doc) await probe(frame, "show", ctx.slide)
   const token = await probe<string>(frame, "snapshot")
   let slideAt = 0
   for (let i = 0; i < nActions; i++) {
@@ -873,7 +999,7 @@ async function editPhase(
   ctx.stats.reorderedSlides = dom.filter(
     (d) => d.chunks.join("|") !== d.originalChunks.join("|"),
   ).length
-  const served = await probe<string | null>(frame, "srcSha")
+  const served = await probe<string>(frame, "reloadSig")
   const outcome = await awaitSave(
     page,
     shortId,
@@ -922,25 +1048,48 @@ async function editPhase(
     })
   // The page reloads on the saved source and the session picks back up there.
   await expect
-    .poll(
-      async () => probe<string | null>(await artifactFrame(page), "srcSha").catch(() => served),
-      {
-        timeout: 20_000,
-      },
-    )
+    .poll(async () => probe<string>(await artifactFrame(page), "reloadSig").catch(() => served), {
+      timeout: 20_000,
+    })
     .not.toBe(served)
     .catch(() => {})
-  await expect(page.getByTestId("inline-edit-bar"))
-    .toBeVisible({ timeout: 15_000 })
-    .catch(() => {
-      ctx.failures.push({
-        phase: "edit",
-        oracle: "save",
-        signature: "the session did not pick back up after a successful save",
-        message: "inline-edit-bar not visible 15s after the save response",
+  // A Markdown save ends the session (index.tsx resumes only where element edits are
+  // allowed); the next round opens it again, as a person would.
+  if (ctx.doc !== "markdown")
+    await expect(page.getByTestId("inline-edit-bar"))
+      .toBeVisible({ timeout: 15_000 })
+      .catch(() => {
+        ctx.failures.push({
+          phase: "edit",
+          oracle: "save",
+          signature: "the session did not pick back up after a successful save",
+          message: "inline-edit-bar not visible 15s after the save response",
+        })
       })
-    })
   const after = await contentOf(page, shortId)
+  if (ctx.doc === "markdown") {
+    // What a reader gets: the saved Markdown through the served renderer.
+    const html = await renderMarkdown(after, null)
+    const rendered = await renderTexts(fp.render, html)
+    for (const f of [
+      ...checkWysiwyg(
+        dom.map((d) => d.text),
+        rendered,
+      ),
+      ...checkMarkdownDiff(
+        before,
+        after,
+        dom[0] as DomSlideCapture,
+        await renderMarkdown(before, null),
+      ),
+      ...checkMarkdownHtml(before, after),
+      ...checkArtifacts(before, after),
+    ])
+      ctx.failures.push({ ...f, phase: label })
+    save.sources(label, before, after)
+    save.dom(dom)
+    return ctx.failures.length === failuresBefore
+  }
   const rendered = await renderTexts(fp.render, after)
   for (const f of [
     ...checkWysiwyg(
@@ -950,7 +1099,7 @@ async function editPhase(
     ...checkEditDiff(before, after, dom),
     ...checkArtifacts(before, after),
   ])
-    ctx.failures.push({ ...f, phase: "edit" })
+    ctx.failures.push({ ...f, phase: ctx.doc ? label : "edit" })
   save.sources(label, before, after)
   save.dom(dom)
   return ctx.failures.length === failuresBefore
@@ -981,6 +1130,7 @@ export async function runSession(
     slide: 0,
     phase: "edit",
     stats: { touchedSlides: 0, reorderedSlides: 0, edits: 0 },
+    doc: isDocMode(opts.mode) ? opts.mode : null,
   }
   const saves: Record<string, unknown> = {}
   const sources: Record<string, { before: string; after: string }> = {}
@@ -1004,7 +1154,11 @@ export async function runSession(
   ) as SaveRecorder
   const oneSlide = (opts.mode ?? "one-slide") === "one-slide"
   const arranged =
-    opts.arrange === "on" ? true : opts.arrange === "off" || oneSlide ? false : rng.chance(0.3)
+    opts.arrange === "on"
+      ? true
+      : opts.arrange === "off" || oneSlide || ctx.doc
+        ? false
+        : rng.chance(0.3)
   let shortId = ""
   // What else happened to the page during the session, to tell a product reload
   // (the frame swapped under the editor) from environment noise (the dev servers
@@ -1024,35 +1178,65 @@ export async function runSession(
   page.on("framenavigated", onNavArmed)
   page.on("console", onConsole)
   try {
-    shortId = await publishArtifact(page, "deck.html", FIXTURE, "text/html")
-    await openDeck(page, shortId)
-    await expect(page.getByTestId("deck-position")).toBeVisible()
-    armed = true
-    if (arranged) await arrangePhase(ctx, fp, shortId, recorder)
-    if (ctx.failures.some((f) => f.oracle === "arrange-model" || f.oracle === "save")) {
-      // The arrangement already failed; there is nothing sound to edit on top of.
-    } else if (!oneSlide) await editPhase(ctx, fp, shortId, opts, recorder)
-    else {
+    if (ctx.doc) {
+      // A document: one section, 8–15 changes and a save, then 5 more and a save.
+      const fx = DOC_FIXTURES[ctx.doc]
+      shortId = await publishArtifact(page, fx.name, fx.src, fx.mime)
+      await openDoc(page, shortId)
+      armed = true
       const frame = await artifactFrame(page)
-      const slide = rng.int(0, (await probe<number>(frame, "slideCount")) - 1)
-      const first = await probe<string | null>(frame, "srcSha")
-      const round = { slide, actions: rng.int(8, 15), label: "edit" }
-      // Round two starts on the page the first save reloaded (fresh source ids).
-      if (await editPhase(ctx, fp, shortId, opts, recorder, round)) {
+      const section = rng.int(0, (await probe<number>(frame, "sectionCount")) - 1)
+      const first = await probe<string>(frame, "reloadSig")
+      if (
+        await editPhase(ctx, fp, shortId, opts, recorder, {
+          slide: section,
+          actions: rng.int(8, 15),
+          label: "edit",
+        })
+      ) {
         await expect
           .poll(
-            async () =>
-              probe<string | null>(await artifactFrame(page), "srcSha").catch(() => first),
-            {
-              timeout: 20_000,
-            },
+            async () => probe<string>(await artifactFrame(page), "reloadSig").catch(() => first),
+            { timeout: 20_000 },
           )
           .not.toBe(first)
         await editPhase(ctx, fp, shortId, opts, recorder, {
-          slide,
-          actions: rng.int(5, 8),
+          slide: section,
+          actions: 5,
           label: "edit2",
         })
+      }
+    } else {
+      shortId = await publishArtifact(page, "deck.html", FIXTURE, "text/html")
+      await openDeck(page, shortId)
+      await expect(page.getByTestId("deck-position")).toBeVisible()
+      armed = true
+      if (arranged) await arrangePhase(ctx, fp, shortId, recorder)
+      if (ctx.failures.some((f) => f.oracle === "arrange-model" || f.oracle === "save")) {
+        // The arrangement already failed; there is nothing sound to edit on top of.
+      } else if (!oneSlide) await editPhase(ctx, fp, shortId, opts, recorder)
+      else {
+        const frame = await artifactFrame(page)
+        const slide = rng.int(0, (await probe<number>(frame, "slideCount")) - 1)
+        const first = await probe<string | null>(frame, "srcSha")
+        const round = { slide, actions: rng.int(8, 15), label: "edit" }
+        // Round two starts on the page the first save reloaded (fresh source ids).
+        if (await editPhase(ctx, fp, shortId, opts, recorder, round)) {
+          await expect
+            .poll(
+              async () =>
+                probe<string | null>(await artifactFrame(page), "srcSha").catch(() => first),
+              {
+                timeout: 20_000,
+              },
+            )
+            .not.toBe(first)
+          await editPhase(ctx, fp, shortId, opts, recorder, {
+            slide,
+            actions: rng.int(5, 8),
+            label: "edit2",
+          })
+        }
       }
     }
   } catch (err) {

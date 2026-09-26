@@ -1,4 +1,11 @@
-import { deckOf, nodeAtPath, type SourceChunk, type SourceSlide } from "./html-tree"
+import {
+  deckOf,
+  type HNode,
+  nodeAtPath,
+  parseHtml,
+  type SourceChunk,
+  type SourceSlide,
+} from "./html-tree"
 import type { DomSlideCapture } from "./probe"
 
 /**
@@ -12,6 +19,10 @@ import type { DomSlideCapture } from "./probe"
  *  artifacts     no editor-only markup (contenteditable, data-derive-editable, …)
  *                entered the source
  *  save          the save itself was refused, partial, or never sent
+ *  markdown      (Markdown docs) the same questions asked of Markdown source: bytes
+ *                outside the edited blocks — and, in a list or table, outside the
+ *                edited item's or row's line — are identical; no block appears or
+ *                disappears; typed text never lands as live HTML
  *  leak          (checked live during the session) typing landed in a block the
  *                person did not click
  */
@@ -450,4 +461,211 @@ export function checkArrange(
       message: `region ids appear twice after the save: ${[...new Set(fresh)].join(", ")}`,
     })
   return out
+}
+
+// ---------------------------------------------------------------------------------
+// Markdown
+
+/** A top-level Markdown block: a run of non-blank lines (a fenced code block may hold
+ *  blank lines). Deliberately naive and independent of the renderer's parser — the doc
+ *  fixture keeps one blank line between blocks, so its blocks map 1:1 onto the
+ *  rendered page's top-level elements (the sanity spec checks that). */
+export function mdBlocks(src: string): { start: number; end: number }[] {
+  const out: { start: number; end: number }[] = []
+  let at = 0
+  let open: { start: number; end: number } | null = null
+  let fence: string | null = null
+  while (at < src.length) {
+    const nl = src.indexOf("\n", at)
+    const end = nl < 0 ? src.length : nl
+    const line = src.slice(at, end)
+    const f = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1]
+    if (fence) {
+      if (f && f[0] === fence[0] && f.length >= fence.length) fence = null
+      if (open) open.end = end
+    } else if (!line.trim()) open = null
+    else {
+      if (!open) {
+        open = { start: at, end }
+        out.push(open)
+      } else open.end = end
+      if (f) fence = f
+    }
+    at = end + 1
+  }
+  return out
+}
+
+/** Lines of a block, with their offsets. */
+const linesOf = (src: string, b: { start: number; end: number }) => {
+  const out: { start: number; end: number }[] = []
+  let at = b.start
+  while (at <= b.end) {
+    const nl = src.indexOf("\n", at)
+    const end = nl < 0 || nl > b.end ? b.end : nl
+    out.push({ start: at, end })
+    at = end + 1
+  }
+  return out
+}
+
+/**
+ * Which source lines of a list or table block an edited element may touch. A list
+ * item or table row is one line in the doc fixture, so the i-th <li> (depth first) is
+ * the i-th line of a list, and the i-th <tr> is the i-th line of a table skipping its
+ * delimiter row. `null` means the whole block (the edit reached the list or table
+ * element itself, or the block is prose).
+ */
+function allowedLines(chunk: HNode, paths: number[][]): Set<number> | null {
+  const kind = chunk.tag === "ul" || chunk.tag === "ol" ? "li" : chunk.tag === "table" ? "tr" : null
+  if (!kind) return null
+  const units: HNode[] = []
+  const walk = (n: HNode) => {
+    for (const c of n.children) {
+      if (c.tag === kind) units.push(c)
+      walk(c)
+    }
+  }
+  walk(chunk)
+  const lines = new Set<number>()
+  for (const p of paths) {
+    let n = nodeAtPath(chunk, p)
+    while (n && n !== chunk && n.tag !== kind) n = n.parent
+    if (!n || n === chunk) return null
+    const i = units.indexOf(n)
+    if (i < 0) return null
+    lines.add(kind === "tr" && i >= 1 ? i + 1 : i)
+  }
+  return lines
+}
+
+/**
+ * Minimal diff for an inline edit on a Markdown doc. `renderedBefore` is the served
+ * render of `before` (its <main> children are the page's top-level blocks), used only
+ * to find which list item or table row an edited element path names.
+ */
+export function checkMarkdownDiff(
+  before: string,
+  after: string,
+  cap: DomSlideCapture,
+  renderedBefore: string,
+): Failure[] {
+  const out: Failure[] = []
+  const bb = mdBlocks(before)
+  const ba = mdBlocks(after)
+  if (cap.originalChunks.length !== bb.length) {
+    out.push({
+      oracle: "harness",
+      signature: "markdown blocks do not map 1:1 onto the rendered page",
+      message: `source has ${bb.length} blocks, the page showed ${cap.originalChunks.length}`,
+    })
+    return out
+  }
+  if (cap.chunks.join("|") !== cap.originalChunks.join("|"))
+    out.push({
+      oracle: "minimal-diff",
+      signature: "the edited page's blocks were added, removed or reordered",
+      message: `page shows [${cap.chunks.join(", ")}], it loaded [${cap.originalChunks.join(", ")}]`,
+    })
+  if (ba.length !== bb.length) {
+    const d = diffWindow(before, after, 80)
+    out.push({
+      oracle: "minimal-diff",
+      signature:
+        ba.length > bb.length
+          ? "an edit split a Markdown block (new block in the source)"
+          : "an edit merged or removed a Markdown block",
+      message: `source had ${bb.length} blocks, now ${ba.length}`,
+      excerpt: `before: ${d.a}\nafter : ${d.b}`,
+    })
+    return out
+  }
+  const gaps = (src: string, bs: { start: number; end: number }[]) => [
+    src.slice(0, bs[0]?.start ?? 0),
+    ...bs.map((b, i) => src.slice(b.end, bs[i + 1]?.start ?? src.length)),
+  ]
+  if (gaps(before, bb).join("\u0000") !== gaps(after, ba).join("\u0000"))
+    out.push(
+      bytesDiff(
+        "blank lines between Markdown blocks changed",
+        gaps(before, bb).join("¦"),
+        gaps(after, ba).join("¦"),
+        "document",
+      ),
+    )
+  const main = (() => {
+    const find = (n: HNode): HNode | null => {
+      for (const c of n.children) {
+        if (c.tag === "main") return c
+        const hit = find(c)
+        if (hit) return hit
+      }
+      return null
+    }
+    return find(parseHtml(renderedBefore))
+  })()
+  bb.forEach((b, i) => {
+    const a = ba[i] as { start: number; end: number }
+    const bytesB = before.slice(b.start, b.end)
+    const bytesA = after.slice(a.start, a.end)
+    if (bytesB === bytesA) return
+    const key = cap.originalChunks[i] as string
+    const paths = cap.changed[key]
+    const where = `block ${i + 1} (${key})`
+    if (!paths) {
+      out.push(bytesDiff("untouched Markdown block changed", bytesB, bytesA, where))
+      return
+    }
+    const chunk = main?.children[i]
+    const lines = chunk ? allowedLines(chunk, paths) : null
+    if (!lines) return
+    const lb = linesOf(before, b)
+    const la = linesOf(after, a)
+    if (lb.length !== la.length) {
+      out.push(
+        bytesDiff("an edit added or removed a line in a list or table", bytesB, bytesA, where),
+      )
+      return
+    }
+    lb.forEach((l, j) => {
+      if (lines.has(j)) return
+      const x = before.slice(l.start, l.end)
+      const y = after.slice((la[j] as { start: number }).start, (la[j] as { end: number }).end)
+      if (x !== y)
+        out.push(
+          bytesDiff(
+            chunk?.tag === "table"
+              ? "an edit reached another table row"
+              : "an edit reached another list item",
+            x,
+            y,
+            `${where} line ${j + 1}`,
+          ),
+        )
+    })
+  })
+  return out
+}
+
+/** Markdown with code (fenced or inline) blanked out, so tags shown as code don't count. */
+const proseOf = (md: string) =>
+  md.replace(/^(\s{0,3})(`{3,}|~{3,})[\s\S]*?^\s{0,3}\2[^\n]*$/gm, "").replace(/(`+)[^`]*?\1/g, "")
+const TAG = /<\/?[a-zA-Z][a-zA-Z0-9-]*(?:\s[^<>]*)?\/?>/g
+
+/** Typed words must stay words: an HTML tag that appears in a Markdown doc's prose
+ *  after an inline edit came from the editor, not the author. */
+export function checkMarkdownHtml(before: string, after: string): Failure[] {
+  const was: string[] = proseOf(before).match(TAG) ?? []
+  const now: string[] = proseOf(after).match(TAG) ?? []
+  if (now.length <= was.length) return []
+  const extra = now.filter((t) => !was.includes(t))
+  const at = after.indexOf(extra[0] ?? now[now.length - 1] ?? "")
+  return [
+    {
+      oracle: "artifacts",
+      signature: "HTML entered the Markdown source as live markup",
+      message: `${was.length} tag(s) in the prose before the save, ${now.length} after: ${extra.slice(0, 4).join(" ")}`,
+      excerpt: after.slice(Math.max(0, at - 100), at + 100),
+    },
+  ]
 }

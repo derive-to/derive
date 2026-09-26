@@ -1,11 +1,30 @@
 import { Buffer } from "node:buffer"
+import { renderMarkdown } from "@derive/core"
 import type { Page } from "@playwright/test"
 import { publishArtifact } from "../helpers"
 import { expect, FUZZ_ON, test } from "./fixtures"
 import { deckOf, outline, type SourceSlide } from "./html-tree"
-import { checkArrange, checkArtifacts, checkEditDiff, checkWysiwyg, type Failure } from "./oracles"
+import {
+  checkArrange,
+  checkArtifacts,
+  checkEditDiff,
+  checkMarkdownDiff,
+  checkMarkdownHtml,
+  checkWysiwyg,
+  type Failure,
+  mdBlocks,
+} from "./oracles"
 import type { DomSlideCapture } from "./probe"
-import { artifactFrame, contentOf, FIXTURE, openDeck, probe, renderTexts } from "./session"
+import {
+  artifactFrame,
+  contentOf,
+  DOC_FIXTURES,
+  FIXTURE,
+  openDeck,
+  openDoc,
+  probe,
+  renderTexts,
+} from "./session"
 
 /**
  * The harness checks itself before anyone trusts its numbers: a known-good edit must
@@ -208,4 +227,71 @@ test("moves: reordered blocks and slides pass only while their bytes are untouch
   expect(
     checkArrange(FIXTURE, touchedMove, model, texts, rendered).map((f) => f.signature),
   ).toEqual(["moved slide's bytes changed"])
+})
+
+test("the doc fixtures: parser, block map and text reader agree with the served pages", async ({
+  fuzz,
+}) => {
+  test.setTimeout(90_000)
+  const { page, render } = fuzz
+  for (const mode of ["html-doc", "markdown"] as const) {
+    const fx = DOC_FIXTURES[mode]
+    const shortId = await publishArtifact(page, fx.name, fx.src, fx.mime)
+    await openDoc(page, shortId)
+    const frame = await artifactFrame(page)
+    const stored = await contentOf(page, shortId)
+    expect(stored).toBe(fx.src)
+    const html = mode === "markdown" ? await renderMarkdown(stored, null) : stored
+    expect(await probe<string[]>(frame, "texts")).toEqual(await renderTexts(render, html))
+    const outlines = await probe<string[]>(frame, "outlines")
+    expect(outlines).toEqual(deckOf(html).slides.map((s) => outline(s.node)))
+    expect(await probe<number>(frame, "sectionCount")).toBe(mode === "markdown" ? 6 : 6)
+    if (mode === "markdown")
+      // One source block per rendered top-level block: the minimal-diff map.
+      expect(mdBlocks(stored).length).toBe((deckOf(html).slides[0] as SourceSlide).chunks.length)
+  }
+})
+
+test("markdown oracles: an in-place edit passes, damage outside it is caught", async () => {
+  const before = DOC_FIXTURES.markdown.src
+  const html = await renderMarkdown(before, null)
+  const main = deckOf(html).slides[0] as SourceSlide
+  const keys = main.chunks.map((c) => c.key)
+  const listAt = main.chunks.findIndex((c) => c.node.tag === "ol")
+  const cap = (changed: Record<string, number[][]>): DomSlideCapture => ({
+    region: null,
+    text: "",
+    chunks: keys,
+    originalChunks: keys,
+    changed,
+    touched: true,
+  })
+  // The second item of the ordered list was edited.
+  const edited = before.replace("Replace the rails", "Replace all rails")
+  const second = cap({ [keys[listAt] as string]: [[1]] })
+  expect(checkMarkdownDiff(before, edited, second, html)).toEqual([])
+  expect(checkMarkdownHtml(before, edited)).toEqual([])
+  // The same save also touched the first item: another list item's line.
+  const spill = edited.replace("Survey the track bed", "Survey the track")
+  expect(checkMarkdownDiff(before, spill, second, html).map((f) => f.signature)).toEqual([
+    "an edit reached another list item",
+  ])
+  // A paragraph nobody touched changed.
+  const stray = edited.replace("Each phase ends with a walk", "Each phase ends with a stroll")
+  expect(checkMarkdownDiff(before, stray, second, html).map((f) => f.signature)).toEqual([
+    "untouched Markdown block changed",
+  ])
+  // The edit split its block.
+  const split = before.replace("Replace the rails", "Replace\n\nthe rails")
+  expect(checkMarkdownDiff(before, split, second, html).map((f) => f.signature)).toEqual([
+    "an edit split a Markdown block (new block in the source)",
+  ])
+  // Typed markup stored as markup.
+  expect(
+    checkMarkdownHtml(before, before.replace("fish market", "fish <b> market")).map(
+      (f) => f.signature,
+    ),
+  ).toEqual(["HTML entered the Markdown source as live markup"])
+  // Markup inside code does not count.
+  expect(checkMarkdownHtml(before, before.replace("`Pier 9`", "`<b>Pier 9`"))).toEqual([])
 })
