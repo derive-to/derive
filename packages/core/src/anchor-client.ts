@@ -3966,6 +3966,8 @@ interface ElReg {
   /** The block a person last moved within each parent, to name the move. */
   let lastMoved = new Map<HTMLElement, HTMLElement>()
   let blockClip: { el: HTMLElement; copy: boolean } | null = null
+  /** Blocks this session copied (Duplicate, a pasted copy). */
+  const copies = new WeakSet<Element>()
   interface BlockDrag {
     el: HTMLElement
     pointerId: number
@@ -4283,17 +4285,27 @@ interface ElReg {
     if (rearrange([parent], () => reorderInPlace(order), true)) lastMoved.set(parent, el)
     paintBlocks()
   }
+  /** A copy of a block, typeable like any block: its words aren't in the entry
+   *  snapshot, but the save compares it with its original's (source-tokens). */
+  const copyOf = (el: HTMLElement): HTMLElement => {
+    const copy = el.cloneNode(true) as HTMLElement
+    copy.classList.remove("derive-edited", "derive-edit-hover", "derive-block-dragging")
+    // The block itself may be armed too: a copy is armed when it is typed in.
+    const armed = Array.from(copy.querySelectorAll("[data-derive-editable]"))
+    if (copy.hasAttribute("data-derive-editable")) armed.push(copy)
+    for (const a of armed) {
+      a.removeAttribute("contenteditable")
+      a.removeAttribute("data-derive-editable")
+      a.classList.remove("derive-edited")
+    }
+    copies.add(copy)
+    return copy
+  }
   const duplicateBlock = () => {
     const el = blockSel
     const parent = el?.parentElement
     if (!el || !parent) return
-    const copy = el.cloneNode(true) as HTMLElement
-    copy.classList.remove("derive-edited", "derive-edit-hover", "derive-block-dragging")
-    for (const armed of Array.from(copy.querySelectorAll("[data-derive-editable]"))) {
-      armed.removeAttribute("contenteditable")
-      armed.removeAttribute("data-derive-editable")
-      armed.classList.remove("derive-edited")
-    }
+    const copy = copyOf(el)
     rearrange([parent], () => el.after(copy))
     selectBlock(copy)
   }
@@ -4317,7 +4329,7 @@ interface ElReg {
     const clip = blockClip
     const parent = at?.parentElement
     if (!clip || !at || !parent || (at === clip.el && !clip.copy)) return
-    const el = clip.copy ? (clip.el.cloneNode(true) as HTMLElement) : clip.el
+    const el = clip.copy ? copyOf(clip.el) : clip.el
     const from = clip.el.parentElement
     rearrange(from && from !== parent && !clip.copy ? [parent, from] : [parent], () => at.after(el))
     blockClip = { el, copy: true }
@@ -5230,15 +5242,19 @@ interface ElReg {
       const nodes = textNodes(cand)
       if (!nodes.length) return
       const origStarts: number[] = []
+      // A copy's words are new too, but they are the person's: its save needs no
+      // offsets (copies exist only on stamped pages).
+      let copied = false
+      for (let e: Element | null = cand; e && !copied; e = e.parentElement) copied = copies.has(e)
       for (const n of nodes) {
         const s = base.starts.get(n)
-        if (s === undefined) {
+        if (s !== undefined) origStarts.push(s)
+        else if (!copied) {
           // This part of the page was re-rendered by its own script after the
           // snapshot — its text can't be mapped back to the stored source.
           post({ type: "edit-blocked", reason: "dynamic" })
           return
         }
-        origStarts.push(s)
       }
       const origValues = nodes.map((n) => n.nodeValue ?? "")
       target = {

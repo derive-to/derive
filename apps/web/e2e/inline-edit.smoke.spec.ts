@@ -1105,6 +1105,100 @@ test("the block pill stays off the neighbouring rows and never keeps the keyboar
   }).toPass({ timeout: 10_000 })
 })
 
+// A copy shares its original's source id; what is typed into one must never be
+// saved as the other's words.
+const COPIES_DOC = `<style>body{font:16px/1.5 sans-serif;margin:96px 24px}td{padding:6px 10px;border:1px solid #ccc}.card{padding:12px;margin:8px 0;border:1px solid #ccc}</style>
+<table><tbody><tr><td>Survey</td><td>4</td></tr><tr><td>Rails</td><td>18</td></tr></tbody></table>
+<ul class="tasks"><li>Check the gauge</li><li>Sweep the bed</li></ul>
+<ol class="steps"><li>Lift the rail</li><li>Lay the rail</li></ol>
+<div class="cards"><div class="card"><h3>Plan</h3><p>First.</p></div><div class="card"><h3>Ship</h3><p>Second.</p></div></div>`
+
+test("a duplicate and its original each save their own words", async ({ owner }) => {
+  const shortId = await publishArtifact(owner, "copies.html", COPIES_DOC, "text/html")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+  const frame = doc(owner)
+  const duplicate = async () => {
+    await pill(owner).getByRole("button", { name: "Duplicate" }).click()
+  }
+
+  // A row: only the copy is edited.
+  await frame.getByText("Rails").click()
+  await owner.keyboard.press("Escape")
+  await duplicate()
+  await expect(frame.locator("tr")).toHaveCount(3)
+  await typeAtLineEnd(owner, "tr >> nth=2 >> td >> nth=0", " copy")
+  await expect(frame.locator("tr").nth(2)).toContainText("Rails copy")
+
+  // A list item: only the original is edited, after the copy is made.
+  await frame.getByText("Check the gauge").click()
+  await owner.keyboard.press("Escape")
+  await duplicate()
+  await expect(frame.locator("ul.tasks li")).toHaveCount(3)
+  await typeAtLineEnd(owner, "ul.tasks li >> nth=0", " first")
+  await expect(frame.locator("ul.tasks li").nth(1)).toHaveText("Check the gauge")
+
+  // A list item edited, then copied: the copy carries the words it shows.
+  await typeAtLineEnd(owner, "ol.steps li >> nth=0", " again")
+  await owner.keyboard.press("Escape")
+  await duplicate()
+  await expect(frame.locator("ol.steps li")).toHaveText([
+    "Lift the rail again",
+    "Lift the rail again",
+    "Lay the rail",
+  ])
+
+  // A card: both it and its copy are edited, differently.
+  await pickBlock(owner, ".card >> nth=1")
+  await duplicate()
+  await expect(frame.locator(".card")).toHaveCount(3)
+  await typeAtLineEnd(owner, ".card >> nth=1 >> p", " A")
+  await typeAtLineEnd(owner, ".card >> nth=2 >> p", " B")
+  await expect(frame.locator(".card p")).toHaveText(["First.", "Second. A", "Second. B"])
+
+  await saveEdits(owner)
+  await expect(async () => {
+    const saved = await contentOf(owner, shortId)
+    expect(saved).toContain(
+      "<tr><td>Rails</td><td>18</td></tr><tr><td>Rails copy</td><td>18</td></tr>",
+    )
+    expect(saved).toContain(
+      '<ul class="tasks"><li>Check the gauge first</li><li>Check the gauge</li><li>Sweep the bed</li></ul>',
+    )
+    expect(saved).toContain(
+      '<ol class="steps"><li>Lift the rail again</li><li>Lift the rail again</li><li>Lay the rail</li></ol>',
+    )
+    expect(saved).toContain(
+      '<div class="card"><h3>Ship</h3><p>Second. A</p></div><div class="card"><h3>Ship</h3><p>Second. B</p></div>',
+    )
+    expect(saved).not.toContain("data-derive")
+  }).toPass({ timeout: 10_000 })
+})
+
+test("the second half of an Enter split saves what is typed into it later", async ({ owner }) => {
+  const shortId = await publishArtifact(owner, "split.html", PARAGRAPHS_DOC, "text/html")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+  const notes = doc(owner).locator("p.note")
+
+  await caretBefore(owner, "p.note", " Day crews")
+  await owner.keyboard.press("Enter")
+  await expect(notes).toHaveCount(2)
+  // Somewhere else first, then back into the second half.
+  await typeAtLineEnd(owner, "#head", " tonight")
+  await typeAtLineEnd(owner, "p.note >> nth=1", " Quickly.")
+  await expect(notes.nth(1)).toHaveText(" Day crews lay the new rail. Quickly.")
+
+  await saveEdits(owner)
+  await expect(async () => {
+    const saved = await contentOf(owner, shortId)
+    expect(saved).toContain(
+      '<p class="note">Night crews lift the old rail between the depot and the second stop, section by section.</p>\n<p class="note"> Day crews lay the new rail. Quickly.</p>',
+    )
+    expect(saved).toContain('<h2 id="head">Crew notes tonight</h2>')
+  }).toPass({ timeout: 10_000 })
+})
+
 test("resize from the edge or corner with a readout; double-click resets; ⋯ sets it exactly", async ({
   owner,
 }) => {

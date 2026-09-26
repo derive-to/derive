@@ -97,6 +97,9 @@ const sigOf = (el: Element): string => {
 
 export interface SrcSnapshot {
   sigs: Map<number, string>
+  /** The stamped elements themselves: a copy made later shares its original's id
+   *  (and so its record) but is not one of these. */
+  els: WeakSet<Element>
   /** Ids the browser's parser stamped on more than one element (it cloned a
    *  formatting element while repairing markup). Never expressible: fail closed. */
   dupes: Set<number>
@@ -107,18 +110,20 @@ export interface SrcSnapshot {
 export function snapshotSource(root: Element): SrcSnapshot {
   const sigs = new Map<number, string>()
   const dupes = new Set<number>()
+  const els = new WeakSet<Element>()
   for (const el of Array.from(root.querySelectorAll("*"))) {
     const k = kindOf(el)
     if (k === "new" && !el.closest(CHROME)) el.setAttribute(GEN_ATTR, "")
     if (k !== "src") continue
     const n = srcOf(el) as number
+    els.add(el)
     if (sigs.has(n)) dupes.add(n)
     sigs.set(n, sigOf(el))
   }
   // An unstamped root (a body the server left bare) is recorded too, so a change
   // directly under it is caught instead of silently dropped.
   if (srcOf(root) === null) sigs.set(-1, sigOf(root))
-  return { sigs, dupes }
+  return { sigs, dupes, els }
 }
 
 /** Undo what snapshotSource marked on the page. */
@@ -128,9 +133,9 @@ export function releaseSource(root: Element): void {
 
 /**
  * The `content` ops that turn the snapshot's source into what `root` shows now,
- * limited to `touched` elements when given. `ok` is false when a change can't be
- * expressed (a script-made element holding source, a parser-duplicated id): the
- * caller must not save a partial picture. Ops carry no hashes; the host fills them
+ * limited to `touched` elements (and copies made inside them) when given. `ok` is
+ * false when a change can't be expressed (a script-made element holding source, a
+ * parser-duplicated id): the caller must not save a partial picture. Ops carry no hashes; the host fills them
  * from the source map.
  */
 export function collectSourceOps(
@@ -138,7 +143,13 @@ export function collectSourceOps(
   snap: SrcSnapshot,
   touched?: ReadonlySet<Element>,
 ): { ops: SourceOp[]; ok: boolean } {
-  const mine = (el: Element) => !touched || touched.has(el)
+  // A copy made inside something the person touched (Duplicate, a pasted copy, the
+  // second half of an Enter) is theirs too, typed in or not: it shares its original's
+  // id, so it is compared with the original's record and any difference is saved.
+  const mine = (el: Element): boolean =>
+    !touched ||
+    touched.has(el) ||
+    (!snap.els.has(el) && !!el.parentElement && el !== root && mine(el.parentElement))
   let ok = srcOf(root) !== null || !mine(root) || sigOf(root) === snap.sigs.get(-1)
   // Stamped elements whose own children changed, and every ancestor of one.
   const changed = new Set<Element>()

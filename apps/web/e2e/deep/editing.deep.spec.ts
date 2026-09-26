@@ -406,20 +406,25 @@ test.describe("exact-source serializer", () => {
       ["[data-edit]", mode],
     )
   }
-  const collect = (page: Page) =>
-    page.evaluate(() => {
+  /** With `touched`, only what those selectors match is the person's (as the client
+   *  passes the blocks typed in and the parents rearranged). */
+  const collect = (page: Page, touched?: string[]) =>
+    page.evaluate((sels) => {
       const w = window as unknown as {
         __snap: unknown
-        __src: { collectSourceOps: (r: Element, s: unknown) => { ops: Op[]; ok: boolean } }
+        __src: {
+          collectSourceOps: (r: Element, s: unknown, t?: Set<Element>) => { ops: Op[]; ok: boolean }
+        }
       }
-      return w.__src.collectSourceOps(document.body, w.__snap)
-    })
+      const t = sels && new Set(sels.flatMap((s) => Array.from(document.querySelectorAll(s))))
+      return w.__src.collectSourceOps(document.body, w.__snap, t)
+    }, touched)
   const text = (page: Page) =>
     page.evaluate(() => document.body.innerText.replace(/\s+/g, " ").trim())
 
   /** Collect, apply as the server does, render the result, and compare with the page. */
-  const roundTrip = async (page: Page, src: string) => {
-    const { ops, ok } = await collect(page)
+  const roundTrip = async (page: Page, src: string, touched?: string[]) => {
+    const { ops, ok } = await collect(page, touched)
     expect(ok).toBe(true)
     const { hashes } = await sourceMap(src)
     const hash = (t: Tok): Tok => ({
@@ -589,6 +594,88 @@ test.describe("exact-source serializer", () => {
     ])
     expect(html).toContain('<div class="b">B<!-- note --></div>')
     expect(html.match(/<div class="a" style="color:red">A &amp; a<\/div>/g)).toHaveLength(2)
+  })
+
+  test("a copy saves its own words, and its original keeps its own", async ({ page }) => {
+    const src =
+      '<body><ul id="l"><li class="a">Alpha <b>one</b></li><li class="b">Beta</li></ul><div id="x"><p>Other</p></div></body>'
+    // Each case copies `.a` the way the editor does (Duplicate is a deep clone, Enter
+    // a shallow one taking the words after the caret), then types. The client passes
+    // only the blocks typed in and the rearranged list: a copy made from a block that
+    // was armed stays typeable without ever being armed itself.
+    const cases: { name: string; edit: () => void; touched: string[]; want: string }[] = [
+      {
+        name: "only the copy",
+        edit: () => {
+          const a = document.querySelector(".a") as Element
+          const copy = a.cloneNode(true) as Element
+          a.after(copy)
+          copy.append(" copy")
+        },
+        touched: ["#l"],
+        want: '<li class="a">Alpha <b>one</b></li><li class="a">Alpha <b>one</b> copy</li>',
+      },
+      {
+        name: "only the original",
+        edit: () => {
+          const a = document.querySelector(".a") as Element
+          a.after(a.cloneNode(true))
+          a.append(" first")
+        },
+        touched: ["#l", ".a >> nth=0"],
+        want: '<li class="a">Alpha <b>one</b> first</li><li class="a">Alpha <b>one</b></li>',
+      },
+      {
+        name: "the original, then copied",
+        edit: () => {
+          const a = document.querySelector(".a") as Element
+          a.append(" again")
+          a.after(a.cloneNode(true))
+        },
+        touched: ["#l", ".a >> nth=0"],
+        want: '<li class="a">Alpha <b>one</b> again</li><li class="a">Alpha <b>one</b> again</li>',
+      },
+      {
+        name: "both, differently",
+        edit: () => {
+          const a = document.querySelector(".a") as Element
+          const copy = a.cloneNode(true) as Element
+          a.after(copy)
+          a.append(" A")
+          ;(copy.querySelector("b") as Element).append(" B")
+        },
+        touched: ["#l", ".a >> nth=0", ".a >> nth=1"],
+        want: '<li class="a">Alpha <b>one</b> A</li><li class="a">Alpha <b>one B</b></li>',
+      },
+      {
+        name: "an Enter split, the second half typed in later",
+        edit: () => {
+          const a = document.querySelector(".a") as Element
+          const copy = a.cloneNode(false) as Element
+          copy.append(a.querySelector("b") as Element, " more")
+          a.after(copy)
+        },
+        touched: ["#l", ".a >> nth=0"],
+        want: '<li class="a">Alpha </li><li class="a"><b>one</b> more</li>',
+      },
+    ]
+    for (const c of cases) {
+      await open(page, src)
+      await page.evaluate(c.edit)
+      // ">> nth=" is not CSS: mark those elements (a mark no save writes) instead.
+      const touched = await page.evaluate((sels) => {
+        let i = 0
+        return sels.map((s) => {
+          const [css, nth] = s.split(" >> nth=")
+          if (nth === undefined) return s
+          const el = document.querySelectorAll(css as string)[Number(nth)] as Element
+          el.setAttribute("data-touched", String(++i))
+          return `[data-touched="${i}"]`
+        })
+      }, c.touched)
+      const { html } = await roundTrip(page, src, touched)
+      expect(html, c.name).toBe(src.replace(/<li class="a">.*?<\/li>/, c.want))
+    }
   })
 
   test("what a page script made is never written; source it swallowed refuses the save", async ({
