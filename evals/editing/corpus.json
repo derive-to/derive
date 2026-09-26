@@ -1155,7 +1155,7 @@
       "risk": "P0",
       "oracle": "stored-source-and-render",
       "source": "apps/web/e2e/deep/editing.deep.spec.ts",
-      "covers": "rendered GFM list selection maps back through emphasis",
+      "covers": "rendered GFM list selection saves as the page shows it",
       "cadence": "regression"
     },
     {
