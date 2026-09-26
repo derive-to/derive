@@ -417,9 +417,12 @@ async function withLeakCheck(
   const activeBefore = await probe<{ rect: Rect; label: string } | null>(frame, "activeBlock")
   await run()
   await settle(ctx.page)
+  // Enter is a new paragraph where the caret was, or, at a heading's end, a move on to
+  // the words after it: typing that follows lands there.
   const changed = await probe<{ rect: Rect; label: string; atPoint: boolean }[]>(
     frame,
     "changedBlocks",
+    type === "enter",
   )
   for (const c of changed) {
     // Allowed: the editable block that holds the clicked point (it may have reflowed

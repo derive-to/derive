@@ -406,7 +406,18 @@ export function installProbe(): void {
         if (!isUi(el) && !el.closest(".derive-edit-ui"))
           marked.set(el, { text: directText(el), parent: el.parentElement })
   }
-  const changedBlocks = (): { rect: Rect; label: string; atPoint: boolean }[] => {
+  /** `b` is the next words after `a`: nothing but whitespace between them. */
+  const followsDirectly = (a: Element, b: Element): boolean => {
+    if (a.contains(b) || !(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING))
+      return false
+    const between = document.createRange()
+    between.setStartAfter(a)
+    between.setEndBefore(b)
+    return !between.toString().trim()
+  }
+  /** `next`: Enter at a heading's end moves the caret on to the words after it, so the
+   *  block right after the clicked one counts as where the typing went. */
+  const changedBlocks = (next = false): { rect: Rect; label: string; atPoint: boolean }[] => {
     const hits = new Set<Element>()
     for (const [el, was] of marked) {
       if (!el.isConnected) {
@@ -425,7 +436,8 @@ export function installProbe(): void {
       while (at && !at.isConnected) at = pointParents.get(at) ?? null
       const pointBlock = at ? at.closest("[data-derive-editable]") : null
       return {
-        atPoint: !!pointBlock && pointBlock === block,
+        atPoint:
+          !!pointBlock && (pointBlock === block || (next && followsDirectly(pointBlock, block))),
         rect: extentOf(block),
         label: `${block.localName}.${classKey(block)}:${(block.textContent ?? "").trim().slice(0, 40)}`,
       }
