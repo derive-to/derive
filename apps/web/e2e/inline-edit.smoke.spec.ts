@@ -1430,6 +1430,105 @@ test("Markdown saves a retyped list item whose bold runs into its full stop", as
   }).toPass({ timeout: 10_000 })
 })
 
+test("Markdown saves exactly: typed Markdown is source, code takes a caret, Shift+Enter breaks the line", async ({
+  owner,
+}) => {
+  const markdown = "# Notes\n\nThe *first* step &mdash; see `v1` today.\n\n- One\n- Two\n"
+  const shortId = await publishArtifact(owner, "notes.md", markdown, "text/markdown")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+
+  // Markdown is source: typed `**now**` is saved as written, and reads as bold.
+  await typeAtLineEnd(owner, "p", " **now**")
+  // Inside a code span the words take a caret like any other.
+  await doc(owner)
+    .locator("p code")
+    .evaluate((el) => {
+      const text = el.firstChild as Text
+      const range = document.createRange()
+      range.setStart(text, text.length)
+      range.collapse(true)
+      window.getSelection()?.removeAllRanges()
+      window.getSelection()?.addRange(range)
+    })
+  await owner.keyboard.type("2")
+  // Shift+Enter in a list item: a hard break, the next line under the item's indent.
+  await typeAtLineEnd(owner, "li >> nth=1", "")
+  await owner.keyboard.press("ArrowLeft")
+  await owner.keyboard.press("Shift+Enter")
+  await saveEdits(owner, true)
+  // Every byte the edits didn't touch is as it was: the entity, the markers, the blank lines.
+  expect(await contentOf(owner, shortId)).toBe(
+    "# Notes\n\nThe *first* step &mdash; see `v12` today. **now**\n\n- One\n- Tw\\\n  o\n",
+  )
+  await expect(doc(owner).locator("p strong")).toHaveText("now")
+
+  // The session picked back up on the saved page: the next edit saves the same way.
+  await typeAtLineEnd(owner, "h1", " B")
+  await saveEdits(owner, true)
+  expect(await contentOf(owner, shortId)).toBe(
+    "# Notes B\n\nThe *first* step &mdash; see `v12` today. **now**\n\n- One\n- Tw\\\n  o\n",
+  )
+})
+
+test("Markdown Enter starts a new paragraph or item, Shift+Enter breaks the line, and both save exactly", async ({
+  owner,
+}) => {
+  const markdown =
+    "# Crew notes\n\nNight crews lift the old rail. Day crews lay the new rail.\n\n* Check the gauge\n* Sweep the bed\n\n| Task | Crew |\n| --- | --- |\n| Lift | Night |\n"
+  const shortId = await publishArtifact(owner, "crew.md", markdown, "text/markdown")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+  const frame = doc(owner)
+  const paras = frame.locator("main > p")
+  const items = frame.locator("li")
+
+  // Enter splits the paragraph at the caret; Backspace at the new one's start joins it back.
+  await caretBefore(owner, "main > p", "Day crews")
+  await owner.keyboard.press("Enter")
+  await expect(paras).toHaveCount(2)
+  await expect(paras.nth(1)).toHaveText("Day crews lay the new rail.")
+  await owner.keyboard.press("Backspace")
+  await expect(paras).toHaveCount(1)
+  await owner.keyboard.press("Enter")
+  await expect(paras).toHaveCount(2)
+  // Shift+Enter is a hard break inside the paragraph.
+  await typeAtLineEnd(owner, "main > p >> nth=1", "")
+  await owner.keyboard.press("Shift+Enter")
+  await owner.keyboard.type("By noon.")
+  // Enter in a list item starts the next item.
+  await typeAtLineEnd(owner, "li >> nth=0", "")
+  await owner.keyboard.press("Enter")
+  await owner.keyboard.type("Level the rail")
+  await expect(items).toHaveCount(3)
+  // A table cell is one line: Enter breaks it.
+  await typeAtLineEnd(owner, "td >> nth=0", "")
+  await owner.keyboard.press("Enter")
+  await owner.keyboard.type("and tamp")
+  await expect(frame.locator("tr")).toHaveCount(2)
+
+  await saveEdits(owner, true)
+  // A blank line between the halves, the item's own marker, a hard break, a <br> in the
+  // cell; every other byte as it was.
+  expect(await contentOf(owner, shortId)).toBe(
+    "# Crew notes\n\nNight crews lift the old rail. \n\nDay crews lay the new rail.\\\nBy noon.\n\n* Check the gauge\n* Level the rail\n* Sweep the bed\n\n| Task | Crew |\n| --- | --- |\n| Lift<br>and tamp | Night |\n",
+  )
+  await expect(paras).toHaveCount(2)
+  await expect(items).toHaveCount(3)
+
+  // The session picked back up on the saved page, and splits again the same way.
+  await typeAtLineEnd(owner, "li >> nth=2", "")
+  await owner.keyboard.press("Enter")
+  await owner.keyboard.type("Oil the points")
+  await typeAtLineEnd(owner, "main > p >> nth=0", "")
+  await owner.keyboard.press("Enter")
+  await owner.keyboard.type("Then:")
+  await saveEdits(owner, true)
+  expect(await contentOf(owner, shortId)).toBe(
+    "# Crew notes\n\nNight crews lift the old rail.\n\nThen: \n\nDay crews lay the new rail.\\\nBy noon.\n\n* Check the gauge\n* Level the rail\n* Sweep the bed\n* Oil the points\n\n| Task | Crew |\n| --- | --- |\n| Lift<br>and tamp | Night |\n",
+  )
+})
+
 test("replacing selected linked and annotated text saves the user's replacement", async ({
   owner,
 }) => {

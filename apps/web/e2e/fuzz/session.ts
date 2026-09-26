@@ -285,8 +285,12 @@ const VOCAB = [
   "&amp;",
   "🙂",
 ]
-function typedText(rng: Rng): string {
-  const words = Array.from({ length: rng.int(1, 3) }, () => rng.pick(VOCAB))
+/** Markdown is source: typed `<b>` is live HTML and `&amp;` an entity (see the targeted
+ *  inline-edit test). The Markdown fuzz types words that read as themselves. */
+const MARKDOWN_VOCAB = VOCAB.filter((w) => w !== "<b>" && w !== "&amp;")
+function typedText(rng: Rng, doc: DocMode | null = null): string {
+  const vocab = doc === "markdown" ? MARKDOWN_VOCAB : VOCAB
+  const words = Array.from({ length: rng.int(1, 3) }, () => rng.pick(vocab))
   let s = words.join(rng.chance(0.2) ? "" : " ")
   if (rng.chance(0.25)) s = ` ${s}`
   if (rng.chance(0.2)) s = `${s} `
@@ -306,7 +310,7 @@ async function finish(ctx: Ctx, detail: Record<string, unknown>) {
   detail.after = then
   const k = ctx.page.keyboard
   if (then === "type") {
-    const text = typedText(ctx.rng)
+    const text = typedText(ctx.rng, ctx.doc)
     detail.text = text
     await k.type(text, { delay: 5 })
   } else if (then === "backspace") await k.press("Backspace")
@@ -466,7 +470,7 @@ async function editAction(ctx: Ctx, type: ActionType, n: number) {
   switch (type) {
     case "type": {
       const { pt, label } = aimText()
-      const text = typedText(rng)
+      const text = typedText(rng, ctx.doc)
       Object.assign(detail, { at: label, text })
       // Sometimes just one click, as people do: on words that places the caret too.
       const single = rng.chance(0.2)
@@ -533,7 +537,7 @@ async function editAction(ctx: Ctx, type: ActionType, n: number) {
     }
     case "enter": {
       const { pt, label } = aimText()
-      const text = rng.chance(0.6) ? typedText(rng) : ""
+      const text = rng.chance(0.6) ? typedText(rng, ctx.doc) : ""
       Object.assign(detail, { at: label, text })
       await withLeakCheck(ctx, pt, type, async () => {
         await placeCaret(ctx, t.view, pt, detail)
@@ -554,14 +558,14 @@ async function editAction(ctx: Ctx, type: ActionType, n: number) {
       }
       await k.press(fmt)
       if (rng.chance(0.3)) {
-        detail.text = typedText(rng)
+        detail.text = typedText(rng, ctx.doc)
         await k.type(detail.text as string, { delay: 5 })
       }
       return
     }
     case "selectAll": {
       const { pt, label } = aimText()
-      const text = typedText(rng)
+      const text = typedText(rng, ctx.doc)
       Object.assign(detail, { at: label, text })
       await placeCaret(ctx, t.view, pt, detail)
       await k.press("ControlOrMeta+a")
@@ -578,7 +582,7 @@ async function editAction(ctx: Ctx, type: ActionType, n: number) {
       Object.assign(detail, { at: pt, text })
       // Half the time a block is being edited first — the classic leak is typing that
       // lands back in it after a click elsewhere.
-      if (rng.chance(0.5)) {
+      if (rng.chance(0.5) && t.text.length) {
         const a = aimText()
         detail.primed = a.label
         await placeCaret(ctx, t.view, a.pt, detail)
@@ -643,17 +647,17 @@ async function editAction(ctx: Ctx, type: ActionType, n: number) {
       await withLeakCheck(ctx, pt, type, async () => {
         if (how === "retype") {
           await clickAt(ctx, t.view, pt, { count: 2 })
-          detail.text = typedText(rng)
+          detail.text = typedText(rng, ctx.doc)
           await k.type(detail.text as string, { delay: 5 })
           return
         }
         await placeCaret(ctx, t.view, pt, detail)
         if (how === "end") {
           await k.press("End")
-          detail.text = typedText(rng)
+          detail.text = typedText(rng, ctx.doc)
           await k.type(detail.text as string, { delay: 5 })
         } else if (how === "type") {
-          detail.text = typedText(rng)
+          detail.text = typedText(rng, ctx.doc)
           await k.type(detail.text as string, { delay: 5 })
         } else {
           detail.count = rng.int(1, 8)
@@ -1006,14 +1010,30 @@ async function editPhase(
   const outcome = await awaitSave(
     page,
     shortId,
-    () => page.getByTestId("inline-edit-save").click(),
+    // Nothing to save shows no Save button: that is the "no request" outcome, not a hang.
+    () =>
+      page
+        .getByTestId("inline-edit-save")
+        .click({ timeout: 10_000 })
+        .catch(() => {}),
     touched,
   )
   save(label, outcome)
   if (outcome.kind !== "no-request" && Array.isArray(outcome.edits))
     ctx.stats.edits = outcome.edits.length
   if (outcome.kind === "no-request") {
-    if (touched)
+    // Undo puts back equal elements, not the same ones: a page that reads as its stored
+    // source again has nothing to save.
+    const stored = await renderTexts(
+      fp.render,
+      ctx.doc === "markdown" ? await renderMarkdown(before, null) : before,
+    )
+    const reverted =
+      checkWysiwyg(
+        dom.map((d) => d.text),
+        stored,
+      ).length === 0
+    if (touched && !reverted)
       ctx.failures.push({
         phase: "edit",
         oracle: "save",
@@ -1056,19 +1076,16 @@ async function editPhase(
     })
     .not.toBe(served)
     .catch(() => {})
-  // A Markdown save ends the session (index.tsx resumes only where element edits are
-  // allowed); the next round opens it again, as a person would.
-  if (ctx.doc !== "markdown")
-    await expect(page.getByTestId("inline-edit-bar"))
-      .toBeVisible({ timeout: 15_000 })
-      .catch(() => {
-        ctx.failures.push({
-          phase: "edit",
-          oracle: "save",
-          signature: "the session did not pick back up after a successful save",
-          message: "inline-edit-bar not visible 15s after the save response",
-        })
+  await expect(page.getByTestId("inline-edit-bar"))
+    .toBeVisible({ timeout: 15_000 })
+    .catch(() => {
+      ctx.failures.push({
+        phase: "edit",
+        oracle: "save",
+        signature: "the session did not pick back up after a successful save",
+        message: "inline-edit-bar not visible 15s after the save response",
       })
+    })
   const after = await contentOf(page, shortId)
   if (ctx.doc === "markdown") {
     // What a reader gets: the saved Markdown through the served renderer.

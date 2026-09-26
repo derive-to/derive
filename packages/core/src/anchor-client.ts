@@ -2281,13 +2281,13 @@ interface ElReg {
   /* === Inline edit mode ======================================================
      Click-to-type text editing, host-driven ("edit-mode" on/off). A click lands a
      caret in the nearest text block (contenteditable, plaintext-only) — typing edits
-     in place. On an HTML page the server stamped (see `stamped`), "edit-collect"
-     answers with exact-source ops: each changed element's new children, by source
-     id (source-tokens.ts). On Markdown and LaTeX every enabled block snapshots its
+     in place. On a page the server stamped (see `stamped`: HTML, a deck, Markdown),
+     "edit-collect" answers with exact-source ops: each changed element's new children,
+     by source id (source-tokens.ts). On LaTeX every enabled block snapshots its
      text nodes against a whole-document text snapshot taken at mode entry, and each
      changed node becomes a minimal {exact, prefix, suffix, new_text} quote built
      from the PRE-EDIT text, which the server resolves against the stored source.
-     Paste is flattened; Enter and formatting (HTML only) are editor spans. Media and
+     Paste is flattened; Enter and formatting (stamped pages only) are editor spans. Media and
      opted-in boxes can also carry width/height intent. */
   interface EditTarget {
     el: HTMLElement
@@ -2718,7 +2718,7 @@ interface ElReg {
     const list = changeList()
     const n = list.length
     const range = formattableRange()
-    // Markup is only the language of an HTML page; Markdown and LaTeX write it as text.
+    // Formatting needs a stamped page (HTML, a deck, Markdown); LaTeX writes it as text.
     const canFormat = !!range && !!srcSnap
     // A double-click can select a word just before its block is armed editable.
     // selectionchange sees the pre-armed block and cannot cache it, while this
@@ -5530,8 +5530,8 @@ interface ElReg {
      The wrap is the EDITOR's, not the document's: a `[data-derive-fmt]` span holds
      the intent (and shows what it will look like) until the save turns it into a
      real tag. Nothing here touches the stored source; the save serializes these
-     spans as the server's inline-tag tokens (source-tokens.ts). HTML pages only:
-     Markdown and LaTeX write formatting as text.
+     spans as the server's inline-tag tokens (source-tokens.ts). Stamped pages only
+     (HTML, a deck, Markdown): LaTeX writes formatting as text.
 
      ⌘B/⌘I/⌘K, because those are the keys every writing tool binds. The frame owns
      the keyboard while a caret is in a block, so they can't reach the browser. */
@@ -5941,7 +5941,7 @@ interface ElReg {
       new_text: newText,
     }
   }
-  /** The wire shape of one collected text edit (Markdown and LaTeX). */
+  /** The wire shape of one collected text edit (an unstamped page: LaTeX). */
   interface WireEdit {
     quote: {
       exact: string

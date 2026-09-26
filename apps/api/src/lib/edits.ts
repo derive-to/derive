@@ -3,6 +3,7 @@ import {
   type ArtifactRecord,
   applyEdits,
   applyElementEdits,
+  applyMarkdownOps,
   applyQuoteEdits,
   applySceneEdits,
   applySlideOps,
@@ -19,6 +20,7 @@ import {
   isElementEdit,
   isHtmlLike,
   isLatexLike,
+  isMarkdownLike,
   isQuoteEdit,
   isSceneEdit,
   isSourceEditable,
@@ -284,12 +286,23 @@ export async function materializeSourceOps(
   deps: MaterializeEditsDeps,
   artifact: Pick<ArtifactRecord, "id" | "short_id" | "kind" | "current_version">,
   ops: unknown,
-): Promise<MaterializedEdits & { changes: { before: string; after: string }[] }> {
+): Promise<
+  MaterializedEdits & { changes: { before: string; after: string }[]; contentType: string }
+> {
   const { src, contentType } = await currentSource(deps, artifact, undefined, "ops")
   if (!isSourceEditable(contentType ?? ""))
     throw new EditError(
-      `"${artifact.short_id}" isn't an HTML page or deck; \`ops\` edit HTML source only.`,
+      `"${artifact.short_id}" isn't an HTML page, deck or Markdown document; \`ops\` edit those only.`,
     )
+  if (isMarkdownLike(contentType ?? "")) {
+    const { markdown, changes } = await applyMarkdownOps(src, ops)
+    return {
+      content: markdown,
+      filename: preservingFilename(contentType),
+      changes,
+      contentType: "text/markdown",
+    }
+  }
   let { html, changes } = await applySourceOps(src, ops)
   // A legacy deck's arrangeable nodes exist only at serve time (runtime identities).
   // Layout set on one persists those identities, as a structural edit's save does.
@@ -298,7 +311,12 @@ export async function materializeSourceOps(
     (ops as SourceOp[]).some((op) => op.op === "attrs" && op.attrs)
   )
     html = backfillLegacyDeckStructure(html, { layout: true }).html
-  return { content: html, filename: preservingFilename(contentType), changes }
+  return {
+    content: html,
+    filename: preservingFilename(contentType),
+    changes,
+    contentType: "text/html",
+  }
 }
 
 export async function materializeEdits(

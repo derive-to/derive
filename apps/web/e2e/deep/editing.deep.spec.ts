@@ -73,7 +73,7 @@ test("[BROWSER-MD-001] Markdown multi-run selection stores valid source", async 
   )
 })
 
-test("[BROWSER-MD-002] a rendered GFM list selection maps back through emphasis", async ({
+test("[BROWSER-MD-002] a rendered GFM list selection saves as the page shows it", async ({
   owner,
 }) => {
   const source = "# GFM\n\n- raw **list**\n- [x] task **done**\n"
@@ -95,9 +95,11 @@ test("[BROWSER-MD-002] a rendered GFM list selection maps back through emphasis"
     selection?.addRange(range)
   })
   await owner.keyboard.type("raw item")
+  // The words went where the selection started, outside the bold: the save says so.
+  expect((await item.locator("strong").allTextContents()).join("")).toBe("")
   await saveEdits(owner)
 
-  expect(await contentOf(owner, shortId)).toBe("# GFM\n\n- raw **item**\n- [x] task **done**\n")
+  expect(await contentOf(owner, shortId)).toBe("# GFM\n\n- raw item\n- [x] task **done**\n")
   await expect(frame(owner).getByRole("listitem").first()).toHaveText("raw item")
   await expect(frame(owner).getByRole("listitem").nth(1)).toContainText("task done")
 })

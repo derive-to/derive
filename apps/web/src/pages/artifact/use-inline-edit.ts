@@ -74,7 +74,7 @@ const withHashes = (ops: SourceOp[], hashes: string[]): SourceOp[] => {
 }
 
 /** What the frame reports on collect: `ops` (with the version and source sha the frame
- *  was served) on a stamped HTML page, quote `edits` everywhere else; `resume` names
+ *  was served) on a stamped page (HTML or Markdown), quote `edits` everywhere else; `resume` names
  *  the selected block so the session can pick it back up after the save reloads. */
 type Collected = {
   edits: InlineEditInput[]
@@ -168,8 +168,8 @@ const BLOCKED_COPY: Record<string, string> = {
 /**
  * The host half of inline editing (click-to-type in the rendered artifact). The
  * frame owns the caret, the snapshots, and what changed — exact-source ops on an
- * HTML page (elements named by source id; this hook adds their hashes from the
- * source map), quote edits on Markdown and LaTeX. This hook owns the MODE — entering
+ * HTML page or Markdown document (elements named by source id; this hook adds their
+ * hashes from the source map), quote edits on LaTeX. This hook owns the MODE — entering
  * it (freezing the shown version so an SSE republish can't reload the frame and wipe
  * typed text), the dirty count the save bar shows, and landing the save with the
  * shared error grammar:
@@ -534,7 +534,11 @@ export function useInlineEdit(p: {
     setFrozenVersion(p.art.current_version)
     sourceMaps.current.clear()
     const type = p.art.current_content_type ?? ""
-    if (type.startsWith("text/html") || type === "text/x-derive-deck")
+    if (
+      type.startsWith("text/html") ||
+      type === "text/x-derive-deck" ||
+      type.startsWith("text/markdown")
+    )
       sourceMap(p.art.current_version).catch(() => {})
     p.post({ type: "edit-mode", on: true, elementEdits: p.allowElementEdits, ...entry })
   }

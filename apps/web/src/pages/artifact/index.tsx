@@ -914,10 +914,13 @@ export function Artifact({ template = false }: { template?: boolean }) {
     reloadFrame,
     onSaved: ({ version: saved, resume: select }) => {
       ownSaves.current.add(saved)
+      // Exact-source saves pick the session back up: element edits, and Markdown.
+      const resumes =
+        inlineEdit.allowElementEdits || !!art?.current_content_type?.startsWith("text/markdown")
       resume.current = {
         version: saved,
         scrollY: frameScrollY(),
-        session: inlineEdit.allowElementEdits ? { slide: deck?.i ?? null, select } : null,
+        session: resumes ? { slide: deck?.i ?? null, select } : null,
       }
       setResumeLoad(0)
       // A load that never comes (the save was superseded) must not resume later.
