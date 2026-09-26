@@ -726,6 +726,7 @@ interface ElReg {
     ".derive-block-box{box-shadow:0 0 0 2px rgba(79,70,229,.9);z-index:2147483643}" +
     ".derive-block-tag{position:absolute;left:-1px;bottom:100%;margin-bottom:2px;padding:2px 7px;border-radius:5px 5px 5px 0;background:rgba(79,70,229,.78);color:#fff;font:600 11px/1.45 system-ui,sans-serif;white-space:nowrap;cursor:grab;pointer-events:auto;user-select:none;touch-action:none}" +
     ".derive-block-tag-in .derive-block-tag{top:0;bottom:auto;margin:0;border-radius:5px 0 5px 0}" +
+    ".derive-block-tag-below .derive-block-tag{top:100%;bottom:auto;margin:2px 0 0;border-radius:0 5px 5px 5px}" +
     ".derive-block-rz{position:absolute;display:none;padding:0;box-sizing:border-box;border:2px solid rgba(79,70,229,.95);background:#fff;box-shadow:0 1px 4px rgba(15,23,42,.25);pointer-events:auto;touch-action:none}" +
     ".derive-block-rz-e{right:-6px;top:50%;width:10px;height:28px;margin-top:-14px;border-radius:5px;cursor:ew-resize}" +
     ".derive-block-rz-se{right:-7px;bottom:-7px;width:12px;height:12px;border-radius:3px;cursor:nwse-resize}" +
@@ -3883,6 +3884,13 @@ interface ElReg {
   const pillDel = pillButton("Delete", "Delete (⌫)", "Delete", "derive-block-del")
   const pillMore = pillButton("More options", "Path and exact width", "⋯")
   const pillDiv = () => chromeEl("span", "derive-block-div")
+  // Nothing in the pill takes focus: the keyboard stays with the document (⌥ arrows,
+  // Delete), and a key typed next can never press a pill button again.
+  pill.addEventListener("pointerdown", (e) => {
+    e.preventDefault()
+    window.focus()
+  })
+  pill.addEventListener("mousedown", (e) => e.preventDefault())
   pill.append(
     pillName,
     pillDiv(),
@@ -3894,6 +3902,7 @@ interface ElReg {
     pillDiv(),
     pillMore,
   )
+  for (const b of Array.from(pill.querySelectorAll("button"))) b.tabIndex = -1
   ;(document.body || document.documentElement).append(blockHoverBox, blockBox, pill)
   for (const el of [blockHoverBox, blockBox, pill]) ownChrome(el)
 
@@ -3964,8 +3973,7 @@ interface ElReg {
     placeBox(blockHoverBox, hover?.isConnected ? hover : null)
     if (hover?.isConnected) {
       blockTag.textContent = `⠿ ${nameOf(hover)}`
-      // No room above the block: the tag tucks inside its corner.
-      blockHoverBox.classList.toggle("derive-block-tag-in", hover.getBoundingClientRect().top < 24)
+      placeTag(hover)
     }
     const sel = editOn && blockSel?.isConnected ? blockSel : null
     placeBox(blockBox, sel)
@@ -3986,16 +3994,123 @@ interface ElReg {
     pillPrev.disabled = i <= 0
     pillNext.disabled = i < 0 || i >= siblings.length - 1
     pill.style.display = "flex"
-    // Just outside the block: above it, or below when there's no room; always on screen.
+    const spot = pillSpot(sel)
+    pill.style.left = `${spot.x + (window.scrollX || 0)}px`
+    pill.style.top = `${spot.y + scrollTop()}px`
+  }
+  /** Line boxes of words on screen within `area` (viewport coordinates). */
+  const textBoxesNear = (area: DOMRect): DOMRect[] => {
+    const out: DOMRect[] = []
+    const near = new Map<Element, boolean>()
+    const range = document.createRange()
+    const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+      const parent = n.parentElement
+      if (!parent || !n.nodeValue?.trim()) continue
+      let hit = near.get(parent)
+      if (hit === undefined) {
+        const r = parent.getBoundingClientRect()
+        hit =
+          !parent.closest(".derive-edit-ui") &&
+          r.right > area.left &&
+          r.left < area.right &&
+          r.bottom > area.top &&
+          r.top < area.bottom
+        near.set(parent, hit)
+      }
+      if (!hit) continue
+      range.selectNodeContents(n)
+      for (const r of Array.from(range.getClientRects())) if (r.width && r.height) out.push(r)
+    }
+    return out
+  }
+  /** How much of `r` lies over words. */
+  const coversWords = (r: DOMRect, words: readonly DOMRect[]): number => {
+    let area = 0
+    for (const b of words) {
+      const w = Math.min(r.right, b.right) - Math.max(r.left, b.left)
+      const h = Math.min(r.bottom, b.bottom) - Math.max(r.top, b.top)
+      if (w > 0 && h > 0) area += w * h
+    }
+    return area
+  }
+  let pillAt: { key: string; x: number; y: number } | null = null
+  let tagAt: { key: string; at: string } | null = null
+  /** The hover tag sits on the block's top edge, above it where there's room; where
+   *  that covers words (a neighbour's, or the block's own first line when tucked
+   *  inside), it goes inside the corner or under the block instead, so a click on
+   *  words reaches them. */
+  const placeTag = (hover: HTMLElement) => {
+    const r = hover.getBoundingClientRect()
+    const key = [r.left, r.top, r.width, r.height, innerWidth, innerHeight].join()
+    const spots = ["", "derive-block-tag-in", "derive-block-tag-below"]
+    const set = (at: string) => {
+      for (const c of spots) if (c) blockHoverBox.classList.toggle(c, c === at)
+    }
+    if (tagAt?.key !== key) {
+      const fits = spots.filter((at) => at || r.top >= 24)
+      let at = fits[0] ?? "derive-block-tag-in"
+      for (const spot of fits) {
+        set(spot)
+        const tag = blockTag.getBoundingClientRect()
+        if (tag.bottom > innerHeight) continue
+        if (!coversWords(tag, textBoxesNear(tag))) {
+          at = spot
+          break
+        }
+      }
+      tagAt = { key, at }
+    }
+    set(tagAt.at)
+  }
+  /** Where the pill goes: beside the block, on screen, and never over words a person
+   *  might click next (a list's next item, a table's next row, the block's own). Just
+   *  above the block when that's clear; else beside the block's parent (outside its
+   *  flow), below the block, or past the parent's top or bottom edge; failing all of
+   *  them, whichever covers the fewest words. */
+  const pillSpot = (sel: HTMLElement): { x: number; y: number } => {
     const r = sel.getBoundingClientRect()
+    const flow = sel.parentElement?.getBoundingClientRect() ?? r
     const w = pill.offsetWidth
     const h = pill.offsetHeight
-    let top = r.top - h - 10
-    if (top < 4) top = r.bottom + 10
-    top = Math.max(4, Math.min(innerHeight - h - 4, top))
-    const left = Math.max(4, Math.min(innerWidth - w - 4, r.left - 1))
-    pill.style.left = `${left + (window.scrollX || 0)}px`
-    pill.style.top = `${top + scrollTop()}px`
+    const key = [r.left, r.top, r.width, r.height, w, h, innerWidth, innerHeight].join()
+    if (pillAt?.key === key) return pillAt
+    const gap = 8
+    const spots = [
+      [r.left - 1, r.top - h - gap],
+      [flow.left - w - gap, r.top],
+      [flow.right + gap, r.top],
+      [r.left - 1, r.bottom + gap],
+      [flow.left, flow.top - h - gap],
+      [flow.left, flow.bottom + gap],
+    ].map(([x = 0, y = 0]) => {
+      const cx = Math.max(4, Math.min(innerWidth - w - 4, x))
+      const cy = Math.max(4, Math.min(innerHeight - h - 4, y))
+      return new DOMRect(cx, cy, w, h)
+    })
+    const area = spots.reduce((u, s) => {
+      const left = Math.min(u.left, s.left)
+      const top = Math.min(u.top, s.top)
+      return new DOMRect(
+        left,
+        top,
+        Math.max(u.right, s.right) - left,
+        Math.max(u.bottom, s.bottom) - top,
+      )
+    })
+    const words = textBoxesNear(area)
+    let best = spots[0] as DOMRect
+    let least = Number.POSITIVE_INFINITY
+    for (const s of spots) {
+      const covered = coversWords(s, words)
+      if (covered < least) {
+        least = covered
+        best = s
+      }
+      if (!covered) break
+    }
+    pillAt = { key, x: best.left, y: best.top }
+    return pillAt
   }
   const schedulePaintBlocks = () => {
     if (blockPaintTick) return

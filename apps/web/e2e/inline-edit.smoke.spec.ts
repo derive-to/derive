@@ -69,6 +69,9 @@ body{font-family:sans-serif;margin:24px}.agenda{display:flex;gap:16px}
 <div class="agenda-item" id="c3"><span class="index">03</span><h3 id="h3">Review<br>the results</h3><p>Third.</p></div>
 </div></div></section></body></html>`
 
+const ROWS_DOC = `<style>body{font:16px/1.5 sans-serif;margin:96px 24px}table{border-collapse:collapse;width:360px}td{padding:6px 10px;border:1px solid #ccc}</style>
+<table><tbody><tr><td>Survey</td><td>4</td></tr><tr><td>Rails</td><td>18</td></tr><tr><td>Overhead</td><td>9</td></tr></tbody></table>`
+
 const STRUCTURAL_MULTISELECT_DOC = `<style>
 body { font-family: sans-serif }
 @media (max-width: 420px) { body { --dogfood-breakpoint: mobile } }
@@ -950,6 +953,56 @@ test("the changes list says where and what changed, shows it, and reverts just o
     const saved = await contentOf(owner, shortId)
     expect(saved.indexOf('id="c2"')).toBeLessThan(saved.indexOf('id="c1"'))
     expect(saved).toContain('<h3 id="h2">Ship<br>the work</h3>')
+  }).toPass({ timeout: 10_000 })
+})
+
+test("the block pill stays off the neighbouring rows and never keeps the keyboard", async ({
+  owner,
+}) => {
+  const shortId = await publishArtifact(owner, "rows.html", ROWS_DOC, "text/html")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+  const frame = doc(owner)
+  const rows = frame.locator("tr")
+
+  // Escape steps out of the words to the row around them.
+  await frame.getByText("Rails").click()
+  await owner.keyboard.press("Escape")
+  const name = pill(owner).getByRole("button", { name: "Drag to move" })
+  await expect(name).toHaveText("⠿Row 2")
+  const box = await pill(owner).boundingBox()
+  if (!box) throw new Error("not laid out")
+  for (const i of [0, 2]) {
+    const row = await rows.nth(i).boundingBox()
+    if (!row) throw new Error("not laid out")
+    const apart =
+      box.x >= row.x + row.width ||
+      row.x >= box.x + box.width ||
+      box.y >= row.y + row.height ||
+      row.y >= box.y + box.height
+    expect(apart, `the pill covers row ${i + 1}`).toBe(true)
+  }
+
+  // A pill button acts once: the keyboard stays with the document, so Space typed
+  // next presses nothing.
+  await pill(owner).getByRole("button", { name: "Duplicate" }).click()
+  await expect(rows).toHaveCount(4)
+  await owner.keyboard.press(" ")
+  await expect(rows).toHaveCount(4)
+  expect(await frame.locator("body").evaluate(() => document.activeElement?.localName)).not.toBe(
+    "button",
+  )
+
+  // With a block selected, a click on words still puts the caret there.
+  await typeAtLineEnd(owner, "tr >> nth=0 >> td >> nth=0", "!")
+  await expect(frame.locator("td").first()).toHaveText("Survey!")
+  await expect(pill(owner)).toBeHidden()
+
+  await saveEdits(owner)
+  await expect(async () => {
+    const saved = await contentOf(owner, shortId)
+    expect(saved.match(/<td>Rails<\/td>/g)).toHaveLength(2)
+    expect(saved).toContain("<td>Survey!</td>")
   }).toPass({ timeout: 10_000 })
 })
 
