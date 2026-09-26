@@ -88,8 +88,13 @@ test("a known-good one-word edit passes every oracle, and corrupted saves are ca
   expect(dom.filter((d) => d.touched).map((d) => d.region)).toEqual(["slide-1"])
   expect(dom[1]?.changed).toEqual({ "node:s1-title": [[]] })
 
+  // The session picks back up after the save, so the bar may never be seen hidden: wait
+  // for the save itself.
+  const saving = page.waitForResponse(
+    (r) => r.url().includes(`/v1/artifacts/${shortId}/versions`) && r.request().method() === "POST",
+  )
   await page.getByTestId("inline-edit-save").click()
-  await expect(page.getByTestId("inline-edit-bar")).toBeHidden()
+  expect((await saving).ok()).toBe(true)
   const before = FIXTURE
   const saved = await contentOf(page, shortId)
   expect(saved).toContain(
