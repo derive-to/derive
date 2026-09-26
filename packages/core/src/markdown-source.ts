@@ -2,40 +2,28 @@
  * Exact-source editing for Markdown: the rendered editor's `ops` (source-edit.ts) applied
  * to Markdown source.
  *
- * An editor is served the page with `data-derive-src="N"` on every element the renderer
- * drew from a Markdown construct (a paragraph, a list item, a table cell, a `**strong**`
- * run, a link, a code span…), N being that construct's index in one pre-order walk of the
- * parser's tokens, and the root `<main>` as 0. The walk also knows each construct's exact
- * byte range, its content range, and how every rendered character of its text maps back to
- * source bytes (an entity is one character over many bytes; a soft line break is one
- * newline over the next line's `> ` or list indent). What cannot be mapped exactly is
- * served read-only, never guessed at.
+ * The editor's page stamps `data-derive-src="N"` on every element drawn from a Markdown
+ * construct, N being its index in a pre-order walk of marked's tokens (the root `<main>`
+ * is 0). The walk records each construct's byte range, its content range, and the source
+ * bytes of every character it renders (an entity is one character over many bytes; a soft
+ * break is one newline over the next line's `> ` or indent). What can't be mapped exactly
+ * is served read-only.
  *
- * A save rewrites only the content range of each element an op names:
- *  - text is aligned against the element's original rendered text, so every character the
- *    person did not touch is written back as its original bytes (entities, escapes, line
- *    prefixes included); what they typed is written as typed — Markdown is source, so
- *    typing `**x**` makes bold — escaped only where it would otherwise break the element's
- *    own structure (a `|` in a table cell, a list marker at the start of a line…);
- *  - `keep` copies a construct's original bytes, or its delimiters around new content;
- *  - editor formatting becomes Markdown: bold `**…**`, italic `*…*`, a link `[…](href)`,
- *    a line break a hard break (`\` + newline + the block's continuation prefix; `<br>`
- *    in a table cell or a heading, which are one line). Each op must read back as the
- *    page showed it, so where a delimiter can't open or close where it sits (`**x.**y`,
- *    two runs meeting) the op is spelled with `__`/`_`, then with `<strong>`/`<em>`;
- *  - a block kept twice (Enter splitting a paragraph or list item) is written twice,
- *    separated as its container separates blocks (a blank line, or the next list item).
- * Every byte outside the edited content ranges is untouched.
+ * A save rewrites only the content range of each element an op names. Its text is aligned
+ * against the original, so untouched characters keep their bytes; typed text is written as
+ * typed (Markdown is source), escaped only where it would break the element's own
+ * structure. Editor formatting becomes `**`/`*`, `[…](href)` and a hard break, or HTML
+ * where Markdown can't say it. A block kept twice (Enter) is written twice, separated as
+ * its container separates blocks.
  */
 
-import { Marked, Renderer, type Token, type Tokens } from "marked"
+import { Marked, Parser, Renderer, type Token, type Tokens } from "marked"
 import { decodedEntitiesIn, decodeEntities } from "./anchor"
 import { EditError } from "./doc-text"
-import { parseDynamicFence } from "./dynamic-data"
-import { sha256Hex } from "./hash"
 import { newShortId } from "./ids"
 import {
   escapeHtml,
+  isSpecialFence,
   type RenderMarkdownOptions,
   renderDocShell,
   renderSpecialFence,
@@ -43,11 +31,13 @@ import {
 } from "./md"
 import { MERMAID_HEAD } from "./mermaid"
 import {
+  hashSource,
   parseSourceOps,
   SourceConflictError,
-  type SourceHash,
+  type SourceOp,
   type SourceToken,
   sourceSha,
+  staleSourceIds,
 } from "./source-edit"
 
 type Kind =
@@ -75,21 +65,13 @@ type Kind =
   | "br"
   | "raw"
 
-/** One rendered character run of an inline container: `r` is what the page shows, the
- *  source bytes are [s, e). Atomic units (an entity, an escape, a surrogate pair) are
- *  written back whole or not at all. */
+/** One rendered character run: `r` is what the page shows, the source bytes are [s, e).
+ *  An atomic unit (an entity, an escape, a surrogate pair) is kept whole or not at all. */
 interface Unit {
   s: number
   e: number
   r: string
   atomic: boolean
-}
-
-interface Ctx {
-  cell?: boolean
-  link?: boolean
-  atx?: boolean
-  code?: "span" | "block"
 }
 
 interface MdNode {
@@ -104,13 +86,13 @@ interface MdNode {
   linePrefix: string
   /** The continuation-line prefix inside its content. */
   prefix: string
-  /** Content, in order: text units and child nodes (inline), or child nodes (blocks). */
+  /** Content: text units and child nodes (inline), or child nodes (blocks). */
   seq: (Unit | MdNode)[]
-  /** Whether a content op may rewrite it (its content is mapped and verified). */
+  /** Whether an op may rewrite its content (mapped and verified). */
   editable: boolean
   /** Its content starts a line (a paragraph, a list item's text). */
   lineStart: boolean
-  ctx: Ctx
+  ctx: { cell?: boolean; link?: boolean; atx?: boolean; code?: "span" | "block" }
   /** Its text as rendered, filled in while rendering. */
   rendered?: string
   /** A fenced code block's fence. */
@@ -119,7 +101,7 @@ interface MdNode {
 
 const isUnit = (x: Unit | MdNode): x is Unit => "r" in x
 const INLINE_KINDS = new Set<Kind>(["strong", "em", "del", "a", "codespan", "img", "br"])
-const WRAPPERS = new Set<Kind>(["strong", "em", "del", "a"])
+const EMPHASIS = new Set<Kind>(["strong", "em", "del"])
 const INLINE_CONTAINERS = new Set<Kind>([
   "p",
   "h",
@@ -132,7 +114,16 @@ const INLINE_CONTAINERS = new Set<Kind>([
   "codespan",
   "code",
 ])
-const BLOCK_CONTAINERS = new Set<Kind>(["root", "bq", "list", "tbody"])
+/** Inline HTML the model maps: the editor's own spellings where Markdown has none. */
+const HTML_KINDS = new Map<string, Kind>([
+  ["strong", "strong"],
+  ["b", "strong"],
+  ["em", "em"],
+  ["i", "em"],
+  ["del", "del"],
+  ["s", "del"],
+  ["br", "br"],
+])
 
 /** Normalized text (what the parser saw) with each character's source offset. */
 interface Mapped {
@@ -144,9 +135,8 @@ const sliceMapped = (m: Mapped, a: number, b: number): Mapped => ({
   at: m.at.slice(a, b + 1),
 })
 
-/** Map a container's normalized text (its lines with the container's own prefix removed)
- *  onto the source lines it came from: each text line must be a suffix of its source
- *  line. null when the parser changed more than a prefix. */
+/** Map a container's text (its lines without the container's own prefix) onto the source
+ *  lines it came from: each text line must end its source line. */
 const alignLines = (text: string, src: Mapped): Mapped | null => {
   const lines = src.text.split("\n")
   const want = text.split("\n")
@@ -159,8 +149,7 @@ const alignLines = (text: string, src: Mapped): Mapped | null => {
     if (!line.endsWith(t)) return null
     const base = off + line.length - t.length
     for (let k = 0; k < t.length; k++) at.push(src.at[base + k] as number)
-    if (i < want.length - 1) at.push(src.at[off + line.length] as number)
-    else at.push(src.at[base + t.length] as number)
+    at.push(src.at[i < want.length - 1 ? off + line.length : base + t.length] as number)
     off += line.length + 1
   }
   return { text, at }
@@ -171,46 +160,48 @@ const trimmedLength = (raw: string): number => {
   let e = raw.length
   for (;;) {
     const nl = raw.lastIndexOf("\n", e - 1)
-    if (nl < 0 || raw.slice(nl + 1, e).trim() !== "") break
+    if (nl < 0 || raw.slice(nl + 1, e).trim() !== "") return e
     e = nl
   }
-  return e
+}
+
+/** Where a token's raw text (less trailing blank lines) is next in `text`, with only blank
+ *  lines before it; -1 if it isn't. */
+const locate = (text: string, raw: string, cur: number): number => {
+  const at = text.indexOf(raw.slice(0, trimmedLength(raw)), cur)
+  return at < 0 || text.slice(cur, at).trim() !== "" ? -1 : at
 }
 
 /** A table row's cells: content ranges (trimmed) within the line, split at unescaped pipes. */
-const rowCells = (line: string): { s: number; e: number }[] | null => {
-  let a = 0
-  let b = line.length
-  while (a < b && /[ \t]/.test(line[a] as string)) a++
-  while (b > a && /[ \t]/.test(line[b - 1] as string)) b--
+const rowCells = (line: string): { s: number; e: number }[] => {
+  const trim = (s: number, e: number) => {
+    while (s < e && /[ \t]/.test(line[s] as string)) s++
+    while (e > s && /[ \t]/.test(line[e - 1] as string)) e--
+    return { s, e }
+  }
+  let { s: a, e: b } = trim(0, line.length)
   if (line[a] === "|") a++
   if (b > a && line[b - 1] === "|" && line[b - 2] !== "\\") b--
   const out: { s: number; e: number }[] = []
-  let s = a
-  for (let i = a; i <= b; i++) {
-    if (i < b && !(line[i] === "|" && line[i - 1] !== "\\")) continue
-    let cs = s
-    let ce = i
-    while (cs < ce && /[ \t]/.test(line[cs] as string)) cs++
-    while (ce > cs && /[ \t]/.test(line[ce - 1] as string)) ce--
-    out.push({ s: cs, e: ce })
-    s = i + 1
-  }
-  return out.length ? out : null
+  for (let i = a, s = a; i <= b; i++)
+    if (i === b || (line[i] === "|" && line[i - 1] !== "\\")) {
+      out.push(trim(s, i))
+      s = i + 1
+    }
+  return out
 }
-
-type Stamped = Token & { __n?: MdNode; __table?: { thead: MdNode; tbody?: MdNode; rows: MdNode[] } }
 
 interface Model {
   source: string
   nodes: MdNode[]
   root: MdNode
+  /** The node each token was drawn as, for the renderer. */
+  nodeOf: Map<object, MdNode>
 }
 
-/** Build the model: walk the parser's tokens once, give every construct its id and exact
- *  ranges. Tokens get their node attached for the renderer. */
+/** Walk the parser's tokens once, giving every construct its exact ranges. */
 const buildModel = (source: string, tokens: Token[]): Model => {
-  const nodes: MdNode[] = []
+  const nodeOf = new Map<object, MdNode>()
   const norm = source.replace(/\r\n|\r/g, "\n")
   const topAt: number[] = []
   for (let i = 0, j = 0; i <= norm.length; i++, j++) {
@@ -222,10 +213,10 @@ const buildModel = (source: string, tokens: Token[]): Model => {
     start: number,
     end: number,
     parent: MdNode | null,
-    stamp = true,
+    tok?: object,
   ): MdNode => {
     const n: MdNode = {
-      n: stamp ? nodes.length : -1,
+      n: -1,
       kind,
       start,
       end,
@@ -238,138 +229,104 @@ const buildModel = (source: string, tokens: Token[]): Model => {
       lineStart: false,
       ctx: { ...parent?.ctx },
     }
-    if (stamp) nodes.push(n)
+    parent?.seq.push(n)
+    if (tok) nodeOf.set(tok, n)
     return n
   }
-  const root = node("root", 0, source.length, null)
-  root.editable = true
 
+  /** Text as units: characters, surrogate pairs and (unless `raw`) entities. */
   const units = (m: Mapped, from: number, to: number, out: (Unit | MdNode)[], raw: boolean) => {
-    const entities = raw
-      ? []
-      : decodedEntitiesIn(m.text, from, to).filter((x) => m.text[x.end - 1] === ";")
-    let i = from
-    for (const ent of [...entities, { start: to, end: to, text: "" }]) {
-      for (; i < ent.start; i++) {
-        const c = m.text.charCodeAt(i)
-        // A surrogate pair is one character: never split it.
-        const w = c >= 0xd800 && c < 0xdc00 && i + 1 < ent.start ? 2 : 1
-        out.push({
-          s: m.at[i] as number,
-          e: m.at[i + w] as number,
-          r: m.text.slice(i, i + w),
-          atomic: w > 1,
-        })
-        i += w - 1
-      }
-      if (ent.end > ent.start)
-        out.push({
-          s: m.at[ent.start] as number,
-          e: m.at[ent.end] as number,
-          r: ent.text,
-          atomic: true,
-        })
-      i = Math.max(i, ent.end)
+    const entities = new Map(
+      raw
+        ? []
+        : decodedEntitiesIn(m.text, from, to)
+            .filter((x) => m.text[x.end - 1] === ";")
+            .map((x) => [x.start, x]),
+    )
+    for (let i = from; i < to; ) {
+      const ent = entities.get(i)
+      const c = m.text.charCodeAt(i)
+      const end = ent?.end ?? i + (c >= 0xd800 && c < 0xdc00 && i + 1 < to ? 2 : 1)
+      const r = ent?.text ?? m.text.slice(i, end)
+      out.push({ s: m.at[i] as number, e: m.at[end] as number, r, atomic: end - i > 1 })
+      i = end
     }
   }
 
-  /** Forget what a failed walk stamped under `n`: nothing inside it is addressable. */
-  const unmap = (n: MdNode) => {
-    const drop = (x: MdNode) => {
-      for (const c of x.seq) if (!isUnit(c)) drop(c)
-      if (x.n >= 0) x.n = -2
-    }
-    for (const c of n.seq) if (!isUnit(c)) drop(c)
-    n.seq = []
+  /** Map an inline container's tokens; what can't be mapped leaves it read-only. */
+  const mapInline = (n: MdNode, list: Token[], m: Mapped) => {
+    n.editable = inline(list, m, n)
+    if (!n.editable) n.seq = []
   }
 
-  /** Map inline tokens over `m` into `into`. False when something can't be mapped.
-   *  Inline HTML is mapped only as emphasis (`<strong>…</strong>`, `<em>`, `<b>`, `<i>`,
-   *  `<del>`, `<s>`, opened and closed here) and `<br>`: the editor's own spellings where
-   *  Markdown has none. Any other tag leaves the container read-only. */
+  /** Map inline tokens over `m` into `into`. False when something can't be mapped. */
   const inline = (list: Token[], m: Mapped, into: MdNode): boolean => {
     let cur = 0
     let target = into
     const open: { node: MdNode; tag: string; parent: MdNode }[] = []
-    for (const tok of list as Stamped[]) {
+    for (const tok of list) {
       const raw = tok.raw
       if (m.text.slice(cur, cur + raw.length) !== raw) return false
       const s = cur
-      const e = cur + raw.length
-      const src = (a: number, b: number) => [m.at[a] as number, m.at[b] as number] as const
+      const e = s + raw.length
+      const a = m.at[s] as number
+      const b = m.at[e] as number
       if (tok.type === "text") units(m, s, e, target.seq, false)
-      else if (tok.type === "escape") {
-        const [a, b] = src(s, e)
-        target.seq.push({ s: a, e: b, r: tok.text, atomic: true })
-      } else if (tok.type === "strong" || tok.type === "em" || tok.type === "del") {
-        const [a, b] = src(s, e)
-        const child = node(tok.type, a, b, target)
-        tok.__n = child
-        target.seq.push(child)
-        const d = (raw.length - tok.text.length) / 2
-        if (d > 0 && Number.isInteger(d) && raw.slice(d, raw.length - d) === tok.text) {
-          ;[child.cStart, child.cEnd] = src(s + d, e - d)
-          child.editable = inline(tok.tokens ?? [], sliceMapped(m, s + d, e - d), child)
+      else if (tok.type === "escape") target.seq.push({ s: a, e: b, r: tok.text, atomic: true })
+      else if (
+        tok.type === "strong" ||
+        tok.type === "em" ||
+        tok.type === "del" ||
+        tok.type === "link"
+      ) {
+        const link = tok.type === "link"
+        const child = node(link ? "a" : (tok.type as Kind), a, b, target, tok)
+        if (link) child.ctx.link = true
+        // Its words sit between equal delimiters, or in a link's brackets.
+        const text = tok.text as string
+        const i = link ? 1 : (raw.length - text.length) / 2
+        const j = i + text.length
+        const words = link ? raw[0] === "[" && raw[j] === "]" : i > 0 && Number.isInteger(i)
+        if (words && raw.slice(i, j) === text) {
+          child.cStart = m.at[s + i] as number
+          child.cEnd = m.at[s + j] as number
+          mapInline(child, tok.tokens ?? [], sliceMapped(m, s + i, s + j))
         }
-        if (!child.editable) unmap(child)
-      } else if (tok.type === "link") {
-        const [a, b] = src(s, e)
-        const child = node("a", a, b, target)
-        child.ctx.link = true
-        tok.__n = child
-        target.seq.push(child)
-        const len = tok.text.length
-        if (raw[0] === "[" && raw.slice(1, 1 + len) === tok.text && raw[1 + len] === "]") {
-          ;[child.cStart, child.cEnd] = src(s + 1, s + 1 + len)
-          child.editable = inline(tok.tokens ?? [], sliceMapped(m, s + 1, s + 1 + len), child)
-        }
-        if (!child.editable) unmap(child)
       } else if (tok.type === "codespan") {
-        const [a, b] = src(s, e)
-        const child = node("codespan", a, b, target)
+        const child = node("codespan", a, b, target, tok)
         child.ctx.code = "span"
-        tok.__n = child
-        target.seq.push(child)
         const f = /^`+/.exec(raw)?.[0].length ?? 0
-        const inner = raw.slice(f, raw.length - f)
-        if (f && raw.length >= 2 * f && raw.endsWith("`".repeat(f)) && inner === tok.text) {
-          ;[child.cStart, child.cEnd] = src(s + f, e - f)
+        if (
+          f &&
+          raw.length >= 2 * f &&
+          raw.endsWith("`".repeat(f)) &&
+          raw.slice(f, -f) === tok.text
+        ) {
+          child.cStart = m.at[s + f] as number
+          child.cEnd = m.at[e - f] as number
           units(m, s + f, e - f, child.seq, true)
           child.editable = true
         }
-      } else if (tok.type === "image" || tok.type === "br") {
-        const [a, b] = src(s, e)
-        const child = node(tok.type === "br" ? "br" : "img", a, b, target)
-        tok.__n = child
-        target.seq.push(child)
-      } else if (tok.type === "html") {
-        const tag = /^<(\/?)(strong|em|b|i|del|s|br)\s*(\/?)>$/i.exec(raw)
-        if (!tag) return false
-        const [, closing, rawName, selfClosing] = tag as unknown as [string, string, string, string]
-        const name = rawName.toLowerCase()
-        const [a, b] = src(s, e)
-        if (name === "br") {
-          if (closing) return false
-          const child = node("br", a, b, target)
-          tok.__n = child
-          target.seq.push(child)
-        } else if (!closing && !selfClosing) {
-          const kind: Kind =
-            name === "strong" || name === "b"
-              ? "strong"
-              : name === "em" || name === "i"
-                ? "em"
-                : "del"
-          const child = node(kind, a, b, target)
+      } else if (tok.type === "image" || tok.type === "br")
+        node(tok.type === "br" ? "br" : "img", a, b, target, tok)
+      else if (tok.type === "html") {
+        // Emphasis tags opened and closed here, and `<br>`; any other tag is read-only.
+        const tag = /^<(\/?)([a-z]+)\s*(\/?)>$/i.exec(raw)
+        const name = tag?.[2]?.toLowerCase() ?? ""
+        const kind = HTML_KINDS.get(name)
+        if (!tag || !kind) return false
+        if (kind === "br") {
+          if (tag[1]) return false
+          node("br", a, b, target, tok)
+        } else if (!tag[1] && !tag[3]) {
+          const child = node(kind, a, b, target, tok)
           child.cStart = b
           child.editable = true
-          tok.__n = child
-          target.seq.push(child)
           open.push({ node: child, tag: name, parent: target })
           target = child
         } else {
           const top = open.pop()
-          if (!top || top.tag !== name || closing !== "/") return false
+          if (!top || top.tag !== name || !tag[1]) return false
           top.node.cEnd = a
           top.node.end = b
           target = top.parent
@@ -380,216 +337,159 @@ const buildModel = (source: string, tokens: Token[]): Model => {
     return !open.length && cur === m.text.length
   }
 
-  const inlineContainer = (n: MdNode, list: Token[], m: Mapped) => {
-    n.editable = inline(list, m, n)
-    if (!n.editable) unmap(n)
-  }
-
   /** Map block tokens over `m` as the children of `parent`. */
   const blocks = (list: Token[], m: Mapped, parent: MdNode): boolean => {
     let cur = 0
-    for (const tok of list as Stamped[]) {
-      // Blank lines: the next block's search steps over them.
+    for (const tok of list) {
       if (tok.type === "space") continue
       const raw = tok.raw
-      // Found without its trailing blank lines: a loose item's last block carries the
-      // blank line after the item, which the item's own text stops before.
+      // Without its trailing blank lines: a loose item's last block carries the blank line
+      // after the item, which the item's own text stops before.
       const len = trimmedLength(raw)
-      const at = m.text.indexOf(raw.slice(0, len), cur)
-      if (at < 0 || m.text.slice(cur, at).trim() !== "") return false
+      const at = locate(m.text, raw, cur)
+      if (at < 0) return false
       cur = at + len
-      const range = sliceMapped(m, at, at + len)
+      const range = sliceMapped(m, at, cur)
       const start = range.at[0] as number
       const end = range.at[len] as number
       if (tok.type === "paragraph" || tok.type === "heading" || tok.type === "text") {
-        const kind: Kind = tok.type === "paragraph" ? "p" : tok.type === "heading" ? "h" : "tb"
-        const n = node(kind, start, end, parent, kind !== "tb")
-        tok.__n = n
-        parent.seq.push(n)
-        const text = (tok as Tokens.Paragraph).text
+        const kind = tok.type === "paragraph" ? "p" : tok.type === "heading" ? "h" : "tb"
+        const n = node(kind, start, end, parent, tok)
+        const { text, tokens: inner } = tok as Tokens.Paragraph
         const atx = kind === "h" && /^ {0,3}#/.test(raw)
         const hashes = atx ? (/^ {0,3}#{1,6}[ \t]*/.exec(raw)?.[0].length ?? 0) : 0
         const off = kind === "h" ? raw.indexOf(text, hashes) : raw.startsWith(text) ? 0 : -1
         n.ctx.atx = atx
         n.lineStart = !atx
-        if (off < 0 || !(tok as Tokens.Paragraph).tokens) continue
+        if (off < 0 || !inner) continue
         const content = sliceMapped(m, at + off, at + off + text.length)
         n.cStart = content.at[0] as number
         n.cEnd = content.at[text.length] as number
-        inlineContainer(n, (tok as Tokens.Paragraph).tokens, content)
+        mapInline(n, inner, content)
       } else if (tok.type === "blockquote") {
-        const n = node("bq", start, end, parent)
-        tok.__n = n
-        parent.seq.push(n)
-        const marker = /^ {0,3}> ?/.exec(raw)?.[0] ?? "> "
-        n.prefix = parent.prefix + marker.trimStart()
-        const inner = alignLines((tok as Tokens.Blockquote).text, range)
-        n.editable = !!inner && blocks((tok as Tokens.Blockquote).tokens, inner, n)
+        const n = node("bq", start, end, parent, tok)
+        n.prefix += (/^ {0,3}> ?/.exec(raw)?.[0] ?? "> ").trimStart()
+        const { text, tokens: kids } = tok as Tokens.Blockquote
+        const inner = alignLines(text, range)
+        n.editable = !!inner && blocks(kids, inner, n)
       } else if (tok.type === "list") {
-        const n = node("list", start, end, parent)
-        tok.__n = n
-        parent.seq.push(n)
+        const n = node("list", start, end, parent, tok)
         n.editable = true
         let icur = 0
-        for (const item of (tok as Tokens.List).items as (Tokens.ListItem & Stamped)[]) {
-          const iat = range.text.indexOf(item.raw.slice(0, trimmedLength(item.raw)), icur)
-          const ilen = trimmedLength(item.raw)
-          if (iat < 0 || range.text.slice(icur, iat).trim() !== "") {
+        for (const item of (tok as Tokens.List).items) {
+          const iat = locate(range.text, item.raw, icur)
+          if (iat < 0) {
             n.editable = false
             break
           }
+          const ilen = trimmedLength(item.raw)
           icur = iat + ilen
-          const ir = sliceMapped(range, iat, iat + ilen)
-          const li = node("li", ir.at[0] as number, ir.at[ilen] as number, n)
-          item.__n = li
-          n.seq.push(li)
+          const ir = sliceMapped(range, iat, icur)
+          const li = node("li", ir.at[0] as number, ir.at[ilen] as number, n, item)
           if (item.task) continue
           const first = ir.text.split("\n", 1)[0] as string
           const textFirst = item.text.split("\n", 1)[0] as string
           const indent = textFirst
             ? first.length - textFirst.length
             : (/^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]*/.exec(first)?.[0].length ?? first.length)
-          li.prefix = n.prefix + " ".repeat(Math.max(0, indent))
+          li.prefix += " ".repeat(Math.max(0, indent))
           const inner = alignLines(item.text.replace(/\n+$/, ""), ir)
           if (!inner) continue
           li.cStart = inner.at[0] as number
           li.editable = blocks(item.tokens, inner, li)
         }
       } else if (tok.type === "table") {
-        const t = tok as Tokens.Table & Stamped
-        const n = node("table", start, end, parent)
-        tok.__n = n
-        parent.seq.push(n)
+        const t = tok as Tokens.Table
+        const n = node("table", start, end, parent, tok)
         const lines = range.text.split("\n")
-        let off = 0
-        const lineRanges = lines.map((l) => {
-          const r = { s: off, e: off + l.length }
-          off += l.length + 1
-          return r
-        })
-        const rowNode = (li: number, parentNode: MdNode, cells: Tokens.TableCell[]) => {
-          const lr = lineRanges[li] as { s: number; e: number }
-          const tr = node("tr", range.at[lr.s] as number, range.at[lr.e] as number, parentNode)
-          parentNode.seq.push(tr)
-          const found = rowCells(lines[li] as string)
-          if (!found || found.length !== cells.length) return tr
-          tr.editable = true
-          found.forEach((c, k) => {
-            const cellTok = cells[k] as Tokens.TableCell & Stamped
-            const cell = node(
-              "cell",
-              range.at[lr.s + c.s] as number,
-              range.at[lr.s + c.e] as number,
-              tr,
-            )
-            cell.ctx.cell = true
-            cellTok.__n = cell
-            tr.seq.push(cell)
-            // The cell's text with `\|` read as `|`, each character on its source bytes.
-            const raw = (lines[li] as string).slice(c.s, c.e)
-            const cm: Mapped = { text: "", at: [] }
-            for (let i = 0; i < raw.length; i++) {
-              cm.at.push(range.at[lr.s + c.s + i] as number)
-              if (raw[i] === "\\" && raw[i + 1] === "|") i++
-              cm.text += raw[i]
-            }
-            cm.at.push(cell.end)
-            if (cm.text !== cellTok.text) return
-            inlineContainer(cell, cellTok.tokens, cm)
-          })
-          return tr
-        }
-        const bodyLines = lines.length - 2
-        if (bodyLines !== t.rows.length || lines.length < 2) continue
+        if (lines.length < 2 || lines.length - 2 !== t.rows.length) continue
         // Its parts keep their places (serializeParts); the cells hold the words.
         n.editable = true
-        const thead = node(
-          "thead",
-          range.at[0] as number,
-          range.at[lineRanges[0]?.e ?? 0] as number,
-          n,
-        )
-        thead.editable = true
-        n.seq.push(thead)
-        rowNode(0, thead, t.header)
-        let tbody: MdNode | undefined
-        const rows: MdNode[] = []
-        if (bodyLines > 0) {
-          const s0 = lineRanges[2]?.s ?? 0
-          tbody = node("tbody", range.at[s0] as number, end, n)
-          tbody.editable = true
-          n.seq.push(tbody)
-          t.rows.forEach((cells, r) => {
-            rows.push(rowNode(r + 2, tbody as MdNode, cells))
+        const lineAt: number[] = []
+        for (let i = 0, off = 0; i < lines.length; off += (lines[i++] as string).length + 1)
+          lineAt.push(off)
+        const row = (li: number, part: MdNode, cells: Tokens.TableCell[]) => {
+          const line = lines[li] as string
+          const s = lineAt[li] as number
+          const tr = node("tr", range.at[s] as number, range.at[s + line.length] as number, part)
+          const found = rowCells(line)
+          if (found.length !== cells.length) return
+          tr.editable = true
+          found.forEach((c, k) => {
+            const cellTok = cells[k] as Tokens.TableCell
+            const at = (i: number) => range.at[s + i] as number
+            const cell = node("cell", at(c.s), at(c.e), tr, cellTok)
+            cell.ctx.cell = true
+            // The cell's text with `\|` read as `|`, each character on its source bytes.
+            const cm: Mapped = { text: "", at: [] }
+            for (let i = c.s; i < c.e; i++) {
+              cm.at.push(at(i))
+              if (line[i] === "\\" && line[i + 1] === "|" && i + 1 < c.e) i++
+              cm.text += line[i]
+            }
+            cm.at.push(cell.end)
+            if (cm.text === cellTok.text) mapInline(cell, cellTok.tokens, cm)
           })
         }
-        t.__table = { thead, tbody, rows: [thead.seq[0] as MdNode, ...rows] }
+        const thead = node("thead", start, range.at[(lines[0] as string).length] as number, n)
+        thead.editable = true
+        row(0, thead, t.header)
+        if (t.rows.length) {
+          const tbody = node("tbody", range.at[lineAt[2] as number] as number, end, n)
+          tbody.editable = true
+          t.rows.forEach((cells, r) => {
+            row(r + 2, tbody, cells)
+          })
+        }
       } else if (tok.type === "code") {
-        const n = node("pre", start, end, parent)
-        tok.__n = n
-        parent.seq.push(n)
-        const c = tok as Tokens.Code
+        const n = node("pre", start, end, parent, tok)
+        const { text, lang } = tok as Tokens.Code
         const fence = /^ {0,3}(`{3,}|~{3,})/.exec(raw)
-        if (
-          !fence ||
-          parseDynamicFence(c.lang) ||
-          c.lang?.trim().split(/\s+/)[0]?.toLowerCase() === "mermaid"
-        )
-          continue
         const nl = raw.indexOf("\n")
-        if (nl < 0 && c.text) continue
         const bodyAt = nl < 0 ? len : nl + 1
-        if (raw.slice(bodyAt, bodyAt + c.text.length) !== c.text) continue
-        const body = sliceMapped(m, at + bodyAt, at + bodyAt + c.text.length)
-        const code = node("code", body.at[0] as number, body.at[c.text.length] as number, n)
+        if (!fence || isSpecialFence(lang) || (nl < 0 && text)) continue
+        if (raw.slice(bodyAt, bodyAt + text.length) !== text) continue
+        const body = sliceMapped(m, at + bodyAt, at + bodyAt + text.length)
+        const code = node("code", body.at[0] as number, body.at[text.length] as number, n)
         code.ctx.code = "block"
         code.fence = fence[1]
-        n.seq.push(code)
-        units(body, 0, c.text.length, code.seq, true)
+        units(body, 0, text.length, code.seq, true)
         // The renderer ends the block's text with a newline no source byte stands for.
         code.seq.push({ s: code.cEnd, e: code.cEnd, r: "\n", atomic: true })
-        code.editable = true
         n.cStart = code.cStart
         n.cEnd = code.cEnd
         n.editable = true
-      } else if (tok.type === "hr") {
-        const n = node("hr", start, end, parent)
-        tok.__n = n
-        parent.seq.push(n)
-      } else {
-        // An HTML block, a link definition: no element of ours to stamp, kept in place.
-        const n = node("raw", start, end, parent, false)
-        tok.__n = n
-        parent.seq.push(n)
-      }
+        code.editable = true
+        // An HTML block or a link definition has no element of ours: it is kept in place.
+      } else node(tok.type === "hr" ? "hr" : "raw", start, end, parent, tok)
     }
     return m.text.slice(cur).trim() === ""
   }
 
-  const top: Mapped = { text: norm, at: topAt }
-  root.editable = blocks(tokens, top, root)
-  // Ids stay dense: whatever a failed walk un-stamped is renumbered out.
-  const live = nodes.filter((x) => x.n !== -2)
-  live.forEach((x, i) => {
-    x.n = i
-  })
-  return { source, nodes: live, root }
+  const root = node("root", 0, source.length, null)
+  root.editable = blocks(tokens, { text: norm, at: topAt }, root)
+  // Ids in walk order, over what the walk kept.
+  const nodes: MdNode[] = []
+  const number = (x: MdNode) => {
+    if (x.kind !== "tb" && x.kind !== "raw") x.n = nodes.push(x) - 1
+    for (const c of x.seq) if (!isUnit(c)) number(c)
+  }
+  number(root)
+  return { source, nodes, root, nodeOf }
 }
 
 // ── Rendering ───────────────────────────────────────────────────────────────────────
 
 /** Visible text of rendered HTML, for comparison only. Tags are stripped until none
  *  remain, so a nested `<<b>b>` can't leave a partial tag behind. */
-const stripTags = (html: string): string => {
-  let out = html
+const textOf = (html: string): string => {
+  let out = html.replace(/\n$/, "")
   for (let prev = ""; prev !== out; ) {
     prev = out
     out = out.replace(/<[^>]*>/g, "")
   }
-  return out
+  return decodeEntities(out)
 }
-const textOf = (html: string): string =>
-  decodeEntities(stripTags(html.replace(/\n$/, ""))).replaceAll("\u00a0", " ")
 const predicted = (n: MdNode): string =>
   n.seq
     .map((x) => (isUnit(x) ? x.r : (x.rendered ?? predicted(x))))
@@ -597,171 +497,148 @@ const predicted = (n: MdNode): string =>
     .replaceAll("\u00a0", " ")
 
 /** Render tokens as the reader's page does, with every modeled construct stamped. An
- *  inline container whose rendered text differs from what the model predicts is served
- *  read-only: the map would be wrong, so no edit may rely on it. */
+ *  inline container whose rendered text isn't what the model predicts is read-only. */
 const renderStamped = (
+  model: Model,
   tokens: Token[],
   opts: RenderMarkdownOptions,
 ): { body: string; mermaid: boolean } => {
-  const nonce = `${newShortId()}${newShortId()}`
-  const attr = `data-derive-s${nonce}`
+  const attr = `data-derive-s${newShortId()}${newShortId()}`
   let mermaid = false
-  const base = new Renderer()
+  const nodeOf = (t: object) => model.nodeOf.get(t)
   const stamp = (html: string, n: MdNode | undefined, ro = false): string => {
     if (n && n.rendered === undefined) n.rendered = textOf(html)
-    if (!n && !ro) return html
     const value = `${n && n.n >= 0 ? n.n : ""}${ro ? "r" : ""}`
     if (!value) return html
     return html.replace(/^(\s*<[a-zA-Z][a-zA-Z0-9]*)/, `$1 ${attr}="${value}"`)
   }
-  /** Stamp an inline container, verifying its text on the way. */
-  const container = (html: string, n: MdNode | undefined): string => {
-    if (!n) return html
+  const verify = (html: string, n: MdNode) => {
     n.rendered = textOf(html)
-    if (n.editable && INLINE_CONTAINERS.has(n.kind) && predicted(n) !== n.rendered)
-      n.editable = false
-    return stamp(html, n, INLINE_CONTAINERS.has(n.kind) && !n.editable)
+    if (n.editable && predicted(n) !== n.rendered) n.editable = false
   }
-  const nodeOf = (t: unknown) => (t as Stamped).__n
-  const md = new Marked({
-    gfm: true,
-    renderer: {
-      paragraph(t) {
-        base.parser = this.parser
-        return container(base.paragraph(t), nodeOf(t))
-      },
-      heading(t) {
-        base.parser = this.parser
-        return container(base.heading(t), nodeOf(t))
-      },
-      text(t) {
-        base.parser = this.parser
-        const html = base.text(t)
-        const n = nodeOf(t)
-        if (n?.kind === "tb") {
-          n.rendered = textOf(html)
-          if (n.editable && predicted(n) !== n.rendered) n.editable = false
-        }
-        return html
-      },
-      blockquote(t) {
-        base.parser = this.parser
-        const n = nodeOf(t)
-        return stamp(base.blockquote(t), n, !n?.editable)
-      },
-      list(t) {
-        // As marked draws a list, with the items through this renderer.
-        const n = nodeOf(t)
-        const type = t.ordered ? "ol" : "ul"
-        const start = t.ordered && t.start !== 1 ? ` start="${t.start}"` : ""
-        const items = t.items.map((item) => this.listitem(item)).join("")
-        return stamp(`<${type}${start}>\n${items}</${type}>\n`, n, !n?.editable)
-      },
-      listitem(t) {
-        base.parser = this.parser
-        const n = nodeOf(t)
-        const tb = n?.seq.find((x): x is MdNode => !isUnit(x) && x.kind === "tb")
-        const html = base.listitem(t)
-        // A tight item's text is the item's own: its text block decides.
-        return stamp(html, n, !n?.editable || (tb ? !tb.editable : false))
-      },
-      tablecell(t) {
-        base.parser = this.parser
-        return container(base.tablecell(t), nodeOf(t))
-      },
-      table(t) {
-        base.parser = this.parser
-        const map = (t as Stamped).__table
-        const row = (cells: Tokens.TableCell[], tr: MdNode | undefined) =>
-          stamp(`<tr>\n${cells.map((c) => this.tablecell(c)).join("")}</tr>\n`, tr)
-        const head = row(t.header, map?.rows[0])
-        const body = t.rows.map((cells, r) => row(cells, map?.rows[r + 1])).join("")
-        const html = `<table>\n${stamp("<thead>\n", map?.thead)}${head}</thead>\n${body ? `${stamp("<tbody>", map?.tbody)}${body}</tbody>` : ""}</table>\n`
-        return stamp(html, nodeOf(t), !map)
-      },
-      code(t) {
-        base.parser = this.parser
-        const n = nodeOf(t)
-        const special = renderSpecialFence(t, opts, () => {
-          mermaid = true
-        })
-        if (special !== false) return stamp(special, n, true)
-        const html = base.code(t)
-        const code = n?.seq[0] as MdNode | undefined
-        if (!code) return stamp(html, n, true)
-        code.rendered = textOf(html)
-        if (predicted(code) !== code.rendered) code.editable = false
-        return stamp(html.replace(/<code\b/, stamp("<code", code, !code.editable)), n)
-      },
-      hr(t) {
-        return stamp(base.hr(t), nodeOf(t))
-      },
-      html(t) {
-        // Authored HTML: shown as written, never edited inline.
-        const n = nodeOf(t)
-        if ("block" in t && t.block) {
-          if (n) n.rendered = textOf(t.text)
-          return stamp(t.text, undefined, true)
-        }
-        // An emphasis or break tag the model maps (the editor's own spellings).
-        if (n) {
-          const html = stamp(t.text, n)
-          // Its words are rendered by the tokens that follow: read them from the model.
-          n.rendered = n.kind === "br" ? "" : undefined
-          return html
-        }
-        return t.text
-      },
-      strong(t) {
-        base.parser = this.parser
-        return container(base.strong(t), nodeOf(t))
-      },
-      em(t) {
-        base.parser = this.parser
-        return container(base.em(t), nodeOf(t))
-      },
-      del(t) {
-        base.parser = this.parser
-        return container(base.del(t), nodeOf(t))
-      },
-      link(t) {
-        base.parser = this.parser
-        return container(base.link(t), nodeOf(t))
-      },
-      codespan(t) {
-        return container(base.codespan(t), nodeOf(t))
-      },
-      br(t) {
-        const n = nodeOf(t)
-        if (n) n.rendered = ""
-        return stamp(base.br(t), n)
-      },
-      image(t) {
-        base.parser = this.parser
-        const n = nodeOf(t)
-        if (n) n.rendered = ""
-        return stamp(base.image(t), n)
-      },
-    },
-  })
-  const html = md.parser(tokens)
-  const clean = stampSanitizer(attr).process(html)
-  const body = clean.replace(
-    new RegExp(` ${attr}="(\\d*)(r?)"`, "g"),
-    (_m, n: string, r: string) =>
-      `${n ? ` data-derive-src="${n}"` : ""}${r ? " data-derive-readonly" : ""}`,
-  )
+  const container = (html: string, t: object): string => {
+    const n = nodeOf(t)
+    if (!n) return html
+    verify(html, n)
+    return stamp(html, n, !n.editable)
+  }
+  const empty = (html: string, t: object): string => {
+    const n = nodeOf(t)
+    if (n) n.rendered = ""
+    return stamp(html, n)
+  }
+  class Stamping extends Renderer {
+    override paragraph(t: Tokens.Paragraph) {
+      return container(super.paragraph(t), t)
+    }
+    override heading(t: Tokens.Heading) {
+      return container(super.heading(t), t)
+    }
+    override tablecell(t: Tokens.TableCell) {
+      return container(super.tablecell(t), t)
+    }
+    override strong(t: Tokens.Strong) {
+      return container(super.strong(t), t)
+    }
+    override em(t: Tokens.Em) {
+      return container(super.em(t), t)
+    }
+    override del(t: Tokens.Del) {
+      return container(super.del(t), t)
+    }
+    override link(t: Tokens.Link) {
+      return container(super.link(t), t)
+    }
+    override codespan(t: Tokens.Codespan) {
+      return container(super.codespan(t), t)
+    }
+    override br(t: Tokens.Br) {
+      return empty(super.br(t), t)
+    }
+    override image(t: Tokens.Image) {
+      return empty(super.image(t), t)
+    }
+    override hr(t: Tokens.Hr) {
+      return stamp(super.hr(t), nodeOf(t))
+    }
+    override text(t: Tokens.Text | Tokens.Escape) {
+      // A tight item's text: unstamped, but it decides whether the item is editable.
+      const html = super.text(t)
+      const n = nodeOf(t)
+      if (n?.kind === "tb") verify(html, n)
+      return html
+    }
+    override blockquote(t: Tokens.Blockquote) {
+      const n = nodeOf(t)
+      return stamp(super.blockquote(t), n, !n?.editable)
+    }
+    override list(t: Tokens.List) {
+      const n = nodeOf(t)
+      return stamp(super.list(t), n, !n?.editable)
+    }
+    override listitem(t: Tokens.ListItem) {
+      const n = nodeOf(t)
+      const tb = n?.seq.find((x): x is MdNode => !isUnit(x) && x.kind === "tb")
+      return stamp(super.listitem(t), n, !n?.editable || !!(tb && !tb.editable))
+    }
+    override table(t: Tokens.Table) {
+      const n = nodeOf(t)
+      const [thead, tbody] = (n?.seq ?? []) as (MdNode | undefined)[]
+      const row = (cells: Tokens.TableCell[], tr: Unit | MdNode | undefined) =>
+        stamp(`<tr>\n${cells.map((c) => this.tablecell(c)).join("")}</tr>\n`, tr as MdNode)
+      const head = row(t.header, thead?.seq[0])
+      const body = t.rows.map((cells, r) => row(cells, tbody?.seq[r])).join("")
+      return stamp(
+        `<table>\n${stamp("<thead>\n", thead)}${head}</thead>\n${body ? `${stamp("<tbody>", tbody)}${body}</tbody>` : ""}</table>\n`,
+        n,
+        !n?.editable,
+      )
+    }
+    override code(t: Tokens.Code) {
+      const n = nodeOf(t)
+      const special = renderSpecialFence(t, opts, () => {
+        mermaid = true
+      })
+      if (special !== false) return stamp(special, n, true)
+      const html = super.code(t)
+      const code = n?.seq[0] as MdNode | undefined
+      if (!code) return stamp(html, n, true)
+      verify(html, code)
+      return stamp(html.replace(/<code\b/, stamp("<code", code, !code.editable)), n)
+    }
+    override html(t: Tokens.HTML | Tokens.Tag) {
+      const n = nodeOf(t)
+      // Authored HTML blocks are shown as written, never edited inline.
+      if ("block" in t && t.block) {
+        if (n) n.rendered = textOf(t.text)
+        return stamp(t.text, undefined, true)
+      }
+      const html = stamp(t.text, n)
+      // An emphasis tag's words are the tokens after it: read them from the model.
+      if (n) n.rendered = n.kind === "br" ? "" : undefined
+      return html
+    }
+  }
+  const html = Parser.parse(tokens, { gfm: true, renderer: new Stamping() })
+  const body = stampSanitizer(attr)
+    .process(html)
+    .replace(
+      new RegExp(` ${attr}="(\\d*)(r?)"`, "g"),
+      (_m, n: string, r: string) =>
+        `${n ? ` data-derive-src="${n}"` : ""}${r ? " data-derive-readonly" : ""}`,
+    )
   return { body, mermaid }
 }
 
-const lex = (source: string): Token[] => new Marked({ gfm: true }).lexer(source)
-
 /** The model with its editable flags settled (they depend on the rendered text). */
-const modelOf = (source: string): Model & { body: string; mermaid: boolean } => {
-  const tokens = lex(source)
+const modelOf = (source: string, opts: RenderMarkdownOptions = {}) => {
+  const tokens = new Marked({ gfm: true }).lexer(source)
   const model = buildModel(source, tokens)
-  return { ...model, ...renderStamped(tokens, {}) }
+  return { ...model, ...renderStamped(model, tokens, opts) }
 }
+
+const hashOf = (source: string, n: MdNode | undefined) =>
+  n ? hashSource(source.slice(n.start, n.end)) : Promise.resolve("")
 
 /**
  * The editor's view of a stored Markdown document: the reader's page, with
@@ -774,9 +651,7 @@ export const renderMarkdownForEditor = async (
   base: { version: number },
   opts: RenderMarkdownOptions = {},
 ): Promise<string> => {
-  const tokens = lex(source)
-  buildModel(source, tokens)
-  const { body, mermaid } = renderStamped(tokens, opts)
+  const { body, mermaid } = modelOf(source, opts)
   const sha = await sourceSha(source)
   return renderDocShell(body, title, mermaid ? MERMAID_HEAD : "")
     .replace(
@@ -786,17 +661,14 @@ export const renderMarkdownForEditor = async (
     .replace("<main data-derive-ready>", '<main data-derive-ready data-derive-src="0">')
 }
 
-const hashText = async (text: string): Promise<SourceHash> =>
-  (await sha256Hex(new TextEncoder().encode(text))).slice(0, 16)
-
 /** The hash of every id's source bytes, as `sourceMap` gives them for HTML. */
 export const markdownSourceMap = async (
   source: string,
-): Promise<{ sha: string; hashes: SourceHash[] }> => {
+): Promise<{ sha: string; hashes: string[] }> => {
   const { nodes } = modelOf(source)
   const [sha, hashes] = await Promise.all([
     sourceSha(source),
-    Promise.all(nodes.map((n) => hashText(source.slice(n.start, n.end)))),
+    Promise.all(nodes.map((n) => hashOf(source, n))),
   ])
   return { sha, hashes }
 }
@@ -815,37 +687,23 @@ interface Piece {
   nl?: boolean
 }
 
-const BLOCK_START: [RegExp, (m: RegExpExecArray) => number][] = [
-  [/^#{1,6}(?=[ \t]|$)/, () => 0],
-  [/^>/, () => 0],
-  [/^[-+*](?=[ \t]|$)/, () => 0],
-  [/^\d{1,9}[.)](?=[ \t]|$)/, (m) => m[0].length - 1],
-  [/^(?:`{3,}|~{3,})/, () => 0],
-  [/^([-*_])(?:[ \t]*\1){2,}[ \t]*$/, () => 0],
-]
+/** What starts a block at a line's start. An ordered marker's digits are group 1: its
+ *  `.`/`)` is what gets escaped. */
+const BLOCK_START =
+  /^(?:#{1,6}(?=[ \t]|$)|>|[-+*](?=[ \t]|$)|(\d{1,9})[.)](?=[ \t]|$)|`{3,}|~{3,}|([-*_])(?:[ \t]*\2){2,}[ \t]*$)/
 const SETEXT = /^(?:=+|-+)[ \t]*$/
 
-/** How emphasis is spelled. "md": `**`/`*` for new formatting, the author's own
- *  delimiters kept. The others re-spell every run in the op — `__` with `*`, `**` with
- *  `_`, `__`/`_` (a delimiter meeting another run), then `<strong>`/`<em>` (one that can't
- *  close where it sits, like `**x.**y`). The save takes the first that reads back as the
- *  page showed. */
-type Spelling = "md" | "mixA" | "mixB" | "alt" | "html"
-/** The delimiter character a spelling writes for strong and for emphasis. */
-const DELIM: Record<Exclude<Spelling, "html">, { strong: string; em: string }> = {
-  md: { strong: "*", em: "*" },
-  mixA: { strong: "_", em: "*" },
-  mixB: { strong: "*", em: "_" },
-  alt: { strong: "_", em: "_" },
-}
+/** A save's context. `html`: emphasis is spelled `<strong>`/`<em>`, the fallback where
+ *  Markdown's delimiters wouldn't read back as the page showed them. */
 interface Serializer {
   model: Model
-  spelling: Spelling
+  html: boolean
 }
 
 const fail = (message: string): never => {
   throw new EditError(message)
 }
+const READ_ONLY = "That part of the document can't be edited inline. Use the source editor."
 
 const reindent = (bytes: string, from: string, to: string): string => {
   if (from === to || !bytes.includes("\n")) return bytes
@@ -917,57 +775,47 @@ const align = (a: string[], b: string[], eq: (x: string, y: string) => boolean):
   return out
 }
 
-const nodeSym = (n: MdNode) => `\u0000${n.n}`
-
 /** An inline container's new content: its original text aligned against the new, the
  *  unchanged characters written back as their original bytes. */
 const inlinePieces = (z: Serializer, n: MdNode, tokens: SourceToken[]): Piece[] => {
   const src = z.model.source
-  // Original symbols: one per rendered character (with its unit), one per child node.
+  // One symbol per original rendered character, or child node, with its index in `seq`.
   const aSym: string[] = []
-  const aRef: { si: number; k: number }[] = []
+  const aSi: number[] = []
   n.seq.forEach((x, si) => {
-    if (isUnit(x))
-      for (let k = 0; k < x.r.length; k++) {
-        aSym.push(x.r[k] as string)
-        aRef.push({ si, k })
-      }
-    else {
-      aSym.push(nodeSym(x))
-      aRef.push({ si, k: 0 })
+    for (const c of isUnit(x) ? x.r.split("") : [`\u0000${x.n}`]) {
+      aSym.push(c)
+      aSi.push(si)
     }
   })
   const bSym: string[] = []
   const bTok: (SourceToken | null)[] = []
-  for (const t of tokens) {
+  for (const t of tokens)
     if ("text" in t)
-      for (let i = 0; i < t.text.length; i++) {
-        bSym.push(t.text[i] as string)
+      for (const c of t.text.split("")) {
+        bSym.push(c)
         bTok.push(null)
       }
     else {
-      const node = "keep" in t ? z.model.nodes[t.keep] : undefined
-      bSym.push(node ? nodeSym(node) : "\u0000new")
+      bSym.push("keep" in t ? `\u0000${t.keep}` : "\u0000new")
       bTok.push(t)
     }
-  }
   const loose = n.ctx.code === undefined
-  const eq = (x: string, y: string) =>
-    x === y || (loose && x.length === 1 && y.length === 1 && isSpace(x) && isSpace(y))
-  const match = align(aSym, bSym, eq)
+  const match = align(
+    aSym,
+    bSym,
+    (x, y) => x === y || (loose && x.length === 1 && y.length === 1 && isSpace(x) && isSpace(y)),
+  )
   // An atomic unit stays only when every character of it matched, in one run.
-  const unitMatch = new Map<number, number[]>()
+  const hits = new Map<number, number[]>()
   match.forEach((ai, bi) => {
-    if (ai < 0) return
-    const r = aRef[ai] as { si: number }
-    unitMatch.set(r.si, [...(unitMatch.get(r.si) ?? []), bi])
+    if (ai >= 0) hits.set(aSi[ai] as number, [...(hits.get(aSi[ai] as number) ?? []), bi])
   })
-  for (const [si, bis] of unitMatch) {
+  for (const [si, bis] of hits) {
     const u = n.seq[si] as Unit | MdNode
     if (!isUnit(u) || !u.atomic) continue
-    const whole =
-      bis.length === u.r.length && bis.every((b, i) => i === 0 || b === (bis[i - 1] as number) + 1)
-    if (!whole) for (const b of bis) match[b] = -1
+    if (bis.length !== u.r.length || bis.some((b, i) => i > 0 && b !== (bis[i - 1] as number) + 1))
+      for (const b of bis) match[b] = -1
   }
 
   const pieces: Piece[] = []
@@ -977,28 +825,26 @@ const inlinePieces = (z: Serializer, n: MdNode, tokens: SourceToken[]): Piece[] 
     if (ins) pieces.push({ s: typed(ins, n), kind: "ins" })
     ins = ""
   }
-  for (let bi = 0; bi < bSym.length; bi++) {
+  bSym.forEach((sym, bi) => {
     const t = bTok[bi]
     const ai = match[bi] as number
-    if (t === null || t === undefined) {
-      if (ai < 0) {
-        ins += bSym[bi]
-        continue
+    const si = ai >= 0 ? (aSi[ai] as number) : undefined
+    if (!t) {
+      if (si === undefined) ins += sym
+      else if (!emitted.has(si)) {
+        flush()
+        emitted.add(si)
+        const u = n.seq[si] as Unit
+        pieces.push({ s: src.slice(u.s, u.e), kind: "orig", si, nl: u.r === "\n" })
       }
-      const { si } = aRef[ai] as { si: number }
-      if (emitted.has(si)) continue
-      flush()
-      emitted.add(si)
-      const u = n.seq[si] as Unit
-      pieces.push({ s: src.slice(u.s, u.e), kind: "orig", si, nl: u.r === "\n" })
-      continue
+      return
     }
     flush()
-    const si = ai >= 0 ? (aRef[ai] as { si: number }).si : undefined
     const out = emitToken(z, n, t)
-    if (out !== null)
-      pieces.push({ s: out, kind: "node", si, nl: /\n[^\n]*$/.test(out) && isBreak(z, t) })
-  }
+    const brk =
+      ("tag" in t && t.tag === "br") || ("keep" in t && z.model.nodes[t.keep]?.kind === "br")
+    pieces.push({ s: out, kind: "node", si, nl: brk && /\n[^\n]*$/.test(out) })
+  })
   flush()
   return pieces
 }
@@ -1013,9 +859,9 @@ const serializeInline = (z: Serializer, n: MdNode, tokens: SourceToken[]): strin
 }
 
 /** Emphasis around content: what sits at its edges and can't be emphasized (space, a
- *  line break, a line's prefix) moves outside the delimiters — a delimiter beside it
- *  wouldn't open or close — and nothing is left of it when the content is gone. */
-const wrapPieces = (pieces: Piece[], open: string, close: string): string => {
+ *  line break, a line's prefix) moves outside the delimiters, and nothing is left of it
+ *  when the content is gone. */
+const wrapPieces = (pieces: Piece[], [open, close]: [string, string]): string => {
   const edge = (p: Piece) => !!p.nl || p.s.trim() === ""
   let a = 0
   while (a < pieces.length && edge(pieces[a] as Piece)) a++
@@ -1038,62 +884,50 @@ const wrapPieces = (pieces: Piece[], open: string, close: string): string => {
   return `${joined(pieces.slice(0, a))}${lead}${open}${joined(core)}${close}${trail}${joined(pieces.slice(b))}`
 }
 
-const isBreak = (z: Serializer, t: SourceToken): boolean =>
-  ("tag" in t && t.tag === "br") || ("keep" in t && z.model.nodes[t.keep]?.kind === "br")
+/** How emphasis is delimited: as a tag when the save spells it as HTML, else a kept run's
+ *  own delimiters, or `**`/`*` for a new one. */
+const delimiters = (z: Serializer, kind: Kind, kept?: MdNode): [string, string] => {
+  if (z.html) return [`<${kind}>`, `</${kind}>`]
+  if (kept)
+    return [
+      z.model.source.slice(kept.start, kept.cStart),
+      z.model.source.slice(kept.cEnd, kept.end),
+    ]
+  return kind === "strong" ? ["**", "**"] : ["*", "*"]
+}
 
-/** One non-text token inside an inline container, as Markdown; null to drop it. */
-const emitToken = (z: Serializer, n: MdNode, t: SourceToken): string | null => {
-  const src = z.model.source
+/** One non-text token inside an inline container, as Markdown. */
+const emitToken = (z: Serializer, n: MdNode, t: SourceToken): string => {
   if ("comment" in t) return `<!--${t.comment}-->`
   if ("tag" in t) return emitTag(z, n, t)
-  if (!("keep" in t)) return null
-  const k = z.model.nodes[t.keep] as MdNode
+  const k = z.model.nodes[(t as KeepToken).keep] as MdNode
   if (!INLINE_KINDS.has(k.kind))
     fail(
       "A paragraph can only hold words, links and formatting. Use the source editor to move blocks.",
     )
-  if (!t.children) {
-    // Another spelling re-spells kept emphasis too: two runs that now touch (`**a****b**`)
-    // only parse apart when one of them changes.
-    const bytes =
-      z.spelling !== "md" && k.kind !== "a" && WRAPPERS.has(k.kind) && k.editable
-        ? emphasis(z, k, src.slice(k.cStart, k.cEnd))
-        : src.slice(k.start, k.end)
-    return reindent(bytes, k.linePrefix, n.prefix)
-  }
-  return reindent(emitWith(z, k, t.children), k.linePrefix, n.prefix)
+  const src = z.model.source
+  const { children } = t as KeepToken
+  // Spelled as HTML, kept emphasis is too: two runs that now touch (`**a****b**`) only
+  // parse apart as tags.
+  const bytes = children
+    ? rewrite(z, k, children)
+    : z.html && EMPHASIS.has(k.kind) && k.editable
+      ? wrapPieces([{ s: src.slice(k.cStart, k.cEnd), kind: "orig" }], delimiters(z, k.kind))
+      : src.slice(k.start, k.end)
+  return reindent(bytes, k.linePrefix, n.prefix)
 }
 
-/** Kept emphasis around its content (its own bytes, or new pieces), in the save's
- *  spelling. */
-const emphasis = (z: Serializer, k: MdNode, inner: string | Piece[]): string => {
-  const src = z.model.source
-  const pieces: Piece[] = typeof inner === "string" ? [{ s: inner, kind: "orig" }] : inner
-  if (z.spelling === "html") {
-    const tag = k.kind === "em" ? "em" : k.kind === "del" ? "del" : "strong"
-    return wrapPieces(pieces, `<${tag}>`, `</${tag}>`)
-  }
-  const html = /^</.test(src.slice(k.start, k.cStart))
-  const swap = (d: string) => {
-    if (z.spelling === "md" || k.kind === "del" || html) return d
-    const c = DELIM[z.spelling as Exclude<Spelling, "html">][k.kind === "em" ? "em" : "strong"]
-    return d.replace(/[*_]/g, c)
-  }
-  return wrapPieces(pieces, swap(src.slice(k.start, k.cStart)), swap(src.slice(k.cEnd, k.end)))
-}
-
-/** A kept construct with new content: its delimiters around the serialized content. */
-const emitWith = (z: Serializer, k: MdNode, children: SourceToken[]): string => {
-  const src = z.model.source
-  if (!k.editable) fail("Part of that edit is inside something that can't be edited inline.")
-  if (k.kind === "codespan") return codespan(serializeInline(z, k, children))
-  if (WRAPPERS.has(k.kind) && k.kind !== "a")
-    return emphasis(z, k, finishInline(k, inlinePieces(z, k, children)))
+/** A kept construct with new content: its own delimiters (or a block's marker and
+ *  suffix) around it. */
+const rewrite = (z: Serializer, k: MdNode, children: SourceToken[]): string => {
+  if (!k.editable) fail(READ_ONLY)
+  if (EMPHASIS.has(k.kind))
+    return wrapPieces(finishInline(k, inlinePieces(z, k, children)), delimiters(z, k.kind, k))
   const inner = serializeContent(z, k, children)
-  const open = src.slice(k.start, k.cStart)
-  const close = src.slice(k.cEnd, k.end)
-  if (k.kind === "a") return inner.trim() ? open + inner + close : inner
-  return open + inner + close
+  if (k.kind === "codespan") return codespan(inner)
+  // An emptied link leaves its space; an emptied paragraph is gone (Markdown has none).
+  if (!inner.trim() && (k.kind === "a" || k.kind === "p")) return k.kind === "a" ? inner : ""
+  return z.model.source.slice(k.start, k.cStart) + inner + z.model.source.slice(k.cEnd, k.end)
 }
 
 const codespan = (inner: string): string => {
@@ -1111,41 +945,39 @@ const codespan = (inner: string): string => {
   return fence + pad + inner + pad + fence
 }
 
+const tagKind = (tag: TagToken["tag"]): Kind =>
+  tag === "br" ? "br" : tag === "a" ? "a" : tag === "b" || tag === "strong" ? "strong" : "em"
+
 /** Editor formatting as Markdown. */
-const emitTag = (z: Serializer, n: MdNode, t: TagToken): string | null => {
+const emitTag = (z: Serializer, n: MdNode, t: TagToken): string => {
+  const children = t.children ?? []
   if (t.tag === "br") {
-    if (n.ctx.code === "block") return `\n${n.prefix}`
-    if (n.ctx.code === "span") return " "
+    if (n.ctx.code) return n.ctx.code === "block" ? `\n${n.prefix}` : " "
     // An ATX heading and a table cell are one line: only HTML can break them.
-    if (n.ctx.cell || n.ctx.atx) return "<br>"
-    return `\\\n${n.prefix}`
+    return n.ctx.cell || n.ctx.atx ? "<br>" : `\\\n${n.prefix}`
   }
-  // Code holds no formatting: its words stay, as code.
-  if (n.ctx.code) return serializeInline(z, { ...n, seq: [], lineStart: false }, t.children ?? [])
-  const kind: Kind = t.tag === "a" ? "a" : t.tag === "b" || t.tag === "strong" ? "strong" : "em"
-  const pseudo: MdNode = { ...n, kind, seq: [], lineStart: false, ctx: { ...n.ctx } }
-  if (t.tag === "a") {
+  const kind = tagKind(t.tag)
+  // New content inside `n`: its context, none of its text. Code holds no formatting: its
+  // words stay, as code.
+  const host: MdNode = { ...n, seq: [], lineStart: false, ctx: { ...n.ctx } }
+  if (n.ctx.code) return serializeInline(z, host, children)
+  host.kind = kind
+  if (kind === "a") {
     if (n.ctx.link) fail("That edit would put a link inside a link.")
-    pseudo.ctx.link = true
-    const inner = serializeInline(z, pseudo, t.children ?? [])
+    host.ctx.link = true
+    const inner = serializeInline(z, host, children)
     const href = t.href ?? ""
     const dest = /[\s()<>]/.test(href) ? `<${href.replace(/[\\<>]/g, "\\$&")}>` : href
     return inner.trim() ? `[${inner}](${dest})` : inner
   }
-  const inner = finishInline(pseudo, inlinePieces(z, pseudo, t.children ?? []))
-  const strong = t.tag === "b" || t.tag === "strong"
-  if (z.spelling === "html")
-    return wrapPieces(inner, strong ? "<strong>" : "<em>", strong ? "</strong>" : "</em>")
-  const d = DELIM[z.spelling][strong ? "strong" : "em"].repeat(strong ? 2 : 1)
-  return wrapPieces(inner, d, d)
+  return wrapPieces(finishInline(host, inlinePieces(z, host, children)), delimiters(z, kind))
 }
 
 /** Settle an inline container's pieces: nothing typed may start a new block at a line
  *  start, a break needs text after it, and typed space at the edges of a block is dropped. */
 const finishInline = (n: MdNode, pieces: Piece[]): Piece[] => {
   if (n.ctx.code) return pieces
-  const block = n.kind === "p" || n.kind === "tb" || n.kind === "cell" || n.kind === "h"
-  if (block) {
+  if (n.kind === "p" || n.kind === "tb" || n.kind === "cell" || n.kind === "h") {
     // Typed space at a block's edges is never shown, and a line break at either end
     // renders as a literal backslash: both go.
     const edge = (p: Piece | undefined) =>
@@ -1158,8 +990,7 @@ const finishInline = (n: MdNode, pieces: Piece[]): Piece[] => {
     if (last?.kind === "ins") last.s = last.s.trimEnd()
   }
   // Line starts: the content start (when it starts a line) and after every line end.
-  const starts: number[] = []
-  if (n.lineStart) starts.push(0)
+  const starts: number[] = n.lineStart ? [0] : []
   pieces.forEach((p, i) => {
     if (p.nl) starts.push(i + 1)
   })
@@ -1167,9 +998,7 @@ const finishInline = (n: MdNode, pieces: Piece[]): Piece[] => {
     if (k >= pieces.length) continue
     const first = pieces[k] as Piece
     const prev = pieces[k - 1]
-    const untouched =
-      first.si !== undefined && (k === 0 ? first.si === 0 : prev?.si === first.si - 1)
-    if (untouched) continue
+    if (first.si !== undefined && (k === 0 ? first.si === 0 : prev?.si === first.si - 1)) continue
     // Leading space on a new line is never shown; four of it would start code.
     while (k < pieces.length && (pieces[k] as Piece).kind !== "node") {
       const p = pieces[k] as Piece
@@ -1188,15 +1017,8 @@ const finishInline = (n: MdNode, pieces: Piece[]): Piece[] => {
       line += nl < 0 ? s : s.slice(0, nl)
       if (nl >= 0 || (pieces[i] as Piece).nl) break
     }
-    let at = -1
-    for (const [re, idx] of BLOCK_START) {
-      const m = re.exec(line)
-      if (m) {
-        at = idx(m)
-        break
-      }
-    }
-    if (at < 0 && k > 0 && SETEXT.test(line)) at = 0
+    const m = BLOCK_START.exec(line)
+    const at = m ? (m[1]?.length ?? 0) : k > 0 && SETEXT.test(line) ? 0 : -1
     if (at < 0) continue
     // Escape the marker character where it sits.
     for (let i = k, off = 0; i < pieces.length; i++) {
@@ -1247,8 +1069,12 @@ const serializeBlocks = (z: Serializer, n: MdNode, tokens: SourceToken[]): strin
   const items: Item[] = []
   const firstEmit = new Set<MdNode>()
   const inlineGroup: SourceToken[] = []
-  const words = (host: MdNode, group: SourceToken[]) =>
-    serializeInline(z, { ...host, seq: [], lineStart: true, editable: true }, group)
+  const words = (host: MdNode, kind: Kind, group: SourceToken[]) =>
+    serializeInline(
+      z,
+      { ...host, kind, linePrefix: host.prefix, seq: [], lineStart: true, editable: true },
+      group,
+    )
   const flushInline = () => {
     const group = inlineGroup.splice(0)
     if (!group.length) return
@@ -1261,18 +1087,15 @@ const serializeBlocks = (z: Serializer, n: MdNode, tokens: SourceToken[]): strin
     if (group.every((t) => "text" in t && t.text.trim() === "")) return
     // Words the browser put between blocks (typed past a list's last item): in a list
     // they continue the item before them, elsewhere they are a paragraph of their own.
-    const prev = items.at(-1)
     if (n.kind === "list") {
-      if (!prev?.node) fail("Text can only be typed inside a list item.")
-      const host = prev?.node as MdNode
-      const line = words({ ...host, kind: "tb", linePrefix: host.prefix }, group)
-      if (prev && line) prev.bytes += `\n${host.prefix}${line}`
+      const prev = items.at(-1)
+      if (!prev?.node) return fail("Text can only be typed inside a list item.")
+      const line = words(prev.node, "tb", group)
+      if (line) prev.bytes += `\n${prev.node.prefix}${line}`
       return
     }
-    if (n.kind === "tbody" || n.kind === "thead")
-      fail("Text can only be typed inside a table cell.")
-    const kind: Kind = "p"
-    items.push({ bytes: words({ ...n, kind, linePrefix: n.prefix }, group) })
+    if (n.kind === "tbody") fail("Text can only be typed inside a table cell.")
+    items.push({ bytes: words(n, "p", group) })
   }
   for (const t of liftBlocks(z, tokens)) {
     const k = "keep" in t ? z.model.nodes[t.keep] : undefined
@@ -1283,10 +1106,10 @@ const serializeBlocks = (z: Serializer, n: MdNode, tokens: SourceToken[]): strin
     flushInline()
     if (k.kind === "li" && n.kind !== "list") fail("A list item can only move within a list.")
     if (k.kind !== "li" && n.kind === "list") fail("A list can only hold list items.")
-    if ((k.kind === "tr") !== (n.kind === "tbody" || n.kind === "thead"))
+    if ((k.kind === "tr") !== (n.kind === "tbody"))
       fail("A table row can only move within its table.")
-    const kt = t as KeepToken
-    const bytes = kt.children ? emitBlockWith(z, k, kt.children) : src.slice(k.start, k.end)
+    const { children } = t as KeepToken
+    const bytes = children ? rewrite(z, k, children) : src.slice(k.start, k.end)
     const orig = kids.includes(k) && !firstEmit.has(k) ? k : undefined
     if (orig) firstEmit.add(orig)
     items.push({ orig, node: k, bytes: reindent(bytes, k.linePrefix, n.prefix) })
@@ -1294,66 +1117,42 @@ const serializeBlocks = (z: Serializer, n: MdNode, tokens: SourceToken[]): strin
   flushInline()
   if (n.kind === "li" && kids[0]?.kind === "tb" && !firstEmit.has(kids[0])) {
     // Every word of the item's own text was deleted.
-    firstEmit.add(kids[0])
     items.unshift({ orig: kids[0], node: kids[0], bytes: "" })
   }
   // What has no element of ours (an HTML block, a link definition) stays where it was:
   // after the kept block that preceded it.
   kids.forEach((k, i) => {
-    if (k.n >= 0 || k.kind === "tb") return
+    if (k.kind !== "raw") return
     let at = 0
-    for (let j = i - 1; j >= 0; j--) {
-      const idx = items.findIndex((it) => it.orig === kids[j])
-      if (idx >= 0) {
-        at = idx + 1
-        break
-      }
-    }
+    for (let j = i - 1; j >= 0 && !at; j--) at = items.findIndex((it) => it.orig === kids[j]) + 1
     items.splice(at, 0, { orig: k, bytes: src.slice(k.start, k.end) })
   })
-  const sep = (i: number): string => {
-    const a = kids[i] as MdNode
-    const b = kids[i + 1] as MdNode
-    return src.slice(a.end, b.start)
-  }
-  const blank = `\n${n.prefix.trimEnd()}\n${n.prefix}`
+  const sep = (i: number): string =>
+    src.slice((kids[i] as MdNode).end, (kids[i + 1] as MdNode).start)
+  // A tight item's text and its nested list sit on consecutive lines; a loose item's
+  // paragraphs are blank-line separated, even when it had only one.
+  const tight =
+    n.kind === "list" ||
+    n.kind === "tbody" ||
+    (n.kind === "li" &&
+      !kids.some((k) => k.kind === "p") &&
+      !kids.some((_k, i) => i > 0 && /\n[ \t>]*\n/.test(sep(i - 1))))
   const fallback =
-    n.kind === "list"
-      ? kids.length > 1
-        ? sep(0)
-        : `\n${n.prefix}`
-      : n.kind === "tbody" || n.kind === "thead"
+    n.kind === "list" && kids.length > 1
+      ? sep(0)
+      : tight
         ? `\n${n.prefix}`
-        : n.kind === "li" &&
-            // A tight item's text and its nested list sit on consecutive lines; a loose
-            // item's paragraphs are blank-line separated, even when it had only one.
-            !kids.some((k) => k.kind === "p") &&
-            !kids.some((_k, i) => i > 0 && /\n[ \t>]*\n/.test(sep(i - 1)))
-          ? `\n${n.prefix}`
-          : blank
+        : `\n${n.prefix.trimEnd()}\n${n.prefix}`
   const live = items.filter((it) => it.bytes !== "" || it.orig?.kind === "tb")
-  let out = ""
-  live.forEach((it, i) => {
-    if (i > 0) {
-      const prev = live[i - 1] as Item
-      const pi = prev.orig ? kids.indexOf(prev.orig) : -1
-      out += pi >= 0 && it.orig && kids.indexOf(it.orig) === pi + 1 ? sep(pi) : fallback
-    }
-    out += it.bytes
+  const out = live.map((it, i) => {
+    const prev = live[i - 1]
+    if (!prev) return it.bytes
+    const pi = prev.orig ? kids.indexOf(prev.orig) : -1
+    return (pi >= 0 && it.orig && kids.indexOf(it.orig) === pi + 1 ? sep(pi) : fallback) + it.bytes
   })
   const lead = kids[0] ? src.slice(n.cStart, kids[0].start) : ""
   const tail = kids.length ? src.slice((kids.at(-1) as MdNode).end, n.cEnd) : ""
-  return lead + out + tail
-}
-
-/** A block kept with new content (a split's halves, an item holding an edit). */
-const emitBlockWith = (z: Serializer, k: MdNode, children: SourceToken[]): string => {
-  const src = z.model.source
-  if (!k.editable) fail("Part of that edit is inside something that can't be edited inline.")
-  const inner = serializeContent(z, k, children)
-  // A paragraph whose words are all gone is gone: Markdown has no empty paragraph.
-  if (k.kind === "p" && inner.trim() === "") return ""
-  return src.slice(k.start, k.cStart) + inner + src.slice(k.cEnd, k.end)
+  return lead + out.join("") + tail
 }
 
 /** A table part (a row, the head, the table itself, named whole when a split elsewhere
@@ -1375,7 +1174,7 @@ const serializeParts = (z: Serializer, n: MdNode, tokens: SourceToken[]): string
   let cursor = n.cStart
   kept.forEach((t, i) => {
     const c = parts[i] as MdNode
-    const children = (t as KeepToken).children
+    const { children } = t as KeepToken
     out += src.slice(cursor, c.cStart)
     out += children ? serializeContent(z, c, children) : src.slice(c.cStart, c.cEnd)
     cursor = c.cEnd
@@ -1385,7 +1184,7 @@ const serializeParts = (z: Serializer, n: MdNode, tokens: SourceToken[]): string
 
 /** A node's new content (what replaces [cStart, cEnd)). */
 const serializeContent = (z: Serializer, n: MdNode, tokens: SourceToken[]): string => {
-  if (!n.editable) fail("That part of the document can't be edited inline. Use the source editor.")
+  if (!n.editable) fail(READ_ONLY)
   if (n.kind === "pre") {
     const code = n.seq[0] as MdNode
     const only = tokens.length === 1 ? tokens[0] : undefined
@@ -1397,22 +1196,19 @@ const serializeContent = (z: Serializer, n: MdNode, tokens: SourceToken[]): stri
   }
   if (n.kind === "code") {
     const body = serializeInline(z, n, tokens).replace(/\n$/, "")
-    const fence = n.fence
-    if (
-      fence &&
-      body.split("\n").some((l) => {
-        const m = /^[ \t>]*(`{3,}|~{3,})[ \t]*$/.exec(l)
-        return !!m && m[1]?.[0] === fence[0] && (m[1]?.length ?? 0) >= fence.length
-      })
-    )
-      fail("A line in that code block would end it early. Use the source editor.")
+    const fence = n.fence as string
+    const closes = body.split("\n").some((l) => {
+      const m = /^[ \t>]*(`{3,}|~{3,})[ \t]*$/.exec(l)?.[1]
+      return !!m && m[0] === fence[0] && m.length >= fence.length
+    })
+    if (closes) fail("A line in that code block would end it early. Use the source editor.")
     return body
   }
   if (INLINE_CONTAINERS.has(n.kind)) return serializeInline(z, n, tokens)
   if (n.kind === "tr" || n.kind === "table" || n.kind === "thead")
     return serializeParts(z, n, tokens)
-  if (n.kind === "li" || BLOCK_CONTAINERS.has(n.kind)) return serializeBlocks(z, n, tokens)
-  return fail("That part of the document can't be edited inline. Use the source editor.")
+  // The block containers: root, a quote, a list, an item, a table body.
+  return serializeBlocks(z, n, tokens)
 }
 
 // ── Apply ───────────────────────────────────────────────────────────────────────────
@@ -1443,7 +1239,7 @@ const settle = (out: string[]): string => {
   if (flat.at(-1) === " ") flat.pop()
   return flat.join("\u0002")
 }
-const MARK: Record<string, string> = {
+const MARK: Partial<Record<Kind, string>> = {
   strong: "s",
   em: "e",
   del: "d",
@@ -1451,14 +1247,14 @@ const MARK: Record<string, string> = {
   code: "c",
   codespan: "c",
 }
-const chars = (text: string, marks: string[], out: string[]) => {
-  const m = [...new Set(marks)].sort().join("")
-  for (const ch of text) out.push(isSpace(ch) ? " " : `${ch}${m}`)
-}
 
 /** How a model (or a save's intended model) reads. */
 const readingOfModel = (n: MdNode): string => {
   const out: string[] = []
+  const chars = (text: string, marks: string[]) => {
+    const m = [...new Set(marks)].sort().join("")
+    for (const ch of text) out.push(isSpace(ch) ? " " : `${ch}${m}`)
+  }
   const walk = (x: MdNode, marks: string[]) => {
     const mark = MARK[x.kind]
     const m = mark ? [...marks, mark] : marks
@@ -1467,13 +1263,36 @@ const readingOfModel = (n: MdNode): string => {
     if (x.kind === "br") out.push("\u23ce")
     if (x.kind === "img") out.push("\ufffc")
     for (const c of x.seq)
-      if (isUnit(c)) chars(c.r, m, out)
+      if (isUnit(c)) chars(c.r, m)
       else walk(c, m)
-    if (!x.seq.length && x.rendered) chars(x.rendered, m, out)
+    if (!x.seq.length && x.rendered) chars(x.rendered, m)
     if (block) out.push("\u00b6")
   }
   walk(n, [])
   return settle(out)
+}
+
+/** A node as the save means it to read: the op's children in place of its content,
+ *  each kept construct as it was (or with its own new children). */
+const expectedNode = (model: Model, host: MdNode, tokens: SourceToken[]): MdNode => {
+  const seq: (Unit | MdNode)[] = []
+  for (const t of tokens) {
+    if ("text" in t) {
+      if (INLINE_CONTAINERS.has(host.kind) || host.kind === "li")
+        seq.push({ s: 0, e: 0, r: t.text, atomic: false })
+    } else if ("tag" in t) {
+      // Code holds no formatting: its words stay plain code.
+      const kind = host.ctx.code ? host.kind : tagKind(t.tag)
+      const inner = expectedNode(model, { ...host, kind, seq: [] }, t.children ?? [])
+      if (host.ctx.code) seq.push(...inner.seq)
+      else seq.push(inner)
+    } else if ("keep" in t) {
+      const k = model.nodes[t.keep] as MdNode
+      seq.push(t.children ? expectedNode(model, k, t.children) : k)
+    }
+  }
+  // Its words are exactly these tokens (an emptied construct reads as nothing).
+  return { ...host, seq, rendered: "" }
 }
 
 /**
@@ -1486,41 +1305,18 @@ export const applyMarkdownOps = async (
   raw: unknown,
 ): Promise<AppliedMarkdownOps> => {
   const ops = parseSourceOps(raw)
+  for (const op of ops)
+    if (op.op !== "content") fail("A Markdown document has no layout to change inline.")
   const model = modelOf(source)
   const place = (n: number) => `element ${n}`
-  const expected = new Map<number, SourceHash>()
-  const expect = (n: number, hash: SourceHash) => {
-    if ((expected.get(n) ?? hash) !== hash) fail(`${place(n)} is sent with two different hashes.`)
-    expected.set(n, hash)
-  }
-  const walk = (list: SourceToken[]): void => {
-    for (const t of list) {
-      if ("keep" in t) expect(t.keep, t.hash)
-      if ("children" in t && t.children) walk(t.children)
-    }
-  }
-  for (const op of ops) {
-    if (op.op !== "content") fail("A Markdown document has no layout to change inline.")
-    expect(op.src, op.hash)
-    if (op.op === "content") walk(op.children)
-  }
-  const actual = await Promise.all(
-    [...expected].map(async ([n, h]) => {
-      const node = model.nodes[n]
-      return [n, h, node ? await hashText(source.slice(node.start, node.end)) : ""] as const
-    }),
-  )
-  const conflicts = actual.filter(([, want, got]) => want !== got).map(([n]) => n)
+  const conflicts = await staleSourceIds(ops, (n) => hashOf(source, model.nodes[n]), place)
   if (conflicts.length)
     throw new SourceConflictError(
       `${conflicts.length === 1 ? "A part of the document" : `${conflicts.length} parts of the document`} changed since this page was loaded. Reload to see the latest version, then redo ${conflicts.length === 1 ? "that edit" : "those edits"}.`,
-      conflicts.sort((a, b) => a - b),
+      conflicts,
     )
-  const targets = ops
-    .map((op) => ({
-      op: op as Extract<typeof op, { op: "content" }>,
-      node: model.nodes[op.src] as MdNode,
-    }))
+  const targets = (ops as Extract<SourceOp, { op: "content" }>[])
+    .map(({ src, children }) => ({ children, node: model.nodes[src] as MdNode }))
     .sort((a, b) => a.node.start - b.node.start)
   targets.forEach(({ node }, i) => {
     const prev = targets[i - 1]?.node
@@ -1528,23 +1324,24 @@ export const applyMarkdownOps = async (
       fail(`${place(node.n)} is inside ${place(prev.n)}, which the same save also edits.`)
   })
 
-  // An edit inside a run of emphasis, a link or a code span rewrites the whole run: its
-  // delimiters depend on its content (space moves out of `**`, a typed backtick needs a
-  // longer fence, an emptied run goes).
+  // An edit inside emphasis, a link or a code span rewrites the whole run: its delimiters
+  // depend on its content (space moves out of `**`, a typed backtick needs a longer fence,
+  // an emptied run goes).
   const whole = (node: MdNode) => INLINE_KINDS.has(node.kind)
-  const range = (node: MdNode) => (whole(node) ? [node.start, node.end] : [node.cStart, node.cEnd])
-  const spell = (spelling: Spelling) =>
-    targets.map(({ op, node }) =>
+  const range = (node: MdNode): [number, number] =>
+    whole(node) ? [node.start, node.end] : [node.cStart, node.cEnd]
+  const spell = (html: boolean) =>
+    targets.map(({ node, children }) =>
       whole(node)
-        ? emitWith({ model, spelling }, node, op.children)
-        : serializeContent({ model, spelling }, node, op.children),
+        ? rewrite({ model, html }, node, children)
+        : serializeContent({ model, html }, node, children),
     )
   const assemble = (texts: string[]) => {
     let out = ""
     let cursor = 0
     const at: number[] = []
     targets.forEach(({ node }, k) => {
-      const [from, to] = range(node) as [number, number]
+      const [from, to] = range(node)
       out += source.slice(cursor, from)
       at.push(out.length)
       out += texts[k] as string
@@ -1553,11 +1350,11 @@ export const applyMarkdownOps = async (
     return { markdown: out + source.slice(cursor), at }
   }
   // Each op must read back as the page showed it. Emphasis delimiters are the one thing
-  // that may not (a `*` run meeting another, `**x.**y`): an op that doesn't is spelled
-  // another way when that one does. Typed Markdown reads differently on purpose; no
-  // spelling fixes that, and the plain one stays.
-  const reading = targets.map(({ op, node }) =>
-    readingOfModel(expectedNode(model, node, op.children)),
+  // that may not (a run meeting another, `**x.**y`): such an op spells its emphasis as
+  // HTML when that reads back right. Typed Markdown reads differently on purpose; HTML
+  // doesn't fix that, and the Markdown spelling stays.
+  const reading = targets.map(({ node, children }) =>
+    readingOfModel(expectedNode(model, node, children)),
   )
   const misread = (texts: string[], only?: number): number[] => {
     const { markdown, at } = assemble(texts)
@@ -1573,62 +1370,22 @@ export const applyMarkdownOps = async (
       return got && readingOfModel(got) === reading[k] ? [] : [k]
     })
   }
-  let texts = spell("md")
-  const spellings: Partial<Record<Spelling, string[]>> = {}
-  for (const k of misread(texts))
-    for (const spelling of ["mixA", "mixB", "alt", "html"] as const) {
-      spellings[spelling] ??= spell(spelling)
-      const trial = [...texts]
-      trial[k] = (spellings[spelling] as string[])[k] as string
-      if (!misread(trial, k).length) {
-        texts = trial
-        break
-      }
-    }
-  const result: AppliedMarkdownOps = {
-    markdown: assemble(texts).markdown,
+  let texts = spell(false)
+  const bad = misread(texts)
+  const html = bad.length ? spell(true) : []
+  for (const k of bad) {
+    const trial = [...texts]
+    trial[k] = html[k] as string
+    if (!misread(trial, k).length) texts = trial
+  }
+  const markdown = assemble(texts).markdown
+  if (markdown === source)
+    fail("These ops leave the document exactly as it is, so there is nothing to save.")
+  return {
+    markdown,
     changes: targets.map(({ node }, k) => ({
-      before: source.slice(...(range(node) as [number, number])),
+      before: source.slice(...range(node)),
       after: texts[k] as string,
     })),
   }
-  if (result.markdown === source)
-    fail("These ops leave the document exactly as it is, so there is nothing to save.")
-  return result
-}
-
-/** A node as the save means it to read: the op's children in place of its content,
- *  each kept construct as it was (or with its own new children). */
-const expectedNode = (model: Model, node: MdNode, children: SourceToken[]): MdNode => {
-  const fromTokens = (host: MdNode, tokens: SourceToken[]): MdNode => {
-    const seq: (Unit | MdNode)[] = []
-    for (const t of tokens) {
-      if ("text" in t) {
-        if (INLINE_CONTAINERS.has(host.kind) || host.kind === "li")
-          seq.push({ s: 0, e: 0, r: t.text, atomic: false })
-      } else if ("tag" in t) {
-        const kind: Kind =
-          t.tag === "br"
-            ? "br"
-            : t.tag === "a"
-              ? "a"
-              : t.tag === "b" || t.tag === "strong"
-                ? "strong"
-                : "em"
-        // Code holds no formatting: its words stay plain code.
-        const inner = fromTokens(
-          { ...host, kind: host.ctx.code ? host.kind : kind, seq: [] },
-          t.children ?? [],
-        )
-        if (host.ctx.code) seq.push(...inner.seq)
-        else seq.push(inner)
-      } else if ("keep" in t) {
-        const k = model.nodes[t.keep] as MdNode
-        seq.push(t.children ? fromTokens(k, t.children) : k)
-      }
-    }
-    // Its words are exactly these tokens (an emptied construct reads as nothing).
-    return { ...host, seq, rendered: "" }
-  }
-  return fromTokens(node, children)
 }

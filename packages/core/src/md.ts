@@ -172,6 +172,13 @@ export interface RenderMarkdownOptions {
   dynamic?: ReadonlyMap<string, DynamicValue>
 }
 
+const isMermaid = (lang?: string): boolean =>
+  lang?.trim().split(/\s+/)[0]?.toLowerCase() === "mermaid"
+
+/** Whether the renderer draws a fence itself (renderSpecialFence), not from its text. */
+export const isSpecialFence = (lang?: string): boolean =>
+  isMermaid(lang) || !!parseDynamicFence(lang)
+
 /** A fenced code block the renderer draws itself: a mermaid diagram (read-only), or a
  *  dynamic-data fence's current value or seed. `false` for an ordinary code block. */
 export const renderSpecialFence = (
@@ -180,7 +187,7 @@ export const renderSpecialFence = (
   onMermaid: () => void,
 ): string | false => {
   const { text, lang } = token
-  if (lang?.trim().split(/\s+/)[0]?.toLowerCase() === "mermaid") {
+  if (isMermaid(lang)) {
     onMermaid()
     return `<pre class="derive-mermaid" data-derive-readonly><code>${escapeHtml(text)}</code></pre>`
   }
