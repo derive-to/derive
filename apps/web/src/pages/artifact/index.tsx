@@ -85,7 +85,7 @@ import { useArtifactFrame } from "./use-artifact-frame"
 import { useArtifactLive } from "./use-artifact-live"
 import { useArtifactRoute } from "./use-artifact-route"
 import { useCommentsPanel } from "./use-comments-panel"
-import { unsavedEditsCopy, useInlineEdit } from "./use-inline-edit"
+import { type EditChange, unsavedEditsCopy, useInlineEdit } from "./use-inline-edit"
 import { useSeenCursor } from "./use-seen-cursor"
 import { useVersionDiff } from "./use-version-diff"
 import { WorkbenchSkeleton } from "./workbench-skeleton"
@@ -458,7 +458,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
     dirty: number
     requestExit: () => void
     save: () => void
-    start: () => void
+    start: (entry?: { select?: number[] | null }) => void
   }>({
     active: false,
     canEdit: false,
@@ -468,6 +468,8 @@ export function Artifact({ template = false }: { template?: boolean }) {
     start: () => {},
   })
   const [editViewport, setEditViewport] = useState<EditViewport>("auto")
+  // The block pill's ⋯ brings the edit panel's block section to the eye.
+  const [blockAttention, setBlockAttention] = useState(0)
   const pinnedRef = useRef(version)
   pinnedRef.current = version
   const onVersionLive = useCallback(
@@ -855,15 +857,22 @@ export function Artifact({ template = false }: { template?: boolean }) {
     resetEdit()
   }
 
-  // A reload of the same version (after an in-place inline save) starts a deck on its
-  // first slide; put the reader back on the slide they were editing.
-  const resumeSlide = useRef<number | null>(null)
+  // A save reloads the frame on the saved version, which starts a deck on its first
+  // slide with no session. Pick the session back up where it was: armed by the save,
+  // run on the first load of that version. The deck goes back to its slide first;
+  // messages to the frame arrive in order, so edit mode opens on that slide.
+  const resume = useRef<{ version: number; slide: number | null; select: number[] | null } | null>(
+    null,
+  )
+  const [resumeLoad, setResumeLoad] = useState(0)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs once per resumed load.
   useEffect(() => {
-    const at = resumeSlide.current
-    if (at === null || !deck) return
-    if (deck.i === at) resumeSlide.current = null
-    else deckCmd("goto", at)
-  }, [deck, deckCmd])
+    const r = resume.current
+    if (!r || !resumeLoad) return
+    resume.current = null
+    if (r.slide !== null) deckCmd("goto", r.slide)
+    inlineEditRef.current.start({ select: r.select })
+  }, [resumeLoad])
 
   // Inline (click-to-type) editing: the frame owns the caret and the diffs, this
   // hook owns the mode + save. Entering clears any parked selection so the
@@ -888,9 +897,20 @@ export function Artifact({ template = false }: { template?: boolean }) {
       art?.current_content_type === "text/x-derive-video" ||
       art?.current_content_type === "text/x-derive-linked-bundle",
     onOpenSourceEditor: () => startEdit(),
-    reloadFrame: () => {
-      resumeSlide.current = deck?.i ?? null
-      reloadFrame()
+    reloadFrame,
+    onSaved: ({ version: saved, resume: select }) => {
+      if (!inlineEdit.allowElementEdits) return
+      resume.current = { version: saved, slide: deck?.i ?? null, select }
+      setResumeLoad(0)
+      // A load that never comes (the save was superseded) must not resume later.
+      window.setTimeout(() => {
+        if (resume.current?.version === saved) resume.current = null
+      }, 20_000)
+    },
+    onBlockMore: () => {
+      setRail("inspect")
+      setPanel("open")
+      setBlockAttention((n) => n + 1)
     },
     onEnter: () => {
       setSel(null)
@@ -919,6 +939,13 @@ export function Artifact({ template = false }: { template?: boolean }) {
       setFrameReload((n) => n + 1)
     }
   }, [inlineEdit.active])
+
+  // A row of the changes list: bring its slide on screen, then show the element there.
+  const revealChange = (c: EditChange) => {
+    if (!deck || c.slide === null || c.slide === deck.i) return inlineEdit.revealChange(c.id)
+    deckCmd("goto", c.slide)
+    window.setTimeout(() => inlineEdit.revealChange(c.id), 250)
+  }
 
   const deckOrganizer = useDeckOrganizer({
     shortId,
@@ -1344,6 +1371,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
       onFrameLoad={() => {
         onFrameLoad()
         inlineEdit.onFrameGone()
+        if (resume.current?.version === shown) setResumeLoad((n) => n + 1)
       }}
       onToggleDiff={() => setView(view === "diff" ? "preview" : "diff")}
       onRestore={() => restore(shown)}
@@ -1765,10 +1793,13 @@ export function Artifact({ template = false }: { template?: boolean }) {
                 canFormat={inlineEdit.tools.canFormat}
                 allowElementEdits={inlineEdit.allowElementEdits}
                 viewport={editViewport}
+                changes={inlineEdit.changes}
                 onUndo={inlineEdit.undo}
                 onRedo={inlineEdit.redo}
                 onFormat={inlineEdit.format}
                 onViewport={setEditViewport}
+                onRevealChange={revealChange}
+                onRevertChange={(c) => inlineEdit.revertChange(c.id)}
                 onSave={inlineEdit.save}
                 onDiscard={inlineEdit.discard}
                 onDone={inlineEdit.done}
@@ -1917,6 +1948,10 @@ export function Artifact({ template = false }: { template?: boolean }) {
                     textActive={inlineEdit.tools.textActive}
                     textKind={inlineEdit.tools.textKind}
                     selectedText={inlineEdit.tools.selectedText}
+                    block={inlineEdit.block}
+                    blockAttention={blockAttention}
+                    onBlockCrumb={inlineEdit.selectCrumb}
+                    onBlockWidth={inlineEdit.setBlockWidth}
                     video={video}
                     runtimeDiagnostic={runtimeDiagnostic}
                     onSceneEdit={(edit) => post({ type: "video-edit", ...edit })}

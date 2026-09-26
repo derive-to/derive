@@ -74,14 +74,58 @@ const withHashes = (ops: SourceOp[], hashes: string[]): SourceOp[] => {
 }
 
 /** What the frame reports on collect: `ops` (with the version and source sha the frame
- *  was served) on a stamped HTML page, quote `edits` everywhere else. */
+ *  was served) on a stamped HTML page, quote `edits` everywhere else; `resume` names
+ *  the selected block so the session can pick it back up after the save reloads. */
 type Collected = {
   edits: InlineEditInput[]
   ops?: SourceOp[]
   base?: { version: number; sha: string }
+  resume?: number[] | null
 }
 
-type SaveOutcome = { kind: "published"; version: number } | null
+type SaveOutcome = { kind: "published"; version: number; resume: number[] | null } | null
+
+/** One unsaved change, as the frame derives it: where (in block names) and what. */
+export type EditChange = {
+  id: string
+  where: string
+  what?: string
+  from?: string
+  to?: string
+  /** The slide it sits on, in a deck. */
+  slide: number | null
+}
+/** The selected block: its path (each crumb selects that level) and its width. */
+export type EditBlock = { name: string; crumbs: string[]; resizable: boolean; width: number | null }
+
+const str = (v: unknown): string | undefined =>
+  typeof v === "string" ? v.slice(0, 200) : undefined
+const changesOf = (v: unknown): EditChange[] =>
+  Array.isArray(v)
+    ? v.slice(0, 200).flatMap((c) => {
+        if (!c || typeof c !== "object") return []
+        const r = c as Record<string, unknown>
+        const id = str(r.id)
+        const where = str(r.where)
+        if (!id || where === undefined) return []
+        const slide = typeof r.slide === "number" && Number.isInteger(r.slide) ? r.slide : null
+        return [{ id, where, what: str(r.what), from: str(r.from), to: str(r.to), slide }]
+      })
+    : []
+const blockOf = (v: unknown): EditBlock | null => {
+  if (!v || typeof v !== "object") return null
+  const r = v as Record<string, unknown>
+  const name = str(r.name)
+  if (!name || !Array.isArray(r.crumbs)) return null
+  return {
+    name,
+    crumbs: r.crumbs.slice(0, 20).map((c) => str(c) ?? ""),
+    resizable: r.resizable === true,
+    width: typeof r.width === "number" && Number.isFinite(r.width) ? r.width : null,
+  }
+}
+const pathOf = (v: unknown): number[] | null =>
+  Array.isArray(v) && v.length < 64 && v.every((n) => Number.isInteger(n) && n >= 0) ? v : null
 
 export type InlineMentionMenuState = {
   query: string
@@ -111,6 +155,7 @@ const BLOCKED_COPY: Record<string, string> = {
   "embedded-image":
     "That image is embedded in the page itself, so there's no file to replace. Use the source editor.",
   "format-empty": "Select the words you want to format first.",
+  layout: "The page's own layout decides that, so it stays as it was.",
   "format-outside": "Select text inside the document to format it.",
   "format-range":
     "That selection is part of something bigger. Select a run of plain words instead.",
@@ -151,6 +196,10 @@ export function useInlineEdit(p: {
   reloadFrame: () => void
   /** Clear selection/composer state the moment edit mode opens. */
   onEnter?: () => void
+  /** A save landed: the page reloads on `version`; `resume` is the block to reselect. */
+  onSaved?: (saved: { version: number; resume: number[] | null }) => void
+  /** The block pill's ⋯: show the block's path and exact width in the edit panel. */
+  onBlockMore?: () => void
   /** This viewer could open the mode right now (permission, current version, not a
    *  bundle). Gates every entry point — the header button, the
    *  `e` shortcut, and the Edit verb on a selection. */
@@ -175,6 +224,8 @@ export function useInlineEdit(p: {
     textKind: "",
     selectedText: "",
   })
+  const [changes, setChanges] = useState<EditChange[]>([])
+  const [block, setBlock] = useState<EditBlock | null>(null)
   // Escape (or Done) pressed with unsaved edits: the confirm the page renders.
   const [exitPrompt, setExitPrompt] = useState(false)
   const active = frozenVersion !== null
@@ -204,6 +255,7 @@ export function useInlineEdit(p: {
   const swapImageRef = useRef<(src: string) => void>(() => {})
   const mentionQueryRef = useRef<(query: string, rect: FrameMentionRect) => void>(() => {})
   const mentionKeyRef = useRef<(key: string) => void>(() => {})
+  const blockMoreRef = useRef<() => void>(() => {})
   const renderMentionHandlesRef = useRef<(handles: unknown) => void>(() => {})
   const canEditRef = useRef(false)
   canEditRef.current = p.canEdit
@@ -221,6 +273,8 @@ export function useInlineEdit(p: {
     setMention(null)
     setFrozenVersion(null)
     setDirty(0)
+    setChanges([])
+    setBlock(null)
     setTools({
       canUndo: false,
       canRedo: false,
@@ -279,6 +333,10 @@ export function useInlineEdit(p: {
           textKind: typeof d.textKind === "string" ? d.textKind : "",
           selectedText: typeof d.selectedText === "string" ? d.selectedText : "",
         })
+        setChanges(changesOf(d.changes))
+        setBlock(blockOf(d.block))
+      } else if (d.type === "edit-block-more") {
+        if (activeRef.current) blockMoreRef.current()
       } else if (d.type === "edit-edits") {
         const w = collectWait.current
         // The nonce pins the reply to THIS collect: a slow page can answer a
@@ -300,7 +358,7 @@ export function useInlineEdit(p: {
         const uncaptured = typeof d.uncaptured === "number" ? d.uncaptured : 0
         const frameDirty = typeof d.dirty === "number" ? d.dirty : 0
         const lost = uncaptured > 0 || (edits.length === 0 && !ops?.length && frameDirty > 0)
-        w.resolve(lost ? { desync: true } : { edits, ops, base: d.base })
+        w.resolve(lost ? { desync: true } : { edits, ops, base: d.base, resume: pathOf(d.resume) })
       } else if (d.type === "edit-save") {
         // ⌘S / ⌘Enter pressed inside the frame. Deliberately NOT gated on the dirty
         // count: that number arrives on a debounce, and gating on it dropped the
@@ -464,12 +522,14 @@ export function useInlineEdit(p: {
    *  live selection — so the caret lands on the words the user was already looking
    *  at instead of making them click again. Omitted for the header button and the
    *  `e` shortcut: the mode opens, and the first click chooses the block. */
-  const start = (entry?: { fromSelection?: boolean }) => {
+  const start = (entry?: { fromSelection?: boolean; select?: number[] | null }) => {
     if (!p.art || active) return
     p.onEnter?.()
     mentionRequest.current++
     setMention(null)
     setDirty(0)
+    setChanges([])
+    setBlock(null)
     setFrozenVersion(p.art.current_version)
     sourceMaps.current.clear()
     const type = p.art.current_content_type ?? ""
@@ -498,6 +558,12 @@ export function useInlineEdit(p: {
   const redo = () => p.post({ type: "edit-redo" })
   const format = (kind: "b" | "i" | "a", href?: string) =>
     p.post({ type: "edit-format", kind, href })
+  /** The changes list and the block panel speak to the frame by id and index. */
+  const revealChange = (id: string) => p.post({ type: "edit-reveal", id })
+  const revertChange = (id: string) => p.post({ type: "edit-revert", id })
+  const selectCrumb = (index: number) => p.post({ type: "edit-block-crumb", index })
+  const setBlockWidth = (width: number | null) => p.post({ type: "edit-block-width", width })
+  blockMoreRef.current = () => p.onBlockMore?.()
   /** The frame reloaded (version swap, retry, source editor) — the edit session
    *  died with it. Exit and say so if anything was pending. */
   const onFrameGone = () => {
@@ -566,7 +632,7 @@ export function useInlineEdit(p: {
       if (!art) throw new Error("save fired before the artifact loaded")
       const collected = await collect()
       if ("desync" in collected) return collected
-      const { edits, ops, base } = collected
+      const { edits, ops, base, resume = null } = collected
       if (!(ops ?? edits).length) return null
       let a: Artifact
       if (ops && base) {
@@ -588,7 +654,7 @@ export function useInlineEdit(p: {
       // the quotes re-resolve against the new source (the strict matcher refuses
       // anything that moved), which is the closest thing to a clean auto-merge.
       else a = await api.publishEdits(p.shortId, edits, art.current_version, editMessage(edits))
-      return { kind: "published", version: a.current_version }
+      return { kind: "published", version: a.current_version, resume }
     },
     errorToast: false,
     onSuccess: (r) => {
@@ -622,6 +688,7 @@ export function useInlineEdit(p: {
       if (r.version === frozenVersion) p.reloadFrame()
       exit("settle")
       toast.success(`Saved v${r.version}`)
+      p.onSaved?.({ version: r.version, resume: r.resume })
       p.load()
     },
     onError: (err) => {
@@ -666,6 +733,13 @@ export function useInlineEdit(p: {
     dirty,
     /** Live capability of the bar's controls (undo / redo / format). */
     tools,
+    /** The unsaved changes, and the selected block, as the frame reports them. */
+    changes,
+    block,
+    revealChange,
+    revertChange,
+    selectCrumb,
+    setBlockWidth,
     /** Whether this source format can persist selector-scoped element operations. */
     allowElementEdits: p.allowElementEdits,
     undo,

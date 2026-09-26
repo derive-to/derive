@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Icon } from "@/components/icons"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { SectionTitle } from "@/components/shared/section-title"
@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { cn } from "@/lib/utils"
 import type { RuntimeDiagnostic } from "./render-stage"
+import type { EditBlock } from "./use-inline-edit"
 
 type FormatKind = "b" | "i" | "a"
 
@@ -26,9 +27,13 @@ export function ArtifactInspect({
   textActive,
   textKind,
   selectedText,
+  block,
+  blockAttention = 0,
   video,
   runtimeDiagnostic,
   onSceneEdit,
+  onBlockCrumb,
+  onBlockWidth,
   onUndo,
   onRedo,
   onFormat,
@@ -43,6 +48,10 @@ export function ArtifactInspect({
   textActive: boolean
   textKind: string
   selectedText: string
+  /** The block selected in the document: its path and exact width live here. */
+  block?: EditBlock | null
+  /** Bumped by the block pill's ⋯, which brings this section to the eye. */
+  blockAttention?: number
   video?: {
     i: number
     total: number
@@ -56,6 +65,8 @@ export function ArtifactInspect({
    * collapsed Advanced section of the editor-only Inspect rail. */
   runtimeDiagnostic?: RuntimeDiagnostic | null
   onSceneEdit?: (edit: Record<string, unknown>) => void
+  onBlockCrumb?: (index: number) => void
+  onBlockWidth?: (width: number | null) => void
   onUndo: () => void
   onRedo: () => void
   onFormat: (kind: FormatKind, href?: string) => void
@@ -85,6 +96,14 @@ export function ArtifactInspect({
           selectedText={selectedText}
           saving={saving}
           onFormat={onFormat}
+        />
+      ) : block && onBlockCrumb && onBlockWidth ? (
+        <BlockInspect
+          block={block}
+          attention={blockAttention}
+          saving={saving}
+          onCrumb={onBlockCrumb}
+          onWidth={onBlockWidth}
         />
       ) : video && onSceneEdit ? (
         <SceneInspect video={video} onEdit={onSceneEdit} saving={saving} />
@@ -277,6 +296,108 @@ function SceneInspect({
   )
 }
 
+/** The block's path (each crumb selects that level) and, where its layout allows
+ *  one, an exact width. The rare things; moving, duplicating and deleting live on
+ *  the pill beside the block itself. */
+function BlockInspect({
+  block,
+  attention,
+  saving,
+  onCrumb,
+  onWidth,
+}: {
+  block: EditBlock
+  attention: number
+  saving: boolean
+  onCrumb: (index: number) => void
+  onWidth: (width: number | null) => void
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!attention) return
+    ref.current?.scrollIntoView({ block: "nearest" })
+    ref.current?.animate?.(
+      [{ boxShadow: "0 0 0 3px var(--ring)" }, { boxShadow: "0 0 0 0 transparent" }],
+      { duration: 900 },
+    )
+  }, [attention])
+  const commit = (raw: string) => {
+    const value = Number(raw)
+    if (raw.trim() && Number.isFinite(value) && value !== block.width) onWidth(value)
+  }
+  return (
+    <div ref={ref} data-testid="artifact-inspect-block" className="mt-6 rounded-lg">
+      <Eyebrow as="div">Block</Eyebrow>
+      <SectionTitle className="mt-1">{block.name}</SectionTitle>
+      <nav aria-label="Block path" className="mt-3 flex flex-wrap items-center gap-1 text-xs">
+        {block.crumbs.map((crumb, i) => (
+          <span key={block.crumbs.slice(0, i + 1).join(" › ")} className="flex items-center gap-1">
+            {i > 0 && <span className="text-muted-foreground/60">›</span>}
+            <button
+              type="button"
+              data-testid={`artifact-inspect-crumb-${i}`}
+              aria-current={i === block.crumbs.length - 1 ? "location" : undefined}
+              className={cn(
+                "rounded px-1.5 py-0.5 hover:bg-accent",
+                i === block.crumbs.length - 1
+                  ? "font-medium text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+              onClick={() => onCrumb(i)}
+            >
+              {crumb}
+            </button>
+          </span>
+        ))}
+      </nav>
+      {block.resizable && (
+        <label className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
+          Width
+          <input
+            key={`${block.name}-${block.width}`}
+            data-testid="artifact-inspect-block-width"
+            type="number"
+            min={10}
+            max={100}
+            placeholder="Auto"
+            defaultValue={block.width ?? ""}
+            disabled={saving}
+            className="h-8 w-20 rounded-md border border-input bg-transparent px-2 text-sm text-foreground"
+            onBlur={(e) => commit(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commit(e.currentTarget.value)
+            }}
+          />
+          <span>%</span>
+          <Button
+            variant="outline"
+            size="sm"
+            data-testid="artifact-inspect-block-auto"
+            disabled={saving || block.width === null}
+            onClick={() => onWidth(null)}
+          >
+            Auto
+          </Button>
+        </label>
+      )}
+      <div className="mt-5 space-y-2 text-xs text-muted-foreground">
+        <p className="flex items-center justify-between gap-3">
+          <span>Move block</span>
+          <Kbd>⌥ ← →</Kbd>
+        </p>
+        <p className="flex items-center justify-between gap-3">
+          <span>Select parent</span>
+          <Kbd>Esc</Kbd>
+        </p>
+        <p className="flex items-center justify-between gap-3">
+          <span>Duplicate</span>
+          <Kbd>⌘D</Kbd>
+        </p>
+      </div>
+    </div>
+  )
+}
+
 function TextInspect({
   canFormat,
   kind,
@@ -430,14 +551,18 @@ function ChooseInspect() {
     <div data-testid="artifact-inspect-choose" className="mt-6">
       <SectionTitle>Choose content in the document</SectionTitle>
       <p className="mt-2 text-sm leading-6 text-muted-foreground">
-        Click text to type in place, or select an image, media element, or marked box to adjust it
-        with the surrounding layout visible.
+        Click text to type in place. Click around the words of a card, item or section to select it:
+        move, duplicate or delete it from the bar beside it.
       </p>
 
       <ul className="mt-5 space-y-3 text-sm">
         <InspectCapability
           title="Text"
           detail="Type inline; select words for bold, italic, or link."
+        />
+        <InspectCapability
+          title="Blocks"
+          detail="Drag by name or use the arrows; resize from the edge."
         />
         <InspectCapability
           title="Images and media"

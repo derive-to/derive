@@ -47,25 +47,8 @@ import {
   srcOf,
 } from "./source-tokens"
 import {
-  coachStructuralLayout,
-  evaluateStructuralCapability,
-  idleStructuralInteraction,
-  planStructuralIntent,
-  type StructuralCapability,
-  type StructuralConstraintReason,
-  type StructuralIntentCommand,
-  type StructuralIntentPlan,
-  type StructuralInteractionEvent,
-  structuralDistributionIsValid,
-  structuralDropTarget,
-  structuralModifierIntent,
-  transitionStructuralInteraction,
-} from "./structural-interaction"
-import {
-  MAX_STRUCTURAL_GAP_PX,
   MAX_STRUCTURAL_HEIGHT_PX,
   MAX_STRUCTURAL_WIDTH_PCT,
-  MIN_STRUCTURAL_GAP_PX,
   MIN_STRUCTURAL_HEIGHT_PX,
   MIN_STRUCTURAL_WIDTH_PCT,
   STRUCTURAL_ALIGN_PROPERTY,
@@ -73,11 +56,6 @@ import {
   STRUCTURAL_HEIGHT_PROPERTY,
   STRUCTURAL_LAYOUT,
   STRUCTURAL_WIDTH_PROPERTY,
-  type StructuralAlignment,
-  snapStructuralHeight,
-  snapStructuralWidth,
-  structuralBlockResizeAxis,
-  structuralResizeAxis,
 } from "./structural-width"
 import { updatedStyle } from "./style-attribute"
 
@@ -504,7 +482,6 @@ interface ElReg {
   // Reassigned by edit controls mounted later in the file. Escape must dismiss a
   // focused in-frame control before it asks the host to leave the entire edit mode.
   let dismissEditUi = (): boolean => false
-  let dismissStructureUi = (): boolean => false
   // Same late-bound seam for Save: a small in-frame editor gets one chance to commit
   // its pending value before the host snapshots the document.
   let commitEditUi = (): boolean => true
@@ -524,8 +501,7 @@ interface ElReg {
   }
   /** Our own chords, as a table: what the handler does is readable in one place,
    *  and every one of them is a modifier chord — never a bare key. */
-  let cancelStructureResize = () => false
-  let cancelStructuralGesture = () => cancelStructureResize()
+  let cancelStructuralGesture = (): boolean => false
   const chordFor = (
     e: KeyboardEvent,
     focused: HTMLElement | null,
@@ -548,11 +524,10 @@ interface ElReg {
       return () => {
         if (!cancelStructuralGesture()) (e.shiftKey ? redo : undo)()
       }
-    if (!focused && editOn && structureSelected && !precisionFocused && !e.shiftKey) {
-      const selected = structureSelected.el
-      if (k === "d") return () => pasteStructure({ el: selected, copy: true })
-      if (k === "c" || k === "x") return () => clipStructure(k === "c")
-      if (k === "v" && structureClip) return () => pasteStructure(structureClip)
+    if (!focused && editOn && blockSel && !precisionFocused && !e.shiftKey) {
+      if (k === "d") return duplicateBlock
+      if (k === "c" || k === "x") return () => clipBlock(k === "c")
+      if (k === "v" && blockClip) return pasteBlock
     }
     if (!focused) return null
     // ⌘A selects the block being edited, never the page: typing over a document-wide
@@ -579,33 +554,13 @@ interface ElReg {
       }
     return null
   }
-  // Structural editing is initialized later, after the shared keyboard boundary.
-  // Keep this tiny handoff here so an authored artifact cannot consume Enter before
-  // a selected structural node transfers focus into Derive's toolbar.
-  let focusStructureToolbar = (): boolean => false
   const ownKeys = (e: KeyboardEvent) =>
     guard(() => {
       const focused = editingCaret()
-      const active = asEl(document.activeElement)
-      const editControlFocused = !!active?.closest(".derive-edit-ui")
-      const precisionFocused = !!active?.closest(".derive-resize-panel")
+      const precisionFocused = !!asEl(document.activeElement)?.closest(".derive-resize-panel")
       // An IME is mid-word. Not ours to interpret.
       if (e.isComposing || e.keyCode === 229) return
       if (e.type === "keydown") {
-        if (
-          editOn &&
-          !focused &&
-          !editControlFocused &&
-          !e.metaKey &&
-          !e.ctrlKey &&
-          !e.altKey &&
-          e.key === "Enter" &&
-          focusStructureToolbar()
-        ) {
-          e.preventDefault()
-          e.stopImmediatePropagation()
-          return
-        }
         const run = chordFor(e, focused, precisionFocused)
         if (run) {
           e.preventDefault()
@@ -652,13 +607,14 @@ interface ElReg {
             e.stopImmediatePropagation()
             return
           }
-          // Two steps, deliberately. With the caret in a block, Escape drops the
-          // caret and stops there — the typed text and the session both survive,
-          // which is what "get this cursor out of the way" should mean. Only an
-          // Escape with no block focused asks the host to leave the MODE.
-          if (focused) {
+          // One step out at a time: the caret gives way to the block around it,
+          // a block to its parent, the last one to nothing. The typed text and the
+          // session survive every step; only an Escape with nothing left asks the
+          // host to leave the MODE.
+          if (focused || blockSel) {
             e.stopImmediatePropagation()
-            focused.blur()
+            if (focused) dropCaret()
+            selectBlock(focused ? blockOf(focused) : blockSel && parentBlock(blockSel))
             return
           }
           // Focus is inside the frame, where the host's listener can't see it —
@@ -763,14 +719,31 @@ interface ElReg {
     ".derive-resize-box:not(.derive-resize-enabled) :is(.derive-resize-handle,.derive-resize-size,.derive-resize-panel){display:none}" +
     ".derive-resize-handle:focus-visible,.derive-resize-size:focus-visible,.derive-resize-replace:focus-visible,.derive-resize-button:focus-visible{outline:2px solid rgba(100,116,139,.95);outline-offset:2px}" +
     ".derive-resize-input:focus-visible{border-color:#475569;outline:2px solid rgba(100,116,139,.34);outline-offset:1px}" +
-    /* Structural editing is opt-in authored UI. A selected node gets one source-free
-       outline and a compact toolbar; the artifact keeps full control of layout and
-       of what compact/standard/full mean in its own CSS. */
-    ".derive-structure-box{position:absolute;display:none;pointer-events:none;box-sizing:border-box;border:2px solid rgba(79,70,229,.88);border-radius:5px;box-shadow:0 0 0 4px rgba(79,70,229,.12);z-index:2147483644}" +
-    ".derive-structure-multi-box{position:absolute;display:none;pointer-events:none;box-sizing:border-box;border:2px dashed rgba(79,70,229,.72);border-radius:5px;background:rgba(79,70,229,.05);z-index:2147483642}" +
-    ".derive-structure-toolbar{position:absolute;left:-2px;bottom:calc(100% + 8px);display:flex;align-items:center;gap:3px;max-width:min(560px,calc(100vw - 16px));padding:5px;border:1px solid rgba(71,85,105,.35);border-radius:8px;background:rgba(248,250,252,.98);color:#0f172a;box-shadow:0 8px 24px rgba(15,23,42,.24);pointer-events:auto;font:600 11px/1 system-ui,sans-serif;white-space:nowrap}" +
-    ".derive-structure-box.derive-structure-below .derive-structure-toolbar{bottom:auto;top:calc(100% + 8px)}" +
-    ".derive-structure-label{max-width:112px;padding:0 5px;overflow:hidden;text-overflow:ellipsis;color:#475569;font:600 10px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace}" +
+    /* Blocks: what hover names, what a click on a block's non-text area selects, and
+       the pill beside it. Indigo, the one voice the editor's own chrome speaks. */
+    ".derive-block-hover,.derive-block-box{position:absolute;display:none;pointer-events:none;box-sizing:border-box;border-radius:6px;z-index:2147483642}" +
+    ".derive-block-hover{box-shadow:0 0 0 1px rgba(79,70,229,.55)}" +
+    ".derive-block-box{box-shadow:0 0 0 2px rgba(79,70,229,.9);z-index:2147483643}" +
+    ".derive-block-tag{position:absolute;left:-1px;bottom:100%;margin-bottom:2px;padding:2px 7px;border-radius:5px 5px 5px 0;background:rgba(79,70,229,.78);color:#fff;font:600 11px/1.45 system-ui,sans-serif;white-space:nowrap;cursor:grab;pointer-events:auto;user-select:none;touch-action:none}" +
+    ".derive-block-tag-in .derive-block-tag{top:0;bottom:auto;margin:0;border-radius:5px 0 5px 0}" +
+    ".derive-block-rz{position:absolute;display:none;padding:0;box-sizing:border-box;border:2px solid rgba(79,70,229,.95);background:#fff;box-shadow:0 1px 4px rgba(15,23,42,.25);pointer-events:auto;touch-action:none}" +
+    ".derive-block-rz-e{right:-6px;top:50%;width:10px;height:28px;margin-top:-14px;border-radius:5px;cursor:ew-resize}" +
+    ".derive-block-rz-se{right:-7px;bottom:-7px;width:12px;height:12px;border-radius:3px;cursor:nwse-resize}" +
+    ".derive-block-box[data-resize~=width] .derive-block-rz-e,.derive-block-box[data-resize~=both] .derive-block-rz-se{display:block}" +
+    ".derive-block-size{position:absolute;right:0;top:calc(100% + 8px);display:none;padding:2px 7px;border-radius:5px;background:#0f172a;color:#fff;font:600 11px/1.45 system-ui,sans-serif;white-space:nowrap}" +
+    ".derive-block-box.derive-block-sizing .derive-block-size{display:block}" +
+    ".derive-block-pill{position:absolute;display:none;align-items:center;gap:2px;padding:3px;border:1px solid #d9dce3;border-radius:10px;background:#fff;color:#1c1f24;box-shadow:0 6px 18px rgba(15,23,42,.16);font:500 13px/1.2 system-ui,sans-serif;white-space:nowrap;pointer-events:auto;z-index:2147483645}" +
+    ".derive-block-pill button{all:unset;display:inline-flex;align-items:center;gap:5px;padding:5px 8px;border-radius:7px;cursor:pointer}" +
+    ".derive-block-pill button:hover:not(:disabled){background:#f1f5f9}" +
+    ".derive-block-pill button:disabled{opacity:.3;cursor:default}" +
+    ".derive-block-pill button:focus-visible,.derive-block-rz:focus-visible{outline:2px solid rgba(79,70,229,.9);outline-offset:1px}" +
+    ".derive-block-pill .derive-block-name{font-weight:650;cursor:grab;touch-action:none}" +
+    ".derive-block-name span{color:#868e96}" +
+    ".derive-block-pill .derive-block-del{color:#b91c1c}" +
+    ".derive-block-div{width:1px;height:18px;margin:0 2px;background:#e9ecef}" +
+    ".derive-block-dragging{opacity:.92;box-shadow:0 12px 30px rgba(15,23,42,.22)!important}" +
+    ".derive-block-flash{animation:derive-block-flash .9s ease}" +
+    "@keyframes derive-block-flash{0%{outline:3px solid rgba(250,204,21,.95);outline-offset:2px}100%{outline:3px solid transparent;outline-offset:2px}}" +
     /* Structural dimensions are product semantics, not a suggestion to every deck
        author to recreate the same CSS. Runtime-only legacy nodes and canonical
        authored nodes therefore render the same in a fixed stage. Row widths also
@@ -786,69 +759,6 @@ interface ElReg {
     ":is([data-derive-region],[data-derive-runtime-region]):is([data-derive-layout],[data-derive-runtime-layout])>:is([data-derive-node],[data-derive-runtime-node]):is([data-derive-height],[data-derive-runtime-height]){height:var(--derive-structural-height)!important;box-sizing:border-box!important}" +
     ":is([data-derive-region],[data-derive-runtime-region]):is([data-derive-layout],[data-derive-runtime-layout])>:is([data-derive-node],[data-derive-runtime-node]):is([data-derive-align],[data-derive-runtime-align]){align-self:var(--derive-structural-align)!important}" +
     ":is([data-derive-region],[data-derive-runtime-region]):is([data-derive-gap],[data-derive-runtime-gap]){gap:var(--derive-structural-gap)!important}" +
-    ".derive-structure-button{height:28px;min-width:28px;padding:0 8px;border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#334155;font:650 11px/26px system-ui,sans-serif;cursor:pointer}" +
-    ".derive-structure-button:hover:not(:disabled){border-color:#64748b;background:#f1f5f9}" +
-    ".derive-structure-button:disabled{opacity:.38;cursor:default}" +
-    ".derive-structure-grip{cursor:grab;touch-action:none;font-size:15px;letter-spacing:-2px;padding-right:10px}" +
-    ".derive-structure-grip:active{cursor:grabbing}" +
-    ".derive-structure-size[aria-pressed=true]{border-color:#4f46e5;background:#eef2ff;color:#3730a3}" +
-    ".derive-structure-parent{border-color:#c7d2fe;color:#4338ca}" +
-    ".derive-structure-batch{border-color:#a7f3d0;background:#ecfdf5;color:#065f46}" +
-    ".derive-structure-layout-panel{position:absolute;right:5px;top:calc(100% + 6px);display:grid;grid-template-columns:repeat(3,max-content);gap:4px;padding:6px;border:1px solid rgba(71,85,105,.35);border-radius:8px;background:rgba(248,250,252,.99);box-shadow:0 8px 24px rgba(15,23,42,.24);pointer-events:auto}" +
-    ".derive-structure-layout-panel[hidden]{display:none}" +
-    ".derive-structure-intent-panel{position:absolute;right:5px;top:calc(100% + 6px);display:grid;width:272px;box-sizing:border-box;gap:7px;padding:9px;border:1px solid rgba(71,85,105,.35);border-radius:8px;background:rgba(248,250,252,.99);color:#334155;box-shadow:0 8px 24px rgba(15,23,42,.24);pointer-events:auto;font:600 11px/1.35 system-ui,sans-serif;white-space:normal}" +
-    ".derive-structure-intent-panel[hidden]{display:none}" +
-    ".derive-structure-intent-variants{display:grid;grid-template-columns:1fr 1fr;gap:5px}" +
-    ".derive-structure-intent-variants .derive-structure-button{height:auto;min-height:34px;line-height:1.15;white-space:normal}" +
-    ".derive-structure-intent-variants .derive-structure-button[aria-pressed=true]{border-color:#4f46e5;background:#eef2ff;color:#3730a3}" +
-    ".derive-structure-intent-receipt{display:grid;gap:3px;padding:7px;border-radius:6px;background:#f1f5f9;color:#475569}" +
-    ".derive-structure-intent-receipt b{color:#0f172a}" +
-    ".derive-structure-intent-actions{display:flex;justify-content:flex-end;gap:5px}" +
-    ".derive-structure-precision-panel{position:absolute;right:5px;top:calc(100% + 6px);display:grid;grid-template-columns:repeat(2,92px);gap:7px;padding:9px;border:1px solid rgba(71,85,105,.35);border-radius:8px;background:rgba(248,250,252,.99);box-shadow:0 8px 24px rgba(15,23,42,.24);pointer-events:auto;color:#334155;font:600 10px/1.2 system-ui,sans-serif}" +
-    ".derive-structure-precision-panel[hidden]{display:none}" +
-    ".derive-structure-precision-field{display:grid;gap:4px}" +
-    ".derive-structure-precision-input{width:100%;height:30px;box-sizing:border-box;padding:4px 7px;border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#0f172a;font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;outline:none}" +
-    ".derive-structure-precision-actions{grid-column:1/-1;display:flex;justify-content:flex-end;gap:5px}" +
-    ".derive-structure-resize-handle{position:absolute;right:-8px;top:50%;width:16px;height:34px;padding:0;transform:translateY(-50%);border:2px solid #4f46e5;border-radius:8px;background:#eef2ff;box-shadow:0 2px 8px rgba(15,23,42,.28);cursor:ew-resize;pointer-events:auto;touch-action:none}" +
-    ".derive-structure-resize-handle.derive-structure-resize-left{left:-8px;right:auto}" +
-    ".derive-structure-resize-handle:after{content:'';position:absolute;left:5px;top:8px;width:2px;height:14px;border-left:1px solid #4f46e5;border-right:1px solid #4f46e5}" +
-    ".derive-structure-resize-height{position:absolute;left:50%;bottom:-8px;width:34px;height:16px;padding:0;transform:translateX(-50%);border:2px solid #4f46e5;border-radius:8px;background:#eef2ff;box-shadow:0 2px 8px rgba(15,23,42,.28);cursor:ns-resize;pointer-events:auto;touch-action:none}" +
-    ".derive-structure-resize-height.derive-structure-resize-top{top:-8px;bottom:auto}" +
-    ".derive-structure-resize-height:after{content:'';position:absolute;left:8px;top:5px;width:14px;height:2px;border-top:1px solid #4f46e5;border-bottom:1px solid #4f46e5}" +
-    ".derive-structure-resize-corner{position:absolute;right:-10px;bottom:-10px;width:20px;height:20px;padding:0;border:2px solid #4f46e5;border-radius:7px;background:#eef2ff;box-shadow:0 2px 8px rgba(15,23,42,.28);cursor:nwse-resize;pointer-events:auto;touch-action:none}" +
-    ".derive-structure-resize-corner.derive-structure-resize-left{left:-10px;right:auto;cursor:nesw-resize}" +
-    ".derive-structure-resize-corner.derive-structure-resize-top{top:-10px;bottom:auto;cursor:nesw-resize}" +
-    ".derive-structure-resize-corner.derive-structure-resize-left.derive-structure-resize-top{cursor:nwse-resize}" +
-    ".derive-structure-resize-corner:after{content:'';position:absolute;right:4px;bottom:4px;width:7px;height:7px;border-right:1px solid #4f46e5;border-bottom:1px solid #4f46e5}" +
-    ".derive-structure-resize-corner.derive-structure-resize-left:after{left:4px;right:auto;border-left:1px solid #4f46e5;border-right:0}" +
-    ".derive-structure-resize-handle:disabled,.derive-structure-resize-height:disabled,.derive-structure-resize-corner:disabled{opacity:.38;cursor:default}" +
-    ".derive-structure-width-readout{position:absolute;left:50%;bottom:-34px;display:none;min-height:21px;padding:3px 7px;transform:translateX(-50%);border-radius:4px;background:rgba(49,46,129,.96);color:#fff;font:700 11px/15px ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}" +
-    ".derive-structure-box.derive-structure-resizing .derive-structure-width-readout{display:block}" +
-    ".derive-structure-snap-guide{position:absolute;display:none;width:0;border-left:1px solid rgba(79,70,229,.92);box-shadow:0 0 8px rgba(79,70,229,.52);pointer-events:none;z-index:2147483643}" +
-    ".derive-structure-snap-guide:after{content:attr(data-label);position:absolute;left:7px;top:var(--derive-structure-snap-label-y,50%);max-width:min(160px,calc(100vw - 24px));transform:translateY(-50%);overflow:hidden;text-overflow:ellipsis;padding:3px 6px;border-radius:4px;background:rgba(49,46,129,.96);color:#fff;font:700 10px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}" +
-    ".derive-structure-snap-guide.derive-structure-snap-left:after{left:auto;right:7px}" +
-    ".derive-structure-height-snap-guide{position:absolute;display:none;height:0;border-top:1px solid rgba(79,70,229,.92);box-shadow:0 0 8px rgba(79,70,229,.52);pointer-events:none;z-index:2147483643}" +
-    ".derive-structure-height-snap-guide:after{content:attr(data-label);position:absolute;left:var(--derive-structure-height-label-x,50%);top:7px;max-width:min(160px,calc(100vw - 24px));transform:translateX(-50%);overflow:hidden;text-overflow:ellipsis;padding:3px 6px;border-radius:4px;background:rgba(49,46,129,.96);color:#fff;font:700 10px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}" +
-    ".derive-structure-drop-marker{position:absolute;display:none;height:0;border-top:3px solid #4f46e5;pointer-events:none;z-index:2147483645}" +
-    ".derive-structure-drop-marker:before,.derive-structure-drop-marker:after{content:'';position:absolute;top:-6px;width:9px;height:9px;border-radius:50%;background:#4f46e5}" +
-    ".derive-structure-drop-marker:before{left:-2px}.derive-structure-drop-marker:after{right:-2px}" +
-    ".derive-structure-drop-marker.derive-structure-drop-marker-x{width:0;height:auto;border-top:0;border-left:3px solid #4f46e5}" +
-    ".derive-structure-drop-marker.derive-structure-drop-marker-x:before,.derive-structure-drop-marker.derive-structure-drop-marker-x:after{left:-6px;right:auto}" +
-    ".derive-structure-drop-marker.derive-structure-drop-marker-x:before{top:-2px}.derive-structure-drop-marker.derive-structure-drop-marker-x:after{top:auto;bottom:-2px}" +
-    ".derive-structure-drop-marker-label{position:absolute;left:8px;bottom:7px;padding:3px 6px;border-radius:4px;background:rgba(49,46,129,.96);color:#fff;font:700 10px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}" +
-    ".derive-structure-remove{border-color:#fecaca;color:#b91c1c}" +
-    ".derive-structure-toast{position:fixed;left:50%;bottom:18px;display:none;align-items:center;gap:10px;transform:translateX(-50%);padding:8px 10px 8px 13px;border-radius:8px;background:#0f172a;color:#fff;box-shadow:0 8px 24px rgba(15,23,42,.3);z-index:2147483646;font:600 12px/1.2 system-ui,sans-serif;pointer-events:auto}" +
-    ".derive-structure-toast button{height:26px;padding:0 8px;border:1px solid rgba(255,255,255,.35);border-radius:5px;background:transparent;color:#fff;font:700 11px/24px system-ui,sans-serif;cursor:pointer}" +
-    ".derive-structure-button:focus-visible,.derive-structure-resize-handle:focus-visible,.derive-structure-resize-height:focus-visible,.derive-structure-resize-corner:focus-visible,.derive-structure-toast button:focus-visible{outline:2px solid #4f46e5;outline-offset:2px}" +
-    ".derive-structure-dragging{opacity:.72;box-shadow:0 12px 28px rgba(15,23,42,.2)}" +
-    /* The host's deck controls overlay the bottom of the iframe. Lift destructive
-       recovery above that bar on desktop so the five-second Undo is actually seen. */
-    "@media(min-width:641px){body:has([data-derive-slide])>.derive-structure-toast{bottom:92px}}" +
-    /* On a narrow canvas the contextual controls become a predictable editing shelf.
-       Root selections use two rows; a nested selection reserves a third for Parent.
-       Every action stays visible without document overflow, with touch-sized targets. */
-    "@media(max-width:640px){html.derive-structure-safe body{padding-bottom:calc(var(--derive-structure-body-padding-base,0px) + 166px + env(safe-area-inset-bottom))!important}html.derive-structure-parent-safe body{padding-bottom:calc(var(--derive-structure-body-padding-base,0px) + 214px + env(safe-area-inset-bottom))!important}.derive-structure-toolbar{position:fixed;left:8px;right:8px;top:auto!important;bottom:calc(8px + env(safe-area-inset-bottom))!important;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;max-width:none;padding:6px}.derive-structure-layout-panel,.derive-structure-precision-panel,.derive-structure-intent-panel{position:fixed;left:8px;right:8px;top:auto;bottom:calc(174px + env(safe-area-inset-bottom))}.derive-structure-layout-panel{grid-template-columns:repeat(3,minmax(0,1fr))}.derive-structure-precision-panel{grid-template-columns:repeat(2,minmax(0,1fr))}.derive-structure-intent-panel{width:auto}.derive-structure-label{display:none}.derive-structure-button{width:100%;height:44px;min-width:0;padding:0 6px;font:650 12px/42px system-ui,sans-serif}.derive-structure-grip{padding-right:8px}.derive-structure-resize-handle{right:0;width:24px;height:44px}.derive-structure-resize-handle.derive-structure-resize-left{left:0}.derive-structure-resize-handle:after{left:9px;top:13px}.derive-structure-resize-height{bottom:0;width:44px;height:24px}.derive-structure-resize-height.derive-structure-resize-top{top:0;bottom:auto}.derive-structure-resize-height:after{left:13px;top:9px}.derive-structure-resize-corner{right:0;bottom:0;width:44px;height:44px}.derive-structure-resize-corner.derive-structure-resize-left{left:0}.derive-structure-resize-corner.derive-structure-resize-top{top:0;bottom:auto}.derive-structure-toast{bottom:calc(166px + env(safe-area-inset-bottom));max-width:calc(100vw - 16px)}html.derive-structure-parent-safe .derive-structure-toast{bottom:calc(214px + env(safe-area-inset-bottom))}}" +
-    "@media(prefers-reduced-motion:reduce){.derive-structure-dragging{transition:none!important;animation:none!important}}" +
     /* ...and again derived from the block's OWN text colour, which by definition
        contrasts with whatever the artifact painted behind it. The slate wash above
        composites to ~1:1 on a dark page — invisible exactly where the invitation
@@ -2576,21 +2486,19 @@ interface ElReg {
     for (const n of textNodes(el)) out += n.nodeValue
     return out
   }
-  const countDirty = () => {
-    let n = 0
-    for (const t of editTargets) {
-      // Formatting counts even when not one character changed: bolding a word is a
-      // real edit, and the text-only compare called that block clean — so Save
-      // stayed hidden and the work was discardable without a warning.
-      const changed = document.contains(t.el) && (concatText(t.el) !== t.origConcat || hasFmt(t.el))
-      t.el.classList.toggle("derive-edited", changed)
-      if (changed) n++
-    }
-    for (const t of resizeTargets)
-      if (document.contains(t.el) && rawStyle(t.el) !== t.origStyle) n++
-    for (const el of structureCopies) if (el.isConnected) n++
-    return n + sceneEdits.length + structureDirtyCount()
+  /** The session's changes (see `changes`), marking each edited text block. */
+  const changeList = () => {
+    // Formatting counts even when not one character changed: bolding a word is a
+    // real edit, and the text-only compare called that block clean — so Save
+    // stayed hidden and the work was discardable without a warning.
+    for (const t of editTargets)
+      t.el.classList.toggle(
+        "derive-edited",
+        document.contains(t.el) && (concatText(t.el) !== t.origConcat || hasFmt(t.el)),
+      )
+    return changes()
   }
+  const countDirty = () => changeList().length
   /* ── Undo, for the whole session ──────────────────────────────────────────────
      The browser's own undo only knows typing, and only inside the one block it
      happened in: it cannot see a bold, a link, a line break, or a block someone
@@ -2603,47 +2511,26 @@ interface ElReg {
      round trip to the host would be neither. */
   const UNDO_LIMIT = 60
   const TYPING_BURST_MS = 900
-  interface StructuralSizingHistory {
+  interface ChildList {
     el: HTMLElement
-    sizeName: string
-    size: string | null
-    widthName: string
-    width: string | null
-    heightName: string
-    height: string | null
-    style: string | null
-  }
-  interface StructuralAlignHistory {
-    el: HTMLElement
-    alignName: string
-    align: string | null
-    style: string | null
-  }
-  interface StructuralGapHistory {
-    el: HTMLElement
-    gapName: string
-    gap: string | null
-    style: string | null
-  }
-  interface StructuralIntentHistory {
-    sizing: StructuralSizingHistory[]
-    alignment: StructuralAlignHistory[]
+    nodes: ChildNode[]
   }
   type HistoryEntry =
     | { kind: "html"; el: HTMLElement; html: string }
     | { kind: "style"; el: ResizableElement; style: string | null }
-    | ({ kind: "structural-sizing" } & StructuralSizingHistory)
-    | { kind: "structural-sizing-batch"; entries: StructuralSizingHistory[] }
-    | { kind: "structural-align-batch"; entries: StructuralAlignHistory[] }
-    | ({ kind: "structural-intent" } & StructuralIntentHistory)
-    | ({ kind: "structural-gap" } & StructuralGapHistory)
-    | { kind: "structural-order"; region: HTMLElement; nodes: HTMLElement[] }
     | {
-        kind: "placement"
+        kind: "structural-sizing"
         el: HTMLElement
-        parent: HTMLElement | null
-        next: ChildNode | null
+        sizeName: string
+        size: string | null
+        widthName: string
+        width: string | null
+        heightName: string
+        height: string | null
+        style: string | null
       }
+    /** Parents' child lists before a move, duplicate, delete, paste or revert. */
+    | { kind: "children"; lists: ChildList[] }
     | { kind: "scene"; entry: SceneHistory; activeAfter: boolean }
   let undoStack: HistoryEntry[] = []
   let redoStack: HistoryEntry[] = []
@@ -2651,13 +2538,6 @@ interface ElReg {
   // The resize overlay is mounted below; history can run before/after it without
   // knowing its DOM. Reassigned once that controller exists.
   let refreshResizeUi = () => {}
-  // Structural placement history is declared later in this client. This bridge
-  // lets shared undo/redo keep its intentional-removal ledger in sync without
-  // coupling the generic history stack to structural types.
-  let syncStructuralPlacement = (_el: HTMLElement) => {}
-  // Availability is owned by the structural controller below, but viewport-only
-  // CSS changes (media queries) arrive through the shared resize listener above.
-  let refreshStructureAvailability = () => {}
   const remember = (entry: HistoryEntry) => {
     undoStack.push(entry)
     if (undoStack.length > UNDO_LIMIT) undoStack.shift()
@@ -2687,34 +2567,12 @@ interface ElReg {
     style: rawStyle(el),
   })
   const applyStructuralSizing = (entry: Extract<HistoryEntry, { kind: "structural-sizing" }>) => {
-    if (entry.size === null) entry.el.removeAttribute(entry.sizeName)
-    else entry.el.setAttribute(entry.sizeName, entry.size)
-    if (entry.width === null) entry.el.removeAttribute(entry.widthName)
-    else entry.el.setAttribute(entry.widthName, entry.width)
-    if (entry.height === null) entry.el.removeAttribute(entry.heightName)
-    else entry.el.setAttribute(entry.heightName, entry.height)
+    const set = (name: string, value: string | null) =>
+      value === null ? entry.el.removeAttribute(name) : entry.el.setAttribute(name, value)
+    set(entry.sizeName, entry.size)
+    set(entry.widthName, entry.width)
+    set(entry.heightName, entry.height)
     restoreStyle(entry.el, entry.style)
-  }
-  const structuralSizingBatchOf = (
-    entries: readonly StructuralSizingHistory[],
-  ): Extract<HistoryEntry, { kind: "structural-sizing-batch" }> => ({
-    kind: "structural-sizing-batch",
-    entries: entries.map((entry) => {
-      const current = structuralSizingOf(
-        entry.el,
-        entry.sizeName,
-        entry.widthName,
-        entry.heightName,
-      )
-      const { kind: _kind, ...sizing } = current
-      return sizing
-    }),
-  })
-  const applyStructuralSizingBatch = (
-    entry: Extract<HistoryEntry, { kind: "structural-sizing-batch" }>,
-  ) => {
-    for (const sizing of entry.entries)
-      applyStructuralSizing({ kind: "structural-sizing", ...sizing })
   }
   /** Put `order`'s nodes into the places those same nodes hold now, in that order.
    *  Everything between them (whitespace, a footer, a subtitle) keeps its place, so a
@@ -2724,79 +2582,6 @@ interface ElReg {
       .sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1))
       .map((el) => el.parentNode?.insertBefore(document.createComment(""), el))
     for (const [i, el] of order.entries()) slots[i]?.replaceWith(el)
-  }
-  const structuralOrderOf = (
-    region: HTMLElement,
-    nodes: readonly HTMLElement[],
-  ): Extract<HistoryEntry, { kind: "structural-order" }> => ({
-    kind: "structural-order",
-    region,
-    nodes: [...nodes],
-  })
-  const applyStructuralOrder = (entry: Extract<HistoryEntry, { kind: "structural-order" }>) => {
-    reorderInPlace(entry.nodes.filter((node) => node.parentElement === entry.region))
-  }
-  const structuralAlignBatchOf = (
-    entries: readonly StructuralAlignHistory[],
-  ): Extract<HistoryEntry, { kind: "structural-align-batch" }> => ({
-    kind: "structural-align-batch",
-    entries: entries.map((entry) => ({
-      el: entry.el,
-      alignName: entry.alignName,
-      align: entry.el.getAttribute(entry.alignName),
-      style: rawStyle(entry.el),
-    })),
-  })
-  const applyStructuralAlignBatch = (
-    entry: Extract<HistoryEntry, { kind: "structural-align-batch" }>,
-  ) => {
-    for (const alignment of entry.entries) {
-      if (alignment.align === null) alignment.el.removeAttribute(alignment.alignName)
-      else alignment.el.setAttribute(alignment.alignName, alignment.align)
-      restoreStyle(alignment.el, alignment.style)
-    }
-  }
-  const structuralIntentHistoryOf = (
-    entry: StructuralIntentHistory,
-  ): Extract<HistoryEntry, { kind: "structural-intent" }> => ({
-    kind: "structural-intent",
-    sizing: structuralSizingBatchOf(entry.sizing).entries,
-    alignment: structuralAlignBatchOf(entry.alignment).entries,
-  })
-  const applyStructuralIntentHistory = (
-    entry: Extract<HistoryEntry, { kind: "structural-intent" }>,
-  ) => {
-    applyStructuralSizingBatch({ kind: "structural-sizing-batch", entries: entry.sizing })
-    applyStructuralAlignBatch({ kind: "structural-align-batch", entries: entry.alignment })
-  }
-  const structuralGapOf = (
-    el: HTMLElement,
-    gapName: string,
-  ): Extract<HistoryEntry, { kind: "structural-gap" }> => ({
-    kind: "structural-gap",
-    el,
-    gapName,
-    gap: el.getAttribute(gapName),
-    style: rawStyle(el),
-  })
-  const applyStructuralGap = (entry: Extract<HistoryEntry, { kind: "structural-gap" }>) => {
-    if (entry.gap === null) entry.el.removeAttribute(entry.gapName)
-    else entry.el.setAttribute(entry.gapName, entry.gap)
-    restoreStyle(entry.el, entry.style)
-  }
-  const placementOf = (el: HTMLElement): Extract<HistoryEntry, { kind: "placement" }> => ({
-    kind: "placement",
-    el,
-    parent: el.parentElement,
-    next: el.nextSibling,
-  })
-  const applyPlacement = (entry: Extract<HistoryEntry, { kind: "placement" }>) => {
-    if (!entry.parent) entry.el.remove()
-    else
-      entry.parent.insertBefore(
-        entry.el,
-        entry.next?.parentNode === entry.parent ? entry.next : null,
-      )
   }
   /** Checkpoint at the start of a typing burst, never mid-word. */
   const checkpointTyping = (el: HTMLElement) => {
@@ -2834,41 +2619,14 @@ interface ElReg {
         restoreActiveVideoScene(entry.entry.activeBefore)
       }
       to.push({ ...entry, activeAfter: !entry.activeAfter })
-    } else if (entry.kind === "placement") {
-      to.push(placementOf(entry.el))
-      applyPlacement(entry)
-      syncStructuralPlacement(entry.el)
-    } else if (entry.kind === "structural-sizing") {
-      if (!document.contains(entry.el)) return
+    } else if (entry.kind === "children") {
+      to.push({ kind: "children", lists: entry.lists.map(({ el }) => ({ el, nodes: kidsOf(el) })) })
+      for (const { el, nodes } of entry.lists) setKids(el, nodes)
+    } else if (!document.contains(entry.el)) return
+    else if (entry.kind === "structural-sizing") {
       to.push(structuralSizingOf(entry.el, entry.sizeName, entry.widthName, entry.heightName))
       applyStructuralSizing(entry)
-    } else if (entry.kind === "structural-sizing-batch") {
-      if (entry.entries.some(({ el }) => !document.contains(el))) return
-      to.push(structuralSizingBatchOf(entry.entries))
-      applyStructuralSizingBatch(entry)
-    } else if (entry.kind === "structural-align-batch") {
-      if (entry.entries.some(({ el }) => !document.contains(el))) return
-      to.push(structuralAlignBatchOf(entry.entries))
-      applyStructuralAlignBatch(entry)
-    } else if (entry.kind === "structural-intent") {
-      if ([...entry.sizing, ...entry.alignment].some(({ el }) => !document.contains(el))) return
-      to.push(structuralIntentHistoryOf(entry))
-      applyStructuralIntentHistory(entry)
-    } else if (entry.kind === "structural-gap") {
-      if (!document.contains(entry.el)) return
-      to.push(structuralGapOf(entry.el, entry.gapName))
-      applyStructuralGap(entry)
-    } else if (entry.kind === "structural-order") {
-      if (!document.contains(entry.region)) return
-      const tracked = new Set(entry.nodes)
-      const current = Array.from(entry.region.children).filter(
-        (node): node is HTMLElement => node instanceof HTMLElement && tracked.has(node),
-      )
-      to.push(structuralOrderOf(entry.region, current))
-      applyStructuralOrder(entry)
-      for (const node of entry.nodes) syncStructuralPlacement(node)
-    } else if (!document.contains(entry.el)) return
-    else if (entry.kind === "html") {
+    } else if (entry.kind === "html") {
       to.push({ kind: "html", el: entry.el, html: entry.el.innerHTML })
       entry.el.innerHTML = entry.html
       reregister(targetFor(entry.el), entry.el)
@@ -2907,7 +2665,8 @@ interface ElReg {
   }
 
   const postDirty = () => {
-    const n = countDirty()
+    const list = changeList()
+    const n = list.length
     const range = formattableRange()
     // Markup is only the language of an HTML page; Markdown and LaTeX write it as text.
     const canFormat = !!range && !!srcSnap
@@ -2953,7 +2712,17 @@ interface ElReg {
     const selectedText = contextRange
       ? contextRange.toString().replace(/\s+/g, " ").trim().slice(0, 120)
       : ""
-    const state = `${n}|${undoStack.length > 0}|${redoStack.length > 0}|${canFormat}|${textActive}|${textKind}|${selectedText}`
+    const slides = slideEls()
+    const changed = list.map(({ id, where, what, from, to, at }) => ({
+      id,
+      where,
+      what,
+      from,
+      to,
+      slide: at && slides.length > 1 ? slideOfEl(at, slides) : null,
+    }))
+    const block = blockInfo()
+    const state = `${n}|${undoStack.length > 0}|${redoStack.length > 0}|${canFormat}|${textActive}|${textKind}|${selectedText}|${JSON.stringify([changed, block])}`
     if (state !== lastState) {
       lastState = state
       lastDirty = n
@@ -2966,6 +2735,8 @@ interface ElReg {
         textActive,
         textKind,
         selectedText,
+        changes: changed,
+        block,
       })
     }
   }
@@ -3010,7 +2781,9 @@ interface ElReg {
     const direct = el.closest(DIRECT_RESIZABLE)
     if (isResizableElement(direct) && !direct.hasAttribute("data-derive-slide")) return direct
     const box = el.closest("div,section,article,aside")
-    if (!isResizableElement(box) || box.hasAttribute("data-derive-slide")) return null
+    // A block is picked up and moved; its size, where it has one, lives on its handles.
+    if (!isResizableElement(box) || box.hasAttribute("data-derive-slide") || isMovable(box, true))
+      return null
     const hint = `${box.id || ""} ${box.className || ""}`
     const style = box.getAttribute("style") || ""
     return BOX_HINT.test(hint) || /\b(?:width|height)\s*:/i.test(style) ? box : null
@@ -3138,11 +2911,9 @@ interface ElReg {
     if (focusTrigger && resizeSize.offsetParent) resizeSize.focus()
   }
   dismissEditUi = () => {
-    if (precisionOn) {
-      closePrecision(true)
-      return true
-    }
-    return dismissStructureUi()
+    if (!precisionOn) return false
+    closePrecision(true)
+    return true
   }
   const resizeUiEl = (): ResizableElement | null => resizeSelectedEl ?? resizeHoverEl
   const aspectOf = (rect: DOMRect): number => {
@@ -3490,15 +3261,19 @@ interface ElReg {
   window.addEventListener("scroll", paintResizeUi, true)
   window.addEventListener("resize", paintResizeUi)
 
-  /* ── Authored structural regions ─────────────────────────────────────────────
-     This editor is deliberately capability-based: no data attributes, no tools.
-     An ordered stack or row owns only its direct data-derive-node children. Offered on
-     stamped pages only: a save writes what the page shows, by source id. */
-  const STRUCTURE_ID = /^[A-Za-z][A-Za-z0-9_-]{0,127}$/
-  type StructureSize = "compact" | "standard" | "full"
-  const STRUCTURE_SIZES = new Set<StructureSize>(["compact", "standard", "full"])
+  /* ── Blocks ──────────────────────────────────────────────────────────────────
+     What a person can pick up: an author's declared structural node, or any element
+     that repeats (two or more look-alike siblings in the source: same tag, same
+     classes), such as cards, list items, columns and table rows. Hover shows its
+     name; a click on its non-text area (or on the name tag) selects it; a pill just
+     outside it moves, duplicates and deletes it. A move only reorders it among those
+     siblings, so a save writes the parent's new child order by source id (a
+     `content` op keeping each child) and needs no author markup. Stamped pages only:
+     a save writes what the page shows, by source id. */
   type StructureLayout = "stack" | "row"
   const STRUCTURE_LAYOUTS = new Set<StructureLayout>(["stack", "row"])
+  const STRUCTURE_ID = /^[A-Za-z][A-Za-z0-9_-]{0,127}$/
+  const STRUCTURE_SIZES = new Set(["compact", "standard", "full"])
   type StructurePrefix = "data-derive" | "data-derive-runtime"
   const structureAttribute = (prefix: StructurePrefix, name: string) => `${prefix}-${name}`
   const structureNodeSelector = "[data-derive-node],[data-derive-runtime-node]"
@@ -3511,267 +3286,19 @@ interface ElReg {
     origSize: string | null
     origWidth: string | null
     origHeight: string | null
-    origAlign: string | null
     origStyle: string | null
-    origTabindex: string | null
   }
   interface StructureRegion {
     el: HTMLElement
-    id: string
     prefix: StructurePrefix
     layout: StructureLayout
     nodes: StructureNode[]
     /** The owning node when it is itself arrangeable; null for a top-level region. */
     owner: StructureNode | null
-    ownerEl: HTMLElement | null
-    origOrder: string[]
-    origGap: string | null
-    origStyle: string | null
   }
   let structureRegions: StructureRegion[] = []
   let structureRegionByNode = new Map<StructureNode, StructureRegion>()
   let structureNodeByElement = new Map<HTMLElement, StructureNode>()
-  let structureSelected: StructureNode | null = null
-  let structureSelection: StructureNode[] = []
-  let structurePointerExtend = false
-  let structurePointerSelectionHandled = false
-  let structureExpectedRemoved = new Set<StructureNode>()
-  let structureObserver: MutationObserver | null = null
-  let structureToastTimer = 0
-  let structureSafeAreaOn = false
-  let structureLayoutOpen = false
-  let structurePrecisionOpen = false
-  let structureIntentOpen = false
-  let structureIntentCommand: StructuralIntentCommand = "balance"
-  let structureInteraction = idleStructuralInteraction()
-
-  const structureBox = document.createElement("div")
-  structureBox.className = "derive-edit-ui derive-structure-box"
-  const updateStructureInteraction = (event: StructuralInteractionEvent) => {
-    structureInteraction = transitionStructuralInteraction(structureInteraction, event)
-    structureBox.setAttribute("data-interaction-state", structureInteraction.phase)
-  }
-  const structureToolbar = document.createElement("div")
-  structureToolbar.className = "derive-structure-toolbar"
-  structureToolbar.setAttribute("role", "toolbar")
-  structureToolbar.setAttribute("aria-label", "Arrange element")
-  const structureButton = (text: string, title: string, extra = "") => {
-    const button = document.createElement("button")
-    button.type = "button"
-    button.className = `derive-structure-button ${extra}`.trim()
-    button.textContent = text
-    button.title = title
-    button.setAttribute("aria-label", title)
-    return button
-  }
-  const structureGrip = structureButton("⠿", "Drag to reorder", "derive-structure-grip")
-  const structureLabel = document.createElement("span")
-  structureLabel.className = "derive-structure-label"
-  const structureEarlier = structureButton("↑", "Move earlier (Option+Up)")
-  const structureLater = structureButton("↓", "Move later (Option+Down)")
-  const structureSelectAll = structureButton("All", "Select all siblings", "derive-structure-batch")
-  const structureSameWidth = structureButton(
-    "Same W",
-    "Match selected widths to the active element",
-    "derive-structure-batch",
-  )
-  const structureSameHeight = structureButton(
-    "Same H",
-    "Match selected heights to the active element",
-    "derive-structure-batch",
-  )
-  const structureFitHeight = structureButton(
-    "Fit H",
-    "Fit selected heights to their content",
-    "derive-structure-batch",
-  )
-  const structureDistribute = structureButton("Space", "Distribute all siblings vertically")
-  const structureHealth = structureButton(
-    "Check",
-    "Check layout health and suggest the nearest safe fix",
-    "derive-structure-batch",
-  )
-  const structureIntent = structureButton(
-    "Design",
-    "Preview a safe design-intent plan",
-    "derive-structure-batch",
-  )
-  const structureAlignStart = structureButton("Start", "Align selected to start")
-  const structureAlignCenter = structureButton("Center", "Align selected to center")
-  const structureAlignEnd = structureButton("End", "Align selected to end")
-  const structureLayout = structureButton("Layout", "Open selected layout actions")
-  const structureLayoutPanel = document.createElement("div")
-  structureLayoutPanel.className = "derive-structure-layout-panel"
-  structureLayoutPanel.hidden = true
-  structureLayoutPanel.append(
-    structureSameWidth,
-    structureSameHeight,
-    structureFitHeight,
-    structureDistribute,
-    structureHealth,
-    structureIntent,
-    structureAlignStart,
-    structureAlignCenter,
-    structureAlignEnd,
-  )
-  const structureIntentPanel = document.createElement("div")
-  structureIntentPanel.className = "derive-structure-intent-panel"
-  structureIntentPanel.hidden = true
-  const structureIntentVariants = document.createElement("div")
-  structureIntentVariants.className = "derive-structure-intent-variants"
-  const structureIntentBalance = structureButton("Balance", "Balance on the nearest local rail")
-  const structureIntentEmphasize = structureButton(
-    "Emphasize active",
-    "Make the active element dominant",
-  )
-  structureIntentVariants.append(structureIntentBalance, structureIntentEmphasize)
-  const structureIntentReceipt = document.createElement("div")
-  structureIntentReceipt.className = "derive-structure-intent-receipt"
-  const structureIntentReceiptTitle = document.createElement("b")
-  const structureIntentReceiptSummary = document.createElement("span")
-  structureIntentReceipt.append(structureIntentReceiptTitle, structureIntentReceiptSummary)
-  const structureIntentActions = document.createElement("div")
-  structureIntentActions.className = "derive-structure-intent-actions"
-  const structureIntentCancel = structureButton("Cancel", "Cancel design intent preview")
-  const structureIntentApply = structureButton("Apply plan", "Apply this design intent plan")
-  structureIntentActions.append(structureIntentCancel, structureIntentApply)
-  structureIntentPanel.append(
-    structureIntentVariants,
-    structureIntentReceipt,
-    structureIntentActions,
-  )
-  const structureParent = structureButton(
-    "Parent",
-    "Select containing group (Escape)",
-    "derive-structure-parent",
-  )
-  const structureAuto = structureButton("Auto", "Use authored size", "derive-structure-size")
-  const structureCompact = structureButton("S", "Compact size", "derive-structure-size")
-  const structureStandard = structureButton("M", "Standard size", "derive-structure-size")
-  const structureFull = structureButton("L", "Full size", "derive-structure-size")
-  const structureExact = structureButton("Exact", "Set exact width and height")
-  const structurePrecisionPanel = document.createElement("form")
-  structurePrecisionPanel.className = "derive-structure-precision-panel"
-  structurePrecisionPanel.hidden = true
-  const structurePrecisionField = (label: string, suffix: string) => {
-    const field = document.createElement("label")
-    field.className = "derive-structure-precision-field"
-    const title = document.createElement("span")
-    title.textContent = `${label} (${suffix})`
-    const input = document.createElement("input")
-    input.className = "derive-structure-precision-input"
-    input.type = "number"
-    input.required = true
-    field.append(title, input)
-    return { field, input }
-  }
-  const structurePrecisionWidth = structurePrecisionField("Width", "%")
-  const structurePrecisionHeight = structurePrecisionField("Height", "px")
-  structurePrecisionHeight.input.required = false
-  structurePrecisionHeight.input.placeholder = "Auto"
-  structurePrecisionWidth.input.min = String(MIN_STRUCTURAL_WIDTH_PCT)
-  structurePrecisionWidth.input.max = String(MAX_STRUCTURAL_WIDTH_PCT)
-  structurePrecisionHeight.input.min = String(MIN_STRUCTURAL_HEIGHT_PX)
-  structurePrecisionHeight.input.max = String(MAX_STRUCTURAL_HEIGHT_PX)
-  const structurePrecisionActions = document.createElement("div")
-  structurePrecisionActions.className = "derive-structure-precision-actions"
-  const structurePrecisionCancel = structureButton("Cancel", "Cancel exact sizing")
-  const structurePrecisionApply = structureButton("Apply", "Apply exact width and height")
-  structurePrecisionApply.type = "submit"
-  structurePrecisionActions.append(structurePrecisionCancel, structurePrecisionApply)
-  structurePrecisionPanel.append(
-    structurePrecisionWidth.field,
-    structurePrecisionHeight.field,
-    structurePrecisionActions,
-  )
-  const structureRemove = structureButton(
-    "Remove",
-    "Remove element (Delete)",
-    "derive-structure-remove",
-  )
-  structureToolbar.append(
-    structureGrip,
-    structureLabel,
-    structureEarlier,
-    structureLater,
-    structureSelectAll,
-    structureLayout,
-    structureParent,
-    structureAuto,
-    structureCompact,
-    structureStandard,
-    structureFull,
-    structureExact,
-    structureRemove,
-    structureLayoutPanel,
-    structurePrecisionPanel,
-    structureIntentPanel,
-  )
-  const structureResizeHandle = document.createElement("button")
-  structureResizeHandle.type = "button"
-  structureResizeHandle.className = "derive-structure-resize-handle"
-  structureResizeHandle.title = "Drag or use arrow keys to resize width"
-  structureResizeHandle.setAttribute("role", "slider")
-  structureResizeHandle.setAttribute("aria-label", "Resize element width")
-  structureResizeHandle.setAttribute("aria-orientation", "horizontal")
-  structureResizeHandle.setAttribute("aria-valuemin", String(MIN_STRUCTURAL_WIDTH_PCT))
-  structureResizeHandle.setAttribute("aria-valuemax", String(MAX_STRUCTURAL_WIDTH_PCT))
-  const structureHeightHandle = document.createElement("button")
-  structureHeightHandle.type = "button"
-  structureHeightHandle.className = "derive-structure-resize-height"
-  structureHeightHandle.title = "Drag or use arrow keys to resize height"
-  structureHeightHandle.setAttribute("role", "slider")
-  structureHeightHandle.setAttribute("aria-label", "Resize element height")
-  structureHeightHandle.setAttribute("aria-orientation", "vertical")
-  structureHeightHandle.setAttribute("aria-valuemin", String(MIN_STRUCTURAL_HEIGHT_PX))
-  structureHeightHandle.setAttribute("aria-valuemax", String(MAX_STRUCTURAL_HEIGHT_PX))
-  const structureCornerHandle = document.createElement("button")
-  structureCornerHandle.type = "button"
-  structureCornerHandle.className = "derive-structure-resize-corner"
-  structureCornerHandle.title = "Drag to resize width and height"
-  structureCornerHandle.setAttribute("aria-label", "Resize element width and height")
-  const structureWidthReadout = document.createElement("span")
-  structureWidthReadout.className = "derive-structure-width-readout"
-  const structureSnapGuide = document.createElement("div")
-  structureSnapGuide.className = "derive-edit-ui derive-structure-snap-guide"
-  const structureHeightSnapGuide = document.createElement("div")
-  structureHeightSnapGuide.className = "derive-edit-ui derive-structure-height-snap-guide"
-  const structureDropMarker = document.createElement("div")
-  structureDropMarker.className = "derive-edit-ui derive-structure-drop-marker"
-  const structureDropMarkerLabel = document.createElement("span")
-  structureDropMarkerLabel.className = "derive-structure-drop-marker-label"
-  structureDropMarker.append(structureDropMarkerLabel)
-  structureBox.append(
-    structureToolbar,
-    structureResizeHandle,
-    structureHeightHandle,
-    structureCornerHandle,
-    structureWidthReadout,
-  )
-  const structureToast = document.createElement("div")
-  structureToast.className = "derive-edit-ui derive-structure-toast"
-  structureToast.setAttribute("role", "status")
-  const structureToastText = document.createElement("span")
-  const structureToastAction = document.createElement("button")
-  structureToastAction.type = "button"
-  structureToastAction.hidden = true
-  const structureToastUndo = document.createElement("button")
-  structureToastUndo.type = "button"
-  structureToastUndo.textContent = "Undo"
-  structureToast.append(structureToastText, structureToastAction, structureToastUndo)
-  const structureMultiLayer = document.createElement("div")
-  structureMultiLayer.className = "derive-edit-ui"
-  const structureMultiBoxes = new Map<HTMLElement, HTMLDivElement>()
-  ;(document.body || document.documentElement).append(
-    structureBox,
-    structureMultiLayer,
-    structureDropMarker,
-    structureSnapGuide,
-    structureHeightSnapGuide,
-    structureToast,
-  )
-  ownChrome(structureBox)
-  ownChrome(structureToast)
 
   const sourceChildren = (region: HTMLElement): HTMLElement[] =>
     Array.from(region.children).filter(
@@ -3791,18 +3318,16 @@ interface ElReg {
     structureRegionByNode.get(node) ?? null
   const parentStructureNode = (node: StructureNode): StructureNode | null =>
     regionForStructureNode(node)?.owner ?? null
-  const structureRegionExpectedDetached = (region: StructureRegion): boolean => {
-    for (let owner = region.owner; owner; owner = regionForStructureNode(owner)?.owner ?? null)
-      if (structureExpectedRemoved.has(owner)) return true
-    return false
-  }
-  const activeStructureRegions = (): StructureRegion[] =>
-    structureRegions.filter((region) => !structureRegionExpectedDetached(region))
   const connectedStructureNodes = (region: StructureRegion): StructureNode[] => {
     const byEl = new Map(region.nodes.map((node) => [node.el, node]))
     return sourceChildren(region.el)
       .map((el) => byEl.get(el))
       .filter((node): node is StructureNode => !!node)
+  }
+  /** The authored node this element is, when it sits directly in its region. */
+  const nodeOf = (el: Element | null): StructureNode | null => {
+    const node = el instanceof HTMLElement ? structureNodeByElement.get(el) : undefined
+    return node && el?.parentElement === regionForStructureNode(node)?.el ? node : null
   }
   const filterOpacity = (filter: string): number => {
     let opacity = 1
@@ -3812,19 +3337,21 @@ interface ElReg {
     }
     return opacity
   }
-  const structureNodeAvailable = (node: StructureNode): boolean => {
-    const region = regionForStructureNode(node)
-    if (!region || node.el.parentElement !== region.el || !document.contains(node.el)) return false
-    const slide = node.el.closest(".slide")
-    if (slide && document.querySelector(".slide.on") && !slide.classList.contains("on"))
-      return false
-    for (let current: Element | null = node.el; current; current = current.parentElement) {
+  /** On the slide on screen, painted, and not hidden by anything above it. */
+  const availableEl = (el: Element): boolean => {
+    if (!el.isConnected) return false
+    const slides = slideEls()
+    if (slides.length > 1) {
+      const at = slideOfEl(el, slides)
+      if (at !== null && at !== activeSlide(slides)) return false
+    }
+    for (let current: Element | null = el; current; current = current.parentElement) {
       const style = getComputedStyle(current)
       if (
         current.getAttribute("aria-hidden")?.trim().toLowerCase() === "true" ||
         current.hasAttribute("inert") ||
         style.display === "none" ||
-        (current === node.el && style.display === "contents") ||
+        (current === el && style.display === "contents") ||
         style.visibility === "hidden" ||
         style.visibility === "collapse" ||
         Number.parseFloat(style.opacity || "1") <= 0.001 ||
@@ -3834,10 +3361,8 @@ interface ElReg {
       )
         return false
     }
-    const rect = node.el.getBoundingClientRect()
-    if (!(rect.width > 0 && rect.height > 0)) return false
-    const viewportWidth = window.innerWidth || document.documentElement.clientWidth
-    return rect.right > 0 && rect.left < viewportWidth
+    const rect = el.getBoundingClientRect()
+    return rect.width > 0 && rect.height > 0 && rect.right > 0 && rect.left < innerWidth
   }
   const axisAlignedTransform = (style: CSSStyleDeclaration): boolean => {
     const rotate = style.getPropertyValue("rotate").trim()
@@ -3863,42 +3388,12 @@ interface ElReg {
       if (!axisAlignedTransform(getComputedStyle(current))) return false
     return true
   }
-  const structureNodeVisibleForSnap = (node: StructureNode): boolean => {
-    if (!structureNodeAvailable(node) || !structureTransformResizable(node)) return false
-    const rect = node.el.getBoundingClientRect()
-    const viewportWidth = window.innerWidth || document.documentElement.clientWidth
-    const viewportHeight = window.innerHeight || document.documentElement.clientHeight
-    if (rect.left < 0 || rect.top < 0 || rect.right > viewportWidth || rect.bottom > viewportHeight)
-      return false
-    for (let current = node.el.parentElement; current; current = current.parentElement) {
-      const style = getComputedStyle(current)
-      const clipsX = /^(?:auto|hidden|clip|scroll)$/.test(style.overflowX)
-      const clipsY = /^(?:auto|hidden|clip|scroll)$/.test(style.overflowY)
-      if (!clipsX && !clipsY) continue
-      const clip = current.getBoundingClientRect()
-      if (
-        (clipsX && (rect.left < clip.left - 1 || rect.right > clip.right + 1)) ||
-        (clipsY && (rect.top < clip.top - 1 || rect.bottom > clip.bottom + 1))
-      )
-        return false
-    }
-    return true
-  }
-  const structuralNodeAt = (el: Element | null): StructureNode | null => {
-    const candidate = el?.closest(structureNodeSelector)
-    if (!(candidate instanceof HTMLElement)) return null
-    const node = structureNodeByElement.get(candidate)
-    const region = node ? regionForStructureNode(node) : null
-    return node && candidate.parentElement === region?.el ? node : null
-  }
-  /* Each region stands alone: one that breaks the contract gets no handles, and the
-     rest stay arrangeable. A save names elements by source id, so what the page shows
-     is what is saved; content around the nodes (a kicker, a footer, speaker notes)
-     keeps its place because a move only swaps nodes between their own slots. */
+  /* Each region stands alone: one that breaks the contract offers no resize, and the
+     rest stay sizable. Its nodes remain blocks either way. */
   const scanStructureRegions = (): StructureRegion[] => {
-    const allRegionEls = Array.from(document.querySelectorAll(structureRegionSelector))
     const regions: StructureRegion[] = []
-    for (const regionEl of allRegionEls) {
+    const owners = new Map<StructureRegion, HTMLElement | null>()
+    for (const regionEl of Array.from(document.querySelectorAll(structureRegionSelector))) {
       if (!(regionEl instanceof HTMLElement)) continue
       const hasCanonical = regionEl.hasAttribute("data-derive-region")
       const hasRuntime = regionEl.hasAttribute("data-derive-runtime-region")
@@ -3913,15 +3408,7 @@ interface ElReg {
         continue
       const gap = regionEl.getAttribute(structureAttribute(prefix, "gap"))
       const customGap = regionEl.style.getPropertyValue(STRUCTURAL_GAP_PROPERTY).trim()
-      if (
-        (gap !== null &&
-          (!/^\d+$/.test(gap) ||
-            Number.parseInt(gap, 10) < MIN_STRUCTURAL_GAP_PX ||
-            Number.parseInt(gap, 10) > MAX_STRUCTURAL_GAP_PX ||
-            customGap !== `${gap}px`)) ||
-        (gap === null && !!customGap)
-      )
-        continue
+      if ((gap !== null && customGap !== `${gap}px`) || (gap === null && !!customGap)) continue
       const nodeName = structureAttribute(prefix, "node")
       const children = sourceChildren(regionEl)
       // Authored and generated nodes never mix in one region.
@@ -3931,51 +3418,46 @@ interface ElReg {
         )
       )
         continue
-      const owned = children.filter((child) => child.hasAttribute(nodeName))
       const nodes: StructureNode[] = []
       let valid = true
-      for (const child of owned) {
-        const nodeId = child.getAttribute(nodeName) || ""
-        const size = child.getAttribute(structureAttribute(prefix, "size"))
-        const width = child.getAttribute(structureAttribute(prefix, "width"))
-        const customWidth = child.style.getPropertyValue(STRUCTURAL_WIDTH_PROPERTY).trim()
-        const height = child.getAttribute(structureAttribute(prefix, "height"))
-        const customHeight = child.style.getPropertyValue(STRUCTURAL_HEIGHT_PROPERTY).trim()
-        const align = child.getAttribute(structureAttribute(prefix, "align"))
-        const customAlign = child.style.getPropertyValue(STRUCTURAL_ALIGN_PROPERTY).trim()
+      for (const child of children.filter((c) => c.hasAttribute(nodeName))) {
+        const attr = (name: string) => child.getAttribute(structureAttribute(prefix, name))
+        const custom = (property: string) => child.style.getPropertyValue(property).trim()
+        const size = attr("size")
+        const width = attr("width")
+        const height = attr("height")
+        const align = attr("align")
         if (
-          !STRUCTURE_ID.test(nodeId) ||
+          !STRUCTURE_ID.test(attr("node") || "") ||
           child.matches(structureRegionSelector) ||
-          (size !== null && !STRUCTURE_SIZES.has(size as StructureSize)) ||
+          (size !== null && !STRUCTURE_SIZES.has(size)) ||
+          (size !== null && width !== null) ||
           (width !== null &&
             (!/^(?:[1-9]|[1-9][0-9]|100)$/.test(width) ||
               Number.parseInt(width, 10) < MIN_STRUCTURAL_WIDTH_PCT ||
-              customWidth !== `${width}%`)) ||
-          (width === null && !!customWidth) ||
-          (size !== null && width !== null) ||
+              custom(STRUCTURAL_WIDTH_PROPERTY) !== `${width}%`)) ||
+          (width === null && !!custom(STRUCTURAL_WIDTH_PROPERTY)) ||
           (height !== null &&
             (!/^\d+$/.test(height) ||
               Number.parseInt(height, 10) < MIN_STRUCTURAL_HEIGHT_PX ||
               Number.parseInt(height, 10) > MAX_STRUCTURAL_HEIGHT_PX ||
-              customHeight !== `${height}px`)) ||
-          (height === null && !!customHeight) ||
-          (align !== null && (!/^(?:start|center|end)$/.test(align) || customAlign !== align)) ||
-          (align === null && !!customAlign)
+              custom(STRUCTURAL_HEIGHT_PROPERTY) !== `${height}px`)) ||
+          (height === null && !!custom(STRUCTURAL_HEIGHT_PROPERTY)) ||
+          (align !== null && custom(STRUCTURAL_ALIGN_PROPERTY) !== align) ||
+          (align === null && !!custom(STRUCTURAL_ALIGN_PROPERTY))
         ) {
           valid = false
           break
         }
         nodes.push({
           el: child,
-          id: nodeId,
-          kind: child.getAttribute(structureAttribute(prefix, "kind")) || "element",
+          id: attr("node") || "",
+          kind: attr("kind") || "",
           prefix,
           origSize: size,
           origWidth: width,
           origHeight: height,
-          origAlign: align,
-          origStyle: child.getAttribute("style"),
-          origTabindex: child.getAttribute("tabindex"),
+          origStyle: rawStyle(child),
         })
       }
       if (!valid) continue
@@ -3986,50 +3468,16 @@ interface ElReg {
           ownerEl.getAttribute("data-derive-runtime-node"))
         : null
       if (regionEl.getAttribute(structureAttribute(prefix, "owner")) !== ownerId) continue
-      regions.push({
-        el: regionEl,
-        id,
-        prefix,
-        layout: layout as StructureLayout,
-        nodes,
-        owner: null,
-        ownerEl: ownerEl instanceof HTMLElement ? ownerEl : null,
-        origOrder: nodes.map((node) => node.id),
-        origGap: gap,
-        origStyle: rawStyle(regionEl),
-      })
+      const region = { el: regionEl, prefix, layout: layout as StructureLayout, nodes, owner: null }
+      owners.set(region, ownerEl instanceof HTMLElement ? ownerEl : null)
+      regions.push(region)
     }
     const nodeByEl = new Map(
       regions.flatMap((region) => region.nodes.map((node) => [node.el, node] as const)),
     )
-    // An owner in a refused region is still the region's owner in source, but it has
-    // no handles of its own to select as a parent.
-    for (const region of regions)
-      region.owner = region.ownerEl ? (nodeByEl.get(region.ownerEl) ?? null) : null
+    for (const [region, ownerEl] of owners)
+      region.owner = ownerEl ? (nodeByEl.get(ownerEl) ?? null) : null
     return regions
-  }
-
-  const structureDirtyCount = (): number => {
-    let dirty = 0
-    for (const region of activeStructureRegions()) {
-      if (region.el.getAttribute(structureAttribute(region.prefix, "gap")) !== region.origGap)
-        dirty++
-      const current = connectedStructureNodes(region)
-      const currentIds = current.map((node) => node.id)
-      const currentSet = new Set(currentIds)
-      dirty += region.nodes.filter((node) => !currentSet.has(node.id)).length
-      const originalRemaining = region.origOrder.filter((id) => currentSet.has(id))
-      if (currentIds.some((id, index) => id !== originalRemaining[index])) dirty++
-      for (const node of current)
-        if (
-          node.el.getAttribute(structureAttribute(node.prefix, "size")) !== node.origSize ||
-          node.el.getAttribute(structureAttribute(node.prefix, "width")) !== node.origWidth ||
-          node.el.getAttribute(structureAttribute(node.prefix, "height")) !== node.origHeight ||
-          node.el.getAttribute(structureAttribute(node.prefix, "align")) !== node.origAlign
-        )
-          dirty++
-    }
-    return dirty
   }
 
   const structureContentWidth = (region: StructureRegion): number => {
@@ -4039,27 +3487,6 @@ interface ElReg {
       (Number.parseFloat(style.paddingLeft) || 0) -
       (Number.parseFloat(style.paddingRight) || 0)
     )
-  }
-  const structureResizeAxisFor = (node: StructureNode, region: StructureRegion) => {
-    const regionStyle = getComputedStyle(region.el)
-    const nodeStyle = getComputedStyle(node.el)
-    const regionRect = region.el.getBoundingClientRect()
-    const nodeRect = node.el.getBoundingClientRect()
-    const screenScale = region.el.offsetWidth > 0 ? regionRect.width / region.el.offsetWidth : 1
-    const paddingLeft = Number.parseFloat(regionStyle.paddingLeft) || 0
-    const paddingRight = Number.parseFloat(regionStyle.paddingRight) || 0
-    const borderRight = Math.max(
-      0,
-      region.el.offsetWidth - region.el.clientWidth - region.el.clientLeft,
-    )
-    const contentLeft = regionRect.left + (region.el.clientLeft + paddingLeft) * screenScale
-    const contentRight = regionRect.right - (borderRight + paddingRight) * screenScale
-    const leftGap = Math.max(0, nodeRect.left - contentLeft)
-    const rightGap = Math.max(0, contentRight - nodeRect.right)
-    const selfAlignment = nodeStyle.alignSelf
-    const alignment =
-      selfAlignment && selfAlignment !== "auto" ? selfAlignment : regionStyle.alignItems
-    return structuralResizeAxis(leftGap, rightGap, alignment.includes("center"))
   }
   const horizontalStructureWritingMode = (node: StructureNode, region: StructureRegion): boolean =>
     getComputedStyle(node.el).writingMode === "horizontal-tb" &&
@@ -4082,11 +3509,11 @@ interface ElReg {
   const structureGridHasSingleColumn = (style: CSSStyleDeclaration): boolean =>
     !style.gridAutoFlow.includes("column") &&
     (style.gridTemplateColumns === "none" || cssTrackCount(style.gridTemplateColumns) === 1)
+  const inFlow = (style: CSSStyleDeclaration) =>
+    /^(?:static|relative)$/.test(style.position) && style.float === "none"
   const structureStackLayoutResizable = (node: StructureNode, region: StructureRegion): boolean => {
     if (region.layout !== "stack" || !horizontalStructureWritingMode(node, region)) return false
     const regionStyle = getComputedStyle(region.el)
-    const nodeStyle = getComputedStyle(node.el)
-    if (!/^(?:static|relative)$/.test(nodeStyle.position)) return false
     if (!/^(?:auto|1)$/.test(regionStyle.columnCount) || regionStyle.columnWidth !== "auto")
       return false
     if (
@@ -4098,9 +3525,8 @@ interface ElReg {
       return false
     let previousBottom = Number.NEGATIVE_INFINITY
     for (const child of connectedStructureNodes(region)) {
-      if (!structureNodeAvailable(child)) continue
-      const style = getComputedStyle(child.el)
-      if (!/^(?:static|relative)$/.test(style.position) || style.float !== "none") return false
+      if (!availableEl(child.el)) continue
+      if (!inFlow(getComputedStyle(child.el))) return false
       const rect = child.el.getBoundingClientRect()
       if (rect.top < previousBottom - 1) return false
       previousBottom = Math.max(previousBottom, rect.bottom)
@@ -4110,156 +3536,57 @@ interface ElReg {
   const structureRowLayoutResizable = (node: StructureNode, region: StructureRegion): boolean => {
     if (region.layout !== "row" || !horizontalStructureWritingMode(node, region)) return false
     const regionStyle = getComputedStyle(region.el)
-    const nodeStyle = getComputedStyle(node.el)
     if (
       !regionStyle.display.includes("flex") ||
       regionStyle.flexDirection !== "row" ||
-      regionStyle.flexWrap !== "nowrap" ||
-      !/^(?:static|relative)$/.test(nodeStyle.position)
+      regionStyle.flexWrap !== "nowrap"
     )
       return false
-    for (const child of connectedStructureNodes(region)) {
-      if (!structureNodeAvailable(child)) continue
-      const style = getComputedStyle(child.el)
-      if (!/^(?:static|relative)$/.test(style.position) || style.float !== "none") return false
+    return connectedStructureNodes(region).every(
+      (child) => !availableEl(child.el) || inFlow(getComputedStyle(child.el)),
+    )
+  }
+  /** Today's rules for a width a save can persist: an in-flow stack or row. */
+  const widthResizable = (node: StructureNode, region: StructureRegion) =>
+    structureTransformResizable(node) &&
+    (structureStackLayoutResizable(node, region) || structureRowLayoutResizable(node, region))
+  const heightResizable = (node: StructureNode, region: StructureRegion): boolean => {
+    const row = structureRowLayoutResizable(node, region)
+    if (!row && !structureStackLayoutResizable(node, region)) return false
+    const regionStyle = getComputedStyle(region.el)
+    if (regionStyle.display.includes("flex"))
+      return /^(?:normal|start|flex-start|stretch)$/.test(
+        row ? regionStyle.alignItems : regionStyle.justifyContent,
+      )
+    if (regionStyle.display.includes("grid")) {
+      const self = getComputedStyle(node.el).alignSelf
+      const alignment = self && self !== "auto" ? self : regionStyle.alignItems
+      return structureGridHasSingleColumn(regionStyle) && /^(?:start|flex-start)$/.test(alignment)
     }
     return true
-  }
-  const structureWidthAxisFor = (node: StructureNode, region: StructureRegion) => {
-    if (!structureStackLayoutResizable(node, region) && !structureRowLayoutResizable(node, region))
-      return null
-    return structureResizeAxisFor(node, region)
-  }
-  const structureHeightAxisFor = (node: StructureNode, region: StructureRegion) => {
-    const row = structureRowLayoutResizable(node, region)
-    if (!row && !structureStackLayoutResizable(node, region)) return null
-    const regionStyle = getComputedStyle(region.el)
-    const nodeStyle = getComputedStyle(node.el)
-    if (regionStyle.display.includes("flex")) {
-      const alignment = row ? regionStyle.alignItems : regionStyle.justifyContent
-      if (!/^(?:normal|start|flex-start|stretch)$/.test(alignment)) return null
-      return structuralBlockResizeAxis(0, 1)
-    }
-    if (regionStyle.display.includes("grid")) {
-      if (!structureGridHasSingleColumn(regionStyle)) return null
-      const selfAlignment = nodeStyle.alignSelf
-      const alignment =
-        selfAlignment && selfAlignment !== "auto" ? selfAlignment : regionStyle.alignItems
-      if (!/^(?:start|flex-start)$/.test(alignment)) return null
-      return structuralBlockResizeAxis(0, 1)
-    }
-    return structuralBlockResizeAxis(0, 1)
-  }
-  const structureCrossAxisAlignAvailable = (
-    node: StructureNode,
-    region: StructureRegion,
-  ): boolean => {
-    const regionStyle = getComputedStyle(region.el)
-    const nodeStyle = getComputedStyle(node.el)
-    return (
-      horizontalStructureWritingMode(node, region) &&
-      regionStyle.display.includes("flex") &&
-      ((region.layout === "stack" && regionStyle.flexDirection === "column") ||
-        (region.layout === "row" && regionStyle.flexDirection === "row")) &&
-      regionStyle.flexWrap === "nowrap" &&
-      /^(?:static|relative)$/.test(nodeStyle.position) &&
-      nodeStyle.float === "none"
-    )
-  }
-  const structureDistributionGap = (region: StructureRegion): number | null => {
-    if (region.layout !== "stack") return null
-    const nodes = connectedStructureNodes(region).filter((node) => structureNodeAvailable(node))
-    if (nodes.length < 3 || selectedStructureNodes(region).length !== nodes.length) return null
-    const regionStyle = getComputedStyle(region.el)
-    if (
-      !regionStyle.display.includes("flex") ||
-      regionStyle.flexDirection !== "column" ||
-      regionStyle.flexWrap !== "nowrap" ||
-      !/^(?:normal|start|flex-start)$/.test(regionStyle.justifyContent)
-    )
-      return null
-    for (const node of nodes) {
-      const style = getComputedStyle(node.el)
-      if (
-        !structureTransformResizable(node) ||
-        !/^(?:static|relative)$/.test(style.position) ||
-        style.float !== "none" ||
-        Math.abs(Number.parseFloat(style.marginTop) || 0) > 0.5 ||
-        Math.abs(Number.parseFloat(style.marginBottom) || 0) > 0.5
-      )
-        return null
-    }
-    const contentHeight =
-      region.el.clientHeight -
-      (Number.parseFloat(regionStyle.paddingTop) || 0) -
-      (Number.parseFloat(regionStyle.paddingBottom) || 0)
-    const gap = Math.round(
-      (contentHeight - nodes.reduce((sum, node) => sum + node.el.offsetHeight, 0)) /
-        (nodes.length - 1),
-    )
-    const currentGap = Number.parseFloat(regionStyle.rowGap)
-    return Number.isInteger(gap) &&
-      gap >= MIN_STRUCTURAL_GAP_PX &&
-      gap <= MAX_STRUCTURAL_GAP_PX &&
-      Math.abs(gap - currentGap) > 1
-      ? gap
-      : null
   }
   const structureWidthName = (node: StructureNode): string =>
     structureAttribute(node.prefix, "width")
   const structureSizeName = (node: StructureNode): string => structureAttribute(node.prefix, "size")
   const structureHeightName = (node: StructureNode): string =>
     structureAttribute(node.prefix, "height")
-  const structureAlignName = (node: StructureNode): string =>
-    structureAttribute(node.prefix, "align")
   const currentStructureWidth = (node: StructureNode): number | null => {
     const raw = node.el.getAttribute(structureWidthName(node))
-    if (raw === null) return null
-    const width = Number.parseInt(raw, 10)
-    return Number.isInteger(width) &&
-      width >= MIN_STRUCTURAL_WIDTH_PCT &&
-      width <= MAX_STRUCTURAL_WIDTH_PCT
-      ? width
-      : null
+    return raw === null ? null : Number.parseInt(raw, 10)
   }
   const currentStructureHeight = (node: StructureNode): number | null => {
     const raw = node.el.getAttribute(structureHeightName(node))
-    if (raw === null) return null
-    const height = Number.parseInt(raw, 10)
-    return Number.isInteger(height) &&
-      height >= MIN_STRUCTURAL_HEIGHT_PX &&
-      height <= MAX_STRUCTURAL_HEIGHT_PX
-      ? height
-      : null
+    return raw === null ? null : Number.parseInt(raw, 10)
   }
-  const rememberStructureSizing = (node: StructureNode) =>
-    remember(
-      structuralSizingOf(
-        node.el,
-        structureSizeName(node),
-        structureWidthName(node),
-        structureHeightName(node),
-      ),
+  const sizingOf = (node: StructureNode) =>
+    structuralSizingOf(
+      node.el,
+      structureSizeName(node),
+      structureWidthName(node),
+      structureHeightName(node),
     )
   const clearEmptyStyle = (el: HTMLElement) => {
     if (!(el.getAttribute("style") || "").trim()) el.removeAttribute("style")
-  }
-  const restoreStructureTransition = (
-    node: { el: HTMLElement },
-    value: string,
-    priority: string,
-  ) => {
-    if (value) node.el.style.setProperty("transition", value, priority)
-    else node.el.style.removeProperty("transition")
-    clearEmptyStyle(node.el)
-  }
-  const applyStructurePreset = (node: StructureNode, size: StructureSize | null) => {
-    const sizeName = structureSizeName(node)
-    if (size === null) node.el.removeAttribute(sizeName)
-    else node.el.setAttribute(sizeName, size)
-    node.el.removeAttribute(structureWidthName(node))
-    node.el.style.removeProperty(STRUCTURAL_WIDTH_PROPERTY)
-    clearEmptyStyle(node.el)
   }
   const applyStructureWidth = (node: StructureNode, width: number | null) => {
     node.el.removeAttribute(structureSizeName(node))
@@ -4284,17 +3611,6 @@ interface ElReg {
     node.el.setAttribute(heightName, String(height))
     node.el.style.setProperty(STRUCTURAL_HEIGHT_PROPERTY, `${height}px`)
   }
-  const applyStructureAlign = (node: StructureNode, align: StructuralAlignment | null) => {
-    const alignName = structureAlignName(node)
-    if (align === null) {
-      node.el.removeAttribute(alignName)
-      node.el.style.removeProperty(STRUCTURAL_ALIGN_PROPERTY)
-      clearEmptyStyle(node.el)
-      return
-    }
-    node.el.setAttribute(alignName, align)
-    node.el.style.setProperty(STRUCTURAL_ALIGN_PROPERTY, align)
-  }
   const structureWidthFits = (
     node: StructureNode,
     region: StructureRegion,
@@ -4303,15 +3619,11 @@ interface ElReg {
     const contentWidth = structureContentWidth(region)
     if (!(contentWidth > 0)) return false
     const expected = (contentWidth * width) / 100
-    const tolerance = Math.max(2, expected * 0.02)
-    return Math.abs(node.el.offsetWidth - expected) <= tolerance
+    return Math.abs(node.el.offsetWidth - expected) <= Math.max(2, expected * 0.02)
   }
-  const structureHeightFits = (node: StructureNode, height: number): boolean => {
-    const tolerance = Math.max(2, height * 0.02)
-    const rendered = node.el.offsetHeight
-    const clipsContent = node.el.scrollHeight > node.el.clientHeight + 1
-    return Math.abs(rendered - height) <= tolerance && !clipsContent
-  }
+  const structureHeightFits = (node: StructureNode, height: number): boolean =>
+    Math.abs(node.el.offsetHeight - height) <= Math.max(2, height * 0.02) &&
+    node.el.scrollHeight <= node.el.clientHeight + 1
   interface StructureHeightClipOverflow {
     top: number
     bottom: number
@@ -4328,2009 +3640,786 @@ interface ElReg {
     const screenScaleY = ancestor.offsetHeight > 0 ? ancestorRect.height / ancestor.offsetHeight : 1
     const clipTop = ancestorRect.top + ancestor.clientTop * screenScaleY
     const clipBottom = clipTop + ancestor.clientHeight * screenScaleY
-    const footprint = [node.el, ...node.el.querySelectorAll<HTMLElement>("*")].reduce(
-      (bounds, element) => {
-        const rect = element.getBoundingClientRect()
-        if (!(rect.width > 0 || rect.height > 0)) return bounds
-        return {
-          top: Math.min(bounds.top, rect.top),
-          bottom: Math.max(bounds.bottom, rect.bottom),
-        }
-      },
-      { top: node.el.getBoundingClientRect().top, bottom: node.el.getBoundingClientRect().bottom },
-    )
+    let top = node.el.getBoundingClientRect().top
+    let bottom = node.el.getBoundingClientRect().bottom
+    for (const element of Array.from(node.el.querySelectorAll<HTMLElement>("*"))) {
+      const rect = element.getBoundingClientRect()
+      if (!(rect.width > 0 || rect.height > 0)) continue
+      top = Math.min(top, rect.top)
+      bottom = Math.max(bottom, rect.bottom)
+    }
     return {
-      top: Math.max(0, clipTop - footprint.top),
-      bottom: Math.max(0, footprint.bottom - clipBottom),
+      top: Math.max(0, clipTop - top),
+      bottom: Math.max(0, bottom - clipBottom),
       scroll: Math.max(0, ancestor.scrollHeight - ancestor.clientHeight),
     }
   }
-  const structureHeightChainBaseline = (node: StructureNode): StructureHeightChainBaseline => {
-    const baseline: StructureHeightChainBaseline = new Map()
-    for (let ancestor = node.el.parentElement; ancestor && ancestor !== document.body; ) {
-      const overflowY = getComputedStyle(ancestor).overflowY
-      if (overflowY === "hidden" || overflowY === "clip")
-        baseline.set(ancestor, structureHeightClipOverflow(node, ancestor))
-      ancestor = ancestor.parentElement
-    }
-    return baseline
+  const clippingAncestors = (node: StructureNode): HTMLElement[] => {
+    const out: HTMLElement[] = []
+    for (let a = node.el.parentElement; a && a !== document.body; a = a.parentElement)
+      if (/^(?:hidden|clip)$/.test(getComputedStyle(a).overflowY)) out.push(a)
+    return out
   }
+  const structureHeightChainBaseline = (node: StructureNode): StructureHeightChainBaseline =>
+    new Map(clippingAncestors(node).map((a) => [a, structureHeightClipOverflow(node, a)]))
+  /** A new height fits every ancestor that has one, and newly overflows nothing that
+   *  clips: an authored CSS-height wrapper outside Derive's sizing contract included. */
   const structureHeightChainFits = (
     node: StructureNode,
-    baseline?: StructureHeightChainBaseline,
+    baseline: StructureHeightChainBaseline,
   ): boolean => {
-    for (
-      let current: StructureNode | null = node;
-      current;
-      current = parentStructureNode(current)
-    ) {
-      const height = currentStructureHeight(current)
-      if (height !== null && !structureHeightFits(current, height)) return false
+    for (let n: StructureNode | null = node; n; n = parentStructureNode(n)) {
+      const height = currentStructureHeight(n)
+      if (height !== null && !structureHeightFits(n, height)) return false
     }
-    // Nested structural regions can also live inside an authored CSS-height
-    // wrapper. Reject a candidate that newly overflows a clipping ancestor even
-    // when that ancestor does not participate in Derive's sizing contract.
-    for (let ancestor = node.el.parentElement; ancestor && ancestor !== document.body; ) {
-      const overflowY = getComputedStyle(ancestor).overflowY
-      if (overflowY === "hidden" || overflowY === "clip") {
-        const overflow = structureHeightClipOverflow(node, ancestor)
-        const before = baseline?.get(ancestor) ?? { top: 0, bottom: 0, scroll: 0 }
-        if (
-          overflow.top > before.top + 1 ||
-          overflow.bottom > before.bottom + 1 ||
-          overflow.scroll > before.scroll + 1
-        )
-          return false
-      }
-      ancestor = ancestor.parentElement
-    }
-    return true
-  }
-
-  const syncStructureSafeArea = (
-    hasParent = !!structureSelected && !!parentStructureNode(structureSelected),
-  ) => {
-    const root = document.documentElement
-    const body = document.body
-    const shouldReserve = !!body && editOn && !!structureSelected && innerWidth <= 640
-    if (shouldReserve !== structureSafeAreaOn) {
-      structureSafeAreaOn = shouldReserve
-      if (shouldReserve && body) {
-        const base = Number.parseFloat(getComputedStyle(body).paddingBottom) || 0
-        root.style.setProperty("--derive-structure-body-padding-base", `${base}px`)
-        root.classList.add("derive-structure-safe")
-      } else {
-        root.classList.remove("derive-structure-safe")
-        root.style.removeProperty("--derive-structure-body-padding-base")
-      }
-    }
-    root.classList.toggle("derive-structure-parent-safe", shouldReserve && hasParent)
-  }
-
-  const paintStructureMultiSelection = () => {
-    const activeRegion = structureSelected ? regionForStructureNode(structureSelected) : null
-    const selected = new Set(
-      structureSelection
-        .filter(
-          (node) =>
-            node !== structureSelected &&
-            structureNodeAvailable(node) &&
-            regionForStructureNode(node) === activeRegion,
-        )
-        .map((node) => node.el),
-    )
-    for (const [el, box] of structureMultiBoxes)
-      if (!selected.has(el)) {
-        box.remove()
-        structureMultiBoxes.delete(el)
-      }
-    for (const el of selected) {
-      let box = structureMultiBoxes.get(el)
-      if (!box) {
-        box = document.createElement("div")
-        box.className = "derive-structure-multi-box"
-        structureMultiLayer.append(box)
-        structureMultiBoxes.set(el, box)
-      }
-      const rect = el.getBoundingClientRect()
-      box.style.display = rect.width || rect.height ? "block" : "none"
-      box.style.left = `${rect.left + (window.scrollX || 0)}px`
-      box.style.top = `${rect.top + scrollTop()}px`
-      box.style.width = `${rect.width}px`
-      box.style.height = `${rect.height}px`
-    }
-  }
-
-  const structureCapability = (
-    capability: StructuralCapability,
-    selected: StructureNode,
-    region: StructureRegion,
-    selection: readonly StructureNode[],
-    nodes = connectedStructureNodes(region),
-  ) =>
-    evaluateStructuralCapability(capability, {
-      selectionCount: selection.length,
-      siblingCount: nodes.length,
-      transformed: selection.some((node) => !structureTransformResizable(node)),
-      widthAxis: selection.every((node) => !!structureWidthAxisFor(node, region)),
-      heightAxis: selection.every((node) => !!structureHeightAxisFor(node, region)),
-      alignAxis: selection.every((node) => structureCrossAxisAlignAvailable(node, region)),
-      boundedStack: structureDistributionGap(region) !== null,
-      hasFixedHeight: selection.some((node) => currentStructureHeight(node) !== null),
-      activeId: selected.id,
-    })
-
-  const applyCapabilityToButton = (
-    button: HTMLButtonElement,
-    capability: ReturnType<typeof structureCapability>,
-    availableTitle: string,
-  ) => {
-    button.disabled = !capability.available
-    button.title = capability.available ? availableTitle : capability.reason.message
-    button.setAttribute("aria-label", button.title)
-  }
-
-  const structureIntentPlanFor = (
-    command: StructuralIntentCommand,
-    selected: StructureNode,
-    region: StructureRegion,
-    selection: readonly StructureNode[],
-  ): StructuralIntentPlan | null => {
-    const contentWidth = structureContentWidth(region)
-    if (!(contentWidth > 0)) return null
-    return planStructuralIntent(command, {
-      selectedIds: selection.map(({ id }) => id),
-      activeId: selected.id,
-      widths: selection.map((node) => Math.round((node.el.offsetWidth / contentWidth) * 100)),
-      fixedHeightIds: selection
-        .filter((node) => currentStructureHeight(node) !== null)
-        .map(({ id }) => id),
-      canAlign: selection.every((node) => structureCrossAxisAlignAvailable(node, region)),
-    })
-  }
-
-  const paintStructureUi = () => {
-    const selected = structureSelected
-    const parent = selected ? parentStructureNode(selected) : null
-    syncStructureSafeArea(!!parent)
-    paintStructureMultiSelection()
-    if (!editOn || !selected || !structureNodeAvailable(selected)) {
-      structureBox.style.display = "none"
-      if (!structureResizeDrag) {
-        structureSnapGuide.style.display = "none"
-        structureHeightSnapGuide.style.display = "none"
-      }
-      return
-    }
-    const region = regionForStructureNode(selected)
-    if (!region) {
-      structureBox.style.display = "none"
-      return
-    }
-    const rect = selected.el.getBoundingClientRect()
-    if (!(rect.width || rect.height)) {
-      structureBox.style.display = "none"
-      return
-    }
-    const nodes = connectedStructureNodes(region)
-    const size = selected.el.getAttribute(structureAttribute(selected.prefix, "size"))
-    const width = currentStructureWidth(selected)
-    const height = currentStructureHeight(selected)
-    structureBox.style.display = "block"
-    structureBox.style.left = `${rect.left + (window.scrollX || 0)}px`
-    structureBox.style.top = `${rect.top + scrollTop()}px`
-    structureBox.style.width = `${rect.width}px`
-    structureBox.style.height = `${rect.height}px`
-    structureBox.classList.toggle("derive-structure-below", rect.top < 54)
-    const selection = structureSelection.filter(
-      (node) => regionForStructureNode(node) === region && structureNodeAvailable(node),
-    )
-    const selectionSet = new Set(selection)
-    structureLabel.textContent =
-      selection.length > 1 ? `${selection.length} selected · ${selected.id}` : selected.id
-    structureParent.hidden = !parent
-    structureGrip.disabled = selection.length > 1
-    structureGrip.title =
-      selection.length > 1 ? "Use the arrow controls to reorder this selection" : "Drag to reorder"
-    structureEarlier.disabled = !nodes.some(
-      (node, nodeIndex) =>
-        selectionSet.has(node) &&
-        nodeIndex > 0 &&
-        !selectionSet.has(nodes[nodeIndex - 1] as StructureNode),
-    )
-    structureLater.disabled = !nodes.some(
-      (node, nodeIndex) =>
-        selectionSet.has(node) &&
-        nodeIndex < nodes.length - 1 &&
-        !selectionSet.has(nodes[nodeIndex + 1] as StructureNode),
-    )
-    structureSelectAll.disabled = nodes.length < 2 || selection.length === nodes.length
-    structureLayout.hidden = selection.length < 2
-    if (selection.length < 2) {
-      structureLayoutOpen = false
-      structureIntentOpen = false
-    }
-    if (selection.length > 1) structurePrecisionOpen = false
-    structureLayout.setAttribute("aria-expanded", String(structureLayoutOpen))
-    structureLayoutPanel.hidden = !structureLayoutOpen || selection.length < 2
-    const intentPlan = structureIntentPlanFor(structureIntentCommand, selected, region, selection)
-    structureIntent.setAttribute("aria-expanded", String(structureIntentOpen))
-    structureIntentPanel.hidden = !structureIntentOpen || !intentPlan
-    structureIntentBalance.setAttribute(
-      "aria-pressed",
-      String(structureIntentCommand === "balance"),
-    )
-    structureIntentEmphasize.setAttribute(
-      "aria-pressed",
-      String(structureIntentCommand === "emphasize-active"),
-    )
-    structureIntentEmphasize.textContent =
-      selected.kind === "visual" || selected.kind === "image"
-        ? "Emphasize visual"
-        : "Emphasize active"
-    structureIntentApply.disabled = !intentPlan
-    structureIntentReceiptTitle.textContent = intentPlan?.title ?? "No safe plan"
-    structureIntentReceiptSummary.textContent = intentPlan?.summary ?? "Selection is not eligible"
-    const alignCapability = structureCapability("align", selected, region, selection, nodes)
-    for (const [button, title] of [
-      [structureAlignStart, "Align selected to start"],
-      [structureAlignCenter, "Align selected to center"],
-      [structureAlignEnd, "Align selected to end"],
-    ] as const)
-      applyCapabilityToButton(button, alignCapability, title)
-    applyCapabilityToButton(
-      structureFitHeight,
-      structureCapability("fit-height", selected, region, selection, nodes),
-      "Fit selected heights to their content",
-    )
-    applyCapabilityToButton(
-      structureSameWidth,
-      structureCapability("equalize-width", selected, region, selection, nodes),
-      "Match selected widths to the active element",
-    )
-    applyCapabilityToButton(
-      structureSameHeight,
-      structureCapability("equalize-height", selected, region, selection, nodes),
-      "Match selected heights to the active element",
-    )
-    applyCapabilityToButton(
-      structureDistribute,
-      structureCapability("distribute", selected, region, selection, nodes),
-      "Distribute all siblings vertically",
-    )
-    structureRemove.disabled = selection.length > 1
-    structureRemove.title =
-      selection.length > 1 ? "Remove one element at a time" : "Remove element (Delete)"
-    structureAuto.setAttribute("aria-pressed", String(size === null && width === null))
-    structureCompact.setAttribute("aria-pressed", String(size === "compact"))
-    structureStandard.setAttribute("aria-pressed", String(size === "standard"))
-    structureFull.setAttribute("aria-pressed", String(size === "full"))
-    structureWidthReadout.textContent = `${width === null ? size || "Auto" : `${width}%`} × ${height === null ? "Auto" : `${height}px`}`
-    const contentWidth = structureContentWidth(region)
-    const reportedWidth =
-      width ?? (contentWidth > 0 ? Math.round((selected.el.offsetWidth / contentWidth) * 100) : 100)
-    structureResizeHandle.setAttribute("aria-valuenow", String(reportedWidth))
-    structureResizeHandle.setAttribute(
-      "aria-valuetext",
-      width === null
-        ? `${reportedWidth}%${size ? `, ${size} preset` : ", authored size"}`
-        : `${width}%, custom width`,
-    )
-    const reportedHeight = height ?? Math.round(selected.el.offsetHeight)
-    structureHeightHandle.setAttribute("aria-valuenow", String(reportedHeight))
-    structureHeightHandle.setAttribute(
-      "aria-valuetext",
-      height === null
-        ? `${reportedHeight} pixels, authored height`
-        : `${height} pixels, custom height`,
-    )
-    structureCornerHandle.setAttribute(
-      "aria-description",
-      `${reportedWidth}% wide and ${reportedHeight} pixels high`,
-    )
-    const widthAxis = structureWidthAxisFor(selected, region)
-    const heightAxis = structureHeightAxisFor(selected, region)
-    const batchSelected = selection.length > 1
-    structureExact.hidden = batchSelected
-    structureExact.setAttribute("aria-expanded", String(structurePrecisionOpen))
-    structurePrecisionPanel.hidden = !structurePrecisionOpen || batchSelected
-    structureAuto.disabled = batchSelected
-    for (const [button, availableTitle] of [
-      [structureCompact, "Compact size"],
-      [structureStandard, "Standard size"],
-      [structureFull, "Full size"],
-    ] as const) {
-      button.disabled = batchSelected || region.layout === "row"
-      const title =
-        region.layout === "row" ? "Use exact or drag resize for a row element" : availableTitle
-      button.title = title
-      button.setAttribute("aria-label", title)
-    }
-    const exactCapability = structureCapability("exact-size", selected, region, selection, nodes)
-    const widthCapability = structureCapability("resize-width", selected, region, selection, nodes)
-    const heightCapability = structureCapability(
-      "resize-height",
-      selected,
-      region,
-      selection,
-      nodes,
-    )
-    const bothCapability = structureCapability("resize-both", selected, region, selection, nodes)
-    structureExact.disabled = !exactCapability.available
-    structureResizeHandle.disabled = !widthCapability.available
-    structureHeightHandle.disabled = !heightCapability.available
-    structureCornerHandle.disabled = !bothCapability.available
-    structureResizeHandle.classList.toggle(
-      "derive-structure-resize-left",
-      widthAxis?.edge === "left",
-    )
-    structureCornerHandle.classList.toggle(
-      "derive-structure-resize-left",
-      widthAxis?.edge === "left",
-    )
-    structureHeightHandle.classList.toggle(
-      "derive-structure-resize-top",
-      heightAxis?.edge === "top",
-    )
-    structureCornerHandle.classList.toggle(
-      "derive-structure-resize-top",
-      heightAxis?.edge === "top",
-    )
-    structureResizeHandle.title = widthCapability.available
-      ? "Drag or use arrow keys to resize width"
-      : widthCapability.reason.message
-    structureHeightHandle.title = heightCapability.available
-      ? "Drag or use arrow keys to resize height"
-      : heightCapability.reason.message
-    structureCornerHandle.title = bothCapability.available
-      ? "Drag to resize width and height"
-      : bothCapability.reason.message
-  }
-  refreshResizeUi = () => {
-    paintResizeUi()
-    paintStructureUi()
-  }
-  hasSelectedResize = () => !!resizeSelectedEl || !!structureSelected
-
-  const selectStructure = (node: StructureNode | null, extend = false) => {
-    structureLayoutOpen = false
-    structurePrecisionOpen = false
-    structureIntentOpen = false
-    if (node && !structureNodeAvailable(node)) node = null
-    if (!node) {
-      structureSelection = []
-      structureSelected = null
-    } else if (
-      extend &&
-      structureSelected &&
-      regionForStructureNode(node) === regionForStructureNode(structureSelected)
-    ) {
-      const existing = structureSelection.indexOf(node)
-      if (existing >= 0) structureSelection.splice(existing, 1)
-      else structureSelection.push(node)
-      structureSelected = structureSelection.at(-1) ?? null
-    } else {
-      structureSelection = [node]
-      structureSelected = node
-    }
-    node = structureSelected
-    if (!node) {
-      structureSnapGuide.style.display = "none"
-      structureHeightSnapGuide.style.display = "none"
-    }
-    if (node) {
-      clearResizeUi()
-      setEditHover(null)
-    }
-    updateStructureInteraction(
-      node
-        ? { type: "select", selectedIds: structureSelection.map(({ id }) => id), activeId: node.id }
-        : { type: "clear" },
-    )
-    paintStructureUi()
-    if (node && innerWidth <= 640)
-      requestAnimationFrame(() => {
-        if (structureSelected !== node || !document.contains(node.el)) return
-        const rect = node.el.getBoundingClientRect()
-        const visibleBottom = innerHeight - 126
-        if (rect.bottom > visibleBottom)
-          window.scrollBy({ top: rect.bottom - visibleBottom + 8, behavior: "auto" })
-      })
-    scheduleDirty()
-  }
-  dismissStructureUi = () => {
-    if (!structureSelected) return false
-    if (structurePrecisionOpen || structureLayoutOpen || structureIntentOpen) {
-      const wasIntent = structureIntentOpen
-      const returnFocus = wasIntent
-        ? structureIntent
-        : structureLayoutOpen
-          ? structureLayout
-          : structureExact
-      structurePrecisionOpen = false
-      structureLayoutOpen = wasIntent
-      structureIntentOpen = false
-      paintStructureUi()
-      returnFocus.focus()
-      return true
-    }
-    if (structureSelection.length > 1) {
-      structureSelection = [structureSelected]
-      structureLayoutOpen = false
-      paintStructureUi()
-      return true
-    }
-    const parent = parentStructureNode(structureSelected)
-    if (parent) {
-      selectStructure(parent)
-      parent.el.focus({ preventScroll: true })
-      return true
-    }
-    selectStructure(null)
-    return true
-  }
-  let structureToastActionRun: (() => void) | null = null
-  const showStructureToast = (message: string, action?: { label: string; run: () => void }) => {
-    structureToastText.textContent = message
-    structureToastActionRun = action?.run ?? null
-    structureToastAction.hidden = !action
-    structureToastAction.textContent = action?.label ?? ""
-    structureToastUndo.hidden = !!action
-    structureToast.style.display = "flex"
-    if (structureToastTimer) clearTimeout(structureToastTimer)
-    structureToastTimer = window.setTimeout(() => {
-      structureToast.style.display = "none"
-      structureToastTimer = 0
-    }, 5000)
-  }
-  const settleStructureInteraction = (
-    outcome: "commit" | "cancel",
-    reason?: StructuralConstraintReason,
-  ) => {
-    updateStructureInteraction(
-      outcome === "commit" ? { type: "commit" } : { type: "cancel", reason },
-    )
-    updateStructureInteraction({ type: "settle" })
-  }
-  const beginStructureLayoutInteraction = () =>
-    updateStructureInteraction({ type: "begin", gesture: "layout" })
-  const markStructureChanged = () => {
-    if (lastDirty <= 0) {
-      lastDirty = 1
-      // See the generic resize path above: a partial optimistic state must never
-      // suppress the next authoritative history state.
-      lastState = ""
-      post({ type: "edit-state", dirty: 1, canUndo: true })
-    }
-    paintStructureUi()
-    scheduleDirty()
-  }
-  const structureGeometry = (region: StructureRegion): Map<string, DOMRect> =>
-    new Map(
-      connectedStructureNodes(region).map((node) => [node.id, node.el.getBoundingClientRect()]),
-    )
-  const structureGeometryChanged = (
-    before: Map<string, DOMRect>,
-    region: StructureRegion,
-  ): boolean => {
-    const threshold = 0.5
-    for (const node of connectedStructureNodes(region)) {
-      const previous = before.get(node.id)
-      if (!previous) continue
-      const current = node.el.getBoundingClientRect()
-      if (
-        Math.abs(current.left - previous.left) > threshold ||
-        Math.abs(current.top - previous.top) > threshold ||
-        Math.abs(current.width - previous.width) > threshold ||
-        Math.abs(current.height - previous.height) > threshold
-      )
-        return true
-    }
-    return false
-  }
-  const topStructureNodeAt = (
-    x: number,
-    y: number,
-    candidates: readonly StructureNode[],
-  ): StructureNode | null => {
-    const byEl = new Map(candidates.map((node) => [node.el, node]))
-    for (const hit of document.elementsFromPoint(x, y)) {
-      const owner = hit.closest(structureNodeSelector)
-      const node = owner instanceof HTMLElement ? byEl.get(owner) : undefined
-      if (node) return node
-    }
-    return null
-  }
-  const pairPaintOrder = (first: StructureNode, second: StructureNode): StructureNode | null => {
-    const a = first.el.getBoundingClientRect()
-    const b = second.el.getBoundingClientRect()
-    const left = Math.max(a.left, b.left)
-    const right = Math.min(a.right, b.right)
-    const top = Math.max(a.top, b.top)
-    const bottom = Math.min(a.bottom, b.bottom)
-    if (right - left <= 1 || bottom - top <= 1) return null
-    return topStructureNodeAt((left + right) / 2, (top + bottom) / 2, [first, second])
-  }
-  const structurePaintOrder = (
-    selected: StructureNode,
-    region: StructureRegion,
-  ): Map<string, string> => {
-    const order = new Map<string, string>()
-    for (const other of connectedStructureNodes(region)) {
-      if (other === selected) continue
-      const top = pairPaintOrder(selected, other)
-      if (top) order.set(other.id, top.id)
-    }
-    return order
-  }
-  const structurePaintOrderChanged = (
-    before: Map<string, string>,
-    selected: StructureNode,
-    region: StructureRegion,
-  ): boolean => {
-    const after = structurePaintOrder(selected, region)
-    for (const [id, top] of before) if (after.get(id) !== top) return true
-    return false
-  }
-  const moveStructure = (direction: -1 | 1) => {
-    const active = structureSelected
-    if (!active) return
-    const region = regionForStructureNode(active)
-    if (!region) return
-    const nodes = connectedStructureNodes(region)
-    const selected = new Set(
-      structureSelection.filter((node) => regionForStructureNode(node) === region),
-    )
-    if (!selected.size) selected.add(active)
-    const canMove = nodes.some(
-      (node, index) =>
-        selected.has(node) &&
-        (direction < 0
-          ? index > 0 && !selected.has(nodes[index - 1] as StructureNode)
-          : index < nodes.length - 1 && !selected.has(nodes[index + 1] as StructureNode)),
-    )
-    if (!canMove) return
-    beginStructureLayoutInteraction()
-    const initial = structuralOrderOf(
-      region.el,
-      nodes.map((node) => node.el),
-    )
-    const geometry = structureGeometry(region)
-    const initialPaintOrder = new Map<string, string>()
-    for (const chosen of selected)
-      for (const other of nodes) {
-        if (selected.has(other)) continue
-        const top = pairPaintOrder(chosen, other)
-        if (top) initialPaintOrder.set(`${chosen.id}\u0000${other.id}`, top.id)
-      }
-    const reordered = [...nodes]
-    if (direction < 0) {
-      for (let index = 1; index < reordered.length; index++) {
-        const node = reordered[index] as StructureNode
-        if (!selected.has(node) || selected.has(reordered[index - 1] as StructureNode)) continue
-        const previous = reordered[index - 1] as StructureNode
-        reordered[index - 1] = node
-        reordered[index] = previous
-      }
-    } else {
-      for (let index = reordered.length - 2; index >= 0; index--) {
-        const node = reordered[index] as StructureNode
-        if (!selected.has(node) || selected.has(reordered[index + 1] as StructureNode)) continue
-        const next = reordered[index + 1] as StructureNode
-        reordered[index] = next
-        reordered[index + 1] = node
-      }
-    }
-    reorderInPlace(reordered.map((node) => node.el))
-    let paintOrderChanged = false
-    for (const [pair, topId] of initialPaintOrder) {
-      const [chosenId, otherId] = pair.split("\u0000")
-      const chosen = nodes.find((node) => node.id === chosenId)
-      const other = nodes.find((node) => node.id === otherId)
-      if (chosen && other && pairPaintOrder(chosen, other)?.id !== topId) {
-        paintOrderChanged = true
-        break
-      }
-    }
-    if (!structureGeometryChanged(geometry, region) && !paintOrderChanged) {
-      applyStructuralOrder(initial)
-      const reason: StructuralConstraintReason = {
-        code: "authored-layout",
-        nodeId: active.id,
-        message: "Authored layout controls this order",
-      }
-      settleStructureInteraction("cancel", reason)
-      showStructureToast(reason.message)
-      paintStructureUi()
-      return
-    }
-    remember(initial)
-    settleStructureInteraction("commit")
-    markStructureChanged()
-  }
-  const selectedStructureNodes = (region: StructureRegion): StructureNode[] =>
-    structureSelection.filter(
-      (node) => regionForStructureNode(node) === region && structureNodeAvailable(node),
-    )
-  const equalizeStructure = (axis: "width" | "height") => {
-    const active = structureSelected
-    if (!active) return
-    const region = regionForStructureNode(active)
-    if (!region) return
-    const selected = selectedStructureNodes(region)
-    if (selected.length < 2) return
-    beginStructureLayoutInteraction()
-    const contentWidth = structureContentWidth(region)
-    const width =
-      currentStructureWidth(active) ?? Math.round((active.el.offsetWidth / contentWidth) * 100)
-    const height = currentStructureHeight(active) ?? active.el.offsetHeight
-    const snapshots = selected.map((node) => {
-      const { kind: _kind, ...sizing } = structuralSizingOf(
-        node.el,
-        structureSizeName(node),
-        structureWidthName(node),
-        structureHeightName(node),
-      )
-      return sizing
-    })
-    const heightChainBaselines = new Map(
-      selected.map((node) => [node, structureHeightChainBaseline(node)]),
-    )
-    let accepted =
-      contentWidth > 0 &&
-      width >= MIN_STRUCTURAL_WIDTH_PCT &&
-      width <= MAX_STRUCTURAL_WIDTH_PCT &&
-      height >= MIN_STRUCTURAL_HEIGHT_PX &&
-      height <= MAX_STRUCTURAL_HEIGHT_PX
-    for (const node of selected) {
-      if (
-        !structureTransformResizable(node) ||
-        (axis === "width"
-          ? !structureWidthAxisFor(node, region)
-          : !structureHeightAxisFor(node, region))
-      ) {
-        accepted = false
-        break
-      }
-      if (node === active) continue
-      if (axis === "width") applyStructureWidth(node, width)
-      else applyStructureHeight(node, height)
-      if (
-        (axis === "width" && !structureWidthFits(node, region, width)) ||
-        (axis === "height" &&
-          (!structureHeightFits(node, height) ||
-            !structureHeightChainFits(node, heightChainBaselines.get(node))))
-      ) {
-        accepted = false
-        break
-      }
-    }
-    if (!accepted) {
-      applyStructuralSizingBatch({ kind: "structural-sizing-batch", entries: snapshots })
-      showStructureToast(
-        axis === "width"
-          ? "Authored constraints prevent matching these widths"
-          : "Content or authored constraints prevent matching these heights",
-      )
-      settleStructureInteraction("cancel", {
-        code: "authored-layout",
-        nodeId: active.id,
-        message:
-          axis === "width"
-            ? "Authored constraints prevent matching these widths"
-            : "Content or authored constraints prevent matching these heights",
-        suggestion: axis === "width" ? "same-width" : "fit-height",
-      })
-      paintStructureUi()
-      return
-    }
-    remember({ kind: "structural-sizing-batch", entries: snapshots })
-    settleStructureInteraction("commit")
-    markStructureChanged()
-  }
-  const fitStructureHeight = () => {
-    const active = structureSelected
-    if (!active) return
-    const region = regionForStructureNode(active)
-    if (!region) return
-    const selected = selectedStructureNodes(region)
-    const changed = selected.filter((node) => currentStructureHeight(node) !== null)
-    if (selected.length < 2 || !changed.length) return
-    beginStructureLayoutInteraction()
-    const snapshots = selected.map((node) => {
-      const { kind: _kind, ...sizing } = structuralSizingOf(
-        node.el,
-        structureSizeName(node),
-        structureWidthName(node),
-        structureHeightName(node),
-      )
-      return sizing
-    })
-    const heightChainBaselines = new Map(
-      selected.map((node) => [node, structureHeightChainBaseline(node)]),
-    )
-    for (const node of changed) applyStructureHeight(node, null)
-    if (selected.some((node) => !structureHeightChainFits(node, heightChainBaselines.get(node)))) {
-      applyStructuralSizingBatch({ kind: "structural-sizing-batch", entries: snapshots })
-      showStructureToast("An authored wrapper prevents these elements from fitting content")
-      settleStructureInteraction("cancel", {
-        code: "authored-layout",
-        nodeId: active.id,
-        message: "An authored wrapper prevents these elements from fitting content",
-      })
-      paintStructureUi()
-      return
-    }
-    remember({ kind: "structural-sizing-batch", entries: snapshots })
-    settleStructureInteraction("commit")
-    markStructureChanged()
-  }
-  const distributeStructure = () => {
-    const active = structureSelected
-    const region = active ? regionForStructureNode(active) : null
-    if (!region) return
-    const gap = structureDistributionGap(region)
-    if (gap === null) return
-    beginStructureLayoutInteraction()
-    const nodes = connectedStructureNodes(region).filter((node) => structureNodeAvailable(node))
-    const initial = structuralGapOf(region.el, structureAttribute(region.prefix, "gap"))
-    const heights = nodes.map((node) => node.el.getBoundingClientRect().height)
-    const transition = region.el.style.getPropertyValue("transition")
-    const transitionPriority = region.el.style.getPropertyPriority("transition")
-    region.el.style.setProperty("transition", "none", "important")
-    void region.el.offsetWidth
-    region.el.setAttribute(structureAttribute(region.prefix, "gap"), String(gap))
-    region.el.style.setProperty(STRUCTURAL_GAP_PROPERTY, `${gap}px`)
-    const rects = nodes.map((node) => node.el.getBoundingClientRect())
-    const actualGaps = rects.slice(1).map((rect, index) => rect.top - (rects[index]?.bottom ?? 0))
-    const accepted =
-      getComputedStyle(region.el).rowGap === `${gap}px` &&
-      structuralDistributionIsValid({
-        targetGap: gap,
-        actualGaps,
-        beforeSizes: heights,
-        afterSizes: rects.map(({ height }) => height),
-        scrollSize: region.el.scrollHeight,
-        clientSize: region.el.clientHeight,
-      })
-    restoreStructureTransition(region, transition, transitionPriority)
-    if (!accepted) {
-      applyStructuralGap(initial)
-      showStructureToast("This authored stack cannot safely distribute its siblings")
-      settleStructureInteraction("cancel", {
-        code: "authored-layout",
-        nodeId: active?.id,
-        message: "This authored stack cannot safely distribute its siblings",
-      })
-      paintStructureUi()
-      postDirty()
-      return
-    }
-    remember(initial)
-    settleStructureInteraction("commit")
-    markStructureChanged()
-  }
-  const alignStructure = (align: StructuralAlignment) => {
-    const active = structureSelected
-    if (!active) return
-    const region = regionForStructureNode(active)
-    if (!region) return
-    const selected = selectedStructureNodes(region)
-    if (
-      selected.length < 2 ||
-      selected.some((node) => !structureCrossAxisAlignAvailable(node, region))
-    )
-      return
-    beginStructureLayoutInteraction()
-    const snapshots: StructuralAlignHistory[] = selected.map((node) => ({
-      el: node.el,
-      alignName: structureAlignName(node),
-      align: node.el.getAttribute(structureAlignName(node)),
-      style: rawStyle(node.el),
-    }))
-    const before = new Map(
-      selected.map((node) => {
-        const rect = node.el.getBoundingClientRect()
-        return [node, { width: rect.width, height: rect.height }]
-      }),
-    )
-    for (const node of selected) applyStructureAlign(node, align)
-    const regionRect = region.el.getBoundingClientRect()
-    const regionStyle = getComputedStyle(region.el)
-    const left = regionRect.left + (Number.parseFloat(regionStyle.paddingLeft) || 0)
-    const right = regionRect.right - (Number.parseFloat(regionStyle.paddingRight) || 0)
-    const accepted = selected.every((node) => {
-      const rect = node.el.getBoundingClientRect()
-      const original = before.get(node)
+    return clippingAncestors(node).every((ancestor) => {
+      const now = structureHeightClipOverflow(node, ancestor)
+      const before = baseline.get(ancestor) ?? { top: 0, bottom: 0, scroll: 0 }
       return (
-        getComputedStyle(node.el).alignSelf === align &&
-        !!original &&
-        Math.abs(rect.width - original.width) <= 1 &&
-        Math.abs(rect.height - original.height) <= 1 &&
-        rect.left >= left - 1 &&
-        rect.right <= right + 1
+        now.top <= before.top + 1 &&
+        now.bottom <= before.bottom + 1 &&
+        now.scroll <= before.scroll + 1
       )
     })
-    if (!accepted) {
-      applyStructuralAlignBatch({ kind: "structural-align-batch", entries: snapshots })
-      showStructureToast("This authored stack does not expose safe cross-axis alignment")
-      settleStructureInteraction("cancel", {
-        code: "authored-layout",
-        nodeId: active.id,
-        message: "This authored stack does not expose safe cross-axis alignment",
-      })
-      paintStructureUi()
-      return
-    }
-    remember({ kind: "structural-align-batch", entries: snapshots })
-    settleStructureInteraction("commit")
-    markStructureChanged()
   }
-  const applyExactStructureSize = () => {
-    const node = structureSelected
-    const region = node ? regionForStructureNode(node) : null
-    if (!node || !region || structureSelection.length > 1) return
-    const width = structurePrecisionWidth.input.valueAsNumber
-    const heightText = structurePrecisionHeight.input.value.trim()
-    const height = heightText ? structurePrecisionHeight.input.valueAsNumber : null
-    if (
-      !Number.isInteger(width) ||
-      width < MIN_STRUCTURAL_WIDTH_PCT ||
-      width > MAX_STRUCTURAL_WIDTH_PCT ||
-      (height !== null &&
-        (!Number.isInteger(height) ||
-          height < MIN_STRUCTURAL_HEIGHT_PX ||
-          height > MAX_STRUCTURAL_HEIGHT_PX))
-    ) {
-      structurePrecisionPanel.reportValidity()
-      return
-    }
-    const initial = structuralSizingOf(
-      node.el,
-      structureSizeName(node),
-      structureWidthName(node),
-      structureHeightName(node),
-    )
-    const heightChainBaseline = structureHeightChainBaseline(node)
-    beginStructureLayoutInteraction()
-    const transition = node.el.style.getPropertyValue("transition")
-    const transitionPriority = node.el.style.getPropertyPriority("transition")
+  /** Size a node, measuring with its own transition off (an authored width
+   *  transition reports the OLD geometry for its first frame). */
+  const withoutTransition = <T>(node: StructureNode, fn: () => T): T => {
+    const value = node.el.style.getPropertyValue("transition")
+    const priority = node.el.style.getPropertyPriority("transition")
     node.el.style.setProperty("transition", "none", "important")
     void node.el.offsetWidth
-    applyStructureWidth(node, width)
-    applyStructureHeight(node, height)
-    const accepted =
-      structureTransformResizable(node) &&
-      !!structureWidthAxisFor(node, region) &&
-      !!structureHeightAxisFor(node, region) &&
-      structureWidthFits(node, region, width) &&
-      (height === null || structureHeightFits(node, height)) &&
-      structureHeightChainFits(node, heightChainBaseline)
-    restoreStructureTransition(node, transition, transitionPriority)
-    if (!accepted) {
-      applyStructuralSizing(initial)
-      showStructureToast("Authored content or constraints control this size")
-      settleStructureInteraction("cancel", {
-        code: "authored-layout",
-        nodeId: node.id,
-        message: "Authored content or constraints control this size",
-        suggestion: "fit-height",
-      })
-      paintStructureUi()
-      postDirty()
-      return
+    try {
+      return fn()
+    } finally {
+      if (value) node.el.style.setProperty("transition", value, priority)
+      else node.el.style.removeProperty("transition")
+      clearEmptyStyle(node.el)
     }
-    remember(initial)
-    structurePrecisionOpen = false
-    settleStructureInteraction("commit")
-    markStructureChanged()
   }
-  const sizeStructure = (size: StructureSize | null) => {
-    const selected = structureSelected
-    if (
-      !selected ||
-      (selected.el.getAttribute(structureSizeName(selected)) === size &&
-        currentStructureWidth(selected) === null)
-    )
-      return
-    const region = regionForStructureNode(selected)
-    if (!region) return
-    if (region.layout === "row" && size !== null) {
-      showStructureToast("Use exact or drag resize for a row element")
-      return
-    }
-    rememberStructureSizing(selected)
-    // An authored width transition reports the OLD geometry for its first frame,
-    // which would make a valid explicit preset look constrained and roll it back.
-    // Suppress transitions only for this synchronous measurement.
-    const transition = selected.el.style.getPropertyValue("transition")
-    const transitionPriority = selected.el.style.getPropertyPriority("transition")
-    selected.el.style.setProperty("transition", "none", "important")
-    void selected.el.offsetWidth
-    applyStructurePreset(selected, size)
-    // offsetWidth is the authored layout width before transforms. A rotated or
-    // skewed node has a wider visual bounding box even when its semantic width is
-    // exactly right, so getBoundingClientRect() would falsely reject the preset.
-    const afterLayoutWidth = selected.el.offsetWidth
-    if (transition) selected.el.style.setProperty("transition", transition, transitionPriority)
-    else selected.el.style.removeProperty("transition")
-    clearEmptyStyle(selected.el)
-    const contentWidth = structureContentWidth(region)
-    const fraction = size === "compact" ? 0.5 : size === "standard" ? 0.75 : 1
-    const expectedWidth = contentWidth * fraction
-    const tolerance = Math.max(2, expectedWidth * 0.02)
-    if (size !== null && Math.abs(afterLayoutWidth - expectedWidth) > tolerance) {
-      const checkpoint = undoStack.pop()
-      if (checkpoint?.kind === "structural-sizing") applyStructuralSizing(checkpoint)
-      showStructureToast("Authored constraints control this size")
-      paintStructureUi()
-      return
-    }
-    markStructureChanged()
-  }
-  const removeStructure = () => {
-    const selected = structureSelected
-    if (!selected?.el.parentElement) return
-    if (structureSelection.length > 1) {
-      showStructureToast("Collapse the selection before removing an element")
-      return
-    }
-    remember(placementOf(selected.el))
-    structureExpectedRemoved.add(selected)
-    selected.el.remove()
-    selectStructure(null)
-    showStructureToast(`Removed ${selected.id}`)
-    markStructureChanged()
-  }
-  /* Cut, copy, paste and duplicate a selected node, on stamped pages only: there a
-     save names a moved or copied element by its source id, so it can land on any
-     slide. Paste goes after the selected node; a pasted cut pastes copies after that. */
-  let structureClip: { el: HTMLElement; copy: boolean } | null = null
-  const structureCopies = new Set<HTMLElement>()
-  const clipStructure = (copy: boolean) => {
-    const selected = structureSelected
-    if (!selected) return
-    if (!copy) removeStructure()
-    if (copy || !selected.el.isConnected) structureClip = { el: selected.el, copy }
-  }
-  const pasteStructure = (clip: { el: HTMLElement; copy: boolean } | null) => {
-    const at = structureSelected?.el
-    if (!clip || !at?.parentElement || (at === clip.el && !clip.copy)) return
-    const el = clip.copy ? (clip.el.cloneNode(true) as HTMLElement) : clip.el
-    if (clip.copy) {
-      el.removeAttribute("tabindex")
-      structureCopies.add(el)
-    }
-    remember(clip.copy ? { kind: "placement", el, parent: null, next: null } : placementOf(el))
-    at.after(el)
-    structureClip = { el, copy: true }
-    showStructureToast(clip.copy ? "Pasted a copy" : "Moved here")
-    markStructureChanged()
-  }
-  const selectAllStructureSiblings = () => {
-    const active = structureSelected
-    const region = active ? regionForStructureNode(active) : null
-    if (!active || !region) return
-    structureSelection = connectedStructureNodes(region).filter((node) =>
-      structureNodeAvailable(node),
-    )
-    structureSelected = active
-    updateStructureInteraction({
-      type: "select",
-      selectedIds: structureSelection.map(({ id }) => id),
-      activeId: active.id,
-    })
-    paintStructureUi()
-  }
-  const checkStructureHealth = () => {
-    const active = structureSelected
-    const region = active ? regionForStructureNode(active) : null
-    if (!active || !region) return
-    const nodes = connectedStructureNodes(region).filter((node) => structureNodeAvailable(node))
-    const selected = selectedStructureNodes(region)
-    const issue = coachStructuralLayout({
-      selectionCount: selected.length,
-      siblingCount: nodes.length,
-      boundedStack: structureDistributionGap(region) !== null,
-      activeId: active.id,
-      clipping: selected.map((node) => ({
-        id: node.id,
-        overflow: node.el.scrollHeight - node.el.clientHeight,
-        fitHeight: currentStructureHeight(node) !== null,
-      })),
-      widths: selected.map((node) => node.el.getBoundingClientRect().width),
-      heights: selected.map((node) => node.el.getBoundingClientRect().height),
-    })
-    const viewport =
-      innerWidth <= 420
-        ? `Mobile · ${innerWidth}px`
-        : innerWidth <= 820
-          ? `Tablet · ${innerWidth}px`
-          : `Fluid · ${innerWidth}px`
-    if (!issue) {
-      showStructureToast(`${viewport}: layout health looks good`)
-      return
-    }
-    const action =
-      issue.suggestion === "select-all"
-        ? { label: "Select all", run: selectAllStructureSiblings }
-        : issue.suggestion === "fit-height"
-          ? { label: "Fit H", run: fitStructureHeight }
-          : issue.suggestion === "same-width"
-            ? { label: "Same W", run: () => equalizeStructure("width") }
-            : issue.suggestion === "same-height"
-              ? { label: "Same H", run: () => equalizeStructure("height") }
-              : undefined
-    showStructureToast(`${viewport}: ${issue.message}`, action)
-  }
-  const applyStructureIntent = () => {
-    const active = structureSelected
-    const region = active ? regionForStructureNode(active) : null
-    if (!active || !region) return
-    const selected = selectedStructureNodes(region)
-    const plan = structureIntentPlanFor(structureIntentCommand, active, region, selected)
-    if (!plan) return
-    const history: Extract<HistoryEntry, { kind: "structural-intent" }> = {
-      kind: "structural-intent",
-      sizing: selected.map((node) => {
-        const { kind: _kind, ...entry } = structuralSizingOf(
-          node.el,
-          structureSizeName(node),
-          structureWidthName(node),
-          structureHeightName(node),
-        )
-        return entry
-      }),
-      alignment: selected.map((node) => ({
-        el: node.el,
-        alignName: structureAlignName(node),
-        align: node.el.getAttribute(structureAlignName(node)),
-        style: rawStyle(node.el),
-      })),
-    }
-    const transitions = new Map(
-      selected.map((node) => [
-        node,
-        {
-          value: node.el.style.getPropertyValue("transition"),
-          priority: node.el.style.getPropertyPriority("transition"),
-        },
-      ]),
-    )
-    const heightChainBaselines = new Map(
-      selected.map((node) => [node, structureHeightChainBaseline(node)]),
-    )
-    for (const node of selected) node.el.style.setProperty("transition", "none", "important")
-    void region.el.offsetWidth
-    beginStructureLayoutInteraction()
-    const byId = new Map(selected.map((node) => [node.id, node]))
-    const expectedWidths = new Map<StructureNode, number>()
-    const fitted = new Set<StructureNode>()
-    const expectedAlign = new Map<StructureNode, StructuralAlignment>()
-    for (const operation of plan.operations) {
-      if (operation.kind === "set-width")
-        for (const id of operation.ids) {
-          const node = byId.get(id)
-          if (!node) continue
-          applyStructureWidth(node, operation.width)
-          expectedWidths.set(node, operation.width)
-        }
-      else if (operation.kind === "fit-height")
-        for (const id of operation.ids) {
-          const node = byId.get(id)
-          if (!node) continue
-          applyStructureHeight(node, null)
-          fitted.add(node)
-        }
-      else
-        for (const id of operation.ids) {
-          const node = byId.get(id)
-          if (!node) continue
-          applyStructureAlign(node, operation.alignment)
-          expectedAlign.set(node, operation.alignment)
-        }
-    }
-    const accepted = selected.every((node) => {
-      const width = expectedWidths.get(node)
-      const alignment = expectedAlign.get(node)
-      return (
-        structureTransformResizable(node) &&
-        !!structureWidthAxisFor(node, region) &&
-        (width === undefined ||
-          (currentStructureWidth(node) === width && structureWidthFits(node, region, width))) &&
-        (!fitted.has(node) || currentStructureHeight(node) === null) &&
-        (alignment === undefined ||
-          (structureCrossAxisAlignAvailable(node, region) &&
-            getComputedStyle(node.el).alignSelf === alignment)) &&
-        structureHeightChainFits(node, heightChainBaselines.get(node))
-      )
-    })
-    if (!accepted) {
-      applyStructuralIntentHistory(history)
-      settleStructureInteraction("cancel", {
-        code: "authored-layout",
-        nodeId: active.id,
-        message: `${plan.title} was blocked by authored constraints`,
-      })
-      showStructureToast(`${plan.title} was blocked by authored constraints`)
-      paintStructureUi()
-      postDirty()
-      return
-    }
-    for (const node of selected) {
-      const transition = transitions.get(node)
-      if (transition) restoreStructureTransition(node, transition.value, transition.priority)
-    }
-    remember(history)
-    settleStructureInteraction("commit")
-    structureIntentOpen = false
-    showStructureToast(`${plan.title} applied · ${plan.summary}`)
-    markStructureChanged()
-  }
-  structureEarlier.addEventListener("click", (e) => {
-    e.stopPropagation()
-    moveStructure(-1)
-  })
-  structureLater.addEventListener("click", (e) => {
-    e.stopPropagation()
-    moveStructure(1)
-  })
-  structureSelectAll.addEventListener("click", (e) => {
-    e.stopPropagation()
-    selectAllStructureSiblings()
-  })
-  structureLayout.addEventListener("click", (e) => {
-    e.stopPropagation()
-    structureLayoutOpen = !structureLayoutOpen
-    paintStructureUi()
-  })
-  structureIntent.addEventListener("click", (e) => {
-    e.stopPropagation()
-    structureLayoutOpen = false
-    structureIntentOpen = true
-    paintStructureUi()
-  })
-  structureIntentBalance.addEventListener("click", (e) => {
-    e.stopPropagation()
-    structureIntentCommand = "balance"
-    paintStructureUi()
-  })
-  structureIntentEmphasize.addEventListener("click", (e) => {
-    e.stopPropagation()
-    structureIntentCommand = "emphasize-active"
-    paintStructureUi()
-  })
-  structureIntentCancel.addEventListener("click", (e) => {
-    e.stopPropagation()
-    structureIntentOpen = false
-    structureLayoutOpen = true
-    paintStructureUi()
-    structureIntent.focus()
-  })
-  structureIntentApply.addEventListener("click", (e) => {
-    e.stopPropagation()
-    applyStructureIntent()
-  })
-  structureExact.addEventListener("click", (e) => {
-    e.stopPropagation()
-    const node = structureSelected
-    const region = node ? regionForStructureNode(node) : null
-    if (!node || !region || structureSelection.length > 1) return
-    structureLayoutOpen = false
-    structurePrecisionOpen = !structurePrecisionOpen
-    if (structurePrecisionOpen) {
-      const contentWidth = structureContentWidth(region)
-      structurePrecisionWidth.input.value = String(
-        currentStructureWidth(node) ??
-          Math.round((node.el.offsetWidth / Math.max(1, contentWidth)) * 100),
-      )
-      const height = currentStructureHeight(node)
-      structurePrecisionHeight.input.value = height === null ? "" : String(height)
-      paintStructureUi()
-      structurePrecisionWidth.input.focus()
-    } else paintStructureUi()
-  })
-  structurePrecisionCancel.addEventListener("click", (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    structurePrecisionOpen = false
-    paintStructureUi()
-    structureExact.focus()
-  })
-  structurePrecisionPanel.addEventListener("submit", (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    applyExactStructureSize()
-  })
-  structureSameWidth.addEventListener("click", (e) => {
-    e.stopPropagation()
-    equalizeStructure("width")
-  })
-  structureSameHeight.addEventListener("click", (e) => {
-    e.stopPropagation()
-    equalizeStructure("height")
-  })
-  structureFitHeight.addEventListener("click", (e) => {
-    e.stopPropagation()
-    fitStructureHeight()
-  })
-  structureDistribute.addEventListener("click", (e) => {
-    e.stopPropagation()
-    distributeStructure()
-  })
-  structureHealth.addEventListener("click", (e) => {
-    e.stopPropagation()
-    checkStructureHealth()
-  })
-  for (const [button, align] of [
-    [structureAlignStart, "start"],
-    [structureAlignCenter, "center"],
-    [structureAlignEnd, "end"],
-  ] as const)
-    button.addEventListener("click", (e) => {
-      e.stopPropagation()
-      alignStructure(align)
-    })
-  structureParent.addEventListener("click", (e) => {
-    e.stopPropagation()
-    const parent = structureSelected ? parentStructureNode(structureSelected) : null
-    if (!parent) return
-    selectStructure(parent)
-    parent.el.focus({ preventScroll: true })
-  })
-  for (const [button, size] of [
-    [structureAuto, null],
-    [structureCompact, "compact"],
-    [structureStandard, "standard"],
-    [structureFull, "full"],
-  ] as const)
-    button.addEventListener("click", (e) => {
-      e.stopPropagation()
-      sizeStructure(size)
-    })
-  structureRemove.addEventListener("click", (e) => {
-    e.stopPropagation()
-    removeStructure()
-  })
-  structureToastAction.addEventListener("click", (e) => {
-    e.stopPropagation()
-    const run = structureToastActionRun
-    structureToast.style.display = "none"
-    structureToastActionRun = null
-    run?.()
-  })
-  structureToastUndo.addEventListener("click", (e) => {
-    e.stopPropagation()
-    undo()
-    structureToast.style.display = "none"
-  })
-  structureToolbar.addEventListener("pointerdown", (e) => e.stopPropagation())
-
-  interface StructureWidthCandidate {
-    width: number
-    label: string
-  }
-  interface StructureHeightCandidate {
-    height: number
-    label: string
-  }
-  const structureWidthCandidates = (
-    selected: StructureNode,
-    region: StructureRegion,
-  ): StructureWidthCandidate[] => {
-    const contentWidth = structureContentWidth(region)
-    const candidates = new Map<number, string>([
-      [50, "50% rail"],
-      [75, "75% rail"],
-      [100, "100% rail"],
-    ])
-    if (!(contentWidth > 0)) return [...candidates].map(([width, label]) => ({ width, label }))
-    for (const node of connectedStructureNodes(region)) {
-      if (node === selected || !structureNodeVisibleForSnap(node)) continue
-      const width = Math.round((node.el.offsetWidth / contentWidth) * 100)
-      if (width >= MIN_STRUCTURAL_WIDTH_PCT && width <= MAX_STRUCTURAL_WIDTH_PCT)
-        candidates.set(width, `Match ${node.id}`)
-    }
-    return [...candidates].map(([width, label]) => ({ width, label }))
-  }
-  const structureHeightCandidates = (
-    selected: StructureNode,
-    region: StructureRegion,
-  ): StructureHeightCandidate[] => {
-    const candidates = new Map<number, string>()
-    for (const node of connectedStructureNodes(region)) {
-      if (node === selected || !structureNodeVisibleForSnap(node)) continue
-      const height = Math.round(node.el.offsetHeight)
-      if (height >= MIN_STRUCTURAL_HEIGHT_PX && height <= MAX_STRUCTURAL_HEIGHT_PX)
-        candidates.set(height, `Match ${node.id} height`)
-    }
-    return [...candidates].map(([height, label]) => ({ height, label }))
-  }
-  const hideStructureSnapGuide = () => {
-    structureSnapGuide.style.display = "none"
-    structureSnapGuide.style.removeProperty("--derive-structure-snap-label-y")
-    structureSnapGuide.removeAttribute("data-label")
-    structureSnapGuide.classList.remove("derive-structure-snap-left")
-  }
-  const hideStructureHeightSnapGuide = () => {
-    structureHeightSnapGuide.style.display = "none"
-    structureHeightSnapGuide.style.removeProperty("--derive-structure-height-label-x")
-    structureHeightSnapGuide.removeAttribute("data-label")
-  }
-  const showStructureSnapGuide = (
+  /** Whether a node's current width/height is one its authored layout honours. */
+  const sizingHolds = (
     node: StructureNode,
     region: StructureRegion,
-    label: string,
-    edge: "left" | "right",
-  ) => {
-    const nodeRect = node.el.getBoundingClientRect()
-    const regionRect = region.el.getBoundingClientRect()
-    structureSnapGuide.style.display = "block"
-    structureSnapGuide.style.left = `${nodeRect[edge] + (window.scrollX || 0)}px`
-    structureSnapGuide.style.top = `${regionRect.top + scrollTop()}px`
-    structureSnapGuide.style.height = `${regionRect.height}px`
-    const labelY = Math.min(
-      Math.max(18, nodeRect.bottom - regionRect.top + 48),
-      Math.max(18, regionRect.height - 18),
+    baseline: StructureHeightChainBaseline,
+  ): boolean => {
+    const width = currentStructureWidth(node)
+    const height = currentStructureHeight(node)
+    return (
+      (width === null ||
+        (widthResizable(node, region) && structureWidthFits(node, region, width))) &&
+      (height === null || (heightResizable(node, region) && structureHeightFits(node, height))) &&
+      structureHeightChainFits(node, baseline)
     )
-    structureSnapGuide.style.setProperty("--derive-structure-snap-label-y", `${labelY}px`)
-    structureSnapGuide.setAttribute("data-label", label)
-    // Keep the label inside the resized box/region at both edges. This also avoids
-    // clipping a 100% rail label against a narrow viewport.
-    structureSnapGuide.classList.toggle("derive-structure-snap-left", edge === "right")
-  }
-  const showStructureHeightSnapGuide = (
-    node: StructureNode,
-    region: StructureRegion,
-    label: string,
-    edge: "top" | "bottom",
-  ) => {
-    const nodeRect = node.el.getBoundingClientRect()
-    const regionRect = region.el.getBoundingClientRect()
-    structureHeightSnapGuide.style.display = "block"
-    structureHeightSnapGuide.style.left = `${regionRect.left + (window.scrollX || 0)}px`
-    structureHeightSnapGuide.style.top = `${nodeRect[edge] + scrollTop()}px`
-    structureHeightSnapGuide.style.width = `${regionRect.width}px`
-    const labelX = Math.min(
-      Math.max(48, nodeRect.left + nodeRect.width / 2 - regionRect.left),
-      Math.max(48, regionRect.width - 48),
-    )
-    structureHeightSnapGuide.style.setProperty("--derive-structure-height-label-x", `${labelX}px`)
-    structureHeightSnapGuide.setAttribute("data-label", label)
   }
 
-  type StructureResizeMode = "width" | "height" | "both"
-  interface StructureResizeDrag {
-    mode: StructureResizeMode
+  /* -- what is a block, and what is it called -- */
+  const SLIDE_SEL = "[data-derive-slide],.slide"
+  const classSig = (el: Element) =>
+    Array.from(el.classList)
+      .filter((c) => !c.startsWith("derive-"))
+      .sort()
+      .join(" ")
+  const lookAlikes = (el: Element): HTMLElement[] => {
+    const parent = el.parentElement
+    if (!parent || srcOf(el) === null || srcOf(parent) === null) return []
+    const sig = classSig(el)
+    return Array.from(parent.children).filter(
+      (c): c is HTMLElement =>
+        c instanceof HTMLElement &&
+        c.localName === el.localName &&
+        srcOf(c) !== null &&
+        classSig(c) === sig,
+    )
+  }
+  // Prose repeats too, but a paragraph or a heading is words: it stays text to click.
+  const PROSE = "p,h1,h2,h3,h4,h5,h6,blockquote,pre,figcaption,dd,dt,td,th"
+  const repeats = (el: HTMLElement): boolean =>
+    !el.matches(SLIDE_SEL) &&
+    !el.matches(PROSE) &&
+    !readonlyAt(el) &&
+    !el.hasAttribute(GEN_ATTR) &&
+    lookAlikes(el).length > 1 &&
+    /^(?:block|flex|grid|list-item|table|table-row|flow-root)$/.test(getComputedStyle(el).display)
+  /** A block, on screen (or `anywhere`: naming a change on another slide). */
+  const isMovable = (el: Element, anywhere = false): boolean =>
+    el instanceof HTMLElement &&
+    el !== document.body &&
+    !el.closest(".derive-edit-ui") &&
+    (!!nodeOf(el) || repeats(el)) &&
+    (anywhere || availableEl(el))
+  /** The innermost block at or above `el`, or null. */
+  const blockOf = (el: Element | null | undefined): HTMLElement | null => {
+    if (!blocksOn) return null
+    for (let e = el ?? null; e && e !== document.body; e = e.parentElement)
+      if (e instanceof HTMLElement && isMovable(e)) return e
+    return null
+  }
+  const parentBlock = (el: HTMLElement) => blockOf(el.parentElement)
+  /** The siblings a block moves among, itself included. */
+  const siblingsOf = (el: HTMLElement): HTMLElement[] => {
+    const node = nodeOf(el)
+    const region = node && regionForStructureNode(node)
+    return region ? connectedStructureNodes(region).map((n) => n.el) : lookAlikes(el)
+  }
+  /** Which way siblings flow on screen: the arrows and the drag follow it. */
+  const axisOf = (els: readonly Element[]): "x" | "y" => {
+    const centers = els.map((el) => {
+      const r = el.getBoundingClientRect()
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+    })
+    const spread = (k: "x" | "y") =>
+      Math.max(...centers.map((c) => c[k])) - Math.min(...centers.map((c) => c[k]))
+    return els.length > 1 && spread("x") > spread("y") ? "x" : "y"
+  }
+  const KIND_NAMES: Record<string, string> = {
+    heading: "Title",
+    label: "Label",
+    media: "Image",
+    image: "Image",
+  }
+  const nameOf = (el: HTMLElement): string => {
+    const slides = slideEls()
+    if (slides.includes(el)) return `Slide ${slides.indexOf(el) + 1}`
+    const kind = nodeOf(el)?.kind
+    if (kind) return KIND_NAMES[kind] ?? "Section"
+    const same = lookAlikes(el)
+    if (same.length < 2) return "Block"
+    const tag = el.localName
+    const noun =
+      tag === "li"
+        ? "Item"
+        : tag === "tr"
+          ? "Row"
+          : /^(?:img|figure|picture)$/.test(tag)
+            ? "Image"
+            : /\bcol(?:umn)?s?\b|-col\b/i.test(classSig(el))
+              ? "Column"
+              : "Card"
+    return `${noun} ${same.indexOf(el) + 1}`
+  }
+  const plainOf = (root: Node): string => {
+    let s = ""
+    const walk = (n: Node) => {
+      for (let c = n.firstChild; c; c = c.nextSibling)
+        if (c.nodeType === 3) s += c.nodeValue
+        else if (c instanceof Element && !c.matches(".derive-edit-ui"))
+          if (c.localName === "br") s += " "
+          else walk(c)
+    }
+    walk(root)
+    return s.replace(/\s+/g, " ").trim()
+  }
+  const clipText = (s: string, n = 60) => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
+  /** How a change names a block: its heading's words, else its name. */
+  const titleOf = (el: HTMLElement) =>
+    clipText(plainOf(el.querySelector("h1,h2,h3,h4,h5,h6") ?? document.createElement("i")), 40) ||
+    nameOf(el)
+  /** Slide 2 › Section › Card 3: the slide (when there is one), then every block. */
+  const crumbsOf = (el: HTMLElement): { name: string; el: HTMLElement | null }[] => {
+    const chain: { name: string; el: HTMLElement | null }[] = []
+    for (let b: HTMLElement | null = el; b; b = parentBlock(b))
+      chain.unshift({ name: nameOf(b), el: b })
+    const slides = slideEls()
+    const at = slides.length > 1 ? slideOfEl(el, slides) : null
+    if (at !== null) chain.unshift({ name: `Slide ${at + 1}`, el: null })
+    return chain
+  }
+
+  /* -- chrome: the hover outline + name tag, the selection box + handles, the pill -- */
+  const chromeEl = <K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text = "") => {
+    const el = document.createElement(tag)
+    el.className = cls
+    el.textContent = text
+    return el
+  }
+  const blockHoverBox = chromeEl("div", "derive-edit-ui derive-block-hover")
+  const blockTag = chromeEl("span", "derive-block-tag")
+  blockHoverBox.append(blockTag)
+  const blockBox = chromeEl("div", "derive-edit-ui derive-block-box")
+  const blockRzE = chromeEl("button", "derive-block-rz derive-block-rz-e")
+  blockRzE.setAttribute("aria-label", "Resize width (double-click for auto)")
+  const blockRzSe = chromeEl("button", "derive-block-rz derive-block-rz-se")
+  blockRzSe.setAttribute("aria-label", "Resize width and height (double-click for auto)")
+  const blockSize = chromeEl("span", "derive-block-size")
+  blockBox.append(blockRzE, blockRzSe, blockSize)
+  const pill = chromeEl("div", "derive-edit-ui derive-block-pill")
+  pill.setAttribute("role", "toolbar")
+  pill.setAttribute("aria-label", "Block actions")
+  const pillButton = (label: string, title: string, text: string, cls = "") => {
+    const b = chromeEl("button", cls, text)
+    b.type = "button"
+    b.title = title
+    b.setAttribute("aria-label", label)
+    return b
+  }
+  const pillName = pillButton("Drag to move", "Drag to move", "", "derive-block-name")
+  const pillPrev = pillButton("Move earlier", "Move earlier (Option+Arrow)", "←")
+  const pillNext = pillButton("Move later", "Move later (Option+Arrow)", "→")
+  const pillDup = pillButton("Duplicate", "Duplicate (⌘D)", "⧉ Duplicate")
+  const pillDel = pillButton("Delete", "Delete (⌫)", "Delete", "derive-block-del")
+  const pillMore = pillButton("More options", "Path and exact width", "⋯")
+  const pillDiv = () => chromeEl("span", "derive-block-div")
+  pill.append(
+    pillName,
+    pillDiv(),
+    pillPrev,
+    pillNext,
+    pillDiv(),
+    pillDup,
+    pillDel,
+    pillDiv(),
+    pillMore,
+  )
+  ;(document.body || document.documentElement).append(blockHoverBox, blockBox, pill)
+  for (const el of [blockHoverBox, blockBox, pill]) ownChrome(el)
+
+  let blocksOn = false
+  let blockSel: HTMLElement | null = null
+  let blockHover: HTMLElement | null = null
+  let blockPaintTick = 0
+  let blockObserver: MutationObserver | null = null
+  /** Each parent's children before the person first rearranged them (Discard and the
+   *  changes list compare against these; a revert puts them back). */
+  let kidsSnap = new Map<HTMLElement, ChildNode[]>()
+  /** The block a person last moved within each parent, to name the move. */
+  let lastMoved = new Map<HTMLElement, HTMLElement>()
+  let blockClip: { el: HTMLElement; copy: boolean } | null = null
+  interface BlockDrag {
+    el: HTMLElement
+    pointerId: number
+    x0: number
+    y0: number
+    before: ChildNode[] | null
+    /** Picked up by the pill's name or the hover tag, which hide as it's picked. */
+    chrome: boolean
+  }
+  let blockDrag: BlockDrag | null = null
+  interface BlockResize {
+    mode: "width" | "both"
     pointerId: number
     node: StructureNode
     region: StructureRegion
     initial: Extract<HistoryEntry, { kind: "structural-sizing" }>
-    startX: number
-    startY: number
-    startWidth: number
-    startHeight: number
-    contentWidth: number
-    screenScaleX: number
-    screenScaleY: number
-    widthEdge: "left" | "right"
-    widthMotion: -1 | 0.5 | 1
-    heightEdge: "top" | "bottom"
-    heightMotion: -1 | 0.5 | 1
-    transition: string
-    transitionPriority: string
+    x0: number
+    y0: number
+    w0: number
+    h0: number
     width: number
     height: number
-    heightChainBaseline: StructureHeightChainBaseline
+    /** The node's own transition, off while the drag previews. */
+    transition: [string, string]
+    unit: number
+    scaleY: number
+    baseline: StructureHeightChainBaseline
     moved: boolean
   }
-  let structureResizeDrag: StructureResizeDrag | null = null
-  const beginStructureResize = (
-    e: PointerEvent,
-    mode: StructureResizeMode,
-    handle: HTMLButtonElement,
-  ) => {
-    if (!e.isPrimary || (e.pointerType === "mouse" && e.button !== 0)) return
-    const node = structureSelected
-    const region = node ? regionForStructureNode(node) : null
-    if (!node || !region || !document.contains(node.el) || !structureTransformResizable(node))
+  let blockResize: BlockResize | null = null
+  let suppressClick = false
+
+  const placeBox = (box: HTMLElement, el: HTMLElement | null) => {
+    const r = el?.getBoundingClientRect()
+    if (!el || !r || !(r.width || r.height)) {
+      box.style.display = "none"
       return
-    const widthAxis = structureWidthAxisFor(node, region)
-    const heightAxis = structureHeightAxisFor(node, region)
-    if (mode !== "height" && !widthAxis) return
-    if (mode !== "width" && !heightAxis) return
-    const contentWidth = structureContentWidth(region)
-    const regionRect = region.el.getBoundingClientRect()
-    const nodeRect = node.el.getBoundingClientRect()
-    const screenScaleX = region.el.offsetWidth > 0 ? regionRect.width / region.el.offsetWidth : 0
-    const screenScaleY = node.el.offsetHeight > 0 ? nodeRect.height / node.el.offsetHeight : 0
-    if (!(contentWidth > 0 && screenScaleX > 0 && screenScaleY > 0)) return
+    }
+    box.style.display = "block"
+    box.style.left = `${r.left + (window.scrollX || 0)}px`
+    box.style.top = `${r.top + scrollTop()}px`
+    box.style.width = `${r.width}px`
+    box.style.height = `${r.height}px`
+  }
+  /** What the selected block can be resized along, by today's rules. */
+  const resizeOf = (el: HTMLElement) => {
+    const node = nodeOf(el)
+    const region = node && regionForStructureNode(node)
+    if (!node || !region || !widthResizable(node, region)) return null
+    return { node, region, both: heightResizable(node, region) }
+  }
+  const paintBlocks = () => {
+    const hover = editOn && blockHover !== blockSel && !blockDrag ? blockHover : null
+    placeBox(blockHoverBox, hover?.isConnected ? hover : null)
+    if (hover?.isConnected) {
+      blockTag.textContent = `⠿ ${nameOf(hover)}`
+      // No room above the block: the tag tucks inside its corner.
+      blockHoverBox.classList.toggle("derive-block-tag-in", hover.getBoundingClientRect().top < 24)
+    }
+    const sel = editOn && blockSel?.isConnected ? blockSel : null
+    placeBox(blockBox, sel)
+    const rz = sel && !blockDrag ? resizeOf(sel) : null
+    blockBox.setAttribute("data-resize", rz ? (rz.both ? "width both" : "width") : "")
+    // The pill steps aside for typing, dragging and resizing.
+    if (!sel || blockDrag || blockResize || editingCaret()) {
+      pill.style.display = "none"
+      return
+    }
+    const siblings = siblingsOf(sel)
+    const i = siblings.indexOf(sel)
+    const x = axisOf(siblings) === "x"
+    pillName.innerHTML = ""
+    pillName.append(chromeEl("span", "", "⠿"), nameOf(sel))
+    pillPrev.textContent = x ? "←" : "↑"
+    pillNext.textContent = x ? "→" : "↓"
+    pillPrev.disabled = i <= 0
+    pillNext.disabled = i < 0 || i >= siblings.length - 1
+    pill.style.display = "flex"
+    // Just outside the block: above it, or below when there's no room; always on screen.
+    const r = sel.getBoundingClientRect()
+    const w = pill.offsetWidth
+    const h = pill.offsetHeight
+    let top = r.top - h - 10
+    if (top < 4) top = r.bottom + 10
+    top = Math.max(4, Math.min(innerHeight - h - 4, top))
+    const left = Math.max(4, Math.min(innerWidth - w - 4, r.left - 1))
+    pill.style.left = `${left + (window.scrollX || 0)}px`
+    pill.style.top = `${top + scrollTop()}px`
+  }
+  const schedulePaintBlocks = () => {
+    if (blockPaintTick) return
+    blockPaintTick = requestAnimationFrame(() => {
+      blockPaintTick = 0
+      if (blockSel && !(blockSel.isConnected && availableEl(blockSel))) blockSel = null
+      if (blockHover && !blockHover.isConnected) blockHover = null
+      paintBlocks()
+    })
+  }
+  refreshResizeUi = () => {
+    paintResizeUi()
+    paintBlocks()
+  }
+  hasSelectedResize = () => !!resizeSelectedEl || !!blockSel
+  const setBlockHover = (el: HTMLElement | null) => {
+    if (el === blockHover) return
+    blockHover = el
+    paintBlocks()
+  }
+  const selectBlock = (el: HTMLElement | null) => {
+    blockSel = el
+    if (el) {
+      clearResizeUi()
+      setEditHover(null)
+    }
+    paintBlocks()
+    scheduleDirty()
+  }
+  /** Put the caret down and leave text: nothing typed next may land anywhere. */
+  const dropCaret = () => {
+    const focused = editingCaret()
+    if (focused) focused.blur()
+    window.getSelection()?.removeAllRanges()
+  }
+
+  /* -- rearranging: moves, drags, duplicates, deletes and paste are one gesture -- */
+  const kidsOf = (el: Element): ChildNode[] =>
+    Array.from(el.childNodes).filter(
+      (n) => !(n instanceof Element && n.classList.contains("derive-edit-ui")),
+    )
+  const setKids = (el: Element, nodes: readonly ChildNode[]) => {
+    const chrome = Array.from(el.children).filter((c) => c.classList.contains("derive-edit-ui"))
+    el.replaceChildren(...nodes, ...chrome)
+  }
+  const sameKids = (a: readonly ChildNode[], b: readonly ChildNode[]) =>
+    a.length === b.length && a.every((n, i) => n === b[i])
+  const snapKids = (el: HTMLElement) => {
+    if (!kidsSnap.has(el)) kidsSnap.set(el, kidsOf(el))
+  }
+  /** Siblings slide from where they were to where they are now. Whether anything
+   *  moved on screen at all is the answer. */
+  const flip = (parent: Element, fn: () => void): boolean => {
+    const kids = Array.from(parent.children).filter(
+      (c): c is HTMLElement => c instanceof HTMLElement && !c.classList.contains("derive-edit-ui"),
+    )
+    const before = new Map(kids.map((k) => [k, k.getBoundingClientRect()]))
+    fn()
+    const still = matchMedia?.("(prefers-reduced-motion: reduce)").matches
+    let moved = false
+    for (const k of kids) {
+      const was = before.get(k)
+      if (!was || !k.isConnected) continue
+      const now = k.getBoundingClientRect()
+      const dx = was.left - now.left
+      const dy = was.top - now.top
+      if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue
+      moved = true
+      if (still) continue
+      const style = rawStyle(k)
+      k.style.transition = "none"
+      k.style.transform = `translate(${dx}px,${dy}px)`
+      requestAnimationFrame(() => {
+        k.style.transition = "transform .18s ease"
+        k.style.transform = ""
+        window.setTimeout(() => {
+          if (!k.classList.contains("derive-block-dragging")) restoreStyle(k, style)
+        }, 200)
+      })
+    }
+    return moved
+  }
+  /** Run one rearrangement of `parents` as a single history step. A move the page
+   *  doesn't show (CSS order, absolute positions) is put back rather than saved. */
+  const rearrange = (parents: HTMLElement[], fn: () => void, mustShow = false): boolean => {
+    for (const p of parents) snapKids(p)
+    const before = parents.map((el) => ({ el, nodes: kidsOf(el) }))
+    const shown = flip(parents[0] as HTMLElement, fn)
+    if (before.every(({ el, nodes }) => sameKids(kidsOf(el), nodes))) return false
+    if (mustShow && !shown) {
+      for (const { el, nodes } of before) setKids(el, nodes)
+      post({ type: "edit-blocked", reason: "layout" })
+      return false
+    }
+    remember({ kind: "children", lists: before })
+    markBlocksChanged()
+    return true
+  }
+  const markBlocksChanged = () => {
+    if (lastDirty <= 0) {
+      lastDirty = 1
+      // A partial optimistic state must never suppress the next full one.
+      lastState = ""
+      post({ type: "edit-state", dirty: 1, canUndo: true })
+    }
+    paintBlocks()
+    scheduleDirty()
+  }
+  /** Move the selected block one place along its siblings. */
+  const moveBlock = (direction: -1 | 1) => {
+    const el = blockSel
+    const parent = el?.parentElement
+    if (!el || !parent) return
+    const siblings = siblingsOf(el)
+    const i = siblings.indexOf(el)
+    const j = i + direction
+    if (i < 0 || j < 0 || j >= siblings.length) return
+    const order = [...siblings]
+    order.splice(i, 1)
+    order.splice(j, 0, el)
+    if (rearrange([parent], () => reorderInPlace(order), true)) lastMoved.set(parent, el)
+    paintBlocks()
+  }
+  const duplicateBlock = () => {
+    const el = blockSel
+    const parent = el?.parentElement
+    if (!el || !parent) return
+    const copy = el.cloneNode(true) as HTMLElement
+    copy.classList.remove("derive-edited", "derive-edit-hover", "derive-block-dragging")
+    for (const armed of Array.from(copy.querySelectorAll("[data-derive-editable]"))) {
+      armed.removeAttribute("contenteditable")
+      armed.removeAttribute("data-derive-editable")
+      armed.classList.remove("derive-edited")
+    }
+    rearrange([parent], () => el.after(copy))
+    selectBlock(copy)
+  }
+  const deleteBlock = () => {
+    const el = blockSel
+    const parent = el?.parentElement
+    if (!el || !parent) return
+    selectBlock(null)
+    rearrange([parent], () => el.remove())
+  }
+  /* Cut, copy and paste a block: a save names a moved or copied element by its source
+     id, so it can land on any slide. Paste goes after the selected block. */
+  const clipBlock = (copy: boolean) => {
+    const el = blockSel
+    if (!el) return
+    if (!copy) deleteBlock()
+    blockClip = { el, copy }
+  }
+  const pasteBlock = () => {
+    const at = blockSel
+    const clip = blockClip
+    const parent = at?.parentElement
+    if (!clip || !at || !parent || (at === clip.el && !clip.copy)) return
+    const el = clip.copy ? (clip.el.cloneNode(true) as HTMLElement) : clip.el
+    const from = clip.el.parentElement
+    rearrange(from && from !== parent && !clip.copy ? [parent, from] : [parent], () => at.after(el))
+    blockClip = { el, copy: true }
+    selectBlock(el)
+  }
+  pillPrev.addEventListener("click", () => moveBlock(-1))
+  pillNext.addEventListener("click", () => moveBlock(1))
+  pillDup.addEventListener("click", duplicateBlock)
+  pillDel.addEventListener("click", deleteBlock)
+  pillMore.addEventListener("click", () => post({ type: "edit-block-more" }))
+
+  /** A click here places a caret: it is on words (the text a caret resolves to has a
+   *  line box under the point), or inside the paragraph, heading or list item they
+   *  belong to (beside its last word, even when it is itself the block). Anywhere
+   *  else inside a block (its padding, the space beside a short label, the gap
+   *  between its lines) picks the block up. */
+  const takesCaret = (x: number, y: number, target: Element | null): boolean => {
+    const hit = editNodeAt(x, y)
+    if (!hit) return false
+    const range = document.createRange()
+    range.selectNodeContents(hit.node)
+    if (
+      Array.from(range.getClientRects()).some(
+        (r) => x >= r.left - 3 && x <= r.right + 3 && y >= r.top - 2 && y <= r.bottom + 2,
+      )
+    )
+      return true
+    const text = editNodeVisibleAt(x, y)
+    const box = text && editContainerFor(text.node)
+    const block = blockOf(target)
+    return !!box && (!block || box.matches(BLOCKS))
+  }
+
+  /* -- drag: from the pill's name, the hover tag, or a selected block's non-text area -- */
+  const armDrag = (el: HTMLElement, e: PointerEvent, chrome = false) => {
+    blockDrag = { el, pointerId: e.pointerId, x0: e.clientX, y0: e.clientY, before: null, chrome }
+  }
+  const startDragFromChrome = (e: PointerEvent, el: HTMLElement | null) => {
+    if (!el || e.button !== 0) return
     e.preventDefault()
     e.stopPropagation()
-    const initial = structuralSizingOf(
-      node.el,
-      structureSizeName(node),
-      structureWidthName(node),
-      structureHeightName(node),
-    )
-    const transition = node.el.style.getPropertyValue("transition")
-    const transitionPriority = node.el.style.getPropertyPriority("transition")
+    dropCaret()
+    window.focus()
+    selectBlock(el)
+    // No pointer capture: the pill and the tag hide while dragging, and moves over
+    // the page reach these listeners anyway.
+    armDrag(el, e, true)
+  }
+  pillName.addEventListener("pointerdown", (e) => startDragFromChrome(e, blockSel))
+  blockTag.addEventListener("pointerdown", (e) => startDragFromChrome(e, blockHover))
+  on(
+    document,
+    "pointerdown",
+    (e) => {
+      if (!editOn || e.button !== 0 || !e.isPrimary) return
+      const t = asEl(e.target)
+      if (!t || t.closest(".derive-edit-ui,img,[data-derive-resizable]")) return
+      // Words take a caret, always: a block is picked up by what isn't words.
+      if (takesCaret(e.clientX, e.clientY, t)) return
+      const el = blockOf(t)
+      if (!el) return
+      // No caret and no text selection starts here, so keep the keyboard in this
+      // document by hand: ⌥+arrows and Delete are for the block just picked.
+      e.preventDefault()
+      dropCaret()
+      window.focus()
+      selectBlock(el)
+      armDrag(el, e)
+    },
+    true,
+  )
+  on(
+    window,
+    "pointermove",
+    (e) => {
+      const drag = blockDrag
+      if (!drag || drag.pointerId !== e.pointerId) return
+      e.preventDefault()
+      const parent = drag.el.parentElement
+      if (!parent) return
+      if (!drag.before) {
+        if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 5) return
+        snapKids(parent)
+        drag.before = kidsOf(parent)
+        drag.el.classList.add("derive-block-dragging")
+        paintBlocks()
+      }
+      const siblings = siblingsOf(drag.el)
+      const others = siblings.filter((s) => s !== drag.el)
+      const x = axisOf(siblings) === "x"
+      let at = others.findIndex((s) => {
+        const r = s.getBoundingClientRect()
+        return x ? e.clientX < r.left + r.width / 2 : e.clientY < r.top + r.height / 2
+      })
+      if (at < 0) at = others.length
+      const order = [...others]
+      order.splice(at, 0, drag.el)
+      if (order.some((s, k) => s !== siblings[k])) flip(parent, () => reorderInPlace(order))
+      paintBlocks()
+    },
+    { passive: false },
+  )
+  const finishBlockDrag = (e: PointerEvent | null, cancel: boolean) => {
+    const drag = blockDrag
+    if (!drag || (e && drag.pointerId !== e.pointerId)) return false
+    blockDrag = null
+    drag.el.classList.remove("derive-block-dragging")
+    const parent = drag.el.parentElement
+    // The click that follows this pointerup (same task) is not a click: it ends a
+    // drag, or lands wherever the hidden tag or pill used to be.
+    if (e && (drag.before || drag.chrome)) {
+      suppressClick = true
+      window.setTimeout(() => {
+        suppressClick = false
+      }, 0)
+    }
+    if (drag.before && parent) {
+      if (cancel || sameKids(kidsOf(parent), drag.before)) setKids(parent, drag.before)
+      else {
+        remember({ kind: "children", lists: [{ el: parent, nodes: drag.before }] })
+        lastMoved.set(parent, drag.el)
+        markBlocksChanged()
+      }
+    }
+    paintBlocks()
+    return !!drag.before
+  }
+  on(window, "pointerup", (e) => finishBlockDrag(e, false))
+  on(window, "pointercancel", (e) => finishBlockDrag(e, true))
+
+  /* -- resize: the right edge (width) and the corner (width and height), today's
+        rules, with a live readout; a double-click on either puts it back to auto -- */
+  const readout = (r: BlockResize) =>
+    r.mode === "width" ? `${r.width}% wide` : `${r.width}% × ${r.height}px`
+  const sizeChanged = (
+    node: StructureNode,
+    was: { size: string | null; width: string | null; height: string | null },
+  ) =>
+    node.el.getAttribute(structureSizeName(node)) !== was.size ||
+    node.el.getAttribute(structureWidthName(node)) !== was.width ||
+    node.el.getAttribute(structureHeightName(node)) !== was.height
+  const beginBlockResize = (e: PointerEvent, mode: "width" | "both") => {
+    const rz = blockSel && e.button === 0 ? resizeOf(blockSel) : null
+    if (!rz || (mode === "both" && !rz.both)) return
+    const { node, region } = rz
+    const contentWidth = structureContentWidth(region)
+    const scaleX =
+      region.el.offsetWidth > 0
+        ? region.el.getBoundingClientRect().width / region.el.offsetWidth
+        : 0
+    const scaleY =
+      node.el.offsetHeight > 0 ? node.el.getBoundingClientRect().height / node.el.offsetHeight : 0
+    if (!(contentWidth > 0 && scaleX > 0 && scaleY > 0)) return
+    e.preventDefault()
+    e.stopPropagation()
+    const self = getComputedStyle(node.el).alignSelf
+    const align = self && self !== "auto" ? self : getComputedStyle(region.el).alignItems
+    const initial = sizingOf(node)
+    const transition: [string, string] = [
+      node.el.style.getPropertyValue("transition"),
+      node.el.style.getPropertyPriority("transition"),
+    ]
+    // The drag is the preview: an authored transition would lag every frame of it.
     node.el.style.setProperty("transition", "none", "important")
-    void node.el.offsetWidth
-    const startWidth = Math.round((node.el.offsetWidth / contentWidth) * 100)
-    structureResizeDrag = {
-      pointerId: e.pointerId,
+    const width = Math.round((node.el.offsetWidth / contentWidth) * 100)
+    blockResize = {
       mode,
+      pointerId: e.pointerId,
       node,
       region,
       initial,
-      startX: e.clientX,
-      startY: e.clientY,
-      startWidth,
-      startHeight: node.el.offsetHeight,
-      contentWidth,
-      screenScaleX,
-      screenScaleY,
-      widthEdge: widthAxis?.edge ?? "right",
-      widthMotion: widthAxis?.motion ?? 1,
-      heightEdge: heightAxis?.edge ?? "bottom",
-      heightMotion: heightAxis?.motion ?? 1,
-      transition,
-      transitionPriority,
-      width: startWidth,
+      x0: e.clientX,
+      y0: e.clientY,
+      w0: width,
+      h0: node.el.offsetHeight,
+      width,
       height: node.el.offsetHeight,
-      heightChainBaseline: structureHeightChainBaseline(node),
+      transition,
+      // Percentage points per screen pixel; a centered node grows on both sides.
+      unit: (100 / (contentWidth * scaleX)) * (align.includes("center") ? 2 : 1),
+      scaleY,
+      baseline: structureHeightChainBaseline(node),
       moved: false,
     }
-    updateStructureInteraction({ type: "begin", gesture: "resize" })
-    structureBox.classList.add("derive-structure-resizing")
-    structureWidthReadout.textContent = `${startWidth}% × ${node.el.offsetHeight}px`
-    handle.setPointerCapture?.(e.pointerId)
+    blockBox.classList.add("derive-block-sizing")
+    blockSize.textContent = readout(blockResize)
+    paintBlocks()
+    ;(e.currentTarget as Element).setPointerCapture?.(e.pointerId)
   }
-  structureResizeHandle.addEventListener("pointerdown", (e) =>
-    beginStructureResize(e, "width", structureResizeHandle),
-  )
-  structureHeightHandle.addEventListener("pointerdown", (e) =>
-    beginStructureResize(e, "height", structureHeightHandle),
-  )
-  structureCornerHandle.addEventListener("pointerdown", (e) =>
-    beginStructureResize(e, "both", structureCornerHandle),
-  )
+  blockRzE.addEventListener("pointerdown", (e) => beginBlockResize(e, "width"))
+  blockRzSe.addEventListener("pointerdown", (e) => beginBlockResize(e, "both"))
   on(
     window,
     "pointermove",
     (e) => {
-      const drag = structureResizeDrag
-      if (!drag || drag.pointerId !== e.pointerId) return
+      const r = blockResize
+      if (!r || r.pointerId !== e.pointerId) return
       e.preventDefault()
-      const dx = e.clientX - drag.startX
-      const dy = e.clientY - drag.startY
-      if (!drag.moved && Math.abs(dx) < 1 && Math.abs(dy) < 1) return
-      let widthSnap: { width: number; snappedTo: number | null } = {
-        width: drag.startWidth,
-        snappedTo: null,
-      }
-      let heightSnap: { height: number; snappedTo: number | null } = {
-        height: drag.startHeight,
-        snappedTo: null,
-      }
-      let rawWidth: number | null = null
-      let rawHeight: number | null = null
-      if (drag.mode !== "height") {
-        const widthCandidates = structureWidthCandidates(drag.node, drag.region)
-        rawWidth =
-          drag.startWidth + (dx / (drag.contentWidth * drag.screenScaleX * drag.widthMotion)) * 100
-        const threshold = (8 / (drag.contentWidth * drag.screenScaleX)) * 100
-        widthSnap = structuralModifierIntent(e).bypassSnap
-          ? { width: Math.round(rawWidth), snappedTo: null }
-          : snapStructuralWidth(
-              rawWidth,
-              widthCandidates.map((candidate) => candidate.width),
-              threshold,
-            )
-        drag.width = Math.min(
-          MAX_STRUCTURAL_WIDTH_PCT,
-          Math.max(MIN_STRUCTURAL_WIDTH_PCT, widthSnap.width),
-        )
-        applyStructureWidth(drag.node, drag.width)
-        if (
-          widthSnap.snappedTo !== null &&
-          !structureWidthCandidates(drag.node, drag.region).some(
-            (candidate) => candidate.width === widthSnap.snappedTo,
-          )
-        ) {
-          widthSnap = { width: Math.round(rawWidth), snappedTo: null }
-          drag.width = Math.min(
-            MAX_STRUCTURAL_WIDTH_PCT,
-            Math.max(MIN_STRUCTURAL_WIDTH_PCT, widthSnap.width),
-          )
-          applyStructureWidth(drag.node, drag.width)
-        }
-      }
-      if (drag.mode !== "width") {
-        // Width changes can reflow siblings, so measure height targets only after
-        // applying the current horizontal result.
-        const heightCandidates = structureHeightCandidates(drag.node, drag.region)
-        rawHeight = drag.startHeight + dy / (drag.screenScaleY * drag.heightMotion)
-        const threshold = 8 / drag.screenScaleY
-        heightSnap = structuralModifierIntent(e).bypassSnap
-          ? { height: Math.round(rawHeight), snappedTo: null }
-          : snapStructuralHeight(
-              rawHeight,
-              heightCandidates.map((candidate) => candidate.height),
-              threshold,
-            )
-        drag.height = Math.min(
-          MAX_STRUCTURAL_HEIGHT_PX,
-          Math.max(MIN_STRUCTURAL_HEIGHT_PX, heightSnap.height),
-        )
-        applyStructureHeight(drag.node, drag.height)
-        if (
-          heightSnap.snappedTo !== null &&
-          !structureHeightCandidates(drag.node, drag.region).some(
-            (candidate) => candidate.height === heightSnap.snappedTo,
-          )
-        ) {
-          heightSnap = { height: Math.round(rawHeight), snappedTo: null }
-          drag.height = Math.min(
+      const dx = e.clientX - r.x0
+      const dy = e.clientY - r.y0
+      if (!r.moved && Math.abs(dx) < 1 && Math.abs(dy) < 1) return
+      r.moved = true
+      r.width = Math.round(
+        Math.min(MAX_STRUCTURAL_WIDTH_PCT, Math.max(MIN_STRUCTURAL_WIDTH_PCT, r.w0 + dx * r.unit)),
+      )
+      applyStructureWidth(r.node, r.width)
+      if (r.mode === "both") {
+        r.height = Math.round(
+          Math.min(
             MAX_STRUCTURAL_HEIGHT_PX,
-            Math.max(MIN_STRUCTURAL_HEIGHT_PX, heightSnap.height),
-          )
-          applyStructureHeight(drag.node, drag.height)
-        }
+            Math.max(MIN_STRUCTURAL_HEIGHT_PX, r.h0 + dy / r.scaleY),
+          ),
+        )
+        applyStructureHeight(r.node, r.height)
       }
-      // Reconcile once more after both dimensions are present. Height-dependent
-      // CSS can invalidate a width target (and the width fallback can in turn
-      // invalidate a height target), so labels and committed values must agree.
-      if (
-        widthSnap.snappedTo !== null &&
-        rawWidth !== null &&
-        !structureWidthCandidates(drag.node, drag.region).some(
-          (candidate) => candidate.width === widthSnap.snappedTo,
-        )
-      ) {
-        widthSnap = { width: Math.round(rawWidth), snappedTo: null }
-        drag.width = Math.min(
-          MAX_STRUCTURAL_WIDTH_PCT,
-          Math.max(MIN_STRUCTURAL_WIDTH_PCT, widthSnap.width),
-        )
-        applyStructureWidth(drag.node, drag.width)
-      }
-      if (
-        heightSnap.snappedTo !== null &&
-        rawHeight !== null &&
-        !structureHeightCandidates(drag.node, drag.region).some(
-          (candidate) => candidate.height === heightSnap.snappedTo,
-        )
-      ) {
-        heightSnap = { height: Math.round(rawHeight), snappedTo: null }
-        drag.height = Math.min(
-          MAX_STRUCTURAL_HEIGHT_PX,
-          Math.max(MIN_STRUCTURAL_HEIGHT_PX, heightSnap.height),
-        )
-        applyStructureHeight(drag.node, drag.height)
-      }
-      if (
-        widthSnap.snappedTo !== null &&
-        rawWidth !== null &&
-        !structureWidthCandidates(drag.node, drag.region).some(
-          (candidate) => candidate.width === widthSnap.snappedTo,
-        )
-      ) {
-        widthSnap = { width: Math.round(rawWidth), snappedTo: null }
-        drag.width = Math.min(
-          MAX_STRUCTURAL_WIDTH_PCT,
-          Math.max(MIN_STRUCTURAL_WIDTH_PCT, widthSnap.width),
-        )
-        applyStructureWidth(drag.node, drag.width)
-      }
-      drag.moved =
-        (drag.mode !== "height" && drag.width !== drag.startWidth) ||
-        (drag.mode !== "width" && drag.height !== drag.startHeight)
-      structureWidthReadout.textContent = `${drag.width}% × ${drag.height}px`
-      // Revalidate labels after both dimensions have been applied. A diagonal
-      // resize may reflow or clip the sibling that supplied the initial target.
-      const widthCandidate = structureWidthCandidates(drag.node, drag.region).find(
-        (item) => item.width === widthSnap.snappedTo,
-      )
-      if (widthCandidate)
-        showStructureSnapGuide(drag.node, drag.region, widthCandidate.label, drag.widthEdge)
-      else hideStructureSnapGuide()
-      const heightCandidate = structureHeightCandidates(drag.node, drag.region).find(
-        (item) => item.height === heightSnap.snappedTo,
-      )
-      if (heightCandidate)
-        showStructureHeightSnapGuide(drag.node, drag.region, heightCandidate.label, drag.heightEdge)
-      else hideStructureHeightSnapGuide()
-      if (drag.moved && lastDirty <= 0) {
-        lastDirty = 1
-        // Force the settled/cancelled state to cross the frame even when its stack
-        // shape matches an older state from before this provisional gesture.
-        lastState = ""
-        post({ type: "edit-state", dirty: 1, canUndo: true })
-      }
-      paintStructureUi()
+      blockSize.textContent = readout(r)
+      markBlocksChanged()
     },
     { passive: false },
   )
-  const finishStructureResize = (e: PointerEvent, cancel: boolean) => {
-    const drag = structureResizeDrag
-    if (!drag || drag.pointerId !== e.pointerId) return
-    structureResizeDrag = null
-    structureLayoutOpen = false
-    structurePrecisionOpen = false
-    structureIntentOpen = false
-    structureBox.classList.remove("derive-structure-resizing")
-    hideStructureSnapGuide()
-    hideStructureDropMarker()
-    hideStructureHeightSnapGuide()
-    updateStructureInteraction({ type: "validate" })
-    const widthAccepted =
-      drag.mode === "height" || structureWidthFits(drag.node, drag.region, drag.width)
-    const heightAccepted = drag.mode === "width" || structureHeightFits(drag.node, drag.height)
-    const axesAccepted =
-      (drag.mode === "height" || !!structureWidthAxisFor(drag.node, drag.region)) &&
-      (drag.mode === "width" || !!structureHeightAxisFor(drag.node, drag.region))
-    const sourceAccepted =
-      (drag.mode === "height" ||
-        (currentStructureWidth(drag.node) === drag.width &&
-          drag.node.el.style.getPropertyValue(STRUCTURAL_WIDTH_PROPERTY) === `${drag.width}%`)) &&
-      (drag.mode === "width" ||
-        (currentStructureHeight(drag.node) === drag.height &&
-          drag.node.el.style.getPropertyValue(STRUCTURAL_HEIGHT_PROPERTY) === `${drag.height}px`))
-    const accepted =
-      drag.moved &&
-      widthAccepted &&
-      heightAccepted &&
-      axesAccepted &&
-      sourceAccepted &&
-      structureTransformResizable(drag.node) &&
-      structureHeightChainFits(drag.node, drag.heightChainBaseline)
-    if (cancel || !accepted) {
-      applyStructuralSizing(drag.initial)
-      const reason: StructuralConstraintReason = {
-        code: cancel ? "no-change" : "authored-layout",
-        nodeId: drag.node.id,
-        message:
-          drag.mode === "width"
-            ? "Authored constraints control this width"
-            : drag.mode === "height"
-              ? "Authored content or constraints control this height"
-              : "Authored content or constraints control this size",
-        suggestion: drag.mode === "width" ? "same-width" : "fit-height",
-      }
-      if (drag.moved && !cancel) showStructureToast(reason.message)
-      settleStructureInteraction("cancel", reason)
-      paintStructureUi()
-      postDirty()
-      return
+  const finishBlockResize = (e: PointerEvent | null, cancel: boolean) => {
+    const r = blockResize
+    if (!r || (e && r.pointerId !== e.pointerId)) return false
+    blockResize = null
+    blockBox.classList.remove("derive-block-sizing")
+    const held =
+      !cancel &&
+      r.moved &&
+      sizeChanged(r.node, r.initial) &&
+      sizingHolds(r.node, r.region, r.baseline)
+    if (held) {
+      // Keep the new size; give the author's transition back.
+      const [value, priority] = r.transition
+      if (value) r.node.el.style.setProperty("transition", value, priority)
+      else r.node.el.style.removeProperty("transition")
+      clearEmptyStyle(r.node.el)
+      remember(r.initial)
+    } else {
+      applyStructuralSizing(r.initial)
+      if (r.moved && !cancel) post({ type: "edit-blocked", reason: "layout" })
     }
-    remember(drag.initial)
-    restoreStructureTransition(drag.node, drag.transition, drag.transitionPriority)
-    settleStructureInteraction("commit")
-    markStructureChanged()
-  }
-  on(window, "pointerup", (e) => finishStructureResize(e, false))
-  on(window, "pointercancel", (e) => finishStructureResize(e, true))
-  cancelStructureResize = () => {
-    const drag = structureResizeDrag
-    if (!drag) return false
-    structureResizeDrag = null
-    structureBox.classList.remove("derive-structure-resizing")
-    hideStructureSnapGuide()
-    hideStructureHeightSnapGuide()
-    applyStructuralSizing(drag.initial)
-    updateStructureInteraction({ type: "cancel" })
-    updateStructureInteraction({ type: "settle" })
-    paintStructureUi()
+    paintBlocks()
     postDirty()
     return true
   }
-  for (const handle of [structureResizeHandle, structureHeightHandle, structureCornerHandle])
-    handle.addEventListener("lostpointercapture", () => cancelStructureResize())
-  const keyboardStructureResize = (e: KeyboardEvent, mode: StructureResizeMode) => {
-    const horizontal = e.key === "ArrowLeft" || e.key === "ArrowRight"
-    const vertical = e.key === "ArrowUp" || e.key === "ArrowDown"
-    if (
-      (!horizontal && !vertical) ||
-      (mode === "width" && !horizontal) ||
-      (mode === "height" && !vertical)
-    )
-      return
-    const node = structureSelected
-    const region = node ? regionForStructureNode(node) : null
-    if (!node || !region || !structureTransformResizable(node)) return
-    if (horizontal && !structureWidthAxisFor(node, region)) return
-    if (vertical && !structureHeightAxisFor(node, region)) return
-    e.preventDefault()
-    e.stopPropagation()
-    const contentWidth = structureContentWidth(region)
-    if (!(contentWidth > 0)) return
-    const currentWidth = Math.round((node.el.offsetWidth / contentWidth) * 100)
-    const currentHeight = Math.round(node.el.offsetHeight)
-    const modifiers = structuralModifierIntent(e)
-    const width = horizontal
-      ? Math.min(
-          MAX_STRUCTURAL_WIDTH_PCT,
-          Math.max(
-            MIN_STRUCTURAL_WIDTH_PCT,
-            currentWidth + modifiers.keyboardWidthStep * (e.key === "ArrowRight" ? 1 : -1),
-          ),
-        )
-      : currentWidth
-    const height = vertical
-      ? Math.min(
-          MAX_STRUCTURAL_HEIGHT_PX,
-          Math.max(
-            MIN_STRUCTURAL_HEIGHT_PX,
-            currentHeight + modifiers.keyboardHeightStep * (e.key === "ArrowDown" ? 1 : -1),
-          ),
-        )
-      : currentHeight
-    if (width === currentWidth && height === currentHeight) return
-    updateStructureInteraction({ type: "begin", gesture: "resize" })
-    const initial = structuralSizingOf(
-      node.el,
-      structureSizeName(node),
-      structureWidthName(node),
-      structureHeightName(node),
-    )
-    const heightChainBaseline = structureHeightChainBaseline(node)
-    const transition = node.el.style.getPropertyValue("transition")
-    const transitionPriority = node.el.style.getPropertyPriority("transition")
-    node.el.style.setProperty("transition", "none", "important")
-    void node.el.offsetWidth
-    if (horizontal) applyStructureWidth(node, width)
-    if (vertical) applyStructureHeight(node, height)
-    const accepted =
-      (!horizontal || structureWidthFits(node, region, width)) &&
-      (!vertical || structureHeightFits(node, height)) &&
-      structureHeightChainFits(node, heightChainBaseline)
-    updateStructureInteraction({ type: "validate" })
-    restoreStructureTransition(node, transition, transitionPriority)
-    if (!accepted) {
+  on(window, "pointerup", (e) => finishBlockResize(e, false))
+  on(window, "pointercancel", (e) => finishBlockResize(e, true))
+  /** Set (or with null, clear to auto) the selected block's width and/or height. */
+  const setBlockSize = (width: number | null | undefined, height?: number | null) => {
+    const rz = blockSel ? resizeOf(blockSel) : null
+    if (!rz) return
+    const { node, region } = rz
+    const initial = sizingOf(node)
+    const baseline = structureHeightChainBaseline(node)
+    const held = withoutTransition(node, () => {
+      if (width !== undefined) applyStructureWidth(node, width)
+      if (height !== undefined && rz.both) applyStructureHeight(node, height)
+      return sizingHolds(node, region, baseline)
+    })
+    if (!sizeChanged(node, initial)) return
+    if (!held) {
       applyStructuralSizing(initial)
-      showStructureToast(
-        horizontal
-          ? "Authored constraints control this width"
-          : "Authored content or constraints control this height",
-      )
-      settleStructureInteraction("cancel", {
-        code: "authored-layout",
-        nodeId: node.id,
-        message: horizontal
-          ? "Authored constraints control this width"
-          : "Authored content or constraints control this height",
-        suggestion: horizontal ? "same-width" : "fit-height",
-      })
-      paintStructureUi()
-      postDirty()
+      post({ type: "edit-blocked", reason: "layout" })
       return
     }
     remember(initial)
-    settleStructureInteraction("commit")
-    structureBox.classList.add("derive-structure-resizing")
-    structureWidthReadout.textContent = `${width}% × ${height}px`
-    window.setTimeout(() => structureBox.classList.remove("derive-structure-resizing"), 800)
-    markStructureChanged()
+    markBlocksChanged()
   }
-  structureResizeHandle.addEventListener("keydown", (e) => keyboardStructureResize(e, "width"))
-  structureHeightHandle.addEventListener("keydown", (e) => keyboardStructureResize(e, "height"))
-  structureCornerHandle.addEventListener("keydown", (e) => keyboardStructureResize(e, "both"))
-
-  interface StructureDrag {
-    pointerId: number
-    node: StructureNode
-    region: StructureRegion
-    initial: Extract<HistoryEntry, { kind: "structural-order" }>
-    initialOrder: string[]
-    initialGeometry: Map<string, DOMRect>
-    initialPaintOrder: Map<string, string>
-    moved: boolean
-  }
-  let structureDrag: StructureDrag | null = null
-  const hideStructureDropMarker = () => {
-    structureDropMarker.style.display = "none"
-  }
-  const showStructureDropMarker = (
-    region: StructureRegion,
-    before: StructureNode | undefined,
-    axis: "x" | "y",
-    others: readonly StructureNode[],
-  ) => {
-    const regionRect = region.el.getBoundingClientRect()
-    const anchor = before ?? others.at(-1)
-    if (!anchor) return hideStructureDropMarker()
-    const anchorRect = anchor.el.getBoundingClientRect()
-    const after = !before
-    structureDropMarker.style.display = "block"
-    structureDropMarker.classList.toggle("derive-structure-drop-marker-x", axis === "x")
-    structureDropMarkerLabel.textContent = `${after ? "After" : "Before"} ${anchor.id}`
-    structureDropMarker.setAttribute("data-label", structureDropMarkerLabel.textContent)
-    if (axis === "x") {
-      structureDropMarker.style.left = `${(after ? anchorRect.right : anchorRect.left) + (window.scrollX || 0)}px`
-      structureDropMarker.style.top = `${regionRect.top + scrollTop()}px`
-      structureDropMarker.style.width = "0"
-      structureDropMarker.style.height = `${regionRect.height}px`
-    } else {
-      structureDropMarker.style.left = `${regionRect.left + (window.scrollX || 0)}px`
-      structureDropMarker.style.top = `${(after ? anchorRect.bottom : anchorRect.top) + scrollTop()}px`
-      structureDropMarker.style.width = `${regionRect.width}px`
-      structureDropMarker.style.height = "0"
-    }
-  }
-  const structureDragAxis = (nodes: readonly StructureNode[]): "x" | "y" => {
-    if (nodes.length < 2) return "y"
-    const centers = nodes.map((node) => {
-      const rect = node.el.getBoundingClientRect()
-      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
-    })
-    const xs = centers.map(({ x }) => x)
-    const ys = centers.map(({ y }) => y)
-    return Math.max(...xs) - Math.min(...xs) > Math.max(...ys) - Math.min(...ys) ? "x" : "y"
-  }
-  structureGrip.addEventListener("pointerdown", (e) => {
-    const node = structureSelected
-    const region = node ? regionForStructureNode(node) : null
-    if (!node || !region || !document.contains(node.el)) return
-    e.preventDefault()
-    e.stopPropagation()
-    structureDrag = {
-      pointerId: e.pointerId,
-      node,
-      region,
-      initial: structuralOrderOf(
-        region.el,
-        connectedStructureNodes(region).map((candidate) => candidate.el),
-      ),
-      initialOrder: connectedStructureNodes(region).map((candidate) => candidate.id),
-      initialGeometry: structureGeometry(region),
-      initialPaintOrder: structurePaintOrder(node, region),
-      moved: false,
-    }
-    updateStructureInteraction({ type: "begin", gesture: "drag" })
-    node.el.classList.add("derive-structure-dragging")
-    structureGrip.setPointerCapture?.(e.pointerId)
-  })
-  on(
-    window,
-    "pointermove",
-    (e) => {
-      const drag = structureDrag
-      if (!drag || drag.pointerId !== e.pointerId) return
-      e.preventDefault()
-      const others = connectedStructureNodes(drag.region).filter((node) => node !== drag.node)
-      const axis = structureDragAxis(others)
-      const target = structuralDropTarget(
-        axis === "x" ? e.clientX : e.clientY,
-        others.map((node) => {
-          const rect = node.el.getBoundingClientRect()
-          return {
-            id: node.id,
-            start: axis === "x" ? rect.left : rect.top,
-            end: axis === "x" ? rect.right : rect.bottom,
-          }
-        }),
-      )
-      const before = target?.beforeId
-        ? others.find((node) => node.id === target.beforeId)
-        : undefined
-      const placed = others.map((node) => node.el)
-      placed.splice(before ? placed.indexOf(before.el) : placed.length, 0, drag.node.el)
-      reorderInPlace(placed)
-      showStructureDropMarker(drag.region, before, axis, others)
-      const order = connectedStructureNodes(drag.region).map((node) => node.id)
-      drag.moved = order.some((id, index) => id !== drag.initialOrder[index])
-      paintStructureUi()
-    },
-    { passive: false },
-  )
-  const finishStructureDrag = (e: PointerEvent, cancel: boolean) => {
-    const drag = structureDrag
-    if (!drag || drag.pointerId !== e.pointerId) return
-    structureDrag = null
-    hideStructureDropMarker()
-    drag.node.el.classList.remove("derive-structure-dragging")
-    updateStructureInteraction({ type: "validate" })
-    const visuallyMoved =
-      drag.moved &&
-      (structureGeometryChanged(drag.initialGeometry, drag.region) ||
-        structurePaintOrderChanged(drag.initialPaintOrder, drag.node, drag.region))
-    if (cancel || !visuallyMoved) applyStructuralOrder(drag.initial)
-    else remember(drag.initial)
-    if (visuallyMoved && !cancel) {
-      settleStructureInteraction("commit")
-      markStructureChanged()
-    } else if (drag.moved && !cancel) {
-      const reason: StructuralConstraintReason = {
-        code: "authored-layout",
-        nodeId: drag.node.id,
-        message: "Authored layout controls this order",
-      }
-      settleStructureInteraction("cancel", reason)
-      showStructureToast(reason.message)
-      paintStructureUi()
-    } else {
-      settleStructureInteraction("cancel")
-      paintStructureUi()
-    }
-  }
-  const cancelStructureDrag = () => {
-    const drag = structureDrag
-    if (!drag) return false
-    structureDrag = null
-    drag.node.el.classList.remove("derive-structure-dragging")
-    hideStructureDropMarker()
-    applyStructuralOrder(drag.initial)
-    updateStructureInteraction({ type: "cancel" })
-    updateStructureInteraction({ type: "settle" })
-    paintStructureUi()
-    postDirty()
-    return true
-  }
-  on(window, "pointerup", (e) => finishStructureDrag(e, false))
-  on(window, "pointercancel", (e) => finishStructureDrag(e, true))
-  structureGrip.addEventListener("lostpointercapture", () => cancelStructureDrag())
-  cancelStructuralGesture = () => cancelStructureResize() || cancelStructureDrag()
+  blockRzE.addEventListener("dblclick", () => setBlockSize(null))
+  blockRzSe.addEventListener("dblclick", () => setBlockSize(null, null))
+  cancelStructuralGesture = () => finishBlockResize(null, true) || finishBlockDrag(null, true)
   on(window, "blur", () => cancelStructuralGesture())
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) cancelStructuralGesture()
   })
-  window.addEventListener(
-    "scroll",
-    () => {
-      if (structureDrag) hideStructureDropMarker()
-      paintStructureUi()
-    },
-    true,
-  )
-  window.addEventListener("resize", () => refreshStructureAvailability())
-  focusStructureToolbar = () => {
-    if (!editOn || !structureSelected || document.activeElement !== structureSelected.el)
-      return false
-    structureGrip.focus()
-    return true
-  }
-  on(
-    document,
-    "mousedown",
-    (e) => {
-      const target = asEl(e.target)
-      const node = editOn && !target?.closest(".derive-edit-ui") ? structuralNodeAt(target) : null
-      structurePointerExtend = !!node && structuralModifierIntent(e).extendSelection
-      structurePointerSelectionHandled = false
-    },
-    true,
-  )
-  on(document, "focusin", (e) => {
-    if (!editOn) return
-    const node = structuralNodeAt(asEl(e.target))
-    if (node && e.target === node.el && structureNodeAvailable(node)) {
-      selectStructure(node, structurePointerExtend)
-      structurePointerSelectionHandled = structurePointerExtend
-    }
-  })
+  window.addEventListener("scroll", schedulePaintBlocks, true)
+  window.addEventListener("resize", schedulePaintBlocks)
+
+  /* -- keys on a selected block (no caret): ⌥+arrows move, Delete removes it -- */
   on(
     document,
     "keydown",
     (e) => {
-      if (!editOn || !structureSelected || e.defaultPrevented || e.isComposing) return
-      const active = asEl(document.activeElement)
-      if (active?.closest("[contenteditable],input,textarea,select")) return
-      // Only while the node (or its toolbar) holds focus: a Backspace after a click
-      // that landed nowhere must not delete a node selected a moment earlier.
-      if (active !== structureSelected.el && !active?.closest(".derive-edit-ui")) return
-      if (e.key === "Enter" && active === structureSelected.el) {
+      if (!editOn || !blockSel || e.defaultPrevented || e.isComposing || editingCaret()) return
+      if (asEl(document.activeElement)?.closest("input,textarea,select,[contenteditable]")) return
+      if (e.altKey && !e.metaKey && !e.ctrlKey && /^Arrow(?:Up|Down|Left|Right)$/.test(e.key)) {
         e.preventDefault()
         e.stopImmediatePropagation()
-        structureGrip.focus()
-      } else if (
-        structuralModifierIntent(e).reorderShortcut &&
-        (e.key === "ArrowUp" || e.key === "ArrowDown")
-      ) {
-        e.preventDefault()
-        e.stopImmediatePropagation()
-        moveStructure(e.key === "ArrowUp" ? -1 : 1)
+        moveBlock(e.key === "ArrowUp" || e.key === "ArrowLeft" ? -1 : 1)
       } else if (
         !e.altKey &&
         !e.metaKey &&
@@ -6339,143 +4428,304 @@ interface ElReg {
       ) {
         e.preventDefault()
         e.stopImmediatePropagation()
-        removeStructure()
+        deleteBlock()
       }
     },
     true,
   )
 
-  const enableStructuralEditing = () => {
-    setStructureRegions(elementEditsOn && srcSnap ? scanStructureRegions() : [])
-    structureExpectedRemoved = new Set()
-    syncStructuralPlacement = (el) => {
-      const node = structureNodeByElement.get(el)
-      const region = node ? regionForStructureNode(node) : null
-      if (!node || !region) return
-      if (node.el.parentElement === region.el) structureExpectedRemoved.delete(node)
-      else structureExpectedRemoved.add(node)
+  /* -- the changes list: every element the person changed, against how it was when
+        they first touched it, with a way back for each. Derived, never logged, so a
+        revert is "put this element (or this parent's children) back" and whatever
+        depends on it stays consistent. -- */
+  interface Change {
+    id: string
+    where: string
+    what?: string
+    from?: string
+    to?: string
+    at: Element | null
+    revert: () => void
+  }
+  const changeIds = new WeakMap<object, string>()
+  let changeSeq = 0
+  const changeId = (o: object) => {
+    let id = changeIds.get(o)
+    if (!id) {
+      id = `c${++changeSeq}`
+      changeIds.set(o, id)
     }
-    refreshStructureAvailability = () => {
-      for (const region of structureRegions)
-        for (const node of region.nodes)
-          node.el.setAttribute("tabindex", structureNodeAvailable(node) ? "0" : "-1")
-      if (structureSelected && !structureNodeAvailable(structureSelected)) {
-        if (document.activeElement === structureSelected.el) structureSelected.el.blur()
-        structureSelected = null
-      }
-      structureSelection = structureSelection.filter((node) => structureNodeAvailable(node))
-      if (!structureSelected && structureSelection.length)
-        structureSelected = structureSelection.at(-1) ?? null
-      if (structureSelected && !structureSelection.includes(structureSelected))
-        structureSelection.push(structureSelected)
-      if (
-        structureInteraction.phase !== "dragging" &&
-        structureInteraction.phase !== "resizing" &&
-        structureInteraction.phase !== "validating"
+    return id
+  }
+  const htmlPlain = (html: string) => {
+    const t = document.createElement("template")
+    t.innerHTML = html
+    return plainOf(t.content)
+  }
+  const textKindOf = (el: Element) =>
+    /^h[1-6]$/.test(el.localName) ? "Heading" : el.localName === "li" ? "Item" : "Text"
+  /** Where a change sits, in block names: "Card 3 · Heading", "Section", "Slide 2". */
+  const whereOf = (el: HTMLElement, text: boolean): string => {
+    const block = !blocksOn ? null : isMovable(el, true) ? el : blockOfAnywhere(el.parentElement)
+    if (block === el) return nameOf(el)
+    const tail = text ? textKindOf(el) : ""
+    if (block) return [nameOf(block), tail].filter(Boolean).join(" · ")
+    const slides = slideEls()
+    const at = slides.length > 1 ? slideOfEl(el, slides) : null
+    return tail || (at !== null ? `Slide ${at + 1}` : "Page")
+  }
+  const blockOfAnywhere = (el: Element | null): HTMLElement | null => {
+    for (let e = el; e && e !== document.body; e = e.parentElement)
+      if (e instanceof HTMLElement && isMovable(e, true)) return e
+    return null
+  }
+  const describeKids = (parent: HTMLElement, snap: ChildNode[], now: ChildNode[]) => {
+    const els = (list: ChildNode[]) =>
+      list.filter((n): n is HTMLElement => n instanceof HTMLElement)
+    const before = els(snap)
+    const after = els(now)
+    const parts: string[] = []
+    for (const el of after)
+      if (!before.includes(el))
+        parts.push(
+          `${before.some((b) => srcOf(b) === srcOf(el)) ? "Duplicated" : "Added"} ${titleOf(el)}`,
+        )
+    for (const el of before) if (!after.includes(el)) parts.push(`Deleted ${titleOf(el)}`)
+    const was = before.filter((el) => after.includes(el))
+    const kept = after.filter((el) => before.includes(el))
+    const last = lastMoved.get(parent)
+    const moved =
+      last && kept.indexOf(last) !== was.indexOf(last) ? last : kept.find((el, i) => el !== was[i])
+    if (moved) {
+      const peers = (list: HTMLElement[]) =>
+        list.filter((x) => x.localName === moved.localName && classSig(x) === classSig(moved))
+      parts.push(
+        `Moved ${titleOf(moved)} from ${peers(was).indexOf(moved) + 1} → ${peers(kept).indexOf(moved) + 1}`,
       )
-        updateStructureInteraction(
-          structureSelected
-            ? {
-                type: "select",
-                selectedIds: structureSelection.map(({ id }) => id),
-                activeId: structureSelected.id,
-              }
-            : { type: "clear" },
-        )
-      paintStructureUi()
     }
-    refreshStructureAvailability()
-    structureObserver?.disconnect()
-    if (window.MutationObserver) {
-      structureObserver = new MutationObserver((records) => {
-        // Painting the selection box changes platform-owned inline styles. Those
-        // mutations must not wake the availability pass that paints the box again.
-        if (
-          records.every(
-            (record) =>
-              record.target instanceof Element && !!record.target.closest(".derive-edit-ui"),
-          )
-        )
-          return
-        // Pointer resize owns this one style mutation and already repaints its
-        // overlay. Re-scanning every structural node on every pointer frame turns
-        // large decks into an avoidable layout loop.
-        if (
-          structureResizeDrag &&
-          records.every(
-            (record) =>
-              record.target === structureResizeDrag?.node.el && record.attributeName === "style",
-          )
-        )
-          return
-        refreshStructureAvailability()
+    return parts.join(", ") || "Rearranged"
+  }
+  const widthLabel = (size: string | null, width: string | null) =>
+    width !== null ? `${width}%` : size ? `${size[0]?.toUpperCase()}${size.slice(1)}` : "Auto"
+  const changes = (): Change[] => {
+    const out: Change[] = []
+    for (const t of editTargets) {
+      if (!t.el.isConnected || (concatText(t.el) === t.origConcat && !hasFmt(t.el))) continue
+      const from = clipText(htmlPlain(t.origHtml))
+      const to = clipText(plainOf(t.el))
+      out.push({
+        id: changeId(t),
+        where: whereOf(t.el, true),
+        ...(from === to ? { what: "Formatting" } : { from, to }),
+        at: t.el,
+        revert: () => {
+          checkpoint(t.el)
+          t.el.innerHTML = t.origHtml
+          reregister(t, t.el)
+        },
       })
-      structureObserver.observe(document.body || document.documentElement, {
+    }
+    for (const [parent, snap] of kidsSnap) {
+      const now = kidsOf(parent)
+      if (!parent.isConnected || sameKids(now, snap)) continue
+      out.push({
+        id: changeId(parent),
+        where: whereOf(parent, false),
+        what: describeKids(parent, snap, now),
+        at: parent,
+        revert: () => {
+          remember({ kind: "children", lists: [{ el: parent, nodes: now }] })
+          setKids(parent, snap)
+        },
+      })
+    }
+    for (const region of structureRegions)
+      for (const node of region.nodes) {
+        if (
+          !node.el.isConnected ||
+          !sizeChanged(node, {
+            size: node.origSize,
+            width: node.origWidth,
+            height: node.origHeight,
+          })
+        )
+          continue
+        const attr = (name: string) => node.el.getAttribute(structureAttribute(node.prefix, name))
+        const w0 = widthLabel(node.origSize, node.origWidth)
+        const w1 = widthLabel(attr("size"), attr("width"))
+        const h0 = node.origHeight === null ? "Auto" : `${node.origHeight}px`
+        const h1 = attr("height") === null ? "Auto" : `${attr("height")}px`
+        out.push({
+          id: changeId(node),
+          where: nameOf(node.el),
+          what: [w0 !== w1 && `Width ${w0} → ${w1}`, h0 !== h1 && `Height ${h0} → ${h1}`]
+            .filter(Boolean)
+            .join(", "),
+          at: node.el,
+          revert: () => {
+            remember(sizingOf(node))
+            applyStructuralSizing({
+              ...sizingOf(node),
+              size: node.origSize,
+              width: node.origWidth,
+              height: node.origHeight,
+              style: node.origStyle,
+            })
+          },
+        })
+      }
+    for (const t of resizeTargets)
+      if (t.el.isConnected && rawStyle(t.el) !== t.origStyle)
+        out.push({
+          id: changeId(t),
+          where: t.el.localName === "img" ? "Image" : "Box",
+          what: "Resized",
+          at: t.el,
+          revert: () => {
+            checkpointStyle(t.el)
+            restoreStyle(t.el, t.origStyle)
+          },
+        })
+    for (const s of sceneEdits)
+      out.push({
+        id: changeId(s),
+        where: `Scene ${s.wire.id.replace(/^scene-/, "")}`,
+        what: {
+          "scene-update": "Updated",
+          "scene-move": "Moved",
+          "scene-duplicate": "Duplicated",
+          "scene-delete": "Deleted",
+        }[s.wire.op],
+        at: null,
+        revert: () => {
+          s.undo()
+          sceneEdits = sceneEdits.filter((x) => x !== s)
+          restoreActiveVideoScene(s.activeBefore)
+        },
+      })
+    return out.sort((a, b) =>
+      !a.at || !b.at || a.at === b.at
+        ? Number(!a.at) - Number(!b.at)
+        : a.at.compareDocumentPosition(b.at) & Node.DOCUMENT_POSITION_FOLLOWING
+          ? -1
+          : 1,
+    )
+  }
+  const revertChange = (id: string) => {
+    const change = changes().find((c) => c.id === id)
+    if (!change) return
+    cancelStructuralGesture()
+    dropCaret()
+    change.revert()
+    lastBurst = null
+    refreshResizeUi()
+    postDirty()
+  }
+  const revealChange = (id: string) => {
+    const el = changes().find((c) => c.id === id)?.at
+    if (!(el instanceof HTMLElement)) return
+    revealBlock(el)
+    el.classList.remove("derive-block-flash")
+    void el.offsetWidth
+    el.classList.add("derive-block-flash")
+    window.setTimeout(() => el.classList.remove("derive-block-flash"), 950)
+  }
+  /** What the host's panel shows for the selected block: its path and its width. */
+  const blockInfo = () => {
+    const el = blockSel
+    if (!el) return null
+    const rz = resizeOf(el)
+    return {
+      name: nameOf(el),
+      crumbs: crumbsOf(el).map((c) => c.name),
+      resizable: !!rz,
+      width: rz ? currentStructureWidth(rz.node) : null,
+    }
+  }
+  const selectCrumb = (index: number) => {
+    if (!blockSel) return
+    const crumb = crumbsOf(blockSel)[index]
+    if (crumb) selectBlock(crumb.el)
+  }
+  /** A block's place in the source, as indices among stamped children from <body>:
+   *  the same after a save reloads the page, where source ids are not. */
+  const pathOf = (el: HTMLElement | null): number[] | null => {
+    const out: number[] = []
+    for (let e: Element | null = el; e && e !== document.body; e = e.parentElement) {
+      const i = Array.from(e.parentElement?.children ?? [])
+        .filter((c) => srcOf(c) !== null)
+        .indexOf(e)
+      if (i < 0) return null
+      out.unshift(i)
+    }
+    return el ? out : null
+  }
+  /** Select the block at `path` once it is on screen (a deck may still be fading
+   *  its slide in), giving up after a second. */
+  const selectPath = (path: unknown, tries = 20) => {
+    if (!Array.isArray(path) || !editOn) return
+    let el: Element | undefined = document.body
+    for (const i of path)
+      el = Array.from(el?.children ?? []).filter((c) => srcOf(c) !== null)[Number(i)]
+    if (el instanceof HTMLElement && isMovable(el)) {
+      // Keys go on meaning the block, as they did before the save.
+      window.focus()
+      selectBlock(el)
+    } else if (el && tries > 0) window.setTimeout(() => selectPath(path, tries - 1), 50)
+  }
+
+  const enableBlocks = () => {
+    blocksOn = elementEditsOn && !!srcSnap
+    setStructureRegions(blocksOn ? scanStructureRegions() : [])
+    kidsSnap = new Map()
+    lastMoved = new Map()
+    blockClip = null
+    blockSel = null
+    blockHover = null
+    blockObserver?.disconnect()
+    blockObserver = null
+    if (blocksOn && window.MutationObserver) {
+      blockObserver = new MutationObserver((records) => {
+        // Painting our own boxes mutates only our chrome; that must not repaint.
+        if (
+          records.some((r) => !(r.target instanceof Element && r.target.closest(".derive-edit-ui")))
+        )
+          schedulePaintBlocks()
+      })
+      blockObserver.observe(document.body || document.documentElement, {
         attributes: true,
         attributeFilter: ["class", "style", "hidden", "aria-hidden", "inert"],
         childList: true,
         subtree: true,
       })
     }
-    structureSelected = null
-    structureSelection = []
-    paintStructureUi()
+    paintBlocks()
   }
-  const settleStructuralEditing = (restore: boolean) => {
-    structureCopies.clear()
-    structureClip = null
-    structureObserver?.disconnect()
-    structureObserver = null
-    if (restore)
-      for (const region of structureRegions) {
-        const gapAttribute = structureAttribute(region.prefix, "gap")
-        if (region.origGap === null) region.el.removeAttribute(gapAttribute)
-        else region.el.setAttribute(gapAttribute, region.origGap)
-        restoreStyle(region.el, region.origStyle)
-        const byId = new Map(region.nodes.map((node) => [node.id, node]))
-        for (const id of region.origOrder) {
-          const node = byId.get(id)
-          if (!node) continue
-          const sizeAttribute = structureAttribute(node.prefix, "size")
-          if (node.origSize === null) node.el.removeAttribute(sizeAttribute)
-          else node.el.setAttribute(sizeAttribute, node.origSize)
-          const widthAttribute = structureAttribute(node.prefix, "width")
-          if (node.origWidth === null) node.el.removeAttribute(widthAttribute)
-          else node.el.setAttribute(widthAttribute, node.origWidth)
-          const heightAttribute = structureAttribute(node.prefix, "height")
-          if (node.origHeight === null) node.el.removeAttribute(heightAttribute)
-          else node.el.setAttribute(heightAttribute, node.origHeight)
-          const alignAttribute = structureAttribute(node.prefix, "align")
-          if (node.origAlign === null) node.el.removeAttribute(alignAttribute)
-          else node.el.setAttribute(alignAttribute, node.origAlign)
-          restoreStyle(node.el, node.origStyle)
-          region.el.append(node.el)
-        }
-      }
-    for (const region of structureRegions)
-      for (const node of region.nodes) {
-        if (node.origTabindex === null) node.el.removeAttribute("tabindex")
-        else node.el.setAttribute("tabindex", node.origTabindex)
-      }
-    structureSelected = null
-    structureSelection = []
-    for (const box of structureMultiBoxes.values()) box.remove()
-    structureMultiBoxes.clear()
-    structureResizeDrag = null
-    structureLayoutOpen = false
-    structurePrecisionOpen = false
-    structureIntentOpen = false
-    structureExpectedRemoved = new Set()
-    syncStructuralPlacement = () => {}
-    refreshStructureAvailability = () => {}
+  /** End the block session; `restore` puts every rearranged parent and size back. */
+  const settleBlocks = (restore: boolean) => {
+    cancelStructuralGesture()
+    if (restore) {
+      for (const [el, nodes] of kidsSnap) setKids(el, nodes)
+      for (const region of structureRegions)
+        for (const node of region.nodes)
+          applyStructuralSizing({
+            ...sizingOf(node),
+            size: node.origSize,
+            width: node.origWidth,
+            height: node.origHeight,
+            style: node.origStyle,
+          })
+    }
+    blockObserver?.disconnect()
+    blockObserver = null
+    blocksOn = false
+    kidsSnap = new Map()
+    lastMoved = new Map()
+    blockClip = null
+    blockSel = null
+    blockHover = null
     setStructureRegions([])
-    structureBox.style.display = "none"
-    structureBox.classList.remove("derive-structure-resizing")
-    hideStructureSnapGuide()
-    hideStructureDropMarker()
-    structureToast.style.display = "none"
-    if (structureToastTimer) clearTimeout(structureToastTimer)
-    structureToastTimer = 0
+    paintBlocks()
   }
 
   const isBlockEl = (n: Node | null): boolean =>
@@ -6502,8 +4752,9 @@ interface ElReg {
     return false
   }
   /** The mode was opened from the host's Edit verb on the live selection (as opposed
-   *  to the header button, where the first click chooses the block). */
-  type EditEntry = { fromSelection?: boolean }
+   *  to the header button, where the first click chooses the block), or reopened
+   *  after a save with the block that was selected (`select`, see `pathOf`). */
+  type EditEntry = { fromSelection?: boolean; select?: unknown }
   const setEditMode = (
     on: boolean,
     keep?: boolean,
@@ -6515,7 +4766,6 @@ interface ElReg {
     elementEditsOn = on && allowElementEdits
     if (on) {
       clearResizeUi()
-      enableResizeFocus()
       // The pre-edit snapshot every quote is built from. normalize() first so the
       // per-node offsets recorded at enable time can't be split later by typing.
       // "\n" between nodes only where the server projection has whitespace too: a
@@ -6538,7 +4788,8 @@ interface ElReg {
       editBase = { text: full, starts }
       srcSnap = stamped() ? snapshotSource(document.body) : null
       sceneEdits = []
-      enableStructuralEditing()
+      enableBlocks()
+      enableResizeFocus()
       setHover(null)
       // Off-screen slides stop catching clicks meant for the slide on screen.
       maskOffscreenSlides()
@@ -6547,13 +4798,15 @@ interface ElReg {
       // the user already selected instead of making them click the same words a
       // second time. Deferred a frame so the host's chrome has settled and the
       // block's rect is final before revealBlock measures it.
-      if (entry)
+      if (entry?.fromSelection)
         requestAnimationFrame(() => {
           if (!editOn) return
           const s = window.getSelection()
           const n = s && s.rangeCount > 0 ? s.getRangeAt(0).startContainer : null
           if (n && n.nodeType === 3) editActivate(n as Text, null)
         })
+      // Back after a save reloaded the page: the block that was selected is again.
+      if (entry?.select) requestAnimationFrame(() => selectPath(entry.select))
     } else {
       // `keep`: drop the editing chrome but leave the typed text standing. Used right
       // after a PUBLISH — the text on screen is what was just saved, and the version
@@ -6590,7 +4843,7 @@ interface ElReg {
     resizeTargets = []
     restoreResizeFocus()
     clearResizeUi()
-    settleStructuralEditing(false)
+    settleBlocks(false)
     sceneEdits = []
     if (lastDirty !== 0) {
       lastDirty = 0
@@ -6602,22 +4855,16 @@ interface ElReg {
     const activeSceneId = restoredScenes ? sceneEdits[0]?.activeBefore : undefined
     for (let i = sceneEdits.length - 1; i >= 0; i--) sceneEdits[i]?.undo()
     if (restoredScenes) restoreActiveVideoScene(activeSceneId)
-    // Reconnect removed nodes before restoring text blocks nested inside them.
-    for (const el of structureCopies) el.remove()
-    settleStructuralEditing(true)
+    // Reconnect removed blocks before restoring text nested inside them.
+    settleBlocks(true)
     for (const t of editTargets) {
       if (document.contains(t.el)) {
-        if (concatText(t.el) !== t.origConcat) {
+        if (concatText(t.el) !== t.origConcat || hasFmt(t.el)) {
           t.el.innerHTML = t.origHtml
           // innerHTML rebuilt the block's text nodes as NEW objects — re-register
           // them at their original offsets, or a Discarded block would refuse every
           // later click as "dynamic" (its nodes missing from the mode-entry map).
-          if (editBase) {
-            const fresh = textNodes(t.el)
-            if (fresh.length === t.origValues.length)
-              for (let i = 0; i < fresh.length; i++)
-                editBase.starts.set(fresh[i] as Text, t.origStarts[i] as number)
-          }
+          reregister(t, t.el)
         }
         disableTarget(t)
       }
@@ -6635,6 +4882,8 @@ interface ElReg {
     if (lastDirty !== 0) {
       lastDirty = 0
     }
+    // Discard keeps the mode open: the restored page is a fresh starting point.
+    if (editOn) enableBlocks()
     scheduleDirty()
   }
 
@@ -6884,6 +5133,11 @@ interface ElReg {
   }
   const editClick = (e: MouseEvent) => {
     if (!editBase) return
+    // The click that ends a drag lands wherever the pointer let go: it is not a click.
+    if (suppressClick) {
+      suppressClick = false
+      return
+    }
     // A keyboard-synthesized click (Enter/Space on a focused link) reports
     // clientX/clientY 0, which would resolve a caret at the frame's top-left and
     // silently arm an unrelated block. Editing is pointer-driven; ignore it.
@@ -6896,63 +5150,45 @@ interface ElReg {
       post({ type: "edit-blocked", reason: "readonly" })
       return
     }
-    // Once a text block is active, a double/triple click belongs to the browser's
-    // native word/paragraph selection. Re-focusing that same contenteditable from
-    // the click handler collapses Chromium's just-created selection to a caret,
-    // leaving every formatting command disabled. Let the selection stand and only
-    // publish its contextual state after the native event has settled.
-    if (e.detail > 1 && el0?.closest("[data-derive-editable]")) {
+    // Once a text block is active, a double click belongs to the browser's native
+    // word selection. Re-focusing that same contenteditable from the click handler
+    // collapses Chromium's just-created selection to a caret, leaving every
+    // formatting command disabled. Let the selection stand and only publish its
+    // contextual state after the native event has settled. A triple click takes the
+    // whole element: the browser's own stops at a <br> inside a heading.
+    const armed = el0?.closest("[data-derive-editable]")
+    if (e.detail > 1 && armed) {
+      if (e.detail === 3) window.getSelection()?.selectAllChildren(armed)
       selectResize(null)
       setResizeHover(null)
       window.setTimeout(scheduleDirty, 0)
       return
     }
-    // One click selects an explicitly authored structural node; a double click still
-    // reaches the text path below. This matches marked resizable boxes and keeps
-    // inner copy just as editable as the container is movable.
-    const structural = structuralNodeAt(el0)
-    if (e.detail <= 1 && structural) {
-      const extend = structuralModifierIntent(e).extendSelection
-      if (!(extend && structurePointerSelectionHandled)) selectStructure(structural, extend)
-      structurePointerExtend = false
-      structurePointerSelectionHandled = false
-      selectResize(null)
-      return
-    }
-    // A picture selects its direct-manipulation box. Replace is now an explicit verb
-    // on that box, leaving the corner grip free to mean resize on mouse and touch.
+    // A picture selects its direct-manipulation box. Replace is an explicit verb on
+    // that box, leaving the corner grip free to mean resize on mouse and touch.
     const img = imageAt(e)
     if (img) {
+      selectBlock(null)
       selectResize(img)
       return
     }
-    // A deliberately marked layout box is an explicit direct-manipulation target.
-    // Prefer it over its text on a single click: this is how an author discovers
-    // box resizing without needing to find blank padding. A double-click retains
-    // the normal path below, so text inside the box remains just as easy to edit.
-    const markedBox = el0?.closest("[data-derive-resizable]") ?? null
-    if (
-      e.detail <= 1 &&
-      isResizableElement(markedBox) &&
-      !markedBox.hasAttribute("data-derive-slide")
-    ) {
-      selectResize(markedBox)
-      return
-    }
+    // Words take a caret, always, in a block or not; what isn't words selects the
+    // block it belongs to.
+    const block = takesCaret(e.clientX, e.clientY, el0) ? null : blockOf(el0)
+    selectBlock(block)
+    if (block) return
+    const hit = editNodeVisibleAt(e.clientX, e.clientY)
     if (el0?.closest(BLOCKED_EDIT)) {
       post({ type: "edit-blocked", reason: "control" })
       return
     }
-    const hit = editNodeVisibleAt(e.clientX, e.clientY)
     if (!hit) {
-      const resize = resizableAt(e.target)
-      if (resize) selectResize(resize)
+      selectResize(resizableAt(e.target))
       return
     }
     selectResize(null)
     setResizeHover(null)
-    // A double/triple click carries its own selection; editActivate keeps it.
-    editActivate(hit.node, e.detail <= 1 ? hit.caret : null)
+    editActivate(hit.node, hit.caret)
   }
 
   // Text context in the host follows focus as well as selection. This makes Inspect
@@ -7000,15 +5236,18 @@ interface ElReg {
      hit-test, and skipped over controls/media that can't be edited anyway, so the
      invitation never appears where a click would be refused. */
   let editHoverTick = 0
+  // Where the pointer is now, read when the throttle fires (not where it entered).
+  let editHoverAt: { x: number; y: number; target: EventTarget | null } | null = null
   on(document, "mousemove", (e) => {
-    if (!editOn || editHoverTick) return
-    const x = e.clientX
-    const y = e.clientY
-    const target = e.target
+    if (!editOn) return
+    editHoverAt = { x: e.clientX, y: e.clientY, target: e.target }
+    if (editHoverTick) return
     editHoverTick = window.setTimeout(() => {
       editHoverTick = 0
+      const { x, y, target } = editHoverAt ?? { x: 0, y: 0, target: null }
       if (!editOn) return setEditHover(null)
       if (asEl(target)?.closest(".derive-edit-ui")) return
+      setBlockHover(blockOf(asEl(target)))
       const resize = resizableAt(target)
       setResizeHover(resize)
       if (asEl(target)?.closest(BLOCKED_EDIT)) return setEditHover(null)
@@ -7028,6 +5267,7 @@ interface ElReg {
   document.addEventListener("mouseleave", () => {
     setEditHover(null)
     setResizeHover(null)
+    setBlockHover(null)
   })
 
   document.addEventListener(
@@ -7387,8 +5627,22 @@ interface ElReg {
      the layout attributes by their canonical names (a legacy deck's runtime ones
      included: the server persists that structure with the save). */
   const collectOps = (snap: SrcSnapshot) => {
-    const { ops, ok } = collectSourceOps(document.body, snap)
-    let uncaptured = ok && !structureResizeDrag ? 0 : 1
+    // Only what the person changed is theirs to save: the page's own scripts keep
+    // running while you edit (a deck's "3 / 12" counter follows the slide on screen).
+    // Typed-in blocks with any source inside them, and every rearranged parent.
+    const touched = new Set<Element>()
+    const stampedAbove = (el: Element) => {
+      let e: Element | null = el
+      while (e && e !== document.body && srcOf(e) === null) e = e.parentElement
+      if (e) touched.add(e)
+    }
+    for (const t of editTargets) {
+      stampedAbove(t.el)
+      for (const d of Array.from(t.el.querySelectorAll(`[${SRC_ATTR}]`))) touched.add(d)
+    }
+    for (const parent of kidsSnap.keys()) stampedAbove(parent)
+    const { ops, ok } = collectSourceOps(document.body, snap, touched)
+    let uncaptured = ok && !blockResize ? 0 : 1
     const changed = new Map<
       Element,
       {
@@ -7425,16 +5679,14 @@ interface ElReg {
         if (property) entry.style[property] = el.style.getPropertyValue(property).trim() || null
       }
     }
-    for (const region of activeStructureRegions()) {
-      layout(region.el, region.prefix, region.origStyle, { gap: region.origGap })
-      for (const node of connectedStructureNodes(region))
-        layout(node.el, node.prefix, node.origStyle, {
-          size: node.origSize,
-          width: node.origWidth,
-          height: node.origHeight,
-          align: node.origAlign,
-        })
-    }
+    for (const region of structureRegions)
+      for (const node of region.nodes)
+        if (node.el.isConnected)
+          layout(node.el, node.prefix, node.origStyle, {
+            size: node.origSize,
+            width: node.origWidth,
+            height: node.origHeight,
+          })
     for (const [el, { orig, style, attrs }] of changed) {
       const src = srcOf(el)
       if (src === null) uncaptured++
@@ -7461,7 +5713,7 @@ interface ElReg {
       setEditMode(
         !!d.on,
         !!d.keep,
-        d.fromSelection ? { fromSelection: true } : undefined,
+        { fromSelection: !!d.fromSelection, select: d.select },
         !!d.elementEdits,
       )
     // The edit bar's controls, driven from the host. Same functions the keyboard
@@ -7509,9 +5761,28 @@ interface ElReg {
       // The nonce rides back untouched: a slow page can answer a TIMED-OUT collect
       // after the host started a new one, and stale edits must not resolve it.
       if (srcSnap)
-        post({ type: "edit-edits", ...collectOps(srcSnap), dirty: countDirty(), nonce: d.nonce })
+        post({
+          type: "edit-edits",
+          ...collectOps(srcSnap),
+          dirty: countDirty(),
+          nonce: d.nonce,
+          // Where to pick up after the save reloads the page.
+          resume: pathOf(blockSel),
+        })
       else post({ type: "edit-edits", ...collectEdits(), nonce: d.nonce })
     } else if (d.type === "edit-restore") restoreEdits()
+    // The host's changes list and its block panel.
+    else if (d.type === "edit-reveal") revealChange(String(d.id))
+    else if (d.type === "edit-revert") revertChange(String(d.id))
+    else if (d.type === "edit-block-crumb") selectCrumb(Number(d.index))
+    else if (d.type === "edit-block-width")
+      setBlockSize(
+        typeof d.width === "number" && Number.isFinite(d.width)
+          ? Math.round(
+              Math.min(MAX_STRUCTURAL_WIDTH_PCT, Math.max(MIN_STRUCTURAL_WIDTH_PCT, d.width)),
+            )
+          : null,
+      )
     else if (d.type === "scroll-by") window.scrollBy(0, d.dy || 0)
     else if (d.type === "review-mode") setReviewMode(!!d.on)
     else if (d.type === "focus-review") {
