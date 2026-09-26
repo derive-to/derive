@@ -1019,7 +1019,18 @@ async function editPhase(
   if (outcome.kind !== "no-request" && Array.isArray(outcome.edits))
     ctx.stats.edits = outcome.edits.length
   if (outcome.kind === "no-request") {
-    if (touched)
+    // Undo puts back equal elements, not the same ones: a page that reads as its stored
+    // source again has nothing to save.
+    const stored = await renderTexts(
+      fp.render,
+      ctx.doc === "markdown" ? await renderMarkdown(before, null) : before,
+    )
+    const reverted =
+      checkWysiwyg(
+        dom.map((d) => d.text),
+        stored,
+      ).length === 0
+    if (touched && !reverted)
       ctx.failures.push({
         phase: "edit",
         oracle: "save",
