@@ -1260,6 +1260,47 @@ test("Markdown saves a selection across consecutive bold subtitle lines", async 
   }).toPass({ timeout: 10_000 })
 })
 
+test("Markdown saves exactly: typed Markdown is source, code takes a caret, Shift+Enter breaks the line", async ({
+  owner,
+}) => {
+  const markdown = "# Notes\n\nThe *first* step &mdash; see `v1` today.\n\n- One\n- Two\n"
+  const shortId = await publishArtifact(owner, "notes.md", markdown, "text/markdown")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+
+  // Markdown is source: typed `**now**` is saved as written, and reads as bold.
+  await typeAtLineEnd(owner, "p", " **now**")
+  // Inside a code span the words take a caret like any other.
+  await doc(owner)
+    .locator("p code")
+    .evaluate((el) => {
+      const text = el.firstChild as Text
+      const range = document.createRange()
+      range.setStart(text, text.length)
+      range.collapse(true)
+      window.getSelection()?.removeAllRanges()
+      window.getSelection()?.addRange(range)
+    })
+  await owner.keyboard.type("2")
+  // Shift+Enter in a list item: a hard break, the next line under the item's indent.
+  await typeAtLineEnd(owner, "li >> nth=1", "")
+  await owner.keyboard.press("ArrowLeft")
+  await owner.keyboard.press("Shift+Enter")
+  await saveEdits(owner, true)
+  // Every byte the edits didn't touch is as it was: the entity, the markers, the blank lines.
+  expect(await contentOf(owner, shortId)).toBe(
+    "# Notes\n\nThe *first* step &mdash; see `v12` today. **now**\n\n- One\n- Tw\\\n  o\n",
+  )
+  await expect(doc(owner).locator("p strong")).toHaveText("now")
+
+  // The session picked back up on the saved page: the next edit saves the same way.
+  await typeAtLineEnd(owner, "h1", " B")
+  await saveEdits(owner, true)
+  expect(await contentOf(owner, shortId)).toBe(
+    "# Notes B\n\nThe *first* step &mdash; see `v12` today. **now**\n\n- One\n- Tw\\\n  o\n",
+  )
+})
+
 test("replacing selected linked and annotated text saves the user's replacement", async ({
   owner,
 }) => {
