@@ -19,9 +19,10 @@ describe("GitHub App manifest", () => {
     expect(m.public).toBe(true)
   })
 
-  it("requests only metadata, pull requests, and the bounded Actions capability", () => {
+  it("requests repository contents for explicit workflow grants alongside existing tools", () => {
     expect(m.default_permissions).toEqual({
       actions: "write",
+      contents: "write",
       metadata: "read",
       pull_requests: "write",
     })

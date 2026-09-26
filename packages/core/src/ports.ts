@@ -4175,6 +4175,9 @@ export interface ContextRecord {
   connection_ids: string | null
   /** JSON map of environment variable names to connection IDs; values stay in the secret store. */
   environment_bindings: string | null
+  /** Verified GitHub repository grants; changed only through the workflow access API. */
+  repository_bindings: string | null
+  repository_revision: number
   /** Where an imported Context came from (`arxiv`) and the bare reference it was
    *  imported from; null for a Context somebody defined. Imported Contexts are
    *  read-only documents: no runner, no sessions. */
@@ -5098,6 +5101,13 @@ export const isBundleContentType = (contentType: string | null | undefined): boo
 
 /** Control-plane operations only. Runner APIs must not expose these mutations. */
 export interface RuntimeStore {
+  saveWorkflowRepositories(input: {
+    contextId: string
+    orgId: string
+    ownerId: string
+    repositories: import("./workflow-repositories").WorkflowRepository[]
+    revision: number
+  }): Promise<ContextRecord | null>
   getWorkflowFiles(
     contextId: string,
     orgId: string,

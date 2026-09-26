@@ -1,13 +1,16 @@
 import type {
+  ContextRecord,
   RuntimeStore,
   WorkflowDraftRecord,
   WorkflowFilesRecord,
   WorkflowTestRecord,
 } from "@derive/core"
+import { workflowRepositories } from "@derive/core"
 import { type SQL, sql } from "drizzle-orm"
 
 type Store = Pick<
   RuntimeStore,
+  | "saveWorkflowRepositories"
   | "getWorkflowFiles"
   | "saveWorkflowFiles"
   | "projectWorkflowDraft"
@@ -24,6 +27,16 @@ export function workflowDraftRepos(execute: (statement: SQL) => Promise<unknown[
   const first = async <T>(statement: SQL) =>
     ((await execute(statement))[0] as T | undefined) ?? null
   return {
+    saveWorkflowRepositories: (i) => {
+      if (!Number.isSafeInteger(i.revision) || i.revision < 0)
+        throw new Error("Invalid repository revision")
+      const grants = JSON.stringify(workflowRepositories(i.repositories))
+      // Workspace GitHub installations can only be delegated by workspace managers.
+      return first<ContextRecord>(sql`UPDATE context SET repository_bindings = ${grants}, repository_revision = repository_revision + 1
+        WHERE id = ${i.contextId} AND org_id = ${i.orgId} AND import_source IS NULL AND repository_revision = ${i.revision}
+        AND EXISTS (SELECT 1 FROM membership m WHERE m.org_id = context.org_id AND m.user_id = ${i.ownerId} AND m.role = 'owner')
+        RETURNING *`)
+    },
     getWorkflowFiles: (id, org) =>
       first<WorkflowFilesRecord>(
         sql`SELECT * FROM workflow_files WHERE context_id = ${id} AND org_id = ${org}`,

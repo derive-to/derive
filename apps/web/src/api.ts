@@ -19,6 +19,7 @@ import type {
   WorkflowDraftRecord,
   WorkflowFilesRecord,
   WorkflowReadiness,
+  WorkflowRepository,
   WorkspaceAccess,
 } from "@derive/core"
 import type { components, paths } from "./api-types"
@@ -29,7 +30,7 @@ import { guestQuery } from "./lib/guest-id"
  *  canonical in @derive/core (roles.ts); imported here as type-only (clients never
  *  import core at runtime — see .dependency-cruiser.mjs) and re-exported so this
  *  stays the one place other web modules name them from. */
-export type { LinkRole, Listed, Role, WorkspaceAccess }
+export type { LinkRole, Listed, Role, WorkflowRepository, WorkspaceAccess }
 
 /** One dynamic table or figure slot as the API returns it (routes/dynamic-data.ts). */
 export interface DynamicSlot {
@@ -1519,11 +1520,31 @@ export const api = {
   workflowConfiguration: (
     id: string,
   ): Promise<{
+    repositories: WorkflowRepository[]
+    repository_revision: number
+    can_manage_repositories: boolean
     draft: WorkflowDraftRecord | null
     files: (WorkflowFilesRecord & { title?: string; short_id?: string }) | null
     test: { id: string; status: string } | null
     readiness: WorkflowReadiness
   }> => f(`/v1/workflow-runtimes/${id}`, opts()).then(j),
+  workflowRepositories: (
+    id: string,
+    connectionId: string,
+    page: number,
+  ): Promise<{ repositories: { id: number; repository: string }[]; next_page: number | null }> =>
+    f(
+      `/v1/workflow-runtimes/${id}/repositories?connection_id=${encodeURIComponent(connectionId)}&page=${page}`,
+      opts(),
+    ).then(j),
+  saveWorkflowRepositories: (
+    id: string,
+    body: {
+      repositories: Pick<WorkflowRepository, "connection_id" | "repository" | "access">[]
+      revision: number
+    },
+  ): Promise<{ repositories: WorkflowRepository[]; repository_revision: number }> =>
+    f(`/v1/workflow-runtimes/${id}/repositories`, { ...opts(body), method: "PUT" }).then(j),
   saveWorkflowFiles: (
     id: string,
     body: { short_id: string | null; version: number | null; revision: number | null },

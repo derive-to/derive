@@ -3,6 +3,7 @@ import {
   type MetaStore,
   type RunRecord,
   type RuntimeRunInput,
+  readWorkflowRepositories,
   roleAllows,
 } from "@derive/core"
 import type { AppDeps } from "../context"
@@ -67,6 +68,32 @@ export async function runtimeRunContext(
     agent?.org_id !== run.org_id
   )
     return null
+  if (context.repository_bindings && !input?.repositories) return null
+  if (input?.repositories) {
+    if (
+      input.repositories.revision !== context.repository_revision ||
+      JSON.stringify(input.repositories.grants) !==
+        JSON.stringify(readWorkflowRepositories(context.repository_bindings))
+    )
+      return null
+    const connections = await spendableConnections(
+      meta,
+      run.org_id,
+      input.repositories.grants.map((r) => r.connection_id),
+    )
+    if (
+      input.repositories.grants.some(
+        (r) =>
+          !connections.some(
+            (cn) =>
+              cn.id === r.connection_id &&
+              cn.kind === "github_app" &&
+              cn.broker_ref === r.installation_id,
+          ),
+      )
+    )
+      return null
+  }
   if (input?.workflow_revision) {
     const current = (await workflowConfiguration(meta, context)).input
     if (!current) return null

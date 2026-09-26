@@ -13,7 +13,7 @@ import { connectionBindError } from "../lib/broker"
 import { ContextConflictError, createContextCore } from "../lib/create-context"
 import { mintToken, sha256 } from "../lib/crypto"
 import { parseManifestSkillPins } from "../lib/manifest-pins"
-import { badChoice, choiceDescription } from "../lib/open-choice"
+import { badChoice } from "../lib/open-choice"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import { scopeGapMessage } from "../lib/scope-gap"
 import { workflowReadiness } from "../lib/workflow-readiness"
@@ -219,11 +219,11 @@ export function registerAutomateTool(tc: ToolContext): void {
         // client for exactly this reason), and a cached client validates an enum locally —
         // so a newly-shipped action never even reaches the server. See lib/open-choice.ts.
         // Checked server-side below.
-        action: z.string().describe(choiceDescription(AUTOMATE_ACTIONS, "Action.")),
+        action: z.string().describe(AUTOMATE_ACTIONS.join("|")),
         workflow: z
           .record(z.string(), z.unknown())
           .optional()
-          .describe("Workflow fields: derive://skills/loop. Never include secrets."),
+          .describe("Fields: derive://skills/loop. No secrets."),
         workspace: tc.wsArg,
         // EVERY PARAM BELOW SHIPPED WITH NO DESCRIPTION. Five actions share one schema, so
         // which params an action even reads was unstated — an agent asked to schedule work
@@ -247,7 +247,7 @@ export function registerAutomateTool(tc: ToolContext): void {
           .min(1)
           .max(4000)
           .optional()
-          .describe("create: self-contained instruction; runs have no chat history."),
+          .describe("create: instructions; runs have no chat history."),
         provider: z
           .enum(EXECUTION_PROVIDERS)
           .optional()
@@ -269,7 +269,7 @@ export function registerAutomateTool(tc: ToolContext): void {
           .string()
           .max(64)
           .optional()
-          .describe("Context ID: optional for create; required for workflow_* updates."),
+          .describe("Context ID; required for workflow_* updates."),
         connection_ids: z
           .array(z.string().max(64))
           .max(20)

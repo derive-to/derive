@@ -91,7 +91,7 @@ export function CloudWorkflowDetail({ id }: { id: string }) {
             contextId={id}
             state={state}
             view="configuration"
-            access={state.can_edit && <RuntimeAccessCard context={context.data} />}
+            access={state.can_edit && <RuntimeAccessCard context={context.data} workflow />}
           />
           <p className="text-sm text-muted-foreground">
             {context.data.ask_policy === "workspace"

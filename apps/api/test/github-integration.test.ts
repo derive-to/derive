@@ -203,7 +203,7 @@ describe("standard GitHub integration", () => {
                   : {}),
                 metadata: "read",
                 ...(installationPullPermission
-                  ? { pull_requests: installationPullPermission }
+                  ? { pull_requests: installationPullPermission, contents: "write" }
                   : {}),
               },
             }),
@@ -246,6 +246,7 @@ describe("standard GitHub integration", () => {
                 ...(actionsPermission ? { actions: actionsPermission } : {}),
                 metadata: "read",
                 pull_requests: pullPermission,
+                contents: "write",
               },
               events: workflowRunEvent ? ["workflow_run"] : [],
             }),
@@ -424,7 +425,12 @@ describe("standard GitHub integration", () => {
       {
         id: 56001,
         account: { login: "derive-operator", type: "Organization" },
-        permissions: { actions: "write", metadata: "read", pull_requests: "write" },
+        permissions: {
+          actions: "write",
+          contents: "write",
+          metadata: "read",
+          pull_requests: "write",
+        },
       },
     ]
     vi.stubGlobal(
@@ -472,7 +478,12 @@ describe("standard GitHub integration", () => {
             JSON.stringify({
               id: 55002,
               account: { login: "derive-two", type: "Organization" },
-              permissions: { actions: "write", metadata: "read", pull_requests: "write" },
+              permissions: {
+                actions: "write",
+                contents: "write",
+                metadata: "read",
+                pull_requests: "write",
+              },
             }),
             { status: 200 },
           )

@@ -1008,6 +1008,8 @@ CREATE TABLE IF NOT EXISTS context (
   max_concurrency INTEGER NOT NULL DEFAULT 1,
   connection_ids TEXT,
   environment_bindings TEXT,
+  repository_bindings TEXT,
+  repository_revision INTEGER NOT NULL DEFAULT 0,
   config TEXT,
   import_source TEXT,
   import_ref TEXT,

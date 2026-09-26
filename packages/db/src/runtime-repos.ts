@@ -8,7 +8,11 @@ import type {
   RuntimeRunInput,
   RuntimeStore,
 } from "@derive/core"
-import { CONTEXT_ENVIRONMENT_LIMIT, contextEnvironmentNameError } from "@derive/core"
+import {
+  CONTEXT_ENVIRONMENT_LIMIT,
+  contextEnvironmentNameError,
+  workflowRepositories,
+} from "@derive/core"
 import { type SQL, sql } from "drizzle-orm"
 import { runtimeModelBindingRepos, runtimeModelGrant } from "./runtime-model-binding-repos"
 import { runtimeModelRepos } from "./runtime-model-repos"
@@ -84,6 +88,14 @@ const checkedInput = (value: string | null | undefined): RuntimeRunInput => {
       ))
   )
     throw new Error("Invalid runtime credential revisions")
+  const repositories = input.repositories
+    ? {
+        revision: input.repositories.revision,
+        grants: workflowRepositories(input.repositories.grants),
+      }
+    : undefined
+  if (repositories && (!Number.isSafeInteger(repositories.revision) || repositories.revision < 0))
+    throw new Error("Invalid repository revision")
   // Copy the accepted shape; accidental caller fields must not turn this into secret storage.
   return {
     version: 1,
@@ -110,6 +122,7 @@ const checkedInput = (value: string | null | undefined): RuntimeRunInput => {
           },
         }
       : {}),
+    ...(repositories ? { repositories } : {}),
     instruction: input.instruction,
     context_id: input.context_id,
     manifest: {

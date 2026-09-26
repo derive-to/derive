@@ -195,6 +195,22 @@ describe("installationToken", () => {
       permissions: { actions: "write", metadata: "read" },
       repositories: ["derive"],
     })
+    const contents = await installationToken("12345", privateKey, "9001", "contents-read", 123)
+    const write = await installationToken("12345", privateKey, "9001", "contents-write", 123)
+    expect(await installationToken("12345", privateKey, "9001", "contents-read", 123)).toBe(
+      contents,
+    )
+    expect(write).not.toBe(contents)
+    expect(JSON.parse(String(calls[4]?.body))).toEqual({
+      permissions: { contents: "read", metadata: "read" },
+      repository_ids: [123],
+    })
+    expect(JSON.parse(String(calls[5]?.body))).toEqual({
+      permissions: { contents: "write", metadata: "read" },
+      repository_ids: [123],
+    })
+    await installationToken("12345", privateKey, "9001", "contents-read", 456)
+    expect(JSON.parse(String(calls[6]?.body)).repository_ids).toEqual([456])
     expect(new Headers(calls[0]?.headers).get("content-type")).toBe("application/json")
   })
 

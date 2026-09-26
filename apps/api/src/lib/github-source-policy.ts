@@ -1,3 +1,4 @@
+import type { WorkflowRepository } from "@derive/core"
 import type { GitHubTokenProfile } from "./github-app"
 
 // Bound every attacker-controlled path component before token minting. GitHub names are much
@@ -63,7 +64,7 @@ export interface GithubSourcePolicy {
   /** The permission-narrowed installation token this operation needs. */
   tokenProfile: GitHubTokenProfile
   /** Actions tokens are narrowed to this one repository at mint time. */
-  repository?: string
+  repository?: string | number
   /** Workflow dispatch returns the run id under the current GitHub API version. */
   apiVersion?: string
 }
@@ -224,4 +225,45 @@ export function githubSourcePolicy(tool: string, url: URL, body: unknown): Githu
     throw new Error("a GitHub pull request comment body must be 1–65,536 characters")
   const [, owner, repo, number] = match
   return prComment({ verb, prPreflightPath: `/repos/${owner}/${repo}/pulls/${number}` })
+}
+
+/** Workflow repository grants override the installation-wide source surface. */
+export function workflowGithubPolicy(
+  tool: string,
+  url: URL,
+  body: unknown,
+  grants: WorkflowRepository[],
+): GithubSourcePolicy {
+  const match = new RegExp(`^/repos/(${REPO_PART})/(${REPO_PART})(?:/|$)`).exec(url.pathname)
+  const grant =
+    match &&
+    grants.find((r) => r.repository.toLowerCase() === `${match[1]}/${match[2]}`.toLowerCase())
+  if (!grant) throw new Error("This repository is not granted to the workflow")
+  if (tool === "github.post" && grant.access !== "write")
+    throw new Error("This repository has read-only access")
+  if (tool === "github.post" && listPulls.test(url.pathname) && !url.search) {
+    if (
+      !plainObject(body) ||
+      Object.keys(body).some((k) => !["title", "body", "head", "base", "draft"].includes(k)) ||
+      typeof body.title !== "string" ||
+      !body.title.trim() ||
+      body.title.length > 256 ||
+      (body.body !== undefined && (typeof body.body !== "string" || body.body.length > 65536)) ||
+      !workflowRefIsValid(body.head) ||
+      !workflowRefIsValid(body.base) ||
+      (body.draft !== undefined && typeof body.draft !== "boolean")
+    )
+      throw new Error("A pull request needs title, head and base, with optional body and draft")
+    return { verb: "POST", tokenProfile: "pr-comment", repository: grant.repository_id }
+  }
+  if (
+    tool === "github.get" &&
+    url.pathname.toLowerCase() === `/repos/${grant.repository.toLowerCase()}` &&
+    !url.search
+  )
+    return { verb: "GET", tokenProfile: "standard-read", repository: grant.repository_id }
+  const policy = githubSourcePolicy(tool, url, body)
+  if (policy.tokenProfile.startsWith("workflow-"))
+    throw new Error("Repository access does not grant GitHub Actions access")
+  return { ...policy, repository: grant.repository_id }
 }

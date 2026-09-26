@@ -1662,6 +1662,8 @@ export const context = sqliteTable(
     // context can reach. Null/absent = no tools.
     connection_ids: text("connection_ids"),
     environment_bindings: text("environment_bindings"),
+    repository_bindings: text("repository_bindings"),
+    repository_revision: integer("repository_revision").notNull().default(0),
     // Opaque JSON sidecar, parsed only at the route layer (like session_message.meta)
     // — never by the store. Nullable (clean ADD COLUMN; unset until the owner sets one).
     config: text("config"),

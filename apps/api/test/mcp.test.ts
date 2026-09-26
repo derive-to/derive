@@ -412,6 +412,16 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect((await tool("automate", { ...create, workspace: "foreign-workspace" })).error).toContain(
       "No workspace",
     )
+    const config = await read("configuration")
+    expect(
+      (
+        await control("workflow_repositories", {
+          repositories: [],
+          revision: config.result.repository_revision,
+        })
+      ).status,
+    ).toBe(200)
+    expect((await read("configuration")).result.repositories).toEqual([])
     expect((await control("workflow_disable")).status).toBe(200)
     expect((await meta.getContextRuntimeForContext(id, org))?.disabled_at).not.toBeNull()
   })

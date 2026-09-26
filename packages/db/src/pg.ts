@@ -741,6 +741,7 @@ export class PgMetaStore implements MetaStore {
   projectWorkflowDraft = this.runtimes.projectWorkflowDraft
   getWorkflowDraft = this.runtimes.getWorkflowDraft
   saveWorkflowDraft = this.runtimes.saveWorkflowDraft
+  saveWorkflowRepositories = this.runtimes.saveWorkflowRepositories
   getWorkflowFiles = this.runtimes.getWorkflowFiles
   saveWorkflowFiles = this.runtimes.saveWorkflowFiles
   createWorkflowTest = this.runtimes.createWorkflowTest

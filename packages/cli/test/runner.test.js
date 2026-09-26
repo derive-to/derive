@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process"
+import { execFileSync, execSync, spawn } from "node:child_process"
 import { createHash } from "node:crypto"
 import {
   chmodSync,
@@ -35,6 +35,7 @@ import {
   syncRepos,
 } from "../src/runner.js"
 import { prepareRuntimeFiles } from "../src/runtime-files.js"
+import { configureRuntimeGit } from "../src/runtime-git.js"
 import { materializeSkills, skillDigest, skillSlug, writeSkill } from "../src/skills.js"
 
 describe("parseAnswer", () => {
@@ -996,6 +997,86 @@ console.log(JSON.stringify({type:"result",result:'<answer>{"body_md":"done"}</an
 })
 
 describe("persistent runtime runner", () => {
+  it("uses Git’s credential protocol without persisting tokens or falling through to saved helpers", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "derive-git-"))
+    const requests = []
+    let deny = false
+    const server = http.createServer(async (req, res) => {
+      let body = ""
+      for await (const chunk of req) body += chunk
+      requests.push({ url: req.url, auth: req.headers.authorization, body: JSON.parse(body) })
+      res.writeHead(deny ? 403 : 200, { "Content-Type": "application/json" })
+      res.end(
+        JSON.stringify(
+          deny
+            ? { error: "revoked" }
+            : { username: "x-access-token", password: "fixture-temporary-git" },
+        ),
+      )
+    })
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+    const env = {
+      ...process.env,
+      DERIVE_TOKEN: "fixture-attempt",
+      DERIVE_ATTEMPT_URL: `http://127.0.0.1:${server.address().port}/v1/runtime-attempts/test`,
+    }
+    const git = (operation, input) =>
+      new Promise((resolve) => {
+        const child = spawn("git", ["credential", operation], {
+          cwd,
+          env,
+          stdio: ["pipe", "pipe", "pipe"],
+        })
+        let stdout = "",
+          stderr = ""
+        child.stdout.on("data", (s) => {
+          stdout += s
+        })
+        child.stderr.on("data", (s) => {
+          stderr += s
+        })
+        child.on("close", (code) => resolve({ code, stdout, stderr }))
+        child.stdin.end(input)
+      })
+    try {
+      execFileSync("git", ["init", "-q"], { cwd })
+      execFileSync("git", ["config", "credential.helper", "!touch leaked-helper"], { cwd })
+      configureRuntimeGit(env)
+      const request = "protocol=https\nhost=github.com\npath=acme/private.git\n\n"
+      const result = await git("fill", request)
+      expect(result.code).toBe(0)
+      expect(result.stdout).toContain("password=fixture-temporary-git")
+      expect(requests).toEqual([
+        {
+          url: "/v1/runtime-attempts/test/git-credential",
+          auth: "Bearer fixture-attempt",
+          body: { repository: "acme/private" },
+        },
+      ])
+      await git("approve", result.stdout)
+      await git("reject", result.stdout)
+      expect(requests).toHaveLength(1)
+      for (const input of [
+        request.replace("github.com", "github.com.evil.test"),
+        request.replace("https", "http"),
+        request.replace("acme/private.git", "../escape"),
+        "protocol=https\nhost=github.com\n\n",
+      ]) {
+        expect((await git("fill", input)).code).not.toBe(0)
+      }
+      expect(requests).toHaveLength(1)
+      expect(existsSync(join(cwd, "leaked-helper"))).toBe(false)
+      expect(readFileSync(join(cwd, ".git/config"), "utf8")).not.toContain("fixture-temporary-git")
+      deny = true
+      const denied = await git("fill", request)
+      expect(denied.code).not.toBe(0)
+      expect(denied.stdout).not.toContain("password")
+      expect(denied.stderr).not.toContain("fixture-attempt")
+    } finally {
+      await new Promise((resolve) => server.close(resolve))
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
   it("delivers verified versions once, keeps agent work, and fails closed on corrupt or unsafe inputs", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "derive-files-"))
     const sha = (bytes) => createHash("sha256").update(bytes).digest("hex")

@@ -1454,6 +1454,8 @@ export const context = pgTable(
     max_concurrency: integer("max_concurrency").notNull().default(1),
     connection_ids: text("connection_ids"),
     environment_bindings: text("environment_bindings"),
+    repository_bindings: text("repository_bindings"),
+    repository_revision: integer("repository_revision").notNull().default(0),
     config: text("config"),
     // Import provenance (`arxiv` + the bare paper id); see schema.ts for the contract.
     import_source: text("import_source"),

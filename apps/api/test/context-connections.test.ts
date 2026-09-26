@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process"
+import { generateKeyPairSync } from "node:crypto"
 import {
   chmodSync,
   existsSync,
@@ -1518,7 +1519,7 @@ describe("runtime provisioning and shared model accounts", () => {
         const body = JSON.parse(String(init.body))
         expect(body).toMatchObject({ size: "small", auto_stop_after_seconds: 1200 })
         expect(body.name).toMatch(/^[a-z0-9][a-z0-9-]{0,62}$/)
-        expect(body.setup_script).toContain("--save-exact @derive-to/cli@0.7.1")
+        expect(body.setup_script).toContain("--save-exact @derive-to/cli@0.7.2")
         expect(body.agent_connections).toBe(subject ? true : undefined)
         saved = {
           body: String(init.body),
@@ -1884,6 +1885,167 @@ describe("runtime provisioning and shared model accounts", () => {
     }
     return { ...f, model, runtime, sandbox: saved.sandbox, select, fire }
   }
+
+  it("delegates verified repositories through management and confines an active run to its accepted access", async () => {
+    const f = await managedJob()
+    const { privateKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      privateKeyEncoding: { type: "pkcs1", format: "pem" },
+      publicKeyEncoding: { type: "spki", format: "pem" },
+    })
+    await meta.setGithubApp({
+      id: "default",
+      app_id: "98761",
+      slug: "fixture",
+      client_id: "fixture",
+      client_secret: encryptSecret("fixture", SECRET),
+      private_key: encryptSecret(privateKey, SECRET),
+      created_at: now.toISOString(),
+    })
+    const github = await meta.createConnection({
+      id: `github-${count}`,
+      org_id: "default",
+      user_id: owner.id,
+      scope: "workspace",
+      kind: "github_app",
+      broker: "none",
+      toolkit: "github",
+      broker_ref: "876151",
+      status: "active",
+      base_url: "https://api.github.test",
+    })
+    const originalFetch = globalThis.fetch
+    const mints: Record<string, unknown>[] = []
+    let posts = 0
+    globalThis.fetch = async (url, init) => {
+      const path = new URL(String(url)).pathname
+      if (path.endsWith("/access_tokens")) {
+        mints.push(JSON.parse(String(init?.body)))
+        return Response.json({
+          token: "fixture-scoped-installation",
+          expires_at: new Date(Date.now() + 3600000).toISOString(),
+        })
+      }
+      if (path === "/repos/acme/private")
+        return Response.json({ id: 76142, full_name: "acme/private" })
+      if (path === "/installation/repositories")
+        return Response.json({
+          total_count: 1,
+          repositories: [{ id: 76142, full_name: "acme/private" }],
+        })
+      if (path === "/repos/acme/private/pulls" && init?.method === "POST") {
+        posts++
+        return Response.json({ number: 7 })
+      }
+      throw new Error(`Unexpected GitHub request: ${path}`)
+    }
+    try {
+      const path = `/v1/workflow-runtimes/${f.context.id}`
+      const grants = [{ connection_id: github.id, repository: "acme/private", access: "read" }]
+      const save = (repositories: unknown[], revision: number, email = owner.email) =>
+        app.request(`${path}/repositories`, {
+          ...jsonAs(as(email), { repositories, revision }),
+          method: "PUT",
+        })
+      expect((await save(grants, 0, member.email)).status).toBe(403)
+      expect((await save([{ ...grants[0], connection_id: "foreign" }], 0)).status).toBe(400)
+      const saved = await save(grants, 0)
+      expect(saved.status).toBe(200)
+      expect(await saved.json()).toMatchObject({
+        repository_revision: 1,
+        repositories: [{ repository_id: 76142, installation_id: "876151", access: "read" }],
+      })
+      expect(mints).toContainEqual({
+        permissions: { metadata: "read", contents: "read" },
+        repository_ids: [76142],
+      })
+      expect((await save(grants, 0)).status).toBe(409)
+      const discovery = await app.request(`${path}/repositories?connection_id=${github.id}`, {
+        headers: as(owner.email),
+      })
+      expect(await discovery.json()).toMatchObject({
+        repositories: [{ repository: "acme/private" }],
+        next_page: null,
+      })
+      await f.fire()
+      for (let i = 0; i < 5; i++) await pass()
+      const task = launched.get(f.sandbox.id)
+      if (!task) throw new Error("Runner not launched")
+      const request = (action: string, body: unknown = {}, capable = true) =>
+        app.request(
+          `/v1/runtime-attempts/${task.attempt}/${action}`,
+          jsonAs(
+            {
+              Authorization: `Bearer ${task.token}`,
+              ...(capable ? { "X-Derive-Repositories": "1" } : {}),
+            },
+            body,
+          ),
+        )
+      expect((await request("git-credential", { repository: "acme/private" })).status).toBe(409)
+      expect((await request("claim", {}, false)).status).toBe(409)
+      expect((await request("claim")).status).toBe(200)
+      const credential = await request("git-credential", { repository: "acme/private" })
+      expect(credential.headers.get("cache-control")).toBe("no-store")
+      expect(await credential.json()).toEqual({
+        username: "x-access-token",
+        password: "fixture-scoped-installation",
+      })
+      expect((await request("git-credential", { repository: "acme/other" })).status).toBe(403)
+      const create = {
+        tool: "github.post",
+        ref: github.broker_ref,
+        args: {
+          path: "/repos/acme/private/pulls",
+          body: { title: "Integrity fixes", head: "fix", base: "main" },
+        },
+      }
+      expect((await request("tool", create)).status).toBe(502)
+      expect(posts).toBe(0)
+      expect(
+        (
+          await request("tool", {
+            tool: "github.get",
+            args: { path: "/installation/repositories" },
+          })
+        ).status,
+      ).toBe(502)
+      expect((await save([{ ...grants[0], access: "write" }], 1)).status).toBe(200)
+      expect((await request("git-credential", { repository: "acme/private" })).status).toBe(403)
+      for (let i = 0; i < 5; i++) await pass()
+      await f.fire()
+      for (let i = 0; i < 5; i++) await pass()
+      const next = launched.get(f.sandbox.id)
+      if (!next || next.attempt === task.attempt) throw new Error("New runner not launched")
+      const nextRequest = (action: string, body: unknown = {}) =>
+        app.request(
+          `/v1/runtime-attempts/${next.attempt}/${action}`,
+          jsonAs({ Authorization: `Bearer ${next.token}`, "X-Derive-Repositories": "1" }, body),
+        )
+      expect((await nextRequest("claim")).status).toBe(200)
+      expect((await nextRequest("tool", create)).status).toBe(200)
+      expect(posts).toBe(1)
+      expect(mints).toContainEqual({
+        permissions: { metadata: "read", pull_requests: "write" },
+        repository_ids: [76142],
+      })
+      expect(
+        (
+          await nextRequest("tool", {
+            ...create,
+            args: { ...create.args, path: "/repos/acme/other/pulls" },
+          })
+        ).status,
+      ).toBe(502)
+      expect(posts).toBe(1)
+      // Re-authorizing the same repository cannot restore an old attempt's grant.
+      expect((await save(grants, 2)).status).toBe(200)
+      expect((await request("git-credential", { repository: "acme/private" })).status).toBe(409)
+      expect((await nextRequest("git-credential", { repository: "acme/private" })).status).toBe(403)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
 
   it("pins private file inputs through upload, attachment, claim and live delivery without overlaying a new selection", async () => {
     const f = await managedJob()

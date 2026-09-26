@@ -173,6 +173,7 @@ write returns `{status, result}` with the HTTP result, including actionable fail
 | `workflow_account` | `connection_id` (or null to unassign), binding `revision` (null before first assignment) |
 | `workflow_environment` | `bindings`: complete map of environment variable names to saved credential IDs |
 | `workflow_files` | `short_id`, exact numeric `version`, attachment `revision` (null before first selection); set both `short_id` and `version` to null to remove |
+| `workflow_repositories` | `repositories`: complete list of `{connection_id, repository: "owner/name", access: "read" or "write"}`; numeric `revision` from `configuration.repository_revision` (starts at 0); empty list removes access; workspace owner required |
 | `workflow_connections` | `connection_ids`: complete list of source connections to allow |
 | `workflow_test` | `revision`: reviewed readiness hash; stable UUID `request_id` |
 | `workflow_schedule` | `instruction`, `provider`, `cron` (or null for manual), IANA `timezone`, `enabled`, numeric schedule `revision` |
@@ -194,11 +195,17 @@ write returns `{status, result}` with the HTTP result, including actionable fail
    upload’s `short_id` and exact version with `workflow_files`. Uploading alone does not
    attach files. People allowed to run this workflow can use the selected files; the source
    artifact’s sharing stays unchanged. Share standing on the source is required.
-   Public Git repositories can also be cloned by the running agent;
-   private Git access needs a credential that actually permits cloning. Derive's standard
-   GitHub source currently supports PR reads/comments and selected Actions operations, not
-   cloning, pushing branches or opening PRs. Do not promise repository access from that
-   connection alone.
+   For Git repositories, use `workflow_repositories` with a workspace GitHub App connection
+   from `connections` and an exact `owner/name`. Read access lets the agent clone/fetch over
+   HTTPS; write access also allows pushes and creating PRs through `github.post`. The server
+   verifies installation access and permissions before saving. Missing permission approval is
+   completed in Settings → Integrations → GitHub. The agent clones only when needed and owns
+   its saved working directory; there is no separate checkout or dependency setup phase.
+   Once repository access is configured, cloud-run GitHub tools are confined to that selection;
+   it does not grant Actions access. Repository grant changes invalidate old accepted runs.
+   Tokens are issued for one repository, never placed in a remote URL or saved Git config.
+   Removing access stops further issuance; an already issued token can live up to one hour.
+   The ordinary `workflow_connections` GitHub source alone does not grant shell Git access.
 5. Read `configuration`, resolve its blockers, and submit `workflow_test` with the readiness
    revision. Reuse the same request UUID after a lost response. This queues one durable run
    and automatically prepares the environment if needed; closing the client does not lose it.

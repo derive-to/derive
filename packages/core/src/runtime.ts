@@ -52,6 +52,10 @@ export interface RuntimeRunInput {
   context_id: string
   manifest: { artifact_id: string; version: number; blob_key: string }
   files?: WorkflowFileInput
+  repositories?: {
+    revision: number
+    grants: import("./workflow-repositories").WorkflowRepository[]
+  }
   provider: ExecutionProvider
   model: string | null
   connection_ids: string[]
