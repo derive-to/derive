@@ -3778,14 +3778,23 @@ interface ElReg {
     media: "Image",
     image: "Image",
   }
+  /** A block that opens with a heading (an article's section) is called by it. */
+  const headingName = (el: HTMLElement): string => {
+    const first = Array.from(el.children).find((c) => !c.classList.contains("derive-edit-ui"))
+    return first?.matches("h1,h2,h3,h4,h5,h6,[role=heading]") ? clipText(plainOf(first), 40) : ""
+  }
   const nameOf = (el: HTMLElement): string => {
     const slides = slideEls()
     if (slides.includes(el)) return `Slide ${slides.indexOf(el) + 1}`
     const kind = nodeOf(el)?.kind
-    if (kind) return KIND_NAMES[kind] ?? "Section"
+    if (kind) return KIND_NAMES[kind] ?? (headingName(el) || "Section")
     const same = lookAlikes(el)
-    if (same.length < 2) return "Block"
     const tag = el.localName
+    if (tag !== "li" && tag !== "tr") {
+      const heading = headingName(el)
+      if (heading) return heading
+    }
+    if (same.length < 2) return "Block"
     const noun =
       tag === "li"
         ? "Item"
@@ -3811,6 +3820,20 @@ interface ElReg {
     return s.replace(/\s+/g, " ").trim()
   }
   const clipText = (s: string, n = 60) => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
+  /** Before and after of a text change, each clipped to `n` around where they first
+   *  differ: a change past the first words of a long paragraph still shows. */
+  const clipPair = (a: string, b: string, n = 60): [string, string] => {
+    let p = 0
+    while (p < a.length && p < b.length && a[p] === b[p]) p++
+    const cut = (s: string) => {
+      if (s.length <= n) return s
+      const from = Math.max(0, Math.min(p - 20, s.length - n + 1))
+      if (!from) return `${s.slice(0, n - 1)}…`
+      if (from + n - 1 >= s.length) return `…${s.slice(from)}`
+      return `…${s.slice(from, from + n - 2)}…`
+    }
+    return [cut(a), cut(b)]
+  }
   /** How a change names a block: its heading's words, else its name. */
   const titleOf = (el: HTMLElement) =>
     clipText(plainOf(el.querySelector("h1,h2,h3,h4,h5,h6") ?? document.createElement("i")), 40) ||
@@ -4511,12 +4534,13 @@ interface ElReg {
     const out: Change[] = []
     for (const t of editTargets) {
       if (!t.el.isConnected || (concatText(t.el) === t.origConcat && !hasFmt(t.el))) continue
-      const from = clipText(htmlPlain(t.origHtml))
-      const to = clipText(plainOf(t.el))
+      const was = htmlPlain(t.origHtml)
+      const now = plainOf(t.el)
+      const [from, to] = clipPair(was, now)
       out.push({
         id: changeId(t),
         where: whereOf(t.el, true),
-        ...(from === to ? { what: "Formatting" } : { from, to }),
+        ...(was !== now ? { from, to } : { what: "Formatting" }),
         at: t.el,
         revert: () => {
           checkpoint(t.el)
