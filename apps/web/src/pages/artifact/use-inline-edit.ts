@@ -180,8 +180,9 @@ const BLOCKED_COPY: Record<string, string> = {
  *    precise reason and preserve the painted edit for retry.
  *
  * The session is bounded by the FRAME's lifetime: `onFrameGone` (wired to the
- * page's iframe onLoad) force-exits with a warning, because a reloaded frame boots
- * with no edit state and silently saving nothing would read as success.
+ * page's iframe onLoad) force-exits with a warning when edits were pending, because a
+ * reloaded frame boots with no edit state and silently saving nothing would read as
+ * success. A session with nothing typed yet simply continues on the new page.
  */
 export function useInlineEdit(p: {
   shortId: string
@@ -570,12 +571,16 @@ export function useInlineEdit(p: {
     mentionRequest.current++
     setMention(null)
     if (!activeRef.current) return
-    const hadEdits = dirtyRef.current > 0
+    // Nothing typed yet (the page was still loading when the mode opened): carry the
+    // session onto the fresh document instead of dropping it.
+    if (dirtyRef.current === 0) {
+      p.post({ type: "edit-mode", on: true, elementEdits: p.allowElementEdits })
+      return
+    }
     exit("none") // the frame is a fresh document; there is nothing to restore
-    if (hadEdits)
-      toast.warning("The artifact reloaded, so unsaved inline edits were discarded.", {
-        id: "inline-edit-stale",
-      })
+    toast.warning("The artifact reloaded, so unsaved inline edits were discarded.", {
+      id: "inline-edit-stale",
+    })
   }
 
   /**
