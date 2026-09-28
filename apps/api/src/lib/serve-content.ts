@@ -48,6 +48,49 @@ export const slotValuesOf = (rows: DynamicSlotRecord[]): Map<string, DynamicValu
   return slots
 }
 
+/** Legacy decks already have a source-level slide boundary. Optimistically expose their
+ *  safe direct children as movable nodes in the app render; the identical pure transform
+ *  is persisted by materializeEdits on the first save. A malformed or ambiguous deck
+ *  remains viewable and simply receives no structural handles. */
+const withDeckStructure = (doc: string, contentType: string): string => {
+  if (contentType !== "text/x-derive-deck") return doc
+  try {
+    // Runtime-only names keep a legacy page's authored data-derive selectors and
+    // scripts inert. Save materialization stamps the canonical contract only
+    // after an accepted structural action.
+    return backfillLegacyDeckStructure(doc, { runtime: true }).html
+  } catch {
+    return doc
+  }
+}
+
+/** An HTML page as served, before runtime scripts: deck identities, then dynamic data. */
+const servedHtml = (doc: string, contentType: string, slots: Map<string, DynamicValue>) =>
+  applyDynamicBindings(withDeckStructure(doc, contentType), slots)
+
+/**
+ * The page an editor's frame loads for stored source (an HTML page, deck or Markdown
+ * document), before runtime scripts: source ids stamped, then the same serve-time
+ * transforms a reader gets. null for anything not edited in place (a Markdown label on
+ * HTML bytes is served as HTML, unstamped). What `/sync` diffs, so a patch is exactly
+ * what a fresh load would show.
+ */
+export const editorPage = async (
+  text: string,
+  contentType: string,
+  title: string | null,
+  editor: { version: number },
+  slots: Map<string, DynamicValue>,
+): Promise<string | null> => {
+  if (contentType === "text/markdown")
+    return looksLikeHtmlDocument(text)
+      ? null
+      : renderMarkdownForEditor(text, title, editor, { dynamic: slots })
+  if (!isSourceEditable(contentType)) return null
+  const stamped = stampSourceIds(text, { version: editor.version, sha: await sourceSha(text) })
+  return servedHtml(stamped, contentType, slots)
+}
+
 /**
  * Serve a stored artifact version's content under `prefix`, resolving
  * a sub-`path` for bundles. Shared by the `/raw/*` sandbox routes and domain mode:
@@ -157,21 +200,6 @@ export const serveContent = async (
   // route-specific chrome remain appended because they are optional DOM enhancements.
   const htmlBody = (doc: string, isBound?: boolean): string =>
     withRuntime(rf(doc), isBound) + marks + append
-  // Legacy decks already have a source-level slide boundary. Optimistically expose
-  // their safe direct children as movable nodes in the app render; the identical
-  // pure transform is persisted by materializeEdits on the first save. A malformed
-  // or ambiguous deck remains viewable and simply receives no structural handles.
-  const withDeckStructure = (doc: string): string => {
-    if (content.content_type !== "text/x-derive-deck") return doc
-    try {
-      // Runtime-only names keep a legacy page's authored data-derive selectors and
-      // scripts inert. Save materialization stamps the canonical contract only
-      // after an accepted structural action.
-      return backfillLegacyDeckStructure(doc, { runtime: true }).html
-    } catch {
-      return doc
-    }
-  }
   let path = rawPath
   if (isBundleContentType(content.content_type)) {
     const manifestBytes = await blobs.get(content.blob_key)
@@ -304,7 +332,7 @@ export const serveContent = async (
     }
     // An editor gets the same page with source ids (markdown-source.ts), for exact saves.
     const rendered = editor
-      ? await renderMarkdownForEditor(text, title, editor, { dynamic: slots })
+      ? ((await editorPage(text, content.content_type, title, editor, slots)) as string)
       : await renderMarkdown(text, title, { dynamic: slots })
     const isBound = bound(rendered)
     const html = withSharedState(rendered, isBound) + append
@@ -333,12 +361,13 @@ export const serveContent = async (
   // html file artifact — any path serves the document (+ selection capture)
   const ct = mimeFor(path || "index.html")
   if (ct.startsWith("text/html")) {
-    let text = new TextDecoder().decode(data)
+    const text = new TextDecoder().decode(data)
     // Stamp the STORED source before any serve-time transform, so every id and hash
     // names bytes a save can find again.
     const stamp = !!editor && isSourceEditable(content.content_type)
-    if (stamp) text = stampSourceIds(text, { version: editor.version, sha: await sourceSha(text) })
-    const doc = applyDynamicBindings(withDeckStructure(text), slots)
+    const doc = stamp
+      ? ((await editorPage(text, content.content_type, title, editor, slots)) as string)
+      : servedHtml(text, content.content_type, slots)
     const isBound = bound(doc)
     return c.body(htmlBody(doc, isBound), 200, { ...hdrs(isBound, stamp), "Content-Type": ct })
   }

@@ -657,6 +657,10 @@ export interface AfterPublishOpts {
    *  publish): the previous version. A restore passes the restored version's number, so
    *  the new version starts from the numbers that version ended with. */
   dynamicSeedFrom?: number
+  /** A save inside an open inline edit session: the version is live at once (realtime,
+   *  render, search, anchors), but who is TOLD about it — webhooks, channels, mentions —
+   *  waits for the session to end, once for the whole session ({@link finalizeEditSession}). */
+  deferNotifications?: boolean
 }
 
 /**
@@ -672,13 +676,8 @@ export const afterPublish = async (
   version: VersionRecord,
   opts: AfterPublishOpts,
 ): Promise<{ resolved: string[]; storedRows: NewVersionData[] }> => {
-  const { meta, bus, notify, background } = deps
-  await notify(artifact, "version.published", {
-    version: version.n,
-    message: version.message,
-    author: version.author,
-    actor_id: opts.actorId ?? null,
-  })
+  const { meta, bus, background } = deps
+  if (!opts.deferNotifications) await announceVersion(deps, artifact, version, opts.actorId)
   // Fan out to the publisher's followers: "someone you follow published X". Gated to a
   // known HUMAN behind the publish (an agent publish fans out to the followers of the
   // person it acts for), a publicly-listed artifact (a follow never surfaces a private
@@ -714,16 +713,42 @@ export const afterPublish = async (
     opts.previousSearchSource,
     opts.dynamicSeedFrom,
   )
-  // Source mentions are derived from the just-published bytes, never trusted from a client
-  // payload. Run after the canonical version bump and isolate every delivery branch inside the
-  // fan-out, so an outage cannot fail, roll back, or delay a live document edit.
-  await background(
+  if (!opts.deferNotifications)
+    await mentionFanOut(deps, artifact, version, opts.actorId, opts.preparedSource)
+  return { resolved, storedRows }
+}
+
+/** Tell subscribers a version is published: webhooks and the connected channels. */
+const announceVersion = (
+  deps: AfterPublishDeps,
+  artifact: ArtifactRecord,
+  version: VersionRecord,
+  actorId: string | null | undefined,
+): Promise<void> =>
+  deps.notify(artifact, "version.published", {
+    version: version.n,
+    message: version.message,
+    author: version.author,
+    actor_id: actorId ?? null,
+  })
+
+/** Source mentions are derived from the published bytes, never trusted from a client
+ *  payload. Run after the canonical version bump and isolate every delivery branch inside
+ *  the fan-out, so an outage cannot fail, roll back, or delay a live document edit. */
+const mentionFanOut = (
+  deps: AfterPublishDeps,
+  artifact: ArtifactRecord,
+  version: VersionRecord,
+  actorId: string | null | undefined,
+  preparedSource?: string,
+): Promise<void> =>
+  deps.background(
     fanOutNewContentMentions(
-      { meta, blobs: deps.blobs, bus, baseUrl: deps.baseUrl },
+      { meta: deps.meta, blobs: deps.blobs, bus: deps.bus, baseUrl: deps.baseUrl },
       artifact,
       version,
-      opts.actorId ?? null,
-      opts.preparedSource,
+      actorId ?? null,
+      preparedSource,
     ).catch((err) =>
       log.warn("content mention fan-out failed", {
         artifact: artifact.id,
@@ -733,7 +758,43 @@ export const afterPublish = async (
       }),
     ),
   )
-  return { resolved, storedRows }
+
+/**
+ * The end of an inline edit session (Done, the page closing, or five idle minutes): the
+ * notifications its saves deferred fire now, once per version it wrote (normally one —
+ * a session coalesces into its working version), describing the version as it ended.
+ * The caller has already claimed `versions` with `closeEditSession`, so this runs once.
+ */
+export const finalizeEditSession = async (
+  deps: AfterPublishDeps,
+  artifact: ArtifactRecord,
+  versions: VersionRecord[],
+  actorId: string | null,
+): Promise<void> => {
+  for (const version of versions) {
+    await announceVersion(deps, artifact, version, actorId ?? version.author_id)
+    await mentionFanOut(deps, artifact, version, actorId ?? version.author_id)
+  }
+}
+
+/** The idle backstop: finalize every edit session whose last save is older than
+ *  `idleMs` (a person who closed the tab without the page's beacon getting out). Bounded
+ *  per pass; the next pass takes the rest. Returns the versions finalized. */
+export const sweepIdleEditSessions = async (
+  deps: AfterPublishDeps,
+  idleMs: number,
+  now = Date.now(),
+): Promise<number> => {
+  const idle = await deps.meta.listIdleEditSessions(new Date(now - idleMs).toISOString(), 50)
+  let finalized = 0
+  for (const { artifact_id, edit_session } of idle) {
+    const versions = await deps.meta.closeEditSession(artifact_id, edit_session)
+    const artifact = versions.length ? await deps.meta.getArtifactById(artifact_id) : null
+    if (!artifact || artifact.removed_at) continue
+    await finalizeEditSession(deps, artifact, versions, null)
+    finalized += versions.length
+  }
+  return finalized
 }
 
 const fanOutToFollowers = async (

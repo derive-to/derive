@@ -682,6 +682,24 @@ const draftSweepTimer = cfg.backgroundWorkers
   : undefined
 draftSweepTimer?.unref?.()
 
+// Inline edit sessions whose page never said Done (a closed laptop): finalized once idle
+// past the coalescing window, through the app's own route, which holds the fan-out. Needs
+// the operator token; without one the editors' own traffic still sweeps them.
+const editSessionSweepTimer =
+  cfg.backgroundWorkers && cfg.token
+    ? setInterval(
+        () =>
+          void Promise.resolve(
+            app.request("/v1/edit-sessions/sweep", {
+              method: "POST",
+              headers: { authorization: `Bearer ${cfg.token}` },
+            }),
+          ).catch(() => undefined),
+        60_000,
+      )
+    : undefined
+editSessionSweepTimer?.unref?.()
+
 // Opt-in Ortam execution: reconcile durable attempts without holding a process open per VM.
 let runtimeTimer: ReturnType<typeof setInterval> | undefined
 if (runtimeConfig && cfg.backgroundWorkers) {
@@ -797,6 +815,7 @@ const shutdown = makeShutdown({
   clearTimers: () => {
     if (pruneTimer) clearInterval(pruneTimer)
     if (draftSweepTimer) clearInterval(draftSweepTimer)
+    if (editSessionSweepTimer) clearInterval(editSessionSweepTimer)
     if (runtimeTimer) clearInterval(runtimeTimer)
   },
   closeStores,

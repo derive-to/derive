@@ -27,11 +27,15 @@ import {
   isStructuralUserEdit,
   LATEX_BUNDLE_CONTENT_TYPE,
   LATEX_CONTENT_TYPE,
+  markdownSourceMap,
   type QuoteEdit,
   type SceneEdit,
   type SlideOp,
   type SourceOp,
+  type StampedSync,
   type StructuralUserEdit,
+  sourceMap,
+  syncStamped,
   toMarkdown,
   type VersionRecord,
 } from "@derive/core"
@@ -451,4 +455,105 @@ export function parseBaseVersion(raw: string | undefined): number | undefined {
   if (!Number.isSafeInteger(n))
     throw new EditError(`base_version "${raw}" is not a valid version number.`)
   return n
+}
+
+// ── Sync: an editor's page follows the current version in place ─────────────────────
+
+export interface SyncRequest {
+  /** The page's per-id hashes, as the source map it was served with gave them ("" for
+   *  an id the client doesn't know). */
+  hashes: string[]
+  /** The sha of the source the page was stamped from (its root's data-derive-src-sha, or
+   *  the last sync's `sha`). Needed once a session has replaced that version's bytes. */
+  sha?: string
+}
+
+export interface SyncResult extends StampedSync {
+  version: number
+  sha: string
+  hashes: string[]
+}
+
+export interface SyncDeps {
+  getVersion: (artifactId: string, n: number) => Promise<VersionRecord | null>
+  listVersions: (artifactId: string) => Promise<VersionRecord[]>
+  sourceText: (v: Pick<VersionRecord, "blob_key" | "content_type">) => Promise<string | null>
+  /** The editor's page for a source of this content type (serve-content `editorPage`,
+   *  with the artifact's title and current dynamic data), or null when it isn't stamped. */
+  page: (text: string, contentType: string, version: number) => Promise<string | null>
+}
+
+/** How far back a sync without a `sha` looks for the version its page shows. */
+const SYNC_LOOKBACK = 5
+
+/**
+ * What an editor's page needs to show the artifact's current version without reloading:
+ * the new source map, the old ids' new ids, and the changed subtrees as stamped HTML (see
+ * @derive/core `syncStamped`). The page's source is found by `sha` (every version's bytes
+ * stay addressable by it, including a working version's replaced ones), or else among the
+ * last few versions by its hashes; either must match the page's hashes. A page that can't
+ * be matched, or a change that can't be patched in place, answers `head: true`: swap the
+ * whole page.
+ */
+export async function syncEditorPage(
+  deps: SyncDeps,
+  artifact: Pick<ArtifactRecord, "id" | "kind" | "current_version">,
+  req: SyncRequest,
+): Promise<SyncResult> {
+  const cur = await deps.getVersion(artifact.id, artifact.current_version)
+  if (!cur) throw new EditConflictError("This artifact has no current version.")
+  const swap = (sha = "", hashes: string[] = []): SyncResult => ({
+    version: cur.n,
+    sha,
+    hashes,
+    remap: req.hashes.map(() => -1),
+    patches: [],
+    head: true,
+  })
+  const type = cur.content_type
+  if (artifact.kind !== "file" || !isSourceEditable(type)) return swap()
+  const src = await deps.sourceText(cur)
+  if (src === null) throw new EditError("Couldn't load the current source.")
+  const mapOf = (text: string) => (isMarkdownLike(type) ? markdownSourceMap(text) : sourceMap(text))
+  const map = await mapOf(src)
+  const fits = (m: { hashes: string[] }) =>
+    m.hashes.length === req.hashes.length &&
+    req.hashes.some((h) => h !== "") &&
+    req.hashes.every((h, i) => h === "" || h === m.hashes[i])
+  let base: string | null = null
+  if (req.sha === map.sha || (!req.sha && fits(map))) base = src
+  else if (req.sha) {
+    const text = await deps.sourceText({ blob_key: req.sha, content_type: type })
+    if (text !== null && fits(await mapOf(text))) base = text
+  } else {
+    const recent = (await deps.listVersions(artifact.id))
+      .filter((v) => v.n < cur.n && v.content_type === type)
+      .sort((a, b) => b.n - a.n)
+      .slice(0, SYNC_LOOKBACK)
+    for (const v of recent) {
+      const text = await deps.sourceText(v)
+      if (text !== null && fits(await mapOf(text))) {
+        base = text
+        break
+      }
+    }
+  }
+  if (base === null) return swap(map.sha, map.hashes)
+  const [before, after] = await Promise.all([
+    deps.page(base, type, cur.n),
+    deps.page(src, type, cur.n),
+  ])
+  if (before === null || after === null) return swap(map.sha, map.hashes)
+  const sync = syncStamped(before, after)
+  return {
+    version: cur.n,
+    sha: map.sha,
+    hashes: map.hashes,
+    remap: Array.from(
+      { length: Math.max(sync.remap.length, req.hashes.length) },
+      (_, i) => sync.remap[i] ?? -1,
+    ),
+    patches: sync.patches,
+    head: sync.head,
+  }
 }

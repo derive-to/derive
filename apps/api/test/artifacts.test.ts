@@ -674,7 +674,11 @@ describe("inline edit version coalescing", () => {
 describe("exact-source inline saves (ops)", () => {
   const owner: TestUser = { id: "ops-owner", email: "ops-owner@test.dev", name: "Owner" }
   const colleague: TestUser = { id: "ops-colleague", email: "ops-colleague@test.dev", name: "C" }
-  const { app: opsApp } = makeAuthedApp("inline-source-ops", [owner, colleague], "editor")
+  const { app: opsApp, meta: opsMeta } = makeAuthedApp(
+    "inline-source-ops",
+    [owner, colleague],
+    "editor",
+  )
   const page = `<!doctype html><html><head><title>Ops</title></head><body><section class="slide" data-derive-slide="0"><h1>Launch plan</h1><p>First <b>bold</b> point</p></section><section class="slide" data-derive-slide="1"><h2>Risks</h2><p>Second point</p></section></body></html>`
 
   const detail = async (shortId: string, headers: Record<string, string> = {}) =>
@@ -692,11 +696,18 @@ describe("exact-source inline saves (ops)", () => {
   /** The source id the editor's page carries for the nth `<tag>`. */
   const idOf = (stamped: string, tag: string, nth = 0) =>
     Number([...stamped.matchAll(new RegExp(`<${tag} data-derive-src="(\\d+)"`, "g"))][nth]?.[1])
-  const saveOps = (shortId: string, ops: unknown, baseVersion: number, who = owner) => {
+  const saveOps = (
+    shortId: string,
+    ops: unknown,
+    baseVersion: number,
+    who = owner,
+    session?: string,
+  ) => {
     const form = new FormData()
     form.append("ops", JSON.stringify(ops))
     form.append("base_version", String(baseVersion))
-    form.append("coalesce", "true")
+    if (session) form.append("session", session)
+    else form.append("coalesce", "true")
     form.append("message", "Inline edit")
     return opsApp.request(`/v1/artifacts/${shortId}/versions`, {
       method: "POST",
@@ -990,6 +1001,215 @@ describe("exact-source inline saves (ops)", () => {
       2,
     )
     expect(layout.status).toBe(400)
+  })
+
+  const sync = (shortId: string, body: unknown, who = owner) =>
+    opsApp.request(`/v1/artifacts/${shortId}/sync`, {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { ...as(who.email), "content-type": "application/json" },
+    })
+  const editOther = (shortId: string, oldStr: string, newStr: string) => {
+    const form = new FormData()
+    form.append("edits", JSON.stringify([{ old_str: oldStr, new_str: newStr }]))
+    return opsApp.request(`/v1/artifacts/${shortId}/versions`, {
+      method: "POST",
+      body: form,
+      headers: as(colleague.email),
+    })
+  }
+
+  it("syncs the editor's page in place: its own save, then someone else's version", async () => {
+    const { short_id } = await publish()
+    const stamped = await (await framePage(short_id, 1, as(owner.email))).text()
+    const served = await sourceMapOf(short_id)
+    const [h1, secondP] = [idOf(stamped, "h1"), idOf(stamped, "p", 1)]
+    const ids = [...stamped.matchAll(/data-derive-src="(\d+)"/g)].map((m) => Number(m[1]))
+    const type = async (text: string) => {
+      const { hashes } = await sourceMapOf(short_id)
+      const saved = await saveOps(
+        short_id,
+        [{ op: "content", src: h1, hash: hashes[h1], children: [{ text }] }],
+        1,
+        owner,
+        "session-sync-1",
+      )
+      expect(saved.status).toBe(201)
+    }
+
+    // The page gets back only the heading it edited, stamped as a reload would stamp it.
+    await type("Rollout")
+    const own = await sync(short_id, { hashes: served.hashes, sha: served.sha })
+    expect(own.status).toBe(200)
+    expect(own.headers.get("cache-control")).toBe("private, no-store")
+    const first = await own.json()
+    const now = await sourceMapOf(short_id)
+    expect(first).toMatchObject({ version: now.version, sha: now.sha, hashes: now.hashes })
+    expect(first.head).toBe(false)
+    expect(first.patches).toEqual([{ old: h1, html: `<h1 data-derive-src="${h1}">Rollout</h1>` }])
+    for (const id of ids) expect(first.remap[id]).toBe(id === h1 ? -1 : id)
+    const reloaded = await (await framePage(short_id, now.version, as(owner.email))).text()
+    expect(reloaded).toContain(first.patches[0].html)
+
+    // The session's next save replaces that version's bytes in place: the page names what
+    // it shows by sha. Without one, bytes no version holds any more mean a whole-page swap.
+    await type("Rollout, again")
+    const second = await (await sync(short_id, { hashes: first.hashes, sha: first.sha })).json()
+    expect(second).toMatchObject({ version: now.version, head: false })
+    expect(second.patches).toEqual([
+      { old: h1, html: `<h1 data-derive-src="${h1}">Rollout, again</h1>` },
+    ])
+    expect(await (await sync(short_id, { hashes: first.hashes })).json()).toMatchObject({
+      head: true,
+      patches: [],
+    })
+
+    // Someone else's version lands: the page gets their paragraph, found by sha or, for a
+    // version still on record, by its hashes alone.
+    expect((await editOther(short_id, "Second point", "Second, revised")).status).toBe(201)
+    const theirs = await (await sync(short_id, { hashes: second.hashes, sha: second.sha })).json()
+    expect(theirs).toMatchObject({ version: now.version + 1, head: false })
+    expect(theirs.patches).toEqual([
+      { old: secondP, html: `<p data-derive-src="${secondP}">Second, revised</p>` },
+    ])
+    expect((await (await sync(short_id, { hashes: second.hashes })).json()).patches).toEqual(
+      theirs.patches,
+    )
+    // A stylesheet change can't be patched into a live page.
+    await editOther(
+      short_id,
+      "<title>Ops</title>",
+      "<title>Ops</title><style>h1{color:red}</style>",
+    )
+    expect(
+      await (await sync(short_id, { hashes: theirs.hashes, sha: theirs.sha })).json(),
+    ).toMatchObject({ head: true, patches: [] })
+
+    // Publishers only, and a body that isn't a page's hashes is a 400.
+    expect(
+      (await opsApp.request(`/v1/artifacts/${short_id}/sync`, { method: "POST" })).status,
+    ).toBe(403)
+    expect((await sync(short_id, { hashes: ["nope"] })).status).toBe(400)
+    expect((await sync(short_id, { hashes: [], sha: "short" })).status).toBe(400)
+  })
+
+  it("syncs a Markdown editor's page in place", async () => {
+    const form = new FormData()
+    form.append("file", new Blob(["# Plan\n\nFirst step.\n\nSecond step.\n"]), "plan.md")
+    const { short_id } = await (
+      await opsApp.request("/v1/artifacts", {
+        method: "POST",
+        body: form,
+        headers: as(owner.email),
+      })
+    ).json()
+    const stamped = await (await framePage(short_id, 1, as(owner.email))).text()
+    const served = await sourceMapOf(short_id)
+    expect((await editOther(short_id, "Second step.", "Second step, **now**.")).status).toBe(201)
+    const result = await (await sync(short_id, { hashes: served.hashes, sha: served.sha })).json()
+    const p = idOf(stamped, "p", 1)
+    expect(result).toMatchObject({ version: 2, head: false })
+    expect(result.patches).toEqual([
+      {
+        old: p,
+        html: `<p data-derive-src="${p}">Second step, <strong data-derive-src="${p + 1}">now</strong>.</p>`,
+      },
+    ])
+  })
+
+  it("coalesces an edit session into one version and tells subscribers once, when it ends", async () => {
+    const { short_id } = await publish()
+    const artifact = await opsMeta.getByShortId(short_id)
+    if (!artifact) throw new Error("no artifact")
+    await opsMeta.createWebhook({
+      id: `wh_${short_id}`,
+      org_id: artifact.org_id,
+      url: "http://example.com/hook",
+      secret: "s",
+      kind: "generic",
+      events: "version.published",
+    })
+    const delivered = async () =>
+      // Past the idle sweep's fake clock below, which stamps its delivery's due time.
+      (
+        await opsMeta.claimDueDeliveries(
+          new Date(Date.now() + 2 * INLINE_EDIT_COALESCE_MS).toISOString(),
+          100,
+          new Date(Date.now() + 3 * INLINE_EDIT_COALESCE_MS).toISOString(),
+        )
+      )
+        .filter((d) => JSON.parse(d.payload).artifact.short_id === short_id)
+        .map((d) => JSON.parse(d.payload).data.version)
+    await delivered()
+    const stamped = await (await framePage(short_id, 1, as(owner.email))).text()
+    const h1 = idOf(stamped, "h1")
+    const typed = async (text: string, session: string, who = owner) => {
+      const { hashes } = await sourceMapOf(short_id)
+      const r = await saveOps(
+        short_id,
+        [{ op: "content", src: h1, hash: hashes[h1], children: [{ text }] }],
+        1,
+        who,
+        session,
+      )
+      expect(r.status).toBe(201)
+      return (await r.json()).current_version as number
+    }
+    const done = (session: string, who = owner, body?: string) =>
+      opsApp.request(`/v1/artifacts/${short_id}/sessions/${session}/done`, {
+        method: "POST",
+        headers: as(who.email),
+        ...(body ? { body } : {}),
+      })
+
+    // A session opens its own version and every later save of it lands there, silently.
+    expect(await typed("One", "session-a-1")).toBe(2)
+    expect(await typed("Two", "session-a-1")).toBe(2)
+    expect(await typed("Three", "session-a-1")).toBe(2)
+    expect(await delivered()).toEqual([])
+    // Another session never coalesces into it.
+    expect(await typed("Four", "session-b-2")).toBe(3)
+    expect((await detail(short_id, as(owner.email))).versions).toHaveLength(3)
+
+    // Done fires the session's deferred notification once; a repeat closes nothing, and
+    // nobody but its author can close it.
+    expect(await (await done("session-a-1")).json()).toEqual({ closed: [2] })
+    expect(await delivered()).toEqual([2])
+    expect(await (await done("session-a-1")).json()).toEqual({ closed: [] })
+    expect(await (await done("session-b-2", colleague)).json()).toEqual({ closed: [] })
+    expect((await done("bad id!")).status).toBe(400)
+    // The page's beacon: text/plain, and it can ask for a review of the session.
+    const beacon = await done("session-b-2", owner, JSON.stringify({ request_review: true }))
+    expect(await beacon.json()).toEqual({ closed: [3] })
+    expect(await delivered()).toEqual([3])
+    expect((await opsMeta.listReviewRounds(artifact.id)).map((r) => r.version)).toEqual([3])
+
+    // A session left open is finalized by the idle sweep once past the window.
+    expect(await typed("Five", "session-c-3")).toBe(4)
+    const sweep = () =>
+      opsApp.request("/v1/edit-sessions/sweep", {
+        method: "POST",
+        headers: { authorization: "Bearer tok" },
+      })
+    expect(await (await sweep()).json()).toEqual({ finalized: 0 })
+    expect(await delivered()).toEqual([])
+    vi.useFakeTimers({ toFake: ["Date"] })
+    try {
+      vi.setSystemTime(Date.now() + INLINE_EDIT_COALESCE_MS + 1_000)
+      expect(
+        (
+          await opsApp.request("/v1/edit-sessions/sweep", {
+            method: "POST",
+            headers: as(owner.email),
+          })
+        ).status,
+      ).toBe(403)
+      expect((await (await sweep()).json()).finalized).toBeGreaterThanOrEqual(1)
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(await delivered()).toEqual([4])
+    expect(await (await done("session-c-3")).json()).toEqual({ closed: [] })
   })
 })
 
