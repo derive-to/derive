@@ -92,6 +92,8 @@ interface SourceNode {
   end: number
   /** Where its inner content ends (its close tag's `<`, or `end` when implicitly closed). */
   innerEnd: number
+  /** Its end is written in the source (a close tag, or a void element), not implied. */
+  explicit: boolean
   /** Carries `data-derive-src` when served to an editor (a body element outside
    *  template/noscript), and is therefore addressable by ops. */
   stamped: boolean
@@ -110,12 +112,13 @@ const indexElements = (html: string): SourceNode[] => {
     const known = explicit[els.length]
     let end = known?.end ?? -1
     let innerEnd = known?.closeStart ?? -1
+    const stated = end >= 0
     if (end < 0) {
       end = elementEnd(all, i)
       const close = closeAt.get(end)
       innerEnd = close?.name === tag.name ? close.start : end
     }
-    els.push({ n: els.length, tag, end, innerEnd, stamped: false })
+    els.push({ n: els.length, tag, end, innerEnd, explicit: stated, stamped: false })
   })
   const open: SourceNode[] = []
   const crossed = new Set<SourceNode>()
@@ -486,4 +489,246 @@ export const applySourceOps = async (html: string, raw: unknown): Promise<Applie
       "These ops leave the document exactly as it is, so there is nothing to save.",
     )
   return { html: out, changes }
+}
+
+// ── Sync: bring an editor's stamped page to a newer version in place ────────────────
+
+/** How an editor's page (stamped from one source) becomes the page stamped from another,
+ *  without reloading it. Apply in this order, against the old page: find every element
+ *  named by a patch's `old` id and every other stamped element; replace each patch root
+ *  with its `html` (already stamped with new ids); give every other stamped element outside
+ *  a patch root `data-derive-src = remap[its old id]` (always ≥ 0 there). The result is
+ *  the new page exactly. `head` means that can't be done in place (something outside the
+ *  body changed, or a changed part holds a script, or markup whose extent the source
+ *  doesn't state): `patches` is then empty and the page must be swapped whole. Inside a
+ *  patch root, `remap[old] ≥ 0` names the new element with identical content, so a caller
+ *  may keep its live node instead of the parsed copy. */
+export interface StampedSync {
+  remap: number[]
+  patches: { old: number; html: string }[]
+  head: boolean
+}
+
+interface StampedEl {
+  id: number
+  start: number
+  end: number
+  index: number
+  /** Index of its last stamped descendant (itself when it has none). */
+  last: number
+  kids: StampedEl[]
+  name: string
+  /** Its outer text without stamps; "" when its extent is unknown. */
+  key: string
+  /** Parsing its bytes alone gives the same subtree: an explicit end, nothing inside whose
+   *  extent is unknown, and no script (a script inserted by a patch never runs). */
+  patchable: boolean
+}
+
+const STAMP_ATTR = /\sdata-derive-src="(\d+)"/
+const BASE_MARK = / data-derive-src-version="\d+" data-derive-src-sha="[^"]*"/
+
+const parseStamped = (doc: string) => {
+  const els = indexElements(doc)
+  const cuts: [number, number][] = []
+  const mark = BASE_MARK.exec(doc)
+  if (mark) cuts.push([mark.index, mark.index + mark[0].length])
+  const unknown: number[] = []
+  const scripts: number[] = []
+  const found: { el: SourceNode; id: number }[] = []
+  for (const el of els) {
+    if (el.end < 0) unknown.push(el.tag.start)
+    if (el.tag.name === "script") scripts.push(el.tag.start)
+    const m = STAMP_ATTR.exec(doc.slice(el.tag.start, el.tag.end))
+    if (!m) continue
+    const at = el.tag.start + m.index
+    cuts.push([at, at + m[0].length])
+    found.push({ el, id: Number(m[1]) })
+  }
+  cuts.sort((a, b) => a[0] - b[0])
+  let text = ""
+  let cursor = 0
+  const removed: number[] = []
+  for (const [from, to] of cuts) {
+    text += doc.slice(cursor, from)
+    cursor = to
+    removed.push((removed.at(-1) ?? 0) + to - from)
+  }
+  text += doc.slice(cursor)
+  /** A document offset (never inside a cut) as an offset into `text`. */
+  const off = (p: number): number => {
+    let lo = 0
+    let hi = cuts.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if ((cuts[mid] as [number, number])[1] <= p) lo = mid + 1
+      else hi = mid
+    }
+    return p - (lo ? (removed[lo - 1] as number) : 0)
+  }
+  const within = (list: number[], start: number, end: number): boolean =>
+    list.some((p) => p >= start && p < end)
+  const nodes: StampedEl[] = found.map(({ el, id }, index) => ({
+    id,
+    start: el.tag.start,
+    end: el.end,
+    index,
+    last: index,
+    kids: [],
+    name: el.tag.name,
+    key: el.end < 0 ? "" : text.slice(off(el.tag.start), off(el.end)),
+    patchable:
+      el.end >= 0 &&
+      el.explicit &&
+      !within(unknown, el.tag.start, el.end) &&
+      !within(scripts, el.tag.start, el.end),
+  }))
+  const root: StampedEl = {
+    id: -1,
+    start: 0,
+    end: doc.length,
+    index: -1,
+    last: nodes.length - 1,
+    kids: [],
+    name: "",
+    key: "",
+    patchable: false,
+  }
+  const open: StampedEl[] = [root]
+  for (const node of nodes) {
+    while (open.length > 1 && (open.at(-1) as StampedEl).end <= node.start) open.pop()
+    ;(open.at(-1) as StampedEl).kids.push(node)
+    if (node.end > node.start) open.push(node)
+  }
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const node = nodes[i] as StampedEl
+    if (node.end < 0) continue
+    let j = i
+    while (j + 1 < nodes.length && (nodes[j + 1] as StampedEl).start < node.end) j++
+    node.last = j
+  }
+  /** Its text with each child cut out: what must match for its children to be patched
+   *  in place. null when a child's extent is unknown. */
+  const shell = (node: StampedEl): string | null => {
+    if (node.end < 0 || node.kids.some((k) => k.end < 0)) return null
+    let out = ""
+    let at = node.start
+    for (const k of node.kids) {
+      out += `${text.slice(off(at), off(k.start))}\u0000`
+      at = k.end
+    }
+    return out + text.slice(off(at), off(node.end))
+  }
+  return { doc, nodes, root, shell }
+}
+
+/** The longest common subsequence of two key lists, as index pairs (keys "" never match).
+ *  A long middle past the budget is left unmatched: hints, not correctness, ride on it. */
+const commonPairs = (a: string[], b: string[]): [number, number][] => {
+  const pairs: [number, number][] = []
+  let lo = 0
+  while (lo < a.length && lo < b.length && a[lo] && a[lo] === b[lo]) pairs.push([lo, lo++])
+  let hiA = a.length
+  let hiB = b.length
+  const tail: [number, number][] = []
+  while (hiA > lo && hiB > lo && a[hiA - 1] && a[hiA - 1] === b[hiB - 1])
+    tail.unshift([--hiA, --hiB])
+  const n = hiA - lo
+  const m = hiB - lo
+  if (n > 0 && m > 0 && n * m <= 250_000) {
+    const dp = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1))
+    for (let i = n - 1; i >= 0; i--)
+      for (let j = m - 1; j >= 0; j--)
+        (dp[i] as Uint32Array)[j] =
+          a[lo + i] && a[lo + i] === b[lo + j]
+            ? ((dp[i + 1] as Uint32Array)[j + 1] as number) + 1
+            : Math.max(
+                (dp[i + 1] as Uint32Array)[j] as number,
+                (dp[i] as Uint32Array)[j + 1] as number,
+              )
+    let i = 0
+    let j = 0
+    while (i < n && j < m) {
+      if (a[lo + i] && a[lo + i] === b[lo + j]) pairs.push([lo + i++, lo + j++])
+      else if (
+        ((dp[i + 1] as Uint32Array)[j] as number) >= ((dp[i] as Uint32Array)[j + 1] as number)
+      )
+        i++
+      else j++
+    }
+  }
+  return [...pairs, ...tail]
+}
+
+/**
+ * What an editor's page, stamped from one source, needs to become the page stamped from
+ * another (see {@link StampedSync}). Both arguments are whole stamped pages: an HTML
+ * page's `stampSourceIds` output or a Markdown document's `renderMarkdownForEditor`,
+ * after the same serve-time transforms. Elements are matched by their unstamped bytes,
+ * children by position under a parent whose own bytes (outside its children) are
+ * unchanged; the rest is the smallest set of patchable subtrees that covers every change.
+ */
+export const syncStamped = (before: string, after: string): StampedSync => {
+  const A = parseStamped(before)
+  const B = parseStamped(after)
+  const remap = new Array<number>(A.nodes.reduce((max, n) => Math.max(max, n.id + 1), 0)).fill(-1)
+  const size = (n: StampedEl) => n.last - n.index
+  const same = (a: StampedEl, b: StampedEl) => !!a.key && a.key === b.key && size(a) === size(b)
+  const whole = (a: StampedEl, b: StampedEl, pairs: [number, number][]) => {
+    for (let k = 0; k <= size(a); k++)
+      pairs.push([(A.nodes[a.index + k] as StampedEl).id, (B.nodes[b.index + k] as StampedEl).id])
+  }
+  /** Matches inside a replaced subtree: identical children (LCS), and same-tag children
+   *  at the same place between them. */
+  const hint = (a: StampedEl, b: StampedEl, pairs: [number, number][]) => {
+    const common = commonPairs(
+      a.kids.map((k) => k.key),
+      b.kids.map((k) => k.key),
+    )
+    let i = 0
+    let j = 0
+    for (const [ci, cj] of [...common, [a.kids.length, b.kids.length] as [number, number]]) {
+      if (ci - i === cj - j)
+        for (; i < ci; i++, j++) {
+          const ka = a.kids[i] as StampedEl
+          const kb = b.kids[j] as StampedEl
+          if (ka.name !== kb.name) continue
+          pairs.push([ka.id, kb.id])
+          hint(ka, kb, pairs)
+        }
+      const ka = a.kids[ci]
+      const kb = b.kids[cj]
+      if (ka && kb && same(ka, kb)) whole(ka, kb, pairs)
+      i = ci + 1
+      j = cj + 1
+    }
+  }
+  const patches: StampedSync["patches"] = []
+  const pairs: [number, number][] = []
+  /** Whether `a` becomes `b` by patching inside it; records how on success only. */
+  const inPlace = (a: StampedEl, b: StampedEl): boolean => {
+    if (a.kids.length !== b.kids.length) return false
+    const sa = A.shell(a)
+    if (sa === null || sa !== B.shell(b)) return false
+    const mark = [patches.length, pairs.length]
+    const ok = a.kids.every((ka, i) => {
+      const kb = b.kids[i] as StampedEl
+      if (same(ka, kb)) whole(ka, kb, pairs)
+      else if (inPlace(ka, kb)) pairs.push([ka.id, kb.id])
+      else if (ka.patchable && kb.patchable) {
+        patches.push({ old: ka.id, html: after.slice(kb.start, kb.end) })
+        hint(ka, kb, pairs)
+      } else return false
+      return true
+    })
+    if (!ok) {
+      patches.length = mark[0] as number
+      pairs.length = mark[1] as number
+    }
+    return ok
+  }
+  const head = !inPlace(A.root, B.root)
+  if (head) hint(A.root, B.root, pairs)
+  for (const [from, to] of pairs) remap[from] = to
+  return { remap, patches: head ? [] : patches, head }
 }

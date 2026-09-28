@@ -1,5 +1,7 @@
 import { decodeHTML } from "entities"
 import { describe, expect, it } from "vitest"
+// The synthetic HTML article the editing fuzz's HTML mode drives.
+import ARTICLE_HTML from "../../../apps/web/e2e/fuzz/docs/article.html?raw"
 // The synthetic Markdown article the editing fuzz's Markdown mode drives.
 import ARTICLE from "../../../apps/web/e2e/fuzz/docs/article.md?raw"
 import { attrValues, tags } from "../src/html-tags"
@@ -14,9 +16,11 @@ import {
   SourceConflictError,
   type SourceOp,
   type SourceToken,
+  type StampedSync,
   sourceMap,
   sourceSha,
   stampSourceIds,
+  syncStamped,
 } from "../src/source-edit"
 import { sourceElements } from "../src/structural-edit"
 import { setOpeningTagStyle } from "../src/style-attribute"
@@ -386,6 +390,52 @@ const session = (r: () => number) => {
   return { ops, copies, targets, kept }
 }
 
+// ── Sync: an editor's page brought to a newer version in place ───────────────────────
+
+const unbase = (page: string): string =>
+  page.replace(/ data-derive-src-version="\d+" data-derive-src-sha="[^"]*"/, "")
+
+/** Independent oracle for the sync contract, on the page's bytes: replace each patch root
+ *  (found by its old id) with its html, renumber every other stamped element by `remap`. */
+const applySync = (page: string, sync: StampedSync, label: string): string => {
+  const stamped = sourceElements(page).flatMap((e) => {
+    const m = / data-derive-src="(\d+)"/.exec(page.slice(e.tag.start, e.tag.end))
+    return m ? [{ e, id: Number(m[1]), at: e.tag.start + m.index, len: m[0].length }] : []
+  })
+  const roots = sync.patches
+    .map((p) => {
+      const hits = stamped.filter((s) => s.id === p.old)
+      expect(hits, `${label}: patch root ${p.old}`).toHaveLength(1)
+      const { e } = hits[0] as (typeof stamped)[number]
+      return { start: e.tag.start, end: e.end, text: p.html }
+    })
+    .sort((a, b) => a.start - b.start)
+  roots.forEach((r, i) => {
+    expect(r.end, `${label}: patch roots overlap`).toBeLessThanOrEqual(
+      roots[i + 1]?.start ?? Number.POSITIVE_INFINITY,
+    )
+  })
+  const ids = stamped.flatMap((s) => {
+    if (roots.some((r) => r.start <= s.e.tag.start && s.e.tag.start < r.end)) return []
+    const to = sync.remap[s.id] ?? -1
+    expect(
+      to,
+      `${label}: element ${s.id} outside every patch has no new id`,
+    ).toBeGreaterThanOrEqual(0)
+    return [{ start: s.at, end: s.at + s.len, text: ` data-derive-src="${to}"` }]
+  })
+  return splice(page, [...roots, ...ids])
+}
+
+/** Patches + remap turn the old page into the new one exactly, or the sync says `head`.
+ *  Returns the sync for further checks. */
+const expectSync = (before: string, after: string, label: string): StampedSync => {
+  const sync = syncStamped(before, after)
+  if (sync.head) expect(sync.patches, label).toEqual([])
+  else expect(unbase(applySync(before, sync, label)), label).toBe(unbase(after))
+  return sync
+}
+
 describe("applySourceOps", () => {
   it("round-trips 400 random editing sessions over the 44-slide deck", async () => {
     hashes = (await sourceMap(DECK)).hashes
@@ -409,6 +459,13 @@ describe("applySourceOps", () => {
         for (const attr of ["id", "data-derive-slide", "data-derive-node", "data-derive-region"])
           expect(unique(html, attr), `${label} ${attr}`).toBe(true)
       } else expect(html, label).toBe(expected)
+      // The editor's page follows the save in place: only the saved elements are patched.
+      const sync = expectSync(
+        stampSourceIds(DECK, { version: 1, sha: "a" }),
+        stampSourceIds(html, { version: 1, sha: "b" }),
+        label,
+      )
+      expect(sync.head, label).toBe(false)
       // The saved source re-parses to closed, properly nested elements with the expected shape.
       const parsed = sourceElements(html)
       expect(
@@ -866,6 +923,12 @@ describe("Markdown exact-source ops", () => {
         continue
       }
       sessions++
+      const sync = expectSync(
+        await renderMarkdownForEditor(ARTICLE, null, { version: 1 }),
+        await renderMarkdownForEditor(markdown, null, { version: 2 }),
+        label,
+      )
+      expect(sync.head, label).toBe(false)
       // It reads as the edited page did: typed words stay words, escaped where needed.
       expect(await mdText(markdown), label).toBe(expectText)
       // Every block the edit didn't reach is its stored bytes, in order.
@@ -982,5 +1045,171 @@ describe("Markdown exact-source ops", () => {
     ])
     // A blank line between the halves: one line after the other would be one paragraph.
     expect(markdown).toBe("- Lift \n\n  the rail\n\n- Lay the rail\n")
+  })
+})
+
+describe("syncStamped", () => {
+  const SKIP = new Set([
+    "script",
+    "style",
+    "template",
+    "textarea",
+    "title",
+    "svg",
+    "table",
+    "tbody",
+    "thead",
+    "tr",
+    "ul",
+    "ol",
+  ])
+  /** Someone else's publish, as raw source changes: 1–3 of text typed or deleted, an
+   *  element inserted, deleted, duplicated or swapped with its neighbour, an attribute
+   *  changed, or a stylesheet in the head edited. */
+  const mutateHtml = (src: string, r: () => number) => {
+    const pick = <T>(xs: T[]): T => xs[Math.floor(r() * xs.length)] as T
+    let html = src
+    let headChanged = false
+    for (let k = 0, n = 1 + Math.floor(r() * 3); k < n; k++) {
+      const els = sourceElements(html)
+      const body = els.find((e) => e.tag.name === "body")
+      const skipped = els.filter((a) => SKIP.has(a.tag.name))
+      const inBody = els.filter(
+        (e) =>
+          body &&
+          e !== body &&
+          e.tag.start > body.tag.start &&
+          e.end <= body.end &&
+          e.explicitlyClosed &&
+          !e.tag.selfClosing &&
+          !SKIP.has(e.tag.name) &&
+          !skipped.some((a) => a.tag.start < e.tag.start && e.end <= a.end),
+      )
+      const e = pick(inBody)
+      const kids = els.filter((c) => c.parentStart === e.tag.start && c.end >= 0)
+      const edges = [e.tag.end, ...kids.map((c) => c.end)]
+      const at = (i: number, text: string) => html.slice(0, i) + text + html.slice(i)
+      const kind = pick(["text", "text", "cut", "insert", "delete", "dup", "swap", "attr", "head"])
+      if (kind === "text") html = at(pick(edges), escText(pick(WORDS)))
+      else if (kind === "cut" && /^[^<&]/.test(html.slice(e.tag.end, e.closeStart)))
+        html = html.slice(0, e.tag.end) + html.slice(e.tag.end + 1)
+      else if (kind === "insert") html = at(pick(edges), "<span>Inserted by someone</span>")
+      else if (kind === "attr")
+        html = at(e.tag.start + 1 + e.tag.name.length, ` data-note="${Math.floor(r() * 99)}"`)
+      else if (kind === "head") {
+        const style = html.indexOf("</style>")
+        if (style < 0) continue
+        html = at(style, "/* retuned */")
+        headChanged = true
+      } else if (kids.length) {
+        const c = pick(kids)
+        const bytes = html.slice(c.tag.start, c.end)
+        if (kind === "delete") html = html.slice(0, c.tag.start) + html.slice(c.end)
+        else if (kind === "dup") html = at(c.end, bytes)
+        else {
+          const next = kids[kids.indexOf(c) + 1]
+          if (!next) continue
+          html =
+            html.slice(0, c.tag.start) +
+            html.slice(next.tag.start, next.end) +
+            html.slice(c.end, next.tag.start) +
+            bytes +
+            html.slice(next.end)
+        }
+      }
+    }
+    return { html, headChanged }
+  }
+
+  it("brings the page to someone else's version in place, over the deck and the HTML article", () => {
+    for (const [name, doc] of [
+      ["deck", DECK],
+      ["article.html", ARTICLE_HTML],
+    ] as const) {
+      const before = stampSourceIds(doc, { version: 1, sha: "a" })
+      const r = rng(name.length * 7919)
+      let inPlace = 0
+      for (let trial = 0; trial < 300; trial++) {
+        const { html, headChanged } = mutateHtml(doc, r)
+        const label = `${name} trial ${trial}`
+        const sync = expectSync(before, stampSourceIds(html, { version: 2, sha: "b" }), label)
+        // A stylesheet edit can't be patched in place; anything in the body can.
+        expect(sync.head, label).toBe(headChanged)
+        if (!sync.head) inPlace++
+        // The patches never carry the page's scripts: those would not run.
+        for (const p of sync.patches) expect(p.html, label).not.toContain("<script")
+      }
+      expect(inPlace).toBeGreaterThan(150)
+    }
+  }, 60_000)
+
+  it("brings the Markdown page to someone else's version in place", async () => {
+    const before = await renderMarkdownForEditor(ARTICLE, null, { version: 1 })
+    const r = rng(0x77)
+    const pick = <T>(xs: T[]): T => xs[Math.floor(r() * xs.length)] as T
+    for (let trial = 0; trial < 150; trial++) {
+      const lines = ARTICLE.split("\n")
+      for (let k = 0, n = 1 + Math.floor(r() * 3); k < n; k++) {
+        const i = Math.floor(r() * lines.length)
+        const line = lines[i] as string
+        const kind = pick(["type", "type", "delete", "dup", "para", "item"])
+        if (kind === "type") {
+          const at = Math.floor(r() * (line.length + 1))
+          lines[i] =
+            line.slice(0, at) +
+            pick(["zulu ", "**bold** ", "`x` ", "a | b", "1. "]) +
+            line.slice(at)
+        } else if (kind === "delete") lines.splice(i, 1)
+        else if (kind === "dup") lines.splice(i, 0, line)
+        else if (kind === "para") lines.splice(i, 0, "", "A paragraph someone added.", "")
+        else lines.splice(i, 0, "- an item someone added")
+      }
+      const md = lines.join("\n")
+      const label = `trial ${trial}: ${md.slice(0, 200)}`
+      const sync = expectSync(
+        before,
+        await renderMarkdownForEditor(md, null, { version: 2 }),
+        label,
+      )
+      expect(sync.head, label).toBe(false)
+    }
+  }, 60_000)
+
+  it("patches only the element that changed, and keeps every other id", () => {
+    const page = `<!doctype html><html><head><title>T</title></head><body><section><h1>Plan</h1><p>One <b>bold</b> two</p></section><section><p>Other</p></section><script>let at = 0</script></body></html>`
+    const before = stampSourceIds(page, { version: 1, sha: "a" })
+    // Nothing changed: no patches, every id kept.
+    const same = syncStamped(before, before)
+    expect(same).toMatchObject({ head: false, patches: [] })
+    expect(same.remap.filter((n, i) => n >= 0 && n !== i)).toEqual([])
+    // Typing in one paragraph patches that paragraph and nothing else.
+    const typed = stampSourceIds(page.replace("One <b>", "One more <b>"), { version: 2, sha: "b" })
+    const sync = expectSync(before, typed, "typed")
+    expect(sync.patches).toEqual([
+      { old: 6, html: '<p data-derive-src="6">One more <b data-derive-src="7">bold</b> two</p>' },
+    ])
+    expect(sync.remap[7]).toBe(7) // the kept <b> inside the patch is named for reuse
+    // A new paragraph shifts every later id: the parent is patched, the rest renumbered.
+    const inserted = stampSourceIds(page.replace("<p>Other", "<p>New</p><p>Other"), {
+      version: 3,
+      sha: "c",
+    })
+    const moved = expectSync(before, inserted, "inserted")
+    expect(moved.patches.map((p) => p.old)).toEqual([8])
+    expect(moved.remap[10]).toBe(11) // the script after it keeps running under its new id
+    // A stylesheet or script change can't be patched in place.
+    const styled = stampSourceIds(
+      page.replace("<title>T</title>", "<title>T</title><style>p{}</style>"),
+      {
+        version: 4,
+        sha: "d",
+      },
+    )
+    expect(syncStamped(before, styled)).toMatchObject({ head: true, patches: [] })
+    const scripted = stampSourceIds(page.replace("let at = 0", "let at = 1"), {
+      version: 5,
+      sha: "e",
+    })
+    expect(syncStamped(before, scripted)).toMatchObject({ head: true, patches: [] })
   })
 })
