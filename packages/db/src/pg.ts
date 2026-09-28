@@ -1321,6 +1321,7 @@ export class PgMetaStore implements MetaStore {
           preview_marked_error: null,
           summary: null,
           summary_src_hash: null,
+          edit_session: v.edit_session ?? null,
           created_at: now,
         })
         .where(
@@ -1546,6 +1547,35 @@ export class PgMetaStore implements MetaStore {
     }
   }
 
+  async closeEditSession(
+    artifactId: string,
+    session: string,
+    authorId?: string,
+  ): Promise<VersionRecord[]> {
+    const rows = await this.db
+      .update(version)
+      .set({ edit_session: null })
+      .where(
+        and(
+          eq(version.artifact_id, artifactId),
+          eq(version.edit_session, session),
+          authorId === undefined ? undefined : eq(version.author_id, authorId),
+        ),
+      )
+      .returning()
+    return rows.sort((a, b) => a.n - b.n)
+  }
+  async listIdleEditSessions(
+    before: string,
+    limit: number,
+  ): Promise<{ artifact_id: string; edit_session: string }[]> {
+    return (await this.db
+      .selectDistinct({ artifact_id: version.artifact_id, edit_session: version.edit_session })
+      .from(version)
+      .where(and(isNotNull(version.edit_session), lt(version.created_at, before)))
+      .orderBy(version.artifact_id)
+      .limit(limit)) as { artifact_id: string; edit_session: string }[]
+  }
   async getVersion(artifactId: string, n: number): Promise<VersionRecord | null> {
     const rows = await this.db
       .select()

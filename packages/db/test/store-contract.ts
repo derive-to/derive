@@ -279,6 +279,38 @@ export function runStoreContract(
       expect((await store.getVersion(a.id, 1))?.blob_key).toBe("working-2")
     })
 
+    it("closes an inline edit session exactly once, and lists the idle ones", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const v1 = await store.addVersion(
+        a.id,
+        newVersion({ author_id: "u1", edit_session: "s-1", blob_key: "w-1" }),
+      )
+      // A save in the same session keeps the version open.
+      await store.replaceCurrentVersion(
+        a.id,
+        { n: 1, blobKey: v1.blob_key },
+        newVersion({ author_id: "u1", edit_session: "s-1", blob_key: "w-2" }),
+      )
+      const later = new Date(Date.now() + 60_000).toISOString()
+      expect(await store.listIdleEditSessions(later, 10)).toContainEqual({
+        artifact_id: a.id,
+        edit_session: "s-1",
+      })
+      expect(
+        (await store.listIdleEditSessions("2000-01-01T00:00:00.000Z", 10)).filter(
+          (s) => s.artifact_id === a.id,
+        ),
+      ).toEqual([])
+      // Someone else can't close it; its author closes it once.
+      expect(await store.closeEditSession(a.id, "s-1", "u2")).toEqual([])
+      const closed = await store.closeEditSession(a.id, "s-1", "u1")
+      expect(closed.map((v) => [v.n, v.blob_key, v.edit_session])).toEqual([[1, "w-2", null]])
+      expect(await store.closeEditSession(a.id, "s-1")).toEqual([])
+      expect(
+        (await store.listIdleEditSessions(later, 10)).filter((s) => s.artifact_id === a.id),
+      ).toEqual([])
+    })
+
     it("stores and reads a version's facts by name and all-at-once", async () => {
       const a = await store.createArtifact(newArtifact())
       const v = await store.addVersion(a.id, newVersion())

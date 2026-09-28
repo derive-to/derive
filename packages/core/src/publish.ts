@@ -96,6 +96,9 @@ export interface PublishInput {
    * short burst of attended web edits. The store rejects a stale blob key.
    */
   replaceCurrent?: { n: number; blobKey: string }
+  /** The inline editor's open edit session writing this version (republish only): its
+   *  later saves coalesce here and its notifications wait until the session ends. */
+  editSession?: string
   /**
    * Append only while the artifact is still at this version.
    *
@@ -676,6 +679,7 @@ export async function publish(
       source: input.source ?? null,
       message: input.message ?? null,
       name: input.name ?? null,
+      edit_session: input.editSession ?? null,
     }
     if (input.workflow) {
       const title = input.title?.trim()

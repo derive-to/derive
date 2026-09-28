@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS version (
   preview_marked_error TEXT,
   summary TEXT,
   summary_src_hash TEXT,
+  edit_session TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (artifact_id, n),
   FOREIGN KEY (artifact_id) REFERENCES artifact(id)
@@ -1223,6 +1224,8 @@ CREATE INDEX IF NOT EXISTS view_artifact_time ON view (artifact_id, created_at);
 CREATE INDEX IF NOT EXISTS delivery_due ON webhook_delivery (status, next_attempt_at);
 
 CREATE INDEX IF NOT EXISTS render_job_due ON render_job (status, next_attempt_at);
+
+CREATE INDEX IF NOT EXISTS version_open_session ON version (created_at) WHERE edit_session IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS export_job_due ON export_job (renderer_scope, status, next_attempt_at);
 

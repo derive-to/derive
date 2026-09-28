@@ -216,6 +216,8 @@ export const version = pgTable(
     // See the matching comment in schema.ts. Mirrors schema.ts.
     summary: text("summary"),
     summary_src_hash: text("summary_src_hash"),
+    // The open inline-edit session writing this version. Mirrors schema.ts.
+    edit_session: text("edit_session"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   // (artifact_id, n) is unique — addVersion relies on it to turn a concurrent

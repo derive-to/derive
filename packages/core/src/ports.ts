@@ -578,6 +578,10 @@ export interface VersionRecord {
   message: string | null
   /** A named checkpoint (Docs-style). Null = an ordinary auto-saved revision. */
   name: string | null
+  /** The inline editor's edit session still writing this version: its saves coalesce here
+   *  and its notifications wait until the session is done or idle. Null once finalized
+   *  (and for every other publish). */
+  edit_session: string | null
   /** Blob key of the rendered PNG preview of this version; null until generated. */
   preview_key: string | null
   /** Lifecycle of the preview render; null = never queued. */
@@ -666,6 +670,8 @@ export interface NewVersion {
   source?: VersionSource | null
   message: string | null
   name?: string | null
+  /** The inline editor's open edit session writing it (see VersionRecord.edit_session). */
+  edit_session?: string | null
 }
 
 /** One structured facts extracted from a version's source (see @derive/core
@@ -796,6 +802,16 @@ export interface ArtifactStore {
   ): Promise<VersionRecord | null>
   listVersions(artifactId: string): Promise<VersionRecord[]>
   getVersion(artifactId: string, n: number): Promise<VersionRecord | null>
+  /** Close an inline edit session on this artifact: clear `edit_session` on every version
+   *  it still holds open (only `authorId`'s, when given) and return them. A claim: of two
+   *  concurrent closes, each version is returned to exactly one, so its deferred fan-out
+   *  fires once. */
+  closeEditSession(artifactId: string, session: string, authorId?: string): Promise<VersionRecord[]>
+  /** Open edit sessions whose last save is older than `before` (ISO), oldest first. */
+  listIdleEditSessions(
+    before: string,
+    limit: number,
+  ): Promise<{ artifact_id: string; edit_session: string }[]>
   /** What an unfurl/embed card needs for one artifact: its version and comment COUNTS,
    *  its current version row, and that version's facts, in one query. The share-link
    *  SSR path computed the two counts by fetching the artifact's entire version list and
