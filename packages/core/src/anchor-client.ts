@@ -6840,7 +6840,10 @@ interface ElReg {
 
   window.addEventListener("message", (e: MessageEvent) => {
     const d = e.data
-    if (d?.source !== "derive-host") return
+    // Only the page that framed this document drives it: another window claiming to be
+    // the host must not be able to toggle edit mode or push markup into the page.
+    if (e.source !== window.parent || window.parent === window || d?.source !== "derive-host")
+      return
     if (d.type === "anchors") applyAnchors(d.anchors || [])
     else if (d.type === "remeasure") reportRects()
     else if (d.type === "emphasize") setOn(d.id)

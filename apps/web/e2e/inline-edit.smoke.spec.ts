@@ -287,6 +287,37 @@ test("type in the document and save — the edit lands in the stored source", as
   await expect(doc(owner).locator("#one")).toHaveText("First paragraph. Amended.")
 })
 
+test("only the host page can drive editing: a message from any other window is ignored", async ({
+  owner,
+}) => {
+  await seed(owner)
+  const body = doc(owner).locator("body")
+  await expect(body.locator("#one")).toBeVisible()
+  // The page posting to itself stands in for any window that isn't the frame's parent.
+  await body.evaluate(() => {
+    window.postMessage({ source: "derive-host", type: "edit-mode", on: true }, "*")
+    window.postMessage(
+      {
+        source: "derive-host",
+        type: "edit-sync",
+        own: false,
+        version: 9,
+        sha: "",
+        hashes: [],
+        remap: [],
+        head: false,
+        patches: [{ old: 0, html: '<body><p id="injected">x</p></body>' }],
+      },
+      "*",
+    )
+  })
+  await owner.waitForTimeout(400)
+  await expect(body.locator("[contenteditable]")).toHaveCount(0)
+  await expect(body.locator("#injected")).toHaveCount(0)
+  // The real host still drives it.
+  await enterEditMode(owner)
+})
+
 test("replaces deck text when its partial layout schema cannot be scanned", async ({ owner }) => {
   const shortId = await publishArtifact(
     owner,
