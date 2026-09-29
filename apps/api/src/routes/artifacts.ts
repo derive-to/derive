@@ -181,6 +181,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     notifyRender,
     background,
     afterResponse,
+    detachesAfterResponse,
     isMember,
     isToken,
     currentUser,
@@ -249,6 +250,26 @@ export const artifactRoutes = (ctx: AppContext) => {
           { version, host: editorHost(deps) },
           await slots,
         ),
+    }
+  }
+
+  /** The latest save of each (artifact, version) this process wrote: an edit session saves
+   *  the same version over and over, and only the last one's previews, anchors, indexing and
+   *  facts are worth the work (see emitVersionBump's `stillCurrent`). */
+  const latestWrite = new Map<string, number>()
+  let writes = 0
+  /** How long an edit save's follow-up work waits for a later save of the same version to
+   *  take its place: typing saves every pause, and each one would otherwise re-index and
+   *  re-extract the whole document in the process that has to answer the next save. */
+  const SUPERSEDE_MS = 2_000
+  const stillCurrentFor = (key: string) => {
+    const mine = ++writes
+    latestWrite.delete(key)
+    latestWrite.set(key, mine)
+    if (latestWrite.size > 500) latestWrite.delete(latestWrite.keys().next().value as string)
+    return async () => {
+      if (detachesAfterResponse()) await new Promise((r) => setTimeout(r, SUPERSEDE_MS))
+      return latestWrite.get(key) === mine
     }
   }
 
@@ -1309,6 +1330,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           ...(preparedSource !== undefined ? { preparedSource } : {}),
           ...(previousSearchSource ? { previousSearchSource } : {}),
           deferNotifications: !!editSession,
+          ...(editSave ? { stillCurrent: stillCurrentFor(`${artifact.id}:${version.n}`) } : {}),
         })
       // An editor's coalescing save answers once its bytes and version row are stored: the
       // person is waiting on "Saved". What follows from the version (realtime, indexing,

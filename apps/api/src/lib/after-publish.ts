@@ -83,6 +83,9 @@ export const emitVersionBump = async (
   preparedSource?: string,
   previousSearchSource?: { source: string; contentType: string | null; title: string | null },
   dynamicSeedFrom?: number,
+  /** Asked once the version is announced, before the rest (previews, anchors, indexing,
+   *  facts): false when a later save already replaced these bytes, which then does it. */
+  stillCurrent?: () => Promise<boolean>,
 ): Promise<NewVersionData[]> => {
   const { meta, blobs, bus, notifyRender } = deps
   // Give this version its dynamic tables and figures their START POINT first: each binding
@@ -99,6 +102,7 @@ export const emitVersionBump = async (
     log.error("dynamic slot seeding failed", { artifact: artifact.id, err: String(err) })
   }
   bus.publish(artifact.id, { type: "version.published", n: version.n, message: version.message })
+  if (stillCurrent && !(await stillCurrent())) return []
   await notifyRender?.(artifact, version.n)
   await publishSweepEvents(meta, blobs, bus, artifact.id, version, preparedSource)
   // Keep the workspace search index current for the new live version. Best-effort:
@@ -660,6 +664,8 @@ export interface AfterPublishOpts {
   /** A save inside an open inline edit session: live at once, but webhooks, channels and
    *  mentions wait for the session to end ({@link finalizeEditSession}). */
   deferNotifications?: boolean
+  /** See emitVersionBump: a coalescing save's work gives way to the save that replaces it. */
+  stillCurrent?: () => Promise<boolean>
 }
 
 /**
@@ -711,6 +717,7 @@ export const afterPublish = async (
     opts.preparedSource,
     opts.previousSearchSource,
     opts.dynamicSeedFrom,
+    opts.stillCurrent,
   )
   if (!opts.deferNotifications)
     await mentionFanOut(deps, artifact, version, opts.actorId, opts.preparedSource)

@@ -71,7 +71,7 @@ import { enqueueSlackChannelEvent } from "./lib/slack-comments"
 import { SourceTextCache } from "./lib/source-text-cache"
 import { log } from "./log"
 import { enqueueRender } from "./previews"
-import { edgeCtx } from "./realtime-do"
+import { edgeCtx, edgeWaitUntil } from "./realtime-do"
 import type { Summarizer } from "./summarizer"
 import { enqueueForEvent, type WebhookEvent } from "./webhooks"
 
@@ -551,6 +551,9 @@ export function buildContext(deps: AppDeps) {
   // the Node server; inline where nothing may outlive the request (tests).
   // `work` is started here, not by the caller: on Node it must not take the one thread
   // before the response is written, so it waits for the response to finish.
+  /** Whether work handed to afterResponse outlives the response (Workers, the Node server)
+   *  rather than running inline (tests). */
+  const detachesAfterResponse = (): boolean => !!edgeCtx.getStore() || !!deps.detachAfterResponse
   const afterResponse = async (c: Context, work: () => Promise<unknown>): Promise<void> => {
     const run = () =>
       work().catch((err) =>
@@ -1694,10 +1697,30 @@ export function buildContext(deps: AppDeps) {
   // fail-soft, so a store hiccup costs the data, never the search.
   const dynamicSlots = (v: { artifact_id: string; n: number }) =>
     meta.listDynamicSlots(v.artifact_id, v.n).catch(() => [])
+  // A single file's source, also in the Workers edge cache (the colo's, shared by every
+  // isolate there; absent on Node): a save that lands on a cold isolate reads the version it
+  // edits from there instead of object storage. Keyed by the blob key, which is the bytes'
+  // own hash, on a host nothing outside this worker can ask for.
+  const edgeSources = (): Cache | null =>
+    (globalThis as { caches?: { default?: Cache } }).caches?.default ?? null
+  const edgeSourceUrl = (blobKey: string) => `https://sources.derive.internal/${blobKey}`
+  const keepAtEdge = (blobKey: string, text: string) => {
+    const edge = edgeSources()
+    if (edge)
+      edgeWaitUntil(
+        edge
+          .put(
+            edgeSourceUrl(blobKey),
+            new Response(text, { headers: { "cache-control": "public, max-age=604800" } }),
+          )
+          .catch(() => {}),
+      )
+  }
   /** Keep a source this process just stored: the next save of the same session edits it. */
   const rememberSource = (content: { blob_key: string; content_type: string }, text: string) => {
-    if (!isBundleContentType(content.content_type))
-      sourceTextCache.put(`${content.content_type}:${content.blob_key}`, text)
+    if (isBundleContentType(content.content_type)) return
+    sourceTextCache.put(`${content.content_type}:${content.blob_key}`, text)
+    keepAtEdge(content.blob_key, text)
   }
   const sourceText = async (content: {
     blob_key: string
@@ -1713,10 +1736,18 @@ export function buildContext(deps: AppDeps) {
         if (!entryFile) return null
         data = await blobs.get(entryFile.key)
       } else {
+        const kept = await edgeSources()
+          ?.match(edgeSourceUrl(content.blob_key))
+          .catch(() => undefined)
+        if (kept) {
+          const text = await kept.text()
+          return { text, bytes: text.length * 2 }
+        }
         data = await blobs.get(content.blob_key)
       }
       if (!data) return null
       const text = new TextDecoder().decode(data)
+      if (!isBundleContentType(content.content_type)) keepAtEdge(content.blob_key, text)
       return { text, bytes: Math.max(data.byteLength, text.length * 2) }
     })
 
@@ -1973,6 +2004,7 @@ export function buildContext(deps: AppDeps) {
     notifyRender,
     background,
     afterResponse,
+    detachesAfterResponse,
     storageUsed,
     overKnownUsage,
     recountUsage,
