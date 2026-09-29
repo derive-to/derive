@@ -9,13 +9,15 @@
  * made in the browser equals one made on the server BY CONSTRUCTION.
  *
  * The frame has an opaque origin, so everything rides postMessage:
- *   frame → host:  select / anchors-resolved / anchor-rects / scroll / anchor-click /
- *                  anchor-hover / cursor / cursor-tap / cursor-leave / navigate /
- *                  open-external / esc / present / edit-state / edit-edits /
- *                  edit-save / edit-blocked / edit-image /
+ *   frame → host:  select / anchors-resolved / anchor-rects / scroll / position /
+ *                  position-restored / anchor-click / anchor-hover / cursor /
+ *                  cursor-tap / cursor-leave / navigate / open-external / esc / present /
+ *                  edit-state / edit-touch / edit-edits / edit-synced / edit-rebased /
+ *                  edit-deleted / edit-save / edit-blocked / edit-image /
  *                  edit-mention-query / edit-mention-key / deck-sniff
  *   host → frame:  anchors / remeasure / focus-anchor / emphasize / scroll-by /
- *                  edit-mode / edit-collect / edit-restore /
+ *                  restore-position / hello / edit-mode / edit-collect / edit-sync /
+ *                  edit-rebase / edit-resolve / edit-undo-delete /
  *                  edit-undo / edit-redo / edit-format / edit-mention-insert /
  *                  edit-mention-close / deck-drive
  *
@@ -36,15 +38,36 @@ import {
   mentionTokens,
 } from "./mention-shared"
 import {
+  adopt,
+  keepingSelection,
+  layoutOf,
+  linePage,
+  newPageOf,
+  openingOf,
+  partsVia,
+  patchRoot,
+  renumber,
+  renumberHtml,
+  STALE_ATTR,
+  type SyncReply,
+  stampedIn,
+  tagOf,
+} from "./source-sync"
+import {
+  type Baseline,
+  baselineOf,
   collectSourceOps,
   FMT_ATTR,
   GEN_ATTR,
   HOLD_ATTR,
   HREF_ATTR,
+  markGenerated,
   releaseSource,
+  type SigParts,
   SRC_ATTR,
-  type SrcSnapshot,
-  snapshotSource,
+  sameParts,
+  sigParts,
+  snapshotOf,
   srcOf,
 } from "./source-tokens"
 import {
@@ -759,6 +782,12 @@ interface ElReg {
     ".derive-block-div{width:1px;height:18px;margin:0 2px;background:#e9ecef}" +
     ".derive-block-dragging{opacity:.92;box-shadow:0 12px 30px rgba(15,23,42,.22)!important}" +
     ".derive-block-flash{animation:derive-block-flash .9s ease}" +
+    /* Someone else's edit, landing in place: a soft wash that fades, and their name
+       above it for a moment. A block waiting on your choice keeps a dashed ring. */
+    ".derive-remote{animation:derive-remote 2.4s ease}" +
+    "@keyframes derive-remote{0%{background-color:rgba(250,204,21,.32);opacity:.4}20%{opacity:1}100%{background-color:transparent}}" +
+    ".derive-remote-who{position:fixed;z-index:2147483646;pointer-events:none;font:600 11px/18px system-ui,-apple-system,sans-serif;color:#fff;background:#6d28d9;border-radius:4px;padding:0 6px;transition:opacity .4s}" +
+    ".derive-conflict{outline:2px dashed rgba(220,38,38,.8);outline-offset:3px;border-radius:2px}" +
     "@keyframes derive-block-flash{0%{outline:3px solid rgba(250,204,21,.95);outline-offset:2px}100%{outline:3px solid transparent;outline-offset:2px}}" +
     /* Structural dimensions are product semantics, not a suggestion to every deck
        author to recreate the same CSS. Runtime-only legacy nodes and canonical
@@ -1545,24 +1574,29 @@ interface ElReg {
     return { i: activeSlide(slides), total: slides.length }
   }
   let lastOutline = ""
-  const postDeckOutline = () => {
-    // Bound what crosses the frame boundary. A hostile page can claim a billion slides;
-    // Derive still needs a responsive host even when that page's own DOM is unreasonable.
-    const slides = slideEls().slice(0, 500)
-    if (slides.length < 2) return
+  /** Each slide's stable identity: its own `data-derive-slide`, or for a class-only
+   *  deck the one the server's first arrange will stamp. Comments made before that
+   *  save then keep the same identity after slides move. */
+  const slideIds = (slides: Element[]): string[] => {
     const explicit = slides.map((slide) => {
       const value = slide.getAttribute("data-derive-slide")
       return value !== null && /^-?\d+$/.test(value) ? Number(value) : null
     })
     let nextIdentity =
       Math.max(-1, ...explicit.filter((value): value is number => value !== null)) + 1
+    return slides.map((slide) => slide.getAttribute("data-derive-slide") || String(nextIdentity++))
+  }
+  const postDeckOutline = () => {
+    // Bound what crosses the frame boundary. A hostile page can claim a billion slides;
+    // Derive still needs a responsive host even when that page's own DOM is unreasonable.
+    const slides = slideEls().slice(0, 500)
+    if (slides.length < 2) return
+    const ids = slideIds(slides)
     const outline = slides.map((slide, i) => {
       const heading = slide.querySelector("[data-slide-title],h1,h2,h3")
       const raw = (heading?.textContent || slide.textContent || "").replace(/\s+/g, " ").trim()
       return {
-        // Predict the server's first-arrange stamping for class-only decks. Comments made
-        // before that save then keep the same identity after slides move.
-        id: slide.getAttribute("data-derive-slide") || String(nextIdentity++),
+        id: ids[i] as string,
         label: raw.slice(0, 90) || `Untitled slide ${i + 1}`,
       }
     })
@@ -1853,6 +1887,7 @@ interface ElReg {
     sceneEdits.push(entry)
     remember({ kind: "scene", entry, activeAfter: false })
     postDirty()
+    bumpRev()
   }
 
   /* 🚨 Hidden slides still catch clicks.
@@ -1980,13 +2015,113 @@ interface ElReg {
     if (Math.abs(scrollTop() - y) > 1 && tries > 0)
       window.setTimeout(() => scrollBack(y, tries - 1), 50)
   }
-  const reportScroll = () =>
+  const reportScroll = () => {
     post({
       type: "scroll",
       scrollY: scrollTop(),
       viewH: window.innerHeight,
       docH: document.documentElement.scrollHeight,
     })
+    schedulePosition()
+  }
+
+  /* ── Where the reader is ──────────────────────────────────────────────────────
+     A place the host keeps in its URL, so a refresh (or a shared link) lands on the
+     same words: the element nearest above the top of the viewport that has an id (a
+     heading's slug) or else a source stamp, and how far past its top the view starts.
+     Anchored to an element rather than a pixel, it survives images and fonts arriving
+     late. `id,offset`; `~N,offset` for a stamp; `,offset` for the page itself. */
+  const positionNow = (): string => {
+    const y = scrollTop()
+    if (y < 2) return ""
+    let best: Element | null = null
+    let bestTop = Number.NEGATIVE_INFINITY
+    const consider = (el: Element) => {
+      if (el.closest(".derive-edit-ui,.derive-el-hl")) return
+      const r = el.getBoundingClientRect()
+      if (!r.width && !r.height) return
+      const top = r.top + y
+      if (top <= y + 1 && top > bestTop) {
+        best = el
+        bestTop = top
+      }
+    }
+    for (const el of Array.from(document.body?.querySelectorAll("[id]") ?? [])) consider(el)
+    if (!best)
+      for (const el of Array.from(document.body?.querySelectorAll(`[${SRC_ATTR}]`) ?? []))
+        consider(el)
+    const found = best as Element | null
+    if (!found) return `,${Math.round(y)}`
+    const key = found.id ? encodeURIComponent(found.id) : `~${found.getAttribute(SRC_ATTR)}`
+    return `${key},${Math.round(y - bestTop)}`
+  }
+  const positionTop = (at: string): number | null => {
+    const cut = at.lastIndexOf(",")
+    const off = Number(at.slice(cut + 1))
+    if (cut < 0 || !Number.isFinite(off)) return null
+    const key = at.slice(0, cut)
+    if (!key) return off
+    let el: Element | null = null
+    try {
+      el = key.startsWith("~")
+        ? document.querySelector(`[${SRC_ATTR}="${CSS.escape(key.slice(1))}"]`)
+        : document.getElementById(decodeURIComponent(key))
+    } catch (_e) {}
+    return el ? el.getBoundingClientRect().top + scrollTop() + off : null
+  }
+  let posT = 0
+  let lastPosition: string | null = null
+  const schedulePosition = () => {
+    if (posT) clearTimeout(posT)
+    posT = window.setTimeout(() => {
+      posT = 0
+      const at = positionNow()
+      if (at === lastPosition) return
+      lastPosition = at
+      post({ type: "position", at })
+    }, 300)
+  }
+  /* Holding a restored place: images and fonts that arrive after it would push the
+     words down, so it is re-applied as the layout settles, until the reader moves. */
+  let holding: string | null = null
+  let holdUntil = 0
+  const applyHold = () => {
+    if (!holding || Date.now() > holdUntil) {
+      holding = null
+      return
+    }
+    const top = positionTop(holding)
+    if (top !== null && Math.abs(top - scrollTop()) > 1)
+      window.scrollTo({ top, behavior: "instant" as ScrollBehavior })
+  }
+  const releaseHold = () => {
+    holding = null
+  }
+  for (const type of ["wheel", "touchstart", "keydown", "pointerdown"] as const)
+    window.addEventListener(type, releaseHold, { capture: true, passive: true })
+  document.addEventListener("load", applyHold, true)
+  window.addEventListener("load", applyHold)
+  document.fonts?.ready.then(applyHold).catch(() => {})
+  if (window.ResizeObserver) new ResizeObserver(applyHold).observe(document.documentElement)
+  /** Go to a place the host kept: a slide (by its identity when known, which follows it
+   *  if slides moved; else by position, 0-based) and/or a scroll position. */
+  const restorePosition = (slide: unknown, at: unknown, slideId?: unknown) => {
+    if (typeof slideId === "string") {
+      const found = slideIds(slideEls()).indexOf(slideId)
+      if (found >= 0) slide = found
+    }
+    if (typeof slide === "number" && Number.isInteger(slide) && slide >= 0) {
+      // A deck that speaks the protocol moves itself on the host's goto; one that
+      // doesn't is moved by its own keys. Both are absolute, so doing both is safe.
+      driveDeck("goto", slide)
+      window.postMessage({ source: "derive-host", type: "deck", action: "goto", n: slide }, "*")
+    }
+    if (typeof at === "string" && at) {
+      holding = at
+      holdUntil = Date.now() + 6000
+      applyHold()
+    }
+  }
 
   /* Resolve each anchor, scoping a deck comment to its recorded slide FIRST (so the
      same phrase on two slides can't collide), then falling back to a whole-document
@@ -2337,8 +2472,9 @@ interface ElReg {
   // whitespace there — matching the server projection, which renders a space for
   // every tag. A bare concat ("high.Set") could never context-match "high. Set".
   let editBase: { text: string; starts: Map<Text, number> } | null = null
-  /** Each stamped element's children at mode entry (stamped pages only). */
-  let srcSnap: SrcSnapshot | null = null
+  /** What the server holds, element by element (stamped pages only): the session's
+   *  entry state, then each save's result as it syncs in. A save sends what differs. */
+  let saved: Baseline | null = null
   let lastDirty = -1
   /** Everything the edit bar reads, as one comparable string — so a mode where four
    *  things can change (dirty count, undo, redo, a live selection) still posts only
@@ -2518,7 +2654,7 @@ interface ElReg {
   const targetEdited = (t: EditTarget): boolean =>
     concatText(t.el) !== t.origConcat ||
     hasFmt(t.el) ||
-    (!!srcSnap && structSigOf(t.el) !== t.structSig)
+    (!!saved && structSigOf(t.el) !== t.structSig)
   /** The session's changes (see `changes`), marking each edited text block. */
   const changeList = () => {
     for (const t of editTargets)
@@ -2627,7 +2763,7 @@ interface ElReg {
      is ALREADY an edit target is fine (activation only consults the snapshot map when
      it arms a block for the first time), but re-registering when the shape matches
      keeps the aligned per-node diff available instead of falling back to a whole-block
-     span — the same care restoreEdits takes for Discard. */
+     span. */
   const reregister = (t: EditTarget | null, el: HTMLElement) => {
     if (!t || !editBase) return
     const fresh = textNodes(el)
@@ -2687,6 +2823,7 @@ interface ElReg {
     lastBurst = null
     refreshResizeUi()
     postDirty()
+    if (entry.kind === "scene") bumpRev()
   }
   const undo = () => stepHistory(undoStack, redoStack)
   const redo = () => stepHistory(redoStack, undoStack)
@@ -2719,7 +2856,7 @@ interface ElReg {
     const n = list.length
     const range = formattableRange()
     // Formatting needs a stamped page (HTML, a deck, Markdown); LaTeX writes it as text.
-    const canFormat = !!range && !!srcSnap
+    const canFormat = !!range && !!saved
     // A double-click can select a word just before its block is armed editable.
     // selectionchange sees the pre-armed block and cannot cache it, while this
     // settled state pass can. Preserve it here too so the host may safely ask an
@@ -2772,7 +2909,8 @@ interface ElReg {
       slide: at && slides.length > 1 ? slideOfEl(at, slides) : null,
     }))
     const block = blockInfo()
-    const state = `${n}|${undoStack.length > 0}|${redoStack.length > 0}|${canFormat}|${textActive}|${textKind}|${selectedText}|${JSON.stringify([changed, block])}`
+    const conflicts = conflictList()
+    const state = `${n}|${undoStack.length > 0}|${redoStack.length > 0}|${canFormat}|${textActive}|${textKind}|${selectedText}|${JSON.stringify([changed, block, conflicts])}`
     if (state !== lastState) {
       lastState = state
       lastDirty = n
@@ -2787,6 +2925,7 @@ interface ElReg {
         selectedText,
         changes: changed,
         block,
+        conflicts,
       })
     }
   }
@@ -3302,7 +3441,7 @@ interface ElReg {
       const checkpoint = undoStack.pop()
       if (checkpoint?.kind === "style" && checkpoint.el === drag.el)
         restoreStyle(drag.el, checkpoint.style)
-    }
+    } else flushSoon()
     paintResizeUi()
     postDirty()
   }
@@ -3440,6 +3579,26 @@ interface ElReg {
   }
   /* Each region stands alone: one that breaks the contract offers no resize, and the
      rest stay sizable. Its nodes remain blocks either way. */
+  /** Scan again after blocks were swapped in (someone else's edit landed): new elements
+   *  become arrangeable, and a node the session already knew keeps its starting size
+   *  (the session's changes are measured from it). */
+  const rescanStructure = () => {
+    if (!blocksOn) return
+    const known = new Map(structureRegions.flatMap((r) => r.nodes.map((n) => [n.el, n] as const)))
+    const regions = scanStructureRegions()
+    for (const region of regions)
+      for (const node of region.nodes) {
+        const was = known.get(node.el)
+        if (was)
+          Object.assign(node, {
+            origSize: was.origSize,
+            origWidth: was.origWidth,
+            origHeight: was.origHeight,
+            origStyle: was.origStyle,
+          })
+      }
+    setStructureRegions(regions)
+  }
   const scanStructureRegions = (): StructureRegion[] => {
     const regions: StructureRegion[] = []
     const owners = new Map<StructureRegion, HTMLElement | null>()
@@ -4258,6 +4417,7 @@ interface ElReg {
     }
     remember({ kind: "children", lists: before })
     markBlocksChanged()
+    flushSoon()
     return true
   }
   const markBlocksChanged = () => {
@@ -4309,12 +4469,25 @@ interface ElReg {
     rearrange([parent], () => el.after(copy))
     selectBlock(copy)
   }
+  /** The last block deleted, for the host's "Deleted … · Undo": put back where it was. */
+  let lastDeleted: { el: HTMLElement; parent: HTMLElement; next: Node | null } | null = null
   const deleteBlock = () => {
     const el = blockSel
     const parent = el?.parentElement
     if (!el || !parent) return
     selectBlock(null)
-    rearrange([parent], () => el.remove())
+    const next = el.nextSibling
+    if (rearrange([parent], () => el.remove())) {
+      lastDeleted = { el, parent, next }
+      post({ type: "edit-deleted", label: titleOf(el) })
+    }
+  }
+  const restoreDeleted = () => {
+    const d = lastDeleted
+    lastDeleted = null
+    if (!d || d.el.isConnected || !d.parent.isConnected) return
+    const next = d.next?.parentNode === d.parent ? d.next : null
+    if (rearrange([d.parent], () => d.parent.insertBefore(d.el, next))) selectBlock(d.el)
   }
   /* Cut, copy and paste a block: a save names a moved or copied element by its source
      id, so it can land on any slide. Paste goes after the selected block. */
@@ -4567,6 +4740,7 @@ interface ElReg {
       else r.node.el.style.removeProperty("transition")
       clearEmptyStyle(r.node.el)
       remember(r.initial)
+      flushSoon()
     } else {
       applyStructuralSizing(r.initial)
       if (r.moved && !cancel) post({ type: "edit-blocked", reason: "layout" })
@@ -4849,35 +5023,8 @@ interface ElReg {
     const crumb = crumbsOf(blockSel)[index]
     if (crumb) selectBlock(crumb.el)
   }
-  /** A block's place in the source, as indices among stamped children from <body>:
-   *  the same after a save reloads the page, where source ids are not. */
-  const pathOf = (el: HTMLElement | null): number[] | null => {
-    const out: number[] = []
-    for (let e: Element | null = el; e && e !== document.body; e = e.parentElement) {
-      const i = Array.from(e.parentElement?.children ?? [])
-        .filter((c) => srcOf(c) !== null)
-        .indexOf(e)
-      if (i < 0) return null
-      out.unshift(i)
-    }
-    return el ? out : null
-  }
-  /** Select the block at `path` once it is on screen (a deck may still be fading
-   *  its slide in), giving up after a second. */
-  const selectPath = (path: unknown, tries = 20) => {
-    if (!Array.isArray(path) || !editOn) return
-    let el: Element | undefined = document.body
-    for (const i of path)
-      el = Array.from(el?.children ?? []).filter((c) => srcOf(c) !== null)[Number(i)]
-    if (el instanceof HTMLElement && isMovable(el)) {
-      // Keys go on meaning the block, as they did before the save.
-      window.focus()
-      selectBlock(el)
-    } else if (el && tries > 0) window.setTimeout(() => selectPath(path, tries - 1), 50)
-  }
-
   const enableBlocks = () => {
-    blocksOn = elementEditsOn && !!srcSnap
+    blocksOn = elementEditsOn && !!saved
     setStructureRegions(blocksOn ? scanStructureRegions() : [])
     kidsSnap = new Map()
     lastMoved = new Map()
@@ -4954,15 +5101,9 @@ interface ElReg {
     return false
   }
   /** The mode was opened from the host's Edit verb on the live selection (as opposed
-   *  to the header button, where the first click chooses the block), or reopened
-   *  after a save with the block that was selected (`select`, see `pathOf`). */
-  type EditEntry = { fromSelection?: boolean; select?: unknown }
-  const setEditMode = (
-    on: boolean,
-    keep?: boolean,
-    entry?: EditEntry,
-    allowElementEdits = false,
-  ) => {
+   *  to the header button, where the first click chooses the block). */
+  type EditEntry = { fromSelection?: boolean }
+  const setEditMode = (on: boolean, entry?: EditEntry, allowElementEdits = false) => {
     if (on === editOn) return
     editOn = on
     elementEditsOn = on && allowElementEdits
@@ -4988,7 +5129,10 @@ interface ElReg {
       }
       full += "\n"
       editBase = { text: full, starts }
-      srcSnap = stamped() ? snapshotSource(document.body) : null
+      if (stamped()) {
+        markGenerated(document.body)
+        saved = baselineOf(document.body)
+      } else saved = null
       sceneEdits = []
       enableBlocks()
       enableResizeFocus()
@@ -5007,17 +5151,18 @@ interface ElReg {
           const n = s && s.rangeCount > 0 ? s.getRangeAt(0).startContainer : null
           if (n && n.nodeType === 3) editActivate(n as Text, null)
         })
-      // Back after a save reloaded the page: the block that was selected is again.
-      if (entry?.select) requestAnimationFrame(() => selectPath(entry.select))
+      startRevWatch()
+      // Which source this page shows, so the host fetches the hashes that name it.
+      const { deriveSrcVersion, deriveSrcSha } = document.documentElement.dataset
+      if (saved && deriveSrcSha)
+        post({ type: "edit-base", version: Number(deriveSrcVersion), sha: deriveSrcSha })
     } else {
-      // `keep`: drop the editing chrome but leave the typed text standing. Used right
-      // after a PUBLISH — the text on screen is what was just saved, and the version
-      // swap will reload the frame a moment later; restoring here would flash the
-      // pre-edit wording in between and make a successful save look like it failed.
-      if (keep) settleEdits()
-      else restoreEdits()
+      // Every edit saves itself, so leaving drops the editing chrome and leaves the
+      // text standing: it is what the server has (or what the host's queue will send).
+      settleEdits()
+      stopRevWatch()
       editBase = null
-      srcSnap = null
+      saved = null
       releaseSource(document.body)
       setEditHover(null)
       unmaskSlides()
@@ -5052,43 +5197,6 @@ interface ElReg {
       post({ type: "edit-state", dirty: 0 })
     }
   }
-  const restoreEdits = () => {
-    const restoredScenes = sceneEdits.length > 0
-    const activeSceneId = restoredScenes ? sceneEdits[0]?.activeBefore : undefined
-    for (let i = sceneEdits.length - 1; i >= 0; i--) sceneEdits[i]?.undo()
-    if (restoredScenes) restoreActiveVideoScene(activeSceneId)
-    // Reconnect removed blocks before restoring text nested inside them.
-    settleBlocks(true)
-    for (const t of editTargets) {
-      if (document.contains(t.el)) {
-        if (targetEdited(t)) {
-          t.el.innerHTML = t.origHtml
-          // innerHTML rebuilt the block's text nodes as NEW objects — re-register
-          // them at their original offsets, or a Discarded block would refuse every
-          // later click as "dynamic" (its nodes missing from the mode-entry map).
-          reregister(t, t.el)
-        }
-        disableTarget(t)
-      }
-    }
-    for (const t of resizeTargets) if (document.contains(t.el)) restoreStyle(t.el, t.origStyle)
-    editTargets = []
-    resizeTargets = []
-    restoreResizeFocus()
-    clearResizeUi()
-    sceneEdits = []
-    // Discard establishes a new clean baseline inside the still-open mode. History
-    // from the abandoned timeline must not remain actionable: a second edit cycle
-    // should begin exactly like the first, with neither stale Undo nor stale Redo.
-    resetEditHistory()
-    if (lastDirty !== 0) {
-      lastDirty = 0
-    }
-    // Discard keeps the mode open: the restored page is a fresh starting point.
-    if (editOn) enableBlocks()
-    scheduleDirty()
-  }
-
   /* The element a caret click should edit: the nearest block-ish ancestor of the
      clicked text node — a known text block if one is close, else the first
      non-inline ancestor — capped so a page-wide wrapper never becomes one giant
@@ -5221,7 +5329,7 @@ interface ElReg {
     }
     // A page script made it: its words aren't in the source, so there's nowhere to
     // save them.
-    if (srcSnap && cand.closest(`[${GEN_ATTR}]`)) {
+    if (saved && cand.closest(`[${GEN_ATTR}]`)) {
       post({ type: "edit-blocked", reason: "dynamic" })
       return
     }
@@ -5389,6 +5497,10 @@ interface ElReg {
       return
     }
     if (!hit) {
+      // Nothing to type into here: the caret leaves now, not a turn later (keys
+      // already queued behind a busy moment must not land in the block it was in).
+      const host = editingCaret()
+      if (host && !host.contains(el0)) dropCaret()
       selectResize(resizableAt(e.target))
       return
     }
@@ -5412,10 +5524,22 @@ interface ElReg {
     const block = asEl(e.target)?.closest("[data-derive-editable]")
     window.setTimeout(() => {
       scheduleDirty()
-      if (!block || !document.hasFocus() || block.contains(document.activeElement)) return
+      if (!block || block.contains(document.activeElement)) return
+      // Leaving a block is a natural moment to save it, and to let someone else's
+      // edit of it (held while the caret was there) land.
+      flushSoon()
+      if (!document.hasFocus()) return
       const sel = window.getSelection()
       if (sel?.anchorNode && block.contains(sel.anchorNode)) sel.removeAllRanges()
     }, 0)
+  })
+  // A drag, a resize, a pill button: when the gesture ends, save it without a pause.
+  let revAtDown = 0
+  on(document, "pointerdown", () => {
+    revAtDown = rev
+  })
+  on(document, "pointerup", () => {
+    if (editOn && rev !== revAtDown) window.setTimeout(flushSoon, 0)
   })
 
   /* Bring the block being edited into view. On a phone the host shrinks the frame by
@@ -5552,7 +5676,7 @@ interface ElReg {
      ⌘B/⌘I/⌘K, because those are the keys every writing tool binds. The frame owns
      the keyboard while a caret is in a block, so they can't reach the browser. */
   const applyFmt = (kind: "b" | "i" | "a", href?: string): void => {
-    if (!srcSnap) {
+    if (!saved) {
       post({ type: "edit-blocked", reason: "format-text" })
       return
     }
@@ -5613,7 +5737,7 @@ interface ElReg {
    *  formatting uses (so one collect path handles all of it) and rendered by the
    *  real <br> inside it, so the line breaks on screen the moment it's typed. */
   const insertBreak = (): void => {
-    if (!srcSnap) {
+    if (!saved) {
       post({ type: "edit-blocked", reason: "format-text" })
       return
     }
@@ -5730,7 +5854,7 @@ interface ElReg {
   const splittable = (el: HTMLElement): boolean => {
     const parent = el.parentElement
     return (
-      !!srcSnap &&
+      !!saved &&
       el.matches(SPLITS) &&
       srcOf(el) !== null &&
       !!parent &&
@@ -5834,7 +5958,15 @@ interface ElReg {
     }
     const other = sibling(blk)
     const [keep, gone] = forward ? [blk, other] : [other, blk]
-    if (!keep || !gone || !madeBy.has(gone) || srcOf(keep) !== srcOf(gone)) return false
+    // The halves of one element (a copy shares its original's id until a save gives it
+    // one of its own; after that, the same kind of block).
+    if (
+      !keep ||
+      !gone ||
+      !madeBy.has(gone) ||
+      (srcOf(keep) !== srcOf(gone) && keep.localName !== gone.localName)
+    )
+      return false
     // Nothing but space between the caret and the seam.
     const edge = range.cloneRange()
     if (forward) edge.setEnd(blk, blk.childNodes.length)
@@ -6069,15 +6201,97 @@ interface ElReg {
     return { edits, dirty, uncaptured }
   }
 
-  /* The exact-source save (stamped pages), atomic: content ops from the DOM against
-     the entry snapshot, and one attrs op per element whose size or structural layout
-     changed — the properties the editor owns over the author's own style text, and
-     the layout attributes by their canonical names (a legacy deck's runtime ones
-     included: the server persists that structure with the save). */
-  const collectOps = (snap: SrcSnapshot) => {
-    // Only what the person changed is theirs to save: the page's own scripts keep
-    // running while you edit (a deck's "3 / 12" counter follows the slide on screen).
-    // Typed-in blocks with any source inside them, and every rearranged parent.
+  /* ── Live saving ──────────────────────────────────────────────────────────────
+     Every edit saves itself, and a save never reloads this page. The host asks for
+     what differs from what the server holds (`saved`), sends it, and hands back the
+     server's sync: the new version's ids for everything on the page, and the new
+     markup of what changed (see source-sync). Someone else's edit lands the same way,
+     swapped in block by block: never under the caret, never over unsaved typing. */
+
+  /** Bumped by every change the person makes (the host saves when it moves). */
+  let rev = 0
+  /** Our own DOM surgery during a sync is not the person's edit. */
+  let revWatch: MutationObserver | null = null
+  const bumpRev = (flush = false) => {
+    rev++
+    // On the root too, where a test (or a curious reader) can see how far the page got.
+    document.documentElement.setAttribute("data-derive-edit-rev", String(rev))
+    post({ type: "edit-touch", rev, flush })
+  }
+  /** Save now rather than after a pause: a move, a delete, a resize, leaving a block. */
+  const flushSoon = () => post({ type: "edit-touch", rev, flush: true })
+  const isChromeNode = (n: Node) =>
+    n instanceof Element && n.matches(".derive-edit-ui,.derive-el-hl")
+  /** A mutation the person made: in a block they typed in, a parent they rearranged,
+   *  a box they resized. What the page's own scripts do elsewhere is not an edit. */
+  const byPerson = (r: MutationRecord): boolean => {
+    const el = r.target.nodeType === 1 ? (r.target as Element) : r.target.parentElement
+    if (!el || el.closest(".derive-edit-ui,.derive-el-hl")) return false
+    if (r.type === "childList" && [...r.addedNodes, ...r.removedNodes].every(isChromeNode))
+      return false
+    if (r.type !== "attributes") {
+      if (el.closest("[data-derive-editable]") || editTargets.some((t) => t.el.contains(el)))
+        return true
+      return r.type === "childList" && kidsSnap.has(el as HTMLElement)
+    }
+    // Styles and sizes: a box being resized. (A block sliding into its new place after a
+    // move animates its style too; that is not an edit.)
+    return resizeTargets.some((t) => t.el === el) || structureNodeByElement.has(el as HTMLElement)
+  }
+  const startRevWatch = () => {
+    if (!window.MutationObserver) return
+    revWatch = new MutationObserver((records) => {
+      if (records.some(byPerson)) bumpRev()
+    })
+    revWatch.observe(document.body || document.documentElement, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: [
+        "style",
+        ...["size", "width", "height", "align", "gap"].flatMap((k) => [
+          `data-derive-${k}`,
+          `data-derive-runtime-${k}`,
+        ]),
+      ],
+    })
+  }
+  const stopRevWatch = () => {
+    revWatch?.disconnect()
+    revWatch = null
+    for (const c of conflicts) c.theirs.classList.remove("derive-conflict")
+    conflicts = []
+    lastCollect = null
+  }
+
+  /** What a save wrote, as the page held it when collected (see source-sync). */
+  interface CollectRecord {
+    /** The new page in source order, by the page element that made each element. */
+    order: (Element | null)[]
+    rev: number
+    /** Style and layout attributes as sent: what the server holds once it lands. */
+    attrs: [Element, string | null, Record<string, string | null> | null][]
+    /** The words of each block the save rewrote, as sent. */
+    words: Map<Element, string>
+  }
+  let lastCollect: CollectRecord | null = null
+  const savedStyle = new WeakMap<Element, string | null>()
+  const savedLayout = new WeakMap<Element, Record<string, string | null>>()
+  const styleSaved = (el: Element, orig: string | null) =>
+    savedStyle.has(el) ? (savedStyle.get(el) ?? null) : orig
+  /** Someone else changed a block you had unsaved words in: theirs is on the page, yours
+   *  is kept here until you choose. */
+  interface Conflict {
+    mine: Element
+    theirs: Element
+    by: string
+  }
+  let conflicts: Conflict[] = []
+
+  /** Stamped elements the person owns this session: typed-in blocks (and the source in
+   *  them) and every rearranged parent. */
+  const touchedSet = (): Set<Element> => {
     const touched = new Set<Element>()
     const stampedAbove = (el: Element) => {
       let e: Element | null = el
@@ -6089,8 +6303,33 @@ interface ElReg {
       for (const d of Array.from(t.el.querySelectorAll(`[${SRC_ATTR}]`))) touched.add(d)
     }
     for (const parent of kidsSnap.keys()) stampedAbove(parent)
-    const { ops, ok } = collectSourceOps(document.body, snap, touched)
+    return touched
+  }
+
+  /* The exact-source save (stamped pages), atomic: content ops from the DOM against
+     what the server holds, and one attrs op per element whose size or structural
+     layout changed — the properties the editor owns over the author's own style text,
+     and the layout attributes by their canonical names (a legacy deck's runtime ones
+     included: the server persists that structure with the save). */
+  const collectOps = (base: Baseline) => {
+    // Only what the person changed is theirs to save: the page's own scripts keep
+    // running while you edit (a deck's "3 / 12" counter follows the slide on screen).
+    const touched = touchedSet()
+    const { ops, ok, emit } = collectSourceOps(
+      document.body,
+      snapshotOf(base, document.body),
+      touched,
+    )
     let uncaptured = ok && !blockResize ? 0 : 1
+    // A block the current version no longer has (a save deleted it, then undo put it
+    // back): its markup can't be written from here, so the save is refused, not guessed.
+    let stale = 0
+    for (const el of Array.from(document.body.querySelectorAll(`[${STALE_ATTR}]`)))
+      for (let e: Element | null = el; e; e = e.parentElement)
+        if (touched.has(e)) {
+          stale++
+          break
+        }
     const changed = new Map<
       Element,
       {
@@ -6104,37 +6343,49 @@ interface ElReg {
       changed.set(el, entry)
       return entry
     }
+    const sent: CollectRecord["attrs"] = []
     for (const t of resizeTargets) {
-      if (!document.contains(t.el) || rawStyle(t.el) === t.origStyle) continue
+      const was = styleSaved(t.el, t.origStyle)
+      if (!document.contains(t.el) || rawStyle(t.el) === was) continue
       const { width, height } = t.el.style
-      Object.assign(change(t.el, t.origStyle).style, {
+      Object.assign(change(t.el, was).style, {
         width: width || null,
         height: height || null,
       })
+      sent.push([t.el, rawStyle(t.el), null])
     }
     const layout = (
       el: HTMLElement,
       prefix: StructurePrefix,
       origStyle: string | null,
-      was: Partial<Record<keyof typeof STRUCTURAL_LAYOUT, string | null>>,
+      was: Record<string, string | null>,
     ) => {
       const keys = Object.keys(was) as (keyof typeof STRUCTURAL_LAYOUT)[]
-      if (keys.every((key) => el.getAttribute(structureAttribute(prefix, key)) === was[key])) return
+      const now = Object.fromEntries(
+        keys.map((key) => [key, el.getAttribute(structureAttribute(prefix, key))]),
+      )
+      if (keys.every((key) => now[key] === was[key])) return
       const entry = change(el, origStyle)
       for (const key of keys) {
-        entry.attrs[`data-derive-${key}`] = el.getAttribute(structureAttribute(prefix, key))
+        entry.attrs[`data-derive-${key}`] = now[key] ?? null
         const property = STRUCTURAL_LAYOUT[key]?.[0]
         if (property) entry.style[property] = el.style.getPropertyValue(property).trim() || null
       }
+      sent.push([el, rawStyle(el), now])
     }
     for (const region of structureRegions)
       for (const node of region.nodes)
         if (node.el.isConnected)
-          layout(node.el, node.prefix, node.origStyle, {
-            size: node.origSize,
-            width: node.origWidth,
-            height: node.origHeight,
-          })
+          layout(
+            node.el,
+            node.prefix,
+            styleSaved(node.el, node.origStyle),
+            savedLayout.get(node.el) ?? {
+              size: node.origSize,
+              width: node.origWidth,
+              height: node.origHeight,
+            },
+          )
     for (const [el, { orig, style, attrs }] of changed) {
       const src = srcOf(el)
       if (src === null) uncaptured++
@@ -6147,9 +6398,414 @@ interface ElReg {
           ...(Object.keys(attrs).length ? { attrs } : {}),
         })
     }
+    lastCollect = {
+      order: layoutOf(document.body, emit),
+      rev,
+      attrs: sent,
+      words: new Map([...emit.keys()].map((el) => [el, wordsIn(el)])),
+    }
     const { deriveSrcVersion, deriveSrcSha } = document.documentElement.dataset
-    return { ops, base: { version: Number(deriveSrcVersion), sha: deriveSrcSha ?? "" }, uncaptured }
+    return {
+      ops,
+      base: { version: Number(deriveSrcVersion), sha: deriveSrcSha ?? "" },
+      uncaptured: uncaptured + stale,
+      stale,
+    }
   }
+
+  /** Has the person got words (or a size) in `x` the server doesn't hold yet? */
+  const unsavedIn = (x: Element, base: Baseline): boolean => {
+    const touched = touchedSet()
+    for (const el of stampedIn(x)) {
+      const was = base.get(el)
+      if (touched.has(el) && (!was || !sameParts(sigParts(el), was))) return true
+    }
+    if (
+      resizeTargets.some(
+        (t) => x.contains(t.el) && rawStyle(t.el) !== styleSaved(t.el, t.origStyle),
+      )
+    )
+      return true
+    // A block's structural size, set here and not sent yet.
+    return structureRegions.some((region) =>
+      region.nodes.some((node) => {
+        if (!x.contains(node.el)) return false
+        const was = savedLayout.get(node.el) ?? {
+          size: node.origSize,
+          width: node.origWidth,
+          height: node.origHeight,
+        }
+        return Object.entries(was).some(
+          ([key, value]) => node.el.getAttribute(structureAttribute(node.prefix, key)) !== value,
+        )
+      }),
+    )
+  }
+  const caretIn = (x: Element) => {
+    const a = document.activeElement
+    return !!a && (a as HTMLElement).isContentEditable && (x.contains(a) || a.contains(x))
+  }
+  /** The fade, and the name, on a block someone else just changed. */
+  const markRemote = (el: Element, by: string) => {
+    el.classList.remove("derive-remote")
+    void (el as HTMLElement).offsetWidth
+    el.classList.add("derive-remote")
+    window.setTimeout(() => el.classList.remove("derive-remote"), 2500)
+    const r = el.getBoundingClientRect()
+    if (!by || r.width === 0) return
+    const tag = document.createElement("div")
+    tag.className = "derive-edit-ui derive-remote-who"
+    tag.textContent = `${by} edited`
+    tag.style.left = `${Math.max(4, r.left)}px`
+    tag.style.top = `${Math.max(4, r.top - 20)}px`
+    document.body.appendChild(tag)
+    window.setTimeout(() => {
+      tag.style.opacity = "0"
+      window.setTimeout(() => tag.remove(), 450)
+    }, 2200)
+  }
+  /** Swap a block for its new markup; the caret, if it was there, stays in the same
+   *  block at the same place in its words. */
+  const swapIn = (x: Element, p: Element) => {
+    if (blockSel && (x === blockSel || x.contains(blockSel))) selectBlock(null)
+    // Only a caret the person is using right now comes back (a page without focus
+    // keeps a stale active element; taking focus back would pull it from the host).
+    const focused = caretIn(x) && document.hasFocus() ? asEl(document.activeElement) : null
+    let offset = -1
+    const sel = window.getSelection()
+    const caret = sel?.rangeCount ? sel.getRangeAt(0) : null
+    if (focused && caret && x.contains(caret.startContainer)) {
+      // The caret's place in the words of the block being swapped (not of the editing
+      // host, which may be a smaller part of it), as the new words will count it.
+      const before = document.createRange()
+      before.selectNodeContents(x)
+      before.setEnd(caret.startContainer, caret.startOffset)
+      offset = textNodes(before.cloneContents()).reduce((n, t) => n + t.data.length, 0)
+    }
+    const was = offset >= 0 ? wordsIn(x) : ""
+    x.replaceWith(p)
+    // The server's words are editable like any others (a page script's words, made
+    // after the session started, are the ones refused).
+    const nodes = textNodes(p)
+    for (const n of nodes) editBase?.starts.set(n, -1)
+    if (offset < 0) return
+    // Place it by the words before it, or else by those after it; where both changed
+    // there is no telling where it belongs, and it stays out rather than guess.
+    const words = wordsIn(p)
+    if (words.slice(0, offset) !== was.slice(0, offset)) {
+      const tail = was.length - offset
+      if (words.slice(words.length - tail) !== was.slice(offset)) return
+      offset = words.length - tail
+    }
+    let left = offset
+    for (const n of nodes) {
+      const len = n.nodeValue?.length ?? 0
+      if (left <= len) {
+        editActivate(n, { node: n, offset: left })
+        return
+      }
+      left -= len
+    }
+    const last = nodes[nodes.length - 1]
+    if (last) editActivate(last, { node: last, offset: last.nodeValue?.length ?? 0 })
+  }
+  /** Elements only undo (or the session list) still holds: they carry ids too. */
+  const detachedRoots = (): Element[] => {
+    const out: Element[] = []
+    const add = (n: Node | null | undefined) => {
+      if (n instanceof Element && !n.isConnected) out.push(n)
+    }
+    const entry = (e: HistoryEntry) => {
+      if (e.kind === "multi") e.entries.forEach(entry)
+      else if (e.kind === "children")
+        for (const l of e.lists) {
+          add(l.el)
+          l.nodes.forEach(add)
+        }
+      else if (e.kind !== "scene") add(e.el)
+    }
+    undoStack.forEach(entry)
+    redoStack.forEach(entry)
+    for (const [parent, nodes] of kidsSnap) {
+      add(parent)
+      nodes.forEach(add)
+    }
+    for (const t of editTargets) add(t.el)
+    add(blockClip?.el)
+    return out
+  }
+  const renumberEntry = (e: HistoryEntry, idFor: (old: number) => number | null) => {
+    if (e.kind === "multi") for (const x of e.entries) renumberEntry(x, idFor)
+    else if (e.kind === "html") e.html = renumberHtml(e.html, document, idFor)
+  }
+
+  /** A block's words, as the page shows them (not the editor's own chrome). */
+  const wordsIn = (el: Element) =>
+    textNodes(el)
+      .map((n) => n.data)
+      .join("")
+  /**
+   * Bring the page to a newer version in place. `own` is the record of the save this
+   * sync answers (null: someone else's). Returns `reload` when the host must load the
+   * page fresh instead (the head changed, a deck's slides changed, or this page can't
+   * be lined up with the answer), with `lost` when that would drop typing not yet sent.
+   */
+  const applySync = (
+    r: SyncReply,
+    by: string,
+    own: CollectRecord | null,
+  ): { ok: boolean; reload?: boolean; lost?: boolean } => {
+    const base = saved
+    if (!base || r.head) return { ok: false, reload: true, lost: !!own && own.rev !== rev }
+    const oldId = new Map<Element, number>()
+    for (const el of base.keys()) {
+      const n = srcOf(el)
+      if (n !== null) oldId.set(el, n)
+    }
+    const byOld = new Map<number, Element>()
+    for (const [el, n] of oldId) if (el.isConnected || !byOld.has(n)) byOld.set(n, el)
+    const slides = slideEls()
+    /** The page element standing for each id of the new page, and old id → new. */
+    const pageFor = new Map<number, Element>()
+    const oldToNew = new Map<number, number>()
+    const next: Baseline = new Map()
+    const swaps: [Element, Element, boolean][] = []
+
+    if (own) {
+      // This page's own save: the page already is the new version; line the two up.
+      const roots = new Map<number, Element>()
+      for (const patch of r.patches) {
+        const p = patchRoot(patch.html, document)
+        if (!p) return { ok: false, reload: true, lost: own.rev !== rev }
+        roots.set(patch.old, p)
+      }
+      const page = newPageOf(base, r.remap, roots)
+      const lined = page && linePage(own.order, page)
+      if (!page || !lined) {
+        return { ok: false, reload: true, lost: own.rev !== rev }
+      }
+      // A block the new version reads (or renders) differently takes its new markup,
+      // unless the person changed it since this save went out: then it keeps what they
+      // have (the next save sends it) and takes the new markup at a quiet sync.
+      const changedSince = (el: Element) => {
+        for (let e: Element | null = el; e; e = e.parentElement) {
+          const sent = own.words.get(e)
+          if (sent !== undefined) return wordsIn(e) !== sent
+        }
+        return own.rev !== rev
+      }
+      for (const [el, made] of lined.differ)
+        if (!changedSince(el) && !swaps.some(([x]) => x.contains(el))) swaps.push([el, made, false])
+      for (const [el, root] of lined.reshaped)
+        if (!changedSince(el)) swaps.push([el, root, false])
+        else {
+          el.setAttribute(SRC_ATTR, String(srcOf(root)))
+          pageFor.set(srcOf(root) as number, el)
+        }
+      for (const el of lined.strays) if (!caretIn(el)) el.remove()
+      const replaced = (d: Element) => swaps.some(([x]) => x === d || x.contains(d))
+      keepingSelection(document, (moved) => {
+        for (const [ne, d] of lined.pairs) {
+          if (replaced(d)) continue
+          const o = oldId.get(d)
+          const now = ne.made ? adopt(d, ne.made, moved) : d
+          if (!ne.made) now.setAttribute(SRC_ATTR, String(ne.id))
+          pageFor.set(ne.id, now)
+          if (o !== undefined) oldToNew.set(o, ne.id)
+        }
+      })
+      for (const [, root] of swaps)
+        for (const m of stampedIn(root)) pageFor.set(srcOf(m) as number, m)
+      const newIdOf = (q: Element) => {
+        const o = oldId.get(q)
+        if (o === undefined) return undefined
+        const root = roots.get(o)
+        return root ? (srcOf(root) ?? undefined) : r.remap[o]
+      }
+      for (const ne of page) {
+        const now = pageFor.get(ne.id)
+        if (!now) continue
+        next.set(
+          now,
+          ne.made
+            ? partsVia(ne.made, (m) => pageFor.get(srcOf(m) as number))
+            : (base.get(ne.old as Element) ?? []).map((q) => {
+                if (typeof q === "string") return q
+                const n = newIdOf(q)
+                return (n !== undefined && pageFor.get(n)) || q
+              }),
+        )
+      }
+      for (const d of lined.spaced) {
+        const now = [...pageFor.values()].includes(d) ? d : null
+        if (now) next.set(now, sigParts(now))
+      }
+    } else {
+      // Someone else's: each changed subtree swaps in where its old root is, unless
+      // the person has unsaved words there (then theirs goes in and yours is kept to
+      // choose from). A deck's own script holds its slides, so changing which slides
+      // exist needs a fresh page.
+      for (const patch of r.patches) {
+        const x = byOld.get(patch.old)
+        if (!x?.isConnected || x === document.body) return { ok: false, reload: true }
+        if (slides.some((sl) => x === sl || x.contains(sl))) return { ok: false, reload: true }
+        const p = patchRoot(patch.html, document, x)
+        if (!p) return { ok: false, reload: true }
+        swaps.push([x, p, unsavedIn(x, base)])
+      }
+    }
+    const gone = swaps.flatMap(([x]) => stampedIn(x))
+
+    // Everything else that carries an id — the page, the baseline, what undo holds —
+    // takes its new id, or is marked stale when the new version doesn't have it. (Inside
+    // a changed subtree the answer's id is a hint: the same markup under that id, which
+    // is what undo putting it back needs.)
+    const idOf = (o: number): number | null => {
+      const n = oldToNew.get(o) ?? r.remap[o] ?? -1
+      return n >= 0 ? n : null
+    }
+    const placed = new Set(pageFor.values())
+    const targets = new Set<Element>(stampedIn(document.body))
+    for (const el of base.keys()) targets.add(el)
+    for (const root of detachedRoots()) for (const e of stampedIn(root)) targets.add(e)
+    // Your side of a conflict keeps the ids it had: "Keep mine" lines it up with
+    // theirs by those, whenever the choice is made.
+    for (const [x, , mine] of swaps) if (mine) for (const e of stampedIn(x)) targets.delete(e)
+    for (const c of conflicts) for (const e of stampedIn(c.mine)) targets.delete(e)
+    const plan: [Element, number | null][] = []
+    for (const el of targets) {
+      const o = srcOf(el)
+      if (!placed.has(el) && o !== null) plan.push([el, idOf(o)])
+    }
+    // What keeps an element first; then what the new version no longer has. Such a block
+    // (a save removed it and undo brought it back; one kept its words while the new version
+    // rewrote them) saves as a copy of one that opens the same way — a paragraph an Enter
+    // made, a list item — or else refuses to save rather than guess.
+    for (const [el, n] of plan) if (n !== null) renumber(el, n)
+    const opening = new Map<string, number>()
+    for (const el of stampedIn(document.body)) {
+      const n = srcOf(el)
+      if (n !== null && !opening.has(openingOf(el))) opening.set(openingOf(el), n)
+    }
+    const standIns = new Set<Element>()
+    for (const [el, n] of plan)
+      if (n === null) {
+        // On the page, only a sibling will do (it's the same kind of block in the same
+        // place); for one undo holds, any that opens the same way.
+        const sibling = el.isConnected
+          ? Array.from(el.parentElement?.children ?? []).find(
+              (c) => c !== el && srcOf(c) !== null && openingOf(c) === openingOf(el),
+            )
+          : undefined
+        const like = /^(?:b|strong|i|em|br|a)$/.test(el.localName)
+          ? undefined
+          : el.isConnected
+            ? sibling && (srcOf(sibling) ?? undefined)
+            : opening.get(openingOf(el))
+        if (like !== undefined) standIns.add(el)
+        renumber(el, like ?? null)
+      }
+
+    if (!own) {
+      // The baseline keeps its elements (renumbered in place); what was swapped out
+      // leaves it, and what came in joins it.
+      const swapped = new Map<Element, Element>()
+      for (const e of gone) base.delete(e)
+      for (const e of standIns) base.delete(e)
+      for (const [x, p, mine] of swaps) {
+        swapIn(x, p)
+        swapped.set(x, p)
+        for (const e of stampedIn(p)) base.set(e, sigParts(e))
+        if (mine) {
+          p.classList.add("derive-conflict")
+          conflicts.push({ mine: x, theirs: p, by })
+        } else markRemote(p, by)
+      }
+      for (const [el, parts] of base) {
+        if (el !== document.body && srcOf(el) === null) base.delete(el)
+        else if (parts.some((q) => typeof q !== "string" && swapped.has(q)))
+          base.set(
+            el,
+            parts.map((q) => (typeof q === "string" ? q : (swapped.get(q) ?? q))),
+          )
+      }
+    } else {
+      for (const [x, p] of swaps) swapIn(x, p)
+      const root = base.get(document.body)
+      if (root && srcOf(document.body) === null)
+        next.set(
+          document.body,
+          root.map((q) => {
+            if (typeof q === "string") return q
+            const o = oldId.get(q)
+            const n = o === undefined ? undefined : idOf(o)
+            return (n !== null && n !== undefined && pageFor.get(n)) || q
+          }),
+        )
+      saved = next
+      for (const [el, style, lay] of own.attrs) {
+        savedStyle.set(el, style)
+        if (lay) savedLayout.set(el, lay)
+      }
+    }
+    for (const t of editTargets) t.origHtml = renumberHtml(t.origHtml, document, idOf)
+    for (const e of [...undoStack, ...redoStack]) renumberEntry(e, idOf)
+    document.documentElement.setAttribute("data-derive-src-version", String(r.version))
+    document.documentElement.setAttribute("data-derive-src-sha", r.sha)
+    if (swaps.length) rescanStructure()
+    // What the sync itself did to the page is not an edit.
+    revWatch?.takeRecords()
+    refreshResizeUi()
+    paintBlocks()
+    return { ok: true }
+  }
+
+  /** Settle a conflict. Theirs is already on the page; keeping yours puts your block
+   *  back with the new version's ids, so the next save sends it over theirs. */
+  const settleConflict = (c: Conflict, mine: boolean) => {
+    conflicts = conflicts.filter((x) => x !== c)
+    c.theirs.classList.remove("derive-conflict")
+    const base = saved
+    if (!mine || !base || !c.theirs.isConnected) return
+    const page = stampedIn(c.mine)
+    const made = stampedIn(c.theirs)
+    if (
+      page.length !== made.length ||
+      page.some((e, i) => tagOf(e) !== tagOf(made[i] as Element))
+    ) {
+      post({ type: "edit-blocked", reason: "keep-mine" })
+      return
+    }
+    const pageOf = new Map(made.map((p, i) => [p, page[i] as Element]))
+    const parts = made.map((p) => partsVia(p, (e) => pageOf.get(e)))
+    page.forEach((e, i) => {
+      renumber(e, srcOf(made[i] as Element))
+    })
+    for (const p of made) base.delete(p)
+    made.forEach((_, i) => {
+      base.set(page[i] as Element, parts[i] as SigParts)
+    })
+    for (const [el, q] of base)
+      if (q.includes(c.theirs))
+        base.set(
+          el,
+          q.map((x) => (x === c.theirs ? c.mine : x)),
+        )
+    c.theirs.replaceWith(c.mine)
+    rescanStructure()
+    // It is yours again: the next save compares it with theirs and sends the difference.
+    const target = c.mine instanceof HTMLElement ? targetFor(c.mine) : null
+    if (!target && c.mine instanceof HTMLElement) snapKids(c.mine)
+    bumpRev(true)
+  }
+  const conflictList = () =>
+    conflicts.map((c) => ({
+      id: changeId(c),
+      where: c.theirs instanceof HTMLElement ? whereOf(c.theirs, true) : "Block",
+      mine: plainOf(c.mine).slice(0, 200),
+      theirs: plainOf(c.theirs).slice(0, 200),
+      by: c.by,
+    }))
 
   window.addEventListener("message", (e: MessageEvent) => {
     const d = e.data
@@ -6158,12 +6814,7 @@ interface ElReg {
     else if (d.type === "remeasure") reportRects()
     else if (d.type === "emphasize") setOn(d.id)
     else if (d.type === "edit-mode")
-      setEditMode(
-        !!d.on,
-        !!d.keep,
-        { fromSelection: !!d.fromSelection, select: d.select },
-        !!d.elementEdits,
-      )
+      setEditMode(!!d.on, { fromSelection: !!d.fromSelection }, !!d.elementEdits)
     // The edit bar's controls, driven from the host. Same functions the keyboard
     // chords call, so a button and its shortcut can never mean different things.
     else if (d.type === "edit-undo") {
@@ -6208,17 +6859,38 @@ interface ElReg {
     } else if (d.type === "edit-collect") {
       // The nonce rides back untouched: a slow page can answer a TIMED-OUT collect
       // after the host started a new one, and stale edits must not resolve it.
-      if (srcSnap)
+      if (saved)
         post({
           type: "edit-edits",
-          ...collectOps(srcSnap),
+          ...collectOps(saved),
+          rev,
           dirty: countDirty(),
           nonce: d.nonce,
-          // Where to pick up after the save reloads the page.
-          resume: pathOf(blockSel),
         })
-      else post({ type: "edit-edits", ...collectEdits(), nonce: d.nonce })
-    } else if (d.type === "edit-restore") restoreEdits()
+      else post({ type: "edit-edits", ...collectEdits(), rev, nonce: d.nonce })
+    } else if (d.type === "edit-sync") {
+      const own = d.own ? lastCollect : null
+      if (d.own) lastCollect = null
+      const result = applySync(d as SyncReply, typeof d.by === "string" ? d.by : "", own)
+      post({ type: "edit-synced", nonce: d.nonce, ...result })
+      lastState = ""
+      postDirty()
+    } else if (d.type === "edit-rebase") {
+      // A page saved by quotes (LaTeX): what is on screen is the new baseline, unless
+      // the person typed on while it saved.
+      const ok = editOn && !saved && d.rev === rev
+      if (ok) {
+        const elementEdits = elementEditsOn
+        setEditMode(false)
+        setEditMode(true, {}, elementEdits)
+      }
+      post({ type: "edit-rebased", nonce: d.nonce, ok })
+    } else if (d.type === "edit-resolve") {
+      const c = conflicts.find((x) => changeId(x) === d.id)
+      if (c) settleConflict(c, !!d.mine)
+      lastState = ""
+      postDirty()
+    } else if (d.type === "edit-undo-delete") restoreDeleted()
     // The host's changes list and its block panel.
     else if (d.type === "edit-reveal") revealChange(String(d.id))
     else if (d.type === "edit-revert") revertChange(String(d.id))
@@ -6231,10 +6903,31 @@ interface ElReg {
             )
           : null,
       )
-    else if (d.type === "scroll-by") window.scrollBy(0, d.dy || 0)
-    else if (d.type === "scroll-to") scrollBack(Number(d.y) || 0)
-    else if (d.type === "review-mode") setReviewMode(!!d.on)
+    else if (d.type === "scroll-by") {
+      releaseHold()
+      window.scrollBy(0, d.dy || 0)
+    } else if (d.type === "scroll-to") {
+      releaseHold()
+      scrollBack(Number(d.y) || 0)
+    } else if (d.type === "restore-position") {
+      restorePosition(d.slide, d.at, d.slideId)
+      // Two frames: a deck's slide transition has started and the scroll has landed.
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => post({ type: "position-restored", nonce: d.nonce })),
+      )
+    } else if (d.type === "hello") {
+      // This page just became the one on screen (it loaded hidden, behind the old one):
+      // say again what the host dropped while it wasn't listening.
+      lastSniff = ""
+      lastOutline = ""
+      postDeckSniff()
+      postDeckOutline()
+      reportScroll()
+      lastPosition = null
+      post({ type: "mention-resolve", handles: mentionHandlesInDocument() })
+    } else if (d.type === "review-mode") setReviewMode(!!d.on)
     else if (d.type === "focus-review") {
+      releaseHold()
       const target = typeof d.id === "string" ? document.getElementById(d.id) : null
       if (!target) return
       const rect = target.getBoundingClientRect()
@@ -6245,6 +6938,7 @@ interface ElReg {
       window.setTimeout(() => target.classList.remove("derive-review-flash"), 2100)
       setTimeout(reportScroll, 260)
     } else if (d.type === "focus-anchor") {
+      releaseHold()
       const entry = textEntries.find((t) => t.id === d.id)
       const ovEl = document.querySelector<HTMLElement>(`.derive-el-hl[data-derive-id="${d.id}"]`)
       /* quiet element anchors have no overlay — the element itself carries the rect. */
