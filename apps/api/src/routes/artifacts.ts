@@ -162,10 +162,7 @@ const SyncBody = z.object({
       z.string().regex(/^(?:[0-9a-f]{16})?$/, '`hashes` must be 16-hex source-map hashes or ""'),
     )
     .max(200_000),
-  sha: z
-    .string()
-    .regex(/^[0-9a-f]{64}$/, "`sha` must be the 64-hex sha256 of the page's source")
-    .optional(),
+  sha: z.string().regex(/^[0-9a-f]{64}$/, "`sha` must be the 64-hex sha256 of the page's source"),
 })
 /** At most one opportunistic idle-session sweep per process per this long. */
 const SWEEP_EVERY_MS = 30_000
@@ -215,7 +212,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     sourceHiddenFrom,
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
-  const fanOutDeps = {
+  const publishDeps = {
     meta,
     blobs,
     bus,
@@ -226,14 +223,14 @@ export const artifactRoutes = (ctx: AppContext) => {
     summarize,
     baseUrl: deps.baseUrl,
   }
-  // The idle backstop for inline edit sessions whose page never said Done: swept on the
-  // editors' own traffic (throttled), and by the scheduled tick through /edit-sessions/sweep.
+  // Inline edit sessions whose page never said Done are finalized once idle: on the
+  // editors' own traffic (throttled), and by the scheduled tick (/edit-sessions/sweep).
   let lastSweep = 0
   const sweepSoon = (): void => {
     const now = Date.now()
     if (now - lastSweep < SWEEP_EVERY_MS) return
     lastSweep = now
-    void background(sweepIdleEditSessions(fanOutDeps, INLINE_EDIT_COALESCE_MS, now))
+    void background(sweepIdleEditSessions(publishDeps, INLINE_EDIT_COALESCE_MS, now))
   }
 
   /**
@@ -980,23 +977,21 @@ export const artifactRoutes = (ctx: AppContext) => {
       // the same person's unreviewed current web version, and only during a short
       // burst. Named checkpoints, API/MCP writes, comments, review rounds, and a
       // five-minute pause all force the normal append-only path.
-      //
       // An auto-saving editor names its edit SESSION: its saves coalesce into the version
-      // that session opened (never another session's), and their notifications wait for
-      // the session to end — Done, the page closing, or the same five idle minutes.
+      // that session opened, and their notifications wait for the session to end.
       let replaceCurrent: { n: number; blobKey: string } | undefined
-      const coalesceRequested =
+      const coalescing =
         (typeof editsField === "string" || typeof opsField === "string") &&
         (body["coalesce"] === "true" || body["coalesce"] === "1" || !!sessionField) &&
         !str(body["name"]) &&
         body["request_review"] !== "true" &&
         body["request_review"] !== "1" &&
-        !str(body["resolves"])
-      const editSession =
-        coalesceRequested && sessionField && existing && onBehalf && !agentPrincipal
-          ? sessionField
-          : undefined
-      if (coalesceRequested && existing && onBehalf && !agentPrincipal) {
+        !str(body["resolves"]) &&
+        !!existing &&
+        !!onBehalf &&
+        !agentPrincipal
+      const editSession = coalescing ? sessionField : undefined
+      if (coalescing && existing) {
         const current = await meta.getVersion(existing.id, existing.current_version)
         const age = current ? Date.now() - Date.parse(current.created_at) : Number.POSITIVE_INFINITY
         if (
@@ -1144,34 +1139,19 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Webhook + follower fan-out + thread resolves + realtime/render/re-anchor, all via
       // the one shared helper so this path can never drift from MCP publish or restore.
       const afterPublishStartedAt = performance.now()
-      const { storedRows } = await afterPublish(
-        {
-          meta,
-          blobs,
-          bus,
-          notify,
-          notifyRender,
-          background,
-          search,
-          summarize,
-          baseUrl: deps.baseUrl,
-        },
-        artifact,
-        version,
-        {
-          isNew: !shortId,
-          onBehalf,
-          resolves: toResolve,
-          // The ACTING principal — an agent's own id (a bearer's, or the one that minted a
-          // staged upload URL), not the human it acts for. `onBehalf` (and therefore
-          // version.author_id) is deliberately the human, so it can't classify who published.
-          actorId: agentPrincipal?.id ?? tokenAuth?.agent?.id ?? actor?.id ?? null,
-          actorName: agentPrincipal?.name ?? tokenAuth?.agent?.name ?? actor?.name ?? null,
-          ...(preparedSource !== undefined ? { preparedSource } : {}),
-          ...(previousSearchSource ? { previousSearchSource } : {}),
-          deferNotifications: !!editSession,
-        },
-      )
+      const { storedRows } = await afterPublish(publishDeps, artifact, version, {
+        isNew: !shortId,
+        onBehalf,
+        resolves: toResolve,
+        // The ACTING principal — an agent's own id (a bearer's, or the one that minted a
+        // staged upload URL), not the human it acts for. `onBehalf` (and therefore
+        // version.author_id) is deliberately the human, so it can't classify who published.
+        actorId: agentPrincipal?.id ?? tokenAuth?.agent?.id ?? actor?.id ?? null,
+        actorName: agentPrincipal?.name ?? tokenAuth?.agent?.name ?? actor?.name ?? null,
+        ...(preparedSource !== undefined ? { preparedSource } : {}),
+        ...(previousSearchSource ? { previousSearchSource } : {}),
+        deferNotifications: !!editSession,
+      })
       if (editSession) sweepSoon()
       const afterPublishFinishedAt = performance.now()
       // Tag at publish time — the one-step "auto-tag on create/version" hook. `tags` is a
@@ -2614,29 +2594,14 @@ export const artifactRoutes = (ctx: AppContext) => {
       })
       // A restore is a version bump too: same webhook + realtime + re-anchor as a publish,
       // but never a new artifact, so no follower fan-out and no thread resolves.
-      await afterPublish(
-        {
-          meta,
-          blobs,
-          bus,
-          notify,
-          notifyRender,
-          background,
-          search,
-          summarize,
-          baseUrl: deps.baseUrl,
-        },
-        artifact,
-        version,
-        {
-          isNew: false,
-          onBehalf: null,
-          actorId: (await actingUser(c))?.id ?? null,
-          // The restored version's dynamic data comes back with it: v7 restored from v3
-          // starts from the numbers v3 ended with, not from whatever v6 had.
-          dynamicSeedFrom: src.n,
-        },
-      )
+      await afterPublish(publishDeps, artifact, version, {
+        isNew: false,
+        onBehalf: null,
+        actorId: (await actingUser(c))?.id ?? null,
+        // The restored version's dynamic data comes back with it: v7 restored from v3
+        // starts from the numbers v3 ended with, not from whatever v6 had.
+        dynamicSeedFrom: src.n,
+      })
       const fresh = (await meta.getByShortId(artifact.short_id)) as ArtifactRecord
       const versions = await meta.listVersions(artifact.id)
       return c.json(
@@ -2744,22 +2709,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         user_id: me.id,
         role: "owner",
       })
-      await afterPublish(
-        {
-          meta,
-          blobs,
-          bus,
-          notify,
-          notifyRender,
-          background,
-          search,
-          summarize,
-          baseUrl: deps.baseUrl,
-        },
-        copy,
-        v,
-        { isNew: true, onBehalf: me.id, actorId: me.id },
-      )
+      await afterPublish(publishDeps, copy, v, { isNew: true, onBehalf: me.id, actorId: me.id })
       return c.json(
         {
           short_id: copy.short_id,
@@ -2825,11 +2775,8 @@ export const artifactRoutes = (ctx: AppContext) => {
     return c.json({ version: v, ...map })
   })
 
-  // The inline editor's in-place sync: what its page (named by the hashes it was served
-  // with, and the sha of that source) needs to show the current version without a reload —
-  // the new source map, each old id's new id, and the changed subtrees as stamped HTML, or
-  // `head: true` when only a whole-page swap will do. Called after the editor's own save
-  // and when a newer version appears. Publishers only, like the source map it extends.
+  // The inline editor's in-place sync (see syncEditorPage): after its own save and when a
+  // newer version appears. Publishers only, like the source map it extends.
   app.post("/v1/artifacts/:shortId/sync", async (c) => {
     const artifact = await requireArtifact(c, "publish")
     if (artifact instanceof Response) return artifact
@@ -2844,7 +2791,6 @@ export const artifactRoutes = (ctx: AppContext) => {
       const result = await syncEditorPage(
         {
           getVersion: meta.getVersion.bind(meta),
-          listVersions: meta.listVersions.bind(meta),
           sourceText,
           page: (text, contentType, version) =>
             editorPage(
@@ -2867,41 +2813,18 @@ export const artifactRoutes = (ctx: AppContext) => {
     }
   })
 
-  // An inline edit session is done (the editor's Done, or its page closing — a beacon, so
-  // any body is optional and may arrive as text/plain): the notifications its saves
-  // deferred go out now, once, for the version it wrote, and a review round opens if asked
-  // (`{"request_review": true, "review_note"?: string}`). Only the session's own author
+  // An inline edit session is done (the editor's Done, or its page closing — a beacon):
+  // the notifications its saves deferred go out now, once. Only the session's own author
   // closes it. Idempotent: a session already closed (or never opened) closes nothing.
   app.post("/v1/artifacts/:shortId/sessions/:session/done", async (c) => {
     const artifact = await requireArtifact(c, "publish")
     if (artifact instanceof Response) return artifact
     const session = c.req.param("session")
     if (!SESSION_ID.test(session)) return fail(c, 400, "bad session id")
-    let options: { request_review?: unknown; review_note?: unknown } = {}
-    try {
-      const parsed = JSON.parse((await c.req.text()) || "{}")
-      if (parsed && typeof parsed === "object") options = parsed
-    } catch {}
     const who = await privateOwnerId(c)
     const closed = await meta.closeEditSession(artifact.id, session, who ?? undefined)
-    const last = closed.at(-1)
-    if (last && !artifact.removed_at) {
-      const actor = await actingUser(c)
-      await finalizeEditSession(fanOutDeps, artifact, closed, actor?.id ?? who)
-      if (options.request_review === true && who)
-        await openReviewRound(
-          { meta, blobs, bus, baseUrl: deps.baseUrl, notify, pokeWebhooks: deps.pokeWebhooks },
-          artifact,
-          {
-            reviewer: who,
-            requestedById: actor?.id ?? who,
-            requestedByName: actor?.name ?? "Someone",
-            version: last.n,
-            note: typeof options.review_note === "string" ? options.review_note : null,
-            actorId: actor?.id ?? who,
-          },
-        )
-    }
+    if (closed.length && !artifact.removed_at)
+      await finalizeEditSession(publishDeps, artifact, closed, (await actingUser(c))?.id ?? who)
     sweepSoon()
     return c.json({ closed: closed.map((v) => v.n) })
   })
@@ -2912,7 +2835,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (!isToken(c)) return fail(c, 403, "forbidden")
     lastSweep = Date.now()
     return c.json({
-      finalized: await sweepIdleEditSessions(fanOutDeps, INLINE_EDIT_COALESCE_MS),
+      finalized: await sweepIdleEditSessions(publishDeps, INLINE_EDIT_COALESCE_MS),
     })
   })
 

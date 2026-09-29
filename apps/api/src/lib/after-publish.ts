@@ -657,9 +657,8 @@ export interface AfterPublishOpts {
    *  publish): the previous version. A restore passes the restored version's number, so
    *  the new version starts from the numbers that version ended with. */
   dynamicSeedFrom?: number
-  /** A save inside an open inline edit session: the version is live at once (realtime,
-   *  render, search, anchors), but who is TOLD about it — webhooks, channels, mentions —
-   *  waits for the session to end, once for the whole session ({@link finalizeEditSession}). */
+  /** A save inside an open inline edit session: live at once, but webhooks, channels and
+   *  mentions wait for the session to end ({@link finalizeEditSession}). */
   deferNotifications?: boolean
 }
 
@@ -759,12 +758,9 @@ const mentionFanOut = (
     ),
   )
 
-/**
- * The end of an inline edit session (Done, the page closing, or five idle minutes): the
- * notifications its saves deferred fire now, once per version it wrote (normally one —
- * a session coalesces into its working version), describing the version as it ended.
- * The caller has already claimed `versions` with `closeEditSession`, so this runs once.
- */
+/** The end of an inline edit session (Done, the page closing, or idle): the notifications
+ *  its saves deferred fire now, once per version it wrote (normally one), describing the
+ *  version as it ended. The caller claimed `versions` with `closeEditSession`. */
 export const finalizeEditSession = async (
   deps: AfterPublishDeps,
   artifact: ArtifactRecord,
@@ -777,9 +773,8 @@ export const finalizeEditSession = async (
   }
 }
 
-/** The idle backstop: finalize every edit session whose last save is older than
- *  `idleMs` (a person who closed the tab without the page's beacon getting out). Bounded
- *  per pass; the next pass takes the rest. Returns the versions finalized. */
+/** Finalize edit sessions whose last save is older than `idleMs` (the page's beacon never
+ *  got out), a bounded batch per pass. Returns the versions finalized. */
 export const sweepIdleEditSessions = async (
   deps: AfterPublishDeps,
   idleMs: number,

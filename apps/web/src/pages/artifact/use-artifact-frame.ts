@@ -27,6 +27,32 @@ const sameTops = (a: Record<string, number>, b: Record<string, number>): boolean
   return true
 }
 
+let askSeq = 0
+/** Ask a frame's window something and wait for its `reply` echoing the same nonce (a slow
+ *  page can answer a question that timed out after a newer one was asked): null after `ms`. */
+export const askFrame = <T = Record<string, unknown>>(
+  win: Window | null | undefined,
+  msg: Record<string, unknown>,
+  reply: string,
+  ms: number,
+): Promise<T | null> =>
+  new Promise((resolve) => {
+    const nonce = ++askSeq
+    const done = (d: T | null) => {
+      window.removeEventListener("message", onMsg)
+      window.clearTimeout(timer)
+      resolve(d)
+    }
+    const onMsg = (e: MessageEvent) => {
+      const d = e.data
+      if (e.source === win && d?.source === "derive" && d.type === reply && d.nonce === nonce)
+        done(d)
+    }
+    const timer = window.setTimeout(() => done(null), ms)
+    window.addEventListener("message", onMsg)
+    win?.postMessage({ source: "derive-host", ...msg, nonce }, "*")
+  })
+
 /**
  * The entire conversation with the sandboxed artifact iframe, kept out of the
  * page. The frame is a separate opaque origin, so everything crosses via

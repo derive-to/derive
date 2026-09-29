@@ -533,6 +533,12 @@ export interface StampedSync {
   patches: { old: number; html: string }[]
   head: boolean
 }
+/** What `/sync` answers an editor's page: the sync, and the new version's source map. */
+export interface SyncReply extends StampedSync {
+  version: number
+  sha: string
+  hashes: string[]
+}
 
 interface StampedEl {
   id: number

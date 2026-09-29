@@ -42,14 +42,21 @@ export const HOLD_ATTR = "data-derive-hold"
 export const CHROME = ".derive-edit-ui,.derive-el-hl"
 /** Editor wraps around source text (mention chips): transparent. */
 const WRAP = ".derive-mention"
-const BLOCKISH =
-  /^(?:address|article|aside|blockquote|dd|div|dl|dt|figcaption|figure|footer|h[1-6]|header|li|main|nav|ol|p|pre|section|ul)$/
+/** Elements that sit on a line of their own. */
+export const BLOCK_TAGS =
+  "address|article|aside|blockquote|dd|div|dl|dt|figcaption|figure|footer|h[1-6]|header|li|main|nav|ol|p|pre|section|ul"
+const BLOCKISH = new RegExp(`^(?:${BLOCK_TAGS})$`)
 
 /** An element's source id, or null when the browser or a script made it. */
 export const srcOf = (el: Element): number | null => {
   const v = el.getAttribute(SRC_ATTR)
   return v !== null && /^\d+$/.test(v) ? Number(v) : null
 }
+/** An element and its stamped descendants, in document order. */
+export const stampedIn = (el: Element): Element[] => [
+  ...(srcOf(el) !== null ? [el] : []),
+  ...Array.from(el.querySelectorAll(`[${SRC_ATTR}]`)).filter((e) => srcOf(e) !== null),
+]
 
 type Kind = "chrome" | "wrap" | "src" | "gen" | "fmt" | "new"
 const kindOf = (el: Element): Kind =>
@@ -122,12 +129,8 @@ export interface SrcSnapshot {
  *  parts (an unstamped root too, so a change directly under it is caught). Kept by
  *  element, so it survives a sync renumbering the ids. */
 export type Baseline = Map<Element, SigParts>
-export function baselineOf(root: Element): Baseline {
-  const base: Baseline = new Map([[root, sigParts(root)]])
-  for (const el of Array.from(root.querySelectorAll(`[${SRC_ATTR}]`)))
-    if (kindOf(el) === "src") base.set(el, sigParts(el))
-  return base
-}
+export const baselineOf = (root: Element): Baseline =>
+  new Map([root, ...stampedIn(root)].map((el) => [el, sigParts(el)]))
 /** Mark what page scripts made before the session: not in the source. */
 export function markGenerated(root: Element): void {
   for (const el of Array.from(root.querySelectorAll("*")))
@@ -150,14 +153,7 @@ export function snapshotOf(base: Baseline, root: Element): SrcSnapshot {
   return { sigs, dupes, els }
 }
 
-/** Record every stamped element's children and mark script-made elements. Call once
- *  at the start of an edit session, after the page settled. */
-export function snapshotSource(root: Element): SrcSnapshot {
-  markGenerated(root)
-  return snapshotOf(baselineOf(root), root)
-}
-
-/** Undo what snapshotSource marked on the page. */
+/** Undo what markGenerated marked on the page. */
 export function releaseSource(root: Element): void {
   for (const el of Array.from(root.querySelectorAll(`[${GEN_ATTR}]`))) el.removeAttribute(GEN_ATTR)
 }

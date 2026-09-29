@@ -3,10 +3,10 @@
  * source IN PLACE, so a save (yours or someone else's) never reloads the document.
  *
  * Source ids are positions in the stored source, so a save renumbers every element after
- * the first thing it changed. The server answers a sync (see the contract in
- * apps/web/src/api.ts `syncArtifact`) with `remap[oldId] → newId` for every element it
- * kept, and `patches`: the new stamped markup of each changed subtree, by the old id of
- * its root. This module is what the page does with that answer:
+ * the first thing it changed. The server answers a sync (source-edit `syncStamped`) with
+ * `remap[oldId] → newId` for every element it kept, and `patches`: the new stamped markup
+ * of each changed subtree, by the old id of its root. This module is what the page does
+ * with that answer:
  *
  *  - Your own save: the page already shows what was saved, so nothing is replaced. The
  *    save's collect recorded the new page in source order by the page element that
@@ -24,8 +24,11 @@
  * from the package index.
  */
 
+export type { SyncReply } from "./source-edit"
+
 import {
   type Baseline,
+  BLOCK_TAGS,
   CHROME,
   FMT_ATTR,
   GEN_ATTR,
@@ -35,23 +38,11 @@ import {
   SRC_ATTR,
   sigParts,
   srcOf,
+  stampedIn,
 } from "./source-tokens"
 
 /** An element the current version no longer has: a save naming it is refused here. */
 export const STALE_ATTR = "data-derive-stale"
-
-export interface SyncPatch {
-  old: number
-  html: string
-}
-export interface SyncReply {
-  version: number
-  sha: string
-  hashes: string[]
-  remap: number[]
-  patches: SyncPatch[]
-  head: boolean
-}
 
 /** A patch's markup as one element, parsed inert — in a document of its own, where
  *  nothing loads or runs — until it is put on the page. `at`, the element it replaces,
@@ -71,12 +62,6 @@ export function patchRoot(html: string, doc: Document, at?: Element | null): Ele
   const holder = wrap ? t.content.firstElementChild : t.content
   return holder?.firstElementChild ?? null
 }
-
-/** An element and its stamped descendants, in document order. */
-export const stampedIn = (el: Element): Element[] => [
-  ...(srcOf(el) !== null ? [el] : []),
-  ...Array.from(el.querySelectorAll(`[${SRC_ATTR}]`)).filter((e) => srcOf(e) !== null),
-]
 
 /** An element's tag as a save writes it: the editor's spans as the tags they become,
  *  and the two spellings of bold and italic as one. */
@@ -166,7 +151,7 @@ export function newPageOf(
 
 /** An element's own words: its text, leaving out the elements of its own that the new
  *  page names (`own`) and the editor's chrome. */
-const wordsOf = (el: Element, own: (c: Element) => boolean): string => {
+const wordsOf = (el: Element, own: (c: Element) => boolean = () => false): string => {
   let out = ""
   const walk = (n: Node) => {
     for (let c = n.firstChild; c; c = c.nextSibling)
@@ -197,18 +182,17 @@ const childrenOf = (el: Element, holds: boolean): Element[] => {
  *  edges. An inline element's edges count: a space in or out of a bold reads apart. */
 const sameReading = (a: Element, b: Element): boolean => {
   const read = (el: Element) => {
-    const w = wordsOf(el, () => false).replace(/\s+/g, " ")
+    const w = wordsOf(el).replace(/\s+/g, " ")
     return BLOCK.test(el.localName) ? w.trim() : w
   }
   return read(a) === read(b)
 }
-const BLOCK =
-  /^(?:address|article|aside|blockquote|dd|div|dl|dt|figcaption|figure|footer|h[1-6]|header|li|main|nav|ol|p|pre|section|table|tbody|thead|tfoot|tr|td|th|ul|body)$/
+const BLOCK = new RegExp(`^(?:${BLOCK_TAGS}|table|tbody|thead|tfoot|tr|td|th|body)$`)
 
 /** A block with nothing in it but the line it holds open. */
 const blankBlock = (el: Element): boolean =>
   /^(?:p|li|h[1-6])$/.test(el.localName) &&
-  !wordsOf(el, () => false).trim() &&
+  !wordsOf(el).trim() &&
   !el.querySelector("img,svg,video,iframe,hr,input")
 
 /** How the recorded layout lines up with the new page: kept elements one for one, and
@@ -235,7 +219,7 @@ export function linePage(
   const strays: Element[] = []
   const spaced: Element[] = []
   const stray = (d: Element | null | undefined) =>
-    d === null || (!!d && srcOf(d) === null && !wordsOf(d, () => false).trim())
+    d === null || (!!d && srcOf(d) === null && !wordsOf(d).trim())
   // Where the page holds the element the new version keeps: itself, a copy standing in
   // for it (editing can rebuild an inline element with the same attributes), or — where
   // the new version kept a position rather than an element (rows traded places) — an

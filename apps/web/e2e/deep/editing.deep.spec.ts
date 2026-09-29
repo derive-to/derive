@@ -386,9 +386,15 @@ test.describe("exact-source serializer", () => {
       ([sel, m]) => {
         const w = window as unknown as {
           __snap: unknown
-          __src: { snapshotSource: (r: Element) => unknown }
+          __src: {
+            markGenerated: (r: Element) => void
+            baselineOf: (r: Element) => unknown
+            snapshotOf: (b: unknown, r: Element) => unknown
+          }
         }
-        w.__snap = w.__src.snapshotSource(document.body)
+        // As edit mode opens: mark what the page's script made, then record the rest.
+        w.__src.markGenerated(document.body)
+        w.__snap = w.__src.snapshotOf(w.__src.baselineOf(document.body), document.body)
         for (const el of document.querySelectorAll(sel as string))
           el.setAttribute("contenteditable", m as string)
       },

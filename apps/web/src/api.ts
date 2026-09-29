@@ -16,6 +16,7 @@ import type {
   SharedStateResult,
   SortMode,
   SourceOp,
+  SyncReply,
   WorkflowDraftRecord,
   WorkflowFilesRecord,
   WorkflowReadiness,
@@ -258,18 +259,6 @@ export interface SourceMap {
   version: number
   sha: string
   hashes: string[]
-}
-/** A newer version, as an editing page takes it in place (packages/core source-sync):
- *  the new source map, `remap[oldId]` → new id (-1: gone or changed), the new stamped
- *  markup of each changed subtree by its root's old id, and whether anything outside
- *  <body> changed (the page must be reloaded for that). */
-export interface SyncReply {
-  version: number
-  sha: string
-  hashes: string[]
-  remap: number[]
-  patches: { old: number; html: string }[]
-  head: boolean
 }
 /** The other edit shape the server accepts: a literal string swap against the raw
  *  source. The inline editor uses it for exactly one thing — replacing an image's

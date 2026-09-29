@@ -1058,29 +1058,24 @@ describe("exact-source inline saves (ops)", () => {
     expect(reloaded).toContain(first.patches[0].html)
 
     // The session's next save replaces that version's bytes in place: the page names what
-    // it shows by sha. Without one, bytes no version holds any more mean a whole-page swap.
+    // it shows by sha. Bytes nothing holds mean a whole-page swap.
     await type("Rollout, again")
     const second = await (await sync(short_id, { hashes: first.hashes, sha: first.sha })).json()
     expect(second).toMatchObject({ version: now.version, head: false })
     expect(second.patches).toEqual([
       { old: h1, html: `<h1 data-derive-src="${h1}">Rollout, again</h1>` },
     ])
-    expect(await (await sync(short_id, { hashes: first.hashes })).json()).toMatchObject({
-      head: true,
-      patches: [],
-    })
+    expect(
+      await (await sync(short_id, { hashes: first.hashes, sha: "0".repeat(64) })).json(),
+    ).toMatchObject({ head: true, patches: [] })
 
-    // Someone else's version lands: the page gets their paragraph, found by sha or, for a
-    // version still on record, by its hashes alone.
+    // Someone else's version lands: the page gets their paragraph.
     expect((await editOther(short_id, "Second point", "Second, revised")).status).toBe(201)
     const theirs = await (await sync(short_id, { hashes: second.hashes, sha: second.sha })).json()
     expect(theirs).toMatchObject({ version: now.version + 1, head: false })
     expect(theirs.patches).toEqual([
       { old: secondP, html: `<p data-derive-src="${secondP}">Second, revised</p>` },
     ])
-    expect((await (await sync(short_id, { hashes: second.hashes })).json()).patches).toEqual(
-      theirs.patches,
-    )
     // A stylesheet change can't be patched into a live page.
     await editOther(
       short_id,
@@ -1097,6 +1092,7 @@ describe("exact-source inline saves (ops)", () => {
     ).toBe(403)
     expect((await sync(short_id, { hashes: ["nope"] })).status).toBe(400)
     expect((await sync(short_id, { hashes: [], sha: "short" })).status).toBe(400)
+    expect((await sync(short_id, { hashes: theirs.hashes })).status).toBe(400)
   })
 
   it("syncs a Markdown editor's page in place", async () => {
@@ -1161,11 +1157,10 @@ describe("exact-source inline saves (ops)", () => {
       expect(r.status).toBe(201)
       return (await r.json()).current_version as number
     }
-    const done = (session: string, who = owner, body?: string) =>
+    const done = (session: string, who = owner) =>
       opsApp.request(`/v1/artifacts/${short_id}/sessions/${session}/done`, {
         method: "POST",
         headers: as(who.email),
-        ...(body ? { body } : {}),
       })
 
     // A session opens its own version and every later save of it lands there, silently.
@@ -1184,11 +1179,8 @@ describe("exact-source inline saves (ops)", () => {
     expect(await (await done("session-a-1")).json()).toEqual({ closed: [] })
     expect(await (await done("session-b-2", colleague)).json()).toEqual({ closed: [] })
     expect((await done("bad id!")).status).toBe(400)
-    // The page's beacon: text/plain, and it can ask for a review of the session.
-    const beacon = await done("session-b-2", owner, JSON.stringify({ request_review: true }))
-    expect(await beacon.json()).toEqual({ closed: [3] })
+    expect(await (await done("session-b-2")).json()).toEqual({ closed: [3] })
     expect(await delivered()).toEqual([3])
-    expect((await opsMeta.listReviewRounds(artifact.id)).map((r) => r.version)).toEqual([3])
 
     // A session left open is finalized by the idle sweep once past the window.
     expect(await typed("Five", "session-c-3")).toBe(4)

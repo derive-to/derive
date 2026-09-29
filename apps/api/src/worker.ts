@@ -265,9 +265,8 @@ function pokeImporter(env: Env): Promise<unknown> {
   return stub.fetch(`https://previews${IMPORTS_POKE_PATH}`, { method: "POST" }).catch(() => {})
 }
 
-/** Inline edit sessions whose page never said Done are finalized once idle, through the
- *  app's own route (it holds the notification fan-out). Needs the operator token and the
- *  deployment origin; without them the editors' own traffic still sweeps. */
+/** Idle inline edit sessions are finalized through the app's route (see node.ts). Needs the
+ *  operator token and the deployment origin; editors' own traffic also sweeps. */
 const sweepEditSessions = async (env: Env, ctx: ExecutionContext): Promise<void> => {
   if (!env.DERIVE_TOKEN || !env.BASE_URL) return
   const req = new Request(`${env.BASE_URL}/v1/edit-sessions/sweep`, {

@@ -50,12 +50,12 @@ import {
   renumberHtml,
   STALE_ATTR,
   type SyncReply,
-  stampedIn,
   tagOf,
 } from "./source-sync"
 import {
   type Baseline,
   baselineOf,
+  CHROME,
   collectSourceOps,
   FMT_ATTR,
   GEN_ATTR,
@@ -69,6 +69,7 @@ import {
   sigParts,
   snapshotOf,
   srcOf,
+  stampedIn,
 } from "./source-tokens"
 import {
   MAX_STRUCTURAL_HEIGHT_PX,
@@ -2029,18 +2030,16 @@ interface ElReg {
   }
 
   /* ── Where the reader is ──────────────────────────────────────────────────────
-     A place the host keeps in its URL, so a refresh (or a shared link) lands on the
-     same words: the element nearest above the top of the viewport that has an id (a
-     heading's slug) or else a source stamp, and how far past its top the view starts.
-     Anchored to an element rather than a pixel, it survives images and fonts arriving
-     late. `id,offset`; `~N,offset` for a stamp; `,offset` for the page itself. */
+     A place the host keeps in its URL, so a refresh lands on the same words: the
+     nearest element above the viewport's top with an id (else a source stamp), and
+     the offset past its top — `id,offset`, `~N,offset`, or `,offset` for the page. */
   const positionNow = (): string => {
     const y = scrollTop()
     if (y < 2) return ""
     let best: Element | null = null
     let bestTop = Number.NEGATIVE_INFINITY
     const consider = (el: Element) => {
-      if (el.closest(".derive-edit-ui,.derive-el-hl")) return
+      if (el.closest(CHROME)) return
       const r = el.getBoundingClientRect()
       if (!r.width && !r.height) return
       const top = r.top + y
@@ -2075,26 +2074,21 @@ interface ElReg {
   let posT = 0
   let lastPosition: string | null = null
   const schedulePosition = () => {
-    if (posT) clearTimeout(posT)
+    clearTimeout(posT)
     posT = window.setTimeout(() => {
-      posT = 0
       const at = positionNow()
       if (at === lastPosition) return
       lastPosition = at
       post({ type: "position", at })
     }, 300)
   }
-  /* Holding a restored place: images and fonts that arrive after it would push the
-     words down, so it is re-applied as the layout settles, until the reader moves. */
-  let holding: string | null = null
-  let holdUntil = 0
+  /* A restored place is re-applied as late images and fonts settle the layout, for a
+     few seconds or until the reader moves. */
+  let holding: { at: string; until: number } | null = null
   const applyHold = () => {
-    if (!holding || Date.now() > holdUntil) {
-      holding = null
-      return
-    }
-    const top = positionTop(holding)
-    if (top !== null && Math.abs(top - scrollTop()) > 1)
+    if (holding && Date.now() > holding.until) holding = null
+    const top = holding && positionTop(holding.at)
+    if (top != null && Math.abs(top - scrollTop()) > 1)
       window.scrollTo({ top, behavior: "instant" as ScrollBehavior })
   }
   const releaseHold = () => {
@@ -2106,22 +2100,20 @@ interface ElReg {
   window.addEventListener("load", applyHold)
   document.fonts?.ready.then(applyHold).catch(() => {})
   if (window.ResizeObserver) new ResizeObserver(applyHold).observe(document.documentElement)
-  /** Go to a place the host kept: a slide (by its identity when known, which follows it
-   *  if slides moved; else by position, 0-based) and/or a scroll position. */
+  /** Go to a place the host kept: a slide (by identity when known, else 0-based
+   *  position) and/or a scroll position. */
   const restorePosition = (slide: unknown, at: unknown, slideId?: unknown) => {
     if (typeof slideId === "string") {
       const found = slideIds(slideEls()).indexOf(slideId)
       if (found >= 0) slide = found
     }
     if (typeof slide === "number" && Number.isInteger(slide) && slide >= 0) {
-      // A deck that speaks the protocol moves itself on the host's goto; one that
-      // doesn't is moved by its own keys. Both are absolute, so doing both is safe.
+      // A protocol deck moves itself on goto, a sniffed one by its keys: both absolute.
       driveDeck("goto", slide)
       window.postMessage({ source: "derive-host", type: "deck", action: "goto", n: slide }, "*")
     }
     if (typeof at === "string" && at) {
-      holding = at
-      holdUntil = Date.now() + 6000
+      holding = { at, until: Date.now() + 6000 }
       applyHold()
     }
   }
@@ -6205,11 +6197,10 @@ interface ElReg {
   }
 
   /* ── Live saving ──────────────────────────────────────────────────────────────
-     Every edit saves itself, and a save never reloads this page. The host asks for
-     what differs from what the server holds (`saved`), sends it, and hands back the
-     server's sync: the new version's ids for everything on the page, and the new
-     markup of what changed (see source-sync). Someone else's edit lands the same way,
-     swapped in block by block: never under the caret, never over unsaved typing. */
+     Every edit saves itself without reloading this page: the host collects what
+     differs from what the server holds (`saved`), sends it, and hands back the
+     server's sync (new ids, and the new markup of what changed; see source-sync).
+     Someone else's edit lands the same way, never under the caret or unsaved words. */
 
   /** Bumped by every change the person makes (the host saves when it moves). */
   let rev = 0
@@ -6217,28 +6208,25 @@ interface ElReg {
   let revWatch: MutationObserver | null = null
   const bumpRev = (flush = false) => {
     rev++
-    // On the root too, where a test (or a curious reader) can see how far the page got.
+    // On the root too, where a test can see how far the page got.
     document.documentElement.setAttribute("data-derive-edit-rev", String(rev))
     post({ type: "edit-touch", rev, flush })
   }
   /** Save now rather than after a pause: a move, a delete, a resize, leaving a block. */
   const flushSoon = () => post({ type: "edit-touch", rev, flush: true })
-  const isChromeNode = (n: Node) =>
-    n instanceof Element && n.matches(".derive-edit-ui,.derive-el-hl")
   /** A mutation the person made: in a block they typed in, a parent they rearranged,
    *  a box they resized. What the page's own scripts do elsewhere is not an edit. */
   const byPerson = (r: MutationRecord): boolean => {
     const el = r.target.nodeType === 1 ? (r.target as Element) : r.target.parentElement
-    if (!el || el.closest(".derive-edit-ui,.derive-el-hl")) return false
-    if (r.type === "childList" && [...r.addedNodes, ...r.removedNodes].every(isChromeNode))
-      return false
+    if (!el || el.closest(CHROME)) return false
+    const chrome = (n: Node) => n instanceof Element && n.matches(CHROME)
+    if (r.type === "childList" && [...r.addedNodes, ...r.removedNodes].every(chrome)) return false
     if (r.type !== "attributes") {
       if (el.closest("[data-derive-editable]") || editTargets.some((t) => t.el.contains(el)))
         return true
       return r.type === "childList" && kidsSnap.has(el as HTMLElement)
     }
-    // Styles and sizes: a box being resized. (A block sliding into its new place after a
-    // move animates its style too; that is not an edit.)
+    // Styles and sizes: a box being resized (not a moved block sliding into place).
     return resizeTargets.some((t) => t.el === el) || structureNodeByElement.has(el as HTMLElement)
   }
   const startRevWatch = () => {
@@ -6279,12 +6267,31 @@ interface ElReg {
     words: Map<Element, string>
   }
   let lastCollect: CollectRecord | null = null
+  /** Sizes and structural layout as the server holds them (a save moves them on). */
   const savedStyle = new WeakMap<Element, string | null>()
   const savedLayout = new WeakMap<Element, Record<string, string | null>>()
   const styleSaved = (el: Element, orig: string | null) =>
     savedStyle.has(el) ? (savedStyle.get(el) ?? null) : orig
-  /** Someone else changed a block you had unsaved words in: theirs is on the page, yours
-   *  is kept here until you choose. */
+  const layoutSaved = (node: StructureNode): Record<string, string | null> =>
+    savedLayout.get(node.el) ?? {
+      size: node.origSize,
+      width: node.origWidth,
+      height: node.origHeight,
+    }
+  const layoutNow = (node: StructureNode) =>
+    Object.fromEntries(
+      Object.keys(layoutSaved(node)).map((k) => [
+        k,
+        node.el.getAttribute(structureAttribute(node.prefix, k)),
+      ]),
+    )
+  const resized = (t: ResizeTarget) => rawStyle(t.el) !== styleSaved(t.el, t.origStyle)
+  const relaidOut = (node: StructureNode) => {
+    const was = layoutSaved(node)
+    const now = layoutNow(node)
+    return Object.keys(was).some((key) => now[key] !== was[key])
+  }
+  /** Someone else changed a block you had unsaved words in: theirs is on the page. */
   interface Conflict {
     mine: Element
     theirs: Element
@@ -6321,8 +6328,7 @@ interface ElReg {
      and the layout attributes by their canonical names (a legacy deck's runtime ones
      included: the server persists that structure with the save). */
   const collectOps = (base: Baseline) => {
-    // Only what the person changed is theirs to save: the page's own scripts keep
-    // running while you edit (a deck's "3 / 12" counter follows the slide on screen).
+    // Only what the person changed is theirs to save: the page's own scripts keep running.
     const touched = touchedSet()
     const { ops, ok, emit } = collectSourceOps(
       document.body,
@@ -6330,8 +6336,8 @@ interface ElReg {
       touched,
     )
     let uncaptured = ok && !blockResize ? 0 : 1
-    // A block the current version no longer has (a save deleted it, then undo put it
-    // back): its markup can't be written from here, so the save is refused, not guessed.
+    // A block the current version no longer has (a save deleted it, undo put it back)
+    // can't be written from here: the save is refused, not guessed.
     let stale = 0
     for (const el of Array.from(document.body.querySelectorAll(`[${STALE_ATTR}]`)))
       for (let e: Element | null = el; e; e = e.parentElement)
@@ -6354,47 +6360,27 @@ interface ElReg {
     }
     const sent: CollectRecord["attrs"] = []
     for (const t of resizeTargets) {
-      const was = styleSaved(t.el, t.origStyle)
-      if (!document.contains(t.el) || rawStyle(t.el) === was) continue
+      if (!document.contains(t.el) || !resized(t)) continue
       const { width, height } = t.el.style
-      Object.assign(change(t.el, was).style, {
+      Object.assign(change(t.el, styleSaved(t.el, t.origStyle)).style, {
         width: width || null,
         height: height || null,
       })
       sent.push([t.el, rawStyle(t.el), null])
     }
-    const layout = (
-      el: HTMLElement,
-      prefix: StructurePrefix,
-      origStyle: string | null,
-      was: Record<string, string | null>,
-    ) => {
-      const keys = Object.keys(was) as (keyof typeof STRUCTURAL_LAYOUT)[]
-      const now = Object.fromEntries(
-        keys.map((key) => [key, el.getAttribute(structureAttribute(prefix, key))]),
-      )
-      if (keys.every((key) => now[key] === was[key])) return
-      const entry = change(el, origStyle)
-      for (const key of keys) {
-        entry.attrs[`data-derive-${key}`] = now[key] ?? null
-        const property = STRUCTURAL_LAYOUT[key]?.[0]
-        if (property) entry.style[property] = el.style.getPropertyValue(property).trim() || null
-      }
-      sent.push([el, rawStyle(el), now])
-    }
     for (const region of structureRegions)
-      for (const node of region.nodes)
-        if (node.el.isConnected)
-          layout(
-            node.el,
-            node.prefix,
-            styleSaved(node.el, node.origStyle),
-            savedLayout.get(node.el) ?? {
-              size: node.origSize,
-              width: node.origWidth,
-              height: node.origHeight,
-            },
-          )
+      for (const node of region.nodes) {
+        if (!node.el.isConnected || !relaidOut(node)) continue
+        const now = layoutNow(node)
+        const entry = change(node.el, styleSaved(node.el, node.origStyle))
+        for (const key of Object.keys(now) as (keyof typeof STRUCTURAL_LAYOUT)[]) {
+          entry.attrs[`data-derive-${key}`] = now[key] ?? null
+          const property = STRUCTURAL_LAYOUT[key]?.[0]
+          if (property)
+            entry.style[property] = node.el.style.getPropertyValue(property).trim() || null
+        }
+        sent.push([node.el, rawStyle(node.el), now])
+      }
     for (const [el, { orig, style, attrs }] of changed) {
       const src = srcOf(el)
       if (src === null) uncaptured++
@@ -6429,25 +6415,9 @@ interface ElReg {
       const was = base.get(el)
       if (touched.has(el) && (!was || !sameParts(sigParts(el), was))) return true
     }
-    if (
-      resizeTargets.some(
-        (t) => x.contains(t.el) && rawStyle(t.el) !== styleSaved(t.el, t.origStyle),
-      )
-    )
-      return true
-    // A block's structural size, set here and not sent yet.
-    return structureRegions.some((region) =>
-      region.nodes.some((node) => {
-        if (!x.contains(node.el)) return false
-        const was = savedLayout.get(node.el) ?? {
-          size: node.origSize,
-          width: node.origWidth,
-          height: node.origHeight,
-        }
-        return Object.entries(was).some(
-          ([key, value]) => node.el.getAttribute(structureAttribute(node.prefix, key)) !== value,
-        )
-      }),
+    return (
+      resizeTargets.some((t) => x.contains(t.el) && resized(t)) ||
+      structureRegions.some((r) => r.nodes.some((n) => x.contains(n.el) && relaidOut(n)))
     )
   }
   const caretIn = (x: Element) => {
@@ -6477,15 +6447,13 @@ interface ElReg {
    *  block at the same place in its words. */
   const swapIn = (x: Element, p: Element) => {
     if (blockSel && (x === blockSel || x.contains(blockSel))) selectBlock(null)
-    // Only a caret the person is using right now comes back (a page without focus
-    // keeps a stale active element; taking focus back would pull it from the host).
+    // Only a caret in use right now comes back (taking focus would pull it from the host).
     const focused = caretIn(x) && document.hasFocus() ? asEl(document.activeElement) : null
     let offset = -1
     const sel = window.getSelection()
     const caret = sel?.rangeCount ? sel.getRangeAt(0) : null
     if (focused && caret && x.contains(caret.startContainer)) {
-      // The caret's place in the words of the block being swapped (not of the editing
-      // host, which may be a smaller part of it), as the new words will count it.
+      // The caret's place in the words of the block being swapped.
       const before = document.createRange()
       before.selectNodeContents(x)
       before.setEnd(caret.startContainer, caret.startOffset)
@@ -6493,13 +6461,11 @@ interface ElReg {
     }
     const was = offset >= 0 ? wordsIn(x) : ""
     x.replaceWith(p)
-    // The server's words are editable like any others (a page script's words, made
-    // after the session started, are the ones refused).
+    // The server's words are editable like any others.
     const nodes = textNodes(p)
     for (const n of nodes) editBase?.starts.set(n, -1)
     if (offset < 0) return
-    // Place it by the words before it, or else by those after it; where both changed
-    // there is no telling where it belongs, and it stays out rather than guess.
+    // Place it by the words before it, or else after it; where both changed, don't guess.
     const words = wordsIn(p)
     if (words.slice(0, offset) !== was.slice(0, offset)) {
       const tail = was.length - offset
@@ -6553,19 +6519,17 @@ interface ElReg {
     textNodes(el)
       .map((n) => n.data)
       .join("")
-  /**
-   * Bring the page to a newer version in place. `own` is the record of the save this
-   * sync answers (null: someone else's). Returns `reload` when the host must load the
-   * page fresh instead (the head changed, a deck's slides changed, or this page can't
-   * be lined up with the answer), with `lost` when that would drop typing not yet sent.
-   */
+  /** Bring the page to a newer version in place. `own` is the record of the save this
+   *  sync answers (null: someone else's). `reload` when the page must be loaded fresh
+   *  instead, `lost` when that would drop typing not yet sent. */
   const applySync = (
     r: SyncReply,
     by: string,
     own: CollectRecord | null,
   ): { ok: boolean; reload?: boolean; lost?: boolean } => {
     const base = saved
-    if (!base || r.head) return { ok: false, reload: true, lost: !!own && own.rev !== rev }
+    const reload = { ok: false, reload: true, lost: !!own && own.rev !== rev }
+    if (!base || r.head) return reload
     const oldId = new Map<Element, number>()
     for (const el of base.keys()) {
       const n = srcOf(el)
@@ -6577,25 +6541,25 @@ interface ElReg {
     /** The page element standing for each id of the new page, and old id → new. */
     const pageFor = new Map<number, Element>()
     const oldToNew = new Map<number, number>()
-    const next: Baseline = new Map()
     const swaps: [Element, Element, boolean][] = []
+    /** The new baseline: each element the old one keeps, under the page element now
+     *  standing for it, and the elements that came in with their new children. */
+    let standFor: (el: Element) => Element | undefined = () => undefined
+    let made: [Element, SigParts][] = []
 
     if (own) {
       // This page's own save: the page already is the new version; line the two up.
       const roots = new Map<number, Element>()
       for (const patch of r.patches) {
         const p = patchRoot(patch.html, document, byOld.get(patch.old))
-        if (!p) return { ok: false, reload: true, lost: own.rev !== rev }
+        if (!p) return reload
         roots.set(patch.old, p)
       }
       const page = newPageOf(base, r.remap, roots)
       const lined = page && linePage(own.order, page)
-      if (!page || !lined) {
-        return { ok: false, reload: true, lost: own.rev !== rev }
-      }
+      if (!page || !lined) return reload
       // A block the new version reads (or renders) differently takes its new markup,
-      // unless the person changed it since this save went out: then it keeps what they
-      // have (the next save sends it) and takes the new markup at a quiet sync.
+      // unless the person changed it since this save went out (the next save sends it).
       const changedSince = (el: Element) => {
         for (let e: Element | null = el; e; e = e.parentElement) {
           const sent = own.words.get(e)
@@ -6611,9 +6575,8 @@ interface ElReg {
           el.setAttribute(SRC_ATTR, String(srcOf(root)))
           pageFor.set(srcOf(root) as number, el)
         }
-      // A blank line the caret is on stays to be typed on, as a block the browser made
-      // (what's typed there saves as a new one in its place); one it has left, still
-      // blank, goes like the rest.
+      // A blank line the caret is on stays to be typed on (as a block the browser made);
+      // one it has left, still blank, goes.
       for (const el of blankLines)
         if (!el.isConnected || wordsIn(el).trim()) blankLines.delete(el)
         else if (!caretOn(el)) {
@@ -6642,50 +6605,37 @@ interface ElReg {
       })
       for (const [, root] of swaps)
         for (const m of stampedIn(root)) pageFor.set(srcOf(m) as number, m)
-      const newIdOf = (q: Element) => {
+      standFor = (q) => {
+        if (q === document.body && srcOf(q) === null) return q
         const o = oldId.get(q)
-        if (o === undefined) return undefined
-        const root = roots.get(o)
-        return root ? (srcOf(root) ?? undefined) : r.remap[o]
+        const root = o === undefined ? undefined : roots.get(o)
+        return pageFor.get(root ? (srcOf(root) ?? -1) : o === undefined ? -1 : (r.remap[o] ?? -1))
       }
       for (const ne of page) {
         const now = pageFor.get(ne.id)
-        if (!now) continue
-        next.set(
-          now,
-          ne.made
-            ? partsVia(ne.made, (m) => pageFor.get(srcOf(m) as number))
-            : (base.get(ne.old as Element) ?? []).map((q) => {
-                if (typeof q === "string") return q
-                const n = newIdOf(q)
-                return (n !== undefined && pageFor.get(n)) || q
-              }),
-        )
+        if (now && ne.made) made.push([now, partsVia(ne.made, (m) => pageFor.get(srcOf(m) ?? -1))])
       }
       for (const d of lined.spaced) {
         const now = became.get(d)
-        if (now?.isConnected) next.set(now, sigParts(now))
+        if (now?.isConnected) made.push([now, sigParts(now)])
       }
     } else {
-      // Someone else's: each changed subtree swaps in where its old root is, unless
-      // the person has unsaved words there (then theirs goes in and yours is kept to
-      // choose from). A deck's own script holds its slides, so changing which slides
-      // exist needs a fresh page.
+      // Someone else's: each changed subtree swaps in where its old root is (over unsaved
+      // words, as a conflict). A deck's script holds its slides: changing them reloads.
       for (const patch of r.patches) {
         const x = byOld.get(patch.old)
-        if (!x?.isConnected || x === document.body) return { ok: false, reload: true }
-        if (slides.some((sl) => x === sl || x.contains(sl))) return { ok: false, reload: true }
+        if (!x?.isConnected || x === document.body) return reload
+        if (slides.some((sl) => x === sl || x.contains(sl))) return reload
         const p = patchRoot(patch.html, document, x)
-        if (!p) return { ok: false, reload: true }
+        if (!p) return reload
         swaps.push([x, p, unsavedIn(x, base)])
       }
     }
     const gone = swaps.flatMap(([x]) => stampedIn(x))
 
-    // Everything else that carries an id — the page, the baseline, what undo holds —
-    // takes its new id, or is marked stale when the new version doesn't have it. (Inside
-    // a changed subtree the answer's id is a hint: the same markup under that id, which
-    // is what undo putting it back needs.)
+    // Everything else that carries an id (the page, the baseline, what undo holds) takes
+    // its new id, or is marked stale. Inside a changed subtree the id is a hint: the same
+    // markup under that id, which undo putting it back needs.
     const idOf = (o: number): number | null => {
       const n = oldToNew.get(o) ?? r.remap[o] ?? -1
       return n >= 0 ? n : null
@@ -6694,8 +6644,7 @@ interface ElReg {
     const targets = new Set<Element>(stampedIn(document.body))
     for (const el of base.keys()) targets.add(el)
     for (const root of detachedRoots()) for (const e of stampedIn(root)) targets.add(e)
-    // Your side of a conflict keeps the ids it had: "Keep mine" lines it up with
-    // theirs by those, whenever the choice is made.
+    // Your side of a conflict keeps its ids: "Keep mine" lines it up with theirs by them.
     for (const [x, , mine] of swaps) if (mine) for (const e of stampedIn(x)) targets.delete(e)
     for (const c of conflicts) for (const e of stampedIn(c.mine)) targets.delete(e)
     const plan: [Element, number | null][] = []
@@ -6703,10 +6652,8 @@ interface ElReg {
       const o = srcOf(el)
       if (!placed.has(el) && o !== null) plan.push([el, idOf(o)])
     }
-    // What keeps an element first; then what the new version no longer has. Such a block
-    // (a save removed it and undo brought it back; one kept its words while the new version
-    // rewrote them) saves as a copy of one that opens the same way — a paragraph an Enter
-    // made, a list item — or else refuses to save rather than guess.
+    // What the new version no longer has (a save removed it and undo brought it back)
+    // saves as a copy of a block that opens the same way, or else refuses to save.
     for (const [el, n] of plan) if (n !== null) renumber(el, n)
     const opening = new Map<string, number>()
     for (const el of stampedIn(document.body)) {
@@ -6717,8 +6664,8 @@ interface ElReg {
     const unresolved = new Set(plan.filter(([, n]) => n === null).map(([el]) => el))
     for (const [el, n] of plan)
       if (n === null) {
-        // On the page, only the block right before or after it will do (what an Enter
-        // makes: a copy of its neighbour); for one undo holds, any that opens the same way.
+        // On the page only a neighbour will do (what an Enter makes); for one undo holds,
+        // any that opens the same way.
         const sibling = el.isConnected
           ? [el.previousElementSibling, el.nextElementSibling].find(
               (c) =>
@@ -6734,48 +6681,41 @@ interface ElReg {
         renumber(el, like ?? null)
       }
 
-    if (!own) {
-      // The baseline keeps its elements (renumbered in place); what was swapped out
-      // leaves it, and what came in joins it.
-      const swapped = new Map<Element, Element>()
-      for (const e of gone) base.delete(e)
-      for (const e of standIns) base.delete(e)
-      for (const [x, p, mine] of swaps) {
-        swapIn(x, p)
-        swapped.set(x, p)
-        for (const e of stampedIn(p)) base.set(e, sigParts(e))
-        if (mine) {
-          p.classList.add("derive-conflict")
-          conflicts.push({ mine: x, theirs: p, by })
-        } else markRemote(p, by)
-      }
-      for (const [el, parts] of base) {
-        if (el !== document.body && srcOf(el) === null) base.delete(el)
-        else if (parts.some((q) => typeof q !== "string" && swapped.has(q)))
-          base.set(
-            el,
-            parts.map((q) => (typeof q === "string" ? q : (swapped.get(q) ?? q))),
-          )
-      }
-    } else {
-      for (const [x, p] of swaps) swapIn(x, p)
-      const root = base.get(document.body)
-      if (root && srcOf(document.body) === null)
-        next.set(
-          document.body,
-          root.map((q) => {
-            if (typeof q === "string") return q
-            const o = oldId.get(q)
-            const n = o === undefined ? undefined : idOf(o)
-            return (n !== null && n !== undefined && pageFor.get(n)) || q
-          }),
-        )
-      saved = next
+    for (const [x, p, mine] of swaps) {
+      swapIn(x, p)
+      if (own) continue
+      if (mine) {
+        p.classList.add("derive-conflict")
+        conflicts.push({ mine: x, theirs: p, by })
+      } else markRemote(p, by)
+    }
+    if (own)
       for (const [el, style, lay] of own.attrs) {
         savedStyle.set(el, style)
         if (lay) savedLayout.set(el, lay)
       }
+    else {
+      // Someone else's: the elements it keeps stay (renumbered in place), and what was
+      // swapped out gives way to what came in.
+      const swapped = new Map(swaps.map(([x, p]) => [x, p]))
+      const out = new Set([...gone, ...standIns])
+      standFor = (q) =>
+        swapped.get(q) ?? (out.has(q) || (q !== document.body && srcOf(q) === null) ? undefined : q)
+      made = swaps.flatMap(([, p]) =>
+        stampedIn(p).map((e): [Element, SigParts] => [e, sigParts(e)]),
+      )
     }
+    const next: Baseline = new Map()
+    for (const [el, parts] of base) {
+      const now = standFor(el)
+      if (now)
+        next.set(
+          now,
+          parts.map((q) => (typeof q === "string" ? q : (standFor(q) ?? q))),
+        )
+    }
+    for (const [el, parts] of made) next.set(el, parts)
+    saved = next
     for (const t of editTargets) t.origHtml = renumberHtml(t.origHtml, document, idOf)
     for (const e of [...undoStack, ...redoStack]) renumberEntry(e, idOf)
     document.documentElement.setAttribute("data-derive-src-version", String(r.version))
@@ -6976,7 +6916,8 @@ interface ElReg {
       )
     } else if (d.type === "hello") {
       // This page just became the one on screen (it loaded hidden, behind the old one):
-      // say again what the host dropped while it wasn't listening.
+      // its place again (a deck reports its slide), and what the host dropped meanwhile.
+      restorePosition(d.slide, d.at, d.slideId)
       lastSniff = ""
       lastOutline = ""
       postDeckSniff()

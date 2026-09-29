@@ -5,6 +5,7 @@ import { canPublishArtifact } from "@/lib/artifact"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { isUsernameQuery, isValidUsername, normalizeUsername } from "@/lib/username"
 import { mentionCandidates } from "./mention-candidates"
+import { askFrame } from "./use-artifact-frame"
 import { type SaveStatus, useAutoSave } from "./use-auto-save"
 
 export type { SaveStatus }
@@ -200,23 +201,12 @@ export function useInlineEdit(p: {
   const canEditRef = useRef(false)
   canEditRef.current = p.canEdit
 
-  /* Questions to the frame and their answers, matched by nonce: a slow page can
-     answer a timed-out question after a newer one was asked, and a stale answer must
-     never resolve the new one. */
-  const asks = useRef(
-    new Map<number, { reply: string; resolve: (d: unknown) => void; timer: number }>(),
-  )
-  const nonceSeq = useRef(0)
-  const ask = <T>(type: string, payload: Record<string, unknown>, reply: string): Promise<T> =>
-    new Promise<T>((resolve, reject) => {
-      const nonce = ++nonceSeq.current
-      const timer = window.setTimeout(() => {
-        asks.current.delete(nonce)
-        reject(new Error("The page didn't answer. Try again."))
-      }, 6000)
-      asks.current.set(nonce, { reply, resolve: resolve as (d: unknown) => void, timer })
-      p.post({ ...payload, type, nonce })
-    })
+  const ask = async <T>(type: string, payload: Record<string, unknown>, reply: string) => {
+    const w = p.frameRef.current?.contentWindow
+    const answer = await askFrame<T>(w, { ...payload, type }, reply, 6000)
+    if (!answer) throw new Error("The page didn't answer. Try again.")
+    return answer
+  }
 
   const autoSave = useAutoSave({
     shortId: p.shortId,
@@ -303,15 +293,6 @@ export function useInlineEdit(p: {
         return
       const d = e.data
       if (d?.source !== "derive") return
-      if (typeof d.nonce === "number") {
-        const w = asks.current.get(d.nonce)
-        if (w && w.reply === d.type) {
-          asks.current.delete(d.nonce)
-          window.clearTimeout(w.timer)
-          w.resolve(d)
-          return
-        }
-      }
       if (d.type === "edit-state") {
         // What the bar's controls can offer right now. A client cached from before
         // these existed reports none of them, and the controls stay quiet rather

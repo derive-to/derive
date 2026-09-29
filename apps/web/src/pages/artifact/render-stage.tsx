@@ -9,6 +9,7 @@ import {
   type ArtifactRuntimeErrorCode,
   isBlockingRuntimeError,
 } from "./types"
+import { askFrame } from "./use-artifact-frame"
 
 // How long we wait for the sandboxed render to report meaningful content before
 // calling it a failed boot. A cache-warm artifact paints in well under a second; this only
@@ -132,26 +133,6 @@ export const runtimeDiagnosticFor = (
   }
 }
 
-/** The frame's reply of `type` echoing `nonce`, or null after `ms`. */
-const answer = (from: Window | null | undefined, type: string, nonce: string, ms: number) =>
-  new Promise<Record<string, unknown> | null>((resolve) => {
-    const done = (d: Record<string, unknown> | null) => {
-      window.removeEventListener("message", onMsg)
-      window.clearTimeout(timer)
-      resolve(d)
-    }
-    const onMsg = (e: MessageEvent) => {
-      const d = e.data
-      if (e.source === from && d?.source === "derive" && d.type === type && d.nonce === nonce)
-        done(d)
-    }
-    const timer = window.setTimeout(() => done(null), ms)
-    window.addEventListener("message", onMsg)
-  })
-/** Two places are the same slide (by identity when known) and the same scroll anchor. */
-const samePlace = (a: Record<string, unknown>, b: Record<string, unknown>) =>
-  (a.slideId ?? a.slide ?? null) === (b.slideId ?? b.slide ?? null) && (a.at ?? "") === (b.at ?? "")
-
 export function RenderStage({
   rawSrc,
   title,
@@ -224,7 +205,6 @@ export function RenderStage({
   phaseRef.current = phase
   const positionRef = useRef(positionFor)
   positionRef.current = positionFor
-  const askSeq = useRef(0)
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new source (or a retry) is what decides between a swap and a hard load; the rest is read at that moment.
   useLayoutEffect(() => {
@@ -241,53 +221,34 @@ export function RenderStage({
     setFrontKey(key)
     setPhase("booting")
   }, [rawSrc, attempt])
-  /** The next document loaded behind: bring it to the reader's place, then swap it in
-   *  with a short crossfade and drop the old one. The reader keeps reading (and moving)
-   *  on the page on screen meanwhile, so whatever they did last wins: just before the
-   *  swap that page stops taking input and says where the reader is now — after
-   *  anything already sent to it — and the new one goes there first. Commands the host
-   *  sends in that moment wait for the new page (see use-artifact-frame). */
+  /** The next document loaded behind the one on screen. That page stops taking input
+   *  and says where the reader is now, after anything already sent to it (so whatever
+   *  they did last wins); the new one goes there, then crossfades in. Host commands sent
+   *  meanwhile wait for the new page (see use-artifact-frame). */
   const loadedBehind = async (el: HTMLIFrameElement, key: number) => {
-    const w = el.contentWindow
-    const tell = (to: Window | null | undefined, msg: Record<string, unknown>) =>
-      to?.postMessage({ source: "derive-host", ...msg }, "*")
-    const restore = async (place: Record<string, unknown>) => {
-      const nonce = `r${++askSeq.current}`
-      tell(w, { type: "restore-position", ...place, nonce })
-      await answer(w, "position-restored", nonce, 1500)
-    }
-    let place = positionRef.current?.() ?? {}
-    await restore(place)
-    const out = frameRef.current
-    if (!el.isConnected) return
-    if (out && out !== el) {
-      out.inert = true
-      const nonce = `p${++askSeq.current}`
-      tell(out.contentWindow, { type: "position-now", nonce })
-      const now = await answer(out.contentWindow, "position-now", nonce, 300)
-      const last = now
-        ? { slide: now.slide ?? undefined, slideId: now.slideId, at: now.at }
-        : (positionRef.current?.() ?? {})
-      if (!el.isConnected) {
-        out.inert = false
-        return
-      }
-      if (!samePlace(last, place)) {
-        place = last
-        await restore(place)
-        if (!el.isConnected) {
-          out.inert = false
-          return
-        }
-      }
+    const out = frameRef.current !== el ? frameRef.current : null
+    if (out) out.inert = true
+    const now =
+      out && (await askFrame(out.contentWindow, { type: "position-now" }, "position-now", 300))
+    const place = now
+      ? { slide: now.slide ?? undefined, slideId: now.slideId, at: now.at }
+      : (positionRef.current?.() ?? {})
+    await askFrame(
+      el.contentWindow,
+      { type: "restore-position", ...place },
+      "position-restored",
+      1500,
+    )
+    if (!el.isConnected) {
+      if (out) out.inert = false
+      return
     }
     ;(frameRef as { current: HTMLIFrameElement | null }).current = el
     setFrontKey(key)
-    // Now it is heard: tell it again where it is, so it reports that (a deck its slide).
-    tell(w, { type: "restore-position", ...place })
     onFrameLoad?.(true)
-    // It spoke while nobody listened: ask it to say again what the host needs.
-    tell(w, { type: "hello" })
+    // Heard now: it goes to that place again (a deck reports its slide) and repeats what
+    // the host dropped while it loaded unheard.
+    el.contentWindow?.postMessage({ source: "derive-host", type: "hello", ...place }, "*")
     window.setTimeout(() => setDocs((list) => list.filter((d) => d.key >= key)), 160)
   }
 

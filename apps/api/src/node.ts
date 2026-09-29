@@ -682,9 +682,8 @@ const draftSweepTimer = cfg.backgroundWorkers
   : undefined
 draftSweepTimer?.unref?.()
 
-// Inline edit sessions whose page never said Done (a closed laptop): finalized once idle
-// past the coalescing window, through the app's own route, which holds the fan-out. Needs
-// the operator token; without one the editors' own traffic still sweeps them.
+// Inline edit sessions whose page never said Done: finalized once idle, through the app's
+// route (it holds the fan-out). Needs the operator token; editors' traffic also sweeps.
 const editSessionSweepTimer =
   cfg.backgroundWorkers && cfg.token
     ? setInterval(

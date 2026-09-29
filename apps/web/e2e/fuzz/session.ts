@@ -1303,7 +1303,7 @@ export async function runSession(
       if (
         await editPhase(ctx, fp, shortId, opts, recorder, {
           slide: section,
-          actions: rng.int(8, 15),
+          actions: rng.int(...roundOne()),
           label: "edit",
         })
       ) {
@@ -1328,7 +1328,7 @@ export async function runSession(
       else {
         const frame = await artifactFrame(page)
         const slide = rng.int(0, (await probe<number>(frame, "slideCount")) - 1)
-        const round = { slide, actions: rng.int(8, 15), label: "edit" }
+        const round = { slide, actions: rng.int(...roundOne()), label: "edit" }
         // Round two carries on in the same page, on the ids the saves synced in.
         if (await editPhase(ctx, fp, shortId, opts, recorder, round)) {
           await caughtUp(page, shortId)
@@ -1418,6 +1418,12 @@ export async function runSession(
       .catch(() => {})
   }
   return result
+}
+
+/** Round one's edit count: FUZZ_ACTIONS=min-max (default 8–15). */
+function roundOne(env = process.env): [number, number] {
+  const [min = 8, max = 15] = (env.FUZZ_ACTIONS ?? "").split("-").map(Number).filter(Boolean)
+  return [min, Math.max(min, max)]
 }
 
 /** Seeds for this run: FUZZ_SEED replays one; otherwise FUZZ_SESSIONS from FUZZ_BASE_SEED. */

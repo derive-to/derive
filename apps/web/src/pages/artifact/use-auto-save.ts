@@ -1,15 +1,8 @@
-import type { SourceOp, SourceToken } from "@derive/core"
+import type { SourceOp, SourceToken, SyncReply } from "@derive/core"
 import { useEffect, useRef, useState } from "react"
-import {
-  ApiError,
-  type Artifact,
-  api,
-  type InlineEditInput,
-  type SourceMap,
-  type SyncReply,
-} from "@/api"
+import { ApiError, type Artifact, api, type InlineEditInput, type SourceMap } from "@/api"
 import { toast } from "@/components/ui/sonner"
-import { clearQueuedSave, queuedSave, queueSave } from "./edit-queue"
+import { STORAGE_KEYS } from "@/lib/storage-keys"
 
 /** A pause this long after the last keystroke saves. */
 const IDLE_MS = 750
@@ -17,7 +10,7 @@ const IDLE_MS = 750
  *  after the moment the person is still in the middle of (the next click, the next key). */
 const SOON_MS = 200
 
-/** What the save indicator says (see the approved auto-save design). */
+/** What the save indicator says. */
 export type SaveStatus = {
   kind: "saved" | "pending" | "saving" | "offline" | "conflict" | "error"
   /** Edits kept on this device while offline. */
@@ -94,6 +87,58 @@ const retryable = (e: unknown) =>
   !(e instanceof ApiError) || e.status >= 500 || e.status === 429 || e.status === 0
 const noChange = (e: unknown) => e instanceof ApiError && /exactly as it is/.test(e.message)
 
+/** A save the server hasn't confirmed, kept on this device until it does (offline, or the
+ *  tab closed mid-save) and sent again on the next visit. One per artifact: a save carries
+ *  everything that differs from what the server holds. localStorage, because the unload
+ *  guard must read it synchronously. */
+type QueuedSave = { ops: SourceOp[]; base: number; message: string; session: string; count: number }
+const queueKey = (shortId: string) => `${STORAGE_KEYS.editQueue}.${shortId}`
+const queuedSave = (shortId: string): QueuedSave | null => {
+  try {
+    const q = JSON.parse(localStorage.getItem(queueKey(shortId)) ?? "null")
+    return q && Array.isArray(q.ops) && typeof q.base === "number" ? q : null
+  } catch {
+    return null
+  }
+}
+const queueSave = (shortId: string, save: QueuedSave | null) => {
+  try {
+    if (save) localStorage.setItem(queueKey(shortId), JSON.stringify(save))
+    else localStorage.removeItem(queueKey(shortId))
+  } catch {
+    /* storage full or blocked: the in-memory retry still runs while the page is open */
+  }
+}
+
+/** The auto-save's state: one session, one save or sync in flight at a time. */
+const fresh = () => ({
+  session: "",
+  /** The frame's edit counter, and the last value the server holds everything of. */
+  rev: 0,
+  savedRev: 0,
+  saving: false,
+  syncing: false,
+  /** A newer version arrived while busy: take it in when free. */
+  remote: false,
+  timer: 0,
+  remoteTimer: 0,
+  /** When the person last changed something: someone else's edit waits for a pause. */
+  lastTouch: 0,
+  /** A delete's Undo is on screen: its save waits so Undo can simply put it back. */
+  holdUntil: 0,
+  retry: 0,
+  conflictRetry: 0,
+  offline: false,
+  error: false,
+  waiting: 0,
+  table: null as Pick<SourceMap, "version" | "sha" | "hashes"> | null,
+  /** Bumped when the frame reloads: answers for the old document are dropped. */
+  frame: 0,
+  /** Save now even if no edit has been reported yet (⌘S, Done): the page is asked. */
+  force: false,
+  resending: false,
+})
+
 /**
  * Auto-save for inline editing: the queue between the page's edits and the server.
  *
@@ -125,35 +170,15 @@ export function useAutoSave(p: {
 }) {
   const pr = useRef(p)
   pr.current = p
-  const s = useRef({
-    session: "",
-    /** The frame's edit counter, and the last value the server holds everything of. */
-    rev: 0,
-    savedRev: 0,
-    saving: false,
-    syncing: false,
-    /** A newer version arrived while busy: take it in when free. */
-    remote: false,
-    timer: 0,
-    remoteTimer: 0,
-    /** When the person last changed something: someone else's edit waits for a pause. */
-    lastTouch: 0,
-    /** A delete's Undo is on screen: its save waits so Undo can simply put it back. */
-    holdUntil: 0,
-    retry: 0,
-    conflictRetry: 0,
-    offline: false,
-    error: false,
-    waiting: 0,
-    table: null as Pick<SourceMap, "version" | "sha" | "hashes"> | null,
-    /** Bumped when the frame reloads: answers for the old document are dropped. */
-    frame: 0,
-    /** Save now even if no edit has been reported yet (⌘S, Done): the page is asked. */
-    force: false,
-    resending: false,
-  })
+  const s = useRef(fresh())
   const [, setTick] = useState(0)
   const refresh = () => setTick((n) => n + 1)
+  /** A save that failed for good says so, with the way out. */
+  const failed = {
+    id: "inline-edit-failed",
+    duration: 12_000,
+    action: { label: "Open source editor", onClick: () => pr.current.onOpenSourceEditor() },
+  }
 
   const schedule = (ms: number) => {
     const x = s.current
@@ -241,12 +266,10 @@ export function useAutoSave(p: {
             ? "A block that was already saved as deleted can't be put back here."
             : "Those changes couldn't be captured as edits.",
           {
-            id: "inline-edit-failed",
+            ...failed,
             description: c.stale
               ? "Undo it again, or restore that version from History."
               : "Try editing the surrounding sentence too, or use the source editor.",
-            duration: 12_000,
-            action: { label: "Open source editor", onClick: () => P.onOpenSourceEditor() },
           },
         )
         return
@@ -278,7 +301,7 @@ export function useAutoSave(p: {
         } catch (e) {
           if (!noChange(e)) throw e
         }
-        clearQueuedSave(P.shortId)
+        queueSave(P.shortId, null)
         if (frame !== x.frame) return
         await syncIn(true)
       } else {
@@ -308,10 +331,8 @@ export function useAutoSave(p: {
         // Someone changed what this save names. Take their version in (a block you have
         // unsaved words in becomes a choice on the page) and send the rest again.
         x.conflictRetry++
-        clearQueuedSave(pr.current.shortId)
-        x.syncing = true
+        queueSave(pr.current.shortId, null)
         await syncIn(false).catch(() => {})
-        x.syncing = false
         schedule(0)
       } else if (retryable(err) && !(err instanceof Error && /out of date/.test(err.message))) {
         x.offline = true
@@ -325,8 +346,7 @@ export function useAutoSave(p: {
             : err instanceof Error
               ? err.message
               : "Couldn't save your edits."
-        // biome-ignore format: the escape-hatch comment must stay on the toast line.
-        toast.error(message, { id: "inline-edit-failed", duration: 12_000, action: { label: "Open source editor", onClick: () => pr.current.onOpenSourceEditor() } }) // mutation-ignore: bespoke server-message toast with a source-editor fallback action
+        toast.error(message, failed) // mutation-ignore: bespoke server-message toast with a source-editor fallback action
       }
     } finally {
       if (frame === x.frame) {
@@ -391,7 +411,7 @@ export function useAutoSave(p: {
       x.resending = true
       try {
         const a = await api.publishOps(P.shortId, q.ops, q.base, q.message, q.session)
-        clearQueuedSave(P.shortId)
+        queueSave(P.shortId, null)
         P.onOwnVersion(a.current_version)
         P.load()
         P.reloadFrame()
@@ -399,9 +419,9 @@ export function useAutoSave(p: {
           id: "inline-edit-resent",
         })
       } catch (e) {
-        if (noChange(e)) clearQueuedSave(P.shortId)
+        if (noChange(e)) queueSave(P.shortId, null)
         else if (!retryable(e)) {
-          clearQueuedSave(P.shortId)
+          queueSave(P.shortId, null)
           toast.error("Edits kept on this device couldn't be applied to the newer version.", {
             id: "inline-edit-resent",
             description: "Someone changed the same blocks meanwhile. Open History to compare.",
@@ -424,7 +444,6 @@ export function useAutoSave(p: {
   const x = s.current
   const pending = x.rev > x.savedRev
   return {
-    session: () => x.session,
     status: (conflicts: number): SaveStatus => ({
       kind:
         conflicts > 0
@@ -449,22 +468,12 @@ export function useAutoSave(p: {
     begin: () => {
       const y = s.current
       window.clearTimeout(y.timer)
-      Object.assign(y, {
+      window.clearTimeout(y.remoteTimer)
+      Object.assign(y, fresh(), {
         session: crypto.randomUUID(),
-        rev: 0,
-        savedRev: 0,
-        saving: false,
-        syncing: false,
-        remote: false,
-        holdUntil: 0,
-        retry: 0,
-        conflictRetry: 0,
-        offline: false,
-        error: false,
-        waiting: 0,
-        table: null,
+        frame: y.frame + 1,
+        resending: y.resending,
       })
-      y.frame++
       refresh()
     },
     /** The page reports the source it shows (as edit mode opens on it): fetch the
