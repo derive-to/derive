@@ -358,6 +358,12 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "true",
   },
   {
+    name: "DERIVE_AUTOSAVE_WORKSPACES",
+    group: "advanced",
+    doc: "Comma-separated workspace ids whose inline edits save themselves as they are made (live\nauto-save), or `*` for every workspace. Everywhere else an inline edit saves on Save or\nDone; either way a save lands in the open page without a reload. Unset = nowhere.",
+    example: "ws_abc123,ws_def456",
+  },
+  {
     name: "DERIVE_HOSTED_RUNS_ALLOWLIST",
     group: "advanced",
     doc: "Comma-separated immutable workspace ids allowed to execute on this deployment's\nhosted substrate. It gates scheduled materialization, stale-run recovery, the minute dispatch\nsweep, Run now nudges, and hosted ask sessions. Owner-operated polling runners are unaffected.\n\nOn the multi-tenant Cloudflare Worker, unset or blank means NOBODY (fail closed). On a Node\nself-host, unset preserves the single-tenant default of no restriction; set it to restrict\nhosted execution there too, and set it to an empty string for a deployment-level stop.",

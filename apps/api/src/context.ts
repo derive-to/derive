@@ -162,6 +162,9 @@ export interface AppDeps {
    *  Workers (waitUntil). The Node server sets it; tests leave it off so that work finishes
    *  before they assert. */
   detachAfterResponse?: boolean
+  /** Workspaces whose inline edits save themselves (live auto-save): ids, or "all".
+   *  Everywhere else edits save on Save or Done. Unset: nowhere. */
+  liveSaveWorkspaces?: ReadonlySet<string> | "all"
   /** Optional dense/semantic search index. Unset ⇒ workspace search stays lexical-only. Both the
    *  edge and a Postgres self-host inject a pgvector adapter (embeddings from Workers AI or, on
    *  self-host, a local ONNX model); it's absent on SQLite / when no embedder is configured. */
@@ -1880,6 +1883,9 @@ export function buildContext(deps: AppDeps) {
     background,
     afterResponse,
     storageUsed,
+    /** Does this workspace have live auto-save on? */
+    liveSave: (orgId: string): boolean =>
+      deps.liveSaveWorkspaces === "all" || !!deps.liveSaveWorkspaces?.has(orgId),
     attendedTurnBudgetMs: deps.attendedTurnBudgetMs,
     /**
      * Answer an @derive mention in a comment thread — the comment lane's arrival, built once

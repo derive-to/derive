@@ -1853,6 +1853,8 @@ export function Artifact({ template = false }: { template?: boolean }) {
                 onRevertChange={(c) => inlineEdit.revertChange(c.id)}
                 onResolve={inlineEdit.resolveConflict}
                 onDone={inlineEdit.requestExit}
+                live={inlineEdit.live}
+                onSave={inlineEdit.save}
               />
             )}
             {editing ? (
@@ -2008,6 +2010,8 @@ export function Artifact({ template = false }: { template?: boolean }) {
                     onRedo={inlineEdit.redo}
                     onFormat={inlineEdit.format}
                     onDone={inlineEdit.requestExit}
+                    live={inlineEdit.live}
+                    onSave={inlineEdit.save}
                   />
                 ) : undefined
               }

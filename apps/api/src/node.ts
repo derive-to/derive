@@ -27,7 +27,7 @@ import { answerDeriveMention } from "./lib/comment-turn"
 import { dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { sweepExpiredDrafts } from "./lib/drafts"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
-import { workspaceIdsFromEnv } from "./lib/env"
+import { liveSaveFromEnv, workspaceIdsFromEnv } from "./lib/env"
 import { sharpShrinker } from "./lib/image-shrink-node"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { getInstanceSlot, modelSource, readLibrary } from "./lib/model-library"
@@ -545,6 +545,7 @@ let pokeRuntime: (() => void) | undefined
 const app = createApp({
   // An attended editor save answers once its version is stored; indexing and realtime follow.
   detachAfterResponse: true,
+  liveSaveWorkspaces: liveSaveFromEnv(process.env.DERIVE_AUTOSAVE_WORKSPACES),
   hostedAutomation: hostedDispatch
     ? { providers: ["claude-code", "codex"], workspaceIds: hostedDispatch.hostedOrgIds }
     : undefined,

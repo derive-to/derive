@@ -211,6 +211,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     sourceText,
     dynamicSlots,
     sourceHiddenFrom,
+    liveSave,
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
   const publishDeps = {
@@ -2178,6 +2179,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         sessions: groupSessions(versions, versionWindowMs),
         my_role: myRole,
         is_workspace_member: isWorkspaceMember,
+        live_save: liveSave(artifact.org_id),
         // Show the Made-with-Derive mark on this artifact's public surfaces? False
         // only for white-label workspaces that are also entitled to it (beta, or an
         // active subscription); the viewer reads this single boolean so workspace

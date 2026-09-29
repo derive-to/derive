@@ -348,6 +348,12 @@ export const Artifact = z
       .describe(
         "Owner opt-in: readers without artifact standing can browse version history. When false, their detail responses carry only the current version.",
       ),
+    live_save: z
+      .boolean()
+      .optional()
+      .describe(
+        "True when inline edits save themselves as they are made (the workspace has live auto-save on); false when they save on Save or Done. Either way a save lands in the open page without a reload.",
+      ),
     is_workspace_member: z
       .boolean()
       .optional()

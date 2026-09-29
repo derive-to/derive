@@ -118,9 +118,11 @@ for (const b of blocks) {
 let out = kept.map((b) => b.join("\n")).join("\n")
 out = out.replace(/^name = "derive"$/m, `name = "${name}"`)
 out = out.replace(/^BASE_URL = "https:\/\/derive\.to"$/m, `BASE_URL = "${baseUrl}"`)
+// A PR preview is where live auto-save is tried: on for every workspace there. Production
+// turns it on per workspace (DERIVE_AUTOSAVE_WORKSPACES).
 out = out.replace(
   `BASE_URL = "${baseUrl}"`,
-  `BASE_URL = "${baseUrl}"\nDERIVE_EXPORTS_ONLY = "true"\nDERIVE_QA_EMAIL_CAPTURE = "true"`,
+  `BASE_URL = "${baseUrl}"\nDERIVE_EXPORTS_ONLY = "true"\nDERIVE_QA_EMAIL_CAPTURE = "true"\nDERIVE_AUTOSAVE_WORKSPACES = "*"`,
 )
 // Serve /raw/* from THIS preview instead of 302-ing it to production's sandbox origin —
 // otherwise the in-iframe client the preview injects is production's, not the branch's.

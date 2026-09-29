@@ -171,6 +171,8 @@ export function useAutoSave(p: {
   shortId: string
   art: () => Artifact | undefined
   active: () => boolean
+  /** Edits save themselves (live auto-save), or wait for Save / ⌘S / Done. */
+  live: () => boolean
   /** Ask the frame something and wait for its answer. */
   ask: <T>(type: string, payload: Record<string, unknown>, reply: string) => Promise<T>
   /** The frame now shows `version`'s content (no reload needed to show it). */
@@ -381,7 +383,8 @@ export function useAutoSave(p: {
         x.saving = false
         if (x.remote) remote()
         else if (x.force && !x.error && !x.offline) schedule(0)
-        else if (x.rev > x.savedRev && !x.error && !x.offline) schedule(IDLE_MS)
+        else if (x.rev > x.savedRev && !x.error && !x.offline && pr.current.live())
+          schedule(IDLE_MS)
       }
       refresh()
     }
@@ -411,7 +414,7 @@ export function useAutoSave(p: {
         if (frame !== x.frame) return
         x.syncing = false
         if (x.remote) remote()
-        else if (x.rev > x.savedRev) schedule(IDLE_MS)
+        else if (x.rev > x.savedRev && pr.current.live()) schedule(IDLE_MS)
         refresh()
       })
   }
@@ -550,7 +553,8 @@ export function useAutoSave(p: {
       if (!flush) y.lastTouch = Date.now()
       y.error = false
       if (!shown) refresh()
-      schedule(flush ? SOON_MS : IDLE_MS)
+      // Without live auto-save the edit waits for Save (⌘S) or Done.
+      if (pr.current.live()) schedule(flush ? SOON_MS : IDLE_MS)
     },
     /** Save now (⌘S, leaving a block, a gesture ending). */
     flush: () => {
@@ -563,7 +567,7 @@ export function useAutoSave(p: {
     },
     release: () => {
       s.current.holdUntil = 0
-      schedule(IDLE_MS)
+      if (pr.current.live()) schedule(IDLE_MS)
     },
     remote,
     /** Save what's left and wait for it (Done): resolves when saved, or when it can't

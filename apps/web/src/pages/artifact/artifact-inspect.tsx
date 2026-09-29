@@ -5,7 +5,7 @@ import { SectionTitle } from "@/components/shared/section-title"
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { cn } from "@/lib/utils"
-import { StatusDot, statusLabel } from "./edit-bar"
+import { SaveButton, StatusDot, statusLabel } from "./edit-bar"
 import type { RuntimeDiagnostic } from "./render-stage"
 import type { EditBlock, SaveStatus } from "./use-inline-edit"
 
@@ -38,6 +38,8 @@ export function ArtifactInspect({
   onRedo,
   onFormat,
   onDone,
+  live = true,
+  onSave,
 }: {
   status: SaveStatus
   canUndo: boolean
@@ -69,6 +71,9 @@ export function ArtifactInspect({
   onRedo: () => void
   onFormat: (kind: FormatKind, href?: string) => void
   onDone: () => void
+  /** Edits save themselves; otherwise Save sits beside Done. */
+  live?: boolean
+  onSave?: () => void
 }) {
   return (
     <section
@@ -115,6 +120,8 @@ export function ArtifactInspect({
         onUndo={onUndo}
         onRedo={onRedo}
         onDone={onDone}
+        live={live}
+        onSave={onSave}
       />
     </section>
   )
@@ -566,6 +573,8 @@ function SessionControls({
   onUndo,
   onRedo,
   onDone,
+  live,
+  onSave,
 }: {
   status: SaveStatus
   canUndo: boolean
@@ -573,6 +582,8 @@ function SessionControls({
   onUndo: () => void
   onRedo: () => void
   onDone: () => void
+  live: boolean
+  onSave?: () => void
 }) {
   return (
     <div className="mt-auto pt-6">
@@ -621,6 +632,9 @@ function SessionControls({
       </div>
 
       <div className="mt-3 flex items-center gap-2">
+        {onSave && (
+          <SaveButton live={live} status={status} onSave={onSave} testId="artifact-inspect-save" />
+        )}
         <Button variant="outline" data-testid="artifact-inspect-done" onClick={() => onDone()}>
           Done editing
         </Button>

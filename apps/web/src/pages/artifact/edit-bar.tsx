@@ -50,6 +50,8 @@ export function EditBar({
   onRevertChange,
   onResolve,
   onDone,
+  live = true,
+  onSave,
 }: {
   status: SaveStatus
   /** This session's changes, as the document reports them. */
@@ -78,6 +80,9 @@ export function EditBar({
   onRevertChange?: (change: EditChange) => void
   onResolve?: (id: string, mine: boolean) => void
   onDone: () => void
+  /** Edits save themselves (live auto-save); otherwise they wait for Save (⌘S) or Done. */
+  live?: boolean
+  onSave?: () => void
 }) {
   // Apple's 44px minimum. The strip grows a few px on a phone; a target you can
   // actually hit is worth more there than the vertical space it costs.
@@ -231,10 +236,10 @@ export function EditBar({
           {allowElementEdits
             ? touch
               ? "tap text to edit; tap a card or image to move or resize it"
-              : "click text to edit; click around it to move a block · edits save on their own"
+              : `click text to edit; click around it to move a block${live ? " · edits save on their own" : ""}`
             : touch
               ? "tap text to edit; select an image to replace it"
-              : "click text to edit; select an image to replace it · edits save on their own"}
+              : `click text to edit; select an image to replace it${live ? " · edits save on their own" : ""}`}
         </span>
       )}
       {/* A phone gives the status and Done their own row. This is intentionally a
@@ -250,6 +255,7 @@ export function EditBar({
           onRevert={onRevertChange}
           onResolve={onResolve}
         />
+        {onSave && <SaveButton live={live} status={status} onSave={onSave} className={hit} />}
         <Button
           variant="ghost"
           size="sm"
@@ -265,6 +271,31 @@ export function EditBar({
         </Button>
       </div>
     </div>
+  )
+}
+
+/** Save, where edits wait for it (no live auto-save) and some are waiting. */
+export function SaveButton({
+  live,
+  status,
+  onSave,
+  className,
+  testId = "inline-edit-save",
+}: {
+  live: boolean
+  status: SaveStatus
+  onSave: () => void
+  className?: string
+  testId?: string
+}) {
+  if (live || (status.kind !== "pending" && status.kind !== "error")) return null
+  return (
+    <Button variant="default" size="sm" data-testid={testId} onClick={onSave} className={className}>
+      Save
+      <Kbd aria-hidden className="max-sm:hidden">
+        ⌘S
+      </Kbd>
+    </Button>
   )
 }
 

@@ -31,6 +31,7 @@ import { cloudflareSandbox } from "./lib/code-sandbox-cloudflare"
 import { type DispatchDeps, dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { buildAuthEmail } from "./lib/email"
 import {
+  liveSaveFromEnv,
   slackFromEnv,
   subdomainBaseFromEnv,
   superAdminsFromEnv,
@@ -184,6 +185,8 @@ export interface Env {
   /** Workspace ids allowed to execute on Derive's hosted substrate. Empty/unset means nobody
    *  on the multi-tenant edge; owner-operated polling runners remain available everywhere. */
   DERIVE_HOSTED_RUNS_ALLOWLIST?: string
+  /** Workspace ids whose inline edits save themselves, or `*`. Unset: nowhere. */
+  DERIVE_AUTOSAVE_WORKSPACES?: string
   /** "1" runs automations in this isolate via the loop substrate instead of booting a container.
    *  Off by default, so derive.to keeps its current behaviour until it is set deliberately. */
   DERIVE_LOOP_RUNS?: string
@@ -344,6 +347,7 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
       })
       const models = catalogFromGateway(workerGateway(env))
       app = createApp({
+        liveSaveWorkspaces: liveSaveFromEnv(env.DERIVE_AUTOSAVE_WORKSPACES),
         hostedAutomation: {
           workspaceIds: workspaceIdsFromEnv(env.DERIVE_HOSTED_RUNS_ALLOWLIST),
           providers: !secret
