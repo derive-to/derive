@@ -82,7 +82,7 @@ export function layoutOf(
   const order: (Element | null)[] = []
   const kids = (el: Element) => {
     for (let c = el.firstElementChild; c; c = c.nextElementSibling) {
-      if (c.matches(CHROME) || c.hasAttribute(GEN_ATTR)) continue
+      if (isChrome(c) || c.hasAttribute(GEN_ATTR)) continue
       if (srcOf(c) !== null) visit(c)
       else kids(c)
     }
@@ -99,6 +99,11 @@ export function layoutOf(
   else kids(root)
   return order
 }
+
+/** The editor's chrome (CHROME), by class: a selector match per element is the slow way
+ *  to ask on a long page. */
+const isChrome = (el: Element): boolean =>
+  el.classList.contains("derive-edit-ui") || el.classList.contains("derive-el-hl")
 
 /** One element of the new page: its id and tag, and where it comes from — an element
  *  of the old page the sync kept (`old`), or one of a patch's (`made`, under `root`). */

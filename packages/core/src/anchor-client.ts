@@ -1923,23 +1923,41 @@ interface ElReg {
      touched — and a sync that renumbers the stamps writes it again. */
   const editStyle = document.createElement("style")
   const MEDIA = "img,svg,video,canvas,iframe,embed,object,picture,input,textarea,select"
+  /** The stamped elements hit testing passes through (no words of their own). */
+  const textlessEls = new Set<Element>()
   const setEditHitTesting = (on: boolean) => {
     editStyle.remove()
     if (!on) return
     // Our own boxes move as they paint; the browser must never scroll to follow them.
     editStyle.textContent = "html{overflow-anchor:none}"
     ;(document.head || document.documentElement).appendChild(editStyle)
+    textlessEls.clear()
     if (!stamped()) return
     const textless: string[] = []
-    for (const el of Array.from(document.body.querySelectorAll(`[${SRC_ATTR}]`)))
+    // Which elements hold words, children before parents: one visit per node, where asking
+    // each element for its textContent reads a long page once per level of nesting.
+    const all = Array.from(document.body.querySelectorAll("*"))
+    const worded = new Set<Element>()
+    for (let i = all.length - 1; i >= 0; i--) {
+      const el = all[i] as Element
+      for (let n = el.firstChild; n; n = n.nextSibling)
+        if (n.nodeType === 3 ? !!(n as Text).data.trim() : worded.has(n as Element)) {
+          worded.add(el)
+          break
+        }
+    }
+    for (const el of all)
       if (
-        !el.textContent?.trim() &&
+        el.hasAttribute(SRC_ATTR) &&
+        !worded.has(el) &&
         !el.matches(
           `${MEDIA},[data-derive-node],[data-derive-resizable],[data-derive-slide],[data-derive-editable]`,
         ) &&
         !el.querySelector(MEDIA)
-      )
+      ) {
+        textlessEls.add(el)
         textless.push(`[${SRC_ATTR}="${el.getAttribute(SRC_ATTR)}"]`)
+      }
     editStyle.textContent +=
       `:where(body *):not([${SRC_ATTR}],[${FMT_ATTR}],[data-derive-editable],.derive-mention,.derive-edit-ui,.derive-edit-ui *,.derive-el-hl,.derive-el-hl *):not(:has([${SRC_ATTR}])){pointer-events:none!important}` +
       (textless.length ? `${textless.join(",")}{pointer-events:none!important}` : "")
@@ -6256,6 +6274,22 @@ interface ElReg {
     lastCollect = null
   }
 
+  /** A baseline's elements by id, read once per baseline (the save that collects from it
+   *  and the sync that follows both need them). */
+  const baselineIds = new WeakMap<Baseline, Map<Element, number>>()
+  const idsOf = (base: Baseline): Map<Element, number> => {
+    let ids = baselineIds.get(base)
+    if (!ids) {
+      ids = new Map()
+      for (const el of base.keys()) {
+        const n = srcOf(el)
+        if (n !== null) ids.set(el, n)
+      }
+      baselineIds.set(base, ids)
+    }
+    return ids
+  }
+
   /** What a save wrote, as the page held it when collected (see source-sync). */
   interface CollectRecord {
     /** The new page in source order, by the page element that made each element. */
@@ -6332,7 +6366,7 @@ interface ElReg {
     const touched = touchedSet()
     const { ops, ok, emit } = collectSourceOps(
       document.body,
-      snapshotOf(base, document.body),
+      snapshotOf(base, document.body, idsOf(base)),
       touched,
     )
     let uncaptured = ok && !blockResize ? 0 : 1
@@ -6530,11 +6564,9 @@ interface ElReg {
     const base = saved
     const reload = { ok: false, reload: true, lost: !!own && own.rev !== rev }
     if (!base || r.head) return reload
-    const oldId = new Map<Element, number>()
-    for (const el of base.keys()) {
-      const n = srcOf(el)
-      if (n !== null) oldId.set(el, n)
-    }
+    const oldId = idsOf(base)
+    /** Whether any element's id changed (what hit testing is keyed by). */
+    let renamed = false
     const byOld = new Map<number, Element>()
     for (const [el, n] of oldId) if (el.isConnected || !byOld.has(n)) byOld.set(n, el)
     const slides = slideEls()
@@ -6600,6 +6632,7 @@ interface ElReg {
           const now = ne.made ? adopt(d, ne.made, moved) : d
           // Most of a long page keeps its id: writing it again is a mutation for nothing.
           if (!ne.made && o !== ne.id) now.setAttribute(SRC_ATTR, String(ne.id))
+          if (o !== ne.id) renamed = true
           pageFor.set(ne.id, now)
           if (spacedSet.has(d)) became.set(d, now)
           if (o !== undefined) oldToNew.set(o, ne.id)
@@ -6642,32 +6675,46 @@ interface ElReg {
       const n = oldToNew.get(o) ?? r.remap[o] ?? -1
       return n >= 0 ? n : null
     }
-    const placed = new Set(pageFor.values())
-    const targets = new Set<Element>(stampedIn(document.body))
-    for (const el of base.keys()) targets.add(el)
-    for (const root of detachedRoots()) for (const e of stampedIn(root)) targets.add(e)
+    // Elements already placed on the new page are done; only the rest are read.
+    const seen = new Set<Element>(pageFor.values())
     // Your side of a conflict keeps its ids: "Keep mine" lines it up with theirs by them.
-    for (const [x, , mine] of swaps) if (mine) for (const e of stampedIn(x)) targets.delete(e)
-    for (const c of conflicts) for (const e of stampedIn(c.mine)) targets.delete(e)
+    for (const [x, , mine] of swaps) if (mine) for (const e of stampedIn(x)) seen.add(e)
+    for (const c of conflicts) for (const e of stampedIn(c.mine)) seen.add(e)
     const plan: [Element, number | null][] = []
-    for (const el of targets) {
-      const o = srcOf(el)
-      if (!placed.has(el) && o !== null) plan.push([el, idOf(o)])
+    const consider = (el: Element) => {
+      if (seen.has(el)) return
+      seen.add(el)
+      const o = oldId.get(el) ?? srcOf(el)
+      if (o !== null) plan.push([el, idOf(o)])
     }
+    for (const el of Array.from(document.body.querySelectorAll(`[${SRC_ATTR}]`))) consider(el)
+    for (const el of base.keys()) consider(el)
+    for (const root of detachedRoots()) for (const e of stampedIn(root)) consider(e)
     // What the new version no longer has (a save removed it and undo brought it back)
     // saves as a copy of a block that opens the same way, or else refuses to save.
-    for (const [el, n] of plan) if (n !== null && srcOf(el) !== n) renumber(el, n)
+    for (const [el, n] of plan)
+      if (n !== null && srcOf(el) !== n) {
+        renumber(el, n)
+        renamed = true
+      }
     const standIns = new Set<Element>()
     const unresolved = new Set(plan.filter(([, n]) => n === null).map(([el]) => el))
-    // Every opening tag on the page, for what the new version no longer has (rare: read
-    // only then).
-    const opening = new Map<string, number>()
-    if (unresolved.size)
-      for (const el of stampedIn(document.body)) {
-        const n = srcOf(el)
-        const key = n === null ? "" : openingOf(el)
-        if (n !== null && !opening.has(key)) opening.set(key, n)
+    // Every opening tag on the page, for a block only undo holds that the new version no
+    // longer has (rare: read only then).
+    let openings: Map<string, number> | null = null
+    const opening = (el: Element): number | undefined => {
+      if (!openings) {
+        openings = new Map()
+        for (const e of stampedIn(document.body)) {
+          const n = srcOf(e)
+          const key = n === null ? "" : openingOf(e)
+          if (n !== null && !openings.has(key)) openings.set(key, n)
+        }
       }
+      return openings.get(openingOf(el))
+    }
+    /** Elements this sync took the id off. */
+    const cleared = new Set<Element>()
     for (const [el, n] of plan)
       if (n === null) {
         // On the page only a neighbour will do (what an Enter makes); for one undo holds,
@@ -6682,9 +6729,11 @@ interface ElReg {
           ? undefined
           : el.isConnected
             ? sibling && (srcOf(sibling) ?? undefined)
-            : opening.get(openingOf(el))
+            : opening(el)
         if (like !== undefined) standIns.add(el)
+        else cleared.add(el)
         renumber(el, like ?? null)
+        renamed = true
       }
 
     for (const [x, p, mine] of swaps) {
@@ -6705,8 +6754,10 @@ interface ElReg {
       // swapped out gives way to what came in.
       const swapped = new Map(swaps.map(([x, p]) => [x, p]))
       const out = new Set([...gone, ...standIns])
+      // (A baseline element has an id unless this sync took it off: no attribute to read.)
       standFor = (q) =>
-        swapped.get(q) ?? (out.has(q) || (q !== document.body && srcOf(q) === null) ? undefined : q)
+        swapped.get(q) ??
+        (out.has(q) || (q !== document.body && (!oldId.has(q) || cleared.has(q))) ? undefined : q)
       made = swaps.flatMap(([, p]) =>
         stampedIn(p).map((e): [Element, SigParts] => [e, sigParts(e)]),
       )
@@ -6729,8 +6780,14 @@ interface ElReg {
     for (const e of [...undoStack, ...redoStack]) renumberEntry(e, idOf)
     document.documentElement.setAttribute("data-derive-src-version", String(r.version))
     document.documentElement.setAttribute("data-derive-src-sha", r.sha)
-    // Hit testing names the textless elements by id: the same ids now name others.
-    setEditHitTesting(true)
+    // Hit testing names the textless elements by id: the same ids may now name others.
+    // So does a block the save left with no words, or one that had none and now has some.
+    const wordsChanged =
+      !!own &&
+      [...own.words].some(
+        ([el, w]) => !w.trim() || [...textlessEls].some((t) => t === el || el.contains(t)),
+      )
+    if (renamed || swaps.length || wordsChanged) setEditHitTesting(true)
     if (swaps.length) rescanStructure()
     // What the sync itself did to the page is not an edit.
     revWatch?.takeRecords()
@@ -6760,6 +6817,7 @@ interface ElReg {
     page.forEach((e, i) => {
       renumber(e, srcOf(made[i] as Element))
     })
+    baselineIds.delete(base)
     for (const p of made) base.delete(p)
     made.forEach((_, i) => {
       base.set(page[i] as Element, parts[i] as SigParts)

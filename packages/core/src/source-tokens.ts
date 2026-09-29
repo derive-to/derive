@@ -116,7 +116,8 @@ export const sameParts = (a: SigParts, b: SigParts): boolean =>
   a.length === b.length && a.every((p, i) => p === b[i])
 
 export interface SrcSnapshot {
-  sigs: Map<number, string>
+  /** An id's children as the baseline records them (-1: an unstamped root). */
+  sigs: { get(n: number): string | undefined }
   /** The stamped elements themselves: a copy made later shares its original's id
    *  (and so its record) but is not one of these. */
   els: WeakSet<Element>
@@ -137,18 +138,37 @@ export function markGenerated(root: Element): void {
     if (kindOf(el) === "new" && !el.closest(CHROME)) el.setAttribute(GEN_ATTR, "")
 }
 /** The id-keyed record collectSourceOps compares against, from a baseline. */
-export function snapshotOf(base: Baseline, root: Element): SrcSnapshot {
-  const sigs = new Map<number, string>()
+export function snapshotOf(
+  base: Baseline,
+  root: Element,
+  /** The baseline's ids, when the caller has read them already. */
+  ids?: ReadonlyMap<Element, number>,
+): SrcSnapshot {
+  const byId = new Map<number, SigParts>()
   const dupes = new Set<number>()
   const els = new WeakSet<Element>()
   for (const [el, parts] of base) {
-    const n = srcOf(el) ?? (el === root ? -1 : null)
+    const n = (ids ? ids.get(el) : srcOf(el)) ?? (el === root ? -1 : null)
     if (n === null) continue
     if (n >= 0) {
       els.add(el)
-      if (sigs.has(n)) dupes.add(n)
+      if (byId.has(n)) dupes.add(n)
     }
-    sigs.set(n, renderParts(parts))
+    byId.set(n, parts)
+  }
+  // Rendered when asked: a save compares only the elements the person touched, and a long
+  // page has tens of thousands of others.
+  const rendered = new Map<number, string>()
+  const sigs = {
+    get: (n: number): string | undefined => {
+      const hit = rendered.get(n)
+      if (hit !== undefined) return hit
+      const parts = byId.get(n)
+      if (!parts) return undefined
+      const sig = renderParts(parts)
+      rendered.set(n, sig)
+      return sig
+    },
   }
   return { sigs, dupes, els }
 }
@@ -182,8 +202,10 @@ export function collectSourceOps(
   const changed = new Set<Element>()
   const dirty = new Set<Element>()
   for (const el of Array.from(root.querySelectorAll(`[${SRC_ATTR}]`))) {
+    // Whose it is first: that asks no attribute of the many elements nobody touched.
+    if (!mine(el)) continue
     const n = srcOf(el)
-    if (n === null || !mine(el) || sigOf(el) === snap.sigs.get(n)) continue
+    if (n === null || sigOf(el) === snap.sigs.get(n)) continue
     changed.add(el)
     for (let a: Element | null = el; a && !dirty.has(a); a = a.parentElement) dirty.add(a)
   }
