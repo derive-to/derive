@@ -6578,6 +6578,7 @@ interface ElReg {
      *  standing for it, and the elements that came in with their new children. */
     let standFor: (el: Element) => Element | undefined = () => undefined
     let made: [Element, SigParts][] = []
+    const spacedNow: Element[] = []
 
     if (own) {
       // This page's own save: the page already is the new version; line the two up.
@@ -6650,9 +6651,11 @@ interface ElReg {
         const now = pageFor.get(ne.id)
         if (now && ne.made) made.push([now, partsVia(ne.made, (m) => pageFor.get(srcOf(m) ?? -1))])
       }
+      // A block whose spacing alone differs keeps its own children, read once the changed
+      // subtrees are swapped in: read now, its record would name the elements they replace.
       for (const d of lined.spaced) {
         const now = became.get(d)
-        if (now?.isConnected) made.push([now, sigParts(now)])
+        if (now) spacedNow.push(now)
       }
     } else {
       // Someone else's: each changed subtree swaps in where its old root is (over unsaved
@@ -6744,6 +6747,7 @@ interface ElReg {
         conflicts.push({ mine: x, theirs: p, by })
       } else markRemote(p, by)
     }
+    for (const now of spacedNow) if (now.isConnected) made.push([now, sigParts(now)])
     if (own)
       for (const [el, style, lay] of own.attrs) {
         savedStyle.set(el, style)

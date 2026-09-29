@@ -2477,6 +2477,41 @@ test.describe("live auto-save", () => {
     expect(await contentOf(owner, shortId)).toContain('<p id="one">First line<br>Second line</p>')
   })
 
+  test("Markdown: a line the save respaced, and code in it the save redrew, take the next save in place", async ({
+    owner,
+  }) => {
+    const markdown = "# Notes\n\nRiders take the loop. Every figure on `Pier 9` is made up.\n"
+    const shortId = await publishArtifact(owner, "notes.md", markdown, "text/markdown")
+    await openArtifact(owner, shortId)
+    await enterEditMode(owner)
+    const mark = await markFrame(owner)
+    // One save that bolds inside the code span (Markdown can't say that, so the new
+    // version draws that code anew) while the line starts with a space, as editing at a
+    // line's start can leave it: Markdown drops it, so the new version reads the same words
+    // spaced differently and the page keeps its own.
+    await caretBefore(owner, "main code", "9")
+    await owner.keyboard.press("Shift+ArrowRight")
+    await owner.keyboard.press("ControlOrMeta+b")
+    await owner.keyboard.type("10")
+    await doc(owner)
+      .locator("main > p >> nth=0")
+      .evaluate((p) => {
+        const first = p.firstChild
+        if (first?.nodeType !== 3) throw new Error("the line doesn't start with words")
+        ;(first as Text).data = ` ${(first as Text).data}`
+      })
+    await typeAtLineEnd(owner, "main > p >> nth=0", " Really.")
+    await saveEdits(owner)
+    // The whole line retyped: the next save names what the page holds now, not what the
+    // last save swapped out.
+    await doc(owner).locator("main > p >> nth=0").click()
+    await owner.keyboard.press("ControlOrMeta+a")
+    await owner.keyboard.type("Retyped line.")
+    await saveEdits(owner)
+    expect(await frameMark(owner)).toBe(mark)
+    expect(await contentOf(owner, shortId)).toBe("# Notes\n\nRetyped line.\n")
+  })
+
   test("Markdown: emphasis the save wrote with its space outside stays put through the next save", async ({
     owner,
   }) => {
