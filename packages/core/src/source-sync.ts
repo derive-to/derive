@@ -194,6 +194,25 @@ const childrenOf = (el: Element, holds: boolean): Element[] => {
   return out
 }
 
+/** Two elements read the same: their words with each run of whitespace as one space,
+ *  and — for a block, whose edges the page doesn't show — without the space at its
+ *  edges. An inline element's edges count: a space in or out of a bold reads apart. */
+const sameReading = (a: Element, b: Element): boolean => {
+  const read = (el: Element) => {
+    const w = wordsOf(el, () => false).replace(/\s+/g, " ")
+    return BLOCK.test(el.localName) ? w.trim() : w
+  }
+  return read(a) === read(b)
+}
+const BLOCK =
+  /^(?:address|article|aside|blockquote|dd|div|dl|dt|figcaption|figure|footer|h[1-6]|header|li|main|nav|ol|p|pre|section|table|tbody|thead|tfoot|tr|td|th|ul|body)$/
+
+/** A block with nothing in it but the line it holds open. */
+const blankBlock = (el: Element): boolean =>
+  /^(?:p|li|h[1-6])$/.test(el.localName) &&
+  !wordsOf(el, () => false).trim() &&
+  !el.querySelector("img,svg,video,iframe,hr,input")
+
 /** How the recorded layout lines up with the new page: kept elements one for one, and
  *  each changed subtree element for element (`pairs`: the page already shows it), with
  *  the subtrees whose words the new version reads differently (`differ`: it normalized
@@ -213,8 +232,8 @@ export function linePage(
   const pairs: [NewEl, Element][] = []
   const differ: [Element, Element][] = []
   const reshaped: [Element, Element][] = []
-  // Empty editor elements the save wrote as nothing (a bold with no words in it): the
-  // new version doesn't have them, and the page lets them go.
+  // Empty elements the save wrote as nothing (a bold with no words in it, a blank
+  // line): the new version doesn't have them, and the page lets them go.
   const strays: Element[] = []
   const spaced: Element[] = []
   const stray = (d: Element | null | undefined) =>
@@ -268,8 +287,17 @@ export function linePage(
         const fits = (list: Element[]) =>
           list.length === pk.length && list.every((c, x) => tagOf(c) === tagOf(pk[x] as Element))
         // A line-holding break is saved only while it holds a line: try the page's
-        // children with and without them.
-        const dk = [childrenOf(d, true), childrenOf(d, false)].find(fits)
+        // children with and without them. An emptied block (a line Enter left blank)
+        // may be one the source can't hold (Markdown has no empty paragraph): the new
+        // version skips it, and the page lets it go rather than take new markup.
+        let dk = [childrenOf(d, true), childrenOf(d, false)].find(fits)
+        if (!dk) {
+          const kept = childrenOf(d, false).filter((c) => !blankBlock(c))
+          if (fits(kept)) {
+            for (const c of childrenOf(d, false)) if (blankBlock(c)) strays.push(c)
+            dk = kept
+          }
+        }
         if (!dk) {
           reshaped.push([d, p])
           return
@@ -278,10 +306,13 @@ export function linePage(
         const own = (c: Element) => dk.includes(c)
         const mine = wordsOf(d, own)
         const theirs = wordsOf(p, (c) => pk.includes(c))
-        // Only the space between its children differs (how the markup was laid out, not
-        // what it says): the page keeps its own, and the baseline takes it as saved.
+        // Only how the space between its children was laid out differs (a line break
+        // for a space), not what it says: the page keeps its own, and the baseline takes
+        // it as saved. A space that moved across a child's edge (Markdown writes it
+        // outside the emphasis) is a different reading: the block takes the new markup,
+        // or a later save would write its words without that space.
         if (mine !== theirs) {
-          if (mine.replace(/\s+/g, " ").trim() === theirs.replace(/\s+/g, " ").trim())
+          if (sameReading(d, p) && dk.every((c, x) => sameReading(c, pk[x] as Element)))
             spaced.push(d)
           else differ.push([d, p])
         }
@@ -345,6 +376,11 @@ export function adopt(d: Element, p: Element, swap: Map<Node, Node>): Element {
       if (a.name !== "class" && a.name !== "style" && d.getAttribute(a.name) !== a.value)
         d.setAttribute(a.name, a.value)
     d.removeAttribute(HOLD_ATTR)
+    // A break Enter typed sits in the editor's line-break span; saved, it is the
+    // source's own <br>, and the span goes (its words stay where they are).
+    const wrap = d.parentElement
+    if (d.localName === "br" && wrap?.getAttribute(FMT_ATTR) === "br")
+      wrap.replaceWith(...Array.from(wrap.childNodes))
     return d
   }
   const el = d.ownerDocument.createElement(p.localName)

@@ -1917,8 +1917,9 @@ interface ElReg {
      invisible prev/next zones, an empty button stretched over a card, a decorative
      rule — leave hit testing, so a click lands on the words beneath and the browser
      places the caret itself (Shift+click and word selection included). Structural
-     nodes, resizable boxes and media stay targets. Pure CSS keyed by the stamps:
-     the page's own elements are never touched. */
+     nodes, resizable boxes, media and blocks being edited (an emptied one included)
+     stay targets. Pure CSS keyed by the stamps, so the page's own elements are never
+     touched — and a sync that renumbers the stamps writes it again. */
   const editStyle = document.createElement("style")
   const MEDIA = "img,svg,video,canvas,iframe,embed,object,picture,input,textarea,select"
   const setEditHitTesting = (on: boolean) => {
@@ -1932,12 +1933,14 @@ interface ElReg {
     for (const el of Array.from(document.body.querySelectorAll(`[${SRC_ATTR}]`)))
       if (
         !el.textContent?.trim() &&
-        !el.matches(`${MEDIA},[data-derive-node],[data-derive-resizable],[data-derive-slide]`) &&
+        !el.matches(
+          `${MEDIA},[data-derive-node],[data-derive-resizable],[data-derive-slide],[data-derive-editable]`,
+        ) &&
         !el.querySelector(MEDIA)
       )
         textless.push(`[${SRC_ATTR}="${el.getAttribute(SRC_ATTR)}"]`)
     editStyle.textContent +=
-      `:where(body *):not([${SRC_ATTR}],[${FMT_ATTR}],.derive-mention,.derive-edit-ui,.derive-edit-ui *,.derive-el-hl,.derive-el-hl *):not(:has([${SRC_ATTR}])){pointer-events:none!important}` +
+      `:where(body *):not([${SRC_ATTR}],[${FMT_ATTR}],[data-derive-editable],.derive-mention,.derive-edit-ui,.derive-edit-ui *,.derive-el-hl,.derive-el-hl *):not(:has([${SRC_ATTR}])){pointer-events:none!important}` +
       (textless.length ? `${textless.join(",")}{pointer-events:none!important}` : "")
   }
   const maskOffscreenSlides = () => {
@@ -6288,6 +6291,12 @@ interface ElReg {
     by: string
   }
   let conflicts: Conflict[] = []
+  /** Blank lines a save wrote as nothing, kept while the caret was on them. */
+  const blankLines = new Set<Element>()
+  const caretOn = (el: Element) => {
+    const n = window.getSelection()?.anchorNode
+    return caretIn(el) || (!!n && el.contains(n))
+  }
 
   /** Stamped elements the person owns this session: typed-in blocks (and the source in
    *  them) and every rearranged parent. */
@@ -6602,8 +6611,24 @@ interface ElReg {
           el.setAttribute(SRC_ATTR, String(srcOf(root)))
           pageFor.set(srcOf(root) as number, el)
         }
-      for (const el of lined.strays) if (!caretIn(el)) el.remove()
+      // A blank line the caret is on stays to be typed on, as a block the browser made
+      // (what's typed there saves as a new one in its place); one it has left, still
+      // blank, goes like the rest.
+      for (const el of blankLines)
+        if (!el.isConnected || wordsIn(el).trim()) blankLines.delete(el)
+        else if (!caretOn(el)) {
+          el.remove()
+          blankLines.delete(el)
+        }
+      for (const el of lined.strays)
+        if (!caretOn(el)) el.remove()
+        else {
+          for (const e of stampedIn(el)) e.removeAttribute(SRC_ATTR)
+          blankLines.add(el)
+        }
       const replaced = (d: Element) => swaps.some(([x]) => x === d || x.contains(d))
+      /** Each paired page element as it is now (an editor span becomes its tag). */
+      const became = new Map<Element, Element>()
       keepingSelection(document, (moved) => {
         for (const [ne, d] of lined.pairs) {
           if (replaced(d)) continue
@@ -6611,6 +6636,7 @@ interface ElReg {
           const now = ne.made ? adopt(d, ne.made, moved) : d
           if (!ne.made) now.setAttribute(SRC_ATTR, String(ne.id))
           pageFor.set(ne.id, now)
+          became.set(d, now)
           if (o !== undefined) oldToNew.set(o, ne.id)
         }
       })
@@ -6637,8 +6663,8 @@ interface ElReg {
         )
       }
       for (const d of lined.spaced) {
-        const now = [...pageFor.values()].includes(d) ? d : null
-        if (now) next.set(now, sigParts(now))
+        const now = became.get(d)
+        if (now?.isConnected) next.set(now, sigParts(now))
       }
     } else {
       // Someone else's: each changed subtree swaps in where its old root is, unless
@@ -6688,13 +6714,15 @@ interface ElReg {
       if (n !== null && !opening.has(openingOf(el))) opening.set(openingOf(el), n)
     }
     const standIns = new Set<Element>()
+    const unresolved = new Set(plan.filter(([, n]) => n === null).map(([el]) => el))
     for (const [el, n] of plan)
       if (n === null) {
-        // On the page, only a sibling will do (it's the same kind of block in the same
-        // place); for one undo holds, any that opens the same way.
+        // On the page, only the block right before or after it will do (what an Enter
+        // makes: a copy of its neighbour); for one undo holds, any that opens the same way.
         const sibling = el.isConnected
-          ? Array.from(el.parentElement?.children ?? []).find(
-              (c) => c !== el && srcOf(c) !== null && openingOf(c) === openingOf(el),
+          ? [el.previousElementSibling, el.nextElementSibling].find(
+              (c) =>
+                !!c && !unresolved.has(c) && srcOf(c) !== null && openingOf(c) === openingOf(el),
             )
           : undefined
         const like = /^(?:b|strong|i|em|br|a)$/.test(el.localName)
@@ -6752,6 +6780,8 @@ interface ElReg {
     for (const e of [...undoStack, ...redoStack]) renumberEntry(e, idOf)
     document.documentElement.setAttribute("data-derive-src-version", String(r.version))
     document.documentElement.setAttribute("data-derive-src-sha", r.sha)
+    // Hit testing names the textless elements by id: the same ids now name others.
+    setEditHitTesting(true)
     if (swaps.length) rescanStructure()
     // What the sync itself did to the page is not an edit.
     revWatch?.takeRecords()
@@ -6792,6 +6822,7 @@ interface ElReg {
           q.map((x) => (x === c.theirs ? c.mine : x)),
         )
     c.theirs.replaceWith(c.mine)
+    setEditHitTesting(true)
     rescanStructure()
     // It is yours again: the next save compares it with theirs and sends the difference.
     const target = c.mine instanceof HTMLElement ? targetFor(c.mine) : null

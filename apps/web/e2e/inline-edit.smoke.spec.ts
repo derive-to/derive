@@ -2084,9 +2084,11 @@ test("LaTeX: Cancel over unsaved text asks first, and discarding closes the edit
    Every edit saves itself and the page never reloads for it: not for your own save,
    not for someone else's. These pin the promises that make that feel solid. */
 
-/** Mark the frame's document and window so a reload (which would replace both) shows. */
-const markFrame = (page: Page) =>
-  doc(page)
+/** Mark the frame's document and window so a reload (which would replace both) shows.
+ *  The page itself, not the blank document an iframe starts on. */
+const markFrame = async (page: Page) => {
+  await expect(doc(page).locator("html")).toHaveAttribute("data-derive-src-version", /\d/)
+  return doc(page)
     .locator("html")
     .evaluate(() => {
       const w = window as unknown as { __sentinel?: string }
@@ -2094,6 +2096,7 @@ const markFrame = (page: Page) =>
       ;(document as unknown as { __sentinel?: string }).__sentinel = w.__sentinel
       return w.__sentinel
     })
+}
 const frameMark = (page: Page) =>
   doc(page)
     .locator("html")
@@ -2331,5 +2334,93 @@ test.describe("live auto-save", () => {
     await expect(owner.getByText(/Saved 1 edit made offline/)).toBeVisible({ timeout: 20_000 })
     expect(await contentOf(owner, shortId)).toContain("First paragraph. Offline.")
     await expect(doc(owner).locator("#one")).toHaveText("First paragraph. Offline.")
+  })
+
+  test("Markdown: a paragraph emptied and saved, then typed into again, saves as a paragraph", async ({
+    owner,
+  }) => {
+    const markdown =
+      "# Line\n\nIntro words.\n\n## Why\n\nWhen the loop closes.\n\n> Keep it running.\n\n| Phase | Weeks |\n| --- | --- |\n| Survey | 2 |\n"
+    const shortId = await publishArtifact(owner, "empty.md", markdown, "text/markdown")
+    await openArtifact(owner, shortId)
+    await enterEditMode(owner)
+    const status = owner.getByTestId("inline-edit-status")
+    // Select the whole paragraph and press Enter: two empty lines where it was.
+    await doc(owner).locator("main > p", { hasText: "When the loop" }).click({ clickCount: 3 })
+    await owner.keyboard.press("Enter")
+    // It saves on a pause, with the caret still on the blank line…
+    await expect(status).toHaveAttribute("data-status", "saved", { timeout: 10_000 })
+    await expect.poll(() => contentOf(owner, shortId)).not.toContain("When the loop")
+    // …which stays to be typed on.
+    await owner.keyboard.type("Typed again")
+    await saveEdits(owner)
+    await expect(status).toHaveAttribute("data-status", "saved")
+    expect(await contentOf(owner, shortId)).toBe(
+      "# Line\n\nIntro words.\n\n## Why\n\nTyped again\n\n> Keep it running.\n\n| Phase | Weeks |\n| --- | --- |\n| Survey | 2 |\n",
+    )
+  })
+
+  test("after a save renumbers the page, a click still puts the caret in the words under it", async ({
+    owner,
+  }) => {
+    // An empty decorative element leaves hit testing while editing. A save that adds a
+    // tag above it shifts every id after it by one, so its old id now names the
+    // paragraph before it: that paragraph must stay clickable.
+    const html =
+      '<!doctype html><html><body><main><p id="one">One here</p><p id="two">Two here</p><span class="dot"></span></main></body></html>'
+    const shortId = await publishArtifact(owner, "dots.html", html, "text/html")
+    await openArtifact(owner, shortId)
+    await enterEditMode(owner)
+    await doc(owner).locator("#one").click()
+    await owner.keyboard.press("Home")
+    for (let i = 0; i < 3; i++) await owner.keyboard.press("Shift+ArrowRight")
+    await owner.keyboard.press("ControlOrMeta+b")
+    await saveEdits(owner)
+    expect(await contentOf(owner, shortId)).toContain("<b>One</b>")
+    await appendToParagraph(owner, "two", " more")
+    await saveEdits(owner)
+    expect(await contentOf(owner, shortId)).toContain('<p id="two">Two here more</p>')
+  })
+
+  test("a line break saved in place is the page's own <br>, as the source holds it", async ({
+    owner,
+  }) => {
+    const html = '<!doctype html><html><body><main><p id="one">First line</p></main></body></html>'
+    const shortId = await publishArtifact(owner, "lines.html", html, "text/html")
+    await openArtifact(owner, shortId)
+    await enterEditMode(owner)
+    await appendToParagraph(owner, "one", "")
+    await owner.keyboard.press("Shift+Enter")
+    await owner.keyboard.type("Second")
+    await saveEdits(owner)
+    expect(await contentOf(owner, shortId)).toContain('<p id="one">First line<br>Second</p>')
+    // The page is what was saved: the break is a child of the paragraph, not the
+    // editor's span around it, so the next edit and the next sync line up with it.
+    await expect(doc(owner).locator("#one > br")).toHaveCount(1)
+    await expect(doc(owner).locator("#one [data-derive-fmt]")).toHaveCount(0)
+    await appendToParagraph(owner, "one", " line")
+    await saveEdits(owner)
+    expect(await contentOf(owner, shortId)).toContain('<p id="one">First line<br>Second line</p>')
+  })
+
+  test("Markdown: emphasis the save wrote with its space outside stays put through the next save", async ({
+    owner,
+  }) => {
+    const markdown = "# Line\n\nThe detour adds **eleven minutes** each way.\n\nOther words.\n"
+    const shortId = await publishArtifact(owner, "spaces.md", markdown, "text/markdown")
+    await openArtifact(owner, shortId)
+    await enterEditMode(owner)
+    // Italic over " each", the space before it included: Markdown writes the space
+    // outside the emphasis, and the page keeps showing it as it was.
+    await caretBefore(owner, "main > p >> nth=0", " each")
+    for (let i = 0; i < 5; i++) await owner.keyboard.press("Shift+ArrowRight")
+    await owner.keyboard.press("ControlOrMeta+i")
+    await saveEdits(owner)
+    const once = "# Line\n\nThe detour adds **eleven minutes** *each* way.\n\nOther words.\n"
+    expect(await contentOf(owner, shortId)).toBe(once)
+    // An edit elsewhere saves only itself: the emphasized paragraph keeps its bytes.
+    await typeAtLineEnd(owner, "main > p >> nth=1", " More")
+    await saveEdits(owner)
+    expect(await contentOf(owner, shortId)).toBe(once.replace("Other words.", "Other words. More"))
   })
 })

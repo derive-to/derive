@@ -66,8 +66,8 @@ const kindOf = (el: Element): Kind =>
             : "new"
 
 /** An element's children as parts: text runs (merged across node splits), stamped
- *  children by reference, and anything new by tag. A reference renders as its id at
- *  compare time, so a baseline kept as parts survives the ids being renumbered. */
+ *  children by reference, and anything new by tag and contents. A reference renders as
+ *  its id at compare time, so a baseline kept as parts survives the ids being renumbered. */
 export type SigParts = (string | Element)[]
 export function sigParts(el: Element): SigParts {
   const out: SigParts = []
@@ -87,8 +87,12 @@ export function sigParts(el: Element): SigParts {
         flush()
         out.push(c)
       } else if (k === "fmt" || k === "new") {
+        // With its words: a baseline that holds one (a blank line kept after a save)
+        // still sees what is typed into it.
         flush()
-        out.push(`\u0003${c.localName}${c.getAttribute(FMT_ATTR) ?? ""}`)
+        out.push(
+          `\u0003${c.localName}${c.getAttribute(FMT_ATTR) ?? ""}\u0004${renderParts(sigParts(c))}\u0005`,
+        )
       }
     }
   }
