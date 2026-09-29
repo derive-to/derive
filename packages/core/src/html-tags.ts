@@ -228,8 +228,32 @@ const rawTextCloseStart = (lower: string, name: string, from: number): number =>
   }
 }
 
-/** Every tag in `html`, in document order. */
-export const tags = (html: string): HtmlTag[] => {
+/** A function of one large string, remembered for the last few strings it was given. A
+ *  save and its sync walk the same multi-megabyte document several times (sniffing its
+ *  type, indexing its elements, stamping, hashing); each walk after the first is a lookup.
+ *  Strings below `min` characters are cheaper to walk again than to key. Callers must
+ *  treat what it returns as read-only: it is shared. */
+export const lastOf = <T>(size: number, min: number, fn: (text: string) => T) => {
+  const seen = new Map<string, T>()
+  return (text: string): T => {
+    if (text.length < min) return fn(text)
+    const hit = seen.get(text)
+    if (hit !== undefined) {
+      seen.delete(text)
+      seen.set(text, hit)
+      return hit
+    }
+    const value = fn(text)
+    seen.set(text, value)
+    if (seen.size > size) seen.delete(seen.keys().next().value as string)
+    return value
+  }
+}
+
+/** Every tag in `html`, in document order (shared: read-only). */
+export const tags = lastOf(3, 32_768, (html: string): readonly HtmlTag[] => tagsOf(html))
+
+const tagsOf = (html: string): HtmlTag[] => {
   const out: HtmlTag[] = []
   const lower = html.toLowerCase()
   let i = 0
@@ -357,7 +381,7 @@ export const hasAttr = (attrs: string, name: string): boolean => {
 
 /** The offset just past the element opened by `tags[i]`, tracking same-name nesting, or
  *  -1 when it never closes. A self-closing tag ends at its own `>`. */
-export const elementEnd = (all: HtmlTag[], i: number): number => {
+export const elementEnd = (all: readonly HtmlTag[], i: number): number => {
   const open = all[i] as HtmlTag
   if (open.selfClosing) return open.end
   let depth = 1

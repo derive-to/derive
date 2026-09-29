@@ -358,7 +358,10 @@ interface SourceElement {
 
 /** Build browser-effective element ranges and parentage while retaining whether a
  * declared element has a matching authored close token. */
-export const sourceElements = (html: string, all: HtmlTag[] = tags(html)): SourceElement[] => {
+export const sourceElements = (
+  html: string,
+  all: readonly HtmlTag[] = tags(html),
+): SourceElement[] => {
   const closeFor = new Map<number, HtmlTag>()
   for (const tag of all) {
     if (!tag.closing) continue

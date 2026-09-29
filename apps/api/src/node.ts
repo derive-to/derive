@@ -543,6 +543,8 @@ const runtimeConfig = process.env.DERIVE_ORTAM_RUNNER_PATH
   : undefined
 let pokeRuntime: (() => void) | undefined
 const app = createApp({
+  // An attended editor save answers once its version is stored; indexing and realtime follow.
+  detachAfterResponse: true,
   hostedAutomation: hostedDispatch
     ? { providers: ["claude-code", "codex"], workspaceIds: hostedDispatch.hostedOrgIds }
     : undefined,

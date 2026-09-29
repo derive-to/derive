@@ -32,6 +32,7 @@ import {
   markdownSourceMap,
   maxRole,
   missingBlobAdvisory,
+  type NewVersionData,
   newId,
   newShortId,
   outlineOf,
@@ -182,6 +183,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     notify,
     notifyRender,
     background,
+    afterResponse,
     isMember,
     isToken,
     currentUser,
@@ -202,6 +204,9 @@ export const artifactRoutes = (ctx: AppContext) => {
     collectionRole,
     limited,
     overStorage,
+    storageUsed,
+    billingState,
+    billingBlocked,
     billingGate,
     blockCopy,
     effectiveWhiteLabel,
@@ -662,9 +667,14 @@ export const artifactRoutes = (ctx: AppContext) => {
     // Republishing a version needs publish rights on that artifact; creating a
     // new one needs publish rights at the workspace level.
     let existing: ArtifactRecord | null = null
+    // The billing read needs only the workspace: for a revision it goes out alongside the
+    // authorization reads.
+    let billingEarly: ReturnType<typeof billingState> | null = null
     if (shortId) {
       existing = await meta.getByShortId(shortId)
       if (!existing) return fail(c, 404, "not found")
+      billingEarly = billingState(existing.org_id)
+      billingEarly.catch(() => {})
       // A tokened caller is scoped to this artifact's workspace by the token's
       // own org; refuse if the artifact lives elsewhere, so a token minted for
       // one workspace can never revise another's artifact via a shared short_id.
@@ -703,17 +713,22 @@ export const artifactRoutes = (ctx: AppContext) => {
     // org, a new artifact against the caller's active workspace (or, for a
     // tokened create, the workspace the token was minted for).
     const org = existing ? existing.org_id : tokenAuth ? tokenAuth.org : await activeWorkspace(c)
-    const blocked = await billingGate(c, org)
-    if (blocked) return blocked
-    const rl = await limited(c, publishLimiter)
+    const len = Number(c.req.header("content-length") ?? 0)
+    if (len > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
+    // Independent reads go out together: on the edge every one is a network round trip,
+    // and an editor's auto-save waits on all of them. One billing read serves the gate
+    // here and the storage cap below.
+    const billing = billingEarly ?? billingState(org)
+    const [blockedBy, rl, body] = await Promise.all([
+      billing.then((state) => billingBlocked(org, state)),
+      limited(c, publishLimiter),
+      c.req.parseBody(),
+    ])
+    if (blockedBy) return fail(c, 402, blockedBy.message, { code: blockedBy.code })
     if (rl) return rl
     // A new artifact counts against the artifact cap; republishes don't.
     if (!shortId && deps.maxArtifacts && (await meta.countArtifacts(org)) >= deps.maxArtifacts)
       return fail(c, 409, "artifact quota reached")
-    const len = Number(c.req.header("content-length") ?? 0)
-    if (len > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
-
-    const body = await c.req.parseBody()
 
     // `edits` — a token-cheap revision (stdio/API parity with the MCP publish
     // tool's `edits`): exact-match search/replace against the current stored
@@ -745,6 +760,31 @@ export const artifactRoutes = (ctx: AppContext) => {
     let previousSearchSource:
       | { source: string; contentType: string | null; title: string | null }
       | undefined
+    // An edit reads the current version, and a coalescing save asks about it again: once.
+    const versionReads = new Map<string, Promise<VersionRecord | null>>()
+    const versionOf = (artifactId: string, n: number): Promise<VersionRecord | null> => {
+      const key = `${artifactId}:${n}`
+      const read = versionReads.get(key) ?? meta.getVersion(artifactId, n)
+      versionReads.set(key, read)
+      return read
+    }
+    // An editor's save (an edit that asks to coalesce) needs, besides the edit itself, the
+    // feedback on the version it may fold into and the workspace's stored bytes. Asked now,
+    // they overlap the edit's own reads instead of following them.
+    const editSave =
+      !!existing &&
+      (typeof editsField === "string" || typeof opsField === "string") &&
+      (body["coalesce"] === "true" || body["coalesce"] === "1" || !!sessionField)
+    const feedback =
+      editSave && existing
+        ? Promise.all([meta.listComments(existing.id), meta.listReviewRounds(existing.id)])
+        : null
+    const used = editSave
+      ? billing.then((state) => (state.storageCapBytes ? storageUsed(org) : 0))
+      : undefined
+    // Settled below, or never needed when the request fails first.
+    feedback?.catch(() => {})
+    used?.catch(() => {})
     if (
       typeof editsField === "string" ||
       typeof slideOpsField === "string" ||
@@ -783,7 +823,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       try {
         const baseVersion = parseBaseVersion(str(body["base_version"]))
         const deps = {
-          getVersion: meta.getVersion.bind(meta),
+          getVersion: versionOf,
           sourceText,
           captureSource: (source: string, contentType: string | null) => {
             previousSearchSource = { source, contentType, title: existing.title }
@@ -865,7 +905,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           })
       }
       if (bytes.length > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
-      if (await overStorage(org, bytes.length))
+      if (await overStorage(org, bytes.length, await billing, used))
         return fail(c, 413, blockCopy.storage.message, { code: blockCopy.storage.code })
       filename = materialized.bundle ? "paper.zip" : materialized.filename
       isBundle = !!materialized.bundle
@@ -876,7 +916,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // The content-length header is advisory (a client can omit/understate it),
       // so re-check the actual buffered size — the hard cap before anything stores.
       if (bytes.length > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
-      if (await overStorage(org, bytes.length))
+      if (await overStorage(org, bytes.length, await billing))
         return fail(c, 413, blockCopy.storage.message, { code: blockCopy.storage.code })
       filename = file.name
       isBundle =
@@ -992,7 +1032,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         !agentPrincipal
       const editSession = coalescing ? sessionField : undefined
       if (coalescing && existing) {
-        const current = await meta.getVersion(existing.id, existing.current_version)
+        const current = await versionOf(existing.id, existing.current_version)
         const age = current ? Date.now() - Date.parse(current.created_at) : Number.POSITIVE_INFINITY
         if (
           current &&
@@ -1004,10 +1044,8 @@ export const artifactRoutes = (ctx: AppContext) => {
           age >= 0 &&
           age <= INLINE_EDIT_COALESCE_MS
         ) {
-          const [comments, rounds] = await Promise.all([
-            meta.listComments(existing.id),
-            meta.listReviewRounds(existing.id),
-          ])
+          const [comments, rounds] = await (feedback ??
+            Promise.all([meta.listComments(existing.id), meta.listReviewRounds(existing.id)]))
           const hasFeedback = comments.some((comment) => comment.base_version === current.n)
           const hasReview = rounds.some((round) => round.version === current.n)
           if (!hasFeedback && !hasReview)
@@ -1139,19 +1177,27 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Webhook + follower fan-out + thread resolves + realtime/render/re-anchor, all via
       // the one shared helper so this path can never drift from MCP publish or restore.
       const afterPublishStartedAt = performance.now()
-      const { storedRows } = await afterPublish(publishDeps, artifact, version, {
-        isNew: !shortId,
-        onBehalf,
-        resolves: toResolve,
-        // The ACTING principal — an agent's own id (a bearer's, or the one that minted a
-        // staged upload URL), not the human it acts for. `onBehalf` (and therefore
-        // version.author_id) is deliberately the human, so it can't classify who published.
-        actorId: agentPrincipal?.id ?? tokenAuth?.agent?.id ?? actor?.id ?? null,
-        actorName: agentPrincipal?.name ?? tokenAuth?.agent?.name ?? actor?.name ?? null,
-        ...(preparedSource !== undefined ? { preparedSource } : {}),
-        ...(previousSearchSource ? { previousSearchSource } : {}),
-        deferNotifications: !!editSession,
-      })
+      const bump = () =>
+        afterPublish(publishDeps, artifact, version, {
+          isNew: !shortId,
+          onBehalf,
+          resolves: toResolve,
+          // The ACTING principal — an agent's own id (a bearer's, or the one that minted a
+          // staged upload URL), not the human it acts for. `onBehalf` (and therefore
+          // version.author_id) is deliberately the human, so it can't classify who published.
+          actorId: agentPrincipal?.id ?? tokenAuth?.agent?.id ?? actor?.id ?? null,
+          actorName: agentPrincipal?.name ?? tokenAuth?.agent?.name ?? actor?.name ?? null,
+          ...(preparedSource !== undefined ? { preparedSource } : {}),
+          ...(previousSearchSource ? { previousSearchSource } : {}),
+          deferNotifications: !!editSession,
+        })
+      // An editor's coalescing save answers once its bytes and version row are stored: the
+      // person is waiting on "Saved". What follows from the version (realtime, indexing,
+      // anchors, facts, previews) runs after the response, in the same order as ever, and
+      // other viewers see it a moment later. Every other publish keeps its full receipt.
+      let storedRows: NewVersionData[] = []
+      if (coalescing) await afterResponse(bump)
+      else ({ storedRows } = await bump())
       if (editSession) sweepSoon()
       const afterPublishFinishedAt = performance.now()
       // Tag at publish time — the one-step "auto-tag on create/version" hook. `tags` is a
@@ -1230,6 +1276,29 @@ export const artifactRoutes = (ctx: AppContext) => {
       // its human exactly like the /mcp path does — the shared bell + auto-open
       // fan-out. A signed-in human's own save gets none of this — they're
       // already looking at it.
+      const duration = (value: number) => Math.max(0, value).toFixed(1)
+      const phases = [
+        `prepare;dur=${duration(coreStartedAt - requestStartedAt)}`,
+        `blob-put;dur=${duration(publishTimings.blobWriteMs)}`,
+        `store-content;dur=${duration(publishTimings.storeContentMs)}`,
+        `metadata;dur=${duration(coreFinishedAt - coreStartedAt - publishTimings.storeContentMs)}`,
+        `after-publish;dur=${duration(afterPublishFinishedAt - afterPublishStartedAt)}`,
+      ]
+      // An editor's save needs only the new version: no advisories, no version list.
+      if (coalescing && !roundCreated) {
+        c.header(
+          "Server-Timing",
+          [...phases, `total;dur=${duration(performance.now() - requestStartedAt)}`].join(", "),
+        )
+        return c.json(
+          {
+            ...toJson(deps.baseUrl, artifact, []),
+            published: version.n,
+            ...(artifact.kind === "file" ? { content_sha256: version.blob_key } : {}),
+          },
+          201,
+        )
+      }
       const responseText =
         artifact.kind === "file" && isTextType(version.content_type)
           ? new TextDecoder().decode(bytes)
@@ -1302,17 +1371,10 @@ export const artifactRoutes = (ctx: AppContext) => {
       // the host congratulating itself, the exact thing the reward surfaces must not do.
       const storedSlots = assertedOnly(storedRows)
       const responseStartedAt = performance.now()
-      const duration = (value: number) => Math.max(0, value).toFixed(1)
       c.header(
         "Server-Timing",
         [
-          `prepare;dur=${duration(coreStartedAt - requestStartedAt)}`,
-          `blob-put;dur=${duration(publishTimings.blobWriteMs)}`,
-          `store-content;dur=${duration(publishTimings.storeContentMs)}`,
-          `metadata;dur=${duration(
-            coreFinishedAt - coreStartedAt - publishTimings.storeContentMs,
-          )}`,
-          `after-publish;dur=${duration(afterPublishFinishedAt - afterPublishStartedAt)}`,
+          ...phases,
           `post-publish;dur=${duration(responseStartedAt - afterPublishFinishedAt)}`,
           `receipt-push;dur=${duration(receiptDurations["push"] ?? 0)}`,
           `receipt-versions;dur=${duration(receiptDurations["versions"] ?? 0)}`,

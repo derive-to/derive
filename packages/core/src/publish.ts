@@ -615,6 +615,13 @@ export async function publish(
       return workflowPublicationResult(meta, receipt, { blobWriteMs: 0, storeContentMs: 0 }, true)
     }
   }
+  // Whether the version a coalescing save would replace is pinned by a workflow: asked
+  // while the bytes are stored rather than after (each read is a round trip on the edge).
+  const pinned =
+    shortId && input.replaceCurrent && input.existingArtifact?.short_id === shortId
+      ? meta.workflowVersionIsPinned(input.existingArtifact.id, input.replaceCurrent.n)
+      : null
+  pinned?.catch(() => {})
   const storeStartedAt = performance.now()
   const { blobKey, contentType, kind, suggestedTitle, skillSidecar, blobWriteMs } =
     await storeContent(
@@ -654,7 +661,7 @@ export async function publish(
       input.replaceCurrent &&
       contentType !== FILE_BUNDLE_CONTENT_TYPE &&
       artifact.current_content_type !== FILE_BUNDLE_CONTENT_TYPE &&
-      !(await meta.workflowVersionIsPinned(artifact.id, input.replaceCurrent.n))
+      !(await (pinned ?? meta.workflowVersionIsPinned(artifact.id, input.replaceCurrent.n)))
         ? input.replaceCurrent
         : undefined
     await validateSkillRelationsBeforePublish(

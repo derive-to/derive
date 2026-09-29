@@ -498,6 +498,23 @@ describe("inline edit version coalescing", () => {
     ).toContain("<h1>Two</h1>")
   })
 
+  it("answers X-Derive-Timing with every store call the save made", async () => {
+    const created = await (
+      await publishAs(inlineApp, "<h1>Timed</h1>", { title: "Traced page" }, as(owner.email))
+    ).json()
+    const plain = await edit(created.short_id, 1, "Timed", "Plain", as(owner.email))
+    expect(plain.headers.get("server-timing")).not.toContain("db.")
+    const traced = await edit(created.short_id, 1, "Plain", "Traced", {
+      ...as(owner.email),
+      "x-derive-timing": "1",
+    })
+    expect(traced.status).toBe(201)
+    const timing = traced.headers.get("server-timing") ?? ""
+    expect(timing).toMatch(/store\/blob calls/)
+    expect(timing).toMatch(/-db\.getByShortId;desc="at \d+ms";dur=/)
+    expect(timing).toMatch(/-blob\.put;/)
+  })
+
   it("starts a new version when another person edits", async () => {
     const created = await (
       await publishAs(inlineApp, "<h1>A</h1>", { title: "Shared page" }, as(owner.email))
