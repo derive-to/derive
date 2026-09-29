@@ -16,7 +16,7 @@ import type {
   SharedStateResult,
   SortMode,
   SourceOp,
-  SyncReply,
+  SyncWire,
   WorkflowDraftRecord,
   WorkflowFilesRecord,
   WorkflowReadiness,
@@ -844,9 +844,11 @@ const publishChange = (
   baseVersion: number,
   message: string,
   session?: string,
+  baseSha?: string,
 ): Promise<Artifact> => {
   const fd = new FormData()
   fd.append(field, JSON.stringify(payload))
+  if (baseSha) fd.append("base_sha", baseSha)
   fd.append("base_version", String(baseVersion))
   fd.append("coalesce", "true")
   if (message) fd.append("message", message)
@@ -2307,20 +2309,21 @@ export const api = {
   },
   // Exact-source edits (the inline editor on HTML and decks): each op names an element
   // by its source id and hash (see the source map), so nothing is searched for.
+  // `baseSha` names the source the page shows: the answer then carries the page's sync.
   publishOps(
     id: string,
     ops: SourceOp[],
     baseVersion: number,
     message: string,
     session?: string,
-  ): Promise<Artifact> {
-    return publishChange(id, "ops", ops, baseVersion, message, session)
+    baseSha?: string,
+  ): Promise<Artifact & { sync?: SyncWire }> {
+    return publishChange(id, "ops", ops, baseVersion, message, session, baseSha)
   },
-  /** Catch an editing page up: `hashes` are the page's per-id hashes (its source map)
-   *  and `sha` the source it was stamped from (a session save rewrites a version in
-   *  place, so the number alone can't name it). */
-  syncArtifact(id: string, hashes: string[], sha: string): Promise<SyncReply> {
-    return f(`/v1/artifacts/${id}/sync`, opts({ hashes, sha })).then(j)
+  /** Catch an editing page up: `sha` is the source it was stamped from (a session save
+   *  rewrites a version in place, so the number alone can't name it). */
+  syncArtifact(id: string, sha: string): Promise<SyncWire> {
+    return f(`/v1/artifacts/${id}/sync`, opts({ sha })).then(j)
   },
   /** An edit session ended (Done): its saves are one version, announced once. */
   finishEditSession(id: string, session: string): Promise<void> {

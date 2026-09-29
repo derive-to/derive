@@ -719,10 +719,12 @@ describe("exact-source inline saves (ops)", () => {
     baseVersion: number,
     who = owner,
     session?: string,
+    baseSha?: string,
   ) => {
     const form = new FormData()
     form.append("ops", JSON.stringify(ops))
     form.append("base_version", String(baseVersion))
+    if (baseSha) form.append("base_sha", baseSha)
     if (session) form.append("session", session)
     else form.append("coalesce", "true")
     form.append("message", "Inline edit")
@@ -1042,13 +1044,37 @@ describe("exact-source inline saves (ops)", () => {
     })
   }
 
+  type Wire = {
+    version: number
+    sha: string
+    head: boolean
+    patches: { old: number; html: string }[]
+    from: number
+    runs: [number, number, number][]
+    count: number
+    changed: [number, string][]
+    hashes?: string[]
+  }
+  /** A sync off the wire, as the editor reads it against the source map it holds. */
+  const read = (w: Wire, held: string[]) => {
+    const remap = new Array<number>(w.from).fill(-1)
+    const hashes = w.hashes ?? new Array<string>(w.count).fill("")
+    for (const [o, n, len] of w.runs)
+      for (let k = 0; k < len; k++) {
+        remap[o + k] = n + k
+        if (!w.hashes && n + k < w.count) hashes[n + k] = held[o + k] ?? ""
+      }
+    for (const [n, h] of w.changed) hashes[n] = h
+    return { ...w, remap, hashes }
+  }
+
   it("syncs the editor's page in place: its own save, then someone else's version", async () => {
     const { short_id } = await publish()
     const stamped = await (await framePage(short_id, 1, as(owner.email))).text()
     const served = await sourceMapOf(short_id)
     const [h1, secondP] = [idOf(stamped, "h1"), idOf(stamped, "p", 1)]
     const ids = [...stamped.matchAll(/data-derive-src="(\d+)"/g)].map((m) => Number(m[1]))
-    const type = async (text: string) => {
+    const type = async (text: string, base: string) => {
       const { hashes } = await sourceMapOf(short_id)
       const saved = await saveOps(
         short_id,
@@ -1056,60 +1082,69 @@ describe("exact-source inline saves (ops)", () => {
         1,
         owner,
         "session-sync-1",
+        base,
       )
       expect(saved.status).toBe(201)
+      return (await saved.json()).sync as Wire
     }
 
-    // The page gets back only the heading it edited, stamped as a reload would stamp it.
-    await type("Rollout")
-    const own = await sync(short_id, { hashes: served.hashes, sha: served.sha })
+    // The save answers with the page's sync: only the heading it edited, stamped as a
+    // reload would stamp it, and the new source map carried from the page's own.
+    const folded = await type("Rollout", served.sha)
+    const own = await sync(short_id, { sha: served.sha })
     expect(own.status).toBe(200)
     expect(own.headers.get("cache-control")).toBe("private, no-store")
-    const first = await own.json()
+    const asked = (await own.json()) as Wire
+    expect(folded).toEqual(asked)
+    const first = read(folded, served.hashes)
     const now = await sourceMapOf(short_id)
     expect(first).toMatchObject({ version: now.version, sha: now.sha, hashes: now.hashes })
+    expect(folded.hashes).toBeUndefined()
+    expect(folded.changed.length).toBeLessThan(now.hashes.length)
     expect(first.head).toBe(false)
     expect(first.patches).toEqual([{ old: h1, html: `<h1 data-derive-src="${h1}">Rollout</h1>` }])
     for (const id of ids) expect(first.remap[id]).toBe(id === h1 ? -1 : id)
     const reloaded = await (await framePage(short_id, now.version, as(owner.email))).text()
-    expect(reloaded).toContain(first.patches[0].html)
+    expect(reloaded).toContain(first.patches[0]?.html)
 
     // The session's next save replaces that version's bytes in place: the page names what
     // it shows by sha. Bytes nothing holds mean a whole-page swap.
-    await type("Rollout, again")
-    const second = await (await sync(short_id, { hashes: first.hashes, sha: first.sha })).json()
+    const second = read(await type("Rollout, again", first.sha), first.hashes)
     expect(second).toMatchObject({ version: now.version, head: false })
     expect(second.patches).toEqual([
       { old: h1, html: `<h1 data-derive-src="${h1}">Rollout, again</h1>` },
     ])
-    expect(
-      await (await sync(short_id, { hashes: first.hashes, sha: "0".repeat(64) })).json(),
-    ).toMatchObject({ head: true, patches: [] })
+    expect(second.hashes).toEqual((await sourceMapOf(short_id)).hashes)
+    expect(await (await sync(short_id, { sha: "0".repeat(64) })).json()).toMatchObject({
+      head: true,
+      patches: [],
+    })
 
     // Someone else's version lands: the page gets their paragraph.
     expect((await editOther(short_id, "Second point", "Second, revised")).status).toBe(201)
-    const theirs = await (await sync(short_id, { hashes: second.hashes, sha: second.sha })).json()
+    const theirs = read(await (await sync(short_id, { sha: second.sha })).json(), second.hashes)
     expect(theirs).toMatchObject({ version: now.version + 1, head: false })
     expect(theirs.patches).toEqual([
       { old: secondP, html: `<p data-derive-src="${secondP}">Second, revised</p>` },
     ])
+    expect(theirs.hashes).toEqual((await sourceMapOf(short_id)).hashes)
     // A stylesheet change can't be patched into a live page.
     await editOther(
       short_id,
       "<title>Ops</title>",
       "<title>Ops</title><style>h1{color:red}</style>",
     )
-    expect(
-      await (await sync(short_id, { hashes: theirs.hashes, sha: theirs.sha })).json(),
-    ).toMatchObject({ head: true, patches: [] })
+    expect(await (await sync(short_id, { sha: theirs.sha })).json()).toMatchObject({
+      head: true,
+      patches: [],
+    })
 
-    // Publishers only, and a body that isn't a page's hashes is a 400.
+    // Publishers only, and a body that doesn't name a page's source is a 400.
     expect(
       (await opsApp.request(`/v1/artifacts/${short_id}/sync`, { method: "POST" })).status,
     ).toBe(403)
-    expect((await sync(short_id, { hashes: ["nope"] })).status).toBe(400)
-    expect((await sync(short_id, { hashes: [], sha: "short" })).status).toBe(400)
-    expect((await sync(short_id, { hashes: theirs.hashes })).status).toBe(400)
+    expect((await sync(short_id, { sha: "short" })).status).toBe(400)
+    expect((await sync(short_id, {})).status).toBe(400)
   })
 
   it("syncs a Markdown editor's page in place", async () => {
@@ -1125,7 +1160,7 @@ describe("exact-source inline saves (ops)", () => {
     const stamped = await (await framePage(short_id, 1, as(owner.email))).text()
     const served = await sourceMapOf(short_id)
     expect((await editOther(short_id, "Second step.", "Second step, **now**.")).status).toBe(201)
-    const result = await (await sync(short_id, { hashes: served.hashes, sha: served.sha })).json()
+    const result = await (await sync(short_id, { sha: served.sha })).json()
     const p = idOf(stamped, "p", 1)
     expect(result).toMatchObject({ version: 2, head: false })
     expect(result.patches).toEqual([

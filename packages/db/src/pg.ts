@@ -1213,73 +1213,57 @@ export class PgMetaStore implements MetaStore {
     })
   }
 
+  // The three version writes are single statements. Behind Hyperdrive every statement of
+  // a transaction is a network round trip (begin, lock, write, update, read back, commit:
+  // six of them, most of a save's latency); one statement is atomic on its own, and its
+  // row lock orders concurrent writers exactly as the transaction's `for update` did.
+
+  /** Append version n+1 (n = the current version, or `expected` when given: else null). */
+  private async appendVersion(
+    artifactId: string,
+    v: NewVersion,
+    expected?: number,
+  ): Promise<VersionRecord | null> {
+    const now = new Date().toISOString()
+    const res = await this.db.execute(sql`
+      with cur as (
+        select current_version as cv from artifact where id = ${artifactId} for update
+      ), ins as (
+        insert into version (id, artifact_id, n, blob_key, content_type, size_bytes, author,
+          author_login, author_avatar, author_gh_id, author_id, agent_id, agent_name, source,
+          message, name, edit_session, created_at)
+        select ${v.id}, ${artifactId}, cv + 1, ${v.blob_key}, ${v.content_type},
+          ${v.size_bytes ?? 0}, ${v.author}, ${v.author_login ?? null}, ${v.author_avatar ?? null},
+          ${v.author_gh_id ?? null}, ${v.author_id ?? null}, ${v.agent_id ?? null},
+          ${v.agent_name ?? null}, ${v.source ?? null}, ${v.message ?? null}, ${v.name ?? null},
+          ${v.edit_session ?? null}, ${now}
+        from cur ${expected === undefined ? sql`` : sql`where cv = ${expected}`}
+        returning *
+      ), bump as (
+        update artifact set current_version = ins.n, current_content_type = ins.content_type,
+          updated_at = ${now}, author_name = ins.author, author_login = ins.author_login,
+          author_avatar = ins.author_avatar, author_gh_id = ins.author_gh_id,
+          author_id = ins.author_id
+        from ins where artifact.id = ${artifactId}
+      )
+      select * from ins`)
+    return (res.rows[0] as VersionRecord | undefined) ?? null
+  }
+
   async addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord> {
-    return this.db.transaction(async (tx) => {
-      const cur = await tx
-        .select({ cv: artifact.current_version })
-        .from(artifact)
-        .where(eq(artifact.id, artifactId))
-        .for("update")
-      if (!cur[0]) throw new Error(`artifact not found: ${artifactId}`)
-      const n = cur[0].cv + 1
-      await tx.insert(version).values({ ...v, artifact_id: artifactId, n })
-      await tx
-        .update(artifact)
-        .set({
-          current_version: n,
-          current_content_type: v.content_type,
-          updated_at: new Date().toISOString(),
-          // Denormalize the new version's author onto the artifact (its CURRENT author).
-          author_name: v.author,
-          author_login: v.author_login ?? null,
-          author_avatar: v.author_avatar ?? null,
-          author_gh_id: v.author_gh_id ?? null,
-          author_id: v.author_id ?? null,
-        })
-        .where(eq(artifact.id, artifactId))
-      const rows = await tx
-        .select()
-        .from(version)
-        .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
-      return one(rows)
-    })
+    const row = await this.appendVersion(artifactId, v)
+    if (!row) throw new Error(`artifact not found: ${artifactId}`)
+    return row
   }
 
   /** addVersion's conditional twin: the locked read decides, so of two writers revising the
    *  version they read, one appends and the other gets null. */
-  async addVersionIfCurrent(
+  addVersionIfCurrent(
     artifactId: string,
     expectedCurrent: number,
     v: NewVersion,
   ): Promise<VersionRecord | null> {
-    return this.db.transaction(async (tx) => {
-      const cur = await tx
-        .select({ cv: artifact.current_version })
-        .from(artifact)
-        .where(eq(artifact.id, artifactId))
-        .for("update")
-      if (cur[0]?.cv !== expectedCurrent) return null
-      const n = expectedCurrent + 1
-      await tx.insert(version).values({ ...v, artifact_id: artifactId, n })
-      await tx
-        .update(artifact)
-        .set({
-          current_version: n,
-          current_content_type: v.content_type,
-          updated_at: new Date().toISOString(),
-          author_name: v.author,
-          author_login: v.author_login ?? null,
-          author_avatar: v.author_avatar ?? null,
-          author_gh_id: v.author_gh_id ?? null,
-          author_id: v.author_id ?? null,
-        })
-        .where(eq(artifact.id, artifactId))
-      const rows = await tx
-        .select()
-        .from(version)
-        .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
-      return one(rows)
-    })
+    return this.appendVersion(artifactId, v, expectedCurrent)
   }
 
   async replaceCurrentVersion(
@@ -1287,86 +1271,42 @@ export class PgMetaStore implements MetaStore {
     expected: { n: number; blobKey: string },
     v: NewVersion,
   ): Promise<VersionRecord | null> {
-    return this.db.transaction(async (tx) => {
-      const current = await tx
-        .select({ n: artifact.current_version })
-        .from(artifact)
-        .where(eq(artifact.id, artifactId))
-        .for("update")
-      if (current[0]?.n !== expected.n) return null
-
-      const now = new Date().toISOString()
-      const rows = await tx
-        .update(version)
-        .set({
-          blob_key: v.blob_key,
-          content_type: v.content_type,
-          size_bytes: v.size_bytes ?? 0,
-          author: v.author,
-          author_login: v.author_login ?? null,
-          author_avatar: v.author_avatar ?? null,
-          author_gh_id: v.author_gh_id ?? null,
-          author_id: v.author_id ?? null,
-          source: v.source ?? null,
-          message: v.message,
-          name: v.name ?? null,
-          preview_key: null,
-          preview_status: null,
-          preview_error: null,
-          preview_full_key: null,
-          preview_full_status: null,
-          preview_full_error: null,
-          preview_marked_key: null,
-          preview_marked_status: null,
-          preview_marked_error: null,
-          summary: null,
-          summary_src_hash: null,
-          edit_session: v.edit_session ?? null,
-          created_at: now,
-        })
-        .where(
-          and(
-            eq(version.artifact_id, artifactId),
-            eq(version.n, expected.n),
-            eq(version.blob_key, expected.blobKey),
-            notExists(
-              tx
-                .select({ id: workflowArtifactActivity.id })
-                .from(workflowArtifactActivity)
-                .where(
-                  and(
-                    eq(
-                      workflowArtifactActivity.artifact_short_id,
-                      sql`(select short_id from artifact where id = ${artifactId})`,
-                    ),
-                    eq(workflowArtifactActivity.artifact_version, expected.n),
-                    eq(workflowArtifactActivity.source, "observed"),
-                  ),
-                ),
-            ),
-          ),
-        )
-        .returning()
-      const replaced = rows[0]
-      if (!replaced) return null
-
-      await tx
-        .delete(versionData)
-        .where(and(eq(versionData.artifact_id, artifactId), eq(versionData.n, expected.n)))
-      await tx
-        .update(artifact)
-        .set({
-          current_content_type: v.content_type,
-          updated_at: now,
-          author_name: v.author,
-          author_login: v.author_login ?? null,
-          author_avatar: v.author_avatar ?? null,
-          author_gh_id: v.author_gh_id ?? null,
-          author_id: v.author_id ?? null,
-        })
-        .where(and(eq(artifact.id, artifactId), eq(artifact.current_version, expected.n)))
-      return replaced
-    })
+    const now = new Date().toISOString()
+    const res = await this.db.execute(sql`
+      with cur as (
+        select id, short_id from artifact
+         where id = ${artifactId} and current_version = ${expected.n} for update
+      ), upd as (
+        update version set blob_key = ${v.blob_key}, content_type = ${v.content_type},
+          size_bytes = ${v.size_bytes ?? 0}, author = ${v.author},
+          author_login = ${v.author_login ?? null}, author_avatar = ${v.author_avatar ?? null},
+          author_gh_id = ${v.author_gh_id ?? null}, author_id = ${v.author_id ?? null},
+          source = ${v.source ?? null}, message = ${v.message ?? null}, name = ${v.name ?? null},
+          preview_key = null, preview_status = null, preview_error = null,
+          preview_full_key = null, preview_full_status = null, preview_full_error = null,
+          preview_marked_key = null, preview_marked_status = null, preview_marked_error = null,
+          summary = null, summary_src_hash = null, edit_session = ${v.edit_session ?? null},
+          created_at = ${now}
+        from cur
+        where version.artifact_id = cur.id and version.n = ${expected.n}
+          and version.blob_key = ${expected.blobKey}
+          and not exists (
+            select 1 from workflow_artifact_activity w
+             where w.artifact_short_id = cur.short_id and w.artifact_version = ${expected.n}
+               and w.source = 'observed')
+        returning version.*
+      ), facts as (
+        delete from version_data
+         where artifact_id = ${artifactId} and n = ${expected.n} and exists (select 1 from upd)
+      ), bump as (
+        update artifact set current_content_type = upd.content_type, updated_at = ${now},
+          author_name = upd.author, author_login = upd.author_login,
+          author_avatar = upd.author_avatar, author_gh_id = upd.author_gh_id,
+          author_id = upd.author_id
+        from upd where artifact.id = ${artifactId}
+      )
+      select * from upd`)
+    return (res.rows[0] as VersionRecord | undefined) ?? null
   }
 
   listVersions(artifactId: string): Promise<VersionRecord[]> {

@@ -545,8 +545,8 @@ export function buildContext(deps: AppDeps) {
   // indexing, anchors, facts, realtime): after the response on Workers (waitUntil) and on
   // the Node server; inline where nothing may outlive the request (tests).
   // `work` is started here, not by the caller: on Node it must not take the one thread
-  // before the response is written.
-  const afterResponse = async (work: () => Promise<unknown>): Promise<void> => {
+  // before the response is written, so it waits for the response to finish.
+  const afterResponse = async (c: Context, work: () => Promise<unknown>): Promise<void> => {
     const run = () =>
       work().catch((err) =>
         log.error("after-response task failed", {
@@ -555,8 +555,12 @@ export function buildContext(deps: AppDeps) {
       )
     const ec = edgeCtx.getStore()
     if (ec) ec.waitUntil(run())
-    else if (deps.detachAfterResponse) setTimeout(() => void run(), 0)
-    else await run()
+    else if (deps.detachAfterResponse) {
+      // @hono/node-server hands the handler the Node response as `env.outgoing`.
+      const out = (c.env as { outgoing?: { once?: (e: string, f: () => void) => void } })?.outgoing
+      if (out?.once) out.once("close", () => void run())
+      else setTimeout(() => void run(), 0)
+    } else await run()
   }
 
   const bearer = (c: Context): string => {
@@ -1432,14 +1436,17 @@ export function buildContext(deps: AppDeps) {
       // and the workspace binding keeps tokens scoped per ADR-0001. Rows written
       // to an agent id before this model (or by hand) still count, uncapped —
       // they were explicit grants.
-      const own = await meta.getArtifactMember(a.id, ag.id)
-      let derived: Role | null = null
+      // Three independent reads: together (each is a round trip on the edge).
       const ownerId = p.onBehalfOf
-      if (ownerId && ag.org_id === a.org_id) {
-        const m = await meta.getArtifactMember(a.id, ownerId)
-        const cRoles = await meta.collectionRolesForArtifact(a.id, ownerId)
-        derived = capRole(maxRole(m?.role ?? null, ...cRoles), ag.role)
-      }
+      const borrows = !!ownerId && ag.org_id === a.org_id
+      const [own, m, cRoles] = await Promise.all([
+        meta.getArtifactMember(a.id, ag.id),
+        borrows && ownerId ? meta.getArtifactMember(a.id, ownerId) : null,
+        borrows && ownerId ? meta.collectionRolesForArtifact(a.id, ownerId) : [],
+      ])
+      const derived: Role | null = borrows
+        ? capRole(maxRole(m?.role ?? null, ...cRoles), ag.role)
+        : null
       const orgRole = ag.org_id === a.org_id ? ag.role : null
       // Historical rows written directly to an agent id remain explicit grants, but
       // ownership is workspace-bound even for that legacy shape. Lower collaborator
@@ -1458,6 +1465,10 @@ export function buildContext(deps: AppDeps) {
     // every owner-level artifact/collection grant. Deliberate lower collaborator
     // shares remain portable, as does the separately-evaluated world link.
     const me = p.user
+    // The active workspace and the grants are independent reads: together.
+    const grants =
+      pre && pre.userId === me.id ? null : (meta.artifactGrants?.(a.id, a.org_id, me.id) ?? null)
+    grants?.catch(() => {})
     const workspaceActive = (await activeWorkspace(c)) === a.org_id
     // ONE ROUND TRIP WHERE THE STORE CAN, four where it cannot. The reads below are the
     // membership, the per-artifact share and the collection shares — and the last is itself two
@@ -1481,8 +1492,8 @@ export function buildContext(deps: AppDeps) {
         locked,
         unlocked,
       })
-    if (meta.artifactGrants) {
-      const g = await meta.artifactGrants(a.id, a.org_id, me.id)
+    if (grants) {
+      const g = await grants
       return withInheritedCollectionLink(c, a, {
         kind: "user",
         userId: me.id,

@@ -14,6 +14,7 @@ import {
   isCodePath,
   isLatexLike,
   isSourceEditable,
+  lastOf,
   looksLikeHtmlDocument,
   MARKS_SCRIPT,
   mimeFor,
@@ -96,7 +97,28 @@ export const editorHost = (deps: { baseUrl: string; webOrigins?: string[] }): st
  * HTML bytes is served as HTML, unstamped). What `/sync` diffs, so a patch is exactly
  * what a fresh load would show.
  */
-export const editorPage = async (
+export const editorPage = (
+  text: string,
+  contentType: string,
+  title: string | null,
+  editor: EditorStamp,
+  slots: Map<string, DynamicValue>,
+): Promise<string | null> => {
+  // The frame's load, each save's sync and the next save's sync render the same page:
+  // once. Keyed by the source, then by everything else the page depends on.
+  const pages = editorPagesOf(text)
+  const key = JSON.stringify([contentType, title, editor.version, editor.host ?? "", [...slots]])
+  const hit = pages.get(key)
+  if (hit) return hit
+  const page = renderEditorPage(text, contentType, title, editor, slots)
+  if (pages.size >= 4) pages.delete(pages.keys().next().value as string)
+  pages.set(key, page)
+  page.catch(() => pages.delete(key))
+  return page
+}
+const editorPagesOf = lastOf(3, 32_768, () => new Map<string, Promise<string | null>>())
+
+const renderEditorPage = async (
   text: string,
   contentType: string,
   title: string | null,

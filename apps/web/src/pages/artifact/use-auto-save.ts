@@ -1,4 +1,4 @@
-import type { SourceOp, SourceToken, SyncReply } from "@derive/core"
+import type { SourceOp, SourceToken, SyncReply, SyncWire } from "@derive/core"
 import { useEffect, useRef, useState } from "react"
 import { ApiError, type Artifact, api, type InlineEditInput, type SourceMap } from "@/api"
 import { toast } from "@/components/ui/sonner"
@@ -68,6 +68,22 @@ const withHashes = (ops: SourceOp[], hashes: string[]): SourceOp[] => {
       ? { ...o, hash: hash(o.src), children: o.children.map(token) }
       : { ...o, hash: hash(o.src) },
   )
+}
+
+/** A sync as the frame takes it, from the wire (SyncWire in @derive/core): the remap from
+ *  its runs, and the new source map from the one the page holds (`held`). */
+const fromWire = (w: SyncWire, held: readonly string[]): SyncReply => {
+  const remap = new Array<number>(w.from).fill(-1)
+  for (const [o, n, len] of w.runs) for (let k = 0; k < len; k++) remap[o + k] = n + k
+  let hashes = w.hashes
+  if (!hashes) {
+    const next = new Array<string>(w.count).fill("")
+    for (const [o, n, len] of w.runs)
+      for (let k = 0; k < len && n + k < w.count; k++) next[n + k] = held[o + k] ?? ""
+    for (const [n, h] of w.changed) next[n] = h
+    hashes = next
+  }
+  return { version: w.version, sha: w.sha, head: w.head, patches: w.patches, remap, hashes }
 }
 
 /** What the frame reports on collect: `ops` (with the version and source sha the page
@@ -195,9 +211,9 @@ export function useAutoSave(p: {
     return map
   }
 
-  /** Bring the page to the newest version: after this page's own save (`own`), or
-   *  because someone else published. */
-  const syncIn = async (own: boolean) => {
+  /** Bring the page to the newest version: after this page's own save (`own`, whose
+   *  answer carries the sync as `wire`), or because someone else published. */
+  const syncIn = async (own: boolean, wire?: SyncWire) => {
     const x = s.current
     const P = pr.current
     const frame = x.frame
@@ -208,7 +224,7 @@ export function useAutoSave(p: {
     }
     let reply: SyncReply
     try {
-      reply = await api.syncArtifact(P.shortId, table.hashes, table.sha)
+      reply = fromWire(wire ?? (await api.syncArtifact(P.shortId, table.sha)), table.hashes)
     } catch {
       // Without the sync the page's ids are stale after a save: only a fresh page is safe.
       if (own && frame === x.frame) P.reloadFrame()
@@ -216,9 +232,10 @@ export function useAutoSave(p: {
     }
     if (frame !== x.frame || (!own && reply.sha === table.sha)) return
     const by = own ? "" : P.authorOf(reply.version)
+    // The frame needs the remap and patches; the source map stays here.
     const r = await P.ask<{ ok: boolean; reload?: boolean; lost?: boolean }>(
       "edit-sync",
-      { ...reply, own, by },
+      { ...reply, hashes: [], own, by },
       "edit-synced",
     )
     if (frame !== x.frame) return
@@ -295,15 +312,24 @@ export function useAutoSave(p: {
           session: x.session,
           count: c.ops.length,
         })
+        let wire: SyncWire | undefined
         try {
-          const a = await api.publishOps(P.shortId, sent, c.base.version, message, x.session)
+          const a = await api.publishOps(
+            P.shortId,
+            sent,
+            c.base.version,
+            message,
+            x.session,
+            table.sha,
+          )
           P.onOwnVersion(a.current_version)
+          wire = a.sync
         } catch (e) {
           if (!noChange(e)) throw e
         }
         queueSave(P.shortId, null)
         if (frame !== x.frame) return
-        await syncIn(true)
+        await syncIn(true, wire)
       } else {
         // Quotes (LaTeX) and video scenes resolve against the current head, and the
         // page's text becomes the new baseline — unless it moved on while this saved.
@@ -333,6 +359,8 @@ export function useAutoSave(p: {
         x.conflictRetry++
         queueSave(pr.current.shortId, null)
         await syncIn(false).catch(() => {})
+        // The next try reads the source map afresh rather than trusting the one carried.
+        if (frame === x.frame) x.table = null
         schedule(0)
       } else if (retryable(err) && !(err instanceof Error && /out of date/.test(err.message))) {
         x.offline = true

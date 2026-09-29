@@ -97,6 +97,29 @@ describe("stampSourceIds", () => {
       expect(map.hashes[n]).toMatch(stamped.has(n) ? /^[0-9a-f]{16}$/ : /^$/)
     expect(stamped.size).toBeGreaterThan(1000)
   })
+
+  it("pins each element's bytes: an edit changes the hashes of what holds it, and no other", async () => {
+    const before = await sourceMap(DECK)
+    const els = sourceElements(DECK)
+    // A word inside one slide's heading (multi-byte text, so offsets are UTF-8's).
+    const at = DECK.indexOf(">", DECK.indexOf("<h2", DECK.indexOf('data-derive-slide="12"'))) + 1
+    const after = await sourceMap(`${DECK.slice(0, at)}é ${DECK.slice(at)}`)
+    const holds = (n: number) => {
+      const el = els[n]
+      return !!el && el.tag.start < at && at < el.end
+    }
+    for (let n = 0; n < els.length; n++) {
+      if (!before.hashes[n]) continue
+      if (holds(n)) expect(after.hashes[n], `element ${n}`).not.toBe(before.hashes[n])
+      else expect(after.hashes[n], `element ${n}`).toBe(before.hashes[n])
+    }
+    // The same bytes elsewhere hash alike, wherever they sit.
+    const twice = `<body><p>Same <b>words</b></p><div><p>Same <b>words</b></p></div></body>`
+    const { hashes } = await sourceMap(twice)
+    expect(hashes[1]).toMatch(/^[0-9a-f]{16}$/)
+    expect(hashes[1]).toBe(hashes[4])
+    expect(hashes[1]).not.toBe(hashes[3])
+  })
 })
 
 // ── A model of the fixture the random sessions edit ──────────────────────────────────
@@ -452,6 +475,13 @@ describe("applySourceOps", () => {
         continue
       }
       const { html } = await applySourceOps(DECK, ops)
+      // The result's hashes, carried over from the deck's wherever the save left bytes
+      // alone, are exactly what a fresh read of the result gives.
+      if (trial % 10 === 0) {
+        const carried = (await sourceMap(html)).hashes
+        for (let k = 0; k < 5; k++) await sourceMap(`${DECK}<!--${k}-->`)
+        expect((await sourceMap(html)).hashes, label).toEqual(carried)
+      }
       // Every byte outside the edited elements, and every kept element, is the stored bytes;
       // a duplicate differs only in the identities it had to mint.
       if (copies) {

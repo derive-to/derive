@@ -25,8 +25,16 @@ import {
 } from "./decks"
 import { EditError } from "./doc-text"
 import { sha256Hex } from "./hash"
-import { elementEnd, type HtmlTag, RAW_TEXT_ELEMENTS, RCDATA_ELEMENTS, tags } from "./html-tags"
+import {
+  elementEnd,
+  type HtmlTag,
+  lastOf,
+  RAW_TEXT_ELEMENTS,
+  RCDATA_ELEMENTS,
+  tags,
+} from "./html-tags"
 import { escapeHtml } from "./md"
+import { hexOf, Sha256 } from "./sha256"
 import { setLayoutAttributes, sourceElements } from "./structural-edit"
 import { setOpeningTagStyle } from "./style-attribute"
 
@@ -102,7 +110,7 @@ interface SourceNode {
 /** Every start tag in source order with its browser-effective range. One tokenizer pass
  *  (html-tags), explicit ranges from structural-edit, `elementEnd` only for elements the
  *  author closed implicitly. Elements whose ranges cross (misnested markup) get end -1. */
-const indexElements = (html: string): SourceNode[] => {
+const indexElements = lastOf(3, 32_768, (html: string): readonly SourceNode[] => {
   const all = tags(html)
   const explicit = sourceElements(html, all)
   const closeAt = new Map(all.filter((t) => t.closing).map((t) => [t.end, t]))
@@ -134,11 +142,31 @@ const indexElements = (html: string): SourceNode[] => {
   }
   for (const el of crossed) el.end = -1
   return els
-}
+})
 
 const usable = (el: SourceNode | undefined): el is SourceNode => !!el && el.stamped && el.end >= 0
 
 const encode = (text: string): Uint8Array => new TextEncoder().encode(text)
+
+/** A string's UTF-8 bytes, and the byte offset of each of its UTF-16 offsets. */
+const utf8 = (text: string): { bytes: Uint8Array; at: (i: number) => number } => {
+  const bytes = encode(text)
+  if (bytes.length === text.length) return { bytes, at: (i) => i }
+  const offsets = new Uint32Array(text.length + 1)
+  let b = 0
+  for (let i = 0; i < text.length; i++) {
+    offsets[i] = b
+    const c = text.charCodeAt(i)
+    if (c < 0x80) b += 1
+    else if (c < 0x800) b += 2
+    else if (c >= 0xd800 && c < 0xdc00 && (text.charCodeAt(i + 1) & 0xfc00) === 0xdc00) {
+      offsets[++i] = b
+      b += 4
+    } else b += 3
+  }
+  offsets[text.length] = b
+  return { bytes, at: (i) => offsets[i] as number }
+}
 
 /** Text becomes character data, never markup. Quotes stay as typed: they are inert in
  *  text, and escaping them would rewrite untouched prose inside an edited element. */
@@ -148,23 +176,140 @@ const escapeText = (text: string): string =>
 /** The sha256 of stored source text, as the editor's page and source map report it. */
 export const sourceSha = (html: string): Promise<string> => sha256Hex(encode(html))
 
-/** The hash an op names a source slice by. */
-export const hashSource = async (text: string): Promise<SourceHash> =>
-  (await sha256Hex(encode(text))).slice(0, 16)
-
-const hashOf = async (html: string, el: SourceNode | undefined): Promise<SourceHash> =>
-  usable(el) ? hashSource(html.slice(el.tag.start, el.end)) : ""
-
-/** The hash for every source id (array index = N). "" marks an element no op may name
- *  or keep: not stamped, or markup whose end the source does not state. */
-export const sourceMap = async (html: string): Promise<{ sha: string; hashes: SourceHash[] }> => {
-  const els = indexElements(html)
-  const [sha, hashes] = await Promise.all([
-    sourceSha(html),
-    Promise.all(els.map((el) => hashOf(html, el))),
-  ])
-  return { sha, hashes }
+/** The hash an op names a source slice by (Markdown's nodes). */
+export const hashSource = (text: string): SourceHash => {
+  const bytes = encode(text)
+  return hexOf(new Sha256().update(bytes).digest(), 8)
 }
+
+/** Separates an element's own bytes from a child's digest in what its hash covers: 0xFF is
+ *  never a byte of UTF-8, so the stream reads back one way only. */
+const CHILD = new Uint8Array([0xff])
+
+/** A document an op save made from another, and where: `segments` are the old
+ *  document's replaced ranges (sorted, disjoint) with their new text. Lets the new
+ *  document's hashes reuse every digest of an element the save left alone. */
+const madeBy = new Map<string, { from: string; segments: readonly Segment[] }>()
+
+/** The segments a splice applies: sorted, and each one starting past the last. */
+const disjoint = (segments: readonly Segment[]): Segment[] => {
+  const out: Segment[] = []
+  let cursor = 0
+  for (const seg of segments) {
+    if (seg.start < cursor) continue
+    out.push(seg)
+    cursor = seg.end
+  }
+  return out
+}
+
+interface Digests {
+  hex: readonly SourceHash[]
+  /** Each element's full digest (32 bytes at 32·N), all zero where it has none. */
+  full: Uint8Array
+}
+
+/**
+ * Every element's hash (array index = N), "" for an element no op may name or keep (not
+ * stamped, or markup whose end the source doesn't state). An element's hash is the SHA-256
+ * of its outer bytes with each child element's bytes replaced by 0xFF and that child's own
+ * digest: it pins exactly the same bytes a hash of the whole slice would, but the document
+ * is hashed about once rather than once per level of nesting (a 150-slide deck is ten
+ * megabytes of nested slices). A document a save just made hashes only what the save
+ * changed and the elements holding it; everything else keeps its digest. Remembered for
+ * the last few documents.
+ */
+const elementDigests = lastOf(4, 32_768, (html: string): Digests => {
+  const els = indexElements(html)
+  const { bytes, at } = utf8(html)
+  const hex = new Array<SourceHash>(els.length).fill("")
+  const full = new Uint8Array(32 * els.length)
+  // A save's result: the previous document's digests, where the save left bytes alone.
+  const made = madeBy.get(html)
+  madeBy.delete(html)
+  const was = made && elementDigests.peek(made.from)
+  const wasEls = was && made ? indexElements(made.from) : null
+  const wasAt = wasEls ? new Map(wasEls.map((e) => [e.tag.start, e])) : null
+  // The save's segments in new offsets, and the shift they leave after them.
+  const moved: { start: number; end: number; shift: number }[] = []
+  if (made) {
+    let shift = 0
+    for (const seg of made.segments) {
+      const start = seg.start + shift
+      shift += seg.text.length - (seg.end - seg.start)
+      moved.push({ start, end: start + seg.text.length, shift })
+    }
+  }
+  /** The previous document's element with these very bytes at this place, if any. */
+  let seg = 0
+  const unchanged = (el: SourceNode): SourceNode | undefined => {
+    if (!was || !wasAt) return undefined
+    while (seg < moved.length && (moved[seg] as { end: number }).end <= el.tag.start) seg++
+    const next = moved[seg]
+    // A segment overlapping or inside the element: its bytes changed.
+    if (next && next.start < el.end && !(next.start === next.end && next.start === el.tag.start))
+      return undefined
+    const shift = seg ? (moved[seg - 1] as { shift: number }).shift : 0
+    const old = wasAt.get(el.tag.start - shift)
+    if (!old || old.end !== el.end - shift || old.tag.name !== el.tag.name) return undefined
+    // It had a digest of its own (it wasn't misnested there).
+    return was.full.subarray(32 * old.n, 32 * old.n + 32).some((b) => b !== 0) ? old : undefined
+  }
+
+  // One hasher per depth, reused: frames only ever nest.
+  const pool: Sha256[] = []
+  const open: { el: SourceNode; cursor: number }[] = []
+  const give = (child: SourceNode, digest: Uint8Array) => {
+    const parent = open.at(-1)
+    if (!parent) return
+    ;(pool[open.length - 1] as Sha256)
+      .update(bytes, parent.cursor, at(child.tag.start))
+      .update(CHILD)
+      .update(digest)
+    parent.cursor = at(child.end)
+  }
+  const close = () => {
+    const f = open.pop() as { el: SourceNode; cursor: number }
+    const digest = (pool[open.length] as Sha256).update(bytes, f.cursor, at(f.el.end)).digest()
+    full.set(digest, 32 * f.el.n)
+    if (usable(f.el)) hex[f.el.n] = hexOf(digest, 8)
+    give(f.el, digest)
+  }
+  for (let i = 0; i < els.length; i++) {
+    const el = els[i] as SourceNode
+    if (el.end < 0) continue
+    while (open.length && (open.at(-1) as { el: SourceNode }).el.end <= el.tag.start) close()
+    // Crossing its container (misnested markup the index didn't catch): its bytes are the
+    // container's own, and nothing may name it.
+    const top = open.at(-1)
+    if (top && el.end > top.el.end) continue
+    const old = unchanged(el)
+    if (old && was) {
+      // The same bytes as before: its digest and every one inside it carry over.
+      const d = old.n - el.n
+      let j = i
+      for (; j < els.length && (els[j] as SourceNode).tag.start < el.end; j++) {
+        const n = (els[j] as SourceNode).n
+        hex[n] = was.hex[n + d] ?? ""
+        full.set(was.full.subarray(32 * (n + d), 32 * (n + d + 1)), 32 * n)
+      }
+      give(el, was.full.subarray(32 * old.n, 32 * (old.n + 1)))
+      i = j - 1
+      continue
+    }
+    pool[open.length] ??= new Sha256()
+    open.push({ el, cursor: at(el.tag.start) })
+  }
+  while (open.length) close()
+  return { hex, full }
+})
+const elementHashes = (html: string): readonly SourceHash[] => elementDigests(html).hex
+
+/** Every source id's hash, and the sha of the whole source (see elementHashes). */
+export const sourceMap = async (html: string): Promise<{ sha: string; hashes: SourceHash[] }> => ({
+  sha: await sourceSha(html),
+  hashes: [...elementHashes(html)],
+})
 
 /** The app origins (space-separated) whose pages may drive this document's editor: the
  *  in-frame client takes editing messages only from its parent at one of these. */
@@ -374,7 +519,8 @@ export const applySourceOps = async (html: string, raw: unknown): Promise<Applie
   }
 
   // 1. Every element the save names must still be the bytes the editor was served.
-  const conflicts = await staleSourceIds(ops, (n) => hashOf(html, els[n]), place)
+  const hashes = elementHashes(html)
+  const conflicts = await staleSourceIds(ops, async (n) => hashes[n] ?? "", place)
   if (conflicts.length)
     throw new SourceConflictError(
       `${conflicts.length === 1 ? "An element" : `${conflicts.length} elements`} changed since this page was loaded: ${conflicts.map(place).join(", ")}. Reload to see the latest version, then redo ${conflicts.length === 1 ? "that edit" : "those edits"}.`,
@@ -504,15 +650,17 @@ export const applySourceOps = async (html: string, raw: unknown): Promise<Applie
     changes.push({ before: html.slice(el.tag.end, el.innerEnd), after: text })
     return { start: el.tag.end, end: el.innerEnd, text }
   })
-  const out = splice(
-    0,
-    html.length,
-    [...overrides, ...replaced].sort((a, b) => a.start - b.start || b.end - a.end),
-  )
+  const segments = [...overrides, ...replaced].sort((a, b) => a.start - b.start || b.end - a.end)
+  const out = splice(0, html.length, segments)
   if (out === html)
     throw new EditError(
       "These ops leave the document exactly as it is, so there is nothing to save.",
     )
+  // The save's result is hashed next (its sync, the next save): from this document's.
+  if (elementDigests.peek(html) && out.length >= 32_768) {
+    madeBy.set(out, { from: html, segments: disjoint(segments) })
+    if (madeBy.size > 4) madeBy.delete(madeBy.keys().next().value as string)
+  }
   return { html: out, changes }
 }
 
@@ -540,6 +688,51 @@ export interface SyncReply extends StampedSync {
   hashes: string[]
 }
 
+/**
+ * A sync as sent: a {@link SyncReply} without the two arrays that are as long as the page
+ * (tens of thousands of ids on a long deck), which the page mostly holds already.
+ *  - `runs`: the remap as runs `[oldId, newId, length]` (old ids outside every run: -1).
+ *    One edit renumbers everything after it by the same amount, so a save is a few runs.
+ *  - the new source map: the page's own hashes carried through the remap, with `changed`
+ *    (`[newId, hash]`) where that differs; `count` ids in all. `hashes` instead, whole,
+ *    when the page's can't be carried (a whole-page swap).
+ */
+export interface SyncWire {
+  version: number
+  sha: string
+  head: boolean
+  patches: StampedSync["patches"]
+  /** Length of the remap (the old page's id count). */
+  from: number
+  runs: [number, number, number][]
+  count: number
+  changed: [number, string][]
+  hashes?: string[]
+}
+
+/** Encode a sync for the wire, given the source map the page holds (`held`). */
+export const syncWire = (reply: SyncReply, held: readonly string[] | null): SyncWire => {
+  const { remap, hashes, version, sha, head, patches } = reply
+  const runs: [number, number, number][] = []
+  for (let o = 0; o < remap.length; o++) {
+    const n = remap[o] as number
+    if (n < 0) continue
+    const last = runs.at(-1)
+    if (last && last[0] + last[2] === o && last[1] + last[2] === n) last[2]++
+    else runs.push([o, n, 1])
+  }
+  const base = { version, sha, head, patches, from: remap.length, runs, count: hashes.length }
+  if (head || !held) return { ...base, changed: [], hashes }
+  const carried = new Array<string | undefined>(hashes.length)
+  for (const [o, n, len] of runs)
+    for (let k = 0; k < len; k++) if (n + k < hashes.length) carried[n + k] = held[o + k]
+  const changed: [number, string][] = []
+  hashes.forEach((h, n) => {
+    if (carried[n] !== h) changed.push([n, h])
+  })
+  return { ...base, changed }
+}
+
 interface StampedEl {
   id: number
   start: number
@@ -559,7 +752,9 @@ interface StampedEl {
 const STAMP_ATTR = /\sdata-derive-src="(\d+)"/
 const BASE_MARK = / data-derive-src-version="\d+" data-derive-src-sha="[^"]*"/
 
-const parseStamped = (doc: string) => {
+/** A stamped page's elements, keyed by their unstamped bytes. A sync's new page is the
+ *  next sync's old one: remembered for the last two. */
+const parseStamped = lastOf(2, 32_768, (doc: string) => {
   const els = indexElements(doc)
   const cuts: [number, number][] = []
   const mark = BASE_MARK.exec(doc)
@@ -651,7 +846,7 @@ const parseStamped = (doc: string) => {
     return out + text.slice(off(at), off(node.end))
   }
   return { doc, nodes, root, shell }
-}
+})
 
 /** The longest common subsequence of two key lists, as index pairs (keys "" never match).
  *  A long middle past the budget is left unmatched: hints, not correctness, ride on it. */

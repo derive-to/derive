@@ -90,6 +90,7 @@ import {
   materializeSlideOps,
   materializeSourceOps,
   parseBaseVersion,
+  type SyncDeps,
   syncEditorPage,
 } from "../lib/edits"
 import {
@@ -155,15 +156,10 @@ const SAFE_BINARY_CONTENT_TYPES = new Set([
 
 /** An inline edit session's id: the client's uuid for one editing session. */
 const SESSION_ID = /^[A-Za-z0-9_-]{8,64}$/
-/** A sync request: the page's source-map hashes ("" for an id it doesn't know), and the
- *  sha of the source it was stamped from. */
+/** A sync request: the sha of the source the page was stamped from. */
+const SHA = /^[0-9a-f]{64}$/
 const SyncBody = z.object({
-  hashes: z
-    .array(
-      z.string().regex(/^(?:[0-9a-f]{16})?$/, '`hashes` must be 16-hex source-map hashes or ""'),
-    )
-    .max(200_000),
-  sha: z.string().regex(/^[0-9a-f]{64}$/, "`sha` must be the 64-hex sha256 of the page's source"),
+  sha: z.string().regex(SHA, "`sha` must be the 64-hex sha256 of the page's source"),
 })
 /** At most one opportunistic idle-session sweep per process per this long. */
 const SWEEP_EVERY_MS = 30_000
@@ -228,6 +224,29 @@ export const artifactRoutes = (ctx: AppContext) => {
     summarize,
     baseUrl: deps.baseUrl,
   }
+  /** How the inline editor's sync renders pages: as the frame loads them, with the
+   *  dynamic data of version `slotsOf` (read while the sources load). */
+  const editorSyncDeps = (
+    artifact: Pick<ArtifactRecord, "id" | "title">,
+    slotsOf: number,
+    read = dynamicSlots({ artifact_id: artifact.id, n: slotsOf }),
+  ): SyncDeps => {
+    const slots = read.then(slotValuesOf)
+    slots.catch(() => {})
+    return {
+      getVersion: meta.getVersion.bind(meta),
+      sourceText,
+      page: async (text, contentType, version) =>
+        editorPage(
+          text,
+          contentType,
+          artifact.title,
+          { version, host: editorHost(deps) },
+          await slots,
+        ),
+    }
+  }
+
   // Inline edit sessions whose page never said Done are finalized once idle: on the
   // editors' own traffic (throttled), and by the scheduled tick (/edit-sessions/sweep).
   let lastSweep = 0
@@ -663,18 +682,69 @@ export const artifactRoutes = (ctx: AppContext) => {
     },
   ) => {
     const requestStartedAt = performance.now()
+    // An edit reads the current version, and a coalescing save asks about it again: once.
+    const versionReads = new Map<string, Promise<VersionRecord | null>>()
+    const versionOf = (artifactId: string, n: number): Promise<VersionRecord | null> => {
+      const key = `${artifactId}:${n}`
+      const read = versionReads.get(key) ?? meta.getVersion(artifactId, n)
+      versionReads.set(key, read)
+      return read
+    }
     const tokenUser = tokenAuth ? tokenAuth.user : null
+    const len = Number(c.req.header("content-length") ?? 0)
+    if (len > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
+    // The body (capped above) parses while the artifact and the caller's standing are read.
+    // Nothing in it is acted on before authorization answers.
+    const bodyP = c.req.parseBody()
+    bodyP.catch(() => {})
+    /** What a save reads besides the edit itself, asked as soon as the artifact is known:
+     *  every read here is a network round trip on the edge, and none depends on another. */
+    const warm = (a: ArtifactRecord | null, org: string, body: Record<string, unknown>) => {
+      const billing = billingState(org)
+      // Who is publishing (memoized per request), and for an agent its workspace's switch.
+      const identity = Promise.all([
+        tokenAuth ? tokenUser : actingUser(c),
+        tokenAuth ? tokenUser : actingHuman(c),
+        tokenAuth ? (tokenUser?.id ?? null) : privateOwnerId(c),
+        tokenAuth ? null : agentFor(c),
+      ])
+      const settings = (tokenAuth ? Promise.resolve(null) : agentFor(c)).then((agent) =>
+        agent || (tokenAuth && !tokenAuth.draft)
+          ? meta.getOrgSettings(org).catch(() => null)
+          : null,
+      )
+      // An edit save (an edit that names a session or asks to coalesce) also needs the
+      // feedback on the version it may fold into, and the workspace's stored bytes.
+      const editSave =
+        !!a &&
+        (typeof body["edits"] === "string" || typeof body["ops"] === "string") &&
+        (body["coalesce"] === "true" || body["coalesce"] === "1" || !!str(body["session"]))
+      const feedback =
+        editSave && a ? Promise.all([meta.listComments(a.id), meta.listReviewRounds(a.id)]) : null
+      const used = editSave
+        ? billing.then((state) => (state.storageCapBytes ? storageUsed(org) : 0))
+        : undefined
+      // A revision builds on the current version (an edit reads it, a coalescing save asks
+      // about it).
+      if (a) versionOf(a.id, a.current_version).catch(() => {})
+      // An editor's ops save answers with its page's sync, rendered with this data.
+      const slots =
+        a && typeof body["ops"] === "string" && str(body["base_sha"])
+          ? dynamicSlots({ artifact_id: a.id, n: a.current_version })
+          : undefined
+      // Settled below, or never needed when the request fails first.
+      for (const p of [billing, identity, settings, feedback, used, slots]) p?.catch(() => {})
+      return { billing, identity, agentWrites: settings, editSave, feedback, used, slots }
+    }
+    let early: ReturnType<typeof warm> | null = null
     // Republishing a version needs publish rights on that artifact; creating a
     // new one needs publish rights at the workspace level.
     let existing: ArtifactRecord | null = null
-    // The billing read needs only the workspace: for a revision it goes out alongside the
-    // authorization reads.
-    let billingEarly: ReturnType<typeof billingState> | null = null
     if (shortId) {
       existing = await meta.getByShortId(shortId)
       if (!existing) return fail(c, 404, "not found")
-      billingEarly = billingState(existing.org_id)
-      billingEarly.catch(() => {})
+      // Everything else a revision reads goes out alongside the authorization reads.
+      early = warm(existing, existing.org_id, await bodyP)
       // A tokened caller is scoped to this artifact's workspace by the token's
       // own org; refuse if the artifact lives elsewhere, so a token minted for
       // one workspace can never revise another's artifact via a shared short_id.
@@ -713,16 +783,13 @@ export const artifactRoutes = (ctx: AppContext) => {
     // org, a new artifact against the caller's active workspace (or, for a
     // tokened create, the workspace the token was minted for).
     const org = existing ? existing.org_id : tokenAuth ? tokenAuth.org : await activeWorkspace(c)
-    const len = Number(c.req.header("content-length") ?? 0)
-    if (len > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
-    // Independent reads go out together: on the edge every one is a network round trip,
-    // and an editor's auto-save waits on all of them. One billing read serves the gate
-    // here and the storage cap below.
-    const billing = billingEarly ?? billingState(org)
-    const [blockedBy, rl, body] = await Promise.all([
+    const body = await bodyP
+    const { billing, identity, agentWrites, editSave, feedback, used, slots } =
+      early ?? warm(null, org, body)
+    // One billing read serves the gate here and the storage cap below.
+    const [blockedBy, rl] = await Promise.all([
       billing.then((state) => billingBlocked(org, state)),
       limited(c, publishLimiter),
-      c.req.parseBody(),
     ])
     if (blockedBy) return fail(c, 402, blockedBy.message, { code: blockedBy.code })
     if (rl) return rl
@@ -760,31 +827,6 @@ export const artifactRoutes = (ctx: AppContext) => {
     let previousSearchSource:
       | { source: string; contentType: string | null; title: string | null }
       | undefined
-    // An edit reads the current version, and a coalescing save asks about it again: once.
-    const versionReads = new Map<string, Promise<VersionRecord | null>>()
-    const versionOf = (artifactId: string, n: number): Promise<VersionRecord | null> => {
-      const key = `${artifactId}:${n}`
-      const read = versionReads.get(key) ?? meta.getVersion(artifactId, n)
-      versionReads.set(key, read)
-      return read
-    }
-    // An editor's save (an edit that asks to coalesce) needs, besides the edit itself, the
-    // feedback on the version it may fold into and the workspace's stored bytes. Asked now,
-    // they overlap the edit's own reads instead of following them.
-    const editSave =
-      !!existing &&
-      (typeof editsField === "string" || typeof opsField === "string") &&
-      (body["coalesce"] === "true" || body["coalesce"] === "1" || !!sessionField)
-    const feedback =
-      editSave && existing
-        ? Promise.all([meta.listComments(existing.id), meta.listReviewRounds(existing.id)])
-        : null
-    const used = editSave
-      ? billing.then((state) => (state.storageCapBytes ? storageUsed(org) : 0))
-      : undefined
-    // Settled below, or never needed when the request fails first.
-    feedback?.catch(() => {})
-    used?.catch(() => {})
     if (
       typeof editsField === "string" ||
       typeof slideOpsField === "string" ||
@@ -977,10 +1019,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // drove it and get the artifact URL back in the curl response), so — like a
       // session publish, and unlike the agent `publish` tool — it has no agent
       // principal and fires no "your agent published X" bell to onBehalf.
-      const actor = tokenAuth ? tokenUser : await actingUser(c)
-      const human = tokenAuth ? tokenUser : await actingHuman(c)
-      const onBehalf = tokenAuth ? (tokenUser?.id ?? null) : await privateOwnerId(c)
-      const agentPrincipal = tokenAuth ? null : await agentFor(c)
+      const [actor, human, onBehalf, agentPrincipal] = await identity
       // THE AGENT-WRITE SWITCH binds every agent-credentialed publish, not only the hosted
       // claims: a workspace that switched agents off must not take a live write from a
       // standing agent bearer, and not from a staged publish URL either — the mint refuses
@@ -990,7 +1029,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // further down.
       const agentCredentialed = !!agentPrincipal || (!!tokenAuth && !tokenAuth.draft)
       const agentSettings = agentCredentialed
-        ? await meta.getOrgSettings(org).catch(() => null)
+        ? ((await agentWrites) ?? (await meta.getOrgSettings(org).catch(() => null)))
         : null
       if (agentCredentialed && !agentSettings?.agentWrites)
         return fail(
@@ -1091,6 +1130,28 @@ export const artifactRoutes = (ctx: AppContext) => {
         resolvedLinkRole && resolvedLinkRole !== "none" && password && !draft
           ? await hashPassword(password)
           : undefined
+      // The saving page's sync (see syncEditorPage) rides the save's answer, so a save is
+      // one request. Rendered while the version is written: its number is known already.
+      const baseSha = str(body["base_sha"])
+      const current =
+        existing && typeof opsField === "string" && preparedSource !== undefined && baseSha
+          ? await versionOf(existing.id, existing.current_version)
+          : null
+      const syncOf = (n: number, contentType: string) =>
+        current && existing && baseSha && preparedSource !== undefined
+          ? syncEditorPage(
+              editorSyncDeps(existing, current.n, slots),
+              existing,
+              { sha: baseSha },
+              { version: { n, content_type: contentType, blob_key: "" }, text: preparedSource },
+            ).catch((err) => {
+              log.warn("save sync failed", { artifact: existing.short_id, err: String(err) })
+              return undefined
+            })
+          : undefined
+      const expectedN = replaceCurrent?.n ?? (existing?.current_version ?? 0) + 1
+      const earlySync =
+        current && SHA.test(baseSha ?? "") ? syncOf(expectedN, current.content_type) : undefined
       const coreStartedAt = performance.now()
       const {
         artifact,
@@ -1196,7 +1257,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // anchors, facts, previews) runs after the response, in the same order as ever, and
       // other viewers see it a moment later. Every other publish keeps its full receipt.
       let storedRows: NewVersionData[] = []
-      if (coalescing) await afterResponse(bump)
+      if (editSave) await afterResponse(c, bump)
       else ({ storedRows } = await bump())
       if (editSession) sweepSoon()
       const afterPublishFinishedAt = performance.now()
@@ -1284,8 +1345,32 @@ export const artifactRoutes = (ctx: AppContext) => {
         `metadata;dur=${duration(coreFinishedAt - coreStartedAt - publishTimings.storeContentMs)}`,
         `after-publish;dur=${duration(afterPublishFinishedAt - afterPublishStartedAt)}`,
       ]
-      // An editor's save needs only the new version: no advisories, no version list.
-      if (coalescing && !roundCreated) {
+      const sync =
+        earlySync && current
+          ? version.n === expectedN && version.content_type === current.content_type
+            ? await earlySync
+            : await syncOf(version.n, version.content_type)
+          : undefined
+      // An edit save (the inline editor's, or any edit that names a session or asks to
+      // coalesce) needs only the new version: no advisories, no version list.
+      if (editSave && !roundCreated) {
+        // An agent's edit still reaches its human, after the response like the rest.
+        if (agentPrincipal && onBehalf)
+          await afterResponse(c, () =>
+            agentPushFanout(
+              { meta, blobs, bus, baseUrl: deps.baseUrl, pokeWebhooks: deps.pokeWebhooks },
+              artifact,
+              {
+                user: onBehalf,
+                agentId: agentPrincipal.id,
+                agentName: agentPrincipal.name,
+                version: version.n,
+                reviewRound: false,
+                isNew: false,
+                ...(editSummary ? { summary: editSummary } : {}),
+              },
+            ),
+          )
         c.header(
           "Server-Timing",
           [...phases, `total;dur=${duration(performance.now() - requestStartedAt)}`].join(", "),
@@ -1295,6 +1380,7 @@ export const artifactRoutes = (ctx: AppContext) => {
             ...toJson(deps.baseUrl, artifact, []),
             published: version.n,
             ...(artifact.kind === "file" ? { content_sha256: version.blob_key } : {}),
+            ...(sync ? { sync } : {}),
           },
           201,
         )
@@ -1399,6 +1485,7 @@ export const artifactRoutes = (ctx: AppContext) => {
             : {}),
           ...(advisories.length ? { advisories } : {}),
           ...(roundCreated ? { review_requested: true } : {}),
+          ...(sync ? { sync } : {}),
           ...(openedInTab !== null ? { opened_in_tab: openedInTab } : {}),
         },
         201,
@@ -2846,23 +2933,9 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (artifact.current_version === 0) return fail(c, 404, "not found")
     const request = await readJson(c, SyncBody)
     if (request instanceof Response) return request
-    const slots = slotValuesOf(
-      await dynamicSlots({ artifact_id: artifact.id, n: artifact.current_version }),
-    )
     try {
       const result = await syncEditorPage(
-        {
-          getVersion: meta.getVersion.bind(meta),
-          sourceText,
-          page: (text, contentType, version) =>
-            editorPage(
-              text,
-              contentType,
-              artifact.title,
-              { version, host: editorHost(deps) },
-              slots,
-            ),
-        },
+        editorSyncDeps(artifact, artifact.current_version),
         artifact,
         request,
       )

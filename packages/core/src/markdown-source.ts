@@ -20,6 +20,7 @@
 import { Marked, Parser, Renderer, type Token, type Tokens } from "marked"
 import { decodedEntitiesIn, decodeEntities } from "./anchor"
 import { EditError } from "./doc-text"
+import { lastOf } from "./html-tags"
 import { newShortId } from "./ids"
 import {
   escapeHtml,
@@ -632,14 +633,19 @@ const renderStamped = (
 }
 
 /** The model with its editable flags settled (they depend on the rendered text). */
-const modelOf = (source: string, opts: RenderMarkdownOptions = {}) => {
+const modelWith = (source: string, opts: RenderMarkdownOptions) => {
   const tokens = new Marked({ gfm: true }).lexer(source)
   const model = buildModel(source, tokens)
   return { ...model, ...renderStamped(model, tokens, opts) }
 }
+/** A save, its sync and the next save's source map all model the same document: once.
+ *  Shared, so read-only. */
+const plainModel = lastOf(3, 16_384, (source: string) => modelWith(source, {}))
+const modelOf = (source: string, opts?: RenderMarkdownOptions) =>
+  opts && Object.keys(opts).length ? modelWith(source, opts) : plainModel(source)
 
-const hashOf = (source: string, n: MdNode | undefined) =>
-  n ? hashSource(source.slice(n.start, n.end)) : Promise.resolve("")
+const hashOf = async (source: string, n: MdNode | undefined): Promise<string> =>
+  n ? hashSource(source.slice(n.start, n.end)) : ""
 
 /**
  * The editor's view of a stored Markdown document: the reader's page, with

@@ -235,7 +235,7 @@ const rawTextCloseStart = (lower: string, name: string, from: number): number =>
  *  treat what it returns as read-only: it is shared. */
 export const lastOf = <T>(size: number, min: number, fn: (text: string) => T) => {
   const seen = new Map<string, T>()
-  return (text: string): T => {
+  const get = (text: string): T => {
     if (text.length < min) return fn(text)
     const hit = seen.get(text)
     if (hit !== undefined) {
@@ -248,6 +248,9 @@ export const lastOf = <T>(size: number, min: number, fn: (text: string) => T) =>
     if (seen.size > size) seen.delete(seen.keys().next().value as string)
     return value
   }
+  /** What is remembered for `text`, without computing it. */
+  get.peek = (text: string): T | undefined => seen.get(text)
+  return get
 }
 
 /** Every tag in `html`, in document order (shared: read-only). */

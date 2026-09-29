@@ -33,15 +33,17 @@ import {
   type SlideOp,
   type SourceOp,
   type StructuralUserEdit,
-  type SyncReply,
+  type SyncWire,
   sourceMap,
   syncStamped,
+  syncWire,
   toMarkdown,
   type VersionRecord,
 } from "@derive/core"
 import { log } from "../log"
 import { cleanPath } from "./bundle"
 import { bundleTextResolver } from "./latex-bundle"
+import { span } from "./request-trace"
 
 /** A conflict with the artifact's actual state (wrong kind, or it moved past the
  *  version you read) — distinct from a malformed edit itself (bad JSON, 0/multi-match)
@@ -460,10 +462,9 @@ export function parseBaseVersion(raw: string | undefined): number | undefined {
 // ── Sync: an editor's page follows the current version in place ─────────────────────
 
 export interface SyncRequest {
-  /** The page's per-id hashes, as its source map gave them ("" for an id it doesn't know). */
-  hashes: string[]
   /** The sha of the source the page was stamped from (its root's data-derive-src-sha, or
-   *  the last sync's `sha`): a session save replaces a version's bytes in place. */
+   *  the last sync's `sha`): a session save replaces a version's bytes in place, so the
+   *  number alone can't name it. Every version's bytes stay addressable by it. */
   sha: string
 }
 
@@ -478,59 +479,44 @@ export interface SyncDeps {
 /**
  * What an editor's page needs to show the current version without reloading: the new
  * source map, the old ids' new ids, and the changed subtrees as stamped HTML (@derive/core
- * `syncStamped`). The page's source is found by `sha` (every version's bytes stay
- * addressable by it) and must match the page's hashes. A page that can't be matched, or a
- * change that can't be patched in place, answers `head: true`: swap the whole page.
+ * `syncStamped`), encoded against the source map the page holds (`syncWire`). The page's
+ * source is found by `sha`. A page that can't be matched, or a change that can't be
+ * patched in place, answers `head: true`: swap the whole page. A save passes the version
+ * it just wrote as `current`, so its answer needs no read.
  */
 export async function syncEditorPage(
   deps: SyncDeps,
   artifact: Pick<ArtifactRecord, "id" | "kind" | "current_version">,
   req: SyncRequest,
-): Promise<SyncReply> {
-  const cur = await deps.getVersion(artifact.id, artifact.current_version)
+  current?: { version: Pick<VersionRecord, "n" | "content_type" | "blob_key">; text: string },
+): Promise<SyncWire> {
+  const cur = current?.version ?? (await deps.getVersion(artifact.id, artifact.current_version))
   if (!cur) throw new EditConflictError("This artifact has no current version.")
-  const swap = (sha = "", hashes: string[] = []): SyncReply => ({
-    version: cur.n,
-    sha,
-    hashes,
-    remap: req.hashes.map(() => -1),
-    patches: [],
-    head: true,
-  })
   const type = cur.content_type
+  const swap = (sha = "", hashes: string[] = []): SyncWire =>
+    syncWire({ version: cur.n, sha, hashes, remap: [], patches: [], head: true }, null)
   if (artifact.kind !== "file" || !isSourceEditable(type)) return swap()
-  const src = await deps.sourceText(cur)
+  const src = current?.text ?? (await deps.sourceText(cur))
   if (src === null) throw new EditError("Couldn't load the current source.")
   const mapOf = (text: string) => (isMarkdownLike(type) ? markdownSourceMap(text) : sourceMap(text))
-  const map = await mapOf(src)
-  let base: string | null = req.sha === map.sha ? src : null
-  if (base === null) {
-    const text = await deps.sourceText({ blob_key: req.sha, content_type: type })
-    const m = text === null ? null : await mapOf(text)
-    if (
-      m &&
-      m.hashes.length === req.hashes.length &&
-      req.hashes.some((h) => h !== "") &&
-      req.hashes.every((h, i) => h === "" || h === m.hashes[i])
-    )
-      base = text
-  }
+  const map = await span("sync-map", () => mapOf(src))
+  const base =
+    req.sha === map.sha ? src : await deps.sourceText({ blob_key: req.sha, content_type: type })
   if (base === null) return swap(map.sha, map.hashes)
-  const [before, after] = await Promise.all([
-    deps.page(base, type, cur.n),
-    deps.page(src, type, cur.n),
-  ])
-  if (before === null || after === null) return swap(map.sha, map.hashes)
-  const sync = syncStamped(before, after)
-  return {
-    version: cur.n,
-    sha: map.sha,
-    hashes: map.hashes,
-    remap: Array.from(
-      { length: Math.max(sync.remap.length, req.hashes.length) },
-      (_, i) => sync.remap[i] ?? -1,
-    ),
-    patches: sync.patches,
-    head: sync.head,
-  }
+  const [held, before, after] = await span("sync-pages", () =>
+    Promise.all([mapOf(base), deps.page(base, type, cur.n), deps.page(src, type, cur.n)]),
+  )
+  if (held.sha !== req.sha || before === null || after === null) return swap(map.sha, map.hashes)
+  const sync = await span("sync-diff", () => syncStamped(before, after))
+  return syncWire(
+    {
+      version: cur.n,
+      sha: map.sha,
+      hashes: map.hashes,
+      remap: sync.remap,
+      patches: sync.patches,
+      head: sync.head,
+    },
+    held.hashes,
+  )
 }
