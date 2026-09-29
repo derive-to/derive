@@ -148,15 +148,16 @@ export function RenderStage({
   overlays,
   overlay = false,
   presenting = false,
-  reloadKey = 0,
+  positionFor,
   className,
 }: {
   /** null = the source isn't known yet (the record is still a list-row seed) — the
    *  boot state shows without an iframe, and the frame mounts when the src lands. */
   rawSrc: string | null
-  /** Bumped by the page to reload the SAME source (a dynamic slot was deleted, or a
-   *  reconnect found the frame behind): the iframe remounts and boots again. */
-  reloadKey?: number
+  /** Where the reader is now (slide, scroll anchor). When given, a new `rawSrc` loads
+   *  behind the document on screen, is brought to this place, and only then swaps in —
+   *  a new version never blinks the page. */
+  positionFor?: () => Record<string, unknown>
   title: string
   /** WHOSE render this is (the artifact's short id). The Updated cue is keyed on it —
    *  the stage stays mounted across sibling navigation, and a version number alone
@@ -189,13 +190,63 @@ export function RenderStage({
   presenting?: boolean
   className?: string
 }) {
-  // Boot/failure state is per-source: a new rawSrc (version swap, retry) resets it.
+  // Boot/failure state is per-document: a hard load (the first, a retry) resets it.
   const [phase, setPhase] = useState<"booting" | "ready" | "failed">("booting")
   const [attempt, setAttempt] = useState(0)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: rawSrc (or a reload) identifies a new iframe document and intentionally resets its startup state.
+  // The documents: the one on screen, and briefly the next one, loading behind it. The
+  // list only ever grows at the end and shrinks at the front: moving an iframe in the
+  // DOM reloads it, so nothing is ever reordered.
+  const [docs, setDocs] = useState<{ src: string; key: number }[]>([])
+  const [frontKey, setFrontKey] = useState(0)
+  const docSeq = useRef(0)
+  const phaseRef = useRef(phase)
+  phaseRef.current = phase
+  const positionRef = useRef(positionFor)
+  positionRef.current = positionFor
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new source (or a retry) is what decides between a swap and a hard load; the rest is read at that moment.
   useLayoutEffect(() => {
+    if (rawSrc == null) return
+    const front = docs.find((d) => d.key === frontKey)
+    if (front?.src === rawSrc && !attempt) return
+    const key = ++docSeq.current
+    if (front && phaseRef.current === "ready" && positionRef.current && !viewportWidth) {
+      // Swap: load behind the page on screen (see loadedBehind).
+      setDocs((list) => [...list.filter((d) => d.key === frontKey), { src: rawSrc, key }])
+      return
+    }
+    setDocs([{ src: rawSrc, key }])
+    setFrontKey(key)
     setPhase("booting")
-  }, [rawSrc, reloadKey])
+  }, [rawSrc, attempt])
+  /** The next document loaded behind: bring it to the reader's place, then swap it in
+   *  with a short crossfade and drop the old one. */
+  const loadedBehind = (el: HTMLIFrameElement, key: number) => {
+    const w = el.contentWindow
+    let swapped = false
+    const swap = () => {
+      if (swapped) return
+      swapped = true
+      window.removeEventListener("message", onRestored)
+      window.clearTimeout(timer)
+      ;(frameRef as { current: HTMLIFrameElement | null }).current = el
+      setFrontKey(key)
+      onFrameLoad?.()
+      // It spoke while nobody listened: ask it to say again what the host needs.
+      w?.postMessage({ source: "derive-host", type: "hello" }, "*")
+      window.setTimeout(() => setDocs((list) => list.filter((d) => d.key >= key)), 160)
+    }
+    const onRestored = (e: MessageEvent) => {
+      if (e.source === w && e.data?.source === "derive" && e.data.type === "position-restored")
+        swap()
+    }
+    window.addEventListener("message", onRestored)
+    const timer = window.setTimeout(swap, 1500)
+    w?.postMessage(
+      { source: "derive-host", type: "restore-position", ...positionRef.current?.() },
+      "*",
+    )
+  }
 
   useEffect(() => {
     if (runtimeReady) setPhase("ready")
@@ -216,7 +267,8 @@ export function RenderStage({
     return () => clearTimeout(t)
   }, [phase, rawSrc, runtimeError])
 
-  const handleLoad = () => {
+  const handleLoad = (key: number) => {
+    if (key !== frontKey) return
     // A successfully loaded document is the optimistic display boundary. The
     // injected runtime can still classify authored failures after this point, but
     // it must not keep otherwise usable markup behind host chrome just because a
@@ -295,13 +347,18 @@ export function RenderStage({
           presenting && "bg-black pb-14",
         )}
       >
-        {rawSrc != null && (
+        {docs.map(({ src, key }) => (
           <iframe
-            key={`${attempt}:${reloadKey}`}
-            ref={frameRef}
-            onLoad={handleLoad}
+            key={key}
+            ref={(el) => {
+              if (el && key === frontKey)
+                (frameRef as { current: HTMLIFrameElement | null }).current = el
+            }}
+            onLoad={(e) => (key > frontKey ? loadedBehind(e.currentTarget, key) : handleLoad(key))}
             title={title}
-            src={rawSrc}
+            src={src}
+            aria-hidden={key !== frontKey || undefined}
+            tabIndex={key !== frontKey ? -1 : undefined}
             allow="fullscreen"
             // touch-action: pan-y lets the outer page scroll instead of the iframe
             // trapping the gesture on a phone (research's scroll-trap fix); the frame
@@ -315,10 +372,15 @@ export function RenderStage({
             className={cn(
               "min-h-0 touch-pan-y border-0 bg-white opacity-0 transition-[width,opacity] duration-state",
               viewportWidth ? "mx-auto h-full flex-none shadow-[var(--shadow-lg)]" : "flex-1",
-              phase === "ready" && "opacity-100",
+              ((key === frontKey && phase === "ready") || key > frontKey) && "opacity-100",
+              // The next document loads underneath the one on screen; the one leaving
+              // fades out on top of its replacement.
+              key !== frontKey && "pointer-events-none absolute inset-0 h-full w-full",
+              key > frontKey && "-z-10",
+              key < frontKey && "z-10 opacity-0 duration-state",
             )}
           />
-        )}
+        ))}
 
         {/* Boot — a calm centered spinner only until the iframe document's own
             `load` fires. Descendant readiness is deliberately not a host-level gate:

@@ -259,6 +259,18 @@ export interface SourceMap {
   sha: string
   hashes: string[]
 }
+/** A newer version, as an editing page takes it in place (packages/core source-sync):
+ *  the new source map, `remap[oldId]` → new id (-1: gone or changed), the new stamped
+ *  markup of each changed subtree by its root's old id, and whether anything outside
+ *  <body> changed (the page must be reloaded for that). */
+export interface SyncReply {
+  version: number
+  sha: string
+  hashes: string[]
+  remap: number[]
+  patches: { old: number; html: string }[]
+  head: boolean
+}
 /** The other edit shape the server accepts: a literal string swap against the raw
  *  source. The inline editor uses it for exactly one thing — replacing an image's
  *  URL, which lives in an attribute and so has no visible text to quote. The two
@@ -842,12 +854,15 @@ const publishChange = (
   payload: unknown,
   baseVersion: number,
   message: string,
+  session?: string,
 ): Promise<Artifact> => {
   const fd = new FormData()
   fd.append(field, JSON.stringify(payload))
   fd.append("base_version", String(baseVersion))
   fd.append("coalesce", "true")
   if (message) fd.append("message", message)
+  // An open edit session: every save it makes folds into one working version.
+  if (session) fd.append("session", session)
   return f(`/v1/artifacts/${id}/versions`, {
     method: "POST",
     body: fd,
@@ -2297,13 +2312,38 @@ export const api = {
     edits: (InlineEditInput | StrEditInput)[],
     baseVersion: number,
     message: string,
+    session?: string,
   ): Promise<Artifact> {
-    return publishChange(id, "edits", edits, baseVersion, message)
+    return publishChange(id, "edits", edits, baseVersion, message, session)
   },
   // Exact-source edits (the inline editor on HTML and decks): each op names an element
   // by its source id and hash (see the source map), so nothing is searched for.
-  publishOps(id: string, ops: SourceOp[], baseVersion: number, message: string): Promise<Artifact> {
-    return publishChange(id, "ops", ops, baseVersion, message)
+  publishOps(
+    id: string,
+    ops: SourceOp[],
+    baseVersion: number,
+    message: string,
+    session?: string,
+  ): Promise<Artifact> {
+    return publishChange(id, "ops", ops, baseVersion, message, session)
+  },
+  /** Catch an editing page up: `hashes` are the page's per-id hashes (its source map)
+   *  and `sha` the source it was stamped from (a session save rewrites a version in
+   *  place, so the number alone can't name it). */
+  syncArtifact(id: string, hashes: string[], sha: string): Promise<SyncReply> {
+    return f(`/v1/artifacts/${id}/sync`, opts({ hashes, sha })).then(j)
+  },
+  /** An edit session ended (Done): its saves are one version, announced once. */
+  finishEditSession(id: string, session: string): Promise<void> {
+    return f(`/v1/artifacts/${id}/sessions/${encodeURIComponent(session)}/done`, {
+      method: "POST",
+      credentials: "include",
+      keepalive: true,
+    }).then(() => undefined)
+  },
+  /** The same, from a page that is going away (it can't wait for an answer). */
+  finishEditSessionBeacon(id: string, session: string): void {
+    navigator.sendBeacon?.(u(`/v1/artifacts/${id}/sessions/${encodeURIComponent(session)}/done`))
   },
   /** The element hashes of a stamped HTML version, indexed by source id. */
   sourceMap(id: string, version: number): Promise<SourceMap> {

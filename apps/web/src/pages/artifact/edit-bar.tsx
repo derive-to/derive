@@ -5,7 +5,7 @@ import { Kbd } from "@/components/ui/kbd"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
-import type { EditChange } from "./use-inline-edit"
+import type { EditChange, EditConflict, SaveStatus } from "./use-inline-edit"
 
 export type EditViewport = "auto" | "tablet" | "mobile"
 
@@ -23,16 +23,19 @@ export type EditViewport = "auto" | "tablet" | "mobile"
  * It is also the mode's CONTROL SURFACE. Every verb the editor has — undo, redo,
  * bold, italic, link — existed only as a keyboard chord, which meant it existed only
  * for whoever already knew. They are buttons here, in the order you reach for them:
- * history first (what you just did), then the formatting (what you're about to do),
- * then the terminal Save. Each drives the same call its shortcut does, so a control
- * and its chord can never mean different things. Disabled is honest — B / I / link
- * light up only when a selection they could act on exists.
+ * history first (what you just did), then the formatting (what you're about to do).
+ * Each drives the same call its shortcut does, so a control and its chord can never
+ * mean different things. Disabled is honest — B / I / link light up only when a
+ * selection they could act on exists.
+ *
+ * Every edit saves itself, so there is no Save and no Discard: the right end is where
+ * the save is (the status, which opens this session's changes) and Done.
  */
 export function EditBar({
-  dirty,
+  status,
   changes = [],
-  canPublish,
-  saving,
+  conflicts = [],
+  closing = false,
   touch = false,
   canUndo = false,
   canRedo = false,
@@ -45,15 +48,16 @@ export function EditBar({
   onViewport,
   onRevealChange,
   onRevertChange,
-  onSave,
-  onDiscard,
+  onResolve,
   onDone,
 }: {
-  dirty: number
-  /** What the count counts, as the document reports it. */
+  status: SaveStatus
+  /** This session's changes, as the document reports them. */
   changes?: EditChange[]
-  canPublish: boolean
-  saving: boolean
+  /** Blocks someone else changed under unsaved words: each needs a choice. */
+  conflicts?: EditConflict[]
+  /** Done is saving what's left before it leaves. */
+  closing?: boolean
   /** Phone/tablet: the verbs get real 44px touch targets and the hint says "tap". */
   touch?: boolean
   /** Live from the document: history depth and whether a formattable run is selected. */
@@ -72,8 +76,7 @@ export function EditBar({
   /** A row of the changes list: show where it is, or put just that back. */
   onRevealChange?: (change: EditChange) => void
   onRevertChange?: (change: EditChange) => void
-  onSave: () => void
-  onDiscard: () => void
+  onResolve?: (id: string, mine: boolean) => void
   onDone: () => void
 }) {
   // Apple's 44px minimum. The strip grows a few px on a phone; a target you can
@@ -114,7 +117,7 @@ export function EditBar({
           label="Undo"
           chord="⌘Z"
           touch={touch}
-          disabled={!canUndo || saving}
+          disabled={!canUndo}
           onClick={onUndo}
         />
         <HistoryButton
@@ -123,7 +126,7 @@ export function EditBar({
           label="Redo"
           chord="⇧⌘Z"
           touch={touch}
-          disabled={!canRedo || saving}
+          disabled={!canRedo}
           onClick={onRedo}
         />
         <span aria-hidden className="mx-1 h-4 w-px bg-border" />
@@ -133,7 +136,7 @@ export function EditBar({
           label="Bold"
           chord="⌘B"
           size={toolSize}
-          disabled={!canFormat || saving}
+          disabled={!canFormat}
           onClick={() => onFormat("b")}
         />
         <ToolButton
@@ -142,7 +145,7 @@ export function EditBar({
           label="Italic"
           chord="⌘I"
           size={toolSize}
-          disabled={!canFormat || saving}
+          disabled={!canFormat}
           onClick={() => onFormat("i")}
         />
         <ToolButton
@@ -151,7 +154,7 @@ export function EditBar({
           label="Link"
           chord="⌘K"
           size={toolSize}
-          disabled={(!canFormat && href === null) || saving}
+          disabled={!canFormat && href === null}
           onClick={() => setHref("")}
         />
       </div>
@@ -183,7 +186,6 @@ export function EditBar({
                   : "text-muted-foreground hover:bg-accent hover:text-foreground",
               )}
               onClick={() => onViewport(value)}
-              disabled={saving}
             >
               {label}
             </button>
@@ -217,116 +219,185 @@ export function EditBar({
         />
       )}
 
-      {/* The status line. At rest it says what a click does; once there are changes
-          it is the list of them. The hint yields first under width pressure — the
-          controls and the way to save matter more than the sentence. */}
-      {dirty === 0 ? (
+      {/* At rest the hint says what a click does. It yields first under width
+          pressure — the controls and the save status matter more than the sentence. */}
+      {changes.length === 0 && (
         <span
           className={cn(
-            "hidden min-w-0 truncate text-2xs text-muted-foreground md:inline",
-            href !== null && "md:hidden",
+            "hidden min-w-0 truncate text-2xs text-muted-foreground lg:inline",
+            href !== null && "lg:hidden",
           )}
         >
           {allowElementEdits
             ? touch
               ? "tap text to edit; tap a card or image to move or resize it"
-              : "click text to edit; click around it to move a block"
+              : "click text to edit; click around it to move a block · edits save on their own"
             : touch
               ? "tap text to edit; select an image to replace it"
-              : "click text to edit; select an image to replace it"}
+              : "click text to edit; select an image to replace it · edits save on their own"}
         </span>
-      ) : (
-        <ChangesMenu
-          dirty={dirty}
+      )}
+      {/* A phone gives the status and Done their own row. This is intentionally a
+          layout change rather than horizontal scrolling: Undo must not compete with
+          the way to finish the session. */}
+      <div className="ml-auto flex shrink-0 items-center gap-1 max-sm:basis-full max-sm:justify-end">
+        <SessionMenu
+          status={status}
           changes={changes}
+          conflicts={conflicts}
           hidden={href !== null}
           onReveal={onRevealChange}
           onRevert={onRevertChange}
+          onResolve={onResolve}
         />
-      )}
-      {/* A phone gives terminal actions their own row. This is intentionally a
-          layout change rather than horizontal scrolling: Undo must not compete
-          with the only ways to finish or abandon the session. */}
-      <div className="ml-auto flex shrink-0 items-center gap-1 max-sm:basis-full max-sm:justify-end">
-        {dirty > 0 ? (
-          <>
-            <Button
-              variant="ghost"
-              size="sm"
-              data-testid="inline-edit-discard"
-              onClick={onDiscard}
-              disabled={saving}
-              className={hit}
-            >
-              Discard
-            </Button>
-            <Button
-              variant="default"
-              size="sm"
-              data-testid="inline-edit-save"
-              onClick={onSave}
-              loading={saving}
-              className={hit}
-            >
-              {canPublish ? "Save" : "Suggest"}
-              <Kbd aria-hidden className="max-sm:hidden">
-                ⌘S
-              </Kbd>
-            </Button>
-          </>
-        ) : (
-          <Button
-            variant="ghost"
-            size="sm"
-            data-testid="inline-edit-done"
-            onClick={onDone}
-            className={hit}
-          >
-            Done
-            <Kbd aria-hidden className="max-sm:hidden">
-              Esc
-            </Kbd>
-          </Button>
-        )}
+        <Button
+          variant="ghost"
+          size="sm"
+          data-testid="inline-edit-done"
+          onClick={onDone}
+          loading={closing}
+          className={hit}
+        >
+          Done
+          <Kbd aria-hidden className="max-sm:hidden">
+            Esc
+          </Kbd>
+        </Button>
       </div>
     </div>
   )
 }
 
-/** "3 unsaved changes ▾": each change says where it is and what it was, before →
- *  after. A row shows its element in the document; ↺ puts just that one back. */
-function ChangesMenu({
-  dirty,
+const STATUS_COPY: Record<SaveStatus["kind"], string> = {
+  pending: "Edited",
+  saving: "Saving…",
+  saved: "All changes saved",
+  offline: "Offline",
+  conflict: "Needs a decision",
+  error: "Not saved",
+}
+const STATUS_DOT: Record<SaveStatus["kind"], string> = {
+  pending: "bg-muted-foreground/60",
+  saving: "bg-warning",
+  saved: "bg-success",
+  offline: "bg-warning",
+  conflict: "bg-destructive",
+  error: "bg-destructive",
+}
+/** What the save indicator says, in one place (the bar and the Inspect panel). */
+export const statusLabel = (status: SaveStatus) =>
+  status.kind === "offline"
+    ? `Offline — ${status.waiting || "your"} edit${status.waiting === 1 ? "" : "s"} waiting`
+    : STATUS_COPY[status.kind]
+export function StatusDot({ status }: { status: SaveStatus }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "size-2 shrink-0 rounded-full transition-colors",
+        STATUS_DOT[status.kind],
+        status.kind === "saving" && "animate-pulse",
+      )}
+    />
+  )
+}
+
+/** The save status, which opens this session: each change before → after, where it
+ *  is, and ↺ to put back just that one; a block someone else changed under your
+ *  unsaved words asks, first, whose words to keep. Kept across saves: a save is not
+ *  the end of anything. */
+function SessionMenu({
+  status,
   changes,
+  conflicts,
   hidden,
   onReveal,
   onRevert,
+  onResolve,
 }: {
-  dirty: number
+  status: SaveStatus
   changes: EditChange[]
+  conflicts: EditConflict[]
   hidden: boolean
   onReveal?: (change: EditChange) => void
   onRevert?: (change: EditChange) => void
+  onResolve?: (id: string, mine: boolean) => void
 }) {
-  const label = `${dirty} unsaved change${dirty === 1 ? "" : "s"}`
+  const [open, setOpen] = useState(false)
+  // A choice to make opens the list by itself: it is the one state that needs you.
+  const [asked, setAsked] = useState(0)
+  if (conflicts.length > asked) {
+    setAsked(conflicts.length)
+    setOpen(true)
+  } else if (conflicts.length < asked) setAsked(conflicts.length)
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
           variant="ghost"
           size="xs"
-          data-testid="inline-edit-changes"
-          className={cn("shrink-0 text-2xs text-foreground tabular-nums", hidden && "hidden")}
+          data-testid="inline-edit-status"
+          data-status={status.kind}
+          data-saved-rev={status.savedRev}
+          aria-live="polite"
+          className={cn("shrink-0 gap-1.5 text-2xs text-foreground", hidden && "hidden")}
         >
-          <span className="truncate">{label}</span>
+          <StatusDot status={status} />
+          <span className="truncate">{statusLabel(status)}</span>
+          {changes.length > 0 && (
+            <span className="text-muted-foreground tabular-nums">· {changes.length}</span>
+          )}
           <Icon name="caret" size={12} className="text-muted-foreground" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-96 max-w-[calc(100vw-1rem)] gap-1 p-2">
+      <PopoverContent
+        align="end"
+        className="w-96 max-w-[calc(100vw-1rem)] gap-1 p-2"
+        // It can open by itself (a choice to make): focus stays where the person had
+        // it, and moving it elsewhere doesn't dismiss the question.
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        onFocusOutside={(e) => e.preventDefault()}
+      >
         <p className="flex justify-between px-2 pt-1 pb-1.5 font-medium text-2xs text-muted-foreground uppercase tracking-wide">
-          <span>Unsaved changes</span>
+          <span>This session</span>
           <span className="tabular-nums">{changes.length || ""}</span>
         </p>
+        {conflicts.map((c) => (
+          <div
+            key={c.id}
+            data-testid="inline-edit-conflict"
+            className="mx-1 mb-1 rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs"
+          >
+            <p className="text-2xs text-muted-foreground">
+              {c.where} — {c.by || "Someone"} changed it just now
+            </p>
+            <p className="mt-1 break-words">
+              <span className="text-muted-foreground">Yours: </span>
+              {c.mine || "(empty)"}
+            </p>
+            <p className="mt-0.5 break-words">
+              <span className="text-muted-foreground">{c.by ? `${c.by}'s` : "Theirs"}: </span>
+              {c.theirs || "(empty)"}
+            </p>
+            <div className="mt-2 flex gap-1">
+              <Button
+                size="xs"
+                data-testid="inline-edit-keep-mine"
+                onClick={() => onResolve?.(c.id, true)}
+              >
+                Keep mine
+              </Button>
+              <Button
+                size="xs"
+                variant="ghost"
+                data-testid="inline-edit-use-theirs"
+                onClick={() => onResolve?.(c.id, false)}
+              >
+                Use {c.by ? `${c.by}'s` : "theirs"}
+              </Button>
+            </div>
+          </div>
+        ))}
         <ul
           className="flex max-h-72 flex-col gap-0.5 overflow-auto"
           data-testid="inline-edit-changes-list"
@@ -340,7 +411,9 @@ function ChangesMenu({
                   className="min-w-0 flex-1 px-2 py-1.5 text-left text-xs"
                   onClick={() => onReveal?.(c)}
                 >
-                  <span className="block truncate text-2xs text-muted-foreground">{c.where}</span>
+                  <span className="block truncate text-2xs text-muted-foreground">
+                    {c.where} · {status.kind === "saved" ? "saved" : "saving"}
+                  </span>
                   {c.from !== undefined && c.to !== undefined ? (
                     <span className="block break-words">
                       <s className="text-muted-foreground">{c.from || "(empty)"}</s>
@@ -364,8 +437,10 @@ function ChangesMenu({
                 </Button>
               </li>
             ))
-          ) : (
-            <li className="px-2 py-1.5 text-muted-foreground text-xs">Nothing changed yet.</li>
+          ) : conflicts.length ? null : (
+            <li className="px-2 py-1.5 text-muted-foreground text-xs">
+              No edits yet this session.
+            </li>
           )}
         </ul>
       </PopoverContent>

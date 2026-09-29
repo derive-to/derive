@@ -87,6 +87,7 @@ import { useArtifactRoute } from "./use-artifact-route"
 import { useCommentsPanel } from "./use-comments-panel"
 import { type EditChange, unsavedEditsCopy, useInlineEdit } from "./use-inline-edit"
 import { useSeenCursor } from "./use-seen-cursor"
+import { useUrlPlace } from "./use-url-place"
 import { useVersionDiff } from "./use-version-diff"
 import { WorkbenchSkeleton } from "./workbench-skeleton"
 
@@ -455,41 +456,65 @@ export function Artifact({ template = false }: { template?: boolean }) {
   const inlineEditRef = useRef<{
     active: boolean
     canEdit: boolean
-    dirty: number
-    saving: boolean
     requestExit: () => void
+    done: () => Promise<boolean>
     save: () => void
-    start: (entry?: { select?: number[] | null }) => void
+    start: () => void
+    remote: () => void
   }>({
     active: false,
     canEdit: false,
-    dirty: 0,
-    saving: false,
     requestExit: () => {},
+    done: async () => true,
     save: () => {},
     start: () => {},
+    remote: () => {},
   })
   const [editViewport, setEditViewport] = useState<EditViewport>("auto")
   // The block pill's ⋯ brings the edit panel's block section to the eye.
   const [blockAttention, setBlockAttention] = useState(0)
   const pinnedRef = useRef(version)
   pinnedRef.current = version
-  // Versions this page's own inline saves published. Their live event is no news
-  // (the save already said "Saved vN"), and it can land while the save is still in
-  // flight or after the session resumed, where it would read as someone else's.
+  const latestArt = useRef(art)
+  latestArt.current = art
+  // The version on screen, as the live handlers below see it (they are stable
+  // callbacks, so they read a ref rather than closing over a render's value).
+  const shownRef = useRef(0)
+  // The frame's document: the version its URL loaded, and a counter for loading that
+  // version fresh (its bytes changed on the server, or a sync couldn't apply). Nothing
+  // else reloads the frame: saves and other people's edits sync into it in place.
+  const [frameSrc, setFrameSrc] = useState<{
+    shortId: string
+    version: number
+    rev: number
+  } | null>(null)
+  // The version the frame's CONTENT shows. It runs ahead of the URL while editing, so
+  // leaving the mode on a version it already shows loads nothing.
+  const frameContent = useRef<{ shortId: string; version: number } | null>(null)
+  /** Load the version on screen fresh; RenderStage loads it behind the old document and
+   *  swaps once it's at the same place, so nothing blinks. */
+  const refreshFrame = useCallback(
+    () => setFrameSrc((f) => f && { ...f, version: shownRef.current || f.version, rev: f.rev + 1 }),
+    [],
+  )
+  // Versions this page's own inline saves published: their live event is no news.
   const ownSaves = useRef(new Set<number>())
   const onVersionLive = useCallback(
     (n?: number) => {
       load()
       if (pinnedRef.current !== undefined) return
-      if (inlineEditRef.current.saving || (n !== undefined && ownSaves.current.has(n))) return
-      const v = n !== undefined ? `v${n}` : "A new version"
+      // Editing: the page takes the new version in, in place, block by block (an echo
+      // of this page's own save finds nothing new).
       if (inlineEditRef.current.active) {
-        toast.warning(`${v} was just published. Saving will re-check your edits against it.`, {
-          id: `stale-edit-${shortId}`,
-          duration: 8000,
-        })
-      } else if (editingRef.current) {
+        inlineEditRef.current.remote()
+        return
+      }
+      if (n !== undefined && ownSaves.current.has(n)) return
+      // Reading: a save folded into the version on screen changes its content without
+      // changing its number, so the frame loads it fresh (behind the old one, then swaps).
+      if (n !== undefined && n === shownRef.current) refreshFrame()
+      const v = n !== undefined ? `v${n}` : "A new version"
+      if (editingRef.current) {
         toast.warning(`${v} was just published. Publishing this edit will replace it.`, {
           id: `stale-edit-${shortId}`,
           duration: 8000,
@@ -500,7 +525,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
         })
       }
     },
-    [load, shortId],
+    [load, shortId, refreshFrame],
   )
 
   // useArtifactLive is declared before the iframe bridge below. A stable relay
@@ -511,23 +536,18 @@ export function Artifact({ template = false }: { template?: boolean }) {
       sharedPostRef.current({ type: "shared-updated", ...update }),
     [],
   )
-  // The version on screen, as the live handlers below see it (they are stable
-  // callbacks, so they read a ref rather than closing over a render's value).
-  const shownRef = useRef(0)
   // Reload the frame's SAME source: a dynamic slot was deleted (the server renders the
   // authored placeholder again, which the frame has no copy of), or a reconnect found a
-  // slot the frame knew is gone. Never while inline editing: a remount fires onFrameLoad,
-  // which ends the edit session and would lose typed-but-unsaved text; the reload waits
-  // for the session to end instead.
-  const [frameReload, setFrameReload] = useState(0)
+  // slot the frame knew is gone. Never while inline editing: the reload waits for the
+  // session to end.
   const reloadPendingRef = useRef(false)
   const reloadFrame = useCallback(() => {
     if (inlineEditRef.current.active) {
       reloadPendingRef.current = true
       return
     }
-    setFrameReload((n) => n + 1)
-  }, [])
+    refreshFrame()
+  }, [refreshFrame])
   // Bring the frame's bound elements back in line with the server after a gap (a
   // reconnect, a return from a hidden tab): one read of the shown version's slots with
   // their fragments, pushed into the frame. A slot the rail knew that is gone now means
@@ -610,6 +630,9 @@ export function Artifact({ template = false }: { template?: boolean }) {
     onResync: onLiveResync,
   })
 
+  // The reader's place (slide, scroll anchor) in the URL, handed back to every load.
+  const place = useUrlPlace(shortId)
+
   // The whole postMessage channel with the sandboxed iframe: text selection,
   // anchor geometry, scroll, deck position, and peer cursors in; highlight
   // anchors + deck/emphasis commands out. See use-artifact-frame.
@@ -631,7 +654,6 @@ export function Artifact({ template = false }: { template?: boolean }) {
     anchorConf,
     anchorTops,
     subscribeGeom,
-    frameScrollY,
     runtimeError,
     runtimeReady,
   } = useArtifactFrame({
@@ -641,6 +663,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
     version,
     authenticated: !!me,
     onSharedStateAuthRequired: requireSharedStateAuth,
+    onPosition: place.onPosition,
     hoverThread,
     activeThread,
     onPointerMove: live.onPointerMove,
@@ -667,9 +690,9 @@ export function Artifact({ template = false }: { template?: boolean }) {
     onPresent: () => {
       const ie = inlineEditRef.current
       setComposer(null)
-      if (!ie.active) return true
-      ie.requestExit()
-      return !ie.dirty
+      // Everything is saved (or on its way), so presenting simply finishes the session.
+      if (ie.active) void ie.done()
+      return true
     },
     // Escape typed INTO the sandboxed frame (a click into the doc moves keyboard
     // focus there, out of the window listeners' reach) — mirror what a window
@@ -738,6 +761,11 @@ export function Artifact({ template = false }: { template?: boolean }) {
   useEffect(() => {
     live.setViewSlide(deck?.i ?? null)
   }, [live.setViewSlide, deck?.i])
+  // The slide on screen is the place in the URL.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: place reads refs; the slide is the trigger.
+  useEffect(() => {
+    if (deck) place.onSlide(deck.i)
+  }, [deck?.i])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: clears the active thread + composer when the artifact/version changes (the iframe bridge clears its own selection).
   useEffect(() => {
@@ -865,29 +893,6 @@ export function Artifact({ template = false }: { template?: boolean }) {
     resetEdit()
   }
 
-  // A save reloads the frame on the saved version, which starts a deck on its first
-  // slide with no session. Pick the session back up where it was: armed by the save,
-  // run on the first load of that version. The deck goes back to its slide first;
-  // messages to the frame arrive in order, so edit mode opens on that slide.
-  // The reader's place comes back for every format: the scroll position, and where
-  // element edits reopen the session, the deck's slide and the selected block.
-  const resume = useRef<{
-    version: number
-    scrollY: number
-    session: { slide: number | null; select: number[] | null } | null
-  } | null>(null)
-  const [resumeLoad, setResumeLoad] = useState(0)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: runs once per resumed load.
-  useEffect(() => {
-    const r = resume.current
-    if (!r || !resumeLoad) return
-    resume.current = null
-    if (r.scrollY > 0) post({ type: "scroll-to", y: r.scrollY })
-    if (!r.session) return
-    if (r.session.slide !== null) deckCmd("goto", r.session.slide)
-    inlineEditRef.current.start({ select: r.session.select })
-  }, [resumeLoad])
-
   // Inline (click-to-type) editing: the frame owns the caret and the diffs, this
   // hook owns the mode + save. Entering clears any parked selection so the
   // comment grammar and the edit grammar never overlap; the raw source editor is
@@ -911,22 +916,16 @@ export function Artifact({ template = false }: { template?: boolean }) {
       art?.current_content_type === "text/x-derive-video" ||
       art?.current_content_type === "text/x-derive-linked-bundle",
     onOpenSourceEditor: () => startEdit(),
-    reloadFrame,
-    onSaved: ({ version: saved, resume: select }) => {
-      ownSaves.current.add(saved)
-      // Exact-source saves pick the session back up: element edits, and Markdown.
-      const resumes =
-        inlineEdit.allowElementEdits || !!art?.current_content_type?.startsWith("text/markdown")
-      resume.current = {
-        version: saved,
-        scrollY: frameScrollY(),
-        session: resumes ? { slide: deck?.i ?? null, select } : null,
-      }
-      setResumeLoad(0)
-      // A load that never comes (the save was superseded) must not resume later.
-      window.setTimeout(() => {
-        if (resume.current?.version === saved) resume.current = null
-      }, 20_000)
+    reloadFrame: refreshFrame,
+    onSynced: (synced) => {
+      frameContent.current = { shortId, version: synced }
+    },
+    onOwnVersion: (saved) => ownSaves.current.add(saved),
+    // The byline of the version that just arrived (the detail refetches on the same
+    // live event, so it may still be the one before — then no name, just the fade).
+    authorOf: (n) => {
+      const author = latestArt.current?.versions.find((v) => v.n === n)?.author ?? ""
+      return author && author === me?.name ? "You" : author
     },
     onBlockMore: () => {
       setRail("inspect")
@@ -945,11 +944,11 @@ export function Artifact({ template = false }: { template?: boolean }) {
   inlineEditRef.current = {
     active: inlineEdit.active,
     canEdit: inlineEdit.canEdit,
-    dirty: inlineEdit.dirty,
-    saving: inlineEdit.saving,
     requestExit: inlineEdit.requestExit,
+    done: inlineEdit.done,
     save: inlineEdit.save,
     start: inlineEdit.start,
+    remote: inlineEdit.remote,
   }
   useEffect(() => {
     if (inlineEdit.active) setVisualPin(false)
@@ -958,9 +957,9 @@ export function Artifact({ template = false }: { template?: boolean }) {
   useEffect(() => {
     if (!inlineEdit.active && reloadPendingRef.current) {
       reloadPendingRef.current = false
-      setFrameReload((n) => n + 1)
+      refreshFrame()
     }
-  }, [inlineEdit.active])
+  }, [inlineEdit.active, refreshFrame])
 
   // A row of the changes list: bring its slide on screen, then show the element there.
   const revealChange = (c: EditChange) => {
@@ -1012,9 +1011,16 @@ export function Artifact({ template = false }: { template?: boolean }) {
     // frame is not remounted.
     // The source editor's typed text lives only in React state, which the same
     // navigation drops, so a dirty editor blocks the same way.
-    shouldBlockFn: ({ next }) =>
-      (inlineEdit.blocking || editDirty) && !next.pathname.includes(shortId),
-    enableBeforeUnload: () => inlineEdit.blocking || editDirty,
+    // Inline edits save themselves: leaving first lets what's left finish saving, and
+    // asks only when something still isn't saved (edits that can't reach the server stay
+    // on this device and are sent on the next visit, so they don't count).
+    shouldBlockFn: async ({ next }) => {
+      if (next.pathname.includes(shortId)) return false
+      if (editDirty) return true
+      if (!inlineEditRef.current.active) return false
+      return !(await inlineEditRef.current.done())
+    },
+    enableBeforeUnload: () => inlineEdit.unsaved() || editDirty,
     withResolver: true,
   })
 
@@ -1141,9 +1147,22 @@ export function Artifact({ template = false }: { template?: boolean }) {
       />
     )
 
-  // While inline editing, the shown version stays frozen at the mode-entry head so
-  // a concurrent publish can't reload the frame and wipe typed-but-unsaved text.
+  // While inline editing, the shown version is the one the frame's content is at: saves
+  // and other people's edits sync into the frame in place, and move it.
   const shown = version ?? inlineEdit.frozenVersion ?? art.current_version
+  // The frame's own URL moves only when its content must be loaded: a different
+  // version (or artifact) than the one its document already shows. Leaving edit mode on
+  // the version the frame was synced to loads nothing.
+  const synced = frameContent.current
+  let frameDoc = frameSrc
+  if (!frameDoc || frameDoc.shortId !== shortId) frameDoc = { shortId, version: shown, rev: 0 }
+  else if (
+    frameDoc.version !== shown &&
+    !inlineEdit.active &&
+    !(synced?.shortId === shortId && synced.version === shown)
+  )
+    frameDoc = { ...frameDoc, version: shown }
+  if (frameDoc !== frameSrc) setFrameSrc(frameDoc)
   const dynamicSlots = dynamicQ.data?.slots ?? []
   const dataEnabled = dynamicSlots.length > 0
   // A paper Derive fetched from arXiv is read, not worked on: no file list, no source
@@ -1151,15 +1170,18 @@ export function Artifact({ template = false }: { template?: boolean }) {
   const importedPaper = !!art.import_source
   const referencesEnabled = isPaperBundle(art) && !!bibQ.data && !importedPaper
   const pinnedForShown =
-    pinnedRawToken.current?.shortId === shortId && pinnedRawToken.current.version === shown
+    pinnedRawToken.current?.shortId === shortId &&
+    pinnedRawToken.current.version === frameDoc.version
   // A background failure may leave old metadata available, but an expired capability
   // cannot render it. Surface the retry state instead of leaving Loading preview… forever.
   if (failed && rawTokenStale && !pinnedForShown)
     return <ArtifactLoadError onRetry={() => refetch()} onBack={() => nav({ to: "/" })} />
   // A requested version omitted by the server is not readable. Return the same
   // not-found state as the raw endpoint instead of mounting a frame that will 404.
+  // (An edit session's own version can be on screen a moment before the record lists it.)
   if (
     !loading &&
+    !inlineEdit.active &&
     shown !== art.current_version &&
     !art.public_history &&
     !art.versions.some((v) => v.n === shown)
@@ -1184,11 +1206,12 @@ export function Artifact({ template = false }: { template?: boolean }) {
     !rawTokenStale &&
     (!pinnedRawToken.current ||
       pinnedRawToken.current.shortId !== shortId ||
-      pinnedRawToken.current.version !== shown)
+      pinnedRawToken.current.version !== frameDoc.version)
   )
-    pinnedRawToken.current = { shortId, version: shown, token: art.raw_token }
+    pinnedRawToken.current = { shortId, version: frameDoc.version, token: art.raw_token }
   const rawToken =
-    pinnedRawToken.current?.shortId === shortId && pinnedRawToken.current.version === shown
+    pinnedRawToken.current?.shortId === shortId &&
+    pinnedRawToken.current.version === frameDoc.version
       ? pinnedRawToken.current.token
       : undefined
   // While the record is a list-row seed (placeholder), hold the frame: the seed has no
@@ -1200,10 +1223,11 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // never requested.
   // A link to one section of a document (`?section=<slug>`, as a paper's implementation analysis
   // links its citations) opens the frame at that heading's anchor.
+  // `?r=` loads the same version fresh (its bytes changed on the server).
   const rawSrc =
     seeded || (rawTokenStale && !pinnedForShown)
       ? null
-      : `${rawArtifactUrl(shortId, shown, rawToken)}${search.section ? `#${encodeURIComponent(search.section)}` : ""}`
+      : `${rawArtifactUrl(shortId, frameDoc.version, rawToken)}${frameDoc.rev ? `?r=${frameDoc.rev}` : ""}${search.section ? `#${encodeURIComponent(search.section)}` : ""}`
   // Direct publishing is a workbench capability.
   const canPublish = !isGuest && (art.my_role === "editor" || art.my_role === "owner")
   const runtimeDiagnostic = canPublish ? runtimeDiagnosticFor(runtimeError, shortId, shown) : null
@@ -1338,11 +1362,12 @@ export function Artifact({ template = false }: { template?: boolean }) {
       return
     }
     if (inlineEdit.active) {
-      if (inlineEdit.dirty) {
-        inlineEdit.requestExit()
-        return
-      }
-      inlineEdit.done()
+      void inlineEdit.done().then((left) => {
+        if (!left) return
+        setPanel("hidden")
+        deckOrganizer.start()
+      })
+      return
     }
     setPanel("hidden")
     deckOrganizer.start()
@@ -1358,7 +1383,6 @@ export function Artifact({ template = false }: { template?: boolean }) {
   const documentEl = (
     <ArtifactDocument
       shown={shown}
-      reloadKey={frameReload}
       // While inline editing, the frozen view IS the working version: a concurrent
       // publish must not surface the past-version strip mid-session (its Restore
       // would publish over the head while edits are pending; the warning toast
@@ -1390,10 +1414,13 @@ export function Artifact({ template = false }: { template?: boolean }) {
       // A frame (re)load while inline editing means the edit session's document is
       // gone — the hook exits and warns rather than letting a later Save silently
       // no-op over discarded edits.
+      positionFor={() => ({ ...place.current(), slideId: deck?.slides[deck.i]?.id })}
       onFrameLoad={() => {
         onFrameLoad()
+        frameContent.current = { shortId, version: frameDoc.version }
+        // Back to the reader's place: the URL's on the first load, the current one after.
+        post({ type: "restore-position", ...place.restore() })
         inlineEdit.onFrameGone()
-        if (resume.current?.version === shown) setResumeLoad((n) => n + 1)
       }}
       onToggleDiff={() => setView(view === "diff" ? "preview" : "diff")}
       onRestore={() => restore(shown)}
@@ -1529,7 +1556,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
       </>
     )
 
-  const unsaved = unsavedEditsCopy(inlineEdit.dirty)
+  const unsaved = unsavedEditsCopy
   // Which mode holds the unsaved work decides the leave dialog's wording and what
   // "discard" means: the two modes never hold text at the same time (the source editor
   // unmounts the frame, and the inline mode can't be entered over it).
@@ -1806,9 +1833,9 @@ export function Artifact({ template = false }: { template?: boolean }) {
                 unsaved work and no visible Save. */}
             {inlineEdit.active && !editing && (
               <EditBar
-                dirty={inlineEdit.dirty}
-                canPublish={effectiveCanPublish}
-                saving={inlineEdit.saving}
+                status={inlineEdit.status}
+                conflicts={inlineEdit.conflicts}
+                closing={inlineEdit.closing}
                 touch={coarsePointer}
                 canUndo={inlineEdit.tools.canUndo}
                 canRedo={inlineEdit.tools.canRedo}
@@ -1822,9 +1849,8 @@ export function Artifact({ template = false }: { template?: boolean }) {
                 onViewport={setEditViewport}
                 onRevealChange={revealChange}
                 onRevertChange={(c) => inlineEdit.revertChange(c.id)}
-                onSave={inlineEdit.save}
-                onDiscard={inlineEdit.discard}
-                onDone={inlineEdit.done}
+                onResolve={inlineEdit.resolveConflict}
+                onDone={inlineEdit.requestExit}
               />
             )}
             {editing ? (
@@ -1962,8 +1988,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
               inspectPanel={
                 inspectEnabled ? (
                   <ArtifactInspect
-                    dirty={inlineEdit.dirty}
-                    saving={inlineEdit.saving}
+                    status={inlineEdit.status}
                     canUndo={inlineEdit.tools.canUndo}
                     canRedo={inlineEdit.tools.canRedo}
                     canFormat={inlineEdit.tools.canFormat}
@@ -1980,8 +2005,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
                     onUndo={inlineEdit.undo}
                     onRedo={inlineEdit.redo}
                     onFormat={inlineEdit.format}
-                    onSave={inlineEdit.save}
-                    onDone={inlineEdit.done}
+                    onDone={inlineEdit.requestExit}
                   />
                 ) : undefined
               }

@@ -46,4 +46,7 @@ export const STORAGE_KEYS = {
   activitySeen: "derive.activity.seen",
   /** The current visit's snapshot of a seen cursor (sessionStorage) — see use-seen-cursor. */
   seenVisit: "derive.seen.visit",
+  // Inline edits the server hasn't confirmed yet, per artifact (offline, or a tab closed
+  // mid-save): resent on the next visit — see pages/artifact/edit-queue.
+  editQueue: "derive.edit-queue",
 } as const

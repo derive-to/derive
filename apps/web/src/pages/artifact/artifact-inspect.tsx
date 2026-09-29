@@ -5,8 +5,9 @@ import { SectionTitle } from "@/components/shared/section-title"
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { cn } from "@/lib/utils"
+import { StatusDot, statusLabel } from "./edit-bar"
 import type { RuntimeDiagnostic } from "./render-stage"
-import type { EditBlock } from "./use-inline-edit"
+import type { EditBlock, SaveStatus } from "./use-inline-edit"
 
 type FormatKind = "b" | "i" | "a"
 
@@ -15,12 +16,11 @@ type FormatKind = "b" | "i" | "a"
  *
  * The document remains the canvas: click text and type there, or manipulate an
  * element in place. Inspect explains the current context and exposes the same
- * formatting, history, and save commands as the edit bar. Both surfaces drive one
+ * formatting and history commands, and the same save status, as the edit bar. Both surfaces drive one
  * frame-owned history stack, so Undo has one meaning across text and layout edits.
  */
 export function ArtifactInspect({
-  dirty,
-  saving,
+  status,
   canUndo,
   canRedo,
   canFormat,
@@ -37,11 +37,9 @@ export function ArtifactInspect({
   onUndo,
   onRedo,
   onFormat,
-  onSave,
   onDone,
 }: {
-  dirty: number
-  saving: boolean
+  status: SaveStatus
   canUndo: boolean
   canRedo: boolean
   canFormat: boolean
@@ -70,7 +68,6 @@ export function ArtifactInspect({
   onUndo: () => void
   onRedo: () => void
   onFormat: (kind: FormatKind, href?: string) => void
-  onSave: () => void
   onDone: () => void
 }) {
   return (
@@ -94,19 +91,17 @@ export function ArtifactInspect({
           canFormat={canFormat}
           kind={textKind || "Text"}
           selectedText={selectedText}
-          saving={saving}
           onFormat={onFormat}
         />
       ) : block && onBlockCrumb && onBlockWidth ? (
         <BlockInspect
           block={block}
           attention={blockAttention}
-          saving={saving}
           onCrumb={onBlockCrumb}
           onWidth={onBlockWidth}
         />
       ) : video && onSceneEdit ? (
-        <SceneInspect video={video} onEdit={onSceneEdit} saving={saving} />
+        <SceneInspect video={video} onEdit={onSceneEdit} />
       ) : (
         <ChooseInspect />
       )}
@@ -114,13 +109,11 @@ export function ArtifactInspect({
       {runtimeDiagnostic && <RuntimeDiagnostics diagnostic={runtimeDiagnostic} />}
 
       <SessionControls
-        dirty={dirty}
-        saving={saving}
+        status={status}
         canUndo={canUndo}
         canRedo={canRedo}
         onUndo={onUndo}
         onRedo={onRedo}
-        onSave={onSave}
         onDone={onDone}
       />
     </section>
@@ -163,7 +156,6 @@ function RuntimeDiagnostics({ diagnostic }: { diagnostic: RuntimeDiagnostic }) {
 function SceneInspect({
   video,
   onEdit,
-  saving,
 }: {
   video: {
     i: number
@@ -175,7 +167,6 @@ function SceneInspect({
     caption: string
   }
   onEdit: (edit: Record<string, unknown>) => void
-  saving: boolean
 }) {
   const update = (values: Record<string, unknown>) =>
     onEdit({ op: "update", id: video.id, ...values })
@@ -201,7 +192,6 @@ function SceneInspect({
             max={30}
             step={0.5}
             defaultValue={video.durationMs / 1000}
-            disabled={saving}
             className="h-9 min-w-0 flex-1 rounded-md border border-input bg-transparent px-2.5 text-sm text-foreground"
             onBlur={(e) => update({ durationMs: Math.round(Number(e.target.value) * 1000) })}
           />
@@ -214,7 +204,6 @@ function SceneInspect({
           data-testid="artifact-inspect-scene-transition"
           key={`${video.id}-transition-${video.transition}`}
           defaultValue={video.transition}
-          disabled={saving}
           className="h-9 rounded-md border border-input bg-transparent px-2.5 text-sm text-foreground"
           onChange={(e) => update({ transition: e.target.value })}
         >
@@ -231,7 +220,6 @@ function SceneInspect({
           key={`${video.id}-caption-${video.caption}`}
           defaultValue={video.caption}
           maxLength={500}
-          disabled={saving}
           className="min-h-16 resize-y rounded-md border border-input bg-transparent px-2.5 py-2 text-sm text-foreground"
           onBlur={(e) => update({ caption: e.target.value })}
         />
@@ -247,7 +235,7 @@ function SceneInspect({
             max={2}
             step={0.1}
             defaultValue={video.transitionMs / 1000}
-            disabled={saving || video.transition === "cut"}
+            disabled={video.transition === "cut"}
             className="h-9 min-w-0 flex-1 rounded-md border border-input bg-transparent px-2.5 text-sm text-foreground"
             onBlur={(e) => update({ transitionMs: Math.round(Number(e.target.value) * 1000) })}
           />
@@ -259,7 +247,7 @@ function SceneInspect({
           data-testid="artifact-inspect-scene-earlier"
           variant="outline"
           size="sm"
-          disabled={saving || video.i === 0}
+          disabled={video.i === 0}
           onClick={() => onEdit({ op: "move", id: video.id, direction: "previous" })}
         >
           Move earlier
@@ -268,7 +256,7 @@ function SceneInspect({
           data-testid="artifact-inspect-scene-later"
           variant="outline"
           size="sm"
-          disabled={saving || video.i === video.total - 1}
+          disabled={video.i === video.total - 1}
           onClick={() => onEdit({ op: "move", id: video.id, direction: "next" })}
         >
           Move later
@@ -277,7 +265,6 @@ function SceneInspect({
           data-testid="artifact-inspect-scene-duplicate"
           variant="outline"
           size="sm"
-          disabled={saving}
           onClick={() => onEdit({ op: "duplicate", id: video.id })}
         >
           Duplicate
@@ -286,7 +273,7 @@ function SceneInspect({
           data-testid="artifact-inspect-scene-delete"
           variant="outline"
           size="sm"
-          disabled={saving || video.total <= 1}
+          disabled={video.total <= 1}
           onClick={() => onEdit({ op: "delete", id: video.id })}
         >
           Delete
@@ -302,13 +289,11 @@ function SceneInspect({
 function BlockInspect({
   block,
   attention,
-  saving,
   onCrumb,
   onWidth,
 }: {
   block: EditBlock
   attention: number
-  saving: boolean
   onCrumb: (index: number) => void
   onWidth: (width: number | null) => void
 }) {
@@ -361,7 +346,6 @@ function BlockInspect({
             max={100}
             placeholder="Auto"
             defaultValue={block.width ?? ""}
-            disabled={saving}
             className="h-8 w-20 rounded-md border border-input bg-transparent px-2 text-sm text-foreground"
             onBlur={(e) => commit(e.target.value)}
             onKeyDown={(e) => {
@@ -373,7 +357,7 @@ function BlockInspect({
             variant="outline"
             size="sm"
             data-testid="artifact-inspect-block-auto"
-            disabled={saving || block.width === null}
+            disabled={block.width === null}
             onClick={() => onWidth(null)}
           >
             Auto
@@ -402,13 +386,11 @@ function TextInspect({
   canFormat,
   kind,
   selectedText,
-  saving,
   onFormat,
 }: {
   canFormat: boolean
   kind: string
   selectedText: string
-  saving: boolean
   onFormat: (kind: FormatKind, href?: string) => void
 }) {
   const [href, setHref] = useState<string | null>(null)
@@ -447,21 +429,21 @@ function TextInspect({
           testId="artifact-inspect-bold"
           icon="bold"
           label="Bold"
-          disabled={!canFormat || saving}
+          disabled={!canFormat}
           onClick={() => onFormat("b")}
         />
         <FormatButton
           testId="artifact-inspect-italic"
           icon="italic"
           label="Italic"
-          disabled={!canFormat || saving}
+          disabled={!canFormat}
           onClick={() => onFormat("i")}
         />
         <FormatButton
           testId="artifact-inspect-link"
           icon="link"
           label="Link"
-          disabled={(!canFormat && href === null) || saving}
+          disabled={!canFormat && href === null}
           onClick={() => setHref("")}
         />
       </fieldset>
@@ -495,7 +477,7 @@ function TextInspect({
             size="sm"
             type="submit"
             data-testid="artifact-inspect-link-apply"
-            disabled={!href.trim() || saving}
+            disabled={!href.trim()}
           >
             Apply
           </Button>
@@ -578,22 +560,18 @@ function ChooseInspect() {
 }
 
 function SessionControls({
-  dirty,
-  saving,
+  status,
   canUndo,
   canRedo,
   onUndo,
   onRedo,
-  onSave,
   onDone,
 }: {
-  dirty: number
-  saving: boolean
+  status: SaveStatus
   canUndo: boolean
   canRedo: boolean
   onUndo: () => void
   onRedo: () => void
-  onSave: () => void
   onDone: () => void
 }) {
   return (
@@ -601,7 +579,9 @@ function SessionControls({
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="font-medium text-foreground text-xs">Edit history</p>
-          <p className="mt-0.5 text-2xs text-muted-foreground">Text and elements share one stack</p>
+          <p className="mt-0.5 text-2xs text-muted-foreground">
+            Text and elements share one stack, across saves
+          </p>
         </div>
         <div className="flex items-center gap-1">
           <Button
@@ -610,7 +590,7 @@ function SessionControls({
             aria-label="Undo"
             title="Undo"
             data-testid="artifact-inspect-undo"
-            disabled={!canUndo || saving}
+            disabled={!canUndo}
             onClick={onUndo}
           >
             <Icon name="undo" size={15} />
@@ -622,7 +602,7 @@ function SessionControls({
             aria-label="Redo"
             title="Redo"
             data-testid="artifact-inspect-redo"
-            disabled={!canRedo || saving}
+            disabled={!canRedo}
             onClick={onRedo}
           >
             <Icon name="redo" size={15} />
@@ -634,33 +614,14 @@ function SessionControls({
       <div
         data-testid="artifact-inspect-status"
         role="status"
-        className={cn(
-          "mt-4 flex items-center gap-2 rounded-md px-3 py-2 text-sm",
-          dirty > 0 ? "bg-primary/5 text-foreground" : "bg-muted/40 text-muted-foreground",
-        )}
+        className="mt-4 flex items-center gap-2 rounded-md bg-muted/40 px-3 py-2 text-foreground text-sm"
       >
-        <span
-          aria-hidden
-          className={cn(
-            "size-1.5 rounded-full",
-            dirty > 0 ? "bg-primary" : "bg-muted-foreground/50",
-          )}
-        />
-        {dirty > 0 ? `${dirty} unsaved change${dirty === 1 ? "" : "s"}` : "No unsaved changes"}
+        <StatusDot status={status} />
+        {statusLabel(status)}
       </div>
 
       <div className="mt-3 flex items-center gap-2">
-        {dirty > 0 && (
-          <Button data-testid="artifact-inspect-save" loading={saving} onClick={() => onSave()}>
-            Save changes
-          </Button>
-        )}
-        <Button
-          variant={dirty > 0 ? "ghost" : "outline"}
-          data-testid="artifact-inspect-done"
-          disabled={saving}
-          onClick={() => onDone()}
-        >
+        <Button variant="outline" data-testid="artifact-inspect-done" onClick={() => onDone()}>
           Done editing
         </Button>
       </div>

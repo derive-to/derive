@@ -85,6 +85,9 @@ export function useArtifactFrame(p: {
    *  prompt so every mini-app gets the same flow without embedding auth UI. */
   authenticated: boolean
   onSharedStateAuthRequired: () => void
+  /** Where the reader is in the document (see the client's `positionNow`), as they
+   *  scroll: the page keeps it in its URL. */
+  onPosition?: (at: string) => void
 }) {
   const {
     comments,
@@ -100,6 +103,8 @@ export function useArtifactFrame(p: {
   const frame = useRef<HTMLIFrameElement>(null)
   const onVisualPinRef = useRef(p.onVisualPin)
   onVisualPinRef.current = p.onVisualPin
+  const onPositionRef = useRef(p.onPosition)
+  onPositionRef.current = p.onPosition
   const presentWrap = useRef<HTMLDivElement>(null)
   const [frameReady, setFrameReady] = useState(0)
   const [runtimeReady, setRuntimeReady] = useState(false)
@@ -404,6 +409,8 @@ export function useArtifactFrame(p: {
         setAnchorTops((prev) => (sameTops(prev, tops) ? prev : tops))
       } else if (d.type === "scroll") {
         updateGeom(d)
+      } else if (d.type === "position" && typeof d.at === "string") {
+        onPositionRef.current?.(d.at.slice(0, 300))
       } else if (d.type === "anchor-hover") setHoverThread(d.id ?? null)
       else if (d.type === "review-mode-ended") onVisualPinRef.current?.(null)
       else if (d.type === "anchor-click") {
@@ -623,8 +630,6 @@ export function useArtifactFrame(p: {
     anchorConf,
     anchorTops,
     subscribeGeom,
-    /** Where the document is scrolled to now (the last position the frame reported). */
-    frameScrollY: () => geomRef.current.scrollY,
     runtimeError,
     runtimeReady,
   }
