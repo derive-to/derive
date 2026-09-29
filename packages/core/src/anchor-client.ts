@@ -6592,14 +6592,16 @@ interface ElReg {
       const replaced = (d: Element) => swaps.some(([x]) => x === d || x.contains(d))
       /** Each paired page element as it is now (an editor span becomes its tag). */
       const became = new Map<Element, Element>()
+      const spacedSet = new Set(lined.spaced)
       keepingSelection(document, (moved) => {
         for (const [ne, d] of lined.pairs) {
-          if (replaced(d)) continue
+          if (swaps.length && replaced(d)) continue
           const o = oldId.get(d)
           const now = ne.made ? adopt(d, ne.made, moved) : d
-          if (!ne.made) now.setAttribute(SRC_ATTR, String(ne.id))
+          // Most of a long page keeps its id: writing it again is a mutation for nothing.
+          if (!ne.made && o !== ne.id) now.setAttribute(SRC_ATTR, String(ne.id))
           pageFor.set(ne.id, now)
-          became.set(d, now)
+          if (spacedSet.has(d)) became.set(d, now)
           if (o !== undefined) oldToNew.set(o, ne.id)
         }
       })
@@ -6654,14 +6656,18 @@ interface ElReg {
     }
     // What the new version no longer has (a save removed it and undo brought it back)
     // saves as a copy of a block that opens the same way, or else refuses to save.
-    for (const [el, n] of plan) if (n !== null) renumber(el, n)
-    const opening = new Map<string, number>()
-    for (const el of stampedIn(document.body)) {
-      const n = srcOf(el)
-      if (n !== null && !opening.has(openingOf(el))) opening.set(openingOf(el), n)
-    }
+    for (const [el, n] of plan) if (n !== null && srcOf(el) !== n) renumber(el, n)
     const standIns = new Set<Element>()
     const unresolved = new Set(plan.filter(([, n]) => n === null).map(([el]) => el))
+    // Every opening tag on the page, for what the new version no longer has (rare: read
+    // only then).
+    const opening = new Map<string, number>()
+    if (unresolved.size)
+      for (const el of stampedIn(document.body)) {
+        const n = srcOf(el)
+        const key = n === null ? "" : openingOf(el)
+        if (n !== null && !opening.has(key)) opening.set(key, n)
+      }
     for (const [el, n] of plan)
       if (n === null) {
         // On the page only a neighbour will do (what an Enter makes); for one undo holds,
@@ -6708,11 +6714,14 @@ interface ElReg {
     const next: Baseline = new Map()
     for (const [el, parts] of base) {
       const now = standFor(el)
-      if (now)
-        next.set(
-          now,
-          parts.map((q) => (typeof q === "string" ? q : (standFor(q) ?? q))),
-        )
+      if (!now) continue
+      // The same children standing for themselves (nearly every element): the same parts.
+      let same = true
+      for (const q of parts) if (typeof q !== "string" && standFor(q) !== q) same = false
+      next.set(
+        now,
+        same ? parts : parts.map((q) => (typeof q === "string" ? q : (standFor(q) ?? q))),
+      )
     }
     for (const [el, parts] of made) next.set(el, parts)
     saved = next

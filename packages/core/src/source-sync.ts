@@ -126,15 +126,19 @@ export function newPageOf(
     for (let e = parent.get(el); e; e = parent.get(e)) if (e === root) return true
     return false
   }
-  const olds = [...base.keys()]
-    .filter((el) => srcOf(el) !== null)
-    .sort((a, b) => (srcOf(a) as number) - (srcOf(b) as number))
+  // Each id read once: a sort that reads attributes in its comparator reads them
+  // millions of times on a long deck.
+  const olds: [Element, number][] = []
+  for (const el of base.keys()) {
+    const n = srcOf(el)
+    if (n !== null) olds.push([el, n])
+  }
+  olds.sort((a, b) => a[1] - b[1])
   const out: NewEl[] = []
   let skip: Element | null = null
-  for (const el of olds) {
+  for (const [el, o] of olds) {
     if (skip && within(el, skip)) continue
     skip = null
-    const o = srcOf(el) as number
     const made = roots.get(o)
     if (made) {
       for (const m of stampedIn(made))
