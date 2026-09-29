@@ -318,6 +318,49 @@ test("only the host page can drive editing: a message from any other window is i
   await enterEditMode(owner)
 })
 
+test("editing takes orders only from the app's own origin, even from the window framing the page", async ({
+  owner,
+}) => {
+  // Any site can frame a document (an embed), so the parent being the one that asks
+  // proves nothing: the same editor page framed elsewhere must not enter edit mode.
+  await seed(owner)
+  await expect(doc(owner).locator("#one")).toBeVisible()
+  const src = await owner.locator("iframe[title]:not([aria-hidden])").getAttribute("src")
+  const url = new URL(src ?? "", owner.url()).toString()
+  /** Frame the editor page from `host`, ask it to enter edit mode, and report what it
+   *  answered (entering edit mode on a stamped page reports its base: `edit-base`). */
+  const askFrom = (page: Page, frameUrl: string) =>
+    page.evaluate(async (frameUrl) => {
+      const f = document.createElement("iframe")
+      f.src = frameUrl
+      document.body.append(f)
+      await new Promise((r) => f.addEventListener("load", r, { once: true }))
+      await new Promise((r) => setTimeout(r, 300))
+      const heard: string[] = []
+      window.addEventListener("message", (e) => {
+        if (e.source === f.contentWindow) heard.push(String(e.data?.type))
+      })
+      f.contentWindow?.postMessage({ source: "derive-host", type: "edit-mode", on: true }, "*")
+      await new Promise((r) => setTimeout(r, 600))
+      return heard
+    }, frameUrl)
+  // A page on another origin of this same machine (a public one may not frame it at all).
+  const api = new URL(url)
+  const elsewhere = await owner.context().newPage()
+  // The same server by its loopback address, whichever one it listens on.
+  for (const host of ["127.0.0.1", "[::1]"]) {
+    const ok = await elsewhere
+      .goto(`http://${host}:${api.port}/healthz`)
+      .then(() => true)
+      .catch(() => false)
+    if (ok) break
+  }
+  expect(new URL(elsewhere.url()).origin).not.toBe(new URL(owner.url()).origin)
+  expect(await askFrom(elsewhere, url)).not.toContain("edit-base")
+  // The same page framed by the app itself is driven as ever.
+  expect(await askFrom(owner, url)).toContain("edit-base")
+})
+
 test("replaces deck text when its partial layout schema cannot be scanned", async ({ owner }) => {
   const shortId = await publishArtifact(
     owner,

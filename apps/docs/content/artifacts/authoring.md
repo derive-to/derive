@@ -75,6 +75,8 @@ compatible client. Messages are tagged with a `source` field.
 
 ### Host → artifact frame (`source: "derive-host"`)
 
+The client acts only on messages from the window that frames it. Editing messages (`edit-*`) must also come from the app's own origin: an editor's page carries the allowed origins on its root as `data-derive-host`, because any site can frame a document.
+
 | `type` | payload | meaning |
 |---|---|---|
 | `anchors` | `{ anchors: [{ id, exact, prefix, suffix }] }` | paint these anchors as highlights; reply with `anchors-resolved` |

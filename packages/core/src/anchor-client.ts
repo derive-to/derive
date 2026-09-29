@@ -6584,7 +6584,7 @@ interface ElReg {
       // This page's own save: the page already is the new version; line the two up.
       const roots = new Map<number, Element>()
       for (const patch of r.patches) {
-        const p = patchRoot(patch.html, document)
+        const p = patchRoot(patch.html, document, byOld.get(patch.old))
         if (!p) return { ok: false, reload: true, lost: own.rev !== rev }
         roots.set(patch.old, p)
       }
@@ -6838,12 +6838,22 @@ interface ElReg {
       by: c.by,
     }))
 
+  /** The app origins this page was served for (space-separated `data-derive-host`). */
+  const appOrigins = (document.documentElement.getAttribute("data-derive-host") ?? "")
+    .split(/\s+/)
+    .filter(Boolean)
+  const fromApp = (e: MessageEvent) => appOrigins.includes(e.origin)
   window.addEventListener("message", (e: MessageEvent) => {
     const d = e.data
     // Only the page that framed this document drives it: another window claiming to be
     // the host must not be able to toggle edit mode or push markup into the page.
     if (e.source !== window.parent || window.parent === window || d?.source !== "derive-host")
       return
+    // A document can be framed by any site (an embed), so being the parent proves little.
+    // What edits it — the edit mode, saves, syncs that swap markup in, the edit bar —
+    // is taken only from a parent at the app's own origin, which the server named on
+    // this page when it served it to an editor.
+    if (typeof d.type === "string" && /^(?:edit-|video-edit$)/.test(d.type) && !fromApp(e)) return
     if (d.type === "anchors") applyAnchors(d.anchors || [])
     else if (d.type === "remeasure") reportRects()
     else if (d.type === "emphasize") setOn(d.id)
@@ -6905,7 +6915,10 @@ interface ElReg {
     } else if (d.type === "edit-sync") {
       const own = d.own ? lastCollect : null
       if (d.own) lastCollect = null
-      const result = applySync(d as SyncReply, typeof d.by === "string" ? d.by : "", own)
+      // Only a page being edited takes markup in place (a reader's page loads anew).
+      const result = editOn
+        ? applySync(d as SyncReply, typeof d.by === "string" ? d.by : "", own)
+        : { ok: false, reload: true }
       post({ type: "edit-synced", nonce: d.nonce, ...result })
       lastState = ""
       postDirty()

@@ -123,7 +123,7 @@ import {
   toSearchHits,
   workspaceSearchReport,
 } from "../lib/search"
-import { editorPage, slotValuesOf } from "../lib/serve-content"
+import { editorHost, editorPage, slotValuesOf } from "../lib/serve-content"
 import { normalizeTags, parseTagsField } from "../lib/tags"
 import { INLINE_EDIT_COALESCE_MS } from "../lib/version-cache"
 import { parseLinkedWorkflowFacts } from "../lib/workflow-facts"
@@ -2847,7 +2847,13 @@ export const artifactRoutes = (ctx: AppContext) => {
           listVersions: meta.listVersions.bind(meta),
           sourceText,
           page: (text, contentType, version) =>
-            editorPage(text, contentType, artifact.title, { version }, slots),
+            editorPage(
+              text,
+              contentType,
+              artifact.title,
+              { version, host: editorHost(deps) },
+              slots,
+            ),
         },
         artifact,
         request,

@@ -27,6 +27,7 @@ import {
   sourceSha,
   stampSourceIds,
   validateDynamicValue,
+  withHostMarker,
 } from "@derive/core"
 import type { Context } from "hono"
 import { IMMUTABLE_CACHE, RAW_HEADERS, rewriteAbsoluteUrls, toBody } from "./http"
@@ -68,6 +69,26 @@ const withDeckStructure = (doc: string, contentType: string): string => {
 const servedHtml = (doc: string, contentType: string, slots: Map<string, DynamicValue>) =>
   applyDynamicBindings(withDeckStructure(doc, contentType), slots)
 
+/** What an editor's page is stamped with: the version it shows, and the app origins
+ *  (space-separated) whose pages may drive its editor. */
+export interface EditorStamp {
+  version: number
+  host?: string
+}
+/** This deployment's app origins: where the workbench that frames an editor runs. */
+export const editorHost = (deps: { baseUrl: string; webOrigins?: string[] }): string =>
+  [
+    ...new Set(
+      [deps.baseUrl, ...(deps.webOrigins ?? [])].flatMap((u) => {
+        try {
+          return [new URL(u).origin]
+        } catch {
+          return []
+        }
+      }),
+    ),
+  ].join(" ")
+
 /**
  * The page an editor's frame loads for stored source (an HTML page, deck or Markdown
  * document), before runtime scripts: source ids stamped, then the same serve-time
@@ -79,7 +100,7 @@ export const editorPage = async (
   text: string,
   contentType: string,
   title: string | null,
-  editor: { version: number },
+  editor: EditorStamp,
   slots: Map<string, DynamicValue>,
 ): Promise<string | null> => {
   if (contentType === "text/markdown")
@@ -87,7 +108,11 @@ export const editorPage = async (
       ? null
       : renderMarkdownForEditor(text, title, editor, { dynamic: slots })
   if (!isSourceEditable(contentType)) return null
-  const stamped = stampSourceIds(text, { version: editor.version, sha: await sourceSha(text) })
+  const stamped = stampSourceIds(text, {
+    version: editor.version,
+    sha: await sourceSha(text),
+    host: editor.host,
+  })
   return servedHtml(stamped, contentType, slots)
 }
 
@@ -155,7 +180,7 @@ export const serveContent = async (
    *  with source ids stamped for the inline editor (@derive/core source-edit,
    *  markdown-source). Never for a reader, and never cached where a reader could be
    *  handed it. */
-  editor?: { version: number },
+  editor?: EditorStamp,
 ) => {
   const slots = slotValuesOf(dynamic)
   // Bound by declaration: the rendered document carries a binding attribute on a real
@@ -172,6 +197,8 @@ export const serveContent = async (
     }
   }
   const headers = hdrs(false)
+  // An editor's page of any kind names the app origins that may drive its editor.
+  const forEditor = (html: string) => withHostMarker(html, editor?.host)
   const runtimeScripts = (isBound: boolean) =>
     SHARED_STATE_SCRIPT + (isBound ? DYNAMIC_DATA_SCRIPT : "")
   const rf = (doc: string) => (reflow ? reflowHtml(doc) : doc)
@@ -255,7 +282,7 @@ export const serveContent = async (
       // Bundle pages get the anchor client too — comments stick everywhere.
       // Bundle pages are never seeded, so only a substituted row makes one bound.
       const out = entry.type.startsWith("text/html")
-        ? withRuntime(rf(rewritten), slots.size > 0) + marks + append
+        ? withRuntime(rf(forEditor(rewritten)), slots.size > 0) + marks + append
         : rewritten
       return c.body(out, 200, { ...headers, "Content-Type": entry.type })
     }
@@ -272,7 +299,8 @@ export const serveContent = async (
       // would otherwise render it as a stray `<hr>` + heading. The parsed fields surface
       // as skill chrome around this iframe, not in the document body.
       const body = parseFrontmatter(new TextDecoder().decode(data)).body
-      const html = withSharedState(await renderMarkdown(body, title), slots.size > 0) + append
+      const html =
+        withSharedState(forEditor(await renderMarkdown(body, title)), slots.size > 0) + append
       return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
     }
     // A paper's .tex pages render through the LaTeX path with the bundle's own files in
@@ -294,7 +322,7 @@ export const serveContent = async (
           return f?.type.startsWith("image/") ? `${prefix}${clean}` : null
         },
       })
-      const html = withSharedState(rendered.html) + append
+      const html = withSharedState(forEditor(rendered.html)) + append
       return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
     }
     // The fall-through serves a bundle's other files verbatim (a figure, a stylesheet).
@@ -325,7 +353,7 @@ export const serveContent = async (
       onMismatch?.()
       const doc = applyDynamicBindings(text, slots)
       const isBound = bound(doc)
-      return c.body(htmlBody(doc, isBound), 200, {
+      return c.body(htmlBody(forEditor(doc), isBound), 200, {
         ...hdrs(isBound),
         "Content-Type": "text/html; charset=utf-8",
       })
@@ -354,7 +382,7 @@ export const serveContent = async (
     // as for markdown.
     const text = new TextDecoder().decode(data)
     const rendered = renderLatex(text, title, { dynamic: slots })
-    const html = withSharedState(rendered.html) + append
+    const html = withSharedState(forEditor(rendered.html)) + append
     return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
   }
 
@@ -369,7 +397,10 @@ export const serveContent = async (
       ? ((await editorPage(text, content.content_type, title, editor, slots)) as string)
       : servedHtml(text, content.content_type, slots)
     const isBound = bound(doc)
-    return c.body(htmlBody(doc, isBound), 200, { ...hdrs(isBound, stamp), "Content-Type": ct })
+    return c.body(htmlBody(forEditor(doc), isBound), 200, {
+      ...hdrs(isBound, stamp),
+      "Content-Type": ct,
+    })
   }
   return c.body(toBody(data), 200, { ...headers, "Content-Type": ct })
 }

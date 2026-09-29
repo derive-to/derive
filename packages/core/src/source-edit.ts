@@ -166,16 +166,41 @@ export const sourceMap = async (html: string): Promise<{ sha: string; hashes: So
   return { sha, hashes }
 }
 
+/** The app origins (space-separated) whose pages may drive this document's editor: the
+ *  in-frame client takes editing messages only from its parent at one of these. */
+export const hostMarker = (host: string | undefined): string =>
+  host ? ` data-derive-host="${escapeHtml(host)}"` : ""
+/** An editor's page of any kind (a LaTeX paper, a bundle's page) carrying `host` first on
+ *  its root (a page stamped with it already is left alone). Without an `<html>` tag one
+ *  goes before the first element, as stampSourceIds does. */
+export const withHostMarker = (html: string, host: string | undefined): string => {
+  if (!host) return html
+  // Past a leading doctype and comments: the root tag, or where one goes.
+  const lead = /^(?:\s|<!--[\s\S]*?-->|<!doctype[^>]*>)*/i.exec(html)?.[0].length ?? 0
+  const root = /^<html\b[^>]*/i.exec(html.slice(lead))
+  // Ours comes first: a document's own `data-derive-host` loses (the parser keeps the
+  // first of a repeated attribute).
+  if (root && /\sdata-derive-host="[^"]*"/i.exec(root[0])?.[0] === hostMarker(host)) return html
+  const at = root ? lead + 5 : lead
+  return (
+    html.slice(0, at) + (root ? hostMarker(host) : `<html${hostMarker(host)}>`) + html.slice(at)
+  )
+}
+
 /**
  * The editor's view of a stored document: `data-derive-src="N"` inserted right after the
  * tag name of every body element, and the base identity on the root element
- * (`data-derive-src-version`, `data-derive-src-sha`). Byte-identical to the input apart from
+ * (`data-derive-src-version`, `data-derive-src-sha`), with the app origins allowed to drive
+ * the editor (`data-derive-host`, see hostMarker). Byte-identical to the input apart from
  * those attributes. A document without an `<html>` tag gets one before its first element;
  * the parser merges its attributes onto the root it has already implied.
  */
-export const stampSourceIds = (html: string, base: { version: number; sha: string }): string => {
+export const stampSourceIds = (
+  html: string,
+  base: { version: number; sha: string; host?: string },
+): string => {
   const els = indexElements(html)
-  const marker = ` data-derive-src-version="${base.version}" data-derive-src-sha="${escapeHtml(base.sha)}"`
+  const marker = ` data-derive-src-version="${base.version}" data-derive-src-sha="${escapeHtml(base.sha)}"${hostMarker(base.host)}`
   const root = els.find((el) => el.tag.name === "html")
   const inserts: [number, string][] = []
   if (!root && els[0]) inserts.push([els[0].tag.start, `<html${marker}>`])

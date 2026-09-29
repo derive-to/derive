@@ -729,6 +729,8 @@ describe("exact-source inline saves (ops)", () => {
     const map = await sourceMapOf(short_id)
     expect(stamped).toContain(`data-derive-src-version="1" data-derive-src-sha="${map.sha}"`)
     expect(stamped).toContain(`<h1 data-derive-src="${idOf(stamped, "h1")}">Launch plan</h1>`)
+    // The app origin that may drive its editor: the frame takes editing only from there.
+    expect(stamped).toContain('data-derive-host="http://derive.test"')
     expect(editorPage.headers.get("cache-control")).toMatch(/^private,/)
 
     // A reader's capability is a different URL, and its bytes carry no editor ids.
@@ -736,7 +738,9 @@ describe("exact-source inline saves (ops)", () => {
       (await detail(short_id, as(owner.email))).raw_token,
     )
     const readerPage = await framePage(short_id, 1, {})
-    expect(await readerPage.text()).not.toContain("data-derive-src")
+    const readerBytes = await readerPage.text()
+    expect(readerBytes).not.toContain("data-derive-src")
+    expect(readerBytes).not.toContain("data-derive-host")
     expect(readerPage.headers.get("cache-control")).not.toMatch(/private/)
     // The cookie route has no capability to say who asked, so it never stamps.
     const cookiePage = await opsApp.request(`/raw/${short_id}/v/1/index.html`, {
@@ -914,7 +918,9 @@ describe("exact-source inline saves (ops)", () => {
     const editorPage = await framePage(short_id, 1, as(owner.email))
     const stamped = await editorPage.text()
     const { sha, hashes } = await sourceMapOf(short_id)
-    expect(stamped).toContain(`data-derive-src-version="1" data-derive-src-sha="${sha}"`)
+    expect(stamped).toContain(
+      `data-derive-src-version="1" data-derive-src-sha="${sha}" data-derive-host="http://derive.test"`,
+    )
     expect(editorPage.headers.get("cache-control")).toMatch(/^private,/)
     expect(await (await framePage(short_id, 1, {})).text()).not.toContain("data-derive-src")
 

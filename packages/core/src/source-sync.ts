@@ -53,25 +53,23 @@ export interface SyncReply {
   head: boolean
 }
 
-/** A patch's markup as one element, parsed where it will live (`at`, the element it
- *  replaces) so a row or an item parses as one. A `<body>` needs a whole document. */
-export function patchRoot(html: string, doc: Document, at?: Element): Element | null {
-  if (/^\s*<body[\s>]/i.test(html)) {
-    const parsed = new DOMParser().parseFromString(
-      `<!doctype html><html>${html}</html>`,
-      "text/html",
-    )
-    return doc.importNode(parsed.body, true)
-  }
-  if (at?.parentNode) {
-    const range = doc.createRange()
-    range.selectNode(at)
-    return range.createContextualFragment(html).firstElementChild
-  }
+/** A patch's markup as one element, parsed inert — in a document of its own, where
+ *  nothing loads or runs — until it is put on the page. `at`, the element it replaces,
+ *  gives the namespace (a patch inside an `<svg>` parses as SVG); a `<template>` takes a
+ *  row or an item on its own. A `<body>` needs a whole document. */
+export function patchRoot(html: string, doc: Document, at?: Element | null): Element | null {
+  if (/^\s*<body[\s>]/i.test(html))
+    return new DOMParser().parseFromString(`<!doctype html><html>${html}</html>`, "text/html").body
+  const wrap =
+    at?.namespaceURI === "http://www.w3.org/2000/svg"
+      ? "svg"
+      : at?.namespaceURI === "http://www.w3.org/1998/Math/MathML"
+        ? "math"
+        : null
   const t = doc.createElement("template")
-  t.innerHTML = html
-  const el = t.content.firstElementChild
-  return el ? doc.importNode(el, true) : null
+  t.innerHTML = wrap ? `<${wrap}>${html}</${wrap}>` : html
+  const holder = wrap ? t.content.firstElementChild : t.content
+  return holder?.firstElementChild ?? null
 }
 
 /** An element and its stamped descendants, in document order. */

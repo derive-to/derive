@@ -32,6 +32,7 @@ import {
 import { MERMAID_HEAD } from "./mermaid"
 import {
   hashSource,
+  hostMarker,
   parseSourceOps,
   SourceConflictError,
   type SourceOp,
@@ -643,12 +644,13 @@ const hashOf = (source: string, n: MdNode | undefined) =>
 /**
  * The editor's view of a stored Markdown document: the reader's page, with
  * `data-derive-src` on every modeled element, `data-derive-readonly` on what can't be
- * edited in place, and the base identity (`data-derive-src-version`/`-sha`) on the root.
+ * edited in place, and the base identity (`data-derive-src-version`/`-sha`) and the
+ * origins that may drive the editor (`data-derive-host`) on the root.
  */
 export const renderMarkdownForEditor = async (
   source: string,
   title: string | null,
-  base: { version: number },
+  base: { version: number; host?: string },
   opts: RenderMarkdownOptions = {},
 ): Promise<string> => {
   const { body, mermaid } = modelOf(source, opts)
@@ -656,7 +658,7 @@ export const renderMarkdownForEditor = async (
   return renderDocShell(body, title, mermaid ? MERMAID_HEAD : "")
     .replace(
       '<html lang="en">',
-      `<html lang="en" data-derive-src-version="${base.version}" data-derive-src-sha="${escapeHtml(sha)}">`,
+      `<html lang="en" data-derive-src-version="${base.version}" data-derive-src-sha="${escapeHtml(sha)}"${hostMarker(base.host)}>`,
     )
     .replace("<main data-derive-ready>", '<main data-derive-ready data-derive-src="0">')
 }
