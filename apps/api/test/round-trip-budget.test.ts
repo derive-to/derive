@@ -585,16 +585,16 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     // and one meta write; without it the record says only "resolved", by nobody, at no time.
     expect(resolveCalls.length).toBeLessThanOrEqual(7)
     // The edit resolves and authorizes the artifact plus its current version through one
-    // joined read. Core publish uses that trusted record and performs only the one final
-    // artifact read needed for its fresh return value. Materialization must not restore a
-    // separate version lookup.
+    // joined read. Core publish uses that trusted record and knows what the version write
+    // changed, so it reads nothing back. Materialization must not restore a separate
+    // version lookup.
     expect(editCalls).toContain("artifactWithVersion")
     expect(editCalls).not.toContain("getVersion")
     expect(editCalls).not.toContain("getVersionData")
-    expect(editCalls.filter((call) => call === "getByShortId")).toHaveLength(1)
+    expect(editCalls).not.toContain("getByShortId")
     expect(editCalls.filter((call) => call === "getSubscription")).toHaveLength(1)
     expect(editCalls.filter((call) => call === "listMemberships")).toHaveLength(1)
-    expect(editCalls).toHaveLength(13)
+    expect(editCalls).toHaveLength(12)
     // A cold edit reads the previous immutable source once. This fixture already read the
     // active version, so the source cache may make it zero. The new version must never be
     // read back for search, facts, anchors, mentions, or the completion summary.
