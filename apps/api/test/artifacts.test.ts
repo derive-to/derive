@@ -529,7 +529,7 @@ describe("inline edit version coalescing", () => {
     expect(traced.status).toBe(201)
     const timing = traced.headers.get("server-timing") ?? ""
     expect(timing).toMatch(/store\/blob calls/)
-    expect(timing).toMatch(/-db\.getByShortId;desc="at \d+ms";dur=/)
+    expect(timing).toMatch(/-db\.(?:getByShortId|editPreflight);desc="at \d+ms";dur=/)
     expect(timing).toMatch(/-blob\.put;/)
   })
 
@@ -1310,10 +1310,11 @@ describe("prepared single-file publishes", () => {
     })
 
     expect(edited.status).toBe(201)
-    // materializeEdits must read the immutable previous source once. The canonical
-    // post-publish pipeline then reuses the trusted new source for search, facts,
-    // anchor sweeping, and mention detection instead of reading the new blob back.
-    expect(getBlob).toHaveBeenCalledTimes(1)
+    // materializeEdits reads the immutable previous source, which this process stored a
+    // moment ago and kept, so not even that is read back. The canonical post-publish
+    // pipeline reuses the trusted new source for search, facts, anchor sweeping, and
+    // mention detection instead of reading the new blob back.
+    expect(getBlob).toHaveBeenCalledTimes(0)
   })
 })
 

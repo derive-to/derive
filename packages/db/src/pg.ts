@@ -33,6 +33,7 @@ import type {
   DeliveryStatus,
   DomainRecord,
   DomainStatus,
+  EditPreflight,
   ExportJobRecord,
   FolderRecord,
   FollowKind,
@@ -3250,6 +3251,151 @@ export class PgMetaStore implements MetaStore {
     }
     return { orgRole, artifactRoles, portableArtifactRoles }
   }
+  // Every read an edit save makes before it writes, as ONE statement (see the port doc).
+  // Each arm is keyed on the artifact the CTE resolves, and tagged by `kind`; the grant
+  // arms are artifactWithGrants' own, in the same order. The contract test holds each part
+  // to the read-by-read answer.
+  async editPreflight(
+    shortId: string,
+    userId: string | null,
+    agentId: string | null,
+  ): Promise<EditPreflight | null> {
+    try {
+      return await this.preflightWith(shortId, userId, agentId, !this.noAuthUsers)
+    } catch (err) {
+      // A deployment without Better Auth's "user" table (as getUsers allows): no byline arm.
+      const e = err as { code?: string; cause?: { code?: string } }
+      if ((e.code ?? e.cause?.code) !== "42P01" || this.noAuthUsers) throw err
+      this.noAuthUsers = true
+      return this.preflightWith(shortId, userId, agentId, false)
+    }
+  }
+  private noAuthUsers = false
+  private async preflightWith(
+    shortId: string,
+    userId: string | null,
+    agentId: string | null,
+    users: boolean,
+  ): Promise<EditPreflight | null> {
+    const res = await this.db.execute(sql`
+      with a as (select * from artifact where short_id = ${shortId})
+      select 'artifact' as kind, to_jsonb(a) as doc from a
+      union all
+      select 'version', to_jsonb(v)
+        from a join version v on v.artifact_id = a.id and v.n = a.current_version
+      union all
+      select 'membership', to_jsonb(m)
+        from a join membership m on m.org_id = a.org_id and m.user_id = ${userId}
+      union all
+      select case when am.role = 'owner' then 'grant' else 'portable' end, to_jsonb(am.role)
+        from a join artifact_member am on am.artifact_id = a.id and am.user_id = ${userId}
+      union all
+      select case when cm.role = 'owner' then 'grant' else 'portable' end, to_jsonb(cm.role)
+        from a
+        join collection_item ci on ci.artifact_id = a.id
+        join collection_member cm on cm.collection_id = ci.collection_id and cm.user_id = ${userId}
+      union all
+      select 'grant', to_jsonb(m2.role)
+        from a
+        join collection_item ci2 on ci2.artifact_id = a.id
+        join collection c on c.id = ci2.collection_id and c.workspace_access = 'member'
+        join membership m2 on m2.org_id = c.org_id and m2.user_id = ${userId}
+      union all
+      select 'slot', to_jsonb(st)
+        from a join shared_state st on st.artifact_id = a.id
+         and starts_with(st.key, ${DYNAMIC_STATE_PREFIX} || a.current_version::text || '.')
+      union all
+      select 'workspace', jsonb_build_object('id', w.id, 'name', w.name,
+          'created_at', w.created_at, 'role', mw.role)
+        from membership mw join workspace w on w.id = mw.org_id where mw.user_id = ${userId}
+      union all
+      select 'agent', to_jsonb(ag.role)
+        from a join artifact_member ag on ag.artifact_id = a.id and ag.user_id = ${agentId}
+      union all
+      select 'subscription', to_jsonb(s) from a join subscription s on s.org_id = a.org_id
+      union all
+      select 'seats', to_jsonb(count(*))
+        from membership ms
+       where ms.org_id = (select org_id from a) and ms.role in ('editor', 'owner')
+      union all
+      select 'settings', to_jsonb(os.settings)
+        from a join org_settings os on os.org_id = a.org_id
+      ${
+        users
+          ? sql`union all
+      select 'user', jsonb_build_object('name', u.name, 'username', u.username, 'email', u.email)
+        from "user" u where u.id = ${userId}`
+          : sql``
+      }
+      union all
+      select 'comments', to_jsonb(exists (
+        select 1 from comment cc where cc.artifact_id = a.id and cc.base_version = a.current_version))
+        from a
+      union all
+      select 'pinned', to_jsonb(exists (
+        select 1 from workflow_artifact_activity wa
+         where wa.artifact_short_id = a.short_id and wa.artifact_version = a.current_version
+           and wa.source = 'observed'))
+        from a
+      union all
+      select 'reviews', to_jsonb(exists (
+        select 1 from review_round rr where rr.artifact_id = a.id and rr.version = a.current_version))
+        from a
+    `)
+    const rows = (res as unknown as { rows?: { kind: string; doc: unknown }[] }).rows ?? []
+    let record: ArtifactRecord | null = null
+    const out: Omit<EditPreflight, "artifact"> = {
+      version: null,
+      grants: userId ? { orgRole: null, artifactRoles: [], portableArtifactRoles: [] } : null,
+      membership: null,
+      agentRole: null,
+      subscription: null,
+      billableSeats: 0,
+      settings: parseOrgSettings(null),
+      user: null,
+      feedback: { comments: false, reviews: false },
+      pinned: false,
+      workspaces: [],
+      slots: [],
+    }
+    const states: SharedStateRecord[] = []
+    for (const r of rows) {
+      const doc = r.doc
+      if (r.kind === "artifact") record = doc as ArtifactRecord
+      else if (r.kind === "version") out.version = doc as VersionRecord
+      else if (r.kind === "membership") {
+        out.membership = doc as MembershipRecord
+        if (out.grants) out.grants.orgRole = (doc as MembershipRecord).role
+      } else if (r.kind === "grant" || r.kind === "portable") {
+        out.grants?.artifactRoles.push(doc as Role)
+        if (r.kind === "portable") out.grants?.portableArtifactRoles.push(doc as Role)
+      } else if (r.kind === "slot") states.push(doc as SharedStateRecord)
+      else if (r.kind === "workspace")
+        out.workspaces.push(doc as EditPreflight["workspaces"][number])
+      else if (r.kind === "agent") out.agentRole = doc as Role
+      else if (r.kind === "subscription") out.subscription = doc as SubscriptionRecord
+      else if (r.kind === "seats") out.billableSeats = Number(doc)
+      else if (r.kind === "settings") out.settings = parseOrgSettings(doc as string)
+      else if (r.kind === "user") out.user = doc as EditPreflight["user"]
+      else if (r.kind === "comments") out.feedback.comments = doc === true
+      else if (r.kind === "reviews") out.feedback.reviews = doc === true
+      else if (r.kind === "pinned") out.pinned = doc === true
+    }
+    // listDynamicSlots' answer for the current version, in key order.
+    if (record) {
+      const n = (record as ArtifactRecord).current_version
+      const prefix = dynamicStatePrefix(n)
+      out.slots = states
+        .sort((x, y) => (x.key < y.key ? -1 : x.key > y.key ? 1 : 0))
+        .map((row) => dynamicRecord(row, n, row.key.slice(prefix.length)))
+    }
+    // listWorkspaces' order: oldest workspace first.
+    out.workspaces.sort((x, y) =>
+      x.created_at < y.created_at ? -1 : x.created_at > y.created_at ? 1 : 0,
+    )
+    return record ? { artifact: record, ...out } : null
+  }
+
   // `getByShortId` + `artifactGrants` as ONE statement — see the port doc. The artifact
   // resolves in a CTE and every grant arm joins to it, so the caller's standing comes back
   // with the record instead of after it. Same four grant sources as artifactGrants above,

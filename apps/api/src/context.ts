@@ -12,6 +12,7 @@ import {
   can,
   capRole,
   DEFAULT_VERSION_WINDOW_MS,
+  type EditPreflight,
   effectiveRole,
   FREE_SEAT_LIMIT,
   isAuthenticated,
@@ -40,6 +41,7 @@ import { type Backplane, createInProcessBackplane } from "./bus"
 import type { AgentLoopInput } from "./lib/agent-loop"
 import { isApiToken, verifyApiToken } from "./lib/api-token"
 import type { BillingDriver } from "./lib/billing"
+import { clientName } from "./lib/client-names"
 import type { CustomDomainProvider } from "./lib/cloudflare-saas"
 import type { Sandbox } from "./lib/code-sandbox"
 import { answerDeriveMention } from "./lib/comment-turn"
@@ -736,7 +738,7 @@ export function buildContext(deps: AppDeps) {
           a = {
             id: `oauth:${claim.clientId}`,
             org_id: claim.orgId,
-            name: (await meta.getOAuthClientName(claim.clientId)) || claim.clientId || "An agent",
+            name: (await clientName(meta, claim.clientId)) || claim.clientId || "An agent",
             token: "",
             role,
             created_by: claim.userId,
@@ -1059,6 +1061,26 @@ export function buildContext(deps: AppDeps) {
     if (!cap) return false
     return (await (used ?? storageUsed(orgId))) + incoming > cap
   }
+  // An edit save's quota check. Counting a workspace's stored bytes is two aggregate
+  // queries, too slow for a save someone is waiting on, so an edit save checks against the
+  // count last taken in this process (at most ten minutes old), and every edit save
+  // recounts after its response. Where there is no count yet, the save lands and its
+  // recount follows. So an edit save can land at most one save's bytes past the cap before
+  // the next one is refused; uploads and API publishes count live, before they store.
+  const usageSeen = new Map<string, { bytes: number; at: number }>()
+  const USAGE_FRESH_MS = 10 * 60_000
+  const overKnownUsage = (orgId: string, incoming: number, state: BillingState): boolean => {
+    const cap = state.storageCapBytes
+    const seen = usageSeen.get(orgId)
+    if (!cap || !seen || Date.now() - seen.at > USAGE_FRESH_MS) return false
+    return seen.bytes + incoming > cap
+  }
+  const recountUsage = async (orgId: string): Promise<void> => {
+    const bytes = await storageUsed(orgId)
+    usageSeen.delete(orgId)
+    usageSeen.set(orgId, { bytes, at: Date.now() })
+    if (usageSeen.size > 1000) usageSeen.delete(usageSeen.keys().next().value as string)
+  }
   const storageUsed = async (orgId: string): Promise<number> => {
     const [stored, assets] = await Promise.all([
       meta.storageBytes(orgId),
@@ -1357,6 +1379,8 @@ export function buildContext(deps: AppDeps) {
     orgRole: Role | null
     artifactRoles: Role[]
     portableArtifactRoles: Role[]
+    /** For an agent acting for `userId`: its own member row's role (null: none). */
+    agentRole?: Role | null
   }
 
   const actorFor = (c: Context, a: ArtifactRecord, pre?: PreGrants): Promise<Actor> => {
@@ -1439,17 +1463,30 @@ export function buildContext(deps: AppDeps) {
       // and the workspace binding keeps tokens scoped per ADR-0001. Rows written
       // to an agent id before this model (or by hand) still count, uncapped —
       // they were explicit grants.
-      // Three independent reads: together (each is a round trip on the edge).
+      // The owner's share and collection roles are the grants of theirs a preflight read
+      // (every arm artifactGrants has but the workspace seat, which an agent never borrows).
       const ownerId = p.onBehalfOf
       const borrows = !!ownerId && ag.org_id === a.org_id
-      const [own, m, cRoles] = await Promise.all([
-        meta.getArtifactMember(a.id, ag.id),
-        borrows && ownerId ? meta.getArtifactMember(a.id, ownerId) : null,
-        borrows && ownerId ? meta.collectionRolesForArtifact(a.id, ownerId) : [],
-      ])
-      const derived: Role | null = borrows
-        ? capRole(maxRole(m?.role ?? null, ...cRoles), ag.role)
-        : null
+      const read =
+        pre && pre.userId === ownerId && pre.agentRole !== undefined
+          ? {
+              own: pre.agentRole === null ? null : { role: pre.agentRole },
+              owned: pre.artifactRoles,
+            }
+          : null
+      // Otherwise three independent reads, together.
+      const [own, owned] = read
+        ? [read.own, read.owned]
+        : await Promise.all([
+            meta.getArtifactMember(a.id, ag.id),
+            borrows && ownerId
+              ? Promise.all([
+                  meta.getArtifactMember(a.id, ownerId),
+                  meta.collectionRolesForArtifact(a.id, ownerId),
+                ]).then(([m, cRoles]) => [...(m ? [m.role] : []), ...cRoles])
+              : [],
+          ])
+      const derived: Role | null = borrows ? capRole(maxRole(null, ...owned), ag.role) : null
       const orgRole = ag.org_id === a.org_id ? ag.role : null
       // Historical rows written directly to an agent id remain explicit grants, but
       // ownership is workspace-bound even for that legacy shape. Lower collaborator
@@ -1535,9 +1572,58 @@ export function buildContext(deps: AppDeps) {
    *  grants: an explicit share, the workspace seat (when workspace_access=member),
    *  and the world link (link_role, clamped to view for anonymous holders and gated
    *  by unlock when the link is password-locked). See effectiveRole. */
-  const authorize = async (c: Context, action: Action, a: ArtifactRecord): Promise<boolean> => {
-    const actor = await actorFor(c, a)
+  const authorize = async (
+    c: Context,
+    action: Action,
+    a: ArtifactRecord,
+    /** The caller's grants when a combined read already fetched them. */
+    pre?: PreGrants,
+  ): Promise<boolean> => {
+    const actor = await actorFor(c, a, pre)
     return can(actor, action, a.workspace_access, a.link_role)
+  }
+  /** An edit's reads in one statement where the store has it (MetaStore.editPreflight):
+   *  the artifact by short id, the caller's standing (seeded into authorization, so
+   *  `authorize` reads nothing more), and what a save or a sync goes on to need. Undefined
+   *  where the store has no such read or it failed (take the read-by-read path); null for
+   *  an unknown short id. */
+  const editPreflight = async (
+    c: Context,
+    shortId: string,
+  ): Promise<EditPreflight | null | undefined> => {
+    if (!meta.editPreflight) return undefined
+    const [owner, agent] = await Promise.all([privateOwnerId(c), agentFor(c)])
+    const pre = await meta.editPreflight(shortId, owner, agent?.id ?? null).catch((err) => {
+      log.warn("edit preflight failed", { error: String(err) })
+      return undefined
+    })
+    if (pre?.grants && owner) {
+      if (!agent) primeWorkspaces(c, owner, pre.artifact.org_id, pre.membership, pre.workspaces)
+      void actorFor(c, pre.artifact, {
+        userId: owner,
+        ...pre.grants,
+        ...(agent ? { agentRole: pre.agentRole } : {}),
+      }).catch(() => {})
+    }
+    return pre
+  }
+  /** What an edit save's one-statement preflight (MetaStore.editPreflight) already
+   *  answered: the caller's seat and workspaces for workspace resolution, so neither is
+   *  read again this request. */
+  const primeWorkspaces = (
+    c: Context,
+    userId: string,
+    orgId: string,
+    seat: MembershipRecord | null,
+    workspaces: (WorkspaceRecord & { role: Role })[],
+  ) => {
+    const seats = membershipCache.get(c) ?? new Map<string, Promise<MembershipRecord | null>>()
+    membershipCache.set(c, seats)
+    if (!seats.has(`${orgId}:${userId}`)) seats.set(`${orgId}:${userId}`, Promise.resolve(seat))
+    const lists =
+      workspacesCache.get(c) ?? new Map<string, Promise<(WorkspaceRecord & { role: Role })[]>>()
+    workspacesCache.set(c, lists)
+    if (!lists.has(userId)) lists.set(userId, Promise.resolve(workspaces))
   }
 
   /** Authorize using STANDING only — an explicit share or the workspace seat, NOT
@@ -1608,6 +1694,11 @@ export function buildContext(deps: AppDeps) {
   // fail-soft, so a store hiccup costs the data, never the search.
   const dynamicSlots = (v: { artifact_id: string; n: number }) =>
     meta.listDynamicSlots(v.artifact_id, v.n).catch(() => [])
+  /** Keep a source this process just stored: the next save of the same session edits it. */
+  const rememberSource = (content: { blob_key: string; content_type: string }, text: string) => {
+    if (!isBundleContentType(content.content_type))
+      sourceTextCache.put(`${content.content_type}:${content.blob_key}`, text)
+  }
   const sourceText = async (content: {
     blob_key: string
     content_type: string
@@ -1883,6 +1974,9 @@ export function buildContext(deps: AppDeps) {
     background,
     afterResponse,
     storageUsed,
+    overKnownUsage,
+    recountUsage,
+    rememberSource,
     /** Does this workspace have live auto-save on? */
     liveSave: (orgId: string): boolean =>
       deps.liveSaveWorkspaces === "all" || !!deps.liveSaveWorkspaces?.has(orgId),
@@ -1950,6 +2044,8 @@ export function buildContext(deps: AppDeps) {
     actorFor,
     authorize,
     authorizeStanding,
+    primeWorkspaces,
+    editPreflight,
     authorizeUserStanding,
     anonLocked,
     isPrincipal,

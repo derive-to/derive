@@ -651,6 +651,26 @@ export interface NewArtifact {
  *  (agent tokens / OAuth bearers, incl. the CLI), or a historical GitHub import. */
 export type VersionSource = "web" | "mcp" | "api" | "sync"
 
+/** What `editPreflight` answers (see MetaStore). */
+export interface EditPreflight {
+  artifact: ArtifactRecord
+  version: VersionRecord | null
+  grants: { orgRole: Role | null; artifactRoles: Role[]; portableArtifactRoles: Role[] } | null
+  membership: MembershipRecord | null
+  agentRole: Role | null
+  subscription: SubscriptionRecord | null
+  billableSeats: number
+  settings: OrgSettings
+  user: { name: string | null; username: string | null; email: string | null } | null
+  feedback: { comments: boolean; reviews: boolean }
+  /** A workflow pinned the current version's bytes (`workflowVersionIsPinned`). */
+  pinned: boolean
+  /** The caller's workspaces, as `listWorkspaces` lists them. */
+  workspaces: (WorkspaceRecord & { role: Role })[]
+  /** The current version's dynamic data, as `listDynamicSlots` gives it. */
+  slots: DynamicSlotRecord[]
+}
+
 export interface NewVersion {
   id: string
   blob_key: string
@@ -1538,6 +1558,22 @@ export interface CollectionStore {
     members: MembershipRecord[]
     users: UserDir[]
   }>
+
+  /**
+   * Everything an edit save reads before it writes, in ONE round trip: the artifact, its
+   * current version, the caller's grants on it (as `artifactWithGrants` returns them, for
+   * `userId`) and seat in its workspace, an agent's own member row (`agentId`), the
+   * workspace's billing inputs (subscription, billable seat count) and settings, the
+   * caller's user row (their byline), and whether the current version has comments or a
+   * review round (what stops a save coalescing into it). On the hosted edge a request's
+   * statements run one at a time, so these were a dozen round trips in a row. Null for an
+   * unknown short id. Stores without it take the read-by-read path.
+   */
+  editPreflight?(
+    shortId: string,
+    userId: string | null,
+    agentId: string | null,
+  ): Promise<EditPreflight | null>
 
   artifactWithGrants?(
     shortId: string,

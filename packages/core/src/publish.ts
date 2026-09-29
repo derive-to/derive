@@ -96,6 +96,9 @@ export interface PublishInput {
    * short burst of attended web edits. The store rejects a stale blob key.
    */
   replaceCurrent?: { n: number; blobKey: string }
+  /** Whether a workflow pinned the version `replaceCurrent` names, when the caller read it
+   *  already (an edit save's preflight): not asked again. */
+  replaceCurrentPinned?: boolean
   /** The inline editor's open edit session writing this version (republish only): its
    *  later saves coalesce here and its notifications wait until the session ends. */
   editSession?: string
@@ -618,9 +621,11 @@ export async function publish(
   // Whether the version a coalescing save would replace is pinned by a workflow: asked
   // while the bytes are stored rather than after (each read is a round trip on the edge).
   const pinned =
-    shortId && input.replaceCurrent && input.existingArtifact?.short_id === shortId
-      ? meta.workflowVersionIsPinned(input.existingArtifact.id, input.replaceCurrent.n)
-      : null
+    input.replaceCurrentPinned !== undefined
+      ? Promise.resolve(input.replaceCurrentPinned)
+      : shortId && input.replaceCurrent && input.existingArtifact?.short_id === shortId
+        ? meta.workflowVersionIsPinned(input.existingArtifact.id, input.replaceCurrent.n)
+        : null
   pinned?.catch(() => {})
   const storeStartedAt = performance.now()
   const { blobKey, contentType, kind, suggestedTitle, skillSidecar, blobWriteMs } =

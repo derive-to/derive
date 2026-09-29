@@ -87,6 +87,11 @@ export class SourceTextCache {
     this.cache = new WeightedLruCache({ ...options, maxEntryBytes: this.maxEntryBytes })
   }
 
+  /** A source this process just wrote (its blob key names these very bytes). */
+  put(key: string, text: string): void {
+    this.cache.set(key, text, text.length * 2)
+  }
+
   async get(key: string, load: () => Promise<SourceText | null>): Promise<string | null> {
     const cached = this.cache.get(key)
     if (cached !== undefined) return cached
