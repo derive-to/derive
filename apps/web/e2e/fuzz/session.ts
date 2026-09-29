@@ -772,6 +772,28 @@ async function awaitSave(
   return { kind: "ok", skipped: body?.skipped_edits ?? [], edits }
 }
 
+/** The page holds the version the server does: its saves synced in, in place (a
+ *  session whose edits were all undone is back at the first version's bytes). */
+async function caughtUp(page: Page, shortId: string) {
+  await expect
+    .poll(
+      async () => {
+        const res = await page.request.get(`/v1/artifacts/${shortId}`)
+        const art = (await res.json()) as {
+          current_version: number
+          versions?: { n: number; sha256: string }[]
+        }
+        const head = art.versions?.find((v) => v.n === art.current_version)?.sha256
+        const sha = await probe<string | null>(await artifactFrame(page), "srcSha").catch(
+          () => null,
+        )
+        return !!sha && sha === head
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(true)
+}
+
 /** Inline edits save themselves: ask for the rest now (⌘S), wait until the page says the
  *  server holds everything it counted (or that it can't: an error, a conflict), and
  *  report every save the phase sent. A save with nothing left to change is a no-op. */
@@ -1250,9 +1272,14 @@ export async function runSession(
   // (the frame swapped under the editor) from environment noise (the dev servers
   // hot-reloading while other work edits the tree).
   const events: string[] = []
+  // The page keeps the reader's place in its hash (#slide=N, #at=…): that is not a load.
+  const unhashed = (u: string) => u.replace(/#.*$/, "")
+  let pageUrl = ""
   const onNav = (f: Frame) => {
-    if (f === page.mainFrame()) events.push(`page navigated: ${f.url()}`)
-    else if (f.parentFrame() === page.mainFrame())
+    if (f === page.mainFrame()) {
+      if (unhashed(f.url()) !== pageUrl) events.push(`page navigated: ${f.url()}`)
+      pageUrl = unhashed(f.url())
+    } else if (f.parentFrame() === page.mainFrame())
       events.push(`frame navigated: ${f.url().slice(0, 80)}`)
   }
   const onConsole = (m: { text: () => string }) => {
@@ -1270,9 +1297,9 @@ export async function runSession(
       shortId = await publishArtifact(page, fx.name, fx.src, fx.mime)
       await openDoc(page, shortId)
       armed = true
+      pageUrl = unhashed(page.url())
       const frame = await artifactFrame(page)
       const section = rng.int(0, (await probe<number>(frame, "sectionCount")) - 1)
-      const first = await probe<string | null>(frame, "srcSha")
       if (
         await editPhase(ctx, fp, shortId, opts, recorder, {
           slide: section,
@@ -1281,13 +1308,7 @@ export async function runSession(
         })
       ) {
         // Round two carries on in the same page, on the ids the saves synced in.
-        await expect
-          .poll(
-            async () =>
-              probe<string | null>(await artifactFrame(page), "srcSha").catch(() => first),
-            { timeout: 20_000 },
-          )
-          .not.toBe(first)
+        await caughtUp(page, shortId)
         await editPhase(ctx, fp, shortId, opts, recorder, {
           slide: section,
           actions: 5,
@@ -1299,6 +1320,7 @@ export async function runSession(
       await openDeck(page, shortId)
       await expect(page.getByTestId("deck-position")).toBeVisible()
       armed = true
+      pageUrl = unhashed(page.url())
       if (arranged) await arrangePhase(ctx, fp, shortId, recorder)
       if (ctx.failures.some((f) => f.oracle === "arrange-model" || f.oracle === "save")) {
         // The arrangement already failed; there is nothing sound to edit on top of.
@@ -1306,19 +1328,10 @@ export async function runSession(
       else {
         const frame = await artifactFrame(page)
         const slide = rng.int(0, (await probe<number>(frame, "slideCount")) - 1)
-        const first = await probe<string | null>(frame, "srcSha")
         const round = { slide, actions: rng.int(8, 15), label: "edit" }
         // Round two carries on in the same page, on the ids the saves synced in.
         if (await editPhase(ctx, fp, shortId, opts, recorder, round)) {
-          await expect
-            .poll(
-              async () =>
-                probe<string | null>(await artifactFrame(page), "srcSha").catch(() => first),
-              {
-                timeout: 20_000,
-              },
-            )
-            .not.toBe(first)
+          await caughtUp(page, shortId)
           await editPhase(ctx, fp, shortId, opts, recorder, {
             slide,
             actions: rng.int(5, 8),

@@ -429,10 +429,13 @@ export function installProbe(): void {
   const changedBlocks = (next = false): { rect: Rect; label: string; atPoint: boolean }[] => {
     const hits = new Set<Element>()
     // Words that changed. An element swapped for an equal one (a save syncing its
-    // markup in place, an editor span becoming the tag it saved as) moved no words.
+    // markup in place, an editor span becoming the tag it saved as — nested ones in the
+    // same sync included) moved no words: judge by the nearest element seen before.
     const wordsMoved = (el: Element) => {
-      const was = marked.get(el)
-      return !was || (el.textContent ?? "") !== was.full
+      let e: Element | null = el
+      while (e && !marked.has(e)) e = e.parentElement
+      const was = e && marked.get(e)
+      return !e || !was || (e.textContent ?? "") !== was.full
     }
     for (const [el, was] of marked) {
       if (!el.isConnected) {
