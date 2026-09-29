@@ -21,10 +21,6 @@ export const workspaceIdsFromEnv = (raw: string | undefined): ReadonlySet<string
       .filter(Boolean),
   )
 
-/** DERIVE_AUTOSAVE_WORKSPACES: workspace ids with live auto-save on, or `*` for all. */
-export const liveSaveFromEnv = (raw: string | undefined): ReadonlySet<string> | "all" =>
-  raw?.trim() === "*" ? "all" : workspaceIdsFromEnv(raw)
-
 /** The Slack App credentials — only when all three are set (else Slack stays off). */
 export const slackFromEnv = (env: {
   SLACK_CLIENT_ID?: string

@@ -31,6 +31,7 @@ import {
   newId,
   parseDynamicBindings,
   parseFacts,
+  Recent,
   type SearchIndex,
   SKILL_CONTENT_TYPE,
   SKILL_SIDECAR_PATH,
@@ -182,6 +183,26 @@ export const emitVersionBump = async (
     await (deps.background ? deps.background(work) : work)
   }
   return storedRows
+}
+
+/** The latest save of each (artifact, version) this process wrote. */
+const latestWrite = new Recent<string, number>(500)
+let writes = 0
+/**
+ * `stillCurrent` for an edit save: an editing session saves the same version on every
+ * pause, and only the last save's previews, anchors, indexing and facts are worth the work
+ * (each re-reads the whole document, in the process that has to answer the next save).
+ * Where the work outlives the response (`wait`), it first gives a later save two seconds
+ * to take its place.
+ */
+export const laterSaveWins = (artifactId: string, n: number, wait: boolean) => {
+  const key = `${artifactId}:${n}`
+  const mine = ++writes
+  latestWrite.set(key, mine)
+  return async (): Promise<boolean> => {
+    if (wait) await new Promise((r) => setTimeout(r, 2_000))
+    return latestWrite.peek(key) === mine
+  }
 }
 
 export const indexSkillVersion = async (

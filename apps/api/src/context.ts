@@ -68,10 +68,11 @@ import {
 import { verifyWorkToken, workTokenKind } from "./lib/run-token"
 import { billableSeatCount, isBillableRole, syncSeats } from "./lib/seats"
 import { enqueueSlackChannelEvent } from "./lib/slack-comments"
-import { SourceTextCache } from "./lib/source-text-cache"
+import { sourceTexts } from "./lib/source-text-cache"
+import { storageUsage } from "./lib/storage-usage"
 import { log } from "./log"
 import { enqueueRender } from "./previews"
-import { edgeCtx, edgeWaitUntil } from "./realtime-do"
+import { edgeCtx } from "./realtime-do"
 import type { Summarizer } from "./summarizer"
 import { enqueueForEvent, type WebhookEvent } from "./webhooks"
 
@@ -164,9 +165,6 @@ export interface AppDeps {
    *  Workers (waitUntil). The Node server sets it; tests leave it off so that work finishes
    *  before they assert. */
   detachAfterResponse?: boolean
-  /** Workspaces whose inline edits save themselves (live auto-save): ids, or "all".
-   *  Everywhere else edits save on Save or Done. Unset: nowhere. */
-  liveSaveWorkspaces?: ReadonlySet<string> | "all"
   /** Optional dense/semantic search index. Unset ⇒ workspace search stays lexical-only. Both the
    *  edge and a Postgres self-host inject a pgvector adapter (embeddings from Workers AI or, on
    *  self-host, a local ONNX model); it's absent on SQLite / when no embedder is configured. */
@@ -433,7 +431,7 @@ export type AppContext = ReturnType<typeof buildContext>
 
 export function buildContext(deps: AppDeps) {
   const { meta, blobs } = deps
-  const sourceTextCache = new SourceTextCache()
+  const { sourceText, rememberSource } = sourceTexts(blobs)
   // Realtime relay + presence. In-process by default (self-host stays zero-config);
   // the edge entry injects a Durable Object backplane. `bus`/`presence` are facades
   // over it, so the publish + heartbeat call sites are unchanged.
@@ -1053,44 +1051,19 @@ export function buildContext(deps: AppDeps) {
   // The cap itself is now plan-aware (billingState.storageCapBytes) rather than a flat
   // deps.maxBytes comparison: an active subscription's tier cap replaces the operator's
   // fallback, so a Team workspace isn't stuck on the self-host default.
+  const usage = storageUsage(meta)
   const overStorage = async (
     orgId: string,
     incoming: number,
     pre?: BillingState,
-    /** The workspace's stored bytes, when the caller already asked (see storageUsed). */
-    used?: Promise<number>,
   ): Promise<boolean> => {
     const cap = (pre ?? (await billingState(orgId))).storageCapBytes
     if (!cap) return false
-    return (await (used ?? storageUsed(orgId))) + incoming > cap
+    return (await usage.count(orgId)) + incoming > cap
   }
-  // An edit save's quota check. Counting a workspace's stored bytes is two aggregate
-  // queries, too slow for a save someone is waiting on, so an edit save checks against the
-  // count last taken in this process (at most ten minutes old), and every edit save
-  // recounts after its response. Where there is no count yet, the save lands and its
-  // recount follows. So an edit save can land at most one save's bytes past the cap before
-  // the next one is refused; uploads and API publishes count live, before they store.
-  const usageSeen = new Map<string, { bytes: number; at: number }>()
-  const USAGE_FRESH_MS = 10 * 60_000
-  const overKnownUsage = (orgId: string, incoming: number, state: BillingState): boolean => {
-    const cap = state.storageCapBytes
-    const seen = usageSeen.get(orgId)
-    if (!cap || !seen || Date.now() - seen.at > USAGE_FRESH_MS) return false
-    return seen.bytes + incoming > cap
-  }
-  const recountUsage = async (orgId: string): Promise<void> => {
-    const bytes = await storageUsed(orgId)
-    usageSeen.delete(orgId)
-    usageSeen.set(orgId, { bytes, at: Date.now() })
-    if (usageSeen.size > 1000) usageSeen.delete(usageSeen.keys().next().value as string)
-  }
-  const storageUsed = async (orgId: string): Promise<number> => {
-    const [stored, assets] = await Promise.all([
-      meta.storageBytes(orgId),
-      meta.assetStorageBytes(orgId),
-    ])
-    return stored + assets
-  }
+  /** An edit save's cap check, by the last count (see storage-usage). */
+  const overKnownUsage = (orgId: string, incoming: number, state: BillingState): boolean =>
+    usage.overLastCount(orgId, incoming, state.storageCapBytes)
 
   // MEMOIZED PER REQUEST + (org, user), same technique as `actorCache` below and for the
   // same reason: `activeWorkspace`'s cookie-validation branch and `ensureMembership` (called
@@ -1697,60 +1670,6 @@ export function buildContext(deps: AppDeps) {
   // fail-soft, so a store hiccup costs the data, never the search.
   const dynamicSlots = (v: { artifact_id: string; n: number }) =>
     meta.listDynamicSlots(v.artifact_id, v.n).catch(() => [])
-  // A single file's source, also in the Workers edge cache (the colo's, shared by every
-  // isolate there; absent on Node): a save that lands on a cold isolate reads the version it
-  // edits from there instead of object storage. Keyed by the blob key, which is the bytes'
-  // own hash, on a host nothing outside this worker can ask for.
-  const edgeSources = (): Cache | null =>
-    (globalThis as { caches?: { default?: Cache } }).caches?.default ?? null
-  const edgeSourceUrl = (blobKey: string) => `https://sources.derive.internal/${blobKey}`
-  const keepAtEdge = (blobKey: string, text: string) => {
-    const edge = edgeSources()
-    if (edge)
-      edgeWaitUntil(
-        edge
-          .put(
-            edgeSourceUrl(blobKey),
-            new Response(text, { headers: { "cache-control": "public, max-age=604800" } }),
-          )
-          .catch(() => {}),
-      )
-  }
-  /** Keep a source this process just stored: the next save of the same session edits it. */
-  const rememberSource = (content: { blob_key: string; content_type: string }, text: string) => {
-    if (isBundleContentType(content.content_type)) return
-    sourceTextCache.put(`${content.content_type}:${content.blob_key}`, text)
-    keepAtEdge(content.blob_key, text)
-  }
-  const sourceText = async (content: {
-    blob_key: string
-    content_type: string
-  }): Promise<string | null> =>
-    sourceTextCache.get(`${content.content_type}:${content.blob_key}`, async () => {
-      let data: Uint8Array | null
-      if (isBundleContentType(content.content_type)) {
-        const manifestBytes = await blobs.get(content.blob_key)
-        if (!manifestBytes) return null
-        const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
-        const entryFile = manifest.files[manifest.entry]
-        if (!entryFile) return null
-        data = await blobs.get(entryFile.key)
-      } else {
-        const kept = await edgeSources()
-          ?.match(edgeSourceUrl(content.blob_key))
-          .catch(() => undefined)
-        if (kept) {
-          const text = await kept.text()
-          return { text, bytes: text.length * 2 }
-        }
-        data = await blobs.get(content.blob_key)
-      }
-      if (!data) return null
-      const text = new TextDecoder().decode(data)
-      if (!isBundleContentType(content.content_type)) keepAtEdge(content.blob_key, text)
-      return { text, bytes: Math.max(data.byteLength, text.length * 2) }
-    })
-
   // A caller's role on a collection: the static token is owner; otherwise the
   // creator, else their explicit collection-member role, else — when the
   // collection's own workspace_access is `member` — their workspace SEAT role,
@@ -2005,13 +1924,9 @@ export function buildContext(deps: AppDeps) {
     background,
     afterResponse,
     detachesAfterResponse,
-    storageUsed,
     overKnownUsage,
-    recountUsage,
+    recountUsage: usage.recount,
     rememberSource,
-    /** Does this workspace have live auto-save on? */
-    liveSave: (orgId: string): boolean =>
-      deps.liveSaveWorkspaces === "all" || !!deps.liveSaveWorkspaces?.has(orgId),
     attendedTurnBudgetMs: deps.attendedTurnBudgetMs,
     /**
      * Answer an @derive mention in a comment thread — the comment lane's arrival, built once

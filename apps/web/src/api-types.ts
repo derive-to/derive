@@ -7464,8 +7464,6 @@ export interface components {
             open_comment_count?: number;
             /** @description Owner opt-in: readers without artifact standing can browse version history. When false, their detail responses carry only the current version. */
             public_history?: boolean;
-            /** @description True when inline edits save themselves as they are made (the workspace has live auto-save on); false when they save on Save or Done. Either way a save lands in the open page without a reload. */
-            live_save?: boolean;
             /** @description True when the signed-in caller has an active seat in the artifact's workspace. False for link-only readers and members acting in another workspace. */
             is_workspace_member?: boolean;
             /** @description The artifact's workspace id; drives move-to-workspace. */

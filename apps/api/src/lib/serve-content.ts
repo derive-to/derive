@@ -19,6 +19,7 @@ import {
   MARKS_SCRIPT,
   mimeFor,
   parseFrontmatter,
+  Recent,
   reflowHtml,
   renderLatex,
   renderMarkdown,
@@ -111,12 +112,11 @@ export const editorPage = (
   const hit = pages.get(key)
   if (hit) return hit
   const page = renderEditorPage(text, contentType, title, editor, slots)
-  if (pages.size >= 4) pages.delete(pages.keys().next().value as string)
   pages.set(key, page)
   page.catch(() => pages.delete(key))
   return page
 }
-const editorPagesOf = lastOf(3, 32_768, () => new Map<string, Promise<string | null>>())
+const editorPagesOf = lastOf(3, 32_768, () => new Recent<string, Promise<string | null>>(4))
 
 const renderEditorPage = async (
   text: string,

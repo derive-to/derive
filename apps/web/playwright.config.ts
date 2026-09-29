@@ -104,7 +104,7 @@ export default defineConfig({
   webServer: isCI
     ? [
         {
-          command: `rm -rf apps/api/.e2e-data && pnpm --filter @derive/web build && PORT=${API_PORT} DATA_DIR=.e2e-data DERIVE_MULTI_WORKSPACE=true DERIVE_WEB_ORIGIN=${ORIGIN} DERIVE_RATE_LIMIT=false DERIVE_AUTOSAVE_WORKSPACES='*' pnpm --filter @derive/api start`,
+          command: `rm -rf apps/api/.e2e-data && pnpm --filter @derive/web build && PORT=${API_PORT} DATA_DIR=.e2e-data DERIVE_MULTI_WORKSPACE=true DERIVE_WEB_ORIGIN=${ORIGIN} DERIVE_RATE_LIMIT=false pnpm --filter @derive/api start`,
           url: `${ORIGIN}/healthz`,
           cwd: "../..",
           // A full prod build (import-protection dominates) + API start on the free 2-vCPU
@@ -117,7 +117,7 @@ export default defineConfig({
       ]
     : [
         {
-          command: `rm -rf apps/api/.e2e-data && PORT=${API_PORT} DATA_DIR=.e2e-data DERIVE_MULTI_WORKSPACE=true DERIVE_WEB_ORIGIN=${WEB} DERIVE_RATE_LIMIT=false DERIVE_AUTOSAVE_WORKSPACES='*' pnpm --filter @derive/api dev`,
+          command: `rm -rf apps/api/.e2e-data && PORT=${API_PORT} DATA_DIR=.e2e-data DERIVE_MULTI_WORKSPACE=true DERIVE_WEB_ORIGIN=${WEB} DERIVE_RATE_LIMIT=false pnpm --filter @derive/api dev`,
           url: `${ORIGIN}/healthz`,
           cwd: "../..",
           timeout: 60_000,

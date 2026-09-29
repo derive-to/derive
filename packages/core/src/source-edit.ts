@@ -25,15 +25,9 @@ import {
 } from "./decks"
 import { EditError } from "./doc-text"
 import { sha256Hex } from "./hash"
-import {
-  elementEnd,
-  type HtmlTag,
-  lastOf,
-  RAW_TEXT_ELEMENTS,
-  RCDATA_ELEMENTS,
-  tags,
-} from "./html-tags"
+import { elementEnd, type HtmlTag, RAW_TEXT_ELEMENTS, RCDATA_ELEMENTS, tags } from "./html-tags"
 import { escapeHtml } from "./md"
+import { lastOf, Recent } from "./memo"
 import { hexOf, Sha256 } from "./sha256"
 import { setLayoutAttributes, sourceElements } from "./structural-edit"
 import { setOpeningTagStyle } from "./style-attribute"
@@ -189,7 +183,7 @@ const CHILD = new Uint8Array([0xff])
 /** A document an op save made from another, and where: `segments` are the old
  *  document's replaced ranges (sorted, disjoint) with their new text. Lets the new
  *  document's hashes reuse every digest of an element the save left alone. */
-const madeBy = new Map<string, { from: string; segments: readonly Segment[] }>()
+const madeBy = new Recent<string, { from: string; segments: readonly Segment[] }>(4)
 
 /** The segments a splice applies: sorted, and each one starting past the last. */
 const disjoint = (segments: readonly Segment[]): Segment[] => {
@@ -659,7 +653,6 @@ export const applySourceOps = async (html: string, raw: unknown): Promise<Applie
   // The save's result is hashed next (its sync, the next save): from this document's.
   if (elementDigests.peek(html) && out.length >= 32_768) {
     madeBy.set(out, { from: html, segments: disjoint(segments) })
-    if (madeBy.size > 4) madeBy.delete(madeBy.keys().next().value as string)
   }
   return { html: out, changes }
 }
@@ -686,51 +679,6 @@ export interface SyncReply extends StampedSync {
   version: number
   sha: string
   hashes: string[]
-}
-
-/**
- * A sync as sent: a {@link SyncReply} without the two arrays that are as long as the page
- * (tens of thousands of ids on a long deck), which the page mostly holds already.
- *  - `runs`: the remap as runs `[oldId, newId, length]` (old ids outside every run: -1).
- *    One edit renumbers everything after it by the same amount, so a save is a few runs.
- *  - the new source map: the page's own hashes carried through the remap, with `changed`
- *    (`[newId, hash]`) where that differs; `count` ids in all. `hashes` instead, whole,
- *    when the page's can't be carried (a whole-page swap).
- */
-export interface SyncWire {
-  version: number
-  sha: string
-  head: boolean
-  patches: StampedSync["patches"]
-  /** Length of the remap (the old page's id count). */
-  from: number
-  runs: [number, number, number][]
-  count: number
-  changed: [number, string][]
-  hashes?: string[]
-}
-
-/** Encode a sync for the wire, given the source map the page holds (`held`). */
-export const syncWire = (reply: SyncReply, held: readonly string[] | null): SyncWire => {
-  const { remap, hashes, version, sha, head, patches } = reply
-  const runs: [number, number, number][] = []
-  for (let o = 0; o < remap.length; o++) {
-    const n = remap[o] as number
-    if (n < 0) continue
-    const last = runs.at(-1)
-    if (last && last[0] + last[2] === o && last[1] + last[2] === n) last[2]++
-    else runs.push([o, n, 1])
-  }
-  const base = { version, sha, head, patches, from: remap.length, runs, count: hashes.length }
-  if (head || !held) return { ...base, changed: [], hashes }
-  const carried = new Array<string | undefined>(hashes.length)
-  for (const [o, n, len] of runs)
-    for (let k = 0; k < len; k++) if (n + k < hashes.length) carried[n + k] = held[o + k]
-  const changed: [number, string][] = []
-  hashes.forEach((h, n) => {
-    if (carried[n] !== h) changed.push([n, h])
-  })
-  return { ...base, changed }
 }
 
 interface StampedEl {

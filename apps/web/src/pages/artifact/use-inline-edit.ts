@@ -212,7 +212,6 @@ export function useInlineEdit(p: {
     shortId: p.shortId,
     art: () => artRef.current,
     active: () => activeRef.current,
-    live: () => artRef.current?.live_save === true,
     ask,
     onSynced: (version) => {
       setFrozenVersion((v) => (v === null ? v : version))
@@ -637,7 +636,5 @@ export function useInlineEdit(p: {
     onFrameGone,
     /** Save now (⌘S). */
     save: autoSave.flush,
-    /** Edits save themselves; otherwise the bar offers Save. */
-    live: p.art?.live_save === true,
   }
 }

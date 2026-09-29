@@ -498,24 +498,6 @@ describe("inline edit version coalescing", () => {
     ).toContain("<h1>Two</h1>")
   })
 
-  it("says whether the workspace's inline edits save themselves", async () => {
-    const liveOwner = { id: "u_live", email: "live@test.dev", name: "Live" }
-    const { app: liveApp } = makeAuthedApp("inline-live-save", [liveOwner], "editor", {
-      deps: { liveSaveWorkspaces: new Set(["default"]) },
-    })
-    const onHere = await (
-      await publishAs(liveApp, "<h1>One</h1>", { title: "Live" }, as(liveOwner.email))
-    ).json()
-    const read = async (a: typeof inlineApp, id: string, who: string) =>
-      (await (await a.request(`/v1/artifacts/${id}`, { headers: as(who) })).json()).live_save
-    expect(await read(liveApp, onHere.short_id, liveOwner.email)).toBe(true)
-    // Unset: nowhere.
-    const offHere = await (
-      await publishAs(inlineApp, "<h1>One</h1>", { title: "Manual" }, as(owner.email))
-    ).json()
-    expect(await read(inlineApp, offHere.short_id, owner.email)).toBe(false)
-  })
-
   it("answers X-Derive-Timing with every store call the save made", async () => {
     const created = await (
       await publishAs(inlineApp, "<h1>Timed</h1>", { title: "Traced page" }, as(owner.email))

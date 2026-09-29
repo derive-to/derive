@@ -13,6 +13,8 @@
  * values are honored, so a `>` inside `title="a > b"` does not end the tag early.
  */
 
+import { lastOf } from "./memo"
+
 export interface HtmlTag {
   /** Lowercased tag name. */
   name: string
@@ -226,31 +228,6 @@ const rawTextCloseStart = (lower: string, name: string, from: number): number =>
     if (!boundary || boundary === ">" || boundary === "/" || isHtmlSpace(boundary)) return close
     cursor = close + needle.length
   }
-}
-
-/** A function of one large string, remembered for the last few strings it was given. A
- *  save and its sync walk the same multi-megabyte document several times (sniffing its
- *  type, indexing its elements, stamping, hashing); each walk after the first is a lookup.
- *  Strings below `min` characters are cheaper to walk again than to key. Callers must
- *  treat what it returns as read-only: it is shared. */
-export const lastOf = <T>(size: number, min: number, fn: (text: string) => T) => {
-  const seen = new Map<string, T>()
-  const get = (text: string): T => {
-    if (text.length < min) return fn(text)
-    const hit = seen.get(text)
-    if (hit !== undefined) {
-      seen.delete(text)
-      seen.set(text, hit)
-      return hit
-    }
-    const value = fn(text)
-    seen.set(text, value)
-    if (seen.size > size) seen.delete(seen.keys().next().value as string)
-    return value
-  }
-  /** What is remembered for `text`, without computing it. */
-  get.peek = (text: string): T | undefined => seen.get(text)
-  return get
 }
 
 /** Every tag in `html`, in document order (shared: read-only). */

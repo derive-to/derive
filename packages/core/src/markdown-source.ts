@@ -20,7 +20,6 @@
 import { Marked, Parser, Renderer, type Token, type Tokens } from "marked"
 import { decodedEntitiesIn, decodeEntities } from "./anchor"
 import { EditError } from "./doc-text"
-import { lastOf } from "./html-tags"
 import { newShortId } from "./ids"
 import {
   escapeHtml,
@@ -30,6 +29,7 @@ import {
   renderSpecialFence,
   stampSanitizer,
 } from "./md"
+import { lastOf } from "./memo"
 import { MERMAID_HEAD } from "./mermaid"
 import {
   hashSource,
