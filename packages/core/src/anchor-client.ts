@@ -10,13 +10,13 @@
  *
  * The frame has an opaque origin, so everything rides postMessage:
  *   frame → host:  select / anchors-resolved / anchor-rects / scroll / position /
- *                  position-restored / anchor-click / anchor-hover / cursor /
+ *                  position-restored / position-now / anchor-click / anchor-hover / cursor /
  *                  cursor-tap / cursor-leave / navigate / open-external / esc / present /
  *                  edit-state / edit-touch / edit-edits / edit-synced / edit-rebased /
  *                  edit-deleted / edit-save / edit-blocked / edit-image /
  *                  edit-mention-query / edit-mention-key / deck-sniff
  *   host → frame:  anchors / remeasure / focus-anchor / emphasize / scroll-by /
- *                  restore-position / hello / edit-mode / edit-collect / edit-sync /
+ *                  restore-position / position-now / hello / edit-mode / edit-collect / edit-sync /
  *                  edit-rebase / edit-resolve / edit-undo-delete /
  *                  edit-undo / edit-redo / edit-format / edit-mention-insert /
  *                  edit-mention-close / deck-drive
@@ -6943,6 +6943,18 @@ interface ElReg {
     } else if (d.type === "scroll-to") {
       releaseHold()
       scrollBack(Number(d.y) || 0)
+    } else if (d.type === "position-now") {
+      // The host is about to swap a newer version in over this page: where the reader
+      // is right now, after everything already sent here (a Next included).
+      const slides = slideEls()
+      const i = slides.length > 1 ? activeSlide(slides) : null
+      post({
+        type: "position-now",
+        nonce: d.nonce,
+        slide: i,
+        slideId: i === null ? undefined : slideIds(slides)[i],
+        at: positionNow(),
+      })
     } else if (d.type === "restore-position") {
       restorePosition(d.slide, d.at, d.slideId)
       // Two frames: a deck's slide transition has started and the scroll has landed.

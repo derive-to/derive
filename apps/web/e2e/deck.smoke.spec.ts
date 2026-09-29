@@ -28,6 +28,21 @@ async function seedDeck(page: Page) {
   return shortId
 }
 
+/** The version `n` is the one on screen, and the one it replaced is gone. */
+async function versionOnScreen(page: Page, n: number) {
+  await expect(page.locator("iframe[title]")).toHaveCount(1)
+  await expect(page.locator("iframe[title]:not([aria-hidden])")).toHaveAttribute(
+    "src",
+    new RegExp(`/v/${n}/`),
+  )
+}
+/** The identity of the slide on screen (what an arrangement keeps, whatever its place). */
+const slideOnScreen = (page: Page) =>
+  page
+    .frameLocator("iframe[title]:not([aria-hidden])")
+    .locator(".slide.on")
+    .getAttribute("data-derive-slide")
+
 test.describe("deck", () => {
   test("the host bar reflects the deck's state and drives it both ways", async ({
     owner: page,
@@ -169,17 +184,72 @@ test.describe("deck", () => {
     await page.getByTestId("deck-slide-card-2").hover()
     await page.getByTestId("deck-slide-up-2").click()
     await page.getByTestId("deck-arrange-save").click()
-    // The saved deck swaps in on the slide the reader was on, wherever it moved to.
-    await expect(page.getByTestId("deck-position")).toContainText("2 / 3")
+    // The saved deck swaps in on the slide the reader was on (the one they moved),
+    // wherever it moved to: first.
+    await versionOnScreen(page, 2)
+    await expect(page.getByTestId("deck-position")).toContainText("1 / 3")
+    expect(await slideOnScreen(page)).toBe("1")
 
     // Move away, then jump to the anchored comment. Ordinal-only resolution would land
     // on slide 2 (the old position); stable identity takes us back to the moved slide 1.
     await page.getByTestId("deck-next").click()
-    await expect(page.getByTestId("deck-position")).toContainText("3 / 3")
+    await expect(page.getByTestId("deck-position")).toContainText("2 / 3")
     const nextComment = page.getByTestId("comment-nav-next")
     if (!(await nextComment.isVisible())) await page.getByTestId("artifact-show-comments").click()
     await nextComment.click()
     await expect(page.getByTestId("deck-position")).toContainText("1 / 3")
+  })
+
+  test("a saved arrangement never moves the reader: moves made while it loads win, and the slide stays theirs", async ({
+    owner: page,
+  }) => {
+    const classOnly = DECK_TEMPLATE.replace(/ data-derive-slide="\d+"/g, "")
+    const shortId = await publishArtifact(page, "swap-deck.html", classOnly, "text/html")
+    await openArtifact(page, shortId)
+    const position = page.getByTestId("deck-position")
+
+    // The new version is slow to arrive, and the reader moves on meanwhile: that move
+    // is where they stay once it swaps in.
+    let release = () => {}
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let asked = false
+    await page.route(new RegExp(`/raw/${shortId}/v/2/`), async (route) => {
+      asked = true
+      await held
+      await route.continue()
+    })
+    await page.getByTestId("deck-arrange").click()
+    await page.getByTestId("deck-slide-card-2").hover()
+    await page.getByTestId("deck-slide-up-2").click()
+    await page.getByTestId("deck-arrange-save").click()
+    await expect.poll(() => asked).toBe(true)
+    await expect(position).toContainText("2 / 3")
+    await page.getByTestId("deck-next").click()
+    await expect(position).toContainText("3 / 3")
+    release()
+    await versionOnScreen(page, 2)
+    expect(await slideOnScreen(page)).toBe("2")
+    await expect(position).toContainText("3 / 3")
+
+    // Its slide moved without the reader moving: the new version keeps them on it,
+    // at its new place.
+    await page.getByTestId("deck-prev").click()
+    await page.getByTestId("deck-prev").click()
+    await expect(position).toContainText("1 / 3")
+    expect(await slideOnScreen(page)).toBe("1")
+    await page.getByTestId("deck-arrange").click()
+    await page.getByTestId("deck-slide-card-1").hover()
+    await page.getByTestId("deck-slide-down-1").click()
+    await page.getByTestId("deck-arrange-save").click()
+    await versionOnScreen(page, 3)
+    await expect(position).toContainText("2 / 3")
+    expect(await slideOnScreen(page)).toBe("1")
+    // …and nothing moves them after it.
+    await page.waitForTimeout(1500)
+    await expect(position).toContainText("2 / 3")
+    expect(await slideOnScreen(page)).toBe("1")
   })
 
   test("a comment on a later slide flips the deck to that slide", async ({ owner: page }) => {

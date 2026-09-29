@@ -88,7 +88,7 @@ export function ArtifactDocument({
   runtimeReady?: boolean
   canFixRuntimeError?: boolean
   onScrollDoc: (dy: number) => void
-  onFrameLoad: () => void
+  onFrameLoad: (swapped?: boolean) => void
   onToggleDiff: () => void
   onRestore: () => void
   onBackToCurrent: () => void

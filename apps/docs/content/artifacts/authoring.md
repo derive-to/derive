@@ -86,6 +86,7 @@ compatible client. Messages are tagged with a `source` field.
 | `edit-resolve` | `{ id, mine }` | settle a conflict: keep your words (sent over theirs by the next save) or theirs |
 | `edit-undo-delete` | None | put back the block just deleted, where it was |
 | `restore-position` | `{ slide?, slideId?, at? }` | go to a place the host kept (a refresh, or a new version swapped in); the scroll holds while late images and fonts arrive, until the reader moves. Replies `position-restored` |
+| `position-now` | `{ nonce }` | where the reader is right now, after every message sent before it; the host asks the page on screen just before a newer version replaces it. Replies `position-now` with `{ nonce, slide, slideId, at }` |
 
 ### Formatting
 

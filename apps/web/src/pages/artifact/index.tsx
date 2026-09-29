@@ -1415,11 +1415,13 @@ export function Artifact({ template = false }: { template?: boolean }) {
       // gone — the hook exits and warns rather than letting a later Save silently
       // no-op over discarded edits.
       positionFor={() => ({ ...place.current(), slideId: deck?.slides[deck.i]?.id })}
-      onFrameLoad={() => {
-        onFrameLoad()
+      onFrameLoad={(swapped) => {
         frameContent.current = { shortId, version: frameDoc.version }
         // Back to the reader's place: the URL's on the first load, the current one after.
-        post({ type: "restore-position", ...place.restore() })
+        // A version swapped in is there already (the stage brought it to where the
+        // reader was the moment it went on screen).
+        if (!swapped) post({ type: "restore-position", ...place.restore() })
+        onFrameLoad()
         inlineEdit.onFrameGone()
       }}
       onToggleDiff={() => setView(view === "diff" ? "preview" : "diff")}

@@ -464,9 +464,17 @@ export function useArtifactFrame(p: {
 
   // Drive the deck from the host bar; fullscreen wraps the iframe + bar so the
   // controls stay reachable while presenting.
+  // While a newer version is swapping in, the page on screen takes no input (render-
+  // stage): a move made then waits for the new page, and lands after it is in place.
+  const held = useRef<Record<string, unknown>[]>([])
+  const drive = useCallback((msg: Record<string, unknown>) => {
+    const f = frame.current
+    if (f?.inert) held.current.push(msg)
+    else f?.contentWindow?.postMessage(msg, "*")
+  }, [])
   const deckCmd = useCallback(
     (action: "next" | "prev" | "goto", n?: number) =>
-      frame.current?.contentWindow?.postMessage(
+      drive(
         // A protocol deck moves itself; a sniffed one is moved by the injected
         // client (which synthesizes the key the page already listens for, so the
         // page's own idea of where it is stays true).
@@ -476,9 +484,8 @@ export function useArtifactFrame(p: {
           action,
           n,
         },
-        "*",
       ),
-    [],
+    [drive],
   )
   const videoCmd = useCallback(
     (
@@ -486,18 +493,15 @@ export function useArtifactFrame(p: {
       n?: number,
       id?: string,
     ) => {
-      frame.current?.contentWindow?.postMessage(
-        {
-          source: "derive-host",
-          type: videoRef.current?.sniffed ? "video-drive" : "video",
-          action,
-          n,
-          id,
-        },
-        "*",
-      )
+      drive({
+        source: "derive-host",
+        type: videoRef.current?.sniffed ? "video-drive" : "video",
+        action,
+        n,
+        id,
+      })
     },
-    [],
+    [drive],
   )
   // Present mode owns the fullscreen element, the presenting state and the keyboard
   // that drives a deck while it's up (see use-present-mode). It lives here because
@@ -615,6 +619,7 @@ export function useArtifactFrame(p: {
       // The head-injected shared-state SDK queues requests until this handshake,
       // so a very fast iframe cannot post before the host listener exists.
       post({ type: "shared-ready" })
+      for (const msg of held.current.splice(0)) frame.current?.contentWindow?.postMessage(msg, "*")
     },
     post,
     scrollBy,

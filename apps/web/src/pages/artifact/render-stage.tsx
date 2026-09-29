@@ -132,6 +132,26 @@ export const runtimeDiagnosticFor = (
   }
 }
 
+/** The frame's reply of `type` echoing `nonce`, or null after `ms`. */
+const answer = (from: Window | null | undefined, type: string, nonce: string, ms: number) =>
+  new Promise<Record<string, unknown> | null>((resolve) => {
+    const done = (d: Record<string, unknown> | null) => {
+      window.removeEventListener("message", onMsg)
+      window.clearTimeout(timer)
+      resolve(d)
+    }
+    const onMsg = (e: MessageEvent) => {
+      const d = e.data
+      if (e.source === from && d?.source === "derive" && d.type === type && d.nonce === nonce)
+        done(d)
+    }
+    const timer = window.setTimeout(() => done(null), ms)
+    window.addEventListener("message", onMsg)
+  })
+/** Two places are the same slide (by identity when known) and the same scroll anchor. */
+const samePlace = (a: Record<string, unknown>, b: Record<string, unknown>) =>
+  (a.slideId ?? a.slide ?? null) === (b.slideId ?? b.slide ?? null) && (a.at ?? "") === (b.at ?? "")
+
 export function RenderStage({
   rawSrc,
   title,
@@ -170,8 +190,9 @@ export function RenderStage({
   frameRef: RefObject<HTMLIFrameElement | null>
   /** The fullscreen/present target — the render surface itself. */
   wrapRef: RefObject<HTMLDivElement | null>
-  /** Called on the iframe's own `load` (the page's bridge handshakes off it). */
-  onFrameLoad?: () => void
+  /** Called on the iframe's own `load` (the page's bridge handshakes off it), and when a
+   *  newer document swaps in (`swapped`: it is already at the reader's place). */
+  onFrameLoad?: (swapped?: boolean) => void
   /** A source-free runtime failure relayed by the first-injected sandbox runtime. */
   runtimeError?: ArtifactRuntimeError | null
   /** The injected runtime found meaningful content after the iframe loaded. */
@@ -203,6 +224,7 @@ export function RenderStage({
   phaseRef.current = phase
   const positionRef = useRef(positionFor)
   positionRef.current = positionFor
+  const askSeq = useRef(0)
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new source (or a retry) is what decides between a swap and a hard load; the rest is read at that moment.
   useLayoutEffect(() => {
@@ -220,32 +242,53 @@ export function RenderStage({
     setPhase("booting")
   }, [rawSrc, attempt])
   /** The next document loaded behind: bring it to the reader's place, then swap it in
-   *  with a short crossfade and drop the old one. */
-  const loadedBehind = (el: HTMLIFrameElement, key: number) => {
+   *  with a short crossfade and drop the old one. The reader keeps reading (and moving)
+   *  on the page on screen meanwhile, so whatever they did last wins: just before the
+   *  swap that page stops taking input and says where the reader is now — after
+   *  anything already sent to it — and the new one goes there first. Commands the host
+   *  sends in that moment wait for the new page (see use-artifact-frame). */
+  const loadedBehind = async (el: HTMLIFrameElement, key: number) => {
     const w = el.contentWindow
-    let swapped = false
-    const swap = () => {
-      if (swapped) return
-      swapped = true
-      window.removeEventListener("message", onRestored)
-      window.clearTimeout(timer)
-      ;(frameRef as { current: HTMLIFrameElement | null }).current = el
-      setFrontKey(key)
-      onFrameLoad?.()
-      // It spoke while nobody listened: ask it to say again what the host needs.
-      w?.postMessage({ source: "derive-host", type: "hello" }, "*")
-      window.setTimeout(() => setDocs((list) => list.filter((d) => d.key >= key)), 160)
+    const tell = (to: Window | null | undefined, msg: Record<string, unknown>) =>
+      to?.postMessage({ source: "derive-host", ...msg }, "*")
+    const restore = async (place: Record<string, unknown>) => {
+      const nonce = `r${++askSeq.current}`
+      tell(w, { type: "restore-position", ...place, nonce })
+      await answer(w, "position-restored", nonce, 1500)
     }
-    const onRestored = (e: MessageEvent) => {
-      if (e.source === w && e.data?.source === "derive" && e.data.type === "position-restored")
-        swap()
+    let place = positionRef.current?.() ?? {}
+    await restore(place)
+    const out = frameRef.current
+    if (!el.isConnected) return
+    if (out && out !== el) {
+      out.inert = true
+      const nonce = `p${++askSeq.current}`
+      tell(out.contentWindow, { type: "position-now", nonce })
+      const now = await answer(out.contentWindow, "position-now", nonce, 300)
+      const last = now
+        ? { slide: now.slide ?? undefined, slideId: now.slideId, at: now.at }
+        : (positionRef.current?.() ?? {})
+      if (!el.isConnected) {
+        out.inert = false
+        return
+      }
+      if (!samePlace(last, place)) {
+        place = last
+        await restore(place)
+        if (!el.isConnected) {
+          out.inert = false
+          return
+        }
+      }
     }
-    window.addEventListener("message", onRestored)
-    const timer = window.setTimeout(swap, 1500)
-    w?.postMessage(
-      { source: "derive-host", type: "restore-position", ...positionRef.current?.() },
-      "*",
-    )
+    ;(frameRef as { current: HTMLIFrameElement | null }).current = el
+    setFrontKey(key)
+    // Now it is heard: tell it again where it is, so it reports that (a deck its slide).
+    tell(w, { type: "restore-position", ...place })
+    onFrameLoad?.(true)
+    // It spoke while nobody listened: ask it to say again what the host needs.
+    tell(w, { type: "hello" })
+    window.setTimeout(() => setDocs((list) => list.filter((d) => d.key >= key)), 160)
   }
 
   useEffect(() => {
@@ -354,7 +397,9 @@ export function RenderStage({
               if (el && key === frontKey)
                 (frameRef as { current: HTMLIFrameElement | null }).current = el
             }}
-            onLoad={(e) => (key > frontKey ? loadedBehind(e.currentTarget, key) : handleLoad(key))}
+            onLoad={(e) =>
+              key > frontKey ? void loadedBehind(e.currentTarget, key) : handleLoad(key)
+            }
             title={title}
             src={src}
             aria-hidden={key !== frontKey || undefined}
