@@ -73,6 +73,35 @@ test.describe("deck", () => {
     await expect(position).toHaveText("2 / 3")
   })
 
+  test("a copied link opens on the slide being worked on, in the app and on its own", async ({
+    owner: page,
+  }) => {
+    await seedDeck(page)
+    await page.getByTestId("deck-next").click()
+    await page.getByTestId("deck-next").click()
+    await expect(page.getByTestId("deck-position")).toHaveText("3 / 3")
+    await expect.poll(() => new URL(page.url()).hash).toBe("#slide=3")
+
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
+    await page.getByTestId("share-trigger").click()
+    await page.getByTestId("share-url-copy").click()
+    const link = await page.evaluate(() => navigator.clipboard.readText())
+    expect(link).toMatch(/#slide=3$/)
+
+    const other = await page.context().newPage()
+    // Locally the API and the app are separate origins; the link's path and place are
+    // what matter.
+    const { pathname, hash } = new URL(link)
+    await other.goto(new URL(`${pathname}${hash}`, page.url()).href)
+    await expect(other.getByTestId("deck-position")).toHaveText("3 / 3")
+
+    // The page itself, opened without the app (as a workspace domain serves it).
+    const raw = await page.locator("iframe[title]:not([aria-hidden])").getAttribute("src")
+    await other.goto(`${new URL(raw ?? "", page.url()).href.split("#")[0]}#slide=3`)
+    await expect(other.locator(".slide").nth(2)).toHaveClass(/\bon\b/)
+    await other.close()
+  })
+
   test("Present mode is offered for a deck", async ({ owner: page }) => {
     await seedDeck(page)
     // Fullscreen is host-side (it fullscreens the iframe wrapper), which is why a deck

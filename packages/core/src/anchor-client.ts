@@ -2135,6 +2135,16 @@ interface ElReg {
       applyHold()
     }
   }
+  // Opened on its own (a workspace domain, a raw link), the page restores the place its
+  // link carries, as the app does for the pages it frames.
+  if (window.parent === window) {
+    const fromHash = () => {
+      const m = /^#(?:slide=(\d+)|at=(.+))$/.exec(window.location.hash)
+      if (m) restorePosition(m[1] ? Number(m[1]) - 1 : undefined, m[2])
+    }
+    if (document.readyState === "complete") fromHash()
+    else window.addEventListener("load", fromHash, { once: true })
+  }
 
   /* Resolve each anchor, scoping a deck comment to its recorded slide FIRST (so the
      same phrase on two slides can't collide), then falling back to a whole-document
