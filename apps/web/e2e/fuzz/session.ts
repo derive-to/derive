@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { renderMarkdown } from "@derive/core"
-import { expect, type Frame, type Page } from "@playwright/test"
+import { expect, type Frame, type Page, type Response } from "@playwright/test"
 import { publishArtifact } from "../helpers"
 import {
   type ArrangeEntry,
@@ -157,7 +157,9 @@ export interface FuzzPages {
 // Probe plumbing
 
 export async function artifactFrame(page: Page): Promise<Frame> {
-  const handle = await page.locator("iframe[title]").elementHandle({ timeout: 15_000 })
+  const handle = await page
+    .locator("iframe[title]:not([aria-hidden])")
+    .elementHandle({ timeout: 15_000 })
   const frame = await handle?.contentFrame()
   if (!frame) throw new Error("artifact frame not found")
   return frame
@@ -243,7 +245,7 @@ async function targets(ctx: Ctx): Promise<ProbeTargets> {
 
 /** Frame viewport point → page point (the frame may be scaled to fit). */
 async function toPage(ctx: Ctx, view: { w: number; h: number }, x: number, y: number) {
-  const box = await ctx.page.locator("iframe[title]").boundingBox()
+  const box = await ctx.page.locator("iframe[title]:not([aria-hidden])").boundingBox()
   if (!box) throw new Error("artifact frame has no box")
   return { x: box.x + (x * box.width) / view.w, y: box.y + (y * box.height) / view.h }
 }
@@ -374,7 +376,7 @@ async function moveSelected(
     for (let i = 0; i < times; i++) await k.press(key)
   } else if (how === "button") {
     const button = page
-      .frameLocator("iframe[title]")
+      .frameLocator("iframe[title]:not([aria-hidden])")
       .getByRole("button", { name: back ? "Move earlier" : "Move later" })
     if (await button.isEnabled({ timeout: 2000 }).catch(() => false)) await button.click()
     else detail.skipped = "move button disabled"
@@ -770,6 +772,71 @@ async function awaitSave(
   return { kind: "ok", skipped: body?.skipped_edits ?? [], edits }
 }
 
+/** Inline edits save themselves: ask for the rest now (⌘S), wait until the page says the
+ *  server holds everything it counted (or that it can't: an error, a conflict), and
+ *  report every save the phase sent. A save with nothing left to change is a no-op. */
+async function awaitAutoSave(page: Page, sent: Response[]): Promise<SaveOutcome> {
+  const seen = new Set<string>()
+  const counted = Number(
+    (await page
+      .frameLocator("iframe[title]:not([aria-hidden])")
+      .locator("html")
+      .getAttribute("data-derive-edit-rev")
+      .catch(() => null)) ?? 0,
+  )
+  await page
+    .getByTestId("inline-edit-bar")
+    .click({ position: { x: 2, y: 2 } })
+    .catch(() => {})
+  await page.keyboard.press("ControlOrMeta+s")
+  const status = page.getByTestId("inline-edit-status")
+  let kind: string | null = null
+  await expect(async () => {
+    for (const t of await page
+      .locator("[data-sonner-toast]")
+      .allInnerTexts()
+      .catch(() => []))
+      seen.add(t.replace(/\s+/g, " ").trim())
+    kind = await status.getAttribute("data-status")
+    expect(kind === "error" || kind === "conflict" || kind === "saved").toBe(true)
+    if (kind === "saved")
+      expect(Number(await status.getAttribute("data-saved-rev"))).toBeGreaterThanOrEqual(counted)
+  })
+    .toPass({ timeout: 25_000 })
+    .catch(() => {})
+  const toasts = [...seen].filter((t) => !/^Saved|^Done/.test(t))
+  const refused: { res: Response; message: string }[] = []
+  for (const res of sent) {
+    if (res.ok()) continue
+    const body = (await res.json().catch(() => null)) as {
+      error?: { message?: string } | string
+      message?: string
+    } | null
+    const err = body?.error
+    const message =
+      (typeof err === "string" ? err : err?.message) ?? body?.message ?? JSON.stringify(body)
+    if (!/exactly as it is/.test(message)) refused.push({ res, message })
+  }
+  const first = refused[0]
+  if (first)
+    return {
+      kind: "error",
+      status: first.res.status(),
+      message: first.message,
+      edits: editsOf(first.res.request().postData()),
+    }
+  if (kind !== "saved")
+    return {
+      kind: "error",
+      status: 0,
+      message: `the page says ${kind}: ${toasts.join(" / ")}`,
+      edits: null,
+    }
+  const last = sent.filter((r) => r.ok()).at(-1)
+  if (!last) return { kind: "no-request", toasts }
+  return { kind: "ok", skipped: [], edits: editsOf(last.request().postData()) }
+}
+
 // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI escapes from expect messages
 const stripAnsi = (s: string) => s.replace(/\u001b\[[0-9;]*m/g, "")
 
@@ -973,6 +1040,13 @@ async function editPhase(
 
   ctx.slide = slides[0] as number
   await probe(frame, "show", ctx.slide)
+  // Every save this pass sends (they go by themselves as the gestures land).
+  const sent: Response[] = []
+  const onSave = (r: Response) => {
+    if (r.url().includes(`/v1/artifacts/${shortId}/versions`) && r.request().method() === "POST")
+      sent.push(r)
+  }
+  page.on("response", onSave)
   // After a save the session picks back up by itself, on the same slide.
   if (!(await page.getByTestId("inline-edit-bar").isVisible()))
     await page.getByTestId(ctx.doc ? "artifact-inline-edit" : "deck-edit").click()
@@ -1007,17 +1081,7 @@ async function editPhase(
     (d) => d.chunks.join("|") !== d.originalChunks.join("|"),
   ).length
   const served = await probe<string>(frame, "reloadSig")
-  const outcome = await awaitSave(
-    page,
-    shortId,
-    // Nothing to save shows no Save button: that is the "no request" outcome, not a hang.
-    () =>
-      page
-        .getByTestId("inline-edit-save")
-        .click({ timeout: 10_000 })
-        .catch(() => {}),
-    touched,
-  )
+  const outcome = await awaitAutoSave(page, sent).finally(() => page.off("response", onSave))
   save(label, outcome)
   if (outcome.kind !== "no-request" && Array.isArray(outcome.edits))
     ctx.stats.edits = outcome.edits.length
@@ -1069,21 +1133,23 @@ async function editPhase(
       signature: `partial save skipped edits: ${genericize(outcome.skipped[0]?.message ?? "")}`,
       message: outcome.skipped.map((s) => `#${s.index}: ${s.message}`).join(" / "),
     })
-  // The page reloads on the saved source and the session picks back up there.
-  await expect
-    .poll(async () => probe<string>(await artifactFrame(page), "reloadSig").catch(() => served), {
-      timeout: 20_000,
+  // Saving never reloads the page: the same document, still in edit mode.
+  const now = await probe<string>(await artifactFrame(page), "reloadSig").catch(() => "")
+  if (now !== served)
+    ctx.failures.push({
+      phase: "edit",
+      oracle: "save",
+      signature: "the page reloaded while saving",
+      message: "the artifact frame is a different document after the saves",
     })
-    .not.toBe(served)
-    .catch(() => {})
   await expect(page.getByTestId("inline-edit-bar"))
-    .toBeVisible({ timeout: 15_000 })
+    .toBeVisible({ timeout: 5_000 })
     .catch(() => {
       ctx.failures.push({
         phase: "edit",
         oracle: "save",
-        signature: "the session did not pick back up after a successful save",
-        message: "inline-edit-bar not visible 15s after the save response",
+        signature: "edit mode ended during a save",
+        message: "inline-edit-bar not visible after the saves",
       })
     })
   const after = await contentOf(page, shortId)
@@ -1206,7 +1272,7 @@ export async function runSession(
       armed = true
       const frame = await artifactFrame(page)
       const section = rng.int(0, (await probe<number>(frame, "sectionCount")) - 1)
-      const first = await probe<string>(frame, "reloadSig")
+      const first = await probe<string | null>(frame, "srcSha")
       if (
         await editPhase(ctx, fp, shortId, opts, recorder, {
           slide: section,
@@ -1214,9 +1280,11 @@ export async function runSession(
           label: "edit",
         })
       ) {
+        // Round two carries on in the same page, on the ids the saves synced in.
         await expect
           .poll(
-            async () => probe<string>(await artifactFrame(page), "reloadSig").catch(() => first),
+            async () =>
+              probe<string | null>(await artifactFrame(page), "srcSha").catch(() => first),
             { timeout: 20_000 },
           )
           .not.toBe(first)
@@ -1240,7 +1308,7 @@ export async function runSession(
         const slide = rng.int(0, (await probe<number>(frame, "slideCount")) - 1)
         const first = await probe<string | null>(frame, "srcSha")
         const round = { slide, actions: rng.int(8, 15), label: "edit" }
-        // Round two starts on the page the first save reloaded (fresh source ids).
+        // Round two carries on in the same page, on the ids the saves synced in.
         if (await editPhase(ctx, fp, shortId, opts, recorder, round)) {
           await expect
             .poll(

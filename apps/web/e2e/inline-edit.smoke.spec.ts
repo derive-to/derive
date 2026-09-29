@@ -1,6 +1,7 @@
+import { DECK_TEMPLATE } from "@derive/core"
 import type { Page } from "@playwright/test"
 import { zipSync } from "fflate"
-import { expect, openArtifact, publishArtifact, shareArtifact, test } from "./fixtures"
+import { expect, openArtifact, publishArtifact, saveEdits, shareArtifact, test } from "./fixtures"
 
 /**
  * Inline editing: the mode, end to end, through the real sandboxed frame.
@@ -8,8 +9,8 @@ import { expect, openArtifact, publishArtifact, shareArtifact, test } from "./fi
  * Its own file rather than a line in the smoke gate, per the e2e README — this is
  * one surface in depth. It exists because the ENGINE (quote resolution, the
  * projection offset map, the edits route) is covered by unit tests while the part
- * that actually breaks is the MODE: entering it, what a save does to it, and the
- * three ways of leaving with unsaved work. None of that is reachable from a
+ * that actually breaks is the MODE: entering it, what a save does to it (edits save
+ * themselves, and the page never reloads for it), and the ways of leaving. None of that is reachable from a
  * node-environment unit test, so before this file a regression in the state
  * machine shipped without failing anything.
  *
@@ -184,24 +185,8 @@ async function seed(page: Page) {
   return shortId
 }
 
-const frameSha = (page: Page) =>
-  page.frameLocator("iframe[title]").locator("html").getAttribute("data-derive-src-sha")
-/** Save, and wait until it landed. With `resume`, also wait for the session to pick
- *  back up on the reloaded page (an HTML save does), to keep editing there. */
-async function saveEdits(page: Page, resume = false) {
-  const sha = resume ? await frameSha(page) : null
-  const response = page.waitForResponse(
-    (r) => r.url().includes("/versions") && r.request().method() === "POST",
-  )
-  await page.getByTestId("inline-edit-save").click()
-  expect((await response).ok()).toBe(true)
-  if (!resume) return
-  await expect.poll(() => frameSha(page).catch(() => sha), { timeout: 15_000 }).not.toBe(sha)
-  await expect(page.getByTestId("inline-edit-bar")).toBeVisible()
-}
-
 /** The artifact's rendered document — a real cross-origin sandboxed iframe. */
-const doc = (page: Page) => page.frameLocator("iframe[title]")
+const doc = (page: Page) => page.frameLocator("iframe[title]:not([aria-hidden])")
 
 /** Pick a block up by its corner: around its words, not on them. */
 const pickBlock = (page: Page, selector: string) =>
@@ -282,14 +267,13 @@ test("type in the document and save — the edit lands in the stored source", as
 
   await appendToParagraph(owner, "one", " Amended.")
   // The strip counts the touched block, which is how the user knows anything took.
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+  await expect(owner.getByTestId("inline-edit-status")).toContainText("· 1")
 
   await saveEdits(owner)
 
   await expect(async () => {
-    // The owner's own web publish is minutes old, so the inline save coalesces into
-    // it: same version number, new bytes (a pause or a named version appends instead).
-    expect(await versionOf(owner, shortId)).toBe(1)
+    // An edit session is one version: its first save appends it, later ones replace it.
+    expect(await versionOf(owner, shortId)).toBe(2)
     const html = await contentOf(owner, shortId)
     expect(html).toContain("First paragraph. Amended.")
     // Surgical: the rest of the source is untouched, markup included.
@@ -324,7 +308,7 @@ test("replaces deck text when its partial layout schema cannot be scanned", asyn
   })
   await owner.keyboard.type("AI-native social")
   await appendToParagraph(owner, "subtitle", " Ready for review.")
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("2 unsaved changes")
+  await expect(owner.getByTestId("inline-edit-status")).toContainText("· 2")
 
   await saveEdits(owner)
   await expect(async () => {
@@ -359,27 +343,21 @@ test("saves the selected occurrence when cards repeat the same wording", async (
   }).toPass()
 })
 
-test("discard reverts the text and publishes nothing", async ({ owner }) => {
+test("↺ on one change of the session puts it back, and that saves too", async ({ owner }) => {
   const shortId = await seed(owner)
   await enterEditMode(owner)
 
   await appendToParagraph(owner, "one", " Throwaway.")
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
-
-  await owner.getByTestId("inline-edit-discard").click()
-  // Back to the invitation, and the document reads as it did before.
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("click text to edit")
+  await appendToParagraph(owner, "two", " Kept.")
+  await saveEdits(owner)
+  await owner.getByTestId("inline-edit-status").click()
+  await expect(owner.getByTestId("inline-edit-change")).toHaveCount(2)
+  await owner.getByTestId("inline-edit-change-revert").first().click()
   await expect(doc(owner).locator("#one")).toHaveText("First paragraph.")
-  await expect(owner.getByTestId("inline-edit-undo")).toBeDisabled()
-  await expect(owner.getByTestId("inline-edit-redo")).toBeDisabled()
-
-  // A second cycle gets a fresh history rather than reviving the abandoned first one.
-  await appendToParagraph(owner, "two", " Throwaway too.")
-  await owner.getByTestId("inline-edit-discard").click()
-  await expect(doc(owner).locator("#two")).toHaveText("Second paragraph.")
-  await expect(owner.getByTestId("inline-edit-undo")).toBeDisabled()
-  await expect(owner.getByTestId("inline-edit-redo")).toBeDisabled()
-  expect(await versionOf(owner, shortId)).toBe(1)
+  await saveEdits(owner)
+  const saved = await contentOf(owner, shortId)
+  expect(saved).toContain("<p id=one>First paragraph.</p>")
+  expect(saved).toContain("<p id=two>Second paragraph. Kept.</p>")
 })
 
 test("a resolved collaborator becomes a portable chip; code and unknown handles stay plain", async ({
@@ -426,62 +404,36 @@ test("a resolved collaborator becomes a portable chip; code and unknown handles 
   await expect(doc(owner).locator("[data-derive-mention]")).toHaveText(`@${handle}`)
 })
 
-test("escape leaves a clean session, and asks before dropping a dirty one", async ({ owner }) => {
-  await seed(owner)
+test("escape drops the caret first, then saves what's left and leaves", async ({ owner }) => {
+  const shortId = await seed(owner)
   await enterEditMode(owner)
 
   // Clean: Escape is just "leave".
   await owner.keyboard.press("Escape")
   await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
 
-  // Dirty, and the caret is still in the block. Escape is two steps by design: the
-  // first drops the caret and keeps everything (the "get this cursor out of my way"
-  // reflex must not be a destructive keystroke)...
+  // With the caret in a block, the first Escape only drops the caret: the "get this
+  // cursor out of my way" reflex never ends anything.
   await enterEditMode(owner)
   await appendToParagraph(owner, "one", " Pending.")
   await owner.keyboard.press("Escape")
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
-  await expect(owner.getByTestId("inline-edit-exit-confirm")).toBeHidden()
-
-  // ...and only the second asks about the mode itself.
+  await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
+  // The second leaves the mode, and what was typed is saved on the way out.
   await owner.keyboard.press("Escape")
-  await expect(owner.getByTestId("inline-edit-exit-confirm")).toBeVisible()
-
-  // Cancelling keeps both the session and the text.
-  await owner.getByTestId("confirm-dialog-cancel").click()
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
-  // Wait for the dialog to be fully gone: pressing Escape into a layer that is still
-  // animating out is caught by that layer, not the page.
-  await expect(owner.getByTestId("inline-edit-exit-confirm")).toBeHidden()
-
-  // Confirming leaves and reverts. (Cancel returned focus to the page, not the
-  // block, so one press reaches the mode this time.)
-  await owner.keyboard.press("Escape")
-  await owner.getByTestId("inline-edit-exit-confirm").click()
   await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
-  await expect(doc(owner).locator("#one")).toHaveText("First paragraph.")
+  await expect.poll(() => contentOf(owner, shortId)).toContain("First paragraph. Pending.")
+  await expect(doc(owner).locator("#one")).toHaveText("First paragraph. Pending.")
 })
 
-test("navigating away with unsaved edits is guarded, not silent", async ({ owner }) => {
+test("navigating away saves what's left first, and asks nothing", async ({ owner }) => {
   const shortId = await seed(owner)
   await enterEditMode(owner)
   await appendToParagraph(owner, "one", " Unsaved.")
 
-  // In-app navigation is intercepted by the router blocker.
   await owner.getByTestId("sidebar-all").click()
-  await expect(owner.getByTestId("inline-edit-leave-confirm")).toBeVisible()
-  await expect(owner).toHaveURL(new RegExp(shortId))
-
-  // Cancel keeps us on the document with the edit intact.
-  await owner.getByTestId("confirm-dialog-cancel").click()
-  await expect(owner).toHaveURL(new RegExp(shortId))
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
-
-  // Confirming discards and lets the navigation through.
-  await owner.getByTestId("sidebar-all").click()
-  await owner.getByTestId("inline-edit-leave-confirm").click()
   await expect(owner).not.toHaveURL(new RegExp(shortId))
-  expect(await versionOf(owner, shortId)).toBe(1)
+  await expect(owner.getByTestId("inline-edit-leave-confirm")).toBeHidden()
+  expect(await contentOf(owner, shortId)).toContain("First paragraph. Unsaved.")
 })
 
 /**
@@ -540,17 +492,7 @@ test("typing follows the click: a click off the active block takes the keyboard 
       .evaluate(() => (window as unknown as { __nav?: number }).__nav ?? 0),
   ).toBe(0)
 
-  // With the caret dropped, Escape asks about the mode rather than leaving silently.
-  await owner.keyboard.press("Escape")
-  await expect(owner.getByTestId("inline-edit-exit-confirm")).toBeVisible()
-  await owner.getByTestId("confirm-dialog-cancel").click()
-  await expect(owner.getByTestId("inline-edit-exit-confirm")).toBeHidden()
-
   await saveEdits(owner)
-  // The success toast clears itself while the page is visible.
-  const saved = owner.getByText(/^Saved v\d+$/)
-  await expect(saved).toBeVisible()
-  await expect(saved).toBeHidden({ timeout: 10_000 })
   const stored = await contentOf(owner, shortId)
   expect(stored).toContain('<p id="item">Automations and workflows. A</p>')
   expect(stored).toMatch(/<h2 id="title">[ABadegn]{7}<\/h2>/)
@@ -587,7 +529,7 @@ test("⌘A selects the block being edited, and a retype across a heading's <br> 
   await doc(owner).locator("#card").click()
   await owner.keyboard.press("ControlOrMeta+a")
   await owner.keyboard.type("Extensions & Integrations")
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("2 unsaved changes")
+  await expect(owner.getByTestId("inline-edit-status")).toContainText("· 2")
 
   await saveEdits(owner)
   const stored = await contentOf(owner, shortId)
@@ -599,8 +541,12 @@ test("⌘A selects the block being edited, and a retype across a heading's <br> 
 test("closing the tab with unsaved inline edits asks first", async ({ owner }) => {
   await seed(owner)
   await enterEditMode(owner)
+  // Held back from the server (as offline would), so the edit is genuinely unsaved.
+  await owner.route("**/v1/artifacts/*/versions", (route) => route.abort())
   await appendToParagraph(owner, "one", " Unsaved.")
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+  await expect(owner.getByTestId("inline-edit-status")).toContainText("Offline", {
+    timeout: 10_000,
+  })
   const dialog = owner.waitForEvent("dialog")
   await owner.close({ runBeforeUnload: true })
   const prompt = await dialog
@@ -663,7 +609,7 @@ test("the bar's controls: undo, redo, and a format that reaches the source", asy
   await expect(owner.getByTestId("artifact-inspect-choose")).toBeVisible()
 
   await appendToParagraph(owner, "one", " Typed.")
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+  await expect(owner.getByTestId("inline-edit-status")).toContainText("· 1")
   await expect(owner.getByTestId("inline-edit-undo")).toBeEnabled()
   await expect(owner.getByTestId("artifact-inspect-text")).toContainText("Paragraph")
   await expect(owner.getByTestId("artifact-inspect-undo")).toBeEnabled()
@@ -674,7 +620,7 @@ test("the bar's controls: undo, redo, and a format that reaches the source", asy
   // back; redo in the bar returns both the text and the rail's live state.
   await owner.getByTestId("artifact-inspect-undo").click()
   await expect(doc(owner).locator("#one")).toHaveText("First paragraph.")
-  await expect(owner.getByTestId("inline-edit-bar")).not.toContainText("unsaved change")
+  await expect(owner.getByTestId("inline-edit-status")).not.toContainText("·")
   await owner.getByTestId("inline-edit-redo").click()
   await expect(doc(owner).locator("#one")).toHaveText("First paragraph. Typed.")
 
@@ -712,8 +658,8 @@ test("the edit bar keeps history and terminal actions reachable at phone width",
   expect(await bar.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
 
   await appendToParagraph(owner, "one", " Phone.")
-  await expect(owner.getByTestId("inline-edit-discard")).toBeInViewport({ ratio: 1 })
-  await expect(owner.getByTestId("inline-edit-save")).toBeInViewport({ ratio: 1 })
+  await expect(owner.getByTestId("inline-edit-status")).toBeInViewport({ ratio: 1 })
+  await expect(owner.getByTestId("inline-edit-done")).toBeInViewport({ ratio: 1 })
   expect(await bar.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
 })
 
@@ -733,12 +679,8 @@ test("Inspect preserves a text selection while asking for a link", async ({ owne
   await owner.getByTestId("artifact-inspect-link").click()
   await owner.getByTestId("artifact-inspect-link-input").fill("https://derive.to")
   await owner.getByTestId("artifact-inspect-link-input").press("Enter")
-  await expect(owner.getByTestId("artifact-inspect-status")).toContainText("1 unsaved change")
-  const response = owner.waitForResponse(
-    (r) => r.url().includes("/versions") && r.request().method() === "POST",
-  )
-  await owner.getByTestId("artifact-inspect-save").click()
-  expect((await response).ok()).toBe(true)
+  await saveEdits(owner)
+  await expect(owner.getByTestId("artifact-inspect-status")).toHaveText("All changes saved")
 
   const src = await contentOf(owner, shortId)
   expect(src).toMatch(/<p id=one>[\s\S]*<a href="https:\/\/derive\.to">[^<]+<\/a>[\s\S]*<\/p>/)
@@ -762,14 +704,14 @@ test("resize an image and box, then undo/redo and save", async ({ owner }) => {
   await owner.mouse.move(grip.x + grip.width / 2 + 40, grip.y + grip.height / 2 + 20)
   await owner.mouse.up()
 
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+  await expect(owner.getByTestId("inline-edit-status")).toContainText("· 1")
   await expect(image).toHaveCSS("width", "200px")
   // Images keep their natural ratio instead of stretching to follow the pointer.
   expect(await image.evaluate((el) => el.style.height)).toBe("auto")
 
   await owner.getByTestId("inline-edit-undo").click()
   await expect(image).toHaveCSS("width", "160px")
-  await expect(owner.getByTestId("inline-edit-bar")).not.toContainText("unsaved change")
+  await expect(owner.getByTestId("inline-edit-status")).not.toContainText("·")
   await owner.getByTestId("inline-edit-redo").click()
   await expect(image).toHaveCSS("width", "200px")
 
@@ -782,7 +724,7 @@ test("resize an image and box, then undo/redo and save", async ({ owner }) => {
   await boxHandle.press("ArrowDown")
   await expect(box).toHaveCSS("width", "228px")
   await expect(box).toHaveCSS("height", "118px")
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("2 unsaved changes")
+  await expect(owner.getByTestId("inline-edit-status")).toContainText("· 2")
 
   await saveEdits(owner)
   const src = await contentOf(owner, shortId)
@@ -825,7 +767,7 @@ test("nested cards and their owning group move independently, undo, and save saf
   await expect(frame.locator("#board")).toHaveCount(1)
   await expect(cards.nth(0)).toHaveAttribute("id", "card-b")
 
-  await saveEdits(owner, true)
+  await saveEdits(owner)
   const saved = await contentOf(owner, shortId)
   expect(saved.indexOf('data-derive-node="board"')).toBeLessThan(
     saved.indexOf('data-derive-node="title"'),
@@ -835,16 +777,20 @@ test("nested cards and their owning group move independently, undo, and save saf
   )
   expect(saved).toContain('data-derive-owner="board"')
 
-  // The session picks back up on the saved page. Discard walks a new move back
-  // without publishing, and keeps the mode open; Done is the way out.
+  // The session carries on in the same page. Undo walks a new move back (and that
+  // saves too); Done is the way out.
   await pickBlock(owner, "#card-b")
   await owner.keyboard.press("Alt+ArrowRight")
   await expect(cards.nth(0)).toHaveAttribute("id", "card-a")
-  await owner.getByTestId("inline-edit-discard").click()
+  await owner.getByTestId("inline-edit-undo").click()
   await expect(cards.nth(0)).toHaveAttribute("id", "card-b")
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("click text to edit")
   await owner.getByTestId("inline-edit-done").click()
   await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  expect(await contentOf(owner, shortId)).toContain('data-derive-node="move"')
+  const afterUndo = await contentOf(owner, shortId)
+  expect(afterUndo.indexOf('data-derive-node="move"')).toBeLessThan(
+    afterUndo.indexOf('data-derive-node="discover"'),
+  )
 
   // If the final intent removes the parent, child-region changes are superseded by
   // that atomic subtree removal instead of producing a dangling operation.
@@ -958,7 +904,7 @@ test("the changes list says where and what changed, shows it, and reverts just o
   await owner.keyboard.press("Alt+ArrowRight")
   await expect.poll(() => order(owner)).toEqual(["c2", "c1", "c3"])
 
-  await owner.getByTestId("inline-edit-changes").click()
+  await owner.getByTestId("inline-edit-status").click()
   const rows = owner.getByTestId("inline-edit-change")
   await expect(rows).toHaveCount(2)
   await expect(rows.nth(0)).toContainText("Section")
@@ -973,7 +919,7 @@ test("the changes list says where and what changed, shows it, and reverts just o
   // ↺ puts back only that change: the words return, the move stays.
   await owner.getByTestId("inline-edit-change-revert").nth(1).click()
   await expect(frame.locator("#h2")).not.toContainText("now")
-  await expect(owner.getByTestId("inline-edit-changes")).toHaveText(/^1 unsaved change/)
+  await expect(owner.getByTestId("inline-edit-status")).toContainText("· 1")
   await expect.poll(() => order(owner)).toEqual(["c2", "c1", "c3"])
 
   await saveEdits(owner)
@@ -1010,9 +956,9 @@ test("Enter starts a new paragraph of the same kind, Shift+Enter breaks the line
 
   // A change far into a long paragraph is listed where it happened.
   await typeAtLineEnd(owner, "p.note >> nth=0", " Slowly.")
-  await owner.getByTestId("inline-edit-changes").click()
+  await owner.getByTestId("inline-edit-status").click()
   await expect(owner.getByTestId("inline-edit-changes-list")).toContainText("section. Slowly.")
-  await owner.getByTestId("inline-edit-changes").click()
+  await owner.getByTestId("inline-edit-status").click()
 
   // In a list: Shift+Enter breaks the line inside the item, Enter starts the next item.
   await typeAtLineEnd(owner, "ul.tasks li", "")
@@ -1044,7 +990,7 @@ test("Enter starts a new paragraph of the same kind, Shift+Enter breaks the line
     )
     .toBe(true)
   expect(was).toBeGreaterThan(500)
-  await saveEdits(owner, true)
+  await saveEdits(owner)
   // The saved page opens where the reader was, and this save isn't someone else's news.
   await expect.poll(async () => Math.abs((await scrollY()) - was)).toBeLessThan(3)
   await expect(owner.getByText(/was just published/)).toHaveCount(0)
@@ -1316,7 +1262,7 @@ test("a resize the layout can't honour, or one cut short, leaves the block as it
   await owner.mouse.up()
   await expect(guarded).toHaveAttribute("data-derive-width", "50")
   expect(await versionOf(owner, shortId)).toBe(1)
-  await expect(owner.getByTestId("inline-edit-changes")).toBeHidden()
+  await expect(owner.getByTestId("inline-edit-status")).not.toContainText("·")
 })
 
 test("responsive edit previews use the real iframe viewport", async ({ owner }) => {
@@ -1330,7 +1276,7 @@ test("responsive edit previews use the real iframe viewport", async ({ owner }) 
   await expect(owner.getByTestId("inline-edit-viewports")).toBeHidden()
   await enterEditMode(owner)
 
-  const iframe = owner.locator("iframe[title]")
+  const iframe = owner.locator("iframe[title]:not([aria-hidden])")
   const frame = doc(owner)
   await owner.getByTestId("inline-edit-viewport-mobile").click()
   await expect(iframe).toHaveAttribute("data-preview-width", "390")
@@ -1394,13 +1340,13 @@ test("set exact dimensions, constrain a box, and reset to the authored size", as
   await expect(image).toHaveCSS("width", "320px")
   await expect(image).toHaveCSS("height", "180px")
   expect(await image.evaluate((el) => el.style.height)).toBe("auto")
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+  await expect(owner.getByTestId("inline-edit-status")).toContainText("· 1")
 
   await size.click()
   await panel.getByRole("button", { name: "Reset to authored size" }).click()
   await expect(image).toHaveCSS("width", "160px")
   await expect(image).toHaveCSS("height", "90px")
-  await expect(owner.getByTestId("inline-edit-bar")).not.toContainText("unsaved change")
+  await expect(owner.getByTestId("inline-edit-status")).not.toContainText("·")
 
   const box = doc(owner).locator("#summary-box")
   await box.click({ position: { x: 210, y: 100 } })
@@ -1418,15 +1364,16 @@ test("set exact dimensions, constrain a box, and reset to the authored size", as
   await panel.getByLabel("Width in pixels").fill("308")
   await expect(panel.getByLabel("Height in pixels")).toHaveValue("165")
   // The editor's global save chord commits a still-open precision form first, so
-  // values typed here cannot disappear when Save closes the session.
+  // values typed here are part of what it saves.
   await panel.getByLabel("Width in pixels").press("Control+s")
-  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await saveEdits(owner)
   const src = await contentOf(owner, shortId)
   expect(src).toContain(
     '<div id="summary-box" data-derive-resizable style="width: 308px; height: 165px">',
   )
-  // Reset removed the temporary image edit rather than publishing a redundant size.
-  expect(src).toContain('style="display:block;width:160px;height:90px"')
+  // Reset put the image back at its authored size (the size in between was saved on the
+  // way, and reset saved over it).
+  expect(src).toMatch(/<img id="hero"[^>]*style="display: ?block; ?width: ?160px; ?height: ?90px"/)
 })
 
 test("keyboard users can discover resize controls and open exact sizing", async ({ owner }) => {
@@ -1496,7 +1443,7 @@ test("Markdown saves a selection across consecutive bold subtitle lines", async 
     selection?.addRange(range)
   })
   await owner.keyboard.type("person")
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+  await expect(owner.getByTestId("inline-edit-status")).toContainText("· 1")
   await saveEdits(owner)
 
   await expect(async () => {
@@ -1516,7 +1463,7 @@ test("Markdown saves a retyped list item whose bold runs into its full stop", as
 
   await doc(owner).locator("li").first().click({ clickCount: 3 })
   await owner.keyboard.type("Sweep the yard.")
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+  await expect(owner.getByTestId("inline-edit-status")).toContainText("· 1")
   await saveEdits(owner)
   await expect(async () => {
     const stored = await contentOf(owner, shortId)
@@ -1550,7 +1497,7 @@ test("Markdown saves exactly: typed Markdown is source, code takes a caret, Shif
   await typeAtLineEnd(owner, "li >> nth=1", "")
   await owner.keyboard.press("ArrowLeft")
   await owner.keyboard.press("Shift+Enter")
-  await saveEdits(owner, true)
+  await saveEdits(owner)
   // Every byte the edits didn't touch is as it was: the entity, the markers, the blank lines.
   expect(await contentOf(owner, shortId)).toBe(
     "# Notes\n\nThe *first* step &mdash; see `v12` today. **now**\n\n- One\n- Tw\\\n  o\n",
@@ -1559,7 +1506,7 @@ test("Markdown saves exactly: typed Markdown is source, code takes a caret, Shif
 
   // The session picked back up on the saved page: the next edit saves the same way.
   await typeAtLineEnd(owner, "h1", " B")
-  await saveEdits(owner, true)
+  await saveEdits(owner)
   expect(await contentOf(owner, shortId)).toBe(
     "# Notes B\n\nThe *first* step &mdash; see `v12` today. **now**\n\n- One\n- Tw\\\n  o\n",
   )
@@ -1601,7 +1548,7 @@ test("Markdown Enter starts a new paragraph or item, Shift+Enter breaks the line
   await owner.keyboard.type("and tamp")
   await expect(frame.locator("tr")).toHaveCount(2)
 
-  await saveEdits(owner, true)
+  await saveEdits(owner)
   // A blank line between the halves, the item's own marker, a hard break, a <br> in the
   // cell; every other byte as it was.
   expect(await contentOf(owner, shortId)).toBe(
@@ -1610,16 +1557,17 @@ test("Markdown Enter starts a new paragraph or item, Shift+Enter breaks the line
   await expect(paras).toHaveCount(2)
   await expect(items).toHaveCount(3)
 
-  // The session picked back up on the saved page, and splits again the same way.
+  // The session carries on in the same page (it never reloaded), and splits again the
+  // same way: the first paragraph keeps the space its split left at its end.
   await typeAtLineEnd(owner, "li >> nth=2", "")
   await owner.keyboard.press("Enter")
   await owner.keyboard.type("Oil the points")
   await typeAtLineEnd(owner, "main > p >> nth=0", "")
   await owner.keyboard.press("Enter")
   await owner.keyboard.type("Then:")
-  await saveEdits(owner, true)
+  await saveEdits(owner)
   expect(await contentOf(owner, shortId)).toBe(
-    "# Crew notes\n\nNight crews lift the old rail.\n\nThen: \n\nDay crews lay the new rail.\\\nBy noon.\n\n* Check the gauge\n* Level the rail\n* Sweep the bed\n* Oil the points\n\n| Task | Crew |\n| --- | --- |\n| Lift<br>and tamp | Night |\n",
+    "# Crew notes\n\nNight crews lift the old rail. \n\nThen:\n\nDay crews lay the new rail.\\\nBy noon.\n\n* Check the gauge\n* Level the rail\n* Sweep the bed\n* Oil the points\n\n| Task | Crew |\n| --- | --- |\n| Lift<br>and tamp | Night |\n",
   )
 })
 
@@ -1657,7 +1605,7 @@ test("replacing selected linked and annotated text saves the user's replacement"
     selection?.addRange(range)
   })
   await owner.keyboard.type("Rewritten content")
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+  await expect(owner.getByTestId("inline-edit-status")).toContainText("· 1")
   await saveEdits(owner)
   await expect(async () => {
     expect(await contentOf(owner, shortId)).toBe('<p class="target">Rewritten content</p>')
@@ -1727,7 +1675,7 @@ test("Inspect appears only inside an editor's HTML edit session", async ({ owner
   await expect(owner.getByTestId("artifact-inspect-choose")).toContainText(
     "Choose content in the document",
   )
-  await expect(owner.getByTestId("artifact-inspect-status")).toHaveText("No unsaved changes")
+  await expect(owner.getByTestId("artifact-inspect-status")).toHaveText("All changes saved")
   await owner.getByTestId("artifact-inspect-done").click()
   await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
   await expect(owner.getByTestId("rail-tab-inspect")).toHaveCount(0)
@@ -1811,7 +1759,7 @@ test("LaTeX: typing beside a formula edits the prose and leaves the math alone",
   await p.click({ position: { x: 6, y: 8 } })
   await owner.keyboard.press("End")
   await owner.keyboard.type(" Amended.")
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+  await expect(owner.getByTestId("inline-edit-status")).toContainText("· 1")
   await saveEdits(owner)
   // The owner published v1 moments ago, so the edit coalesces into it: read the source.
   await expect(async () => {
@@ -2130,4 +2078,258 @@ test("LaTeX: Cancel over unsaved text asks first, and discarding closes the edit
   await expect(paper(owner).locator("p").first()).toBeVisible()
   // Nothing published: the paper is still v1 and the section is untouched.
   await expect(owner.getByTestId("bundle-folder-sec")).not.toHaveAttribute("data-active", "true")
+})
+
+/* ── Live auto-save ───────────────────────────────────────────────────────────────
+   Every edit saves itself and the page never reloads for it: not for your own save,
+   not for someone else's. These pin the promises that make that feel solid. */
+
+/** Mark the frame's document and window so a reload (which would replace both) shows. */
+const markFrame = (page: Page) =>
+  doc(page)
+    .locator("html")
+    .evaluate(() => {
+      const w = window as unknown as { __sentinel?: string }
+      w.__sentinel = Math.random().toString(36)
+      ;(document as unknown as { __sentinel?: string }).__sentinel = w.__sentinel
+      return w.__sentinel
+    })
+const frameMark = (page: Page) =>
+  doc(page)
+    .locator("html")
+    .evaluate(() => {
+      const w = window as unknown as { __sentinel?: string }
+      const d = document as unknown as { __sentinel?: string }
+      return w.__sentinel && w.__sentinel === d.__sentinel ? w.__sentinel : null
+    })
+/** Publish a change as another client would (the API, not this page). */
+const publishElsewhere = async (page: Page, shortId: string, from: string, to: string) => {
+  const res = await page.request.post(`/v1/artifacts/${shortId}/versions`, {
+    multipart: {
+      edits: JSON.stringify([{ old_str: from, new_str: to }]),
+      base_version: String(await versionOf(page, shortId)),
+      message: "Elsewhere",
+    },
+  })
+  expect(res.ok(), `publish elsewhere: ${res.status()} ${await res.text()}`).toBeTruthy()
+}
+
+test.describe("live auto-save", () => {
+  test("ten edits save themselves without reloading the page", async ({ owner }) => {
+    const shortId = await publishArtifact(owner, "agenda.html", AGENDA_DOC, "text/html")
+    await openArtifact(owner, shortId)
+    await enterEditMode(owner)
+    const mark = await markFrame(owner)
+    const frame = doc(owner)
+    const status = owner.getByTestId("inline-edit-status")
+
+    // Typing saves on a pause, with the caret left where it is: the next keystroke
+    // lands right after the last.
+    await typeAtLineEnd(owner, "#c1 p", " one")
+    for (const word of [". two", ". three", "."]) {
+      await expect(status).toHaveAttribute("data-status", "saved", { timeout: 10_000 })
+      await owner.keyboard.type(word)
+    }
+    await expect(frame.locator("#c1 p")).toHaveText("First. one. two. three.")
+    // Moves and a copy save at once.
+    await owner.keyboard.press("Escape")
+    await frame.locator("#c1").click({ position: { x: 4, y: 6 }, force: true })
+    await owner.keyboard.press("Alt+ArrowRight")
+    await expect.poll(() => order(owner)).toEqual(["c2", "c1", "c3"])
+    await saveEdits(owner)
+    // Saving never drops the selection: the pill still moves the same card.
+    await pill(owner).getByRole("button", { name: "Move later" }).click()
+    await expect.poll(() => order(owner)).toEqual(["c2", "c3", "c1"])
+    await saveEdits(owner)
+    await pill(owner).getByRole("button", { name: "Duplicate" }).click()
+    await expect(frame.locator(".agenda-item")).toHaveCount(4)
+    await saveEdits(owner)
+    // The copy saved with its own identity: typing into it saves into it alone.
+    await typeAtLineEnd(owner, ".agenda-item:nth-child(4) p", " Copy")
+    await saveEdits(owner)
+    await typeAtLineEnd(owner, "#c2 p", " Two")
+    await saveEdits(owner)
+    await typeAtLineEnd(owner, "#c3 p", " Three")
+    await saveEdits(owner)
+    await typeAtLineEnd(owner, "#title", " today")
+    await saveEdits(owner)
+
+    // Never reloaded: the same document and window, still in edit mode.
+    expect(await frameMark(owner)).toBe(mark)
+    await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
+    await expect(status).toContainText("All changes saved")
+    const saved = await contentOf(owner, shortId)
+    expect(saved).toContain(
+      '<h2 id="title" data-derive-node="title" data-derive-kind="heading">Agenda today</h2>',
+    )
+    const cards = [
+      ...saved.matchAll(/<div class="agenda-item" id="(c\d)[^"]*">[\s\S]*?<p>([^<]*)<\/p>/g),
+    ]
+    expect(cards.map((m) => [m[1], m[2]])).toEqual([
+      ["c2", "Second. Two"],
+      ["c3", "Third. Three"],
+      ["c1", "First. one. two. three."],
+      ["c1", "First. one. two. three. Copy"],
+    ])
+    // One edit session is one version.
+    expect(await versionOf(owner, shortId)).toBe(2)
+  })
+
+  test("undo reaches back across saves, and each undo saves too", async ({ owner }) => {
+    const shortId = await seed(owner)
+    await enterEditMode(owner)
+    const mark = await markFrame(owner)
+    await appendToParagraph(owner, "one", " Kept.")
+    await saveEdits(owner)
+    await appendToParagraph(owner, "two", " Undone.")
+    await saveEdits(owner)
+    await expect.poll(() => contentOf(owner, shortId)).toContain("Second paragraph. Undone.")
+
+    await owner.getByTestId("inline-edit-undo").click()
+    await expect(doc(owner).locator("#two")).toHaveText("Second paragraph.")
+    await saveEdits(owner)
+    const after = await contentOf(owner, shortId)
+    expect(after).toContain("<p id=two>Second paragraph.</p>")
+    expect(after).toContain("First paragraph. Kept.")
+    // …and redo brings it back, saved again.
+    await owner.getByTestId("inline-edit-redo").click()
+    await saveEdits(owner)
+    expect(await contentOf(owner, shortId)).toContain("Second paragraph. Undone.")
+    expect(await frameMark(owner)).toBe(mark)
+    // The session list kept every change across the saves.
+    await owner.getByTestId("inline-edit-status").click()
+    await expect(owner.getByTestId("inline-edit-change")).toHaveCount(2)
+  })
+
+  test("a deleted block comes back with the toast's Undo", async ({ owner }) => {
+    const shortId = await publishArtifact(owner, "agenda.html", AGENDA_DOC, "text/html")
+    await openArtifact(owner, shortId)
+    await enterEditMode(owner)
+    await pickBlock(owner, "#c2")
+    await owner.keyboard.press("Delete")
+    await expect(doc(owner).locator(".agenda-item")).toHaveCount(2)
+    const toast = owner.getByText(/^Deleted /)
+    await expect(toast).toBeVisible()
+    await owner.getByRole("button", { name: "Undo" }).last().click()
+    await expect.poll(() => order(owner)).toEqual(["c1", "c2", "c3"])
+    await saveEdits(owner)
+    const saved = await contentOf(owner, shortId)
+    expect([...saved.matchAll(/class="agenda-item" id="(c\d)"/g)].map((m) => m[1])).toEqual([
+      "c1",
+      "c2",
+      "c3",
+    ])
+  })
+
+  test("a refresh keeps the scroll position, and a deck keeps its slide", async ({ owner }) => {
+    const shortId = await publishArtifact(owner, "long.html", PARAGRAPHS_DOC, "text/html")
+    await openArtifact(owner, shortId)
+    await doc(owner)
+      .locator("#head")
+      .evaluate((el) => el.scrollIntoView())
+    await expect(owner).toHaveURL(/#at=head,/)
+    const before = await doc(owner)
+      .locator("html")
+      .evaluate(() => window.scrollY)
+    expect(before).toBeGreaterThan(1000)
+    await owner.reload()
+    await expect
+      .poll(() =>
+        doc(owner)
+          .locator("html")
+          .evaluate(() => Math.round(window.scrollY)),
+      )
+      .toBeGreaterThan(before - 4)
+    expect(
+      await doc(owner)
+        .locator("html")
+        .evaluate(() => window.scrollY),
+    ).toBeLessThan(before + 4)
+
+    const deckId = await publishArtifact(owner, "deck.html", DECK_TEMPLATE, "text/html")
+    await openArtifact(owner, deckId)
+    await expect(owner.getByTestId("deck-position")).toBeVisible()
+    await owner.getByTestId("deck-next").click()
+    await owner.getByTestId("deck-next").click()
+    await expect(owner).toHaveURL(/#slide=3$/)
+    await owner.reload()
+    await expect(owner.getByTestId("deck-position")).toContainText("3 / 3")
+    await expect(owner).toHaveURL(/#slide=3$/)
+  })
+
+  test("someone else's edit lands in place while you type elsewhere", async ({
+    owner,
+    secondUser,
+  }) => {
+    const shortId = await seed(owner)
+    await shareArtifact(owner.request, shortId, secondUser.email, "editor")
+    await enterEditMode(owner)
+    const mark = await markFrame(owner)
+    await appendToParagraph(owner, "one", " Mine")
+    await saveEdits(owner)
+    await doc(owner).locator("#one").click()
+    await owner.keyboard.press("End")
+
+    await publishElsewhere(secondUser.page, shortId, "Second paragraph.", "Second, theirs.")
+    await expect(doc(owner).locator("#two")).toHaveText("Second, theirs.", { timeout: 15_000 })
+    // The caret stayed in the block being typed in: the next keystrokes land there.
+    await owner.keyboard.type(" more")
+    await expect(doc(owner).locator("#one")).toHaveText("First paragraph. Mine more")
+    await saveEdits(owner)
+    const saved = await contentOf(owner, shortId)
+    expect(saved).toContain("First paragraph. Mine more")
+    expect(saved).toContain("Second, theirs.")
+    expect(await frameMark(owner)).toBe(mark)
+  })
+
+  test("the same block edited by two people asks whose words win", async ({
+    owner,
+    secondUser,
+  }) => {
+    const shortId = await seed(owner)
+    await shareArtifact(owner.request, shortId, secondUser.email, "editor")
+    await enterEditMode(owner)
+    // Hold this page's saves back (as a slow network would) while the other edit lands.
+    await owner.route("**/v1/artifacts/*/versions", (route) => route.abort())
+    await appendToParagraph(owner, "one", " Mine.")
+    await expect(owner.getByTestId("inline-edit-status")).toHaveAttribute(
+      "data-status",
+      "offline",
+      { timeout: 10_000 },
+    )
+    await publishElsewhere(secondUser.page, shortId, "First paragraph.", "First, theirs.")
+    // Their edit lands on a block with unsaved words of yours: theirs goes on the page,
+    // yours is kept, and the choice opens by itself.
+    await expect(owner.getByTestId("inline-edit-status")).toHaveAttribute(
+      "data-status",
+      "conflict",
+      { timeout: 15_000 },
+    )
+    await expect(doc(owner).locator("#one")).toHaveText("First, theirs.")
+    await owner.unroute("**/v1/artifacts/*/versions")
+    await expect(owner.getByTestId("inline-edit-conflict")).toContainText("First, theirs.")
+    await expect(owner.getByTestId("inline-edit-conflict")).toContainText("First paragraph. Mine.")
+    await owner.getByTestId("inline-edit-keep-mine").click()
+    await saveEdits(owner)
+    expect(await contentOf(owner, shortId)).toContain("<p id=one>First paragraph. Mine.</p>")
+  })
+
+  test("offline edits wait on this device and survive a reload", async ({ owner }) => {
+    const shortId = await seed(owner)
+    await enterEditMode(owner)
+    await owner.route("**/v1/artifacts/*/versions", (route) => route.abort())
+    await appendToParagraph(owner, "one", " Offline.")
+    await expect(owner.getByTestId("inline-edit-status")).toContainText(
+      "Offline — 1 edit waiting",
+      {
+        timeout: 10_000,
+      },
+    )
+    await owner.reload()
+    await expect(doc(owner).locator("#one")).toBeVisible()
+    await owner.unroute("**/v1/artifacts/*/versions")
+    await expect(owner.getByText(/Saved 1 edit made offline/)).toBeVisible({ timeout: 20_000 })
+    expect(await contentOf(owner, shortId)).toContain("First paragraph. Offline.")
+    await expect(doc(owner).locator("#one")).toHaveText("First paragraph. Offline.")
+  })
 })

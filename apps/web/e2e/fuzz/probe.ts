@@ -69,6 +69,11 @@ export function installProbe(): void {
     "data-derive-readonly",
     "data-derive-mention",
     "data-derive-mention-new",
+    // Source stamps are the editor's names for elements, renumbered as saves sync in
+    // place: not content.
+    "data-derive-src",
+    "data-derive-stale",
+    "data-derive-generated",
   ])
 
   const isUi = (el: Element): boolean =>
@@ -377,7 +382,7 @@ export function installProbe(): void {
   }
 
   /* Leak detection: which blocks' text changed since `mark`. */
-  let marked = new Map<Element, { text: string; parent: Element | null }>()
+  let marked = new Map<Element, { text: string; full: string; parent: Element | null }>()
   const directText = (el: Element) => {
     let t = ""
     for (const c of Array.from(el.childNodes))
@@ -404,7 +409,11 @@ export function installProbe(): void {
     for (const slide of topSlides())
       for (const el of [slide, ...Array.from(slide.querySelectorAll("*"))])
         if (!isUi(el) && !el.closest(".derive-edit-ui"))
-          marked.set(el, { text: directText(el), parent: el.parentElement })
+          marked.set(el, {
+            text: directText(el),
+            full: el.textContent ?? "",
+            parent: el.parentElement,
+          })
   }
   /** `b` is the next words after `a`: nothing but whitespace between them. */
   const followsDirectly = (a: Element, b: Element): boolean => {
@@ -419,14 +428,25 @@ export function installProbe(): void {
    *  block right after the clicked one counts as where the typing went. */
   const changedBlocks = (next = false): { rect: Rect; label: string; atPoint: boolean }[] => {
     const hits = new Set<Element>()
+    // Words that changed. An element swapped for an equal one (a save syncing its
+    // markup in place, an editor span becoming the tag it saved as) moved no words.
+    const wordsMoved = (el: Element) => {
+      const was = marked.get(el)
+      return !was || (el.textContent ?? "") !== was.full
+    }
     for (const [el, was] of marked) {
       if (!el.isConnected) {
-        if (was.parent?.isConnected) hits.add(was.parent)
-      } else if (directText(el) !== was.text) hits.add(el)
+        if (was.parent?.isConnected && wordsMoved(was.parent)) hits.add(was.parent)
+      } else if (directText(el) !== was.text && wordsMoved(el)) hits.add(el)
     }
     for (const slide of topSlides())
       for (const el of Array.from(slide.querySelectorAll("*")))
-        if (!marked.has(el) && !el.closest(".derive-edit-ui") && el.parentElement)
+        if (
+          !marked.has(el) &&
+          !el.closest(".derive-edit-ui") &&
+          el.parentElement &&
+          wordsMoved(el.parentElement)
+        )
           hits.add(el.parentElement)
     return Array.from(hits).map((el) => {
       const block = (el.closest("[data-derive-editable]") as Element | null) ?? el
@@ -472,7 +492,8 @@ export function installProbe(): void {
   /** Changes whenever the frame reloads: the stamped source sha where there is one,
    *  else an id this probe drew when it was installed in this document. */
   const fid = Math.random().toString(36).slice(2)
-  const reloadSig = () => document.documentElement.getAttribute("data-derive-src-sha") ?? fid
+  /** This document's identity: a reload (a new document) answers differently. */
+  const reloadSig = () => fid
   const scrollY = () => window.scrollY
 
   const texts = (): string[] => topSlides().map((s) => textOf(s))

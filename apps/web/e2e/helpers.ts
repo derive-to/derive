@@ -75,6 +75,24 @@ export async function openArtifact(page: Page, shortId: string): Promise<void> {
   await expect(page.getByTestId("activity-stream")).toBeVisible()
 }
 
+/** Inline edits save themselves. Wait until the server holds every edit the page has
+ *  counted so far, asking for it now (⌘S) rather than after the pause. */
+export async function saveEdits(page: Page): Promise<void> {
+  const counted = await page
+    .frameLocator("iframe[title]:not([aria-hidden])")
+    .locator("html")
+    .getAttribute("data-derive-edit-rev")
+  await page.getByTestId("inline-edit-bar").click({ position: { x: 2, y: 2 } })
+  await page.keyboard.press("ControlOrMeta+s")
+  const status = page.getByTestId("inline-edit-status")
+  await expect(async () => {
+    expect(await status.getAttribute("data-status")).toBe("saved")
+    expect(Number(await status.getAttribute("data-saved-rev"))).toBeGreaterThanOrEqual(
+      Number(counted ?? 0),
+    )
+  }).toPass({ timeout: 15_000 })
+}
+
 // Post a top-level comment through the composer (all test-id driven) and wait
 // for it to render. Returns nothing — assert on the body text in the caller.
 export async function addComment(page: Page, body: string): Promise<void> {

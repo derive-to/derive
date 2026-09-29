@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer"
 import { renderMarkdown } from "@derive/core"
 import type { Page } from "@playwright/test"
-import { publishArtifact } from "../helpers"
+import { publishArtifact, saveEdits } from "../helpers"
 import { expect, FUZZ_ON, test } from "./fixtures"
 import { deckOf, outline, type SourceSlide } from "./html-tree"
 import {
@@ -78,7 +78,9 @@ test("a known-good one-word edit passes every oracle, and corrupted saves are ca
   frame = await artifactFrame(page)
   const token = await probe<string>(frame, "snapshot")
 
-  const title = page.frameLocator("iframe[title]").locator("[data-derive-node='s1-title']")
+  const title = page
+    .frameLocator("iframe[title]:not([aria-hidden])")
+    .locator("[data-derive-node='s1-title']")
   // One click on a structural node selects the node; a double click arms its text.
   await title.dblclick({ position: { x: 12, y: 12 } })
   await page.keyboard.press("End")
@@ -88,13 +90,8 @@ test("a known-good one-word edit passes every oracle, and corrupted saves are ca
   expect(dom.filter((d) => d.touched).map((d) => d.region)).toEqual(["slide-1"])
   expect(dom[1]?.changed).toEqual({ "node:s1-title": [[]] })
 
-  // The session picks back up after the save, so the bar may never be seen hidden: wait
-  // for the save itself.
-  const saving = page.waitForResponse(
-    (r) => r.url().includes(`/v1/artifacts/${shortId}/versions`) && r.request().method() === "POST",
-  )
-  await page.getByTestId("inline-edit-save").click()
-  expect((await saving).ok()).toBe(true)
+  // The edit saves itself; wait for the server to hold it.
+  await saveEdits(page)
   const before = FIXTURE
   const saved = await contentOf(page, shortId)
   expect(saved).toContain(
