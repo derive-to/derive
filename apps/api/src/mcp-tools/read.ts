@@ -42,7 +42,6 @@ import { cleanPath } from "../lib/bundle"
 import { boundSources, sourceTools } from "../lib/chat-sources"
 import { clip, MAX_CHARS } from "../lib/clip"
 import { pickVariant, rendersOff } from "../lib/collect-render"
-import { assembleContextPackage } from "../lib/context-package"
 import { documentStructure } from "../lib/doc-structure-cache"
 import {
   buildFocusIndex,
@@ -53,6 +52,7 @@ import {
 import { sniffImageType } from "../lib/image"
 import { paperBibliography, paperCitation } from "../lib/latex-bundle"
 import { latexTemplateBundle } from "../lib/latex-templates"
+import { assemblePaperPackage } from "../lib/paper-package"
 import { baseType, isTextType, present, type ReadFormat, searchMatcher } from "../lib/search"
 import { WeightedLruCache } from "../lib/source-text-cache"
 import { canReadTemplateLibrary } from "../lib/template-library-access"
@@ -73,7 +73,6 @@ import {
   PAGE_MAP_MAX,
   parseLineRange,
   parseVersionRange,
-  runnerOnline,
   safeJson,
   skillFilesFooter,
   skillReading,
@@ -253,7 +252,6 @@ export function registerReadTool(tc: ToolContext): void {
     ownerId,
     inGrant,
     resolveWs,
-    askableContexts,
   } = tc
   // One fixed-size Bloom filter per node. It rejects nodes that cannot contain a
   // focused literal; the ordinary exact matcher verifies every candidate. This is
@@ -596,48 +594,30 @@ export function registerReadTool(tc: ToolContext): void {
           },
         })
       }
-      // A CONTEXT id or name loads the PACKAGE rather than a document: manifest inline,
-      // skills and sources as pointers. Same gate as asking — askableContexts is the
-      // per-human canUserAskContext check `find` uses — so reading can never surface a
-      // context the caller could not already see, and no second access path exists.
-      // Returns null when this ref is not a context the caller can reach, so the artifact
-      // path stays in charge: only a `ctx_` id short-circuits, and a bare NAME is tried
-      // only after the artifact lookup misses (below), so a context can never shadow a doc.
+      // An imported paper's Context id loads the PAPER PACKAGE rather than a document: a
+      // summary inline, the paper and its analysis as pointers. Same gate as the paper routes
+      // (workspace-scoped canUserAskContext), so reading never surfaces a paper the caller
+      // could not already see. Only a `ctx_` id reaches here, so it can never shadow a doc.
       const contextPackage = async () => {
         if (!actingFor)
-          return err(
-            "Contexts need a signed-in user. Reconnect with an OAuth login to read or use them.",
-          )
+          return err("Imported papers need a signed-in user. Reconnect with an OAuth login.")
         const t = await resolveWs(workspace)
         if ("error" in t) return err(t.error)
-        const rows = await askableContexts(t.org, actingFor.id)
-        const hit =
-          rows.find(({ x }) => x.id === short_id) ??
-          rows.find(({ x }) => x.name.toLowerCase() === short_id.trim().toLowerCase())
-        if (!hit) return null
-        const pkg = await assembleContextPackage(
-          ctx.meta,
-          hit.x,
-          hit.manifest,
-          (v) => ctx.sourceText(v),
-          runnerOnline(hit.x),
-          ctx.blobs,
+        const x = await ctx.meta.getContext(short_id)
+        if (!x || x.org_id !== t.org || !(await ctx.canUserAskContext(actingFor.id, x))) return null
+        const paper = await ctx.meta.getArtifactById(x.manifest_artifact_id)
+        const pkg = await assemblePaperPackage(ctx.meta, ctx.blobs, x, paper, (v) =>
+          ctx.sourceText(v),
         )
+        if (!pkg) return null
         return json({
           ...pkg,
-          how: pkg.import
-            ? "An imported paper. This Context IS the paper: `manifest` is a summary of it (authors, abstract, BibTeX) and `documents` names the one artifact it lives in — read that short_id for the full LaTeX source, section by section, and for its `citation`. When `import.analysis` is set, an agent already mapped the paper's contributions to its implementation: read that short_id (the `analysis` document) before mapping them yourself, and keep it current as derive://skills/contexts describes. People see the rendered paper, never the source. It takes no runs; do not call use."
-            : "The Context package, opened progressively: its instructions are loaded; skills and sources are pointers — read one by its short_id when a task needs it. To use the Context for work, call use({context, instruction}).",
+          how: "An imported paper. This Context IS the paper: `manifest` is a summary of it (authors, abstract, BibTeX) and `documents` names the one artifact it lives in — read that short_id for the full LaTeX source, section by section, and for its `citation`. When `import.analysis` is set, an agent already mapped the paper's contributions to its implementation: read that short_id (the `analysis` document) before mapping them yourself, and keep it current as derive://skills/papers describes. People see the rendered paper, never the source.",
         })
       }
       if (short_id.startsWith("ctx_")) {
         const pkg = await contextPackage()
-        return (
-          pkg ??
-          err(
-            `No Context "${short_id}" you can reach here. Call find to list the Contexts you may use.`,
-          )
-        )
+        return pkg ?? err(`No imported paper "${short_id}" you can reach here.`)
       }
       const BP = "derive://brandprint/"
       let docId = short_id
@@ -694,9 +674,7 @@ export function registerReadTool(tc: ToolContext): void {
               ...(envelope ? { artifact: envelope.artifact } : {}),
             })
       if (r && "error" in r) return err(r.error)
-      // A bare name that matches no artifact may still name a CONTEXT — tried only here,
-      // after the artifact lookup, so a context named like a doc can never shadow it.
-      if (!r) return (await contextPackage()) ?? notFound(docId)
+      if (!r) return notFound(docId)
       const a = r.a
       // A skill's default version is current, like every read, and it applies to
       // EVERY rung — body, sections, outline, render — so the footer's "read this

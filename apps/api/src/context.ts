@@ -134,15 +134,12 @@ export interface SessionUser {
 }
 
 export interface AppDeps {
-  hostedAutomation?: import("./lib/automation-availability").HostedAutomationConfig
   runtime?: {
     apiUrl: string
     /** Absolute path to a pinned CLI installation in the saved sandbox. */
     runnerPath: string
     /** The CLI version the sandbox installs; defaults to RUNNER_VERSION (lib/runtime-setup). */
     runnerVersion?: string
-    /** Temporary operator pilot. Empty denies admission; cleanup stays independent. */
-    pilotWorkspaceIds: ReadonlySet<string>
     managed?: { apiKey: string; workspaceIds: ReadonlySet<string> }
   }
   runtimeFetch?: typeof fetch
@@ -205,15 +202,6 @@ export interface AppDeps {
    *  Unset ⇒ chat answers with "no model configured" instead of silently doing nothing. Injected
    *  rather than imported so a test can script it and so no provider choice is baked into the app. */
   callModel?: AgentLoopInput["callModel"]
-  /**
-   * Whether this deployment's operator gateway pays for unattended Claude runs.
-   *
-   * `callModel` alone is not enough: it also exists when queued work is executed by a CLI
-   * child/container, and that executor cannot use the in-process gateway credential. Entry
-   * points set this only when the model loop is the selected unattended substrate. Codex always
-   * resolves a Codex plan through the normal payer chain.
-   */
-  automationOperatorPays?: boolean
   /** EVERY model this deploy can answer an attended turn with, and how to reach each one.
    *
    *  `callModel` above is this catalog's DEFAULT entry — one is built from the other, so the two
@@ -395,15 +383,6 @@ export interface AppDeps {
   imports?: boolean
   /** Wake the import worker after enqueuing a paper import. */
   pokeImports?: () => void
-  /**
-   * EXPERIMENTAL hosted runs: start a freshly-created run NOW instead of waiting for the next
-   * tick, so "Run now" and a fire-URL feel immediate. Best-effort and fire-and-forget by
-   * design — the tick is the guarantee, this is only the latency. Unset (the default, and on
-   * every deployment with hosted runs off) ⇒ the run waits to be claimed, unchanged.
-   */
-  pokeRun?: (runId: string) => void
-  /** Best-effort wake for durable Ortam setup, execution and cleanup; cron remains the backstop. */
-  pokeRuntime?: () => void
   /**
    * derive.to's public site (the front door): the marketing pages, the blog, and
    * the trust files, served by their own Worker (the derive-to/site repo, private). A
@@ -681,16 +660,9 @@ export function buildContext(deps: AppDeps) {
   // Set when this request's bearer is a minted dkapi_ token — read by the mint to
   // refuse chaining (see isMintedApiToken).
   const mintedApiCache = new WeakMap<Context, boolean>()
-  // A run CAPABILITY token's scope: the one run id the bearer may claim/settle/pull for.
-  // Set only when agentFor resolved a dkrun_ token; the run endpoints read it to pin the
-  // principal to exactly its run (a leaked token can't touch any other run).
-  const runScopeCache = new WeakMap<Context, string>()
-  // The same, for a session-scoped bearer (the ask lane's half of hosted execution).
-  const sessionScopeCache = new WeakMap<Context, string>()
-  // The one job a `dkjob_` bearer may touch.
+  // The one job a `dkjob_` bearer may touch. Set only when agentFor resolved a job token;
+  // the job routes read it to pin the principal to exactly its job.
   const jobScopeCache = new WeakMap<Context, string>()
-  // One version-pinned workflow run, for a dkwfr_ GitHub harness capability.
-  const workflowScopeCache = new WeakMap<Context, string>()
   const agentFor = async (c: Context): Promise<AgentRecord | null> => {
     if (agentCache.has(c)) return agentCache.get(c) ?? null
     const b = bearer(c)
@@ -740,76 +712,33 @@ export function buildContext(deps: AppDeps) {
     }
     const workKind = b ? workTokenKind(b) : null
     if (b && workKind && deps.encryptionKey) {
-      // A workflow capability is deliberately MCP-only. It has exactly the `use` surface
-      // registered below and must never inherit the agent principal on ordinary REST routes.
-      if (workKind === "workflow" && c.req.path !== "/mcp") {
-        agentCache.set(c, null)
-        onBehalfOfCache.set(c, null)
-        return null
-      }
-      // A per-work capability token (unattended execution): signed + expiring, minted at
-      // dispatch, never stored. All three kinds resolve to the SAME agent principal a registered
-      // token would — the write path needs no special cases — with the work item pinned as
-      // this request's scope. Fail-closed at every step: bad signature/expiry, a foreign or
-      // already-settled item, or a mismatched agent all resolve to anonymous.
+      // A job capability token (a Derive machine running one job): signed + expiring, minted
+      // at dispatch, never stored. It resolves to the SAME agent principal a registered key
+      // would, with the job pinned as this request's scope. Fail-closed at every step: bad
+      // signature/expiry, a foreign or settled job, or a mismatched agent resolve to anonymous.
       const claim = await verifyWorkToken(workKind, deps.encryptionKey, b, Date.now())
       if (claim) {
-        // Still live? A settled run / session must not keep authorizing writes after the fact,
-        // even inside the token's remaining TTL.
-        let live = false
-        if (workKind === "run") {
-          const r = await meta.getRun(claim.id)
-          live = !!(
-            r &&
-            r.agent_id === claim.agentId &&
-            r.org_id === claim.orgId &&
-            !r.runtime_id &&
-            (r.status === "queued" || r.status === "running")
-          )
-        } else if (workKind === "session") {
-          const s = await meta.getSession(claim.id)
-          // A session's agent lives on its CONTEXT (sessions have no agent column).
-          const cx = s?.context_id ? await meta.getContext(s.context_id) : null
-          live = !!(
-            s &&
-            cx &&
-            cx.agent_id === claim.agentId &&
-            s.org_id === claim.orgId &&
-            (s.state === "open" || s.state === "working")
-          )
-        } else if (workKind === "job") {
-          // A job token lives exactly as long as the claim it was minted for: `<job>~<claim>`,
-          // the claim being the job's started_at. A retry is a new claim, so it cannot revive
-          // an earlier machine's token.
-          const [jobId, claimMs] = claim.id.split("~")
-          const j = jobId ? await meta.getJob(jobId) : null
-          live = !!(
-            j &&
-            j.agent_id === claim.agentId &&
-            j.org_id === claim.orgId &&
-            j.status === "running" &&
-            j.started_at !== null &&
-            String(Date.parse(j.started_at)) === claimMs
-          )
-          if (live && jobId) claim.id = jobId
-        } else {
-          const r = await meta.getWorkflowRunById(claim.id)
-          live = !!(
-            r &&
-            r.assigned_agent_id === claim.agentId &&
-            r.org_id === claim.orgId &&
-            (r.status === "dispatched" || r.status === "running" || r.status === "waiting")
-          )
-        }
+        // Still live? A settled job must not keep authorizing writes after the fact, even
+        // inside the token's remaining TTL. A job token lives exactly as long as the claim it
+        // was minted for: `<job>~<claim>`, the claim being the job's started_at. A retry is a
+        // new claim, so it cannot revive an earlier machine's token.
+        const [jobId, claimMs] = claim.id.split("~")
+        const j = jobId ? await meta.getJob(jobId) : null
+        const live = !!(
+          j &&
+          j.agent_id === claim.agentId &&
+          j.org_id === claim.orgId &&
+          j.status === "running" &&
+          j.started_at !== null &&
+          String(Date.parse(j.started_at)) === claimMs
+        )
+        if (live && jobId) claim.id = jobId
         if (live) {
           const ag = await meta.getAgent(claim.agentId)
           if (ag && ag.org_id === claim.orgId) {
             a = ag
             owner = ag.created_by ?? null
-            if (workKind === "run") runScopeCache.set(c, claim.id)
-            else if (workKind === "session") sessionScopeCache.set(c, claim.id)
-            else if (workKind === "job") jobScopeCache.set(c, claim.id)
-            else workflowScopeCache.set(c, claim.id)
+            jobScopeCache.set(c, claim.id)
           }
         }
       }
@@ -1879,16 +1808,8 @@ export function buildContext(deps: AppDeps) {
       : undefined,
     currentUser,
     agentFor,
-    // The run id a dkrun_ capability bearer is pinned to (null for every other principal).
-    // Run endpoints use it to constrain claim/tool/finish to exactly that run.
-    agentRunScope: (c: Context): string | null => runScopeCache.get(c) ?? null,
-    /** The session id a dksess_ capability bearer is pinned to (null for every other
-     *  principal) — the ask lane's twin of agentRunScope. */
-    agentSessionScope: (c: Context): string | null => sessionScopeCache.get(c) ?? null,
     /** The job a `dkjob_` bearer is pinned to, or null for any other principal. */
     agentJobScope: (c: Context): string | null => jobScopeCache.get(c) ?? null,
-    /** The workflow run id a dkwfr_ capability bearer is pinned to. */
-    agentWorkflowScope: (c: Context): string | null => workflowScopeCache.get(c) ?? null,
     /** Is this request authenticated by a MINTED api token (dkapi_)? The mint refuses
      *  to run off one: a token minting its successor with a fresh TTL would renew
      *  itself indefinitely and quietly defeat the "expires in minutes" property that

@@ -11,22 +11,6 @@
 //                         real hostnames, which is a takeover, not a preview.
 //   [triggers]            the every-minute cron → a second scheduler against the same rows,
 //                         materializing and dispatching real automations.
-//   [[queues.consumers]]  → the preview would steal run-dispatch messages from production.
-//   [[queues.producers]]  → the OTHER direction, and the one that was missed. Dropping only the
-//                         consumer left the preview POKING production's `derive-runs` queue on
-//                         every run-now, with no consumer of its own to answer. So every hosted
-//                         run started from a preview was executed by PRODUCTION, running MAIN's
-//                         code, against the shared database — the branch under test never ran
-//                         its own automations, and a reviewer reading the result was reading
-//                         main's behaviour with the PR's name on it. It cost a day of chasing a
-//                         "bug" that was only ever main's missing fix. It is also a real
-//                         cross-environment leak: a PR's automations executing on production's
-//                         deployment with production's credentials.
-//
-//                         With both gone, `pokeRun` is a no-op and (the cron being stripped too)
-//                         a preview's hosted runs simply stay queued. Hosted execution is OFF on
-//                         previews, visibly, rather than silently delegated to production.
-//   [[containers]]        not needed on the loop substrate, and skips a multi-minute image build.
 //   [[send_email]]        a PR preview must never have a live notification transport. Email
 //                         exports use the strongly-gated .test capture seam instead.
 //   DERIVE_SUBDOMAIN_BASE the *.derive.page vanity host. A preview has no route for it, so a
@@ -93,15 +77,7 @@ for (const line of lines) {
 }
 blocks.push(cur)
 
-const DROP = new Set([
-  "[[services]]",
-  "[[routes]]",
-  "[triggers]",
-  "[[queues.consumers]]",
-  "[[queues.producers]]",
-  "[[containers]]",
-  "[[send_email]]",
-])
+const DROP = new Set(["[[services]]", "[[routes]]", "[triggers]", "[[send_email]]"])
 const headerOf = (b) => b.find((l) => /^\[\[?[a-zA-Z]/.test(l))?.trim() ?? null
 
 const kept = []
@@ -109,9 +85,9 @@ for (const b of blocks) {
   const h = headerOf(b)
   const body = b.join("\n")
   if (h && DROP.has(h)) continue
-  // The container's DO binding and its migration go with the container itself.
-  if (h === "[[durable_objects.bindings]]" && body.includes('name = "RUN_CONTAINER"')) continue
-  if (h === "[[migrations]]" && body.includes('new_sqlite_classes = ["RunContainer"]')) continue
+  // The retired hosted-run container class was created and deleted on production's script
+  // only; a preview script never had it, so deleting it there would fail the deploy.
+  if (h === "[[migrations]]" && body.includes('"RunContainer"')) continue
   kept.push(b)
 }
 

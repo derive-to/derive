@@ -37,7 +37,6 @@ import {
   parseRepoRef,
   type RepoFile,
   type RepoRef,
-  rankLeftOut,
   repoArchiveUrl,
   repoRefAt,
   TarError,

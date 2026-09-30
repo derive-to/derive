@@ -352,30 +352,6 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "true",
   },
   {
-    name: "DERIVE_HOSTED_RUNS",
-    group: "advanced",
-    doc: "EXPERIMENTAL — hosted automation runs on this Node deploy: the API process materializes\ndue schedules and executes each run by spawning the derive CLI\n(`derive runner run <capability token>`) as a child process on this box. Needs the CLI,\nthe selected coding agent (Claude Code or Codex), and a matching connected model plan.\nAmbient model keys are deliberately not inherited by the child. Unset = off; queued runs\nthen wait for a polling `derive runner`.",
-    example: "true",
-  },
-  {
-    name: "DERIVE_HOSTED_RUNS_ALLOWLIST",
-    group: "advanced",
-    doc: "Comma-separated immutable workspace ids allowed to execute on this deployment's\nhosted substrate. It gates scheduled materialization, stale-run recovery, the minute dispatch\nsweep, Run now nudges, and hosted ask sessions. Owner-operated polling runners are unaffected.\n\nOn the multi-tenant Cloudflare Worker, unset or blank means NOBODY (fail closed). On a Node\nself-host, unset preserves the single-tenant default of no restriction; set it to restrict\nhosted execution there too, and set it to an empty string for a deployment-level stop.",
-    example: "ws_abc123,ws_def456",
-  },
-  {
-    name: "DERIVE_LOOP_RUNS",
-    group: "advanced",
-    doc: 'EXPERIMENTAL — run hosted automations IN THIS PROCESS instead of spawning the derive CLI.\nA model call plus fetch, which is all a "read something, write an artifact" automation\nneeds, with no child process and no container. Anything wanting a shell, a filesystem or\ngit still belongs on the CLI runner, so this is opt-in and DERIVE_HOSTED_RUNS must also be\non. The same code path runs on Cloudflare: the loop is an HTTP client of this API, so\nthere is no platform-specific implementation to keep in step.',
-    example: "1",
-  },
-  {
-    name: "DERIVE_LOOP_MODEL",
-    group: "advanced",
-    doc: "ANTHROPIC model id for in-process runs (DERIVE_LOOP_RUNS) that resolve a per-run model\nplan through the payer chain. Unset = claude-sonnet-5, which is the right default for\nautomations: they are latency- and tool-call-bound, so depth buys less than turnaround.\n\nThis is NOT DERIVE_MODEL_NAME. That one names the model on your OpenAI-compatible\ngateway and is only meaningful alongside DERIVE_MODEL_BASE_URL; sending it to\napi.anthropic.com returns `model_not_found` on every run. They are separate vars because\nthe two ids look interchangeable and are not — passing the gateway's id on the\ncredential path is what broke every hosted run before this existed.",
-    example: "claude-sonnet-5",
-  },
-  {
     name: "DERIVE_MODEL_BASE_URL",
     group: "advanced",
     doc: "Root of an OPENAI-COMPATIBLE model endpoint (Fireworks, OpenRouter, Together, a\nself-hosted gateway); `/chat/completions` is appended. Setting it points every in-process\nrun AND attended chat on this deploy at that endpoint instead of the Anthropic Messages API.\n\nAn `openrouter.ai` endpoint also receives Derive's bounded public read tool belt: web search,\nURL fetch, and current date/time. OpenRouter executes those server tools inside the model\nrequest; other compatible gateways receive only Derive's ordinary function tools.\n\nIt BYPASSES THE PAYER CHAIN on purpose: this deployment holds the key and spends it for\nevery workspace on it, so there is no chain to walk and no plan for anyone to connect.\nThat is the HOSTED posture — derive.to sets all three — and the workspace is metered\nagainst its tier allowance rather than billed to a credential it never supplied. It is\nequally right for a single-tenant box, where the operator is the only user.\n\n(This entry used to say derive.to does not set it. That was wrong, and it was read as\nintent: the schedule materializer kept walking a payer chain that cannot resolve on a\nhosted deploy, so scheduled automations silently never fired.)\n\nRequires DERIVE_MODEL_API_KEY and DERIVE_MODEL_NAME; all three or none.",
@@ -422,12 +398,6 @@ const CONFIG_VARS: ConfigVar[] = [
     group: "advanced",
     doc: "DEV ONLY — let a workspace with no broker plan use the ECHO stub instead of a broker that\nrefuses. The stub's `execute` returns the caller's own arguments: it reaches Stripe, Gmail\nand nothing else, so a run using it reports success over data that never existed and writes\nan artifact full of invented numbers, with no error anywhere. Unset = a workspace with no\nplan gets a refusing broker, which is what you want everywhere a human might see the output.\nMCP connections are unaffected either way — they carry their own server and route on their\nown ref.",
     example: "1",
-  },
-  {
-    name: "DERIVE_RUNNER_BIN",
-    group: "advanced",
-    doc: "Path to the derive CLI the hosted-runs worker spawns (read only when\nDERIVE_HOSTED_RUNS is on). Unset = `derive` on PATH.",
-    example: "/usr/local/bin/derive",
   },
 ]
 
@@ -491,13 +461,6 @@ export const CAPABILITIES: Capability[] = [
     requires: ["DERIVE_EMBED_PROVIDER"],
     detail:
       "Dense/semantic workspace search: embeddings (a local ONNX model, or Cloudflare Workers AI over REST) stored in pgvector in your Postgres and fused with lexical FTS. Set DERIVE_EMBED_PROVIDER=local|workersai. Also requires DATABASE_URL (Postgres) — with embedded SQLite it stays lexical-only, so the reported status reflects the running datastore.",
-  },
-  {
-    id: "hostedRuns",
-    label: "Hosted automation runs (experimental)",
-    requires: ["DERIVE_HOSTED_RUNS"],
-    detail:
-      "EXPERIMENTAL. This process executes due automation runs itself — materializing schedules, reclaiming runs whose executor died, and spawning `derive runner run` per run — so an automation updates its artifact with no polling runner and no extra machine. Needs the derive CLI plus a coding agent (claude/codex) installed, and a connected model plan (or an ambient ANTHROPIC_API_KEY / OPENAI_API_KEY) for whoever the run bills. Off ⇒ runs stay queued for a polling `derive runner`.",
   },
 ]
 

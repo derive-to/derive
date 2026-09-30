@@ -1,46 +1,48 @@
 ---
 name: workflows
-summary: graphs and loops via Contexts (publish, use)
+summary: graphs and loops as graph agents (publish, agents, ask)
 order: 5.5
 ---
 # Graphs and bounded loops
 
-Use this when a person asks for a workflow, graph, loop, multi-Context plan, human-decision path, or a
+Use this when a person asks for a workflow, graph, loop, multi-agent plan, human-decision path, or a
 clear account of what will happen before work runs. Do not turn an ordinary one-step artifact into
 a graph.
 
-Derive is the persistent working layer. The connected Codex, Claude, or other authorized harness
-executes. Reuse the existing Context `use` primitive; the workflow run ledger coordinates and
-records that work without becoming a second executor, queue, lease model, or artifact store.
+A workflow is an AGENT whose instructions page holds the definition (see derive://skills/agents).
+Asking that agent, or its schedule firing, opens a `graph` job that Derive walks: each step becomes
+a child job for the agent the step names, a human step stops the graph at `needs_you` with the
+authored options, and a terminal step ends its branch. The agents that do the steps run on their
+own machines, as they would for any ask.
 
-A workflow node binds a Context through `kind:"context"` and `context_ref`. The connected Agent
-executes that node using the Context's instructions, skills, sources, and permissions.
+A step binds an agent through `kind:"context"` and `context_ref`: the agent's id or name in this
+workspace. That agent does the step with its own instructions, sources, and permissions.
 
 ## One Preview gate
 
 Preview includes explanation, structural validation, scenario checks, and repair guidance. Do not
 ask for separate Explain, Validate, and Preview steps. Present one result: **Ready to run** or
-**Needs changes**. Only explicit run intent starts Context sessions; authored human gates still
-pause sensitive actions later.
+**Needs changes**. Only explicit run intent starts a graph job; authored human gates still pause
+sensitive actions later.
 
 ## Author
 
-1. Extract the outcome, evidence of completion, Contexts/roles, external effects, loop bounds, and
+1. Extract the outcome, evidence of completion, agents/roles, external effects, loop bounds, and
    decisions that really need a person. Ask only questions whose answers change safety or behavior.
 2. Choose the smallest useful shape: linear handoff, fan-out/join, human decision, router, or bounded
    evaluator–optimizer loop.
 3. Publish one ordinary HTML linked bundle with two facts generated from the same model:
    - `bundle-manifest` remains the visible topology and #799 authored working state.
-   - `workflow-definition` adds Context bindings, route conditions, bounds, effects, gates,
+   - `workflow-definition` adds agent bindings, route conditions, bounds, effects, gates,
      forbidden actions, and scenarios.
 4. Join the facts only by stable diagram/node IDs. Every visible node and edge must have exactly one
    matching workflow node and route.
-   This is **same IDs, different jobs**. A graph may start with `members:[]`; add actual Context
+   This is **same IDs, different jobs**. A graph may start with `members:[]`; add actual step
    result artifacts later. Never invent a placeholder artifact id. As the authoring agent, generate
    one concise, editable `note` for every visible node. Describe what happens in plain language,
    using the matching workflow `instruction` and `result` as source material. Do not make people
    reconstruct the note from owner, output, routing, or gate metadata.
-5. Before any publish or `use` call, compile the facts in memory and present one Preview: what will
+5. Before any publish or `ask` call, compile the facts in memory and present one Preview: what will
    happen, possible branches, human pauses, bounds, external effects, forbidden actions, scenarios,
    and either **Ready to run** or the exact blockers. Repair in memory until Ready.
 6. Publish the Ready workflow artifact and subsequent Derive result/state updates by default; do
@@ -118,180 +120,54 @@ The companion fact has this shape:
 
 ## Preview invariants
 
-- `context` nodes require `context_ref`, `instruction`, and `result`; use `terminal:true` when the
-  Context result ends the diagram. Multiple routes require `routing:"all"` for unconditional
+- `context` nodes require `context_ref` (an agent), `instruction`, and `result`; use
+  `terminal:true` when the step's result ends the diagram. Multiple routes require `routing:"all"` for unconditional
   fan-out or `routing:"one"` for conditional choice with one fallback.
 - `human` nodes require a typed `decision`, at least two `options`, and `resume`.
 - `terminal` nodes require `result`.
 - Every diagram declares an `entry`; all nodes are reachable from it and at least one is terminal.
-  Human routes match their options exactly and omit fallback; Context fan-out and branching are
+  Human routes match their options exactly and omit fallback; step fan-out and branching are
   explicit through `routing`.
 - Effects are `read`, `write`, `message`, `spend`, or `access`. Derive artifact publication and
   state updates normally use `gate:"none"` with an idempotency contract. Reserve a `human` gate
   for explicitly requested review or consequential effects outside Derive. A human-gated effect
-  belongs on a Context node so Derive can check approval before opening the session. That node must
+  belongs on a `context` node so Derive can check approval before opening the step. That node must
   sit directly and only behind its `approval_ref` human node.
 - Every directed cycle has a loop with a goal, evaluator, integer `max_attempts` (1–100), optional
   stagnation/time/cost limits, and `human_stop`.
-- Every diagram has an expected scenario. Context steps add a failure scenario; human work adds a
+- Every diagram has an expected scenario. Agent steps add a failure scenario; human work adds a
   human scenario covering each human node. Paths start at the declared entry and use real visible
   routes; non-failure paths end at a terminal node.
 - Preview distinguishes guaranteed policy from illustrative paths; it does not promise exact model
   or tool behavior.
 
-## Run through Contexts
+## Run it as an agent
 
-When the person explicitly says to run, start the pinned run through `use`:
-
-```text
-use({workflow_run:{
-  action: "start",
-  short_id: workflow.short_id,
-  diagram_id: diagram.id,
-  dedupe_key: "<stable id for this run intent>"
-}})
-```
-
-Reuse the same `dedupe_key` after a timeout. Derive returns the same run. If the start response is
-lost, recover recent runs with
-`use({workflow_run:{action:"list",short_id:workflow.short_id,diagram_id:diagram.id}})`.
-The start response contains the run id and the version-pinned execution prompt. Begin at the
-diagram's declared `entry`, then start one Context session per ready node attempt:
+When the person explicitly says to run, make the workflow artifact an agent's instructions page,
+then ask that agent. Derive walks the graph from the diagram's `entry`:
 
 ```text
-use({
-  context: node.context_ref,
-  instruction: render(node.instruction, inputs),
-  workflow: {run_id: run.id, node_id: node.id, attempt}
-})
+agents({ action: "create", name: "Weekly brief", instructions: workflow.short_id,
+         machine: "owner" })
+ask({ agent: "<the graph agent>", instruction: "Build this week's brief",
+      dedupe_key: "<stable id for this run intent>" })
 ```
 
-Derive assigns the exact `${run.id}:${node.id}:${attempt}` dedupe key. Collect it with
-`use({session_id, wait:50})`. A mid-run follow-up continues that session; after it settles, retry
-or refinement starts a new numbered attempt/session.
+Only the first diagram of the definition runs. The definition is pinned to the page version the
+graph job started on: an edit changes the next run, not this one. Reuse the same `dedupe_key` after
+a timeout and Derive returns the same job. A `schedule` on the graph agent starts a run on a clock.
 
-After evaluating the answer, record the authored route receipt before opening the next node:
+Each step opens a child job for the agent its `context_ref` names, with the step's `instruction`.
+Follow the graph with `jobs({ job_id })`: its `result.route` records every step taken
+(`node_id`, `attempt`, the routes it selected), and `jobs({ agent })` on a step's agent lists its
+child jobs. A step with `routing:"one"` picks its next step from its own reply: the step's agent
+ends its report with a line `ROUTE: <node id>`, and a missing or unknown one takes the fallback
+route. Loops are bounded by their `max_attempts`.
 
-```text
-use({workflow:{
-  run_id: run.id,
-  node_id: node.id,
-  attempt,
-  status: "succeeded",
-  selected_routes: [nextNode.id],
-  route_basis: "The Context step returned ready"
-}})
-```
+A `human` step stops the graph at `needs_you` with the authored options. Answer with
+`jobs({ job_id, action: "answer", option })` and the graph continues from that step. Cancel with
+`jobs({ job_id, action: "cancel" })`: it cancels the running steps too. `action: "retry"` runs a
+failed or lost graph again.
 
-When a node creates or revises an artifact, attach the exact version during publication:
-
-```text
-publish({
-  short_id: "<artifact>",
-  content: "...",
-  workflow: {
-    run_id: run.id,
-    node_id: node.id,
-    attempt,
-    role: "output"
-  }
-})
-```
-
-Use `role:"evidence"` for evaluation evidence. The publish receipt records the exact artifact
-version in the workflow Activity view. This is observed provenance. It does not mark the node
-complete, select a route, or prove that the artifact passed evaluation.
-
-A bound publish commits the artifact version, ownership on create, and activity together.
-It returns `workflow_publish.dedupe_key` and a pinned `version_url`. If the response is lost,
-retry the same request. `workflow_publish.replayed:true` means Derive returns the original version.
-It does not create another artifact or version, or apply an edit twice.
-A recorded version keeps its bytes. Later editor changes create a new version.
-
-You can supply `workflow.dedupe_key` before the first call. Reuse that key only for the same
-request. A changed request with the same key fails. Without a key, Derive deduplicates identical
-requests within that attempt. To publish identical content again on purpose, supply a new key.
-This applies to bound publishes only. A normal unbound publish still creates a new version.
-
-If publication already happened without workflow metadata, attach the exact existing version:
-
-```text
-use({workflow:{
-  run_id: run.id,
-  node_id: node.id,
-  attempt,
-  artifact: {short_id: "<artifact>", version: 3, role: "output"}
-}})
-```
-
-This operation is idempotent. Use it to backfill activity. Do not republish an unchanged artifact
-only to create a workflow link.
-
-Run history suggests each readable linked member version published while the run was open. The
-suggestion can come from the pinned graph or a later graph version. It preserves an older version
-even when the member has changed again. Treat each suggestion as a candidate. Confirm the exact
-version with the `use` operation above. A suggestion never marks a node complete, and Derive does
-not expose a member that the graph reader cannot open.
-
-Call `catch_up` on the workflow artifact during normal agent work. Its
-`workflow_receipt_gaps` field returns the same permission-checked candidates with a prepared
-`use` payload. Fill any unknown node or attempt from the work you performed, then confirm the
-exact version. If the candidate belongs to another run, leave it unconfirmed.
-
-Inspect the run ledger before each route transition and before the final receipt:
-
-```text
-use({workflow_run:{action:"inspect", run_id:run.id}})
-```
-
-The response contains the pinned run, attempts, observed exact artifact versions, and suggested
-missing receipts. A complete suggestion includes `confirm_with`. An ambiguous suggestion includes
-`confirm_template` and names the fields you must resolve. Never call an incomplete template. This
-makes recovery part of normal execution instead of a separate cleanup task.
-
-If a suggestion is unrelated, call its `dismiss_with` operation. Derive stores the dismissal and
-stops showing the candidate. A dismissal does not create provenance or workflow activity.
-
-If the person stops a run before an attempt exists, call
-`use({workflow_run:{action:"cancel",run_id:run.id}})`. Cancellation is idempotent. Inspect the run
-after a concurrent change, then retry if Derive reports a conflict.
-
-Each new attempt records the route receipts that opened it. A route cannot open the same node
-again after that node succeeds. Failed and cancelled retries reuse their recorded route sources.
-A run created before route provenance was stored cannot repeat a successful node; start a new run.
-Derive enforces the attempt cap before a receipt selects another round. At the cap, choose an authored
-exit route or report failure. A run cannot succeed while a fresh selected route remains unstarted.
-
-Time, cost, and stagnation bounds remain evaluator duties. Derive does not yet store the measurements
-needed to enforce them. Report a failed or cancelled receipt when an authored stop rule applies.
-
-A failed or cancelled Context can report its first final receipt after session failure is observed.
-That receipt stores its error, output, and route explanation. Replaying it returns the same result;
-a different receipt cannot replace it.
-
-Human and terminal nodes use the same receipt shape without a Context session. A human receipt's
-`decision` must be one of that node's authored options. Pass `finish_run:"succeeded"` (or the
-matching failure/cancellation state) on the final receipt.
-
-Project session truth into the authored graph:
-
-- `open` → `waiting` (queued; no inferred help)
-- `working` → `active`
-- `answered` → `done`; evaluate routes. Artifact versions already attached during publication
-  remain in Activity without a bundle-manifest edit.
-- `escalated` → `waiting` with explicit `help.question` and resume action
-- `failed` → declared retry or `blocked`
-- `closed` → stopped deliberately
-
-Publish each result artifact with workflow metadata and record each graph-state transition as normal
-run bookkeeping. Do this by default with version/idempotency protection; it does not need a fresh
-human decision.
-
-An effect's `approval_ref` is the workflow-definition field that references an authored human
-decision; it is unrelated to the removed artifact-approval lifecycle. Derive checks that decision
-before opening the selected Context step. One approval authorizes one attempt. A retry may reuse
-it only when every human-gated effect on the node declares an idempotency contract; otherwise stop
-and start a new run for fresh approval. Stop at a terminal result, exhausted
-loop/time/cost/stagnation bound, unresolved human gate, terminal failure, or the person's stop
-request. Keep state explicit; silence or elapsed time never implies low confidence, urgency, or a
-need for human help.
+A step's agent publishes what it makes as it would for any job. Nothing needs attaching to the
+graph: the child job's report names the versions it made.

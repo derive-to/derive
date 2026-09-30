@@ -87,9 +87,6 @@ importers:
       '@cloudflare/codemode':
         specifier: 0.5.1
         version: 0.5.1(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ai@7.0.44(zod@4.4.3))(zod@4.4.3)
-      '@cloudflare/containers':
-        specifier: ^0.3.7
-        version: 0.3.7
       '@cloudflare/puppeteer':
         specifier: ^1.0.0
         version: 1.1.0(yauzl@2.10.0)
@@ -1209,9 +1206,6 @@ packages:
         optional: true
       zod:
         optional: true
-
-  '@cloudflare/containers@0.3.7':
-    resolution: {integrity: sha512-DM9dm3FnIBSyiSJ1FLavKwl/lk3oAmTaynCzZQ9pZR0ncRPquSxkxd8Nu2MFILxmDDsPkxKsSNEh9mHHMty4Fw==}
 
   '@cloudflare/kv-asset-handler@0.5.0':
     resolution: {integrity: sha512-jxQYkj8dSIzc0cD6cMMNdOc1UVjqSqu8BZdor5s8cGjW2I8BjODt/kWPVdY+u9zj3ms75Q5qaZgnxUad83+eAg==}
@@ -9464,8 +9458,6 @@ snapshots:
       '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
       ai: 7.0.44(zod@4.4.3)
       zod: 4.4.3
-
-  '@cloudflare/containers@0.3.7': {}
 
   '@cloudflare/kv-asset-handler@0.5.0': {}
 

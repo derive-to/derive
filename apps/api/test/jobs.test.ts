@@ -21,10 +21,9 @@ const outsider: TestUser = { id: "u_job_out", email: "jobout@derive.test", name:
 
 type App = ReturnType<typeof makeAuthedApp>["app"]
 
-const setup = async (name: string, opts: { noPlan?: boolean } = {}) => {
+const setup = async (name: string) => {
   const made = makeAuthedApp(name, [owner, ed, outsider], "editor", {
     deps: { encryptionKey: "test-encryption-key" },
-    ...opts,
   })
   const { app, meta } = made
   await app.request("/v1/me", { headers: as(owner.email) })
@@ -815,7 +814,7 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
   })
 
   it("a job with no account to run on fails with a sentence the owner can act on", async () => {
-    const { app } = await setup("jobs-cli-noaccount", { noPlan: true })
+    const { app } = await setup("jobs-cli-noaccount")
     const agent = await createAgent(app)
     const job = (await (await ask(app, ed.email, agent.id, "Go")).json()) as { id: string }
     const { cfg, client } = runnerFor(app, agent)

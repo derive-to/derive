@@ -8,8 +8,6 @@ import {
   profileState,
   reworkInstruction,
   saveAsSkillInstruction,
-  type VersionDataRecord,
-  workflowRunInstruction,
 } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
@@ -17,34 +15,9 @@ import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { resolveActorBrandprint } from "../lib/brandprint"
 import { parseMeta, quoteOf } from "../lib/comments"
-import { mintToken, sha256 } from "../lib/crypto"
-import {
-  dispatchGithubWorkflowRun,
-  GithubWorkflowHarnessError,
-  newGithubWorkflowExecution,
-  parseGithubWorkflowExecution,
-  publicGithubWorkflowExecution,
-} from "../lib/github-workflow-harness"
 import { bail, fail, readJson } from "../lib/http"
 import { notifyMentions } from "../lib/mentions"
 import { notifyCommentBells } from "../lib/notify-comment"
-import {
-  readableWorkflowActivity,
-  workflowActivitySuggestionsForRuns,
-} from "../lib/workflow-activity"
-import { parseLinkedWorkflowFacts } from "../lib/workflow-facts"
-
-const parseWorkflowSelectedRoutes = (value: string | null): string[] | null => {
-  if (!value) return null
-  try {
-    const parsed: unknown = JSON.parse(value)
-    return Array.isArray(parsed) && parsed.every((route) => typeof route === "string")
-      ? parsed
-      : null
-  } catch {
-    return null
-  }
-}
 
 /** The canned agent-request endpoints — Rework, generate-profile, and the fill and
  *  save-as-skill pairs (each pair: a GET returning the instruction for copy-paste, a
@@ -55,20 +28,8 @@ const parseWorkflowSelectedRoutes = (value: string | null): string[] | null => {
  *  publishes per its grant: a publish-capable agent posts directly, a lower grant
  *  answers in comments — no special case here. */
 export const reworkRoutes = (ctx: AppContext) => {
-  const {
-    meta,
-    bus,
-    background,
-    notify,
-    actingUser,
-    requireArtifact,
-    limited,
-    commentLimiter,
-    deps,
-    authorizeStanding,
-    authorize,
-    actingHuman,
-  } = ctx
+  const { meta, bus, background, notify, actingUser, requireArtifact, limited, commentLimiter } =
+    ctx
   const app = new OpenAPIHono<BlankEnv>()
 
   type Acting = Exclude<Awaited<ReturnType<AppContext["actingUser"]>>, null>
@@ -111,28 +72,12 @@ export const reworkRoutes = (ctx: AppContext) => {
     if (artifact.current_version === 0) return fail(c, 404, "not found")
     const acting = await actingUser(c)
     if (!acting) return fail(c, 401, "sign in to send an agent request")
-    // Workflow Context sessions are always opened on behalf of a human. Keep
-    // the agent byline for comments, but pin the run initiator to the OAuth
-    // grantor or registered agent owner so Context membership/access checks
-    // evaluate the real person instead of a synthetic agent id.
-    const initiator = (await actingHuman(c)) ?? acting
     const rl = await limited(c, commentLimiter)
     if (rl) return rl
     const body = await readJson(
       c,
       z.object({
         agentId: z.string().optional(),
-        diagramId: z.string().optional(),
-        delivery: z.enum(["agent", "copy", "github"]).optional(),
-        github: z
-          .object({
-            connectionId: z.string().min(1),
-            owner: z.string().min(1).max(100),
-            repo: z.string().min(1).max(100),
-            workflow: z.string().min(1).max(200),
-            ref: z.string().min(1).max(1_024),
-          })
-          .optional(),
         note: z.string().max(500).optional(),
         threadId: z.string().optional(),
       }),
@@ -141,11 +86,7 @@ export const reworkRoutes = (ctx: AppContext) => {
     return {
       artifact,
       acting,
-      initiator,
       agentId: body.agentId,
-      diagramId: body.diagramId,
-      delivery: body.delivery,
-      github: body.github,
       note: body.note,
       threadId: body.threadId,
     }
@@ -187,92 +128,6 @@ export const reworkRoutes = (ctx: AppContext) => {
     return resolved.collectionIds.length > 0 || !!resolved.profileId
   }
 
-  const requireReadyWorkflow = async (c: Context, artifact: ArtifactRecord, diagramId: string) => {
-    const rows = await meta.getVersionData(artifact.id, artifact.current_version)
-    const facts = parseLinkedWorkflowFacts(rows)
-    if (!facts.bundleFound || !facts.workflowFound)
-      return fail(c, 409, "this artifact does not contain a runnable workflow", {
-        code: "notWorkflow",
-      })
-    if (!facts.manifest)
-      return fail(c, 409, "the visible workflow graph needs changes", {
-        code: "needsChanges",
-        errors: facts.bundleErrors,
-      })
-    if (facts.preview?.status !== "ready")
-      return fail(c, 409, "the workflow Preview needs changes", {
-        code: "needsChanges",
-        errors: facts.preview?.errors ?? [],
-      })
-    const diagram = facts.preview.diagrams.find((item) => item.id === diagramId)
-    if (!diagram) return fail(c, 404, "no such workflow diagram")
-    return diagram
-  }
-
-  const workflowAttemptSummary = z.object({
-    id: z.string(),
-    nodeId: z.string(),
-    attempt: z.number().int(),
-    kind: z.enum(["context", "human", "terminal"]),
-    status: z.enum(["queued", "running", "waiting", "succeeded", "failed", "cancelled"]),
-    selectedRoutes: z.array(z.string()).nullable(),
-    routeSources: z.array(z.string()).nullable(),
-    routeBasis: z.string().nullable(),
-    resultArtifactId: z.string().nullable(),
-    error: z.string().nullable(),
-    createdAt: z.string(),
-    startedAt: z.string().nullable(),
-    finishedAt: z.string().nullable(),
-  })
-  const workflowArtifactActivitySummary = z.object({
-    id: z.string(),
-    nodeId: z.string(),
-    attempt: z.number().int(),
-    artifactShortId: z.string(),
-    artifactVersion: z.number().int(),
-    artifactTitle: z.string().nullable(),
-    role: z.enum(["output", "evidence", "input"]),
-    source: z.enum(["observed", "suggested"]),
-    createdAt: z.string(),
-  })
-  const workflowArtifactSuggestionSummary = z.object({
-    id: z.string(),
-    nodeId: z.string().nullable(),
-    attempt: z.number().int().nullable(),
-    artifactShortId: z.string(),
-    artifactVersion: z.number().int(),
-    artifactTitle: z.string().nullable(),
-    role: z.enum(["output", "evidence", "input"]),
-    source: z.literal("suggested"),
-    reason: z.string(),
-    createdAt: z.string(),
-  })
-  const workflowRunSummary = z.object({
-    id: z.string(),
-    diagramId: z.string(),
-    workflowVersion: z.number().int(),
-    status: z.enum([
-      "queued",
-      "dispatched",
-      "running",
-      "waiting",
-      "succeeded",
-      "failed",
-      "cancelled",
-      "timed_out",
-    ]),
-    reason: z.string(),
-    requestedExecution: z.enum(["any", "local", "hosted", "github_actions"]),
-    actualExecution: z.enum(["local", "hosted", "github_actions"]).nullable(),
-    externalExecution: z.unknown().nullable(),
-    createdAt: z.string(),
-    startedAt: z.string().nullable(),
-    finishedAt: z.string().nullable(),
-    attempts: z.array(workflowAttemptSummary),
-    activity: z.array(workflowArtifactActivitySummary),
-    suggestions: z.array(workflowArtifactSuggestionSummary),
-  })
-
   // Pick the addressee: the named agent, else the workspace's sole one.
   const pickAgent = (
     c: Context,
@@ -289,34 +144,6 @@ export const reworkRoutes = (ctx: AppContext) => {
     if (!sole || rest.length > 0)
       return fail(c, 400, "agentId required when several agents are registered")
     return sole
-  }
-
-  // GitHub's OIDC-authenticated job still needs an attributable Derive principal, but
-  // making people register or choose a standing agent would defeat the passwordless setup.
-  // Reuse one hidden workspace principal and never return its otherwise-unused bearer.
-  const githubExecutor = async (orgId: string, createdBy: string): Promise<AgentRecord> => {
-    const exact = (await meta.listAgents(orgId)).find(
-      (agent) => agent.managed === 1 && agent.name === "GitHub Actions",
-    )
-    if (exact) return exact
-    const create = (name: string) =>
-      meta.createAgent({
-        id: newId("ag"),
-        org_id: orgId,
-        name,
-        token: sha256(mintToken("dk_agt")),
-        role: "editor",
-        created_by: createdBy,
-        managed: 1,
-      })
-    try {
-      return await create("GitHub Actions")
-    } catch {
-      const raced = (await meta.listAgents(orgId)).find(
-        (agent) => agent.managed === 1 && agent.name === "GitHub Actions",
-      )
-      return raced ?? create(`GitHub Actions ${newId("x").slice(-4)}`)
-    }
   }
 
   // Post the canned request: a whole-document comment (no anchor) @mentioning the
@@ -379,359 +206,6 @@ export const reworkRoutes = (ctx: AppContext) => {
     )
     return created.thread_id
   }
-
-  app.openapi(
-    createRoute({
-      method: "get",
-      path: "/v1/artifacts/{shortId}/workflow-run",
-      tags: ["Artifacts"],
-      summary: "Preview a validated workflow handoff without starting it.",
-      request: {
-        params: z.object({ shortId: z.string() }),
-        query: z.object({ diagram: z.string().min(1) }),
-      },
-      responses: {
-        200: {
-          description:
-            "A summary of the pinned definition that would be used. No run record is created.",
-          content: {
-            "application/json": {
-              schema: z.object({
-                prompt: z.string(),
-                diagram: z.object({ id: z.string(), title: z.string() }),
-              }),
-            },
-          },
-        },
-      },
-    }),
-    async (c) => {
-      const artifact = await requireArtifact(c, "comment", { split: true })
-      if (artifact instanceof Response) return bail(artifact)
-      if (artifact.current_version === 0) return bail(fail(c, 404, "not found"))
-      if (!(await actingUser(c))) return bail(fail(c, 401, "sign in to run this workflow"))
-      const ready = await requireReadyWorkflow(c, artifact, c.req.query("diagram") ?? "")
-      if (ready instanceof Response) return bail(ready)
-      return c.json({
-        prompt: `Workflow ${artifact.short_id}@v${artifact.current_version}, diagram "${ready.id}", is Ready to run. Starting it creates a fresh run record and version-pinned instruction.`,
-        diagram: { id: ready.id, title: ready.title },
-      })
-    },
-  )
-
-  app.openapi(
-    createRoute({
-      method: "get",
-      path: "/v1/artifacts/{shortId}/workflow-runs",
-      tags: ["Artifacts"],
-      summary: "List recent runs and their durable step receipts for a workflow artifact.",
-      request: {
-        params: z.object({ shortId: z.string() }),
-        query: z.object({
-          diagram: z.string().min(1).optional(),
-          limit: z.coerce.number().int().min(1).max(20).optional(),
-        }),
-      },
-      responses: {
-        200: {
-          description: "Recent version-pinned workflow runs, newest first.",
-          content: {
-            "application/json": {
-              schema: z.object({ runs: z.array(workflowRunSummary) }),
-            },
-          },
-        },
-      },
-    }),
-    async (c) => {
-      const artifact = await requireArtifact(c, "comment", { split: true })
-      if (artifact instanceof Response) return bail(artifact)
-      if (artifact.current_version === 0) return bail(fail(c, 404, "not found"))
-      if (!(await actingUser(c))) return bail(fail(c, 401, "sign in to view workflow runs"))
-      const query = c.req.valid("query")
-      const runs = await meta.listWorkflowRuns(artifact.id, artifact.org_id, {
-        diagramId: query.diagram,
-        limit: query.limit ?? 10,
-      })
-      const runIds = runs.map((run) => run.id)
-      const [allAttempts, allActivity] = await Promise.all([
-        meta.listWorkflowStepAttempts(runIds, artifact.org_id),
-        meta.listWorkflowArtifactActivity(runIds, artifact.org_id),
-      ])
-      const attempts = runs.map((run) =>
-        allAttempts.filter((attempt) => attempt.workflow_run_id === run.id),
-      )
-      const activity = runs.map((run) =>
-        allActivity.filter((item) => item.workflow_run_id === run.id),
-      )
-      const workflowReadability = new Map<string, Promise<boolean>>()
-      const workflowFacts = new Map<number, Promise<VersionDataRecord[]>>()
-      const loadWorkflowFacts = (version: number): Promise<VersionDataRecord[]> => {
-        const existing = workflowFacts.get(version)
-        if (existing) return existing
-        const result = meta.getVersionData(artifact.id, version)
-        workflowFacts.set(version, result)
-        return result
-      }
-      const canReadWorkflowArtifact = (candidate: ArtifactRecord): Promise<boolean> => {
-        const existing = workflowReadability.get(candidate.id)
-        if (existing) return existing
-        const result = authorize(c, "read", candidate)
-        workflowReadability.set(candidate.id, result)
-        return result
-      }
-      const [readableActivity, suggestions] = await Promise.all([
-        Promise.all(
-          activity.map((items) =>
-            readableWorkflowActivity({
-              meta,
-              rows: items,
-              canRead: canReadWorkflowArtifact,
-            }),
-          ),
-        ),
-        workflowActivitySuggestionsForRuns({
-          meta,
-          workflowArtifact: artifact,
-          states: runs.map((run, index) => ({
-            run,
-            attempts: attempts[index] ?? [],
-            recorded: activity[index] ?? [],
-          })),
-          canRead: canReadWorkflowArtifact,
-          loadVersionData: loadWorkflowFacts,
-        }),
-      ])
-      return c.json({
-        runs: runs.map((run, index) => ({
-          id: run.id,
-          diagramId: run.diagram_id,
-          workflowVersion: run.workflow_version,
-          status: run.status,
-          reason: run.reason,
-          requestedExecution: run.requested_execution,
-          actualExecution: run.actual_execution,
-          externalExecution: publicGithubWorkflowExecution(run.external_execution),
-          createdAt: run.created_at,
-          startedAt: run.started_at,
-          finishedAt: run.finished_at,
-          attempts: (attempts[index] ?? []).map((attempt) => ({
-            id: attempt.id,
-            nodeId: attempt.node_id,
-            attempt: attempt.attempt,
-            kind: attempt.kind,
-            status: attempt.status,
-            selectedRoutes: parseWorkflowSelectedRoutes(attempt.selected_routes),
-            routeSources: parseWorkflowSelectedRoutes(attempt.route_sources),
-            routeBasis: attempt.route_basis,
-            resultArtifactId: attempt.result_artifact_id,
-            error: attempt.error,
-            createdAt: attempt.created_at,
-            startedAt: attempt.started_at,
-            finishedAt: attempt.finished_at,
-          })),
-          activity: (readableActivity[index] ?? []).map((item) => ({
-            id: item.id,
-            nodeId: item.node_id,
-            attempt: item.attempt,
-            artifactShortId: item.artifact_short_id,
-            artifactVersion: item.artifact_version,
-            artifactTitle: item.artifact_title,
-            role: item.role,
-            source: item.source,
-            createdAt: item.created_at,
-          })),
-          suggestions: suggestions.get(run.id) ?? [],
-        })),
-      })
-    },
-  )
-
-  app.openapi(
-    createRoute({
-      method: "post",
-      path: "/v1/artifacts/{shortId}/workflow-run",
-      tags: ["Artifacts"],
-      summary: "Start a version-pinned workflow run for a local harness.",
-      request: {
-        params: z.object({ shortId: z.string() }),
-        body: {
-          required: true,
-          content: {
-            "application/json": {
-              schema: z.object({
-                agentId: z.string().optional(),
-                diagramId: z.string().min(1),
-                delivery: z.enum(["agent", "copy", "github"]).optional(),
-                github: z
-                  .object({
-                    connectionId: z.string().min(1),
-                    owner: z.string().min(1).max(100),
-                    repo: z.string().min(1).max(100),
-                    workflow: z.string().min(1).max(200),
-                    ref: z.string().min(1).max(1_024),
-                  })
-                  .optional(),
-              }),
-            },
-          },
-        },
-      },
-      responses: {
-        201: {
-          description:
-            "A fresh run record and pinned instruction. Agent delivery also returns the inbox request id.",
-          content: {
-            "application/json": {
-              schema: z.object({
-                runId: z.string(),
-                prompt: z.string(),
-                requestId: z.string().optional(),
-                githubRunId: z.string().optional(),
-                githubRunUrl: z.string().url().optional(),
-              }),
-            },
-          },
-        },
-      },
-    }),
-    async (c) => {
-      const rc = await requestContext(c, c.req.param("shortId"))
-      if (rc instanceof Response) return bail(rc)
-      const { artifact, acting, initiator, agentId, diagramId, delivery, github } = rc
-      if (!diagramId) return bail(fail(c, 400, "diagramId is required"))
-      const ready = await requireReadyWorkflow(c, artifact, diagramId)
-      if (ready instanceof Response) return bail(ready)
-      const version = await meta.getVersion(artifact.id, artifact.current_version)
-      if (!version) return bail(fail(c, 409, "the workflow version is unavailable"))
-      const runId = newId("wfr")
-      const prompt = workflowRunInstruction({
-        shortId: artifact.short_id,
-        version: version.n,
-        diagramId: ready.id,
-        runId,
-        baseUrl: deps.baseUrl,
-      })
-      const createRun = (
-        reason: string,
-        assignment?: { requestId?: string; agentId: string },
-        execution?: { requested: "local" | "github_actions"; external?: string },
-      ) =>
-        meta.createWorkflowRun({
-          id: runId,
-          org_id: artifact.org_id,
-          workflow_artifact_id: artifact.id,
-          workflow_version: version.n,
-          workflow_blob_key: version.blob_key,
-          workflow_content_type: version.content_type,
-          diagram_id: ready.id,
-          reason,
-          initiated_by: initiator.id,
-          request_id: assignment?.requestId,
-          assigned_agent_id: assignment?.agentId,
-          requested_execution: execution?.requested ?? "local",
-          external_execution: execution?.external,
-        })
-      if (delivery === "copy") {
-        await createRun("manual:copy")
-        return c.json({ runId, prompt }, 201)
-      }
-      if (delivery === "github") {
-        // Authorize the REQUEST principal, not its byline id. An OAuth/CLI agent has a
-        // synthetic `oauth:<client>` actor id, while its standing comes from the consenting
-        // human and is capped by the grant's role. Looking that synthetic id up as a human
-        // member rejects every legitimate agent-triggered dispatch. `authorizeStanding`
-        // preserves both halves of the boundary: live human standing and the agent's scope.
-        if (!(await authorizeStanding(c, "publish", artifact)))
-          return bail(fail(c, 403, "publish access is required to run GitHub Actions"))
-        if (!deps.encryptionKey) return bail(fail(c, 502, "GitHub Actions is not configured"))
-        if (!github) return bail(fail(c, 400, "github setup is required for GitHub Actions"))
-        const connection = await meta.getConnection(github.connectionId)
-        if (
-          !connection ||
-          connection.org_id !== artifact.org_id ||
-          connection.kind !== "github_app" ||
-          connection.toolkit !== "github" ||
-          connection.status !== "active"
-        )
-          return bail(fail(c, 400, "select an active GitHub App connection"))
-        const nonce = newId("dkx")
-        const external = await newGithubWorkflowExecution({
-          connectionId: connection.id,
-          installationId: connection.broker_ref,
-          owner: github.owner,
-          repo: github.repo,
-          workflow: github.workflow,
-          ref: github.ref,
-          nonce,
-        })
-        const agent = agentId
-          ? pickAgent(c, await meta.listAgents(artifact.org_id), agentId)
-          : await githubExecutor(artifact.org_id, initiator.id)
-        if (agent instanceof Response) return bail(agent)
-        const created = await createRun(
-          "github-actions",
-          { agentId: agent.id },
-          { requested: "github_actions", external: JSON.stringify(external) },
-        )
-        try {
-          const dispatched = await dispatchGithubWorkflowRun({
-            meta,
-            run: created,
-            assignment: external,
-            nonce,
-            encryptionKey: deps.encryptionKey,
-          })
-          const receipt = parseGithubWorkflowExecution(dispatched.external_execution)
-          return c.json(
-            {
-              runId,
-              prompt,
-              githubRunId: receipt?.github_run_id ?? undefined,
-              githubRunUrl: receipt?.github_run_url ?? undefined,
-            },
-            201,
-          )
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "GitHub workflow dispatch failed"
-          return bail(
-            fail(c, error instanceof GithubWorkflowHarnessError ? error.status : 502, message),
-          )
-        }
-      }
-      const agent = pickAgent(c, await meta.listAgents(artifact.org_id), agentId)
-      if (agent instanceof Response) return bail(agent)
-      if (await requestAlreadyQueued(agent, artifact))
-        return bail(
-          fail(c, 409, `a request for this artifact is already queued for ${agent.name}`, {
-            code: "alreadyQueued",
-          }),
-        )
-      const requestId = newId("c")
-      const createdRun = await createRun("agent-request", { requestId, agentId: agent.id })
-      const cancelQueuedRun = async () => {
-        const cancelled = await meta.transitionWorkflowRun(
-          createdRun.id,
-          createdRun.org_id,
-          { status: "queued", stateRevision: createdRun.state_revision },
-          { status: "cancelled", at: new Date().toISOString() },
-        )
-        if (!cancelled) throw new Error("workflow run changed before inbox delivery failed")
-      }
-      let posted: string | Response
-      try {
-        posted = await postRequest(c, artifact, acting, agent, prompt, requestId)
-      } catch (error) {
-        await cancelQueuedRun()
-        throw error
-      }
-      if (posted instanceof Response) {
-        await cancelQueuedRun()
-        return bail(posted)
-      }
-      return c.json({ requestId, runId, prompt }, 201)
-    },
-  )
 
   app.openapi(
     createRoute({

@@ -7,7 +7,6 @@ import {
   WORKSPACE_ACCOUNT_OWNER,
 } from "@derive/core"
 import { decryptSecret } from "./crypto"
-import { fallbackPayerTiers } from "./payer"
 
 // WHICH MODEL ACCOUNT A JOB RUNS WITH, resolved once for every runner.
 //
@@ -15,9 +14,8 @@ import { fallbackPayerTiers } from "./payer"
 // the workspace pool. The asker's tier applies only where the asker's secret stays on a machine
 // nobody else holds: a Derive machine, or the asker's own agent. On a teammate's `owner`
 // machine the job runs on the agent creator's account instead, since whoever runs the job holds
-// the credential it runs with. Until the cutover migrates stored credentials into `model_account`, the
-// legacy tiers (the asker's model plan, an owner-lent plan, the pool plan) follow, so runners
-// that work today keep working.
+// the credential it runs with. Model accounts are the only source: the older stored model
+// plans were carried into accounts at the agents cutover.
 
 export type JobCredential =
   | { credential: { kind: "oauth" | "api_key" | "login"; value: string }; source: string }
@@ -75,22 +73,5 @@ export const resolveJobCredential = async (
   )
   if (pool) return pool
 
-  // Legacy tiers, removed at cutover.
-  // A creator's old stored plan pays for a teammate's ask only through the owner-lend opt-in,
-  // which fallbackPayerTiers applies; only the asker's own plan is taken without it.
-  const tiers = [
-    ...(payer && payer === job.asked_by ? [{ userId: payer, source: "asker" }] : []),
-    ...(await fallbackPayerTiers(meta, agent.org_id, agent.id, agent.created_by)),
-  ]
-  for (const { userId, source } of tiers) {
-    const cred = await meta.getModelCredential(agent.org_id, userId, provider)
-    if (!cred) continue
-    const value = readable(cred.secret, key)
-    if (value === null) {
-      sawUnreadable = true
-      continue
-    }
-    return { credential: { kind: cred.kind, value }, source }
-  }
   return { credential: null, reason: sawUnreadable ? "unreadable" : "none" }
 }

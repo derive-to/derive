@@ -37,28 +37,6 @@ if (!(RUN_TIMEOUT_MS < RUN_TOKEN_TTL_MS && RUN_TOKEN_TTL_MS < RUN_LEASE_MS))
 /** How many times a run may be reclaimed before it is given up as `lost`. */
 export const RUN_MAX_ATTEMPTS = 3
 
-/** How many times a run may be RETRIED after a transient failure before it stays failed.
- *  Deliberately small: every attempt spends the owner's model plan, so a run that keeps
- *  failing must stop costing money rather than grind forever. */
-export const RUN_MAX_RETRIES = 2
-
-/** Backoff before retry N (1-indexed): a minute, then five. Long enough for a provider blip
- *  or a rate limit to clear, short enough that a recovered run is still timely. */
-export const retryDelayMs = (attempt: number): number => (attempt <= 1 ? 60_000 : 5 * 60_000)
-
-/** How long an ASK may stay unsettled before dispatch gives up and marks it `failed`.
- *
- *  A session that wedges — its executor dying past the lease, every round — is otherwise
- *  re-dispatched on every lapse, forever, paying for a full agent run each time. Runs are
- *  bounded by RUN_MAX_ATTEMPTS because they carry an attempt counter in their meta blob.
- *  Sessions have no such column, and elapsed time bounds the spend just as well without
- *  adding one — which would mean a migration to keep in parity across three drivers to hold
- *  a number whose only job is to stop a loop.
- *
- *  Sized as the run cap is — attempts × lease — so an ask and a schedule give up after
- *  comparable effort rather than by coincidence. */
-export const SESSION_MAX_AGE_MS = RUN_MAX_ATTEMPTS * RUN_LEASE_MS
-
 /** An owner-machine claim's lease: the agent's run budget (default 10 minutes, clamped to
  *  30 seconds .. 6 hours) plus a minute of margin. The lease must OUTLIVE the budget it is
  *  derived from: a job that never ticks and finishes right at its budget would otherwise land

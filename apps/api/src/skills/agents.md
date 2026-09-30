@@ -1,6 +1,6 @@
 ---
 name: agents
-summary: make an agent, ask it for work, follow its jobs, or run it from this session (agents, ask, jobs, pull)
+summary: make, ask, and run agents, and follow their jobs (agents, ask, jobs, pull)
 order: 5.8
 ---
 # Agents: named workers that take jobs

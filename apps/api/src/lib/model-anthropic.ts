@@ -59,7 +59,7 @@ export interface AnthropicOptions {
  *
  * Small and explicit on purpose. The API reports usage, not cost, so something has to hold the
  * rates — and the alternative to a short reviewed table is what was here before: `() => null`,
- * unconditionally, which made `sumRunCostSince` sum zero and `overBudget` return false for
+ * unconditionally, which made the monthly spend sum zero and `overBudget` return false for
  * every workspace on every check. A ceiling that cannot be reached is not a ceiling.
  *
  * Matched EXACTLY rather than by family prefix: a wrong rate silently bills a wrong number, and

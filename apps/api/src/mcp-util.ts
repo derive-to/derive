@@ -9,7 +9,6 @@ import {
   type ArtifactRecord,
   type BundleManifest,
   bundleDoc,
-  type ContextRecord,
   isHtmlLike,
   isLatexLike,
   LINKED_BUNDLE_CONTENT_TYPE,
@@ -80,16 +79,6 @@ export const clipDoc = (s: string, sections: OutlineSection[]) => {
     : "no headings to section by — read a past `version`, or ask for the raw file"
   return `${s.slice(0, MAX_CHARS)}\n\n…[truncated ${s.length - MAX_CHARS} of ${s.length} chars — ${steer}]`
 }
-
-// The context-session transcript clipper (used by `use`'s asker reply + runner serve):
-// a generous cap on a settled answer, a tight one per transcript entry — together under
-// clipDoc's MAX_CHARS ceiling — with a steer to the console, which holds the full transcript.
-export const ANSWER_MAX = 40_000
-export const ENTRY_MAX = 1_500
-export const clipSessionText = (s: string, max: number, consoleUrl: string): string =>
-  s.length > max
-    ? `${s.slice(0, max)}\n\n…[truncated ${s.length - max} of ${s.length} chars — full transcript in the console: ${consoleUrl}]`
-    : s
 
 // A content-bearing response: a frontmatter-style header, a blank line, then the RAW
 // body — one text block, real newlines, never JSON-escaped. When a client spills it
@@ -417,9 +406,3 @@ export const bundleFileChanges = (from: BundleManifest, to: BundleManifest) => (
 
 export const changeCount = (c: ReturnType<typeof bundleFileChanges>) =>
   c.added.length + c.changed.length + c.removed.length
-
-// The console's liveness window: a runner is "online" while its last queue
-// poll (stamped at most once a minute) is within this.
-export const RUNNER_ONLINE_MS = 90_000
-export const runnerOnline = (x: ContextRecord) =>
-  !!x.runner_seen_at && Date.now() - new Date(x.runner_seen_at).getTime() < RUNNER_ONLINE_MS

@@ -10,7 +10,6 @@ import {
   templateLibraryUri,
 } from "@derive/core"
 import { z } from "zod"
-import { importStateOf } from "../lib/context-package"
 import {
   searchArtifactVersion,
   searchMatcher,
@@ -27,20 +26,16 @@ import {
   err,
   historyNotPublic,
   json,
-  runnerOnline,
   safeJson,
   summarizeArtifact,
   text,
   versionOpenToWorld,
 } from "../mcp-util"
 
-// FIND — one tool over BROWSE (list_artifacts) + GREP/SEARCH (search) + the askable
-// CONTEXTS (list_contexts), discriminated by argument. The mode is decided by what's
-// passed: `short_id` ⇒ grep within it; `query` alone ⇒ search the workspace; neither ⇒
-// browse. Result rows are typed (artifact | match | context) so a mixed listing is
-// unambiguous. -----------------------------------------------------------------------
-const CONTEXTS_NEED_HUMAN =
-  "Contexts are hidden here because this connection has no signed-in user. Reconnect with an OAuth login to see and use them."
+// FIND — one tool over BROWSE (list_artifacts) + GREP/SEARCH (search), discriminated by
+// argument. The mode is decided by what's passed: `short_id` ⇒ grep within it; `query`
+// alone ⇒ search the workspace; neither ⇒ browse. Result rows are typed (artifact | match).
+// Agents are listed by the `agents` tool, not here. ------------------------------------
 
 /** Rows returned by a cross-artifact fact read. The store is asked for twice this many so
  *  the visibility gate has slack to drop invisible ones without shortening the answer. */
@@ -116,40 +111,6 @@ export const backlinkNotes = (o: {
   }
 }
 
-const contextFindRowsFor = async (
-  tc: ToolContext,
-  org: string,
-  matches?: (name: string) => boolean,
-) => {
-  const { actingFor, askableContexts, ctx } = tc
-  if (!actingFor) return []
-  const rows = await askableContexts(org, actingFor.id)
-  const picked = matches ? rows.filter(({ x }) => matches(x.name)) : rows
-  return Promise.all(
-    picked.map(async ({ x, manifest }) => {
-      const open = (await ctx.meta.listSessions(x.id, { askerId: actingFor.id, limit: 10 }))
-        .filter((session) => session.state !== "closed")
-        .map((session) => ({
-          id: session.id,
-          state: session.state,
-          updated_at: session.updated_at ?? session.created_at,
-        }))
-      const imported = await importStateOf(ctx.meta, x)
-      return {
-        type: "context" as const,
-        id: x.id,
-        name: x.name,
-        ...(imported ? { import: imported } : { online: runnerOnline(x) }),
-        manifest: manifest ? { short_id: manifest.short_id, title: manifest.title } : null,
-        your_open_sessions: open,
-        note: imported
-          ? "An imported paper, read-only: read({short_id: id}) loads its abstract and BibTeX and points at the paper bundle. It takes no runs."
-          : "read({short_id: id}) loads its package (manifest + skill pointers); use({context, instruction}) starts a run with it.",
-      }
-    }),
-  )
-}
-
 const codeFindEligible = (
   args: Record<string, unknown>,
 ): args is Record<string, unknown> & {
@@ -202,11 +163,6 @@ export const prepareCodeFindMany = async (
       },
       queries,
     )
-    const needles = rows.map(({ query }) => query.toLowerCase())
-    const contextRows = await contextFindRowsFor(tc, target.org, (name) => {
-      const lower = name.toLowerCase()
-      return needles.some((needle) => lower.includes(needle))
-    })
     for (const [index, request] of rows.entries()) {
       const query = request.query
       const search = searched[index]
@@ -215,17 +171,13 @@ export const prepareCodeFindMany = async (
         type: "match" as const,
         ...hit,
       }))
-      const contexts = contextRows.filter((row) =>
-        row.name.toLowerCase().includes(query.toLowerCase()),
-      )
       prepared.set(request, {
         workspace: target.org,
         query,
         where: queries[index]?.where ?? "source",
-        count: matches.length + contexts.length,
-        results: [...matches, ...contexts],
+        count: matches.length,
+        results: matches,
         ...(search.note ? { note: search.note } : {}),
-        ...(tc.actingFor ? {} : { contexts_note: CONTEXTS_NEED_HUMAN }),
       })
     }
   }
@@ -235,14 +187,6 @@ export const prepareCodeFindMany = async (
 export function registerFindTool(tc: ToolContext): void {
   const { server, ctx, agent, actingFor, ownerId, reach, notFound, resolveWs, wsArg } = tc
 
-  // Askable contexts as typed `find` rows — INVARIANT (A): sourced ONLY from
-  // askableContexts (the per-human canUserAskContext gate), so a roster-gated context this
-  // user may not ask never appears; (B): with no acting human this returns [] and the
-  // caller adds an explicit note rather than erroring. Each row carries its own open
-  // sessions and the steer to reach it with `use`. (askableContexts/runnerOnline are
-  // defined further down; referenced here from a handler that runs at call-time.)
-  const contextFindRows = (org: string, matches?: (name: string) => boolean) =>
-    contextFindRowsFor(tc, org, matches)
   server.registerTool(
     "find",
     {
@@ -453,8 +397,8 @@ export function registerFindTool(tc: ToolContext): void {
         return text(searchReport(short_id, query, where, total, cap, groups, note))
       }
 
-      // MODE 2 — SEARCH THE WORKSPACE (ranked artifacts + a snippet each), plus any askable
-      // context whose NAME matches the query. Typed rows: {type:"match"} + {type:"context"}.
+      // MODE 2 — SEARCH THE WORKSPACE (ranked artifacts + a snippet each). Typed rows:
+      // {type:"match"}.
       if (query) {
         if (codeEnvelope?.prepared) return json(codeEnvelope.prepared)
         const t = await resolveWs(workspace)
@@ -482,16 +426,13 @@ export function registerFindTool(tc: ToolContext): void {
           type: "match" as const,
           ...h,
         }))
-        const q = query.toLowerCase()
-        const contextRows = await contextFindRows(t.org, (name) => name.toLowerCase().includes(q))
         return json({
           workspace: t.org,
           query,
           where,
-          count: matchRows.length + contextRows.length,
-          results: [...matchRows, ...contextRows],
+          count: matchRows.length,
+          results: matchRows,
           ...(note ? { note } : {}),
-          ...(actingFor ? {} : { contexts_note: CONTEXTS_NEED_HUMAN }),
         })
       }
 
@@ -666,8 +607,8 @@ export function registerFindTool(tc: ToolContext): void {
         })
       }
 
-      // MODE 4 — BROWSE the library: list_artifacts rows (skills:/tag facets), plus every
-      // askable context. A tag filter resolves to an id set first (mirrors the HTTP ?tag=
+      // MODE 4 — BROWSE the library: list_artifacts rows (skills:/tag facets). A tag filter
+      // resolves to an id set first (mirrors the HTTP ?tag=
       // path); viewerId keeps private rows scoped to the agent's human (mirrors `reach`).
       const ids = tag ? await ctx.meta.artifactIdsByTag(tag.trim().toLowerCase()) : undefined
       const rows =
@@ -690,13 +631,11 @@ export function registerFindTool(tc: ToolContext): void {
         ...summarizeArtifact(a),
         tags: tagMap[a.id] ?? [],
       }))
-      const contextRows = archived ? [] : await contextFindRows(t.org)
       return json({
         workspace: t.org,
-        count: artifactRows.length + contextRows.length,
-        results: [...artifactRows, ...contextRows],
+        count: artifactRows.length,
+        results: artifactRows,
         ...(browseTruncated ? { truncated: true } : {}),
-        ...(actingFor ? {} : { contexts_note: CONTEXTS_NEED_HUMAN }),
       })
     },
   )

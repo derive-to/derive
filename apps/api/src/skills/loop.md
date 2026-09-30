@@ -1,6 +1,6 @@
 ---
 name: loop
-summary: catch up, respond to comments, publish updates, pull queued work, and schedule standing work (catch_up, comment, clear_queue, list_automations, automate)
+summary: catch up, answer comments, publish revisions, work the queue (catch_up, comment, clear_queue)
 order: 1
 ---
 # Comments and updates
@@ -78,45 +78,15 @@ names the artifact, comment thread, and requested work. An OAuth connection with
   empty, the call blocks until a new request lands or the time runs out, then returns it.
   Chain `wait` calls to react in seconds instead of polling on a cadence.
 
-## automate: standing work, on a clock or a trigger
+## Standing work: give it to an agent
 
-`automate` is the same loop without a person starting it: a stored instruction that re-runs on a
-schedule or an event. Four actions share one schema, so pass only the parameters the action reads.
-Reading what already exists is the separate `list_automations` tool, which writes nothing.
+Work that should run again without anyone remembering to start it belongs to an AGENT: its
+instructions live on a page, a `schedule` runs it on a clock, and every run is a job you can
+follow (derive://skills/agents). Make one with `agents({ action: "create" })`, hand it one-off
+work with `ask`, and read how its runs went with `jobs`. A multi-step plan with branches, loops or
+human decisions is a graph agent (derive://skills/workflows).
 
-**One gate, refusing in the tool result rather than failing later.** Standing jobs need a
-manage-level (owner) grant, which `list_automations` needs too. When the workspace has paused
-agent writes, nothing is materialized, dispatched, or claimed until they are back on.
-
-- **`create`** needs `trigger` + `instruction`.
-  - `trigger` is `{kind:"manual"|"schedule"|"event"}`. A schedule carries `cron` and `tz`. An
-    event carries `on`, an event name. The row accepts any name, but `on:"webhook"` is the
-    only one anything dispatches today, so another value creates an automation that never
-    fires. A webhook mints a fire secret returned **once**, on that response. There is no way
-    to read it again.
-  - `instruction` is re-run verbatim, with no chat history behind it. Name the artifact it acts
-    on inside the instruction; a run cannot infer "the report we discussed".
-  - `refs` says what it acts on: artifact short ids, `{kind:"artifact",id}`, or
-    `{kind:"tag",tag}` for a set. A run's write publishes as a new version of its target.
-  - `context_id` binds the run to a Context. An Agent executes the work using that package. Omit it
-    and Derive mints a managed execution connection for the automation.
-  - `provider` picks the executing coding agent (`claude-code` by default, or `codex`).
-- **`run_now`** fires one by `automation_id`. A disabled automation, or one whose workspace has
-  no way to pay for the run, is refused here rather than queued and dropped.
-- **`record`** logs a run this session executed LOCALLY, so it lands in the same ledger as hosted
-  runs: `outcome`, an optional `note`, and `wrote` for the short_ids it published. Only
-  `outcome:"failed"` marks the run failed.
-- **`create_context`** wires a new Context to a manifest artifact (`name` + `manifest_short_id`),
-  which needs share standing on that manifest. Skills load **only** from the manifest's
-  frontmatter `skills:` list. Naming one in the body pins nothing, and the response says so
-  when it spots that mistake. The Agent execution connection's `dk_agt_` token is deliberately not
-  returned here.
-
-`list_automations` takes no arguments and returns each automation's id, truncated instruction,
-bound Context, provider and enabled flag.
-
-Automations are not the way to answer a comment or ship one revision; that is the loop above.
-Reach for one when the same instruction should run again without anyone remembering to start it.
+An agent is not the way to answer a comment or ship one revision; that is the loop above.
 
 ## When review is requested
 
@@ -124,100 +94,3 @@ When `catch_up` returns `review.state === 'sent_back'`, read the open threads an
 If the note says it's good, stop: that is the go-signal. Otherwise revise and publish with
 `request_review:true` to send the new version back. Include fixed thread ids in `addresses`
 on that publish; the publish resolves those threads.
-
-### Cloud workflow readiness
-
-For a workflow that keeps working files, call `list_automations` with `workflow_id`
-(the workflow’s Context ID). It returns the same readiness state, ordered reason
-codes, permitted actions, configuration revision and evaluation time as the web
-setup page. This is a read, not permission to execute. Editing and execution through
-the management API require a management grant; read-only connections cannot acquire
-those powers from a readiness result. Ready does not mean local project files have been transferred. The agent handles
-dependencies during ordinary execution; no separate setup feature is required.
-
-### Offload a local job to a persistent workflow
-
-Use the `workflow_*` actions below for a cloud agent that retains its working environment.
-`automate(create)` and `automate(run_now)` use the ordinary task path; attaching a Context
-there does not select a persistent sandbox. Do not create an ordinary task as a substitute.
-
-The caller needs an OAuth management grant (`derive:manage`) and a workspace seat permitted
-to publish. Registered runner tokens cannot manage workflows. Pass `workspace` by ID or name
-when it differs from the connection default. All operations reuse the web API's authorization,
-revision checks, live access checks and execution queue. No temporary bearer is exposed.
-
-Read with `list_automations(view: ..., workflow_id?: ..., workspace?: ...)`:
-
-| view | ID? | Returns |
-| --- | --- | --- |
-| `workflows` | no | Available workflows and whether creation is available |
-| `configuration` | yes | Draft or established schedule, selected source IDs, readiness and latest test request |
-| `runs` | yes | Existing run history, schedule and execution state |
-| `account` | yes | Assigned model account and its binding revision |
-| `environment` | yes | Environment variable names mapped to credential IDs; never values |
-| `accounts` | no | Your saved model accounts |
-| `credentials` | no | Available credential names, IDs and use/manage permissions; never values |
-| `connections` | no | Connected sources that can be assigned |
-
-Write with `automate(action: ..., context_id?: ..., workflow: {...}, workspace?: ...)`.
-Here `context_id` is the workflow ID. Omit it only for `workflow_create`. Put all operation
-fields inside `workflow`; do not mix them with ordinary automation parameters. Each read or
-write returns `{status, result}` with the HTTP result, including actionable failures.
-
-| action | workflow fields |
-| --- | --- |
-| `workflow_create` | `name`, optional `model_connection_id`, stable UUID `request_id` |
-| `workflow_save` | `instruction`, `provider` (`codex` or `claude-code`), numeric draft `revision` |
-| `workflow_account` | `connection_id` (or null to unassign), binding `revision` (null before first assignment) |
-| `workflow_environment` | `bindings`: complete map of environment variable names to saved credential IDs |
-| `workflow_files` | `short_id`, exact numeric `version`, attachment `revision` (null before first selection); set both `short_id` and `version` to null to remove |
-| `workflow_repositories` | `repositories`: complete list of `{connection_id, repository: "owner/name", access: "read" or "write"}`; numeric `revision` from `configuration.repository_revision` (starts at 0); empty list removes access; workspace owner required |
-| `workflow_connections` | `connection_ids`: complete list of source connections to allow |
-| `workflow_test` | `revision`: reviewed readiness hash; stable UUID `request_id` |
-| `workflow_schedule` | `instruction`, `provider`, `cron` (or null for manual), IANA `timezone`, `enabled`, numeric schedule `revision` |
-| `workflow_cancel_preparation` | empty object; cancels unfinished preparation through the existing cleanup path |
-| `workflow_disable` | empty object; disables future runs; this is not a pause/resume switch |
-
-1. Inspect the actual local job. Write self-contained instructions: the remote run does not
-   inherit local conversation history. Identify the files and access it actually needs.
-2. List workflows first so a resumed migration does not create a duplicate. Create a draft
-   with a stable request UUID; save instructions using its returned draft revision.
-3. List and assign a saved model account. If none exists, the human connects one in Derive.
-   Reuse saved credentials by ID and bind only the required environment variables/sources.
-   New secret values can be transferred through the management API using `stage(target:'api')`
-   and a shell, with the user's authorization. Never put them in workflow instructions,
-   artifacts, tool arguments, logs or an uploaded `.env` file.
-4. Transfer local scripts/data as a ZIP with `stage(target:'doc')` and multipart
-   `file_bundle=true`; see the publishing skill. Keep credentials and local caches out.
-   Read `configuration.files.revision` (null before first selection), then attach the
-   upload’s `short_id` and exact version with `workflow_files`. Uploading alone does not
-   attach files. People allowed to run this workflow can use the selected files; the source
-   artifact’s sharing stays unchanged. Share standing on the source is required.
-   For Git repositories, use `workflow_repositories` with a workspace GitHub App connection
-   from `connections` and an exact `owner/name`. Read access lets the agent clone/fetch over
-   HTTPS; write access also allows pushes and creating PRs through `github.post`. The server
-   verifies installation access and permissions before saving. Missing permission approval is
-   completed in Settings → Integrations → GitHub. The agent clones only when needed and owns
-   its saved working directory; there is no separate checkout or dependency setup phase.
-   Once repository access is configured, cloud-run GitHub tools are confined to that selection;
-   it does not grant Actions access. Repository grant changes invalidate old accepted runs.
-   Tokens are issued for one repository, never placed in a remote URL or saved Git config.
-   Removing access stops further issuance; an already issued token can live up to one hour.
-   The ordinary `workflow_connections` GitHub source alone does not grant shell Git access.
-5. Read `configuration`, resolve its blockers, and submit `workflow_test` with the readiness
-   revision. Reuse the same request UUID after a lost response. This queues one durable run
-   and automatically prepares the environment if needed; closing the client does not lose it.
-   Poll configuration/runs to distinguish preparation, submission, actual success and saving.
-6. The remote agent installs missing dependencies as part of its ordinary first run. There
-   is no user-defined dependency setup stage. Inputs arrive in a verified version-specific
-   directory before the agent starts. The agent copies/adapts files into its working directory;
-   later runs resume those working files. A new upload or removal affects future accepted
-   runs, never overlays working files, and cannot erase copies already made. Explicitly
-   select a new version to update an input. Revoking the grantor’s source access blocks
-   further delivery, including for an accepted run.
-7. After checking the report and saved-state result, read the established schedule revision
-   and use `workflow_schedule` to set the authorized cadence. Setting `enabled:false` pauses
-   the schedule while preserving manual runs. Schedule editing also owns instruction updates
-   after preparation; `workflow_save` is only for the pre-runtime draft. A 409 means reread
-   and reconcile, never silently overwrite newer work. Cut over an existing local schedule
-   deliberately so both schedulers do not perform the job at once.

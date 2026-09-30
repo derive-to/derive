@@ -27,12 +27,12 @@
 //
 // ONE TOOL PER INTENT — and where an intent spans reading and writing, one per SIDE of
 // that line, because MCP annotations are per-tool and clients act on them (the library is
-// browse_library / organize / shelve; automations are list_automations and automate). The
+// browse_library / organize / shelve). The
 // count is deliberately not written here: this comment claimed TEN while the server served
 // twelve. surface-coherence.test.ts compares the served list against SKILL.md, which is
 // the copy worth keeping honest. WORKSPACES (list_workspaces), FIND (find: BROWSE the
-// library, GREP one artifact, or SEARCH the workspace — plus the askable contexts,
-// all discriminated by argument), READ content (read), CATCH UP on state/feedback/
+// library, GREP one artifact, or SEARCH the workspace, discriminated by argument), READ
+// content (read), CATCH UP on state/feedback/
 // history AND pull the WORK QUEUE (catch_up: with a short_id it's one artifact's
 // delta; with none it's the @mention inbox teammates handed this agent — the ask-agent
 // and Rework buttons — so the queue is a mode of catch_up, not its own slot), COMMENT
@@ -40,13 +40,13 @@
 // derive://brandprint/profile scaffolds the slot on first write, so brand setup is a
 // publish target, not a separate tool), STAGE out-of-band uploads (stage: target:'doc'
 // for a whole big document/bundle, target:'asset' for an image/font — one tool, two
-// upload URLs), SAVE working state (checkpoint), and USE a workspace context (use:
-// query the live data agents a workspace hosts, acting for the connection's human — the
-// one intent where Derive routes a question to a runner).
+// upload URLs), SAVE working state (checkpoint), and WORK WITH AGENTS (agents to make and
+// change them, ask to hand one work, jobs to follow and answer it, pull for a runner — the
+// one intent where Derive routes work to a machine).
 // Variation lives in parameters, never a new tool: `since_version`/`to_version` turn
 // catch_up into a diff and omitting `short_id` turns it into the work queue,
 // `reply_to`/`set_state` fold reply+resolve into comment, `request_review` folds the
-// review ask into publish, and `find` collapses browse/grep/search/contexts onto
+// review ask into publish, and `find` collapses browse/grep/search onto
 // `query`/`short_id`/`tag`. A new capability is a parameter on an existing tool, not a
 // new tool — every extra tool costs the agent a slot to understand and choose between.
 //
@@ -64,7 +64,7 @@
 // tool IN ORDER — each lives in its own mcp-tools/<name>.ts, sourcing shared refs from
 // the context and pure helpers from mcp-util.ts. The exception is a read/write pair split
 // off one intent: those share a file AND a handler, because they are one body of rules
-// wearing two schemas (organize.ts holds three, automate.ts two). The registration ORDER
+// wearing two schemas (organize.ts holds three, agents.ts four). The registration ORDER
 // here is load-bearing: the surface-budget test and clients depend on tool order.
 
 import {
@@ -98,7 +98,6 @@ import {
   registerJobsTool,
   registerPullTool,
 } from "./mcp-tools/agents"
-import { registerAutomateTool, registerListAutomationsTool } from "./mcp-tools/automate"
 import { registerCallTool } from "./mcp-tools/call"
 import { registerCatchUpTool } from "./mcp-tools/catch-up"
 import { registerCheckpointTool } from "./mcp-tools/checkpoint"
@@ -115,7 +114,6 @@ import {
 import { registerPublishTool } from "./mcp-tools/publish"
 import { registerReadTool } from "./mcp-tools/read"
 import { registerStageTool } from "./mcp-tools/stage"
-import { registerUseTool } from "./mcp-tools/use"
 import { skillFilesFooter, skillReading, skillsCatalog } from "./mcp-util"
 import { CORE_SKILLS } from "./skills-reference.gen"
 
@@ -156,7 +154,6 @@ async function buildServer(
   // This connection is itself authenticated by a minted dkapi_ token — the mint
   // refuses to chain off one (it would renew its own TTL indefinitely).
   mintedToken: boolean,
-  workflowScope: string | null,
   requestApi: NonNullable<ToolContextBase["requestApi"]>,
   // The default workspace's Brandprint inputs can ride the opaque OAuth grant query.
   // Header re-homing passes undefined, which preserves the live workspace lookup.
@@ -166,55 +163,6 @@ async function buildServer(
   // stay inside their round-trip budgets.
   isInitialize = false,
 ): Promise<McpServer> {
-  if (workflowScope) {
-    const workflowSkill = CORE_SKILLS.find((skill) => skill.name === "workflows")
-    if (!workflowSkill) throw new Error("workflow skill is unavailable")
-    const server = new McpServer(
-      { name: "derive", version: "1.0.0" },
-      {
-        capabilities: { tools: { listChanged: true } },
-        instructions:
-          `You are the one-shot harness assigned to workflow run ${workflowScope}. ` +
-          "Read derive://skills/workflows, then coordinate only this run through use. " +
-          "Do not pull or answer Context runner queues.",
-      },
-    )
-    server.registerResource(
-      "skills:workflows",
-      "derive://skills/workflows",
-      {
-        title: "Graphs and bounded loops",
-        description: workflowSkill.summary,
-        mimeType: "text/markdown",
-        annotations: { audience: ["assistant"], priority: 1 },
-      },
-      async (uri) => ({
-        contents: [{ uri: uri.href, mimeType: "text/markdown", text: workflowSkill.body }],
-      }),
-    )
-    const base: ToolContextBase = {
-      server,
-      ctx,
-      agent,
-      actingFor,
-      ownerId,
-      scopeForCap,
-      registered,
-      boundWorkspaces,
-      grantWorkspaces,
-      clientId,
-      mintedToken,
-      workflowScope,
-      requestApi,
-      defaultOrg: agent.org_id,
-      defaultRole: agent.role,
-      pendingRequests: [],
-      bpProfile: undefined,
-      profileArt: null,
-    }
-    registerToolSurface(makeToolContext(base), undefined, new Set(["use"]))
-    return server
-  }
   // The always-loaded CORE SKILLS index: one line per skill (name: summary —
   // derive://skills/<name>), kept in lockstep with the skill bodies by iterating the
   // same array the resources register from. The workflow/protocol prose lives in those
@@ -586,7 +534,6 @@ async function buildServer(
     grantWorkspaces,
     clientId,
     mintedToken,
-    workflowScope,
     requestApi,
     defaultOrg,
     defaultRole,
@@ -594,11 +541,7 @@ async function buildServer(
     bpProfile,
     profileArt,
   }
-  registerToolSurface(
-    makeToolContext(base),
-    ctx.deps.codeSandbox,
-    workflowScope ? new Set(["use"]) : undefined,
-  )
+  registerToolSurface(makeToolContext(base), ctx.deps.codeSandbox)
 
   return server
 }
@@ -627,7 +570,7 @@ export interface ToolSurface {
  * Register the tool surface onto `tc.server` and capture it.
  *
  * THE ORDER IS LOAD-BEARING — the surface-budget test and clients depend on tool order — so it
- * mirrors the historical inline sequence exactly. Gating (the `use` runner behavior, the
+ * mirrors the historical inline sequence exactly. Gating (the `pull` runner behavior, the
  * `catch_up` inbox) lives inside each tool's handler, unchanged.
  *
  * `only` narrows the surface to a named subset, for a caller that is not the MCP transport:
@@ -694,18 +637,13 @@ export function registerToolSurface(
   if (wanted("stage")) registerStageTool(tc)
   if (wanted("publish")) registerPublishTool(tc)
   if (wanted("checkpoint")) registerCheckpointTool(tc)
-  if (wanted("use")) registerUseTool(tc)
-  // The agent model. `use` and `automate` stay for one release as the old doors to the same
-  // work; they go when the CLI's next major ships.
+  // The agent model: make and change agents, ask them, follow and answer their jobs, and
+  // (for a runner) pull and report the work.
   if (wanted("agents")) {
     registerAgentsTool(tc)
     registerAskTool(tc)
     registerJobsTool(tc)
     registerPullTool(tc)
-  }
-  if (wanted("automate")) {
-    registerListAutomationsTool(tc)
-    registerAutomateTool(tc)
   }
   // OPT-IN, not `wanted`. `wanted` is true whenever `only` is absent, which is exactly how an
   // external MCP client is registered — so the ordinary form would hand `call` to every client
@@ -758,7 +696,6 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
     // mint has to be told explicitly not to run off one (self-renewal — see
     // isMintedApiToken).
     const mintedToken = ctx.isMintedApiToken(c)
-    const workflowScope = ctx.agentWorkflowScope(c)
     // Peek the JSON-RPC method: the workspace-skills count in the instructions is only
     // read at initialize, and paying its query on every tool call is exactly the creep
     // the round-trip budget suite pins. A GET (SSE open) or unparsable body reads false.
@@ -781,7 +718,6 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
       grant?.workspaces,
       grant?.clientId ?? "",
       mintedToken,
-      workflowScope,
       async (path, method, body, workspace) => {
         // Keep all REST middleware, live authorization and admission checks. Only
         // server-owned tool mappings supply paths; the model never supplies a URL.

@@ -21,6 +21,7 @@ const SPA_EXACT = new Set([
   "/inbox",
   "/login",
   "/new",
+  "/papers",
   "/people",
   "/reset-password",
   "/roadmap",

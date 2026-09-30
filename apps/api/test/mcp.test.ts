@@ -15,8 +15,6 @@ import { exportJWK, generateKeyPair, SignJWT } from "jose"
 import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { sha256 } from "../src/lib/crypto"
-import { inMemoryLimiter, inMemoryRateLimiters } from "../src/lib/rate-limit"
-import { SETUP_RUNNER_PATH } from "../src/lib/runtime-setup"
 import { searchMatcher, searchWorkspace } from "../src/lib/search"
 import { PNG_BYTES } from "./fixtures"
 import {
@@ -106,383 +104,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(r.wwwAuth).toContain("oauth-protected-resource")
   })
 
-  it("keeps MCP workflow writes in the originating client's API rate-limit bucket", async () => {
-    const { app, token, meta } = appWithGrant(
-      dir,
-      "workflow-ip-limit",
-      "openid derive:read derive:publish derive:manage",
-      {
-        rateLimit: true,
-        rateLimiters: { ...inMemoryRateLimiters(), write: inMemoryLimiter(60_000, 1) },
-      },
-    )
-    await meta.setMembership({
-      id: "mcp-ip-owner",
-      org_id: "ws_p_u_o",
-      user_id: "u_o",
-      role: "owner",
-    })
-    const attempt = async (headers: Record<string, string>) =>
-      JSON.parse(
-        toolText(
-          await rpc(
-            app,
-            token,
-            {
-              jsonrpc: "2.0",
-              id: 9,
-              method: "tools/call",
-              params: {
-                name: "automate",
-                arguments: { action: "workflow_create", workflow: { name: "Rate limit check" } },
-              },
-            },
-            headers,
-          ),
-        ),
-      )
-    // No cloud configuration: admission returns 403, but the HTTP write limiter still runs.
-    expect((await attempt({ "x-forwarded-for": "192.0.2.1, 192.0.2.254" })).status).toBe(403)
-    expect((await attempt({ "x-forwarded-for": "192.0.2.1" })).status).toBe(429)
-    expect((await attempt({ "x-real-ip": "192.0.2.2" })).status).toBe(403)
-    expect((await attempt({ "x-forwarded-for": "192.0.2.2" })).status).toBe(429)
-  })
-
-  it("manages persistent workflows through MCP using the HTTP lifecycle and saved credentials", async () => {
-    const org = "ws_p_u_o"
-    const secret = "workflow MCP encryption fixture"
-    let providerReads = 0
-    const { app, token, meta, teammate } = appWithGrant(
-      dir,
-      "workflow-controls",
-      "openid derive:read derive:publish derive:manage",
-      {
-        encryptionKey: secret,
-        runtime: {
-          apiUrl: "https://ortam.test/v1",
-          runnerPath: SETUP_RUNNER_PATH,
-          pilotWorkspaceIds: new Set(),
-          managed: { apiKey: "workflow controller fixture", workspaceIds: new Set([org]) },
-        },
-        runtimeFetch: async (url) => {
-          providerReads++
-          const path = new URL(String(url)).pathname
-          if (path.endsWith("/auth/token"))
-            return Response.json({
-              token:
-                "header.eyJzdWIiOiJtb2RlbC11c2VyIiwib3JnYW5pemF0aW9uX2lkIjoibW9kZWwtb3JnIn0.signature",
-            })
-          if (path.endsWith("/integration"))
-            return Response.json({ organization_id: "model-org", user_id: "model-user" })
-          if (path.endsWith("/agents"))
-            return Response.json({
-              items: [{ harness: "codex", status: "active", identity: null }],
-            })
-          throw new Error(`Unexpected provider call ${path}`)
-        },
-      },
-    )
-    await meta.setMembership({
-      id: "workflow-controls-owner",
-      org_id: org,
-      user_id: "u_o",
-      role: "owner",
-    })
-    await meta.setOrgSettings(org, {
-      ...(await meta.getOrgSettings(org)),
-      agentWrites: true,
-    })
-    const tool = async (name: string, input: Record<string, unknown>, bearer = token) =>
-      JSON.parse(toolText(await call(app, bearer, name, input)))
-    const create = {
-      action: "workflow_create",
-      workflow: { name: "Integrity report", request_id: "d6acb830-92ed-4453-bb3a-e186e3472232" },
-    }
-    const created = await tool("automate", create)
-    expect(created.status).toBe(201)
-    const id = created.result.id
-    expect((await tool("automate", create)).result.id).toBe(id)
-    expect(providerReads).toBe(0)
-    expect(await meta.getContextRuntimeForContext(id, org)).toBeNull()
-    const read = (view = "configuration") => tool("list_automations", { view, workflow_id: id })
-    const control = (action: string, workflow: Record<string, unknown> = {}, bearer = token) =>
-      tool("automate", { action, context_id: id, workflow }, bearer)
-    expect(
-      (await tool("list_automations", { view: "workflows" })).result.items.map(
-        (item: { id: string }) => item.id,
-      ),
-    ).toContain(id)
-    expect((await read()).result.draft.instruction).toBe("")
-    expect(
-      (
-        await control("workflow_save", {
-          instruction: "Inspect the project and produce an integrity report",
-          provider: "codex",
-          revision: 0,
-        })
-      ).status,
-    ).toBe(200)
-    expect(
-      (
-        await control("workflow_save", {
-          instruction: "Stale overwrite",
-          provider: "codex",
-          revision: 0,
-        })
-      ).status,
-    ).toBe(409)
-    await meta.createRuntimeModelConnection(
-      {
-        id: "rmc_mcp",
-        org_id: org,
-        name: "Work Codex",
-        provider: "codex",
-        created_by: "u_o",
-        api_url: "https://ortam.test/v1",
-        ortam_org_id: "model-org",
-        ortam_user_id: "model-user",
-      },
-      new Date().toISOString(),
-    )
-    expect((await tool("list_automations", { view: "accounts" })).result.items[0].id).toBe(
-      "rmc_mcp",
-    )
-    expect(
-      (await control("workflow_account", { connection_id: "rmc_mcp", revision: null })).status,
-    ).toBe(200)
-    expect((await read("account")).result.connection.name).toBe("Work Codex")
-    const credentialResponse = await app.request("/v1/connections", {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        kind: "secret",
-        toolkit: "database",
-        scope: "personal",
-        scopes_label: "Report database",
-        secret: "private fixture value",
-        request_id: "d6acb830-92ed-4453-bb3a-e186e3472234",
-      }),
-    })
-    expect(credentialResponse.status).toBe(201)
-    const credential = await credentialResponse.json()
-    expect(JSON.stringify(credential)).not.toContain("private fixture value")
-    const credentials = await tool("list_automations", { view: "credentials" })
-    expect(credentials.result.items[0].name).toBe("Report database")
-    expect(JSON.stringify(credentials)).not.toContain("private fixture value")
-    expect(
-      (await control("workflow_environment", { bindings: { DATABASE_URL: credential.id } })).status,
-    ).toBe(200)
-    expect((await read("environment")).result.bindings).toEqual({ DATABASE_URL: credential.id })
-    expect((await control("workflow_connections", { connection_ids: [] })).status).toBe(200)
-    const files = await tool("publish", {
-      title: "Workflow source",
-      files: { "README.md": "# Input", "check.py": "print('ok')" },
-      workspace_access: "none",
-      link_role: "none",
-    })
-    expect(files.short_id).toBeTruthy()
-    expect(
-      (await control("workflow_files", { short_id: files.short_id, version: 1, revision: null }))
-        .status,
-    ).toBe(200)
-    expect((await read()).result.files).toMatchObject({ version: 1, revision: 0 })
-    expect(
-      (await control("workflow_files", { short_id: null, version: null, revision: 0 })).status,
-    ).toBe(200)
-    expect(
-      (await control("workflow_files", { short_id: files.short_id, version: 1, revision: 0 }))
-        .status,
-    ).toBe(409)
-    const configuration = (await read()).result
-    expect(configuration.readiness.blockers).toEqual([])
-    expect(configuration.readiness.can_test).toBe(true)
-    const test = {
-      request_id: "d6acb830-92ed-4453-bb3a-e186e3472233",
-      revision: configuration.readiness.revision,
-    }
-    const accepted = await control("workflow_test", test)
-    expect(accepted.status).toBe(202)
-    expect((await control("workflow_test", test)).result.request.id).toBe(
-      accepted.result.request.id,
-    )
-    expect((await meta.listPendingWorkflowTests()).length).toBe(1)
-    expect(await meta.getContextRuntimeForContext(id, org)).toBeNull()
-    const context = await meta.getContext(id)
-    if (!context) throw new Error("Missing workflow")
-    // Model the existing provisioning saga's durable result; this test starts no machine.
-    const at = new Date().toISOString()
-    await meta.createRuntimeSetup(
-      {
-        id: "setup_mcp",
-        org_id: org,
-        context_id: id,
-        agent_id: context.agent_id,
-        created_by: "u_o",
-        api_url: "https://ortam.test/v1",
-        ortam_org_id: "model-org",
-        ortam_user_id: "model-user",
-        connection_id: null,
-        model_connection_id: "rmc_mcp",
-        model_binding_revision: 0,
-        request_json: "{}",
-        deadline_at: new Date(Date.now() + 60_000).toISOString(),
-      },
-      at,
-    )
-    const transitions = [
-      { phase: "creating" as const },
-      {
-        phase: "provisioning" as const,
-        sandbox_id: "sandbox_mcp",
-        create_operation_id: "create_mcp",
-      },
-      { phase: "stopping" as const, stop_operation_id: "stop_mcp" },
-      { phase: "awaiting_connection" as const },
-      { phase: "binding" as const },
-    ]
-    for (const change of transitions) {
-      const setup = await meta.getRuntimeSetup(id, org)
-      if (!setup) throw new Error("Missing setup")
-      expect(
-        await meta.transitionRuntimeSetup(setup.id, org, setup.revision, change, at),
-      ).not.toBeNull()
-    }
-    const runtime = await meta.bindRuntimeSetup("setup_mcp", org, at)
-    expect(runtime).not.toBeNull()
-    await meta.projectWorkflowDraft(id, org, "u_o", new Date().toISOString())
-    await meta.settleWorkflowTest(accepted.result.request.id, org, "submitted")
-    const prepared = (await read()).result
-    expect(prepared.draft).toBeNull()
-    const schedule = {
-      instruction: prepared.schedule.instruction,
-      provider: "codex",
-      cron: "0 9 * * *",
-      timezone: "America/New_York",
-      enabled: true,
-      revision: prepared.schedule.revision,
-    }
-    const scheduled = await control("workflow_schedule", schedule)
-    expect(scheduled.status).toBe(200)
-    expect(scheduled.result.schedule.runtime_id).toBe(runtime?.id)
-    expect((await control("workflow_schedule", schedule)).status).toBe(409)
-    expect(
-      (
-        await control("workflow_schedule", {
-          ...schedule,
-          enabled: false,
-          revision: scheduled.result.schedule.revision,
-        })
-      ).status,
-    ).toBe(200)
-    expect((await read("runs")).result.schedule.enabled).toBe(0)
-    const weak = teammate("u_o", "workflow-read-grant", "openid derive:read")
-    expect(
-      (await app.request("/v1/credentials", { headers: { authorization: `Bearer ${weak}` } }))
-        .status,
-    ).toBe(401)
-    expect(
-      (
-        await app.request("/v1/connections", {
-          method: "POST",
-          headers: { authorization: `Bearer ${weak}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ kind: "secret", toolkit: "database", secret: "denied fixture" }),
-        })
-      ).status,
-    ).toBeGreaterThanOrEqual(400)
-    expect((await tool("list_automations", { view: "__proto__" })).error).toContain("Use view")
-    expect((await control("workflow_disable", {}, weak)).error).toContain("management")
-    expect((await tool("list_automations", { view: "credentials" }, weak)).error).toContain(
-      "management",
-    )
-    expect(
-      (await tool("automate", { action: "workflow_disable", context_id: "../../credentials" }))
-        .error,
-    ).toContain("context_id")
-    expect(
-      (
-        await tool("automate", {
-          action: "workflow_save",
-          context_id: id,
-          workflow: { url: "https://other.test" },
-        })
-      ).error,
-    ).toContain("Unexpected")
-    expect((await tool("automate", { ...create, workspace: "foreign-workspace" })).error).toContain(
-      "No workspace",
-    )
-    const config = await read("configuration")
-    expect(
-      (
-        await control("workflow_repositories", {
-          repositories: [],
-          revision: config.result.repository_revision,
-        })
-      ).status,
-    ).toBe(200)
-    expect((await read("configuration")).result.repositories).toEqual([])
-    expect((await control("workflow_disable")).status).toBe(200)
-    expect((await meta.getContextRuntimeForContext(id, org))?.disabled_at).not.toBeNull()
-  })
-
-  it("reads the same workflow readiness through MCP and HTTP without widening a read-only grant", async () => {
-    const { app, token, meta, blobs, teammate } = appWithGrant(
-      dir,
-      "workflow-readiness",
-      "openid derive:read derive:publish derive:manage",
-    )
-    await meta.setMembership({
-      id: "readiness-owner",
-      org_id: "ws_p_u_o",
-      user_id: "u_o",
-      role: "owner",
-    })
-    const manifest = await publishVersion(meta, blobs, {
-      bytes: new TextEncoder().encode("Check files"),
-      filename: "manifest.md",
-      isBundle: false,
-      orgId: "ws_p_u_o",
-      authorId: "u_o",
-    })
-    const context = await meta.createContext({
-      id: "ctx_readiness",
-      org_id: "ws_p_u_o",
-      name: "Readiness",
-      agent_id: "agent_readiness",
-      manifest_artifact_id: manifest.artifact.id,
-      created_by: "u_o",
-    })
-    const web = await (
-      await app.request(`/v1/workflow-runtimes/${context.id}`, {
-        headers: { authorization: `Bearer ${token}` },
-      })
-    ).json()
-    const mcp = JSON.parse(
-      toolText(await call(app, token, "list_automations", { workflow_id: context.id })),
-    )
-    expect(mcp).toHaveProperty("readiness")
-    expect(web).toHaveProperty("readiness")
-    expect(mcp.readiness).toEqual({ ...web.readiness, evaluated_at: expect.any(String) })
-    expect(mcp.readiness.blockers.map((b: { code: string }) => b.code)).toContain(
-      "workspace_unavailable",
-    )
-    expect(mcp.readiness.can_test).toBe(false)
-    const readToken = teammate("u_o", "readiness-read-only", "openid derive:read")
-    const readOnly = JSON.parse(
-      toolText(await call(app, readToken, "list_automations", { workflow_id: context.id })),
-    )
-    expect(readOnly.readiness).toMatchObject({ can_test: false, can_edit: false })
-    expect(readOnly.readiness.blockers[0].code).toBe("scope_required")
-    expect(readOnly.readiness.blockers.every((b: { action: unknown }) => b.action === null)).toBe(
-      true,
-    )
-
-    expect(
-      JSON.parse(
-        toolText(await call(app, token, "list_automations", { workflow_id: "unrelated" })),
-      ),
-    ).toEqual({ error: "not found" })
-  })
-
   it("initializes (identity in instructions) and lists the consolidated tools", async () => {
     const { app, token } = appWithGrant(dir, "init", "openid derive:read derive:publish")
     const init = await rpc(app, token, initBody)
@@ -502,16 +123,15 @@ describe("remote MCP endpoint (/mcp)", () => {
     const names = toolNames(list)
     // The consolidated ten (15→10, commit 65eb4e9): find merges search/
     // list_artifacts/list_contexts; stage merges stage_asset/stage_publish;
-    // catch_up absorbs check_requests as its no-short_id queue; use replaces ask;
+    // catch_up absorbs check_requests as its no-short_id queue;
     // setup_brandprint folds into publish (derive://brandprint/profile).
-    // Two of those ten then split along the read/write line, which annotations are
-    // declared on: organize became browse_library / organize / shelve, and automate
-    // became list_automations / automate. Consolidation is still the rule — this is the
-    // one carve-out, because a parameter cannot change a tool's annotation.
+    // organize then split along the read/write line, which annotations are declared on,
+    // into browse_library / organize / shelve: a parameter cannot change a tool's
+    // annotation. The agent model's four (agents, ask, jobs, pull) replaced use, automate
+    // and list_automations.
     expect(names.sort()).toEqual([
       "agents",
       "ask",
-      "automate",
       "browse_library",
       "catch_up",
       "checkpoint",
@@ -519,7 +139,6 @@ describe("remote MCP endpoint (/mcp)", () => {
       "comment",
       "find",
       "jobs",
-      "list_automations",
       "list_workspaces",
       "organize",
       "publish",
@@ -527,7 +146,6 @@ describe("remote MCP endpoint (/mcp)", () => {
       "read",
       "shelve",
       "stage",
-      "use",
     ])
     // The read path advertises readOnlyHint — annotation-honoring clients (Claude Code
     // plan mode gates on exactly this) run it without an approval prompt. Every mutating
@@ -547,7 +165,6 @@ describe("remote MCP endpoint (/mcp)", () => {
       "browse_library",
       "catch_up",
       "find",
-      "list_automations",
       "list_workspaces",
       "read",
     ])
@@ -559,7 +176,7 @@ describe("remote MCP endpoint (/mcp)", () => {
       .map((t) => t.name)
     // `agents` joins it: its delete removes an agent and cancels the agent's open work.
     expect(destructive.sort()).toEqual(["agents", "shelve"])
-    // Consolidated away — folded into find / catch_up / comment / publish / stage / use.
+    // Consolidated away — folded into find / catch_up / comment / publish / stage.
     for (const gone of [
       "whoami",
       "catch_me_up",
@@ -583,7 +200,10 @@ describe("remote MCP endpoint (/mcp)", () => {
       "stage_asset",
       "stage_publish",
       "setup_brandprint",
-      // `ask` was retired into `use`, then came back as the agent model's own verb.
+      // The agents cutover retired the Context and automation doors.
+      "use",
+      "automate",
+      "list_automations",
     ])
       expect(names).not.toContain(gone)
   })
@@ -3821,51 +3441,6 @@ describe("checkpoint tool (lineage layers)", () => {
 // box lacks) does the work and files the receipt through `automate record`; a hosted run files
 // its own. Both land in the same run table, the same timeline, attributed to the same
 // automation — which is the whole point of letting the executor be swappable.
-describe("automate record — local work lands in the same ledger", () => {
-  it("records a locally-executed run against its automation, with its writes", async () => {
-    const { app, token, meta } = appWithGrant(
-      dir,
-      "automate-record",
-      "openid derive:read derive:publish derive:manage",
-    )
-    await rpc(app, token, initBody)
-    const created = JSON.parse(
-      toolText(
-        await call(app, token, "automate", {
-          action: "create",
-          trigger: { kind: "manual" },
-          instruction: "Nightly QA of staging.",
-        }),
-      ),
-    ) as { id: string }
-    expect(created.id).toBeTruthy()
-
-    // The local agent reports what it actually did.
-    const recorded = JSON.parse(
-      toolText(
-        await call(app, token, "automate", {
-          action: "record",
-          automation_id: created.id,
-          wrote: ["qa1rep0rt"],
-          outcome: "published",
-          note: "browser suite, 12/12 pass",
-        }),
-      ),
-    ) as { run_id: string; automation_id: string | null; recorded: boolean }
-    expect(recorded.recorded).toBe(true)
-    expect(recorded.automation_id).toBe(created.id)
-
-    // It IS a run: same table, terminal, attributed, with the writes and the local lane marked
-    // so a reader can tell where it executed rather than being quietly misled.
-    const run = await meta.getRun(recorded.run_id)
-    expect(run?.status).toBe("succeeded")
-    expect(run?.automation_id).toBe(created.id)
-    expect(run?.meta).toContain("qa1rep0rt")
-    expect(run?.meta).toContain('"lane":"local"')
-    expect(run?.meta).toContain("published")
-  })
-})
-
 describe("MCP: LaTeX papers", () => {
   it("types unnamed \\documentclass content as LaTeX, reads it as text and keeps the type across edits", async () => {
     const { app, token } = appWithGrant(dir, "latex", "openid derive:read derive:publish")
