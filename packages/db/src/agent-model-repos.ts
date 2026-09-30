@@ -153,6 +153,7 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
           updated_at = ${now}
         WHERE status = 'queued' AND id IN (
           SELECT id FROM job WHERE agent_id = ${agentId} AND status = 'queued' AND attended = 0
+            AND kind <> 'graph'
             AND (scheduled_for IS NULL OR scheduled_for <= ${now})
             AND (machine_phase IS NULL OR machine_phase = 'released')
           ORDER BY created_at, id LIMIT ${n})
@@ -215,7 +216,7 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
       const now = iso()
       return rows<JobRecord>(sql`
         SELECT j.* FROM job j JOIN agent a ON a.id = j.agent_id AND a.org_id = j.org_id
-        WHERE j.status = 'queued' AND j.attended = 0 AND a.machine = 'derive'
+        WHERE j.status = 'queued' AND j.attended = 0 AND j.kind <> 'graph' AND a.machine = 'derive'
           AND a.paused_at IS NULL AND (j.scheduled_for IS NULL OR j.scheduled_for <= ${now}) ${scope}
         ORDER BY j.created_at, j.id LIMIT ${Math.max(1, Math.min(200, limit))}`)
     },
@@ -261,6 +262,11 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
       return rows<JobRecord>(sql`
         SELECT * FROM job WHERE machine_phase IS NOT NULL AND machine_phase <> 'released'
         ORDER BY created_at, id LIMIT ${Math.max(1, Math.min(200, limit))}`)
+    },
+    listOpenGraphJobs(limit) {
+      return rows<JobRecord>(sql`
+        SELECT * FROM job WHERE kind = 'graph' AND status IN ('queued', 'running')
+        ORDER BY updated_at, id LIMIT ${Math.max(1, Math.min(200, limit))}`)
     },
     async addJobCost(id, microUsd) {
       await first(sql`

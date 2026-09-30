@@ -7,6 +7,7 @@ import {
   runOneJob,
   serveJob,
 } from "../../../packages/cli/src/job-runner.js"
+import { advanceGraph, graphAware, graphPass } from "../src/lib/job-graph"
 import { machinePass, machineWorkspaces } from "../src/lib/job-machine"
 import { jobTick } from "../src/lib/jobs"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
@@ -342,6 +343,35 @@ describe("jobs: who may ask, see, and run", () => {
       (await app.request(`/v1/jobs/${parent.id}/cancel`, jsonAs(as(ed.email), {}))).status,
     ).toBe(200)
     expect((await meta.getJob(child.id))?.status).toBe("cancelled")
+  })
+})
+
+describe("jobs: the agents list the home screen reads", () => {
+  it("carries each agent's schedules and when it last had work, and its creator can replace its key", async () => {
+    const { app } = await setup("jobs-list-shape")
+    const quiet = await createAgent(app)
+    const busy = (await (
+      await app.request(
+        "/v1/agents",
+        jsonAs(as(ed.email), {
+          name: "Nightly",
+          schedule: { cron: "0 3 * * *", instruction: "Tidy" },
+        }),
+      )
+    ).json()) as { id: string }
+    await ask(app, ed.email, busy.id, "Now")
+    const list = (await (await app.request("/v1/agents", { headers: as(ed.email) })).json()) as {
+      agents: { id: string; triggers: { cron: string }[]; last_job_at: string | null }[]
+    }
+    const byId = new Map(list.agents.map((a) => [a.id, a]))
+    expect(byId.get(busy.id)?.triggers.map((t) => t.cron)).toEqual(["0 3 * * *"])
+    expect(byId.get(busy.id)?.last_job_at).toBeTruthy()
+    expect(byId.get(quiet.id)).toMatchObject({ triggers: [], last_job_at: null })
+    // Ed made "Nightly": Ed replaces its key; Ed cannot replace the owner's agent's.
+    const mine = await app.request(`/v1/agents/${busy.id}/rotate`, jsonAs(as(ed.email), {}))
+    expect(mine.status).toBe(200)
+    const theirs = await app.request(`/v1/agents/${quiet.id}/rotate`, jsonAs(as(ed.email), {}))
+    expect(theirs.status).toBe(404)
   })
 })
 
@@ -1046,5 +1076,451 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
       jsonAs(as(owner.email), { name: "Nope", machine: "derive" }),
     )
     expect(res.status).toBe(400)
+  })
+})
+
+describe("jobs: graphs (a workflow on an agent's instructions page)", () => {
+  const graphHtml = (writer: string, publisher: string) => {
+    const nodes = [
+      { id: "draft", label: "Draft", note: "Write the draft" },
+      { id: "review", label: "Review", note: "A person decides" },
+      { id: "publish", label: "Publish", note: "Publish it" },
+    ]
+    const edges = [
+      { from: "draft", to: "review", label: "drafted" },
+      { from: "review", to: "publish", label: "ship" },
+      { from: "review", to: "draft", label: "revise" },
+    ]
+    const manifest = {
+      schema: "derive.linked-bundle/v1",
+      purpose: "Draft, review, publish",
+      members: [],
+      diagrams: [{ id: "ship", title: "Ship", type: "graph", nodes, edges }],
+    }
+    const definition = {
+      schema: "derive.workflow/v1",
+      purpose: "Draft, review, publish",
+      diagrams: [
+        {
+          id: "ship",
+          entry: "draft",
+          nodes: [
+            {
+              id: "draft",
+              kind: "context",
+              context_ref: writer,
+              instruction: "Write the draft.",
+              result: "A draft",
+            },
+            {
+              id: "review",
+              kind: "human",
+              decision: "Ship it?",
+              options: ["ship", "revise"],
+              resume: "Continue with the decision",
+            },
+            {
+              id: "publish",
+              kind: "context",
+              context_ref: publisher,
+              instruction: "Publish the draft.",
+              result: "Published",
+              terminal: true,
+            },
+          ],
+          routes: [
+            { from: "draft", to: "review", when: "drafted" },
+            { from: "review", to: "publish", when: "ship" },
+            { from: "review", to: "draft", when: "revise" },
+          ],
+          loops: [
+            {
+              id: "revise",
+              nodes: ["draft", "review"],
+              goal: "A draft worth shipping",
+              evaluate: "The reviewer ships it",
+              stop: { max_attempts: 2, human_stop: "The reviewer stops" },
+            },
+          ],
+          scenarios: [
+            {
+              id: "expected",
+              kind: "expected",
+              path: ["draft", "review", "publish"],
+              outcome: "Shipped",
+            },
+            { id: "failure", kind: "failure", path: ["draft"], outcome: "Draft failed" },
+            {
+              id: "human",
+              kind: "human",
+              path: ["draft", "review", "draft", "review", "publish"],
+              outcome: "Revised once, then shipped",
+            },
+          ],
+        },
+      ],
+    }
+    return `<!doctype html><html><body><a href="#draft">Draft</a><a href="#review">Review</a><a href="#publish">Publish</a><script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify(manifest)}</script><script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify(definition)}</script></body></html>`
+  }
+
+  it("walks the graph as child jobs, waits on the person, loops back, and finishes", async () => {
+    const made = await setup("jobs-graph")
+    const { app, meta } = made
+    const writer = await createAgent(app, { name: "Writer" })
+    const publisher = await createAgent(app, { name: "Publisher" })
+    const page = (await (
+      await publishAs(
+        app,
+        graphHtml(writer.id, "Publisher"),
+        { title: "Ship flow" },
+        as(owner.email),
+      )
+    ).json()) as { short_id: string }
+    const graph = await createAgent(app, {
+      name: "Ship flow",
+      instructions_short_id: page.short_id,
+    })
+    const deps = graphAware({ meta, blobs: made.ctx.blobs })
+
+    const asked = (await (await ask(app, ed.email, graph.id, "Ship the launch note")).json()) as {
+      id: string
+      kind: string
+    }
+    expect(asked.kind).toBe("graph")
+    // No runner ever takes the graph itself.
+    expect(await pull(app, graph)).toEqual([])
+    await graphPass(deps)
+
+    const settle = async (agent: { id: string; token: string }, reply: string) => {
+      const [j] = await pull(app, agent)
+      if (!j) throw new Error(`nothing for ${agent.id}`)
+      const res = await app.request(
+        `/v1/jobs/${j.id}/report`,
+        jsonAs(bearer(agent.token), {
+          started_at: j.started_at,
+          status: "succeeded",
+          body_md: reply,
+        }),
+      )
+      expect(res.status).toBe(200)
+      return j
+    }
+    const parent = () => meta.getJob(asked.id)
+    const answer = (option: string) =>
+      app.request(`/v1/jobs/${asked.id}/answer`, jsonAs(as(ed.email), { option }))
+
+    const first = await settle(writer, "Draft one.")
+    expect(first).toMatchObject({ kind: "node", node_id: "draft", parent_id: asked.id })
+    // The draft settled: the graph now waits on the person with the authored options.
+    expect(await parent()).toMatchObject({ status: "needs_you" })
+    expect(JSON.parse((await parent())?.needs_json ?? "{}")).toMatchObject({
+      kind: "decision",
+      question: "Ship it?",
+      options: ["ship", "revise"],
+    })
+
+    expect((await answer("revise")).status).toBe(200)
+    await graphPass(deps)
+    await settle(writer, "Draft two.")
+    expect((await answer("ship")).status).toBe(200)
+    await graphPass(deps)
+    await settle(publisher, "Published.")
+
+    const done = await parent()
+    expect(done?.status).toBe("succeeded")
+    const route = (JSON.parse(done?.result_json ?? "{}") as { route: { node_id: string }[] }).route
+    expect(route.map((r) => r.node_id)).toEqual(["draft", "review", "draft", "review", "publish"])
+  })
+
+  const joinHtml = (a: string) => {
+    const ids = ["split", "left", "right", "merge"]
+    const edges = [
+      { from: "split", to: "left", label: "always" },
+      { from: "split", to: "right", label: "always" },
+      { from: "left", to: "merge", label: "done" },
+      { from: "right", to: "merge", label: "done" },
+    ]
+    const manifest = {
+      schema: "derive.linked-bundle/v1",
+      purpose: "Split and join",
+      members: [],
+      diagrams: [
+        {
+          id: "join",
+          title: "Join",
+          type: "graph",
+          nodes: ids.map((id) => ({ id, label: id, note: id })),
+          edges,
+        },
+      ],
+    }
+    const step = (id: string, extra = {}) => ({
+      id,
+      kind: "context",
+      context_ref: a,
+      instruction: `Do ${id}.`,
+      result: id,
+      ...extra,
+    })
+    const definition = {
+      schema: "derive.workflow/v1",
+      purpose: "Split and join",
+      diagrams: [
+        {
+          id: "join",
+          entry: "split",
+          nodes: [
+            step("split", { routing: "all" }),
+            step("left"),
+            step("right"),
+            step("merge", { terminal: true }),
+          ],
+          routes: edges.map((e) => ({ from: e.from, to: e.to, when: e.label })),
+          scenarios: [
+            {
+              id: "expected",
+              kind: "expected",
+              path: ["split", "left", "merge"],
+              outcome: "Joined",
+            },
+            { id: "failure", kind: "failure", path: ["split"], outcome: "Split failed" },
+          ],
+        },
+      ],
+    }
+    return `<!doctype html><html><body>${ids.map((i) => `<a href="#${i}">${i}</a>`).join("")}<script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify(manifest)}</script><script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify(definition)}</script></body></html>`
+  }
+
+  it("opens a step where branches meet once, after both branches finish", async () => {
+    const made = await setup("jobs-graph-join")
+    const { app, meta } = made
+    const worker = await createAgent(app, { name: "Worker", max_concurrency: 3 })
+    const page = (await (
+      await publishAs(app, joinHtml(worker.id), { title: "Join flow" }, as(owner.email))
+    ).json()) as { short_id: string }
+    const graph = await createAgent(app, { name: "Join", instructions_short_id: page.short_id })
+    const deps = graphAware({ meta, blobs: made.ctx.blobs })
+    const asked = (await (await ask(app, ed.email, graph.id, "Go")).json()) as { id: string }
+    await graphPass(deps)
+    const done = async (j: { id: string; started_at: string }) =>
+      app.request(
+        `/v1/jobs/${j.id}/report`,
+        jsonAs(bearer(worker.token), {
+          started_at: j.started_at,
+          status: "succeeded",
+          body_md: "ok",
+        }),
+      )
+    const [split] = await pull(app, worker)
+    if (!split) throw new Error("no split")
+    await done(split)
+    const branches = await pull(app, worker)
+    expect(branches.map((b) => b.node_id).sort()).toEqual(["left", "right"])
+    const [first, second] = branches
+    if (!first || !second) throw new Error("no branches")
+    await done(first)
+    // One branch in: the join waits.
+    expect(await pull(app, worker)).toEqual([])
+    await done(second)
+    await graphPass(deps)
+    const merge = await pull(app, worker)
+    expect(merge.map((m) => m.node_id)).toEqual(["merge"])
+    await done(merge[0] as { id: string; started_at: string })
+    await graphPass(deps)
+    expect((await meta.getJob(asked.id))?.status).toBe("succeeded")
+    const kids = await meta.listJobs({ orgId: "default", parentId: asked.id, limit: 50 })
+    expect(kids.filter((k) => k.node_id === "merge")).toHaveLength(1)
+  })
+
+  it("two passes racing on one graph open each step once", async () => {
+    const made = await setup("jobs-graph-race")
+    const { app, meta } = made
+    const writer = await createAgent(app, { name: "Writer" })
+    await createAgent(app, { name: "Publisher" })
+    const page = (await (
+      await publishAs(
+        app,
+        graphHtml(writer.id, "Publisher"),
+        { title: "Ship flow" },
+        as(owner.email),
+      )
+    ).json()) as { short_id: string }
+    const graph = await createAgent(app, { name: "Race", instructions_short_id: page.short_id })
+    const deps = graphAware({ meta, blobs: made.ctx.blobs })
+    const asked = (await (await ask(app, ed.email, graph.id, "Go")).json()) as { id: string }
+    const stale = await meta.getJob(asked.id)
+    if (!stale) throw new Error("no graph")
+    await Promise.all([advanceGraph(deps, stale), advanceGraph(deps, stale), graphPass(deps)])
+    const kids = await meta.listJobs({ orgId: "default", parentId: asked.id, limit: 50 })
+    expect(kids.map((k) => k.node_id)).toEqual(["draft"])
+    expect((await meta.getJob(asked.id))?.status).toBe("running")
+  })
+
+  it("a message at a decision step that is not a decision leaves the graph waiting", async () => {
+    const made = await setup("jobs-graph-chat")
+    const { app, meta } = made
+    const writer = await createAgent(app, { name: "Writer" })
+    await createAgent(app, { name: "Publisher" })
+    const page = (await (
+      await publishAs(
+        app,
+        graphHtml(writer.id, "Publisher"),
+        { title: "Ship flow" },
+        as(owner.email),
+      )
+    ).json()) as { short_id: string }
+    const graph = await createAgent(app, { name: "Chat", instructions_short_id: page.short_id })
+    const deps = graphAware({ meta, blobs: made.ctx.blobs })
+    const asked = (await (await ask(app, ed.email, graph.id, "Go")).json()) as { id: string }
+    await graphPass(deps)
+    const [j] = await pull(app, writer)
+    if (!j) throw new Error("no draft")
+    await app.request(
+      `/v1/jobs/${j.id}/report`,
+      jsonAs(bearer(writer.token), { started_at: j.started_at, status: "succeeded", body_md: "x" }),
+    )
+    expect((await meta.getJob(asked.id))?.status).toBe("needs_you")
+    await app.request(
+      `/v1/jobs/${asked.id}/messages`,
+      jsonAs(as(ed.email), { body_md: "hold on, checking" }),
+    )
+    await graphPass(deps)
+    expect((await meta.getJob(asked.id))?.status).toBe("needs_you")
+    expect(await meta.listJobs({ orgId: "default", parentId: asked.id, limit: 50 })).toHaveLength(1)
+  })
+
+  it("a step where a longer branch meets a shorter one waits for the longer", async () => {
+    const made = await setup("jobs-graph-uneven")
+    const { app, meta } = made
+    const worker = await createAgent(app, { name: "Worker", max_concurrency: 4 })
+    // split → left → merge, and split → long → right → merge
+    const html = joinHtml(worker.id)
+      .replaceAll(
+        '{"from":"split","to":"right","label":"always"}',
+        '{"from":"split","to":"long","label":"always"},{"from":"long","to":"right","label":"then"}',
+      )
+      .replaceAll(
+        '{"from":"split","to":"right","when":"always"}',
+        '{"from":"split","to":"long","when":"always"},{"from":"long","to":"right","when":"then"}',
+      )
+      .replace(
+        '"nodes":[{"id":"split"',
+        '"nodes":[{"id":"long","label":"long","note":"long"},{"id":"split"',
+      )
+      .replace(
+        '{"id":"left","kind":"context"',
+        `{"id":"long","kind":"context","context_ref":"${worker.id}","instruction":"Do long.","result":"long"},{"id":"left","kind":"context"`,
+      )
+      .replace('<a href="#split">', '<a href="#long">long</a><a href="#split">')
+    const page = (await (
+      await publishAs(app, html, { title: "Uneven" }, as(owner.email))
+    ).json()) as { short_id: string }
+    const graph = await createAgent(app, { name: "Uneven", instructions_short_id: page.short_id })
+    const deps = graphAware({ meta, blobs: made.ctx.blobs })
+    const asked = (await (await ask(app, ed.email, graph.id, "Go")).json()) as { id: string }
+    expect((await meta.getJob(asked.id))?.kind).toBe("graph")
+    await graphPass(deps)
+    const done = (j: { id: string; started_at: string }) =>
+      app.request(
+        `/v1/jobs/${j.id}/report`,
+        jsonAs(bearer(worker.token), {
+          started_at: j.started_at,
+          status: "succeeded",
+          body_md: "ok",
+        }),
+      )
+    const byNode = async () => {
+      const got = await pull(app, worker)
+      return new Map(got.map((j) => [j.node_id as string, j]))
+    }
+    let open = await byNode()
+    await done(open.get("split") as { id: string; started_at: string })
+    open = await byNode()
+    expect([...open.keys()].sort()).toEqual(["left", "long"])
+    await done(open.get("left") as { id: string; started_at: string })
+    // Left arrived at merge, but the long branch can still reach it: merge waits.
+    await done(open.get("long") as { id: string; started_at: string })
+    open = await byNode()
+    expect([...open.keys()]).toEqual(["right"])
+    await done(open.get("right") as { id: string; started_at: string })
+    open = await byNode()
+    expect([...open.keys()]).toEqual(["merge"])
+    await done(open.get("merge") as { id: string; started_at: string })
+    expect((await meta.getJob(asked.id))?.status).toBe("succeeded")
+  })
+
+  it("a pass right after a step settles never counts that step's successor as a second try", async () => {
+    const made = await setup("jobs-graph-race2")
+    const { app, meta } = made
+    const writer = await createAgent(app, { name: "Writer" })
+    await createAgent(app, { name: "Publisher" })
+    const page = (await (
+      await publishAs(
+        app,
+        graphHtml(writer.id, "Publisher"),
+        { title: "Ship flow" },
+        as(owner.email),
+      )
+    ).json()) as { short_id: string }
+    const graph = await createAgent(app, { name: "Race2", instructions_short_id: page.short_id })
+    const deps = graphAware({ meta, blobs: made.ctx.blobs })
+    const asked = (await (await ask(app, ed.email, graph.id, "Go")).json()) as { id: string }
+    await graphPass(deps)
+    const [j] = await pull(app, writer)
+    if (!j) throw new Error("no draft")
+    const stale = await meta.getJob(asked.id)
+    await app.request(
+      `/v1/jobs/${j.id}/report`,
+      jsonAs(bearer(writer.token), { started_at: j.started_at, status: "succeeded", body_md: "x" }),
+    )
+    await Promise.all([graphPass(deps), stale ? advanceGraph(deps, stale) : null])
+    expect((await meta.getJob(asked.id))?.status).toBe("needs_you")
+    // An answer that names no route is not a decision: still waiting, question intact.
+    await app.request(
+      `/v1/jobs/${asked.id}/messages`,
+      jsonAs(as(ed.email), { body_md: "Decision: maybe" }),
+    )
+    await graphPass(deps)
+    const still = await meta.getJob(asked.id)
+    expect(still?.status).toBe("needs_you")
+    expect(JSON.parse(still?.needs_json ?? "{}")).toMatchObject({ question: "Ship it?" })
+  })
+
+  it("stops at the loop's limit instead of revising forever", async () => {
+    const made = await setup("jobs-graph-limit")
+    const { app, meta } = made
+    const writer = await createAgent(app, { name: "Writer" })
+    await createAgent(app, { name: "Publisher" })
+    const page = (await (
+      await publishAs(
+        app,
+        graphHtml(writer.id, "Publisher"),
+        { title: "Ship flow" },
+        as(owner.email),
+      )
+    ).json()) as { short_id: string }
+    const graph = await createAgent(app, { name: "Loop", instructions_short_id: page.short_id })
+    const deps = graphAware({ meta, blobs: made.ctx.blobs })
+    const asked = (await (await ask(app, ed.email, graph.id, "Go")).json()) as { id: string }
+    await graphPass(deps)
+    for (let round = 0; round < 3; round++) {
+      const [j] = await pull(app, writer)
+      if (!j) break
+      await app.request(
+        `/v1/jobs/${j.id}/report`,
+        jsonAs(bearer(writer.token), {
+          started_at: j.started_at,
+          status: "succeeded",
+          body_md: "x",
+        }),
+      )
+      if ((await meta.getJob(asked.id))?.status !== "needs_you") break
+      await app.request(`/v1/jobs/${asked.id}/answer`, jsonAs(as(ed.email), { option: "revise" }))
+      await graphPass(deps)
+    }
+    const done = await meta.getJob(asked.id)
+    expect(done?.status).toBe("failed")
+    const last = (await meta.listJobMessages(asked.id)).at(-1)?.body_md
+    expect(last).toMatch(/limit of 2 tries/)
   })
 })

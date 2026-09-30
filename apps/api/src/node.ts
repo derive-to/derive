@@ -29,6 +29,7 @@ import { sweepExpiredDrafts } from "./lib/drafts"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
 import { workspaceIdsFromEnv } from "./lib/env"
 import { sharpShrinker } from "./lib/image-shrink-node"
+import { graphAware, graphPass } from "./lib/job-graph"
 import { machineDepsFrom, machinePass } from "./lib/job-machine"
 import { jobTick } from "./lib/jobs"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
@@ -723,7 +724,9 @@ if (cfg.backgroundWorkers) {
       server: cfg.baseUrl,
       config: runtimeConfig,
     })
-    void jobTick({ meta }, new Date())
+    const graphs = graphAware({ meta, blobs })
+    void jobTick(graphs, new Date())
+      .then(() => graphPass(graphs))
       .then(() => (machines ? machinePass(machines) : undefined))
       .catch(() => log.warn("job tick failed"))
       .finally(() => {

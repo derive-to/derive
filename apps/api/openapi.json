@@ -1560,6 +1560,122 @@
           "already_member"
         ]
       },
+      "AgentTrigger": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agent_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "schedule",
+              "event"
+            ]
+          },
+          "cron": {
+            "type": "string",
+            "nullable": true
+          },
+          "tz": {
+            "type": "string",
+            "nullable": true
+          },
+          "on_event": {
+            "type": "string",
+            "nullable": true
+          },
+          "instruction": {
+            "type": "string"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "artifact"
+                    ]
+                  },
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "collection"
+                    ]
+                  },
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "tag"
+                    ]
+                  },
+                  "tag": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "tag"
+                ]
+              },
+              {
+                "nullable": true
+              }
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "revision": {
+            "type": "number"
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "agent_id",
+          "kind",
+          "cron",
+          "tz",
+          "on_event",
+          "instruction",
+          "subject",
+          "enabled",
+          "revision",
+          "created_at"
+        ]
+      },
       "Agent": {
         "type": "object",
         "properties": {
@@ -1700,123 +1816,6 @@
           "connection_ids",
           "environment_names",
           "account_id"
-        ]
-      },
-      "AgentTrigger": {
-        "type": "object",
-        "nullable": true,
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "agent_id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string",
-            "enum": [
-              "schedule",
-              "event"
-            ]
-          },
-          "cron": {
-            "type": "string",
-            "nullable": true
-          },
-          "tz": {
-            "type": "string",
-            "nullable": true
-          },
-          "on_event": {
-            "type": "string",
-            "nullable": true
-          },
-          "instruction": {
-            "type": "string"
-          },
-          "subject": {
-            "anyOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "kind": {
-                    "type": "string",
-                    "enum": [
-                      "artifact"
-                    ]
-                  },
-                  "id": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "id"
-                ]
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "kind": {
-                    "type": "string",
-                    "enum": [
-                      "collection"
-                    ]
-                  },
-                  "id": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "id"
-                ]
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "kind": {
-                    "type": "string",
-                    "enum": [
-                      "tag"
-                    ]
-                  },
-                  "tag": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "tag"
-                ]
-              },
-              {
-                "nullable": true
-              }
-            ]
-          },
-          "enabled": {
-            "type": "boolean"
-          },
-          "revision": {
-            "type": "number"
-          },
-          "created_at": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "agent_id",
-          "kind",
-          "cron",
-          "tz",
-          "on_event",
-          "instruction",
-          "subject",
-          "enabled",
-          "revision",
-          "created_at"
         ]
       },
       "ConnectedAgent": {
@@ -6207,7 +6206,31 @@
                     "agents": {
                       "type": "array",
                       "items": {
-                        "$ref": "#/components/schemas/Agent"
+                        "allOf": [
+                          {
+                            "$ref": "#/components/schemas/Agent"
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "triggers": {
+                                "type": "array",
+                                "items": {
+                                  "$ref": "#/components/schemas/AgentTrigger"
+                                }
+                              },
+                              "last_job_at": {
+                                "type": "string",
+                                "nullable": true,
+                                "description": "When it last had work, among the workspace's recent jobs."
+                              }
+                            },
+                            "required": [
+                              "triggers",
+                              "last_job_at"
+                            ]
+                          }
+                        ]
                       }
                     }
                   },
@@ -6246,7 +6269,14 @@
                           "nullable": true
                         },
                         "trigger": {
-                          "$ref": "#/components/schemas/AgentTrigger"
+                          "allOf": [
+                            {
+                              "$ref": "#/components/schemas/AgentTrigger"
+                            },
+                            {
+                              "nullable": true
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -6454,7 +6484,7 @@
         "tags": [
           "Agents"
         ],
-        "summary": "Rotate an agent's token (Admin only) — the old bearer dies at once.",
+        "summary": "Replace an agent's key (its creator or a workspace owner); the old one dies at once.",
         "parameters": [
           {
             "schema": {

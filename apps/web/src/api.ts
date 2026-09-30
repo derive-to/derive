@@ -452,6 +452,9 @@ export type Notification = components["schemas"]["Notification"]
 export type Webhook = components["schemas"]["Webhook"]
 /** A workspace-registered agent. Generated from the OpenAPI spec. */
 export type Agent = components["schemas"]["Agent"]
+/** An agent as the workspace list returns it: with its schedules and when it last had work. */
+export type ListedAgent =
+  paths["/v1/agents"]["get"]["responses"]["200"]["content"]["application/json"]["agents"][number]
 /** One schedule on an agent (routes/agents.ts Trigger). */
 export type AgentTrigger = NonNullable<components["schemas"]["AgentTrigger"]>
 /** One agent with its schedules and what the caller may do with it. The spec marks the shared
@@ -1436,7 +1439,7 @@ export const api = {
   dismissReport: (id: string): Promise<{ ok: boolean }> =>
     f(`/v1/reports/${id}/dismiss`, opts({})).then(j),
 
-  listAgents: (): Promise<{ agents: Agent[] }> => f("/v1/agents", opts()).then(j),
+  listAgents: (): Promise<{ agents: ListedAgent[] }> => f("/v1/agents", opts()).then(j),
   createAgent: (name: string, role?: Role): Promise<Agent & { token: string }> =>
     f("/v1/agents", opts({ name, role })).then(j),
   // Rotation is a credential event, never an identity event: the old bearer dies at

@@ -6,7 +6,7 @@ import type { IconName } from "@/components/icons"
 // Settings › Machines) say the same thing about the same agent.
 
 /** The agents a person sees: never the rows auto-minted for a context. */
-export const rosterOf = (agents: Agent[]): Agent[] => agents.filter((a) => !a.managed)
+export const rosterOf = <A extends Agent>(agents: A[]): A[] => agents.filter((a) => !a.managed)
 
 export const firstLine = (text: string): string => text.trim().split("\n")[0]?.trim() ?? ""
 

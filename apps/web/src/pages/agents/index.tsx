@@ -1,4 +1,4 @@
-import { useQueries, useQuery } from "@tanstack/react-query"
+import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { type ReactNode, useMemo, useState } from "react"
 import type { Agent } from "@/api"
@@ -7,7 +7,7 @@ import { LoadError } from "@/components/shared/load-error"
 import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
 import { Button } from "@/components/ui/button"
-import { agentQuery, agentsQuery, openJobsQuery, recentJobsQuery } from "@/lib/queries"
+import { agentsQuery, openJobsQuery, recentJobsQuery } from "@/lib/queries"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import {
   cronLabel,
@@ -32,10 +32,8 @@ export function AgentsHome() {
   const recent = useQuery(recentJobsQuery())
   const names = useMemberNames()
   const roster = useMemo(() => rosterOf(agents.data ?? []), [agents.data])
-  // The list carries no schedules, so each agent's own read supplies them (and warms the
-  // agent page for the click that follows).
-  const details = useQueries({ queries: roster.map((a) => agentQuery(a.id)) })
-  const triggers = new Map(roster.map((a, i) => [a.id, details[i]?.data?.triggers]))
+  // The list carries each agent's schedules, so grouping needs no read per agent.
+  const triggers = new Map(roster.map((a) => [a.id, a.triggers]))
   const [showNever, setShowNever] = useState(false)
 
   const header = (

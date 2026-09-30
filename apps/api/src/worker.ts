@@ -36,6 +36,7 @@ import {
   superAdminsFromEnv,
   workspaceIdsFromEnv,
 } from "./lib/env"
+import { graphAware, graphPass } from "./lib/job-graph"
 import { machineDepsFrom, machinePass } from "./lib/job-machine"
 import { jobTick } from "./lib/jobs"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
@@ -815,7 +816,9 @@ const hostedRunTick = (env: Env, ctx?: ExecutionContext): Promise<void> =>
 async function jobTickEdge(env: Env): Promise<void> {
   const pass = async () => {
     const meta = env.HYPERDRIVE ? PgMetaStore.fromPool(livePgPool) : createD1Store(liveD1)
-    await jobTick({ meta }, new Date())
+    const graphs = graphAware({ meta, blobs: new R2BlobStore(env.BUCKET) })
+    await jobTick(graphs, new Date())
+    await graphPass(graphs)
     const machines = machineDepsFrom(meta, {
       secret: env.DERIVE_AUTH_SECRET,
       server: env.BASE_URL,
