@@ -7,7 +7,7 @@ import {
   runOneJob,
   serveJob,
 } from "../../../packages/cli/src/job-runner.js"
-import { graphAware, graphPass } from "../src/lib/job-graph"
+import { advanceGraph, graphAware, graphPass } from "../src/lib/job-graph"
 import { machinePass, machineWorkspaces } from "../src/lib/job-machine"
 import { jobTick } from "../src/lib/jobs"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
@@ -1230,6 +1230,163 @@ describe("jobs: graphs (a workflow on an agent's instructions page)", () => {
     expect(done?.status).toBe("succeeded")
     const route = (JSON.parse(done?.result_json ?? "{}") as { route: { node_id: string }[] }).route
     expect(route.map((r) => r.node_id)).toEqual(["draft", "review", "draft", "review", "publish"])
+  })
+
+  const joinHtml = (a: string) => {
+    const ids = ["split", "left", "right", "merge"]
+    const edges = [
+      { from: "split", to: "left", label: "always" },
+      { from: "split", to: "right", label: "always" },
+      { from: "left", to: "merge", label: "done" },
+      { from: "right", to: "merge", label: "done" },
+    ]
+    const manifest = {
+      schema: "derive.linked-bundle/v1",
+      purpose: "Split and join",
+      members: [],
+      diagrams: [
+        {
+          id: "join",
+          title: "Join",
+          type: "graph",
+          nodes: ids.map((id) => ({ id, label: id, note: id })),
+          edges,
+        },
+      ],
+    }
+    const step = (id: string, extra = {}) => ({
+      id,
+      kind: "context",
+      context_ref: a,
+      instruction: `Do ${id}.`,
+      result: id,
+      ...extra,
+    })
+    const definition = {
+      schema: "derive.workflow/v1",
+      purpose: "Split and join",
+      diagrams: [
+        {
+          id: "join",
+          entry: "split",
+          nodes: [
+            step("split", { routing: "all" }),
+            step("left"),
+            step("right"),
+            step("merge", { terminal: true }),
+          ],
+          routes: edges.map((e) => ({ from: e.from, to: e.to, when: e.label })),
+          scenarios: [
+            {
+              id: "expected",
+              kind: "expected",
+              path: ["split", "left", "merge"],
+              outcome: "Joined",
+            },
+            { id: "failure", kind: "failure", path: ["split"], outcome: "Split failed" },
+          ],
+        },
+      ],
+    }
+    return `<!doctype html><html><body>${ids.map((i) => `<a href="#${i}">${i}</a>`).join("")}<script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify(manifest)}</script><script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify(definition)}</script></body></html>`
+  }
+
+  it("opens a step where branches meet once, after both branches finish", async () => {
+    const made = await setup("jobs-graph-join")
+    const { app, meta } = made
+    const worker = await createAgent(app, { name: "Worker", max_concurrency: 3 })
+    const page = (await (
+      await publishAs(app, joinHtml(worker.id), { title: "Join flow" }, as(owner.email))
+    ).json()) as { short_id: string }
+    const graph = await createAgent(app, { name: "Join", instructions_short_id: page.short_id })
+    const deps = graphAware({ meta, blobs: made.ctx.blobs })
+    const asked = (await (await ask(app, ed.email, graph.id, "Go")).json()) as { id: string }
+    await graphPass(deps)
+    const done = async (j: { id: string; started_at: string }) =>
+      app.request(
+        `/v1/jobs/${j.id}/report`,
+        jsonAs(bearer(worker.token), {
+          started_at: j.started_at,
+          status: "succeeded",
+          body_md: "ok",
+        }),
+      )
+    const [split] = await pull(app, worker)
+    if (!split) throw new Error("no split")
+    await done(split)
+    const branches = await pull(app, worker)
+    expect(branches.map((b) => b.node_id).sort()).toEqual(["left", "right"])
+    const [first, second] = branches
+    if (!first || !second) throw new Error("no branches")
+    await done(first)
+    // One branch in: the join waits.
+    expect(await pull(app, worker)).toEqual([])
+    await done(second)
+    await graphPass(deps)
+    const merge = await pull(app, worker)
+    expect(merge.map((m) => m.node_id)).toEqual(["merge"])
+    await done(merge[0] as { id: string; started_at: string })
+    await graphPass(deps)
+    expect((await meta.getJob(asked.id))?.status).toBe("succeeded")
+    const kids = await meta.listJobs({ orgId: "default", parentId: asked.id, limit: 50 })
+    expect(kids.filter((k) => k.node_id === "merge")).toHaveLength(1)
+  })
+
+  it("two passes racing on one graph open each step once", async () => {
+    const made = await setup("jobs-graph-race")
+    const { app, meta } = made
+    const writer = await createAgent(app, { name: "Writer" })
+    await createAgent(app, { name: "Publisher" })
+    const page = (await (
+      await publishAs(
+        app,
+        graphHtml(writer.id, "Publisher"),
+        { title: "Ship flow" },
+        as(owner.email),
+      )
+    ).json()) as { short_id: string }
+    const graph = await createAgent(app, { name: "Race", instructions_short_id: page.short_id })
+    const deps = graphAware({ meta, blobs: made.ctx.blobs })
+    const asked = (await (await ask(app, ed.email, graph.id, "Go")).json()) as { id: string }
+    const stale = await meta.getJob(asked.id)
+    if (!stale) throw new Error("no graph")
+    await Promise.all([advanceGraph(deps, stale), advanceGraph(deps, stale), graphPass(deps)])
+    const kids = await meta.listJobs({ orgId: "default", parentId: asked.id, limit: 50 })
+    expect(kids.map((k) => k.node_id)).toEqual(["draft"])
+    expect((await meta.getJob(asked.id))?.status).toBe("running")
+  })
+
+  it("a message at a decision step that is not a decision leaves the graph waiting", async () => {
+    const made = await setup("jobs-graph-chat")
+    const { app, meta } = made
+    const writer = await createAgent(app, { name: "Writer" })
+    await createAgent(app, { name: "Publisher" })
+    const page = (await (
+      await publishAs(
+        app,
+        graphHtml(writer.id, "Publisher"),
+        { title: "Ship flow" },
+        as(owner.email),
+      )
+    ).json()) as { short_id: string }
+    const graph = await createAgent(app, { name: "Chat", instructions_short_id: page.short_id })
+    const deps = graphAware({ meta, blobs: made.ctx.blobs })
+    const asked = (await (await ask(app, ed.email, graph.id, "Go")).json()) as { id: string }
+    await graphPass(deps)
+    const [j] = await pull(app, writer)
+    if (!j) throw new Error("no draft")
+    await app.request(
+      `/v1/jobs/${j.id}/report`,
+      jsonAs(bearer(writer.token), { started_at: j.started_at, status: "succeeded", body_md: "x" }),
+    )
+    expect((await meta.getJob(asked.id))?.status).toBe("needs_you")
+    await app.request(
+      `/v1/jobs/${asked.id}/messages`,
+      jsonAs(as(ed.email), { body_md: "hold on, checking" }),
+    )
+    await graphPass(deps)
+    expect((await meta.getJob(asked.id))?.status).toBe("needs_you")
+    expect(await meta.listJobs({ orgId: "default", parentId: asked.id, limit: 50 })).toHaveLength(1)
   })
 
   it("stops at the loop's limit instead of revising forever", async () => {

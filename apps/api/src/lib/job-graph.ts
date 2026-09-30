@@ -1,6 +1,7 @@
 import {
   type AgentRecord,
   type BlobStore,
+  isJobOpen,
   type JobRecord,
   type JobResult,
   jobResult,
@@ -11,7 +12,8 @@ import {
   workflowDefinitionOf,
 } from "@derive/core"
 import { log } from "../log"
-import { askAgent, type JobDeps } from "./jobs"
+import { agentWritesOff } from "./agent-writes"
+import { askAgent, canAskAgent, cancelJob, type JobDeps } from "./jobs"
 import { runtimeFailureReason } from "./runtime-diagnostics"
 
 // GRAPHS ON JOBS: an agent whose instructions page carries a `derive.workflow/v1` definition is
@@ -36,8 +38,12 @@ interface GraphMeta {
   diagram_id: string
   /** When this run started: children from an earlier run of the same job are not this run's. */
   since: string
+  /** What this run was asked: the instruction, or the follow-up that reopened it. */
+  ask?: string
   /** The human node the graph is waiting on, if any. */
   waiting?: string
+  /** Steps where branches meet, waiting for their last branch to finish. */
+  pending?: string[]
 }
 
 /** A graph job holds no machine; its lease only keeps reclaim off it and is renewed each pass. */
@@ -53,14 +59,9 @@ const parse = <T>(s: string | null): T | null => {
   }
 }
 
-const pageSource = async (deps: GraphDeps, artifactId: string, version?: number) => {
-  const art = await deps.meta.getArtifactById(artifactId).catch(() => null)
-  if (!art) return null
-  const v = await deps.meta.getVersion(art.id, version ?? art.current_version)
-  if (!v) return null
-  const bytes = await deps.blobs.get(v.blob_key)
-  return bytes ? { text: new TextDecoder().decode(bytes), version: v.n } : null
-}
+// Parsed definitions by page version. A version's bytes never change, so this only grows stale
+// by being bounded.
+const parsed = new Map<string, ReturnType<typeof workflowDefinitionOf>>()
 
 /** The workflow definition on an agent's instructions page, or null when it is not a graph. */
 export async function graphOf(
@@ -69,12 +70,22 @@ export async function graphOf(
   version?: number,
 ): Promise<{ diagram: WorkflowDiagramDefinition; version: number; purpose: string } | null> {
   if (!agent.instructions_artifact_id) return null
-  const page = await pageSource(deps, agent.instructions_artifact_id, version)
-  if (!page) return null
-  const checked = workflowDefinitionOf(page.text)
+  const art = await deps.meta.getArtifactById(agent.instructions_artifact_id).catch(() => null)
+  if (!art) return null
+  const n = version ?? art.current_version
+  const key = `${art.id}@${n}`
+  let checked = parsed.get(key)
+  if (checked === undefined) {
+    const v = await deps.meta.getVersion(art.id, n)
+    const bytes = v ? await deps.blobs.get(v.blob_key) : null
+    if (!bytes) return null
+    checked = workflowDefinitionOf(new TextDecoder().decode(bytes))
+    if (parsed.size > 500) parsed.clear()
+    parsed.set(key, checked)
+  }
   const diagram = checked?.definition?.diagrams[0]
   if (!checked?.definition || checked.errors.length || !diagram) return null
-  return { diagram, version: page.version, purpose: checked.definition.purpose }
+  return { diagram, version: n, purpose: checked.definition.purpose }
 }
 
 /** The agent a node's `context_ref` names: an agent id or name, or a Context's id or name (whose
@@ -126,106 +137,157 @@ const lastReply = async (meta: MetaStore, jobId: string, kind: "agent" | "asker"
   [...(await meta.listJobMessages(jobId))].reverse().find((m) => m.author_kind === kind)?.body_md ??
   ""
 
-/** Advance one graph job as far as it can go now. */
-export async function advanceGraph(deps: GraphDeps, parent: JobRecord): Promise<void> {
-  const { meta } = deps
-  const agent = await meta.getAgent(parent.agent_id)
-  if (!agent) return
-  const now = new Date()
-  const lease = new Date(now.getTime() + GRAPH_LEASE_MS).toISOString()
-  let g = parse<{ graph?: GraphMeta }>(parent.meta_json)?.graph
-  let job = parent
-  let fresh = false
-  // Reopened after it settled (a follow-up or a retry) and not waiting on a person: run again
-  // from the entry, on the definition as it is now.
-  if (g && !g.waiting && job.status === "queued") g = undefined
+/** A pass lost the race for the graph row to another pass; it stops and leaves the rest. */
+class Superseded extends Error {}
 
-  const settle = async (status: "succeeded" | "failed", body: string) => {
-    const done = await meta.updateJob(
-      job.id,
-      { status, finished_at: now.toISOString(), lease_until: null, dedupe_key: null },
-      { status: job.status },
+/** Advance one graph job as far as it can go now. Every write names the row as this pass read
+ *  it (updated_at), so two passes over one graph (the tick and a child's report) never both
+ *  act: the loser's write fails and it stops. Child jobs are deduped by what opened them, so a
+ *  step opened by the winner is found, not opened twice. */
+export async function advanceGraph(deps: GraphDeps, given: JobRecord): Promise<void> {
+  try {
+    await walk(deps, given)
+  } catch (error) {
+    if (!(error instanceof Superseded)) throw error
+  }
+}
+
+async function walk(deps: GraphDeps, given: JobRecord): Promise<void> {
+  const { meta } = deps
+  let job = await meta.getJob(given.id)
+  if (!job || job.kind !== "graph") return
+  const agent = await meta.getAgent(job.agent_id)
+  if (!agent) return
+  // A paused graph agent, or a workspace with agent writes off, holds its graphs where they are.
+  if (agent.paused_at || (await agentWritesOff(meta, agent.org_id))) return
+  const now = new Date()
+  const at = now.toISOString()
+  const lease = new Date(now.getTime() + GRAPH_LEASE_MS).toISOString()
+  let g = parse<{ graph?: GraphMeta }>(job.meta_json)?.graph
+
+  const write = async (
+    patch: Parameters<MetaStore["updateJob"]>[1],
+    status?: JobRecord["status"],
+  ) => {
+    const current = job as JobRecord
+    const next = await meta.updateJob(current.id, patch, {
+      updated_at: current.updated_at,
+      ...(status ? { status } : {}),
+    })
+    if (!next) throw new Superseded()
+    job = next
+    return next
+  }
+  const openChildren = async (since: string) =>
+    (await meta.listJobs({ orgId: agent.org_id, parentId: given.id, limit: 200 })).filter(
+      (c) => c.created_at >= since && isJobOpen(c.status),
     )
-    if (done)
-      await meta.addJobMessage({
-        id: newId("jm"),
-        job_id: job.id,
-        author_kind: "agent",
-        author_id: agent.id,
-        body_md: body,
-      })
+  const settle = async (status: "succeeded" | "failed", body: string) => {
+    await write({
+      status,
+      finished_at: at,
+      lease_until: null,
+      dedupe_key: null,
+      meta_json: JSON.stringify({
+        ...parse(job?.meta_json ?? null),
+        graph: g ? { ...g, waiting: undefined, pending: [] } : undefined,
+      }),
+    })
+    await meta.addJobMessage({
+      id: newId("jm"),
+      job_id: given.id,
+      author_kind: "agent",
+      author_id: agent.id,
+      body_md: body,
+    })
+    // Only once the graph is settled under this pass: a pass that lost never cancels anything.
+    if (g) for (const c of await openChildren(g.since)) await cancelJob(deps, c)
   }
 
-  // Start: claim the graph, pin its definition, open the entry node.
+  // Reopened after it settled (a follow-up or a retry) and not waiting on a person: run again
+  // from the entry, on the definition as it is now, with the latest message as the ask.
+  if (g && !g.waiting && job.status === "queued") g = undefined
+
+  const toOpen: { to: string; from: string }[] = []
   if (!g) {
     if (job.status !== "queued") return
     const def = await graphOf(deps, agent)
-    const claimed = await meta.claimJob(job.id, lease, now.toISOString())
+    const claimed = await meta.claimJob(job.id, lease, at)
     if (!claimed) return
     job = claimed
+    const ask = (await lastReply(meta, job.id, "asker")) || job.instruction
+    g = {
+      artifact_id: agent.instructions_artifact_id ?? "",
+      version: def?.version ?? 0,
+      diagram_id: def?.diagram.id ?? "",
+      since: at,
+      ask,
+      pending: [],
+    }
     if (!def)
       return settle("failed", "This agent's instructions page no longer holds a valid workflow.")
-    g = {
-      artifact_id: agent.instructions_artifact_id as string,
-      version: def.version,
-      diagram_id: def.diagram.id,
-      since: now.toISOString(),
-    }
-    fresh = true
-    job =
-      (await meta.updateJob(job.id, {
-        meta_json: JSON.stringify({ ...parse(job.meta_json), graph: g }),
-        result_json: JSON.stringify({ ...jobResult(job), route: [] }),
-      })) ?? job
+    await write({
+      meta_json: JSON.stringify({ ...parse(job.meta_json), graph: g }),
+      result_json: JSON.stringify({ ...jobResult(job), route: [] }),
+    })
+    toOpen.push({ to: def.diagram.entry, from: "entry" })
   }
   const def = await graphOf(deps, agent, g.version)
   if (!def || def.diagram.id !== g.diagram_id)
     return settle("failed", "The workflow this run started on can no longer be read.")
   const d = def.diagram
-  const route: Route[] = [...((jobResult(job).route ?? []) as Route[])]
   const since = g.since
+  const route: Route[] = [...((jobResult(job).route ?? []) as Route[])]
   const children = (
     await meta.listJobs({ orgId: job.org_id, parentId: job.id, limit: 200 })
   ).filter((c) => c.created_at >= since)
   const recorded = new Set(route.map((r) => r.job_id).filter(Boolean))
-  const toOpen: string[] = []
   let waiting = g.waiting
+  const pending = new Set(g.pending ?? [])
   let failure: string | null = null
 
-  // A person answered the human node: their decision picks the way on.
   if (waiting && job.status === "queued") {
+    // A person wrote to the graph while it waited on them. Only a decision moves it on: an
+    // answer (`Decision: …`) or a reply naming a route. Anything else puts it back to waiting.
     const node = nodeOf(d, waiting)
-    const decision =
-      (await lastReply(meta, job.id, "asker")).replace(/^Decision:\s*/i, "").split("\n")[0] ?? ""
-    const next = node ? decide(d, node, decision) : []
-    route.push({ node_id: waiting, attempt: 1, selected: next, decision })
-    toOpen.push(...next)
+    const msg = await lastReply(meta, job.id, "asker")
+    const said = /^Decision:\s*(.+)$/im.exec(msg)?.[1]?.trim()
+    const out = node ? routesFrom(d, node.id) : []
+    const named =
+      said ??
+      out.find(
+        (r) => r.when.trim().toLowerCase() === msg.trim().toLowerCase() || r.to === msg.trim(),
+      )?.when
+    if (!node || named === undefined) {
+      await write({ status: "needs_you" }, "queued")
+      return
+    }
+    const claimed = await meta.claimJob(job.id, lease, at)
+    if (!claimed) return
+    job = claimed
+    const next = decide(d, node, named)
+    route.push({
+      node_id: node.id,
+      attempt: route.filter((r) => r.node_id === node.id).length + 1,
+      selected: next,
+      decision: named,
+    })
+    for (const to of next) toOpen.push({ to, from: `decision:${route.length}` })
     waiting = undefined
-    const reclaimed = await meta.claimJob(job.id, lease, now.toISOString())
-    if (!reclaimed) return
-    job = reclaimed
   } else if (job.status === "running") {
-    await meta.updateJob(job.id, { lease_until: lease }, { status: "running" })
+    await write({ lease_until: lease }, "running")
   } else return
-
-  if (fresh) toOpen.push(d.entry)
 
   // Children that settled since the last pass move the walk on.
   for (const child of children) {
-    if (
-      recorded.has(child.id) ||
-      child.status === "queued" ||
-      child.status === "running" ||
-      child.status === "needs_you"
-    )
-      continue
+    if (recorded.has(child.id) || isJobOpen(child.status)) continue
     const node = child.node_id ? nodeOf(d, child.node_id) : undefined
     if (!node) continue
     const attempt = route.filter((r) => r.node_id === node.id).length + 1
     if (child.status === "succeeded") {
       const next = chooseRoutes(d, node, await lastReply(meta, child.id, "agent"))
       route.push({ node_id: node.id, attempt, selected: next, job_id: child.id })
-      toOpen.push(...next)
+      for (const to of next) toOpen.push({ to, from: child.id })
     } else {
       const fallback = routesFrom(d, node.id).find((r) => r.fallback)
       route.push({
@@ -234,23 +296,37 @@ export async function advanceGraph(deps: GraphDeps, parent: JobRecord): Promise<
         selected: fallback ? [fallback.to] : [],
         job_id: child.id,
       })
-      if (fallback) toOpen.push(fallback.to)
+      if (fallback) toOpen.push({ to: fallback.to, from: child.id })
       else
         failure = `Step "${node.id}" ${child.status === "cancelled" ? "was cancelled" : "failed"}.`
     }
   }
+  // Steps where branches meet, waiting for the last of them.
+  for (const to of pending) toOpen.push({ to, from: "join" })
 
-  // Open the next nodes.
-  for (const id of toOpen) {
+  const openNow = children.filter((c) => isJobOpen(c.status))
+  const askedBy = job.asked_by ?? agent.created_by ?? agent.id
+  const joined = new Set<string>()
+  for (const { to, from } of toOpen) {
     if (failure) break
-    const node = nodeOf(d, id)
+    const node = nodeOf(d, to)
     if (!node) {
-      failure = `The workflow routes to "${id}", which it does not define.`
+      failure = `The workflow routes to "${to}", which it does not define.`
       break
     }
-    if (node.kind === "terminal") {
-      route.push({ node_id: node.id, attempt: 1, selected: [] })
-      continue
+    // A join opens once, after every branch into it has finished in this run.
+    const sources = [...new Set(d.routes.filter((r) => r.to === to).map((r) => r.from))]
+    if (sources.length > 1) {
+      const live =
+        openNow.some((c) => c.node_id && sources.includes(c.node_id)) ||
+        (waiting !== undefined && sources.includes(waiting))
+      if (live) {
+        pending.add(to)
+        continue
+      }
+      pending.delete(to)
+      if (joined.has(to)) continue
+      joined.add(to)
     }
     if (node.kind === "human") {
       waiting = node.id
@@ -258,12 +334,11 @@ export async function advanceGraph(deps: GraphDeps, parent: JobRecord): Promise<
     }
     const attempt =
       route.filter((r) => r.node_id === node.id).length +
-      children.filter(
-        (c) => c.node_id === node.id && (c.status === "queued" || c.status === "running"),
-      ).length +
+      openNow.filter((c) => c.node_id === node.id).length +
       1
-    if (attempt > attemptCap(d, node.id)) {
-      failure = `Step "${node.id}" reached its limit of ${attemptCap(d, node.id)} tries.`
+    const cap = attemptCap(d, node.id)
+    if (attempt > cap) {
+      failure = `Step "${node.id}" reached its limit of ${cap} tries.`
       break
     }
     const target = node.context_ref ? await nodeAgent(meta, job.org_id, node.context_ref) : null
@@ -271,41 +346,40 @@ export async function advanceGraph(deps: GraphDeps, parent: JobRecord): Promise<
       failure = `Step "${node.id}" names "${node.context_ref ?? ""}", which is not an agent here.`
       break
     }
+    if (!(await canAskAgent(meta, target, askedBy))) {
+      failure = `Step "${node.id}" needs ${target.name}, which the person who started this cannot ask.`
+      break
+    }
+    if (await deps.isGraph?.(target).catch(() => false)) {
+      failure = `Step "${node.id}" names ${target.name}, which is itself a workflow; nesting is not supported.`
+      break
+    }
     const choices = routesFrom(d, node.id)
     const menu =
       node.routing === "one" && choices.length > 1
         ? `\n\nWhen you finish, end your reply with one line \`ROUTE: <step>\` choosing what happens next:\n${choices.map((r) => `- ${r.to}: ${r.when}`).join("\n")}`
         : ""
-    await askAgent(deps, {
+    const { job: child } = await askAgent(deps, {
       agent: target,
-      askedBy: job.asked_by ?? agent.created_by ?? agent.id,
-      instruction: `${node.instruction ?? node.result ?? job.instruction}\n\nThis is step "${node.id}" of the workflow "${def.purpose}", started for: ${job.instruction}${menu}`,
+      askedBy,
+      instruction: `${node.instruction ?? node.result ?? g.ask ?? job.instruction}\n\nThis is step "${node.id}" of the workflow "${def.purpose}", started for: ${g.ask ?? job.instruction}${menu}`,
       parentId: job.id,
       nodeId: node.id,
       kind: "node",
-      dedupeKey: `${job.id}:${since}:${node.id}:${attempt}`,
+      dedupeKey: `${job.id}:${since}:${node.id}:${from}`,
     })
+    openNow.push(child)
   }
 
-  const saved = await meta.updateJob(job.id, {
+  g = { ...g, waiting, pending: [...pending] }
+  await write({
     result_json: JSON.stringify({ ...jobResult(job), route }),
-    meta_json: JSON.stringify({ ...parse(job.meta_json), graph: { ...g, waiting } }),
+    meta_json: JSON.stringify({ ...parse(job.meta_json), graph: g }),
   })
-  if (saved) job = saved
-  if (failure) {
-    for (const c of children)
-      if (c.status === "queued" || c.status === "running")
-        await meta.updateJob(c.id, {
-          status: "cancelled",
-          finished_at: now.toISOString(),
-          lease_until: null,
-        })
-    return settle("failed", failure)
-  }
+  if (failure) return settle("failed", failure)
   if (waiting) {
     const node = nodeOf(d, waiting)
-    await meta.updateJob(
-      job.id,
+    await write(
       {
         status: "needs_you",
         lease_until: null,
@@ -315,16 +389,12 @@ export async function advanceGraph(deps: GraphDeps, parent: JobRecord): Promise<
           ...(node?.options?.length ? { options: node.options } : {}),
         }),
       },
-      { status: "running" },
+      "running",
     )
     return
   }
-  const stillOpen = (await meta.listJobs({ orgId: job.org_id, parentId: job.id, limit: 200 })).some(
-    (c) =>
-      c.created_at >= since &&
-      (c.status === "queued" || c.status === "running" || c.status === "needs_you"),
-  )
-  if (!stillOpen) await settle("succeeded", `Done: ${route.map((r) => r.node_id).join(" → ")}.`)
+  if (pending.size === 0 && (await openChildren(since)).length === 0)
+    await settle("succeeded", `Done: ${route.map((r) => r.node_id).join(" → ")}.`)
 }
 
 /** Deps for the jobs lib that know graphs: `isGraph` reads the agent's instructions page. */

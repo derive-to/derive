@@ -572,7 +572,12 @@ async function failWaiting(deps: MachineDeps, agent: AgentRecord, why: string) {
     status: ["queued"],
     limit: 200,
   })) {
-    if (job.attended === 1 || (job.scheduled_for && job.scheduled_for > now)) continue
+    if (
+      job.attended === 1 ||
+      job.kind === "graph" ||
+      (job.scheduled_for && job.scheduled_for > now)
+    )
+      continue
     const claimed = await deps.meta.claimJob(job.id, iso(deps), iso(deps))
     if (!claimed) continue
     await reportJob(deps, agent, job.id, {
