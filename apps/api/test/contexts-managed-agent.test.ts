@@ -98,7 +98,7 @@ describe("agents: token rotation", () => {
     expect(newProbe.status).toBe(200)
   })
 
-  it("rotation is Admin-gated and workspace-scoped", async () => {
+  it("rotation is for the agent's manager and workspace-scoped", async () => {
     const ag = await (
       await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Rotor 2" }))
     ).json()
@@ -106,7 +106,9 @@ describe("agents: token rotation", () => {
       method: "POST",
       headers: as(member.email),
     })
-    expect([401, 403]).toContain(denied.status)
+    // A member who neither made the agent nor owns the workspace gets the same answer as for an
+    // agent that is not there.
+    expect([401, 403, 404]).toContain(denied.status)
     const missing = await app.request("/v1/agents/ag_nope/rotate", {
       method: "POST",
       headers: as(owner.email),
