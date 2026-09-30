@@ -8,10 +8,8 @@
 // chunk (it did — the bundle budget caught it).
 export const SECTION_ALIASES: Record<string, string> = {
   "model-plans": "accounts",
-  // The old agent-connections and credentials sections: machines and accounts are where
-  // those things live in the agent model.
+  // The old agent-connections section: machines are where agents' runners live now.
   agents: "machines",
-  credentials: "accounts",
   // The id was never `brand`; links that guessed it used to strand on Profile.
   brand: "brandprint",
   // GitHub is a standard workspace integration now; old bookmarks land on the single

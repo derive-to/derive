@@ -658,6 +658,38 @@ export const jobQuery = (id: string) =>
     queryFn: () => api.getJob(id),
   })
 
+// An imported paper (/papers/$id): its import state, code, and the paper artifact.
+export const paperQuery = (id: string) =>
+  queryOptions({
+    queryKey: ["paper", id] as const,
+    queryFn: () => api.getContext(id),
+  })
+
+// An imported paper's implementation analysis and its prompts. Polled only while a copied
+// prompt is waiting on an agent (see pages/papers/analysis-view).
+export const contextAnalysisQuery = (id: string) =>
+  queryOptions({
+    queryKey: ["context-analysis", id] as const,
+    queryFn: () => api.getContextAnalysis(id),
+  })
+
+// Named secrets, write-only: what Settings › Credentials lists, and where each is used.
+export const credentialsQuery = () =>
+  queryOptions({
+    queryKey: ["credentials"] as const,
+    queryFn: () => api.credentials(),
+    meta: { persist: false },
+    staleTime: 0,
+    refetchOnMount: "always",
+  })
+export const credentialUsageQuery = (id: string) =>
+  queryOptions({
+    queryKey: ["credentials", id, "usage"] as const,
+    queryFn: () => api.credentialUsage(id),
+    meta: { persist: false },
+    staleTime: 0,
+  })
+
 // Model accounts: the caller's own and the workspace's shared ones.
 export const accountsQuery = () =>
   queryOptions({

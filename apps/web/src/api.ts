@@ -1432,6 +1432,25 @@ export const api = {
   report: (id: string, reason: string, detail?: string): Promise<{ ok: boolean }> =>
     f(`/v1/artifacts/${id}/report`, opts({ reason, detail })).then(j),
   listReports: (): Promise<{ reports: Report[]; open: number }> => f("/v1/reports", opts()).then(j),
+
+  // Ask a registered agent to rework the artifact to match the Brandprint. The canned
+  // instruction lives server-side; omit agentId when exactly one agent is registered.
+  reworkArtifact: (shortId: string, agentId?: string): Promise<{ requestId: string }> =>
+    f(`/v1/artifacts/${shortId}/rework`, opts(agentId ? { agentId } : {})).then(j),
+  // The fill-with-your-work pair, for a derived copy: GET returns the copyable
+  // prompt, POST delivers the same instruction to an agent's inbox.
+  fillPrompt: (
+    shortId: string,
+    note?: string,
+  ): Promise<{ prompt: string; source: { short_id: string; title: string | null } }> =>
+    f(
+      `/v1/artifacts/${shortId}/fill${note ? `?note=${encodeURIComponent(note)}` : ""}`,
+      opts(),
+    ).then(j),
+  fillArtifact: (
+    shortId: string,
+    body: { agentId?: string; note?: string },
+  ): Promise<{ requestId: string }> => f(`/v1/artifacts/${shortId}/fill`, opts(body)).then(j),
   takedown: (id: string, note?: string): Promise<{ removed: boolean }> =>
     f(`/v1/artifacts/${id}/takedown`, opts({ note })).then(j),
   reinstate: (id: string): Promise<{ removed: boolean }> =>
@@ -1501,6 +1520,54 @@ export const api = {
     f("/v1/accounts", opts(body)).then(j),
   deleteAccount: (id: string): Promise<void> =>
     f(`/v1/accounts/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
+
+  // Imported papers (/papers): an arXiv paper imported as a locked artifact. The server still
+  // stores each one as a read-only Context, so these read the context routes.
+  getContext: (id: string): Promise<ContextDetail> => f(`/v1/contexts/${id}`, opts()).then(j),
+  // An imported paper's implementation analysis, written by an agent, with the prompts a person
+  // copies into theirs to start or update it.
+  getContextAnalysis: (id: string): Promise<ContextAnalysis> =>
+    f(`/v1/contexts/${id}/analysis`, opts()).then(j),
+  // Created at once, fetched in the background. 201 with a new import, or 200 with the one this
+  // workspace already has. `code_url` optionally attaches the repository implementing the
+  // paper; its files land inside the paper's artifact for agents, never in the UI.
+  importArxivContext: (url: string, code_url?: string): Promise<ContextInfo> =>
+    f("/v1/contexts/import/arxiv", opts(code_url ? { url, code_url } : { url })).then(j),
+  // Attach, replace (a url) or remove (null) an imported paper's implementation.
+  setContextCode: (id: string, url: string | null): Promise<ContextInfo> =>
+    f(`/v1/contexts/${id}/import/code`, opts({ url })).then(j),
+  retryContextImport: (id: string): Promise<ContextInfo> =>
+    f(`/v1/contexts/${id}/import/retry`, { ...opts(), method: "POST" }).then(j),
+  deleteContext: (id: string): Promise<void> =>
+    f(`/v1/contexts/${id}`, { ...opts(), method: "DELETE" }).then(() => undefined),
+
+  // Named secrets (Settings › Credentials): personal or workspace `secret` connections an
+  // agent job reads through its environment. Values are write-only.
+  credentials: (): Promise<{ items: Credential[]; can_create_workspace: boolean }> =>
+    f("/v1/credentials", opts()).then(j),
+  credentialUsage: (id: string): Promise<CredentialUsage> =>
+    f(`/v1/credentials/${id}/usage`, opts()).then(j),
+  createCredential: (input: {
+    name: string
+    secret: string
+    scope: "personal" | "workspace"
+    request_id: string
+  }): Promise<Connection> =>
+    f(
+      "/v1/connections",
+      opts({
+        kind: "secret",
+        toolkit: "environment",
+        scopes_label: input.name,
+        secret: input.secret,
+        scope: input.scope,
+        request_id: input.request_id,
+      }),
+    ).then(j),
+  replaceCredential: (
+    id: string,
+    input: { name: string; secret: string; revision: string },
+  ): Promise<Credential> => f(`/v1/credentials/${id}`, { ...opts(input), method: "PUT" }).then(j),
 
   // The home's activity: versions, comments and review rounds across the workspace over a
   // window, on the artifacts the caller can see (routes/activity.ts).

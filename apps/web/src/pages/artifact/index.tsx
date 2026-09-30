@@ -184,14 +184,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
     error,
     dataUpdatedAt: artifactFetchedAt,
     refetch,
-  } = useQuery({
-    ...artifactQuery(shortId, qc),
-    // A linked bundle resolves current member versions in its ordinary detail
-    // response. Refresh that existing read while the workspace is open: the first
-    // pass stays trustworthy without inventing a second realtime protocol.
-    refetchInterval: (query) => (query.state.data?.linked_bundle ? 10_000 : false),
-    refetchIntervalInBackground: false,
-  })
+  } = useQuery(artifactQuery(shortId, qc))
   const isAnon = !me
   const [sharedStateAuthOpen, setSharedStateAuthOpen] = useState(false)
   const [sharedStateReturnTo, setSharedStateReturnTo] = useState(`${selfBase}/${ref}`)

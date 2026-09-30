@@ -39,6 +39,7 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 | `/following` | Recent work by the people they follow. |
 | `/feedback` | Documents waiting on their review or reply. |
 | `/people` | Who is in the workspace, and who they follow. |
+| `/papers/new` | Import a paper from arXiv: Derive fetches its LaTeX source and BibTeX and publishes it locked, optionally with its code repository. The paper's page follows the import and holds the implementation and its analysis. |
 | `/new` | Write or paste a new document (Markdown or HTML) and publish it. |
 | `/welcome` | How to connect an agent over MCP, and how to publish from the CLI. Reachable any time. |
 | `/artifacts/{short_id}` | One document: read it, comment, share, see versions. |
@@ -61,6 +62,7 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 | `/people` | The workspace people directory. |
 | `/settings/billing` | Plan, seats, invoices. Admin only. |
 | `/settings/integrations` | Connect Slack and GitHub; manage workspace email notifications. |
+| `/settings/credentials` | Named personal or workspace secrets (database passwords, API keys) an agent reads as environment variables. Add, replace or revoke values. Values are write-only. |
 | `/settings/sources` | Connect an MCP server so an agent can read from it. |
 | `/settings/brandprint` | The workspace's brand: what published pages look like. |
 | `/settings/webhooks` | Send Derive events to a URL. |

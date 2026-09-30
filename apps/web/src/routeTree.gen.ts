@@ -37,6 +37,8 @@ import { Route as UsersHandleRouteImport } from './routes/users.$handle'
 import { Route as TemplatesRefRouteImport } from './routes/templates.$ref'
 import { Route as TemplateLibrariesIdRouteImport } from './routes/template-libraries.$id'
 import { Route as SettingsSectionRouteImport } from './routes/settings.$section'
+import { Route as PapersNewRouteImport } from './routes/papers.new'
+import { Route as PapersIdRouteImport } from './routes/papers.$id'
 import { Route as JoinTokenRouteImport } from './routes/join.$token'
 import { Route as InviteTokenRouteImport } from './routes/invite.$token'
 import { Route as CollectionsIdRouteImport } from './routes/collections.$id'
@@ -187,6 +189,16 @@ const SettingsSectionRoute = SettingsSectionRouteImport.update({
   path: '/$section',
   getParentRoute: () => SettingsRoute,
 } as any)
+const PapersNewRoute = PapersNewRouteImport.update({
+  id: '/papers/new',
+  path: '/papers/new',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PapersIdRoute = PapersIdRouteImport.update({
+  id: '/papers/$id',
+  path: '/papers/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const JoinTokenRoute = JoinTokenRouteImport.update({
   id: '/join/$token',
   path: '/join/$token',
@@ -261,6 +273,8 @@ export interface FileRoutesByFullPath {
   '/collections/$id': typeof CollectionsIdRoute
   '/invite/$token': typeof InviteTokenRoute
   '/join/$token': typeof JoinTokenRoute
+  '/papers/$id': typeof PapersIdRoute
+  '/papers/new': typeof PapersNewRoute
   '/settings/$section': typeof SettingsSectionRoute
   '/template-libraries/$id': typeof TemplateLibrariesIdRoute
   '/templates/$ref': typeof TemplatesRefRoute
@@ -299,6 +313,8 @@ export interface FileRoutesByTo {
   '/collections/$id': typeof CollectionsIdRoute
   '/invite/$token': typeof InviteTokenRoute
   '/join/$token': typeof JoinTokenRoute
+  '/papers/$id': typeof PapersIdRoute
+  '/papers/new': typeof PapersNewRoute
   '/settings/$section': typeof SettingsSectionRoute
   '/template-libraries/$id': typeof TemplateLibrariesIdRoute
   '/templates/$ref': typeof TemplatesRefRoute
@@ -339,6 +355,8 @@ export interface FileRoutesById {
   '/collections/$id': typeof CollectionsIdRoute
   '/invite/$token': typeof InviteTokenRoute
   '/join/$token': typeof JoinTokenRoute
+  '/papers/$id': typeof PapersIdRoute
+  '/papers/new': typeof PapersNewRoute
   '/settings/$section': typeof SettingsSectionRoute
   '/template-libraries/$id': typeof TemplateLibrariesIdRoute
   '/templates/$ref': typeof TemplatesRefRoute
@@ -380,6 +398,8 @@ export interface FileRouteTypes {
     | '/collections/$id'
     | '/invite/$token'
     | '/join/$token'
+    | '/papers/$id'
+    | '/papers/new'
     | '/settings/$section'
     | '/template-libraries/$id'
     | '/templates/$ref'
@@ -418,6 +438,8 @@ export interface FileRouteTypes {
     | '/collections/$id'
     | '/invite/$token'
     | '/join/$token'
+    | '/papers/$id'
+    | '/papers/new'
     | '/settings/$section'
     | '/template-libraries/$id'
     | '/templates/$ref'
@@ -457,6 +479,8 @@ export interface FileRouteTypes {
     | '/collections/$id'
     | '/invite/$token'
     | '/join/$token'
+    | '/papers/$id'
+    | '/papers/new'
     | '/settings/$section'
     | '/template-libraries/$id'
     | '/templates/$ref'
@@ -497,6 +521,8 @@ export interface RootRouteChildren {
   CollectionsIdRoute: typeof CollectionsIdRoute
   InviteTokenRoute: typeof InviteTokenRoute
   JoinTokenRoute: typeof JoinTokenRoute
+  PapersIdRoute: typeof PapersIdRoute
+  PapersNewRoute: typeof PapersNewRoute
   TemplateLibrariesIdRoute: typeof TemplateLibrariesIdRoute
   TemplatesRefRoute: typeof TemplatesRefRoute
   UsersHandleRoute: typeof UsersHandleRoute
@@ -705,6 +731,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsSectionRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/papers/new': {
+      id: '/papers/new'
+      path: '/papers/new'
+      fullPath: '/papers/new'
+      preLoaderRoute: typeof PapersNewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/papers/$id': {
+      id: '/papers/$id'
+      path: '/papers/$id'
+      fullPath: '/papers/$id'
+      preLoaderRoute: typeof PapersIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/join/$token': {
       id: '/join/$token'
       path: '/join/$token'
@@ -813,6 +853,8 @@ const rootRouteChildren: RootRouteChildren = {
   CollectionsIdRoute: CollectionsIdRoute,
   InviteTokenRoute: InviteTokenRoute,
   JoinTokenRoute: JoinTokenRoute,
+  PapersIdRoute: PapersIdRoute,
+  PapersNewRoute: PapersNewRoute,
   TemplateLibrariesIdRoute: TemplateLibrariesIdRoute,
   TemplatesRefRoute: TemplatesRefRoute,
   UsersHandleRoute: UsersHandleRoute,

@@ -239,11 +239,15 @@ test("settings destinations and their retired paths resolve", async ({ owner }) 
   await expect(owner).toHaveURL(/\/settings\/accounts$/)
   await expect(owner.getByTestId("settings-tab-accounts")).toHaveAttribute("aria-current", "page")
   await expect(owner.getByTestId("account-connect")).toBeVisible()
-  // The retired agent-connection and credential sections land on what replaced them.
+  // The retired agent-connection section lands on Machines; Credentials keeps its own section.
   await owner.goto("/settings/agents")
   await expect(owner).toHaveURL(/\/settings\/machines$/)
   await owner.goto("/settings/credentials")
-  await expect(owner).toHaveURL(/\/settings\/accounts$/)
+  await expect(owner.getByTestId("settings-tab-credentials")).toHaveAttribute(
+    "aria-current",
+    "page",
+  )
+  await expect(owner.getByTestId("credentials-add")).toBeVisible()
 
   // People is a standalone directory page; its retired settings path redirects out.
   await owner.goto("/people")
@@ -753,6 +757,15 @@ test("Settings lists the machines agents run on and the accounts they use", asyn
   await expect(owner.getByTestId("machines")).toContainText("Night shift")
   await expect(owner.getByTestId("machines")).toContainText("seen")
   await expect(owner.getByTestId("machines-runner-command")).toContainText("runner serve")
+  // The workspace's agent brake lives here, for its owner.
+  const writes = owner.getByTestId("toggle-agent-writes")
+  await expect(writes).toBeChecked()
+  await writes.click()
+  await expect(writes).not.toBeChecked()
+  const settingsNow = await (await owner.request.get("/v1/workspace/settings")).json()
+  expect(settingsNow.agentWrites).toBe(false)
+  await writes.click()
+  await expect(writes).toBeChecked()
   await owner.screenshot({ path: testInfo.outputPath("settings-machines.png"), fullPage: true })
 
   await owner.goto("/settings/accounts")
@@ -872,4 +885,15 @@ test("asking an agent from a page's margin opens a job about that page and shows
   await expect(follow).toHaveAttribute("data-status", "succeeded", { timeout: 30_000 })
   await expect(follow).toContainText("It has no owner for the rollout.")
   await owner.screenshot({ path: testInfo.outputPath("margin-ask.png") })
+})
+
+test("a paper from arXiv is imported from Templates, on its own page", async ({ owner }) => {
+  await owner.goto("/templates")
+  await owner.getByTestId("template-academic-arxiv-import").click()
+  await expect(owner).toHaveURL(/\/papers\/new$/)
+  await expect(owner.getByTestId("context-arxiv-form")).toBeVisible()
+  await owner.getByTestId("context-arxiv-link").fill("not a paper")
+  await expect(owner.getByTestId("context-arxiv-submit")).toBeDisabled()
+  await owner.getByTestId("context-arxiv-link").fill("2401.12345")
+  await expect(owner.getByTestId("context-arxiv-submit")).toBeEnabled()
 })
