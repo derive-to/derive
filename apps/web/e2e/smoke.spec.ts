@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test"
 import {
   activateThread,
   addComment,
@@ -109,7 +110,6 @@ test("starting a workflow creates a visible, version-pinned run", async ({ owner
 
   await owner.goto("/settings/automations")
   await expect(owner).toHaveURL(/\/workflows$/)
-  await expect(owner.getByTestId("nav-workflows")).toHaveAttribute("aria-current", "page")
   await expect(owner.getByRole("heading", { level: 1, name: "Workflows" })).toHaveCount(1)
   await expect(owner.getByTestId("workflows-view-schedules")).toHaveAttribute(
     "data-state",
@@ -598,6 +598,7 @@ test("settings destinations and their retired paths resolve", async ({ owner }) 
   await owner.goto("/settings/model-plans")
   await expect(owner).toHaveURL(/\/settings\/accounts$/)
   await expect(owner.getByTestId("settings-tab-accounts")).toHaveAttribute("aria-current", "page")
+  await expect(owner.getByTestId("account-connect")).toBeVisible()
   await expect(owner.getByTestId("model-plan-import")).toBeVisible()
 
   // People is a standalone directory page; its retired settings path redirects out.
@@ -627,7 +628,7 @@ test("settings destinations and their retired paths resolve", async ({ owner }) 
 
 test("Artifacts is the front door and Archived remains one of its filters", async ({ owner }) => {
   await owner.goto("/")
-  await expect(owner.getByTestId("sidebar-all")).toContainText("Artifacts")
+  await expect(owner.getByTestId("sidebar-all")).toContainText("Pages")
   await expect(owner.getByRole("heading", { name: /^Artifacts\b/ })).toBeVisible()
   await expect(owner.getByTestId("library-view")).toHaveAttribute("aria-label", "Artifact views")
   await expect(owner.getByTestId("library-view-artifacts")).toHaveText("All")
@@ -808,7 +809,7 @@ test("the current page keeps its selected state under the pointer", async ({ own
   expect(await bgOf(current), "the active row changed colour on hover").toBe(currentRest)
 
   // …and the scoping didn't just disable hover everywhere: an idle row still washes.
-  const idle = owner.getByTestId("nav-contexts")
+  const idle = owner.getByTestId("nav-agents")
   const idleRest = await bgOf(idle)
   await idle.hover()
   await owner.waitForTimeout(400)
@@ -1217,7 +1218,11 @@ test("workflow accounts connect in place and preserve imported task logins", asy
     if (route.request().method() === "POST") workflowCreates++
     return route.fulfill({ json: { available: true, can_create: true, items: [] } })
   })
-  await owner.getByRole("link", { name: "Workflows", exact: true }).click()
+  // In-app navigation (the palette's Jump to), so the sign-in state above survives.
+  await owner.getByTestId("open-command-palette").click()
+  await owner.keyboard.type("workflows")
+  await owner.getByRole("option", { name: "Workflows" }).click()
+  await expect(owner).toHaveURL(/\/workflows$/)
   await owner.getByTestId("workflows-new").click()
   await owner.getByTestId("workflow-create-name").fill("Daily integrity review")
   await owner.getByTestId("model-account-select").selectOption("rmc_browser_fixture")
@@ -1299,4 +1304,207 @@ test("workflow drafts save without an account and preserve edits on a revision c
   )
   await owner.setViewportSize({ width: 390, height: 844 })
   await owner.screenshot({ path: testInfo.outputPath("workflow-draft-mobile.png"), fullPage: true })
+})
+
+// ---- Agents -----------------------------------------------------------------------------
+// Seeded through the same API a coding session and a runner use: create over /v1/agents, ask
+// over /v1/jobs, and move jobs with the agent's own key through pull and report.
+
+type Seeded = { id: string; token: string }
+
+async function makeAgent(page: Page, body: Record<string, unknown>): Promise<Seeded> {
+  let out: Seeded = { id: "", token: "" }
+  // A new user's workspace is provisioned on first request; retry past that race.
+  await expect(async () => {
+    const r = await page.request.post("/v1/agents", { data: body })
+    expect(r.status(), await r.text()).toBe(201)
+    out = await r.json()
+  }).toPass({ timeout: 10_000 })
+  return out
+}
+
+async function askAgent(page: Page, agent: Seeded, instruction: string): Promise<string> {
+  const r = await page.request.post("/v1/jobs", { data: { agent_id: agent.id, instruction } })
+  expect(r.status(), await r.text()).toBe(201)
+  return (await r.json()).id
+}
+
+/** Claim the agent's queued jobs as its runner would. */
+async function pullAs(page: Page, agent: Seeded): Promise<{ id: string; started_at: string }[]> {
+  const r = await page.request.post(`/v1/agents/${agent.id}/pull`, {
+    headers: { authorization: `Bearer ${agent.token}` },
+    data: {},
+  })
+  expect(r.ok(), await r.text()).toBeTruthy()
+  return (await r.json()).jobs
+}
+
+async function reportAs(
+  page: Page,
+  agent: Seeded,
+  job: { id: string; started_at: string },
+  body: Record<string, unknown>,
+) {
+  const r = await page.request.post(`/v1/jobs/${job.id}/report`, {
+    headers: { authorization: `Bearer ${agent.token}` },
+    data: { started_at: job.started_at, ...body },
+  })
+  expect(r.ok(), await r.text()).toBeTruthy()
+}
+
+test("Agents home groups agents by what they need, and the rail leads with it", async ({
+  owner,
+}, testInfo) => {
+  const scheduled = await makeAgent(owner, {
+    name: "Digest writer",
+    description: "rewrites the weekly digest page",
+    schedule: { cron: "0 9 * * 1-5", tz: "UTC", instruction: "Rewrite the digest." },
+  })
+  const asker = await makeAgent(owner, { name: "Reviewer", description: "reviews pull requests" })
+  const busy = await makeAgent(owner, { name: "Builder", description: "builds things" })
+  const idle = await makeAgent(owner, { name: "Idle helper" })
+
+  await askAgent(owner, asker, "Should I merge the stacked PRs?")
+  const [held] = await pullAs(owner, asker)
+  expect(held).toBeTruthy()
+  if (held)
+    await reportAs(owner, asker, held, {
+      status: "needs_you",
+      needs: { kind: "decision", question: "Merge all three now?", options: ["Merge", "Wait"] },
+    })
+  await askAgent(owner, busy, "Build the release notes")
+  await pullAs(owner, busy)
+
+  await owner.goto("/agents")
+  await expect(owner.getByTestId("nav-agents")).toHaveAttribute("aria-current", "page")
+  // The rail is Agents, Inbox, Pages; the retired rows are gone but their pages still resolve.
+  for (const gone of ["nav-contexts", "nav-workflows", "nav-chat", "nav-templates", "nav-skills"])
+    await expect(owner.getByTestId(gone)).toHaveCount(0)
+  await expect(owner.getByTestId("agents-group-needs")).toContainText("Merge all three now?")
+  await expect(owner.getByTestId("agents-group-running")).toContainText("Builder")
+  await expect(owner.getByTestId("agents-group-running")).toContainText("Build the release notes")
+  await expect(owner.getByTestId("agents-group-scheduled")).toContainText("Digest writer")
+  await expect(owner.getByTestId("agents-group-scheduled")).toContainText("Weekdays 9:00")
+  // The asked agent sits in its own group as well as in Needs you.
+  await expect(owner.getByTestId("agents-group-asked")).toContainText("Reviewer")
+  // Never-used agents are a count until asked for.
+  await expect(owner.getByTestId(`agent-row-${idle.id}`)).toHaveCount(0)
+  await owner.getByTestId("agents-show-never").click()
+  await expect(owner.getByTestId(`agent-row-${idle.id}`)).toBeVisible()
+  await owner.screenshot({ path: testInfo.outputPath("agents-home.png"), fullPage: true })
+
+  await owner.getByTestId(`agent-row-${scheduled.id}`).click()
+  await expect(owner).toHaveURL(new RegExp(`/agents/${scheduled.id}$`))
+  await expect(owner.getByTestId("agent-title")).toHaveText("Digest writer")
+
+  await owner.goto("/contexts")
+  await expect(owner).toHaveURL(/\/contexts$/)
+  // An old /agents/<context id> bookmark still lands on the Context.
+  await owner.goto("/agents/ctx_legacy")
+  await expect(owner).toHaveURL(/\/contexts\/ctx_legacy$/)
+})
+
+test("New agent is a prompt to paste into a coding session", async ({ owner }, testInfo) => {
+  await owner.goto("/agents")
+  await owner.getByTestId("agents-new").click()
+  await expect(owner).toHaveURL(/\/agents\/new$/)
+  const prompt = owner.getByTestId("new-agent-prompt")
+  await expect(prompt).toContainText("agents tool")
+  await expect(prompt).toContainText("<what it should do>")
+  const example = owner.getByTestId("new-agent-example").first()
+  const line = (await example.textContent()) ?? ""
+  await example.click()
+  await expect(prompt).toContainText(line)
+  await expect(prompt).not.toContainText("<what it should do>")
+  await owner.screenshot({ path: testInfo.outputPath("new-agent.png"), fullPage: true })
+})
+
+test("an agent's page answers, retries, and changes the agent", async ({ owner }, testInfo) => {
+  const agent = await makeAgent(owner, { name: "Analyst", description: "answers data questions" })
+  // It runs one job at a time, so each is pulled and settled before the next is asked.
+  const failedId = await askAgent(owner, agent, "Count last week's signups")
+  const [failed] = await pullAs(owner, agent)
+  expect(failed?.id).toBe(failedId)
+  if (failed)
+    await reportAs(owner, agent, failed, {
+      status: "failed",
+      result: { failure: { reason: "the warehouse refused the query", retryable: false } },
+    })
+  const needsId = await askAgent(owner, agent, "Publish the chart?")
+  const [needs] = await pullAs(owner, agent)
+  expect(needs?.id).toBe(needsId)
+  if (needs)
+    await reportAs(owner, agent, needs, {
+      status: "needs_you",
+      needs: { kind: "decision", question: "Publish it to the team?", options: ["Publish"] },
+    })
+
+  await owner.goto(`/agents/${agent.id}`)
+  const failedRow = owner.getByTestId(`job-${failedId}`)
+  await expect(failedRow).toContainText("the warehouse refused the query")
+  await owner.getByTestId(`job-retry-${failedId}`).click()
+  await expect(failedRow).toHaveAttribute("data-status", "queued")
+
+  const needsRow = owner.getByTestId(`job-${needsId}`)
+  await expect(needsRow).toContainText("Publish it to the team?")
+  await owner.getByTestId(`job-option-${needsId}-0`).click()
+  await expect(needsRow).toHaveAttribute("data-status", "queued")
+
+  // Opening a row reads its transcript.
+  await owner.getByTestId(`job-row-${needsId}`).click()
+  await expect(owner.getByTestId(`job-transcript-${needsId}`)).toContainText("Publish the chart?")
+  await owner.screenshot({ path: testInfo.outputPath("agent-jobs.png"), fullPage: true })
+
+  // Ask from the page opens a job.
+  await owner.getByTestId("agent-ask").click()
+  await owner.getByTestId("agent-ask-input").fill("Summarize the funnel")
+  await owner.getByTestId("agent-ask-send").click()
+  await expect(owner.getByTestId("agent-jobs")).toContainText("Summarize the funnel")
+
+  await owner.getByTestId("agent-tab-settings").click()
+  await expect(owner).toHaveURL(/tab=settings/)
+  await owner.getByTestId("agent-pause").click()
+  await expect(owner.getByTestId("agent-state")).toContainText("Paused")
+  await owner.getByTestId("agent-schedule-add").click()
+  await owner.getByTestId("agent-schedule-cron").fill("0 8 * * 1")
+  await owner.getByTestId("agent-schedule-instruction").fill("Write the Monday numbers.")
+  await owner.getByTestId("agent-schedule-save").click()
+  await expect(owner.getByText("Mondays 8:00")).toBeVisible()
+  await owner.getByTestId("agent-write-policy-review").click()
+  await expect(owner.getByTestId("agent-write-policy-review")).toHaveAttribute("data-state", "on")
+  const saved = await (await owner.request.get(`/v1/agents/${agent.id}`)).json()
+  expect(saved).toMatchObject({ paused: true, write_policy: "review" })
+  expect(saved.triggers).toHaveLength(1)
+  await owner.screenshot({ path: testInfo.outputPath("agent-settings.png"), fullPage: true })
+
+  await owner.getByTestId("agent-delete").click()
+  await owner.getByTestId("agent-delete-confirm").click()
+  await expect(owner).toHaveURL(/\/agents$/)
+  expect((await owner.request.get(`/v1/agents/${agent.id}`)).status()).toBe(404)
+})
+
+test("Settings lists the machines agents run on and the accounts they use", async ({
+  owner,
+}, testInfo) => {
+  const agent = await makeAgent(owner, { name: "Night shift" })
+  await pullAs(owner, agent) // its runner checks in
+
+  await owner.goto("/settings/machines")
+  await expect(owner.getByTestId("settings-tab-machines")).toHaveAttribute("aria-current", "page")
+  await expect(owner.getByTestId("machines")).toContainText("Night shift")
+  await expect(owner.getByTestId("machines")).toContainText("seen")
+  await expect(owner.getByTestId("machines-runner-command")).toContainText("runner serve")
+  await owner.screenshot({ path: testInfo.outputPath("settings-machines.png"), fullPage: true })
+
+  await owner.goto("/settings/accounts")
+  await owner.getByTestId("account-connect").click()
+  await owner.getByTestId("account-secret").fill("sk-test-e2e-key-abcd")
+  await owner.getByTestId("account-save").click()
+  const row = owner.getByTestId("accounts").locator("[data-testid^=account-acct_]")
+  await expect(row).toContainText("Your Claude")
+  await expect(row).toContainText("abcd")
+  await owner.screenshot({ path: testInfo.outputPath("settings-accounts.png"), fullPage: true })
+  await owner.getByTestId("accounts").getByRole("button", { name: "Disconnect" }).click()
+  await owner.getByTestId("account-disconnect-confirm").click()
+  await expect(owner.getByTestId("accounts")).toHaveCount(0)
 })

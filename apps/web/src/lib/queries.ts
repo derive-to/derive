@@ -615,6 +615,55 @@ export const agentsQuery = () =>
     queryFn: () => api.listAgents().then((r) => r.agents),
   })
 
+// One agent with its schedules, can_ask and can_manage. Under ["agents"] so a roster
+// invalidation refreshes it too.
+export const agentQuery = (id: string) =>
+  queryOptions({
+    queryKey: ["agents", id] as const,
+    queryFn: () => api.getAgent(id),
+  })
+
+// Every open job in the workspace: what the Agents home groups agents by.
+export const openJobsQuery = () =>
+  queryOptions({
+    queryKey: ["jobs", "open"] as const,
+    queryFn: () =>
+      api.listJobs({ status: ["queued", "running", "needs_you"], limit: 200 }).then((r) => r.jobs),
+  })
+
+// The workspace's recent jobs, any status: when each agent last worked.
+export const recentJobsQuery = () =>
+  queryOptions({
+    queryKey: ["jobs", "recent"] as const,
+    queryFn: () => api.listJobs({ limit: 200 }).then((r) => r.jobs),
+  })
+
+const JOB_PAGE = 50
+// One agent's jobs, newest first, keyset-paged on created_at.
+export const agentJobsQuery = (agentId: string) =>
+  infiniteQueryOptions({
+    queryKey: ["jobs", "agent", agentId] as const,
+    queryFn: ({ pageParam }) =>
+      api.listJobs({ agent: agentId, before: pageParam || undefined, limit: JOB_PAGE }),
+    initialPageParam: "",
+    getNextPageParam: (last) =>
+      last.jobs.length === JOB_PAGE ? last.jobs[last.jobs.length - 1]?.created_at : undefined,
+  })
+
+// One job with its transcript, read when its row is opened.
+export const jobQuery = (id: string) =>
+  queryOptions({
+    queryKey: ["jobs", "one", id] as const,
+    queryFn: () => api.getJob(id),
+  })
+
+// Model accounts: the caller's own and the workspace's shared ones.
+export const accountsQuery = () =>
+  queryOptions({
+    queryKey: ["accounts"] as const,
+    queryFn: () => api.listAccounts().then((r) => r.accounts),
+  })
+
 export const workflowsQuery = () =>
   queryOptions({
     queryKey: ["workflows"] as const,

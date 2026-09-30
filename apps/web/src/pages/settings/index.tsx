@@ -15,6 +15,7 @@ import { CredentialsSection } from "./credentials-section"
 import { CustomDomainsSection } from "./custom-domains-section"
 import { GeneralSection } from "./general-section"
 import { IntegrationsSection } from "./integrations-section"
+import { MachinesSection } from "./machines-section"
 import { MembersSection } from "./members-section"
 import { ModelsSection } from "./models-section"
 import { NotificationsSection } from "./notifications-section"
@@ -48,6 +49,7 @@ const SECTIONS: { id: string; label: string; group: (typeof GROUP_ORDER)[number]
   { id: "accounts", label: "Accounts", group: "You" },
   { id: "appearance", label: "Appearance", group: "You" },
   { id: "general", label: "General", group: "Workspace" },
+  { id: "machines", label: "Machines", group: "Workspace" },
   { id: "members", label: "Members", group: "Workspace" },
   { id: "billing", label: "Billing", group: "Workspace" },
   { id: "integrations", label: "Integrations", group: "Workspace" },
@@ -146,6 +148,7 @@ export function Settings() {
             {active === "accounts" && <AccountsSection />}
             {active === "appearance" && <AppearanceSection />}
             {active === "general" && <GeneralSection />}
+            {active === "machines" && <MachinesSection />}
             {active === "members" && <MembersSection meId={me.id} />}
             {active === "billing" && <BillingSection />}
             {active === "integrations" && <IntegrationsSection />}
