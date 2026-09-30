@@ -139,6 +139,8 @@ export interface AppDeps {
     apiUrl: string
     /** Absolute path to a pinned CLI installation in the saved sandbox. */
     runnerPath: string
+    /** The CLI version the sandbox installs; defaults to RUNNER_VERSION (lib/runtime-setup). */
+    runnerVersion?: string
     /** Temporary operator pilot. Empty denies admission; cleanup stays independent. */
     pilotWorkspaceIds: ReadonlySet<string>
     managed?: { apiKey: string; workspaceIds: ReadonlySet<string> }
@@ -685,6 +687,8 @@ export function buildContext(deps: AppDeps) {
   const runScopeCache = new WeakMap<Context, string>()
   // The same, for a session-scoped bearer (the ask lane's half of hosted execution).
   const sessionScopeCache = new WeakMap<Context, string>()
+  // The one job a `dkjob_` bearer may touch.
+  const jobScopeCache = new WeakMap<Context, string>()
   // One version-pinned workflow run, for a dkwfr_ GitHub harness capability.
   const workflowScopeCache = new WeakMap<Context, string>()
   const agentFor = async (c: Context): Promise<AgentRecord | null> => {
@@ -773,6 +777,21 @@ export function buildContext(deps: AppDeps) {
             s.org_id === claim.orgId &&
             (s.state === "open" || s.state === "working")
           )
+        } else if (workKind === "job") {
+          // A job token lives exactly as long as the claim it was minted for: `<job>~<claim>`,
+          // the claim being the job's started_at. A retry is a new claim, so it cannot revive
+          // an earlier machine's token.
+          const [jobId, claimMs] = claim.id.split("~")
+          const j = jobId ? await meta.getJob(jobId) : null
+          live = !!(
+            j &&
+            j.agent_id === claim.agentId &&
+            j.org_id === claim.orgId &&
+            j.status === "running" &&
+            j.started_at !== null &&
+            String(Date.parse(j.started_at)) === claimMs
+          )
+          if (live && jobId) claim.id = jobId
         } else {
           const r = await meta.getWorkflowRunById(claim.id)
           live = !!(
@@ -789,6 +808,7 @@ export function buildContext(deps: AppDeps) {
             owner = ag.created_by ?? null
             if (workKind === "run") runScopeCache.set(c, claim.id)
             else if (workKind === "session") sessionScopeCache.set(c, claim.id)
+            else if (workKind === "job") jobScopeCache.set(c, claim.id)
             else workflowScopeCache.set(c, claim.id)
           }
         }
@@ -1865,6 +1885,8 @@ export function buildContext(deps: AppDeps) {
     /** The session id a dksess_ capability bearer is pinned to (null for every other
      *  principal) — the ask lane's twin of agentRunScope. */
     agentSessionScope: (c: Context): string | null => sessionScopeCache.get(c) ?? null,
+    /** The job a `dkjob_` bearer is pinned to, or null for any other principal. */
+    agentJobScope: (c: Context): string | null => jobScopeCache.get(c) ?? null,
     /** The workflow run id a dkwfr_ capability bearer is pinned to. */
     agentWorkflowScope: (c: Context): string | null => workflowScopeCache.get(c) ?? null,
     /** Is this request authenticated by a MINTED api token (dkapi_)? The mint refuses

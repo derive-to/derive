@@ -2119,6 +2119,11 @@
             "type": "string",
             "nullable": true
           },
+          "report_short_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "The job's report page, once it has one."
+          },
           "created_at": {
             "type": "string"
           },
@@ -2147,6 +2152,7 @@
           "attempt",
           "cost_micro_usd",
           "report_artifact_id",
+          "report_short_id",
           "created_at",
           "updated_at"
         ]

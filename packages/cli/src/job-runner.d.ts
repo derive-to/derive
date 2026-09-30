@@ -50,3 +50,13 @@ export declare function jobDrainPass(
   client?: JobClient,
 ): Promise<{ served: number; failed: number; considered: number }>
 export declare function serveJobs(cfg: JobRunnerCfg): Promise<never>
+
+export declare function loadOneJobConfig(
+  env?: Record<string, string | undefined>,
+  flags?: Record<string, string>,
+): JobRunnerCfg & { jobId: string }
+export declare function runOneJob(
+  cfg: JobRunnerCfg & { jobId: string },
+  client?: JobClient,
+  deps?: { runAgent?: RunAgent },
+): Promise<"succeeded" | "failed" | "needs_you" | "lost">

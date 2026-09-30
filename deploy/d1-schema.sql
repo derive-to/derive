@@ -261,6 +261,8 @@ CREATE TABLE IF NOT EXISTS agent (
   machine TEXT NOT NULL DEFAULT 'owner',
   sandbox_id TEXT,
   sandbox_state_json TEXT,
+  sandbox_phase TEXT,
+  sandbox_rev INTEGER NOT NULL DEFAULT 0,
   account_id TEXT,
   connection_ids_json TEXT,
   repositories_json TEXT,
@@ -302,6 +304,9 @@ CREATE TABLE IF NOT EXISTS job (
   report_artifact_id TEXT,
   result_json TEXT,
   meta_json TEXT,
+  machine_phase TEXT,
+  machine_json TEXT,
+  machine_rev INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -1307,6 +1312,8 @@ CREATE INDEX IF NOT EXISTS asset_org ON asset (org_id);
 CREATE UNIQUE INDEX IF NOT EXISTS job_trigger_window ON job (trigger_id, scheduled_for) WHERE trigger_id IS NOT NULL AND scheduled_for IS NOT NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS job_dedupe_open ON job (agent_id, asked_by, dedupe_key) WHERE dedupe_key IS NOT NULL AND status IN ('queued', 'running', 'needs_you');
+
+CREATE UNIQUE INDEX IF NOT EXISTS job_machine_holder ON job (agent_id) WHERE machine_phase IS NOT NULL AND machine_phase <> 'released';
 
 CREATE UNIQUE INDEX IF NOT EXISTS workflow_test_pending ON workflow_test (context_id) WHERE status = 'pending';
 

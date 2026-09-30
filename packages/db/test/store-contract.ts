@@ -3260,6 +3260,39 @@ export function runStoreContract(
       })
     })
 
+    it("fences Derive machine state: sandbox and job transitions compare-and-set on a revision", async () => {
+      const a = await mkAgent()
+      const first = await store.transitionAgentSandbox(a.id, ORG, 0, {
+        phase: "creating",
+        state_json: '{"x":1}',
+      })
+      expect(first).toMatchObject({ sandbox_phase: "creating", sandbox_rev: 1 })
+      // A stale writer loses.
+      expect(await store.transitionAgentSandbox(a.id, ORG, 0, { phase: "failed" })).toBeNull()
+      expect(
+        await store.transitionAgentSandbox(a.id, "org_other", 1, { phase: "ready" }),
+      ).toBeNull()
+      expect((await store.listAgentsInSandboxPhase(["creating"], 10)).map((x) => x.id)).toContain(
+        a.id,
+      )
+      const j = await mkJob(a.id)
+      const k = await mkJob(a.id)
+      const held = await store.transitionJobMachine(j.id, 0, {
+        phase: "starting",
+        machine_json: "{}",
+      })
+      expect(held).toMatchObject({ machine_phase: "starting", machine_rev: 1 })
+      expect(await store.transitionJobMachine(j.id, 0, { phase: "ready" })).toBeNull()
+      // One sandbox per agent: a second job cannot hold it while the first does.
+      await expect(store.transitionJobMachine(k.id, 0, { phase: "starting" })).rejects.toThrow()
+      expect((await store.listMachineJobs(10)).map((x) => x.id)).toEqual([j.id])
+      await store.transitionJobMachine(j.id, 1, { phase: "released" })
+      expect(await store.listMachineJobs(10)).toEqual([])
+      expect(await store.transitionJobMachine(k.id, 0, { phase: "starting" })).toMatchObject({
+        machine_phase: "starting",
+      })
+    })
+
     it("keeps one open job per dedupe key and one job per trigger window", async () => {
       const a = await mkAgent()
       const j = await mkJob(a.id, { asked_by: "u_1", dedupe_key: "k" })

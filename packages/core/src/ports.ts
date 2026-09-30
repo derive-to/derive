@@ -1,4 +1,4 @@
-import type { AgentModelStore } from "./agent-model"
+import type { AgentModelStore, AgentSandboxPhase } from "./agent-model"
 import type {
   ContextRuntimeRecord,
   NewContextRuntime,
@@ -3441,6 +3441,10 @@ export interface AgentRecord {
   machine: import("./agent-model").AgentMachine
   sandbox_id: string | null
   sandbox_state_json: string | null
+  /** Derive machine lifecycle: null until one is needed (lib/job-machine.ts). */
+  sandbox_phase: AgentSandboxPhase | null
+  /** Fences every sandbox transition. */
+  sandbox_rev: number
   /** The model account the Derive machine uses. Unused on `owner`. */
   account_id: string | null
   connection_ids_json: string | null
@@ -3498,6 +3502,8 @@ export const syntheticAgent = (
   machine: "owner",
   sandbox_id: null,
   sandbox_state_json: null,
+  sandbox_phase: null,
+  sandbox_rev: 0,
   account_id: null,
   connection_ids_json: null,
   repositories_json: null,

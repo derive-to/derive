@@ -6,6 +6,7 @@ import type {
   AgentMachine,
   AgentMentionKind,
   AgentMentionState,
+  AgentSandboxPhase,
   AgentTriggerKind,
   AgentWritePolicy,
   ArtifactKind,
@@ -30,6 +31,7 @@ import type {
   ImportJobStatus,
   ImportKind,
   JobKind,
+  JobMachinePhase,
   JobMessageAuthor,
   JobStatus,
   LinkRole,
@@ -939,6 +941,10 @@ export const agent = pgTable(
     machine: text("machine").$type<AgentMachine>().notNull().default("owner"),
     sandbox_id: text("sandbox_id"),
     sandbox_state_json: text("sandbox_state_json"),
+    // The Derive machine's lifecycle (lib/job-machine.ts): its phase and a revision that
+    // fences every transition, so two ticks never both act on one sandbox.
+    sandbox_phase: text("sandbox_phase").$type<AgentSandboxPhase>(),
+    sandbox_rev: integer("sandbox_rev").notNull().default(0),
     account_id: text("account_id"),
     connection_ids_json: text("connection_ids_json"),
     repositories_json: text("repositories_json"),
@@ -988,6 +994,11 @@ export const job = pgTable(
     report_artifact_id: text("report_artifact_id"),
     result_json: text("result_json"),
     meta_json: text("meta_json"),
+    // Where this job stands on a Derive machine (null for owner machines), fenced by
+    // machine_rev like the agent's sandbox.
+    machine_phase: text("machine_phase").$type<JobMachinePhase>(),
+    machine_json: text("machine_json"),
+    machine_rev: integer("machine_rev").notNull().default(0),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
     updated_at: text("updated_at").notNull().$defaultFn(isoNow),
   },

@@ -154,6 +154,7 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
         WHERE status = 'queued' AND id IN (
           SELECT id FROM job WHERE agent_id = ${agentId} AND status = 'queued' AND attended = 0
             AND (scheduled_for IS NULL OR scheduled_for <= ${now})
+            AND (machine_phase IS NULL OR machine_phase = 'released')
           ORDER BY created_at, id LIMIT ${n})
         RETURNING *`)
     },
@@ -229,6 +230,37 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
           AND ${askedBy === null ? sql`asked_by IS NULL` : sql`asked_by = ${askedBy}`}
           AND status IN (${list(OPEN)})
         ORDER BY created_at DESC LIMIT 1`)
+    },
+    // ---- Derive machines ---------------------------------------------------------------
+    async transitionAgentSandbox(id, orgId, expectRev, next) {
+      const set: SQL[] = [sql`sandbox_phase = ${next.phase}`, sql`sandbox_rev = sandbox_rev + 1`]
+      if (next.state_json !== undefined) set.push(sql`sandbox_state_json = ${next.state_json}`)
+      if (next.sandbox_id !== undefined) set.push(sql`sandbox_id = ${next.sandbox_id}`)
+      return first<AgentRecord>(sql`
+        UPDATE agent SET ${sql.join(set, sql`, `)}
+        WHERE id = ${id} AND org_id = ${orgId} AND sandbox_rev = ${expectRev} RETURNING *`)
+    },
+    listAgentsInSandboxPhase(phases, limit) {
+      if (phases.length === 0) return Promise.resolve([])
+      return rows<AgentRecord>(sql`
+        SELECT * FROM agent WHERE sandbox_phase IN (${list(phases)})
+        ORDER BY id LIMIT ${Math.max(1, Math.min(200, limit))}`)
+    },
+    async transitionJobMachine(id, expectRev, next) {
+      const set: SQL[] = [
+        sql`machine_phase = ${next.phase}`,
+        sql`machine_rev = machine_rev + 1`,
+        sql`updated_at = ${iso()}`,
+      ]
+      if (next.machine_json !== undefined) set.push(sql`machine_json = ${next.machine_json}`)
+      return first<JobRecord>(sql`
+        UPDATE job SET ${sql.join(set, sql`, `)}
+        WHERE id = ${id} AND machine_rev = ${expectRev} RETURNING *`)
+    },
+    listMachineJobs(limit) {
+      return rows<JobRecord>(sql`
+        SELECT * FROM job WHERE machine_phase IS NOT NULL AND machine_phase <> 'released'
+        ORDER BY created_at, id LIMIT ${Math.max(1, Math.min(200, limit))}`)
     },
     async addJobCost(id, microUsd) {
       await first(sql`

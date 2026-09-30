@@ -27,8 +27,16 @@ const isoNow = () => new Date().toISOString()
 // preflight resolves it before creating work; the two must agree.
 
 export const modelCredentialRoutes = (ctx: AppContext) => {
-  const { meta, deps, agentFor, agentRunScope, agentSessionScope, requireUser, requireWorkspace } =
-    ctx
+  const {
+    meta,
+    deps,
+    agentFor,
+    agentRunScope,
+    agentSessionScope,
+    agentJobScope,
+    requireUser,
+    requireWorkspace,
+  } = ctx
   const app = new Hono()
 
   // List the caller's own connected credentials — HINTS only, never the secret.
@@ -199,6 +207,8 @@ export const modelCredentialRoutes = (ctx: AppContext) => {
     // ever ask about the one item its token names.
     const runScope = agentRunScope(c)
     const sessScope = agentSessionScope(c)
+    // A job token belongs to the agent model; it reads its account from its job's own route.
+    if (agentJobScope(c)) return fail(c, 403, "job token: use GET /v1/jobs/{id}/account")
     if (runScope && c.req.query("session")) return fail(c, 403, "run token: pass ?run= only")
     if (sessScope && c.req.query("run")) return fail(c, 403, "session token: pass ?session= only")
     if (runScope && c.req.query("run") && c.req.query("run") !== runScope)
