@@ -154,6 +154,7 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
         WHERE status = 'queued' AND id IN (
           SELECT id FROM job WHERE agent_id = ${agentId} AND status = 'queued' AND attended = 0
             AND (scheduled_for IS NULL OR scheduled_for <= ${now})
+            AND (machine_phase IS NULL OR machine_phase = 'released')
           ORDER BY created_at, id LIMIT ${n})
         RETURNING *`)
     },

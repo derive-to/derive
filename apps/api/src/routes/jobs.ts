@@ -107,6 +107,7 @@ const Job = z
     attempt: z.number(),
     cost_micro_usd: z.number().nullable(),
     report_artifact_id: z.string().nullable(),
+    report_short_id: z.string().nullable().describe("The job's report page, once it has one."),
     created_at: z.string(),
     updated_at: z.string(),
   })
@@ -157,6 +158,19 @@ export const jobRoutes = (ctx: AppContext) => {
       !!m.meta_json && (JSON.parse(m.meta_json) as { progress?: boolean }).progress === true,
     created_at: m.created_at,
   })
+
+  /** Jobs as the API shows them: the row, plus its report page's short id (one lookup). */
+  const shown = async (jobs: JobRecord[]) => {
+    const ids = [...new Set(jobs.map((j) => j.report_artifact_id).filter((x): x is string => !!x))]
+    const arts = ids.length ? await meta.getArtifactsByIds(ids) : []
+    const short = new Map(arts.map((a) => [a.id, a.short_id]))
+    return jobs.map((j) => ({
+      ...jobJson(j),
+      report_short_id: j.report_artifact_id ? (short.get(j.report_artifact_id) ?? null) : null,
+    }))
+  }
+  const showOne = async (j: JobRecord) =>
+    (await shown([j]))[0] as Awaited<ReturnType<typeof shown>>[number]
 
   /** The person behind a request and whether they may see this job's workspace. Jobs are
    *  visible to every member of the agent's workspace: the work an agent does for one person
@@ -220,7 +234,7 @@ export const jobRoutes = (ctx: AppContext) => {
         before: q.before || undefined,
         limit: Math.min(200, Number(q.limit) || 50),
       })
-      return c.json({ jobs: jobs.map(jobJson) })
+      return c.json({ jobs: await shown(jobs) })
     },
   )
 
@@ -273,7 +287,7 @@ export const jobRoutes = (ctx: AppContext) => {
         dedupeKey: b.dedupe_key ?? null,
       })
       const messages = (await meta.listJobMessages(job.id)).map(messageJson)
-      const body = { ...jobJson(job), messages }
+      const body = { ...(await showOne(job)), messages }
       return created ? c.json(body, 201) : c.json(body, 200)
     },
   )
@@ -293,7 +307,7 @@ export const jobRoutes = (ctx: AppContext) => {
       const job = await visibleJob(c, c.req.param("id"))
       if (job instanceof Response) return bail(job)
       const messages = (await meta.listJobMessages(job.id)).map(messageJson)
-      return c.json({ ...jobJson(job), messages })
+      return c.json({ ...(await showOne(job)), messages })
     },
   )
 
@@ -323,7 +337,7 @@ export const jobRoutes = (ctx: AppContext) => {
       if (b instanceof Response) return bail(b)
       const next = await followUpJob(jobDeps, job, who.id, b.body_md)
       const messages = (await meta.listJobMessages(job.id)).map(messageJson)
-      return c.json({ ...jobJson(next), messages })
+      return c.json({ ...(await showOne(next)), messages })
     },
   )
 
@@ -360,7 +374,7 @@ export const jobRoutes = (ctx: AppContext) => {
         const out = await act(job, c, who.id)
         if (!out) return bail(fail(c, 409, "this job cannot do that from where it is"))
         if ("error" in out) return bail(fail(c, 400, out.error))
-        return c.json(jobJson(out))
+        return c.json(await showOne(out))
       },
     )
   personAction("/v1/jobs/{id}/cancel", "Cancel an open job (and its children).", (job) =>
@@ -472,7 +486,7 @@ export const jobRoutes = (ctx: AppContext) => {
     }
     return Promise.all(
       jobs.map(async (j) => ({
-        ...jobJson(j),
+        ...(await showOne(j)),
         messages: (await meta.listJobMessages(j.id)).map(messageJson),
         instructions,
         execution: { provider: agent.provider, model: agent.model },
@@ -511,12 +525,26 @@ export const jobRoutes = (ctx: AppContext) => {
         retryable: z.boolean().optional(),
         meta: z.record(z.string(), z.unknown()).nullish(),
         report_artifact_id: z.string().nullish(),
+        report_short_id: z.string().max(64).nullish(),
       }),
     )
     if (b instanceof Response) return b
-    const out = await reportJob(jobDeps, agent, c.req.param("id"), b)
+    // A report page must be one in the job's own workspace. Runners name it by the short id
+    // their publish returned.
+    const { report_short_id, ...report } = b
+    if (report_short_id) {
+      const art = await meta.getByShortId(report_short_id).catch(() => null)
+      if (!art || art.org_id !== agent.org_id)
+        return fail(c, 400, "report_short_id is not a page here")
+      report.report_artifact_id = art.id
+    } else if (report.report_artifact_id) {
+      const art = await meta.getArtifactById(report.report_artifact_id).catch(() => null)
+      if (!art || art.org_id !== agent.org_id)
+        return fail(c, 400, "report_artifact_id is not a page here")
+    }
+    const out = await reportJob(jobDeps, agent, c.req.param("id"), report)
     if ("error" in out) return fail(c, out.status as 404 | 409, out.error)
-    return c.json({ job: jobJson(out.job) })
+    return c.json({ job: await showOne(out.job) })
   })
 
   // The one job a Derive machine's runner was launched for, shaped like a pull's entry.

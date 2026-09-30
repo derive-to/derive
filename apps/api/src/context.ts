@@ -139,6 +139,8 @@ export interface AppDeps {
     apiUrl: string
     /** Absolute path to a pinned CLI installation in the saved sandbox. */
     runnerPath: string
+    /** The CLI version the sandbox installs; defaults to RUNNER_VERSION (lib/runtime-setup). */
+    runnerVersion?: string
     /** Temporary operator pilot. Empty denies admission; cleanup stays independent. */
     pilotWorkspaceIds: ReadonlySet<string>
     managed?: { apiKey: string; workspaceIds: ReadonlySet<string> }
@@ -776,14 +778,20 @@ export function buildContext(deps: AppDeps) {
             (s.state === "open" || s.state === "working")
           )
         } else if (workKind === "job") {
-          // A job token lives exactly as long as its job runs on the machine it was sent to.
-          const j = await meta.getJob(claim.id)
+          // A job token lives exactly as long as the claim it was minted for: `<job>~<claim>`,
+          // the claim being the job's started_at. A retry is a new claim, so it cannot revive
+          // an earlier machine's token.
+          const [jobId, claimMs] = claim.id.split("~")
+          const j = jobId ? await meta.getJob(jobId) : null
           live = !!(
             j &&
             j.agent_id === claim.agentId &&
             j.org_id === claim.orgId &&
-            j.status === "running"
+            j.status === "running" &&
+            j.started_at !== null &&
+            String(Date.parse(j.started_at)) === claimMs
           )
+          if (live && jobId) claim.id = jobId
         } else {
           const r = await meta.getWorkflowRunById(claim.id)
           live = !!(

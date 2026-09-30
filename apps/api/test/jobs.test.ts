@@ -613,10 +613,32 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
       await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
     ).json()) as {
       status: string
+      report_short_id: string | null
       messages: { author_kind: string; body_md: string }[]
     }
     expect(done.status).toBe("succeeded")
     expect(done.messages.at(-1)?.author_kind).toBe("agent")
+    // The job left a report page, as the agent, that the asker can read.
+    expect(done.report_short_id).toBeTruthy()
+    const source = async () =>
+      (
+        await app.request(`/v1/artifacts/${done.report_short_id}/content`, {
+          headers: as(ed.email),
+        })
+      ).text()
+    expect(await source()).toContain("## Asked\n\nCount the signups")
+
+    // A follow-up reopens the job and rewrites the same page as a new version.
+    await app.request(
+      `/v1/jobs/${job.id}/messages`,
+      jsonAs(as(ed.email), { body_md: "And last week?" }),
+    )
+    expect(await jobDrainPass(cfg, client)).toMatchObject({ served: 1 })
+    const again = (await (
+      await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
+    ).json()) as { report_short_id: string | null }
+    expect(again.report_short_id).toBe(done.report_short_id)
+    expect(await source()).toContain("## Asked\n\nAnd last week?")
   })
 
   it("runs with its creator's account, and a retryable failure goes back in the queue", async () => {
@@ -680,7 +702,8 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
 describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
   const config = {
     apiUrl: "https://ortam.test/v1",
-    runnerPath: "/home/ortam/derive-runtime/x/node_modules/@derive-to/cli/bin/derive.js",
+    runnerPath: "/home/ortam/derive-runtime/0.8.0/node_modules/@derive-to/cli/bin/derive.js",
+    runnerVersion: "0.8.0",
     pilotWorkspaceIds: new Set<string>(),
     managed: { apiKey: "integration fixture", workspaceIds: new Set(["default"]) },
   }
@@ -691,6 +714,9 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
     const ops = new Map<string, { id: string; sandbox_id: string; kind: string; state: string }>()
     const procs = new Map<string, { id: string; status: string }>()
     const launches: Record<string, string>[] = []
+    // Like Ortam, a repeated idempotency key returns the first answer, whatever happened since.
+    const byKey = new Map<string, unknown>()
+    const state = { failCreates: 0 }
     let n = 0
     const json = (v: unknown) =>
       new Response(JSON.stringify(v), { headers: { "content-type": "application/json" } })
@@ -709,6 +735,12 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
     const fetcher: typeof fetch = async (url, init) => {
       const path = new URL(String(url)).pathname.replace("/v1", "")
       const method = init?.method ?? "GET"
+      const key = new Headers(init?.headers).get("Idempotency-Key")
+      if (key && byKey.has(key)) return json(byKey.get(key))
+      const keep = (v: unknown) => {
+        if (key) byKey.set(key, v)
+        return json(v)
+      }
       if (path === "/auth/token")
         return json({
           token: `h.${Buffer.from(JSON.stringify({ sub: "svc", organization_id: "o" })).toString("base64url")}.s`,
@@ -720,20 +752,33 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
       if (path === "/sandboxes" && method === "POST") {
         const s = { id: `sbx_${++n}`, state: "ready" }
         sandboxes.set(s.id, s)
-        return json({ sandbox: sandbox(s), operation: op(s.id, "create") })
+        const o = op(s.id, "create")
+        if (state.failCreates > 0) {
+          state.failCreates--
+          o.state = "failed"
+          s.state = "deleted"
+        }
+        return keep({ sandbox: sandbox(s), operation: o })
+      }
+      const del = path.match(/^\/sandboxes\/([^/]+)$/)
+      if (del && method === "DELETE") {
+        const s = sandboxes.get(decodeURIComponent(del[1] ?? ""))
+        if (s) s.state = "deleted"
+        return keep(op(s?.id ?? "", "delete"))
       }
       const opm = path.match(/^\/operations\/(.+)$/)
       if (opm) {
         const o = ops.get(decodeURIComponent(opm[1] ?? ""))
         if (!o) return new Response(null, { status: 404 })
-        // Every operation completes by the time it is read.
-        o.state = "succeeded"
+        // Every operation completes by the time it is read (a failed one stays failed).
+        if (o.state !== "failed") o.state = "succeeded"
         const s = sandboxes.get(o.sandbox_id)
-        if (s) s.state = o.kind === "stop" ? "stopped" : "ready"
+        if (s && o.state === "succeeded")
+          s.state = o.kind === "stop" ? "stopped" : o.kind === "delete" ? "deleted" : "ready"
         return json(o)
       }
       const life = path.match(/^\/sandboxes\/([^/]+)\/(resume|stop)$/)
-      if (life) return json(op(decodeURIComponent(life[1] ?? ""), life[2] ?? ""))
+      if (life) return keep(op(decodeURIComponent(life[1] ?? ""), life[2] ?? ""))
       const launch = path.match(/^\/sandboxes\/([^/]+)\/processes$/)
       if (launch && method === "POST") {
         const body = JSON.parse(String(init?.body)) as { env: Record<string, string> }
@@ -751,7 +796,7 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
       }
       return new Response(null, { status: 404 })
     }
-    return { fetcher, sandboxes, procs, launches }
+    return { fetcher, sandboxes, procs, launches, state }
   }
 
   it("brings up the agent's sandbox, runs the job with a job token, and stops it again", async () => {
@@ -848,15 +893,99 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
     )
   })
 
+  const machineApp = async (name: string) => {
+    const made = makeAuthedApp(name, [owner, ed, outsider], "editor", {
+      deps: { encryptionKey: "test-encryption-key", runtime: config },
+    })
+    await made.app.request("/v1/me", { headers: as(owner.email) })
+    await made.app.request("/v1/me", { headers: as(ed.email) })
+    const agent = (await (
+      await made.app.request(
+        "/v1/agents",
+        jsonAs(as(owner.email), { name: `M ${name}`, machine: "derive" }),
+      )
+    ).json()) as { id: string }
+    const ortam = fakeOrtam()
+    const deps = {
+      meta: made.meta,
+      secret: "test-encryption-key",
+      server: "http://derive.test",
+      config,
+      fetcher: ortam.fetcher,
+    }
+    const runLaunched = async (i: number) => {
+      const env = ortam.launches[i] ?? {}
+      const cfg = loadOneJobConfig(
+        { DERIVE_TOKEN: env.DERIVE_TOKEN, DERIVE_JOB_ID: env.DERIVE_JOB_ID },
+        { server: "http://derive.test", mock: "true" },
+      )
+      const client = new JobClient(cfg, (url, init) => Promise.resolve(made.app.request(url, init)))
+      return runOneJob(cfg, client)
+    }
+    const passUntil = async (done: () => boolean | Promise<boolean>, max = 16) => {
+      for (let i = 0; i < max && !(await done()); i++) await machinePass(deps)
+    }
+    return { ...made, agent, ortam, deps, runLaunched, passUntil }
+  }
+
+  it("a reopened job gets a fresh turn on the machine, not its last turn's operations", async () => {
+    const m = await machineApp("jobs-machine-reopen")
+    const job = (await (await ask(m.app, ed.email, m.agent.id, "First")).json()) as { id: string }
+    await m.passUntil(() => m.ortam.launches.length === 1)
+    expect(await m.runLaunched(0)).toBe("succeeded")
+    for (const p of m.ortam.procs.values()) p.status = "exited"
+    await m.passUntil(async () => (await m.meta.getJob(job.id))?.machine_phase === "released")
+    // A follow-up reopens the same job; its second turn resumes the sandbox for real.
+    await m.app.request(`/v1/jobs/${job.id}/messages`, jsonAs(as(ed.email), { body_md: "Again" }))
+    await m.passUntil(() => m.ortam.launches.length === 2)
+    expect(m.ortam.launches).toHaveLength(2)
+    expect(await m.runLaunched(1)).toBe("succeeded")
+    expect(await m.meta.getJob(job.id)).toMatchObject({ status: "succeeded", attempt: 0 })
+  })
+
+  it("a sandbox that fails to come up is replaced, not asked for again by its old key", async () => {
+    const m = await machineApp("jobs-machine-recreate")
+    m.ortam.state.failCreates = 1
+    await ask(m.app, ed.email, m.agent.id, "Go")
+    await m.passUntil(async () => (await m.meta.getAgent(m.agent.id))?.sandbox_phase === "failed")
+    // After the backoff, the next pass brings up a new sandbox and the job runs on it.
+    const later = new Date(Date.now() + 11 * 60_000)
+    const deps = { ...m.deps, now: () => later }
+    for (let i = 0; i < 16 && m.ortam.launches.length === 0; i++) await machinePass(deps)
+    expect(m.ortam.launches).toHaveLength(1)
+    expect(m.ortam.sandboxes.size).toBe(2)
+  })
+
+  it("deleting an agent deletes its sandbox", async () => {
+    const m = await machineApp("jobs-machine-delete")
+    await ask(m.app, ed.email, m.agent.id, "Go")
+    await m.passUntil(() => m.ortam.launches.length === 1)
+    const made = makeAuthedApp("jobs-machine-delete", [owner, ed, outsider], "editor", {
+      deps: {
+        encryptionKey: "test-encryption-key",
+        runtime: config,
+        runtimeFetch: m.ortam.fetcher,
+      },
+    })
+    const del = await made.app.request(`/v1/agents/${m.agent.id}`, {
+      method: "DELETE",
+      headers: as(owner.email),
+    })
+    expect(del.status).toBe(204)
+    expect([...m.ortam.sandboxes.values()].map((s) => s.state)).toEqual(["deleted"])
+  })
+
   it("waits for a sandbox runner that knows job tokens", () => {
-    expect(
-      machineWorkspaces({ ...config, runnerPath: "/home/ortam/derive-runtime/0.7.2/x.js" }).size,
-    ).toBe(0)
-    expect(
-      machineWorkspaces({ ...config, runnerPath: "/home/ortam/derive-runtime/0.8.0/x.js" }).has(
-        "default",
-      ),
-    ).toBe(true)
+    const at = (v: string) => ({
+      ...config,
+      runnerVersion: v,
+      runnerPath: `/home/ortam/derive-runtime/${v}/x.js`,
+    })
+    expect(machineWorkspaces(at("0.7.2")).size).toBe(0)
+    expect(machineWorkspaces(at("0.8.0")).has("default")).toBe(true)
+    // A path ahead of what the sandbox installs would launch a runner that is not there.
+    const ahead = { ...at("0.7.2"), runnerPath: "/home/ortam/derive-runtime/0.8.0/x.js" }
+    expect(machineWorkspaces(ahead).size).toBe(0)
   })
 
   it("is refused where Derive machines are off", async () => {

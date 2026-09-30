@@ -11,8 +11,15 @@ import { bail, fail, readJson } from "../lib/http"
 const EnvironmentInfo = z.object({ bindings: EnvironmentBindings }).openapi("ContextEnvironment")
 
 export const contextEnvironmentRoutes = (ctx: AppContext) => {
-  const { meta, managementPrincipal, workspaceCan, agentFor, agentRunScope, agentSessionScope } =
-    ctx
+  const {
+    meta,
+    managementPrincipal,
+    workspaceCan,
+    agentFor,
+    agentRunScope,
+    agentSessionScope,
+    agentJobScope,
+  } = ctx
   const app = new OpenAPIHono<BlankEnv>()
   app.openapi(
     createRoute({
@@ -95,6 +102,7 @@ export const contextEnvironmentRoutes = (ctx: AppContext) => {
     if (!!sessionId === !!runId) return fail(c, 400, "Pass exactly one session or run")
     const runScope = agentRunScope(c)
     const sessionScope = agentSessionScope(c)
+    if (agentJobScope(c)) return fail(c, 403, "job token: use GET /v1/jobs/{id}/environment")
     if (
       (runScope && (sessionId || runId !== runScope)) ||
       (sessionScope && (runId || sessionId !== sessionScope))

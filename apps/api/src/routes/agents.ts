@@ -15,7 +15,7 @@ import { connectionBindError } from "../lib/broker"
 import { readEnvironmentBindings } from "../lib/context-environment"
 import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
-import { machineWorkspaces } from "../lib/job-machine"
+import { machineWorkspaces, retireSandbox } from "../lib/job-machine"
 import { canAskAgent, cancelJob, canManageAgent } from "../lib/jobs"
 import { previousOccurrence } from "../lib/schedule"
 
@@ -674,6 +674,7 @@ export const agentRoutes = (ctx: AppContext) => {
       if (!target || !(await managerOf(c, target))) return bail(fail(c, 404, "agent not found"))
       const org = target.org_id
       const id = target.id
+      await retireSandbox(deps.runtime, deps.runtimeFetch, target)
       // Scope the delete to the caller's workspace: deleteAgent is keyed by
       // (id, org) so an Admin can't delete another workspace's agent by id.
       await meta.deleteAgent(id, org)
