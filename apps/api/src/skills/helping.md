@@ -29,9 +29,10 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 | Path | What is there |
 | --- | --- |
 | `/agents` | Agents: every agent in the workspace, grouped by what needs a person, what is running, what runs on a schedule, and what runs when asked. |
+| `/inbox` | Inbox: the jobs waiting on you, answered in place (a choice, a reply, or a link to the page to review), then the pages agents published in the workspace today. |
 | `/agents/new` | New agent: a prompt to paste into Claude Code or Codex. The coding session creates the agent over MCP. |
 | `/agents/{id}` | One agent. Jobs: what it is doing and has done, with Cancel, Retry, and answers to its questions. Settings: pause, schedules, account, sources, who can ask, its key, delete. |
-| `/` | Pages, the library: everything in the workspace, most recently updated first. Filter by title, or press Enter to search everything. Collections narrow it. |
+| `/` | Artifacts, the library: everything in the workspace, most recently updated first. Filter by title, or press Enter to search everything. Collections narrow it. |
 | `/search` | Full search across the workspace, by keyword and by meaning. |
 | `/favorites` | Documents they starred. |
 | `/shared` | Documents other people gave them access to. |

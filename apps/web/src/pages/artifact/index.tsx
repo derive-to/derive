@@ -58,6 +58,7 @@ import { DynamicDataPanel } from "./dynamic-data-panel"
 import { EditBar, type EditViewport } from "./edit-bar"
 import { FloatingControl } from "./floating-control"
 import { InlineMentionMenu } from "./inline-mention-menu"
+import { JobHeader } from "./job-header"
 import { buildStream, countUnread } from "./lib/activity"
 import { canCommentWithRole } from "./lib/comment-access"
 import { bucketThreads } from "./lib/layout"
@@ -71,6 +72,7 @@ import {
   LinkedBundleWorkspace,
   linkedBundleAnchor,
 } from "./linked-bundle-workspace"
+import { MarginAsk } from "./margin-ask"
 import { parseRef, refFor } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
 import { PublicViewer } from "./public-viewer"
@@ -211,6 +213,14 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // List rows do not carry caller membership. Defer guest-only behavior until
   // the detail response resolves rather than briefly rendering the wrong controls.
   const isGuest = !!me && !seeded && art?.is_workspace_member === false
+  // The agent surfaces (margin Ask, a report's job line) act in the ACTIVE workspace, so they
+  // show only on that workspace's own pages: is_workspace_member is false for a page from
+  // another workspace, even one the reader has a seat in.
+  const inActiveWorkspace = !!me && art?.is_workspace_member === true
+  // A report is published by its agent, so its v1 carries that agent. When v1 is not in the
+  // payload (history hidden) the lookup runs anyway; it is one indexed read.
+  const firstVersion = art?.versions.find((v) => v.n === 1)
+  const couldBeReport = !firstVersion || !!firstVersion.agent
 
   // A restored/in-memory detail can carry a raw capability that expired long before
   // this click. Refresh it before the iframe gets a src; otherwise the first token is
@@ -1784,6 +1794,10 @@ export function Artifact({ template = false }: { template?: boolean }) {
             {art.current_version === 1 && canEditDoc && !editing && !inlineEdit.active && (
               <DerivedFromBanner art={art} />
             )}
+            {/* A job's report page says which job, above the report itself. */}
+            {inActiveWorkspace && couldBeReport && !editing && !inlineEdit.active && (
+              <JobHeader shortId={shortId} />
+            )}
             {/* A paper keeps its bar above the open editor: the chips switch files. */}
             {art.bundle && !importedPaper && (!editing || isPaperBundle(art)) && (
               <BundleBar
@@ -1992,6 +2006,8 @@ export function Artifact({ template = false }: { template?: boolean }) {
                 // Above the stream; members who can act only.
                 !isGuest && canComment ? (
                   <>
+                    {/* Ask one of the workspace's agents about this page; it opens a job. */}
+                    {inActiveWorkspace && <MarginAsk shortId={shortId} />}
                     {/* The one line that replaces the edit affordance for people who
                         cannot publish here: comments are the suggestion channel. */}
                     {!canPublish ? (

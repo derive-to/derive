@@ -333,13 +333,14 @@ function MobileTopBar({
 // Where am I, for the mobile navbar (the sidebar is hidden behind the drawer).
 // A pathname switch, not route metadata — labels are chrome, not content.
 function PageLabel({ pathname, newSkill }: { pathname: string; newSkill: boolean }) {
-  if (pathname === "/") return "Pages"
+  if (pathname === "/") return "Artifacts"
   if (pathname === "/favorites") return "Favorites"
   if (pathname === "/following") return "Following"
   if (pathname === "/archived") return "Archived"
   if (pathname === "/new") return newSkill ? "New skill" : "New artifact"
   if (pathname.startsWith("/templates")) return "Templates"
   if (pathname.startsWith("/template-libraries")) return "Template library"
+  if (pathname === "/inbox") return "Inbox"
   if (pathname === "/agents/new") return "New agent"
   if (pathname.startsWith("/agents")) return "Agents"
   if (pathname.startsWith("/contexts")) return "Contexts"

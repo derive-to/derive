@@ -252,6 +252,10 @@ export interface JobQuery {
   kind?: readonly JobKind[]
   parentId?: string
   askedBy?: string
+  /** Only the job whose report page is this artifact. */
+  reportArtifactId?: string
+  /** Only jobs this person asked, or on one of these agents (the inbox's "mine"). */
+  askedByOrAgent?: { askedBy: string; agentIds: readonly string[] }
   /** Only jobs created at or after this ISO time. */
   since?: string
   /** Keyset cursor: only jobs created strictly before this ISO time. */

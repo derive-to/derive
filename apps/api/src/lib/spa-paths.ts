@@ -18,6 +18,7 @@ const SPA_EXACT = new Set([
   "/favorites",
   "/feedback",
   "/following",
+  "/inbox",
   "/login",
   "/new",
   "/people",

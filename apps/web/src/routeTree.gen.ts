@@ -22,6 +22,7 @@ import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as PeopleRouteImport } from './routes/people'
 import { Route as NewRouteImport } from './routes/new'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as InboxRouteImport } from './routes/inbox'
 import { Route as FollowingRouteImport } from './routes/following'
 import { Route as FeedbackRouteImport } from './routes/feedback'
 import { Route as FavoritesRouteImport } from './routes/favorites'
@@ -114,6 +115,11 @@ const NewRoute = NewRouteImport.update({
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InboxRoute = InboxRouteImport.update({
+  id: '/inbox',
+  path: '/inbox',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FollowingRoute = FollowingRouteImport.update({
@@ -266,6 +272,7 @@ export interface FileRoutesByFullPath {
   '/favorites': typeof FavoritesRoute
   '/feedback': typeof FeedbackRoute
   '/following': typeof FollowingRoute
+  '/inbox': typeof InboxRoute
   '/login': typeof LoginRoute
   '/new': typeof NewRoute
   '/people': typeof PeopleRoute
@@ -309,6 +316,7 @@ export interface FileRoutesByTo {
   '/favorites': typeof FavoritesRoute
   '/feedback': typeof FeedbackRoute
   '/following': typeof FollowingRoute
+  '/inbox': typeof InboxRoute
   '/login': typeof LoginRoute
   '/new': typeof NewRoute
   '/people': typeof PeopleRoute
@@ -352,6 +360,7 @@ export interface FileRoutesById {
   '/favorites': typeof FavoritesRoute
   '/feedback': typeof FeedbackRoute
   '/following': typeof FollowingRoute
+  '/inbox': typeof InboxRoute
   '/login': typeof LoginRoute
   '/new': typeof NewRoute
   '/people': typeof PeopleRoute
@@ -397,6 +406,7 @@ export interface FileRouteTypes {
     | '/favorites'
     | '/feedback'
     | '/following'
+    | '/inbox'
     | '/login'
     | '/new'
     | '/people'
@@ -440,6 +450,7 @@ export interface FileRouteTypes {
     | '/favorites'
     | '/feedback'
     | '/following'
+    | '/inbox'
     | '/login'
     | '/new'
     | '/people'
@@ -482,6 +493,7 @@ export interface FileRouteTypes {
     | '/favorites'
     | '/feedback'
     | '/following'
+    | '/inbox'
     | '/login'
     | '/new'
     | '/people'
@@ -526,6 +538,7 @@ export interface RootRouteChildren {
   FavoritesRoute: typeof FavoritesRoute
   FeedbackRoute: typeof FeedbackRoute
   FollowingRoute: typeof FollowingRoute
+  InboxRoute: typeof InboxRoute
   LoginRoute: typeof LoginRoute
   NewRoute: typeof NewRoute
   PeopleRoute: typeof PeopleRoute
@@ -650,6 +663,13 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/inbox': {
+      id: '/inbox'
+      path: '/inbox'
+      fullPath: '/inbox'
+      preLoaderRoute: typeof InboxRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/following': {
@@ -874,6 +894,7 @@ const rootRouteChildren: RootRouteChildren = {
   FavoritesRoute: FavoritesRoute,
   FeedbackRoute: FeedbackRoute,
   FollowingRoute: FollowingRoute,
+  InboxRoute: InboxRoute,
   LoginRoute: LoginRoute,
   NewRoute: NewRoute,
   PeopleRoute: PeopleRoute,

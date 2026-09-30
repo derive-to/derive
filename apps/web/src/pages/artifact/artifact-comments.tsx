@@ -300,6 +300,7 @@ export function ArtifactComments(p: {
           document to the highlight without closing the sheet. */}
         {isMobile && !isAnon && (
           <MobileComments
+            hints={p.hints}
             editing={p.editing}
             open={panel === "open"}
             openThreads={p.openThreads}

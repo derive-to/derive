@@ -154,6 +154,8 @@ export const PERF_INDEXES: string[] = [
   `CREATE UNIQUE INDEX IF NOT EXISTS job_dedupe_open ON job (agent_id, asked_by, dedupe_key) WHERE dedupe_key IS NOT NULL AND status IN ('queued', 'running', 'needs_you')`,
   // A Derive machine is one sandbox per agent: at most one job holds it at a time.
   `CREATE UNIQUE INDEX IF NOT EXISTS job_machine_holder ON job (agent_id) WHERE machine_phase IS NOT NULL AND machine_phase <> 'released'`,
+  // A report page finds its job (GET /v1/jobs?report=).
+  `CREATE INDEX IF NOT EXISTS job_report ON job (org_id, report_artifact_id) WHERE report_artifact_id IS NOT NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS workflow_test_pending ON workflow_test (context_id) WHERE status = 'pending'`,
   `CREATE UNIQUE INDEX IF NOT EXISTS run_runtime_schedule_pending ON run (runtime_id) WHERE runtime_id IS NOT NULL AND reason = 'schedule' AND status IN ('queued', 'running')`,
   `CREATE UNIQUE INDEX IF NOT EXISTS automation_runtime ON automation (runtime_id)`,

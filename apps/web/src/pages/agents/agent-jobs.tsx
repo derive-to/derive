@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import {
   accountsQuery,
   agentJobsQuery,
+  agentQuery,
   jobQuery,
   modelCredentialsQuery,
   poolCredentialsQuery,
@@ -215,6 +216,16 @@ function JobRow({
         </button>
         <Meta>
           {asker && <span>{asker}</span>}
+          {job.report_short_id && (
+            <Link
+              to="/artifacts/$ref"
+              params={{ ref: job.report_short_id }}
+              data-testid={`job-report-link-${job.id}`}
+              className="font-medium text-foreground hover:underline"
+            >
+              Report
+            </Link>
+          )}
           {canSteer && (job.status === "running" || job.status === "queued" || needs) && (
             <Button
               type="button"
@@ -258,8 +269,16 @@ function JobRow({
   )
 }
 
+/** Whether this person may answer, cancel, or retry a job: the agent's manager, or its asker
+ *  while they may still ask it (canSteerJob). Reads the agent once (shared with its page). */
+export function useCanSteer(job: Job | undefined, meId: string | undefined): boolean {
+  const agent = useQuery({ ...agentQuery(job?.agent_id ?? ""), enabled: !!job && !!meId })
+  if (!job || !meId || !agent.data) return false
+  return agent.data.can_manage || (job.asked_by === meId && agent.data.can_ask)
+}
+
 /** A needs-you job's question, answered here: one of its options, or in words. */
-function AnswerBox({ job }: { job: Job }) {
+export function AnswerBox({ job }: { job: Job }) {
   const [text, setText] = useState("")
   const answer = useApiMutation({
     mutationFn: (a: { text?: string; option?: string }) => api.answerJob(job.id, a),
