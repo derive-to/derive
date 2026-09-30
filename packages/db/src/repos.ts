@@ -67,6 +67,7 @@ import type {
   NewJoinLink,
   NewMembership,
   NewNotification,
+  NewPlan,
   NewRenderJob,
   NewReport,
   NewReviewRound,
@@ -4580,6 +4581,18 @@ export function makeRepos(db: SqliteDb) {
       )
     return { contexts: buckets(contextRows), workflows: buckets(workflowRows) }
   }
+  const createPlan = async (p: NewPlan): Promise<PlanRecord> =>
+    (await db.insert(plan).values(p).returning().get()) as PlanRecord
+  const getPlan = async (id: string): Promise<PlanRecord | null> =>
+    (await db.select().from(plan).where(eq(plan.id, id)).get()) ?? null
+  const listPlans = async (orgId: string): Promise<PlanRecord[]> =>
+    db.select().from(plan).where(eq(plan.org_id, orgId)).orderBy(desc(plan.created_at)).all()
+  const deletePlan = async (id: string, orgId: string): Promise<void> => {
+    await db
+      .delete(plan)
+      .where(and(eq(plan.id, id), eq(plan.org_id, orgId)))
+      .run()
+  }
   const resolvePlan = async (
     orgId: string,
     userId: string | null,
@@ -5680,6 +5693,10 @@ export function makeRepos(db: SqliteDb) {
     listArtifactSkillLinkHistory,
     listSkillArtifactLinks,
     skillUsage,
+    createPlan,
+    getPlan,
+    listPlans,
+    deletePlan,
     resolvePlan,
     createConnection,
     getConnection,

@@ -76,6 +76,7 @@ import type {
   NewJoinLink,
   NewMembership,
   NewNotification,
+  NewPlan,
   NewRenderJob,
   NewReport,
   NewReviewRound,
@@ -5818,6 +5819,20 @@ export class PgMetaStore implements MetaStore {
           : [],
       )
     return { contexts: buckets(contextRows), workflows: buckets(workflowRows) }
+  }
+  async createPlan(p: NewPlan): Promise<PlanRecord> {
+    const rows = await this.db.insert(plan).values(p).returning()
+    return one(rows)
+  }
+  async getPlan(id: string): Promise<PlanRecord | null> {
+    const rows = await this.db.select().from(plan).where(eq(plan.id, id))
+    return rows[0] ?? null
+  }
+  listPlans(orgId: string): Promise<PlanRecord[]> {
+    return this.db.select().from(plan).where(eq(plan.org_id, orgId)).orderBy(desc(plan.created_at))
+  }
+  async deletePlan(id: string, orgId: string): Promise<void> {
+    await this.db.delete(plan).where(and(eq(plan.id, id), eq(plan.org_id, orgId)))
   }
   async resolvePlan(
     orgId: string,

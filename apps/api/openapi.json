@@ -10538,7 +10538,7 @@
         "tags": [
           "Contexts"
         ],
-        "summary": "Delete a context (its creator or a workspace manager).",
+        "summary": "Delete an imported paper (its creator or a workspace manager).",
         "parameters": [
           {
             "schema": {

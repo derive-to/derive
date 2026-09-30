@@ -1062,29 +1062,19 @@ export const paperImportRoutes = (ctx: AppContext) => {
       method: "delete",
       path: "/v1/contexts/{id}",
       tags: ["Contexts"],
-      summary: "Delete a context (its creator or a workspace manager).",
+      summary: "Delete an imported paper (its creator or a workspace manager).",
       request: { params: z.object({ id: z.string() }) },
       responses: { 204: { description: "The context was deleted." } },
     }),
     async (c) => {
-      // Management principals only (see POST) — the created_by match below must
-      // never be reachable by the runner's own token, whose registrant usually
-      // IS the context creator.
-      const owner = await managementPrincipal(c)
-      if (!owner) return bail(fail(c, 401, "unauthenticated"))
-      const x = await meta.getContext(c.req.param("id"))
-      // workspaceCan reads the CALLER's active workspace, so it only authorizes
-      // deletes of that workspace's contexts — without the org check, a manager of
-      // workspace B would pass it and reach into workspace A. Cross-workspace
-      // callers get the same 404 as a missing id.
-      if (!x || x.org_id !== (await activeWorkspace(c))) return bail(fail(c, 404, "not found"))
-      if (x.created_by !== owner && !(await workspaceCan(c, "manage")))
-        return bail(fail(c, 403, "forbidden"))
+      // The same guard as the other paper routes: a management principal (never a runner's
+      // key), the caller's own workspace, the creator or a manager, and only an imported
+      // paper. A Context that was not imported is not this route's to delete.
+      const x = await manageableImport(c)
+      if (x instanceof Response) return bail(x)
       // An imported Context IS its paper: one artifact, so discarding the Context takes it
       // (the artifact cascade removes the context, its job and its roster with it).
-      if (x.import_source)
-        await deleteArtifactAndUnindex(meta, ctx.search, x.manifest_artifact_id, x.org_id)
-      else await meta.deleteContext(x.id, x.org_id)
+      await deleteArtifactAndUnindex(meta, ctx.search, x.manifest_artifact_id, x.org_id)
       return c.body(null, 204)
     },
   )

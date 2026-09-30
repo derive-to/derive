@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process"
+import { execSync, spawnSync } from "node:child_process"
 import {
   chmodSync,
   existsSync,
@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
 import { describe, expect, it } from "vitest"
+import { loadJobRunnerConfig } from "../src/job-runner.js"
 import { OUTPUT_CONTRACT, parseAnswer, resolveArtifactHtml, runClaude } from "../src/runner.js"
 import { materializeSkills, skillDigest, skillSlug, writeSkill } from "../src/skills.js"
 
@@ -373,5 +374,49 @@ describe("skills", () => {
       expect(writeSkill(root, "safe", next)).toBe(skillDigest(next))
       expect(readFileSync(join(root, "safe", "SKILL.md"), "utf8")).toBe("new")
     })
+  })
+})
+
+describe("the runner command", () => {
+  const bin = join(import.meta.dirname, "..", "bin", "derive.js")
+  const run = (...args) =>
+    spawnSync(process.execPath, [bin, ...args], {
+      encoding: "utf8",
+      env: { ...process.env, DERIVE_TOKEN: "" },
+    })
+
+  it("points every retired Context form at the agent runner in one line", () => {
+    for (const args of [
+      ["runner", "serve", "ctx_abc"],
+      ["runner", "serve", "--context", "ctx_abc"],
+      ["runner", "run", "dkrun_abc"],
+      ["runner", "run", "dksess_abc"],
+      ["runner", "doctor"],
+      ["runner", "install"],
+      ["context", "push"],
+      ["agent", "dev"],
+      ["workflow", "run"],
+    ]) {
+      const out = run(...args)
+      expect(out.status, args.join(" ")).toBe(1)
+      expect(out.stderr.trim().split("\n"), args.join(" ")).toHaveLength(1)
+      expect(out.stderr).toContain("derive runner serve --agent <id>")
+    }
+  })
+
+  it("reads the agent key from --token-file, flags first, keeping it out of the process list", () => {
+    const d = mkdtempSync(join(tmpdir(), "runner-token-"))
+    const file = join(d, "key")
+    writeFileSync(file, "dk_agt_from_file\n")
+    expect(loadJobRunnerConfig({}, { agent: "ag_1", "token-file": file }).token).toBe(
+      "dk_agt_from_file",
+    )
+    expect(
+      loadJobRunnerConfig({ DERIVE_TOKEN: "dk_agt_env" }, { agent: "ag_1", "token-file": file })
+        .token,
+    ).toBe("dk_agt_from_file")
+    expect(() => loadJobRunnerConfig({}, { agent: "ag_1", "token-file": join(d, "none") })).toThrow(
+      /--token-file/,
+    )
   })
 })

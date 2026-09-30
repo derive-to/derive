@@ -121,7 +121,7 @@ export const makeDeltaStream = (opts: DeltaStreamOpts): DeltaStream => {
   // while still going quiet almost immediately for a turn nobody is actually watching.
   //
   // A reader who opens the page mid-answer is not stranded either way: the terminal
-  // `session.settled` still fires, and settling is what makes a client re-read the transcript.
+  // `job.settled` still fires, and settling is what makes a client re-read the transcript.
   // They lose the animation, not the answer.
   let streaming = true
   let consecutiveMisses = 0

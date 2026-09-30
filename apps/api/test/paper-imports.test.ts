@@ -1792,6 +1792,29 @@ describe("paper imports from arXiv", () => {
       page.OffscreenCanvas = saved.canvas
     }
   })
+  it("deletes only imported papers: a Context that was not imported is not found", async () => {
+    const { app, meta } = makeAuthedApp("paper-delete-guard", [owner, member], "editor")
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const manifest = await (
+      await publishAs(app, "# Instructions", { title: "Instructions" }, as(owner.email))
+    ).json()
+    const art = await meta.getByShortId(manifest.short_id)
+    const x = await meta.createContext({
+      id: "ctx_plain_guard",
+      org_id: "default",
+      name: "Plain",
+      agent_id: "ag_plain_guard",
+      manifest_artifact_id: art?.id ?? "",
+      created_by: owner.id,
+    })
+    const res = await app.request(`/v1/contexts/${x.id}`, {
+      method: "DELETE",
+      headers: as(owner.email),
+    })
+    expect(res.status).toBe(404)
+    expect(await meta.getContext(x.id)).not.toBeNull()
+    expect(await meta.getByShortId(manifest.short_id)).not.toBeNull()
+  })
 })
 
 // ---- the same papers over MCP -------------------------------------------------------

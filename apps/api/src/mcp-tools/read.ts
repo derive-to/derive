@@ -281,7 +281,7 @@ export function registerReadTool(tc: ToolContext): void {
         short_id: z
           .string()
           .describe(
-            "An artifact short id. Also a ctx_ id/name, or a derive:// URI (skills, brandprint, decks/template, sources).",
+            "An artifact short id. Also an imported paper's ctx_ id, or a derive:// URI (skills, brandprint, decks/template, sources).",
           ),
         section: z
           .string()

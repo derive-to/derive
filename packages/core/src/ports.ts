@@ -2186,10 +2186,17 @@ export interface AgentStore {
   /** Flip whether Derive's managed executor serves this agent. Workspace-scoped by
    *  (id, org) like deleteAgent; null when the agent isn't in this workspace. */
   setAgentHosted(id: string, orgId: string, hosted: 0 | 1): Promise<AgentRecord | null>
-  // ---- Automations + runs (the generic agent-work primitive) -------------
-  /** One agent by id — resolves a run capability token to its agent principal. */
+  /** One agent by id — resolves a job capability token to its agent principal. */
   getAgent(id: string): Promise<AgentRecord | null>
-  // ---- Plans (bring-your-own model + broker credentials) -----------------
+  // ---- Plans (bring-your-own broker key + monthly limit) -----------------
+  /** Attach a plan. */
+  createPlan(p: NewPlan): Promise<PlanRecord>
+  /** One plan by id, or null. */
+  getPlan(id: string): Promise<PlanRecord | null>
+  /** A workspace's plans, newest first (personal + pool). */
+  listPlans(orgId: string): Promise<PlanRecord[]>
+  /** Remove a plan, org-scoped so a caller can't reach across tenants. */
+  deletePlan(id: string, orgId: string): Promise<void>
   /** The effective plan for (org, user, kind): the user's personal plan if any, else the
    *  workspace-pool plan (user_id null), else null. Money falls back; the caller treats null
    *  as the loud-failure case (no meter available). */

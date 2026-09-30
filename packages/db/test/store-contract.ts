@@ -4392,6 +4392,70 @@ export function runStoreContract(
     })
   })
 
+  describe(`${label}: plans (broker key + monthly limit)`, () => {
+    it("resolves a plan personal-first, then the workspace pool", async () => {
+      const pool = await store.createPlan({
+        id: uuid(),
+        org_id: ORG,
+        user_id: null,
+        kind: "model",
+        provider: "anthropic",
+        secret_enc: "enc_pool",
+      })
+      expect(await store.resolvePlan(ORG, "u_amy", "model")).toMatchObject({ id: pool.id })
+      const mine = await store.createPlan({
+        id: uuid(),
+        org_id: ORG,
+        user_id: "u_amy",
+        kind: "model",
+        provider: "anthropic",
+        secret_enc: "enc_amy",
+      })
+      // Whoever initiated the run pays for it: their own plan outranks the shared pool.
+      expect(await store.resolvePlan(ORG, "u_amy", "model")).toMatchObject({ id: mine.id })
+      // A clock-fired run has no person behind it, so it can only reach the pool.
+      expect(await store.resolvePlan(ORG, null, "model")).toMatchObject({ id: pool.id })
+      // Hands and thinking are billed separately: a model plan never pays for a broker.
+      expect(await store.resolvePlan(ORG, "u_amy", "broker")).toBeNull()
+
+      expect(await store.getPlan(mine.id)).toMatchObject({ provider: "anthropic" })
+      expect((await store.listPlans(ORG)).map((p) => p.id)).toEqual(
+        expect.arrayContaining([pool.id, mine.id]),
+      )
+      await store.deletePlan(mine.id, ORG)
+      expect(await store.getPlan(mine.id)).toBeNull()
+      // Detached, the run falls back to the pool rather than failing to resolve.
+      expect(await store.resolvePlan(ORG, "u_amy", "model")).toMatchObject({ id: pool.id })
+    })
+
+    it("keeps plans inside their workspace — resolve, list, and delete are all org-scoped", async () => {
+      // Every assertion above lives in ONE workspace, so all three org filters could be
+      // deleted from the driver and the suite would still pass. A plan is a payment
+      // credential; "another tenant can spend it" has to be a test, not a code comment.
+      const other = `org_plan_${uuid()}`
+      const theirs = await store.createPlan({
+        id: uuid(),
+        org_id: other,
+        user_id: "u_amy",
+        kind: "model",
+        provider: "anthropic",
+        secret_enc: "enc_theirs",
+      })
+
+      // Same user, same kind, different workspace: must not resolve across the boundary.
+      const hereForAmy = await store.resolvePlan(ORG, "u_amy", "model")
+      expect(hereForAmy?.id).not.toBe(theirs.id)
+      expect((await store.listPlans(ORG)).map((p) => p.id)).not.toContain(theirs.id)
+
+      // A delete naming the wrong workspace must not take effect.
+      await store.deletePlan(theirs.id, ORG)
+      expect(await store.getPlan(theirs.id)).toMatchObject({ id: theirs.id })
+      // …and the rightful workspace can still remove it.
+      await store.deletePlan(theirs.id, other)
+      expect(await store.getPlan(theirs.id)).toBeNull()
+    })
+  })
+
   describe(`${label}: integration settings + Slack`, () => {
     it("returns defaults for an unset org, then round-trips an override (insert + upsert)", async () => {
       const settingsOrg = `org_${uuid()}`

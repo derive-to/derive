@@ -233,6 +233,23 @@ To roll back an image-only problem, put the previous digest back in `.env` and r
 the pre-upgrade backup into a fresh data volume and validate that copy before switching back; never
 delete the original volume during an upgrade.
 
+### Upgrading past the agents release
+
+This release replaces Contexts, automations and stored model plans with agents, schedules and
+model accounts. The old tables stay in the database, but nothing reads them any more, so an
+instance that used them has to carry its data across once.
+
+- **Postgres.** Run `scripts/agents-cutover.sql` from the repository with `psql`. Without
+  `-v apply=1` it only prints what it would change; with it, it applies everything in one
+  transaction. It is additive and idempotent, so running it twice changes nothing.
+- **SQLite and D1.** Nothing is carried automatically. Recreate what you need by hand: each
+  Context you used becomes an agent (its manifest page is the agent's instructions), each stored
+  model credential becomes a model account under Settings › Accounts, and each scheduled
+  automation becomes a schedule on its agent.
+
+`DERIVE_HOSTED_RUNS` and `DERIVE_LOOP_RUNS` no longer do anything; the server logs a warning at
+startup while either is set.
+
 ## Build the current checkout
 
 Use this path to test unreleased code. The resulting image is called `derive:local`; it is not a

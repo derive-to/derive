@@ -853,6 +853,28 @@ if (cmd === "doctor") {
 // report; `run <dkjob_ token>` is a Derive machine's one job. The older Context and automation
 // forms (`runner serve <ctx_id>`, `runner run <dkrun_ token>`, doctor, install) retired with
 // the lanes they served.
+// Contexts became agents. Old forms get one line pointing at the new one instead of a usage
+// dump, since the person typing them already knows what they meant to run.
+const AGENTS_NOW =
+  "Contexts are now agents: run `derive runner serve --agent <id>` with the key from the agent's Settings tab in Derive (DERIVE_TOKEN or --token-file)."
+if (
+  cmd === "context" ||
+  cmd === "workflow" ||
+  (cmd === "agent" && (positional[0] === "push" || positional[0] === "dev")) ||
+  (cmd === "runner" &&
+    (positional[0] === "doctor" ||
+      positional[0] === "install" ||
+      flags.context ||
+      positional.slice(1).some((p) => p.startsWith("ctx_")) ||
+      (positional[0] === "run" &&
+        /^dk(run|sess|wfr|attempt)_/.test(
+          positional[1] ?? flags.token ?? process.env.DERIVE_TOKEN ?? "",
+        ))))
+) {
+  console.error(AGENTS_NOW)
+  process.exit(1)
+}
+
 if (cmd === "runner") {
   const sub = positional.shift()
   const oneJob =
@@ -860,7 +882,7 @@ if (cmd === "runner") {
     (positional[0] ?? flags.token ?? process.env.DERIVE_TOKEN ?? "").startsWith("dkjob_")
   if (!(oneJob || sub === "serve" || sub === "once")) {
     console.error(`usage:
-  derive runner serve --agent <id> [--server url] (key in DERIVE_TOKEN) [--cwd dir] [--model m] [--mock]
+  derive runner serve --agent <id> [--server url] (key in DERIVE_TOKEN or --token-file f) [--cwd dir] [--model m] [--mock]
                       work an agent's jobs on this machine (the command an agent's page shows)
   derive runner once  --agent <id> [same flags]   work what is queued once and exit (cron, Actions)
   derive runner run   <dkjob_ token> [--server url] [--cwd dir] [--model m] [--mock]

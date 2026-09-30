@@ -507,12 +507,21 @@ export const capabilityReport = (env: Env): CapabilityState[] =>
  * means the feature is silently OFF — almost always a mistake. The caller logs these; this
  * never throws, so a stray env var can't take down a running instance.
  */
-export const configWarnings = (env: Env): string[] =>
-  CAPABILITIES.filter((cap) => statusOf(cap, env) === "partial").map((cap) => {
+/** Settings the agents cutover retired. Setting one does nothing now, which is worth saying
+ *  out loud: an operator who set it expects hosted automation runs that no longer exist. */
+const RETIRED_VARS = ["DERIVE_HOSTED_RUNS", "DERIVE_LOOP_RUNS"]
+
+export const configWarnings = (env: Env): string[] => [
+  ...CAPABILITIES.filter((cap) => statusOf(cap, env) === "partial").map((cap) => {
     const have = cap.requires.filter((k) => isSet(env, k))
     const missing = cap.requires.filter((k) => !isSet(env, k))
     return `${cap.label} is half-configured — ${have.join(", ")} set but ${missing.join(", ")} missing, so it stays OFF. Set ${missing.join(", ")}, or unset ${have.join(", ")}.`
-  })
+  }),
+  ...RETIRED_VARS.filter((k) => isSet(env, k)).map(
+    (k) =>
+      `${k} is set but does nothing: hosted automation runs were replaced by agents. Agents run on their owner's runner or on a Derive machine; see the upgrade notes.`,
+  ),
+]
 
 // ---- .env.example generation ----------------------------------------------
 const HEADER =

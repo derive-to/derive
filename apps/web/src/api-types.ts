@@ -5599,7 +5599,7 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        /** Delete a context (its creator or a workspace manager). */
+        /** Delete an imported paper (its creator or a workspace manager). */
         delete: {
             parameters: {
                 query?: never;

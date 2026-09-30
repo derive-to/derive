@@ -50,6 +50,7 @@ import { notificationRoutes } from "./routes/notifications"
 import { oauthRoutes } from "./routes/oauth"
 import { paperFileRoutes } from "./routes/paper-files"
 import { paperImportRoutes } from "./routes/paper-imports"
+import { planRoutes } from "./routes/plans"
 import { rawRoutes } from "./routes/raw"
 import { realtimeRoutes } from "./routes/realtime"
 import { reviewRoutes } from "./routes/review"
@@ -509,6 +510,7 @@ export function createApp(deps: AppDeps): Hono {
     seenRoutes,
     connectionRoutes,
     credentialRoutes,
+    planRoutes,
     mcpOauthRoutes,
     conciergeRoutes,
     skillRoutes,
