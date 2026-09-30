@@ -342,6 +342,73 @@ describe("jobs: who may ask, see, and run", () => {
   })
 })
 
+describe("jobs: what a teammate cannot do with someone else's agent or job", () => {
+  it("an agent cannot be given a teammate's personal connection", async () => {
+    const { app, meta } = await setup("jobs-conn-bind")
+    await meta.createConnection({
+      id: "cn_ed_gmail",
+      org_id: "default",
+      user_id: ed.id,
+      kind: "oauth",
+      broker: "none",
+      toolkit: "gmail",
+      broker_ref: "ed_gmail",
+      status: "active",
+    })
+    const made = await app.request(
+      "/v1/agents",
+      jsonAs(as(owner.email), { name: "Inbox", connection_ids: ["cn_ed_gmail"] }),
+    )
+    expect(made.status).toBe(400)
+    const agent = await createAgent(app)
+    const edit = await app.request(`/v1/agents/${agent.id}`, {
+      ...jsonAs(as(owner.email), { connection_ids: ["cn_ed_gmail"] }),
+      method: "PATCH",
+    })
+    expect(edit.status).toBe(400)
+    // Ed may attach their own to an agent Ed makes.
+    const edsOwn = await app.request(
+      "/v1/agents",
+      jsonAs(as(ed.email), { name: "Ed's inbox", connection_ids: ["cn_ed_gmail"] }),
+    )
+    expect(edsOwn.status).toBe(201)
+  })
+
+  it("only the asker or the agent's manager steers a job; everyone else only sees it", async () => {
+    const { app } = await setup("jobs-steer")
+    const agent = await createAgent(app)
+    const job = (await (await ask(app, ed.email, agent.id, "Mine")).json()) as { id: string }
+    // The asker may cancel their own job; on a job the owner asked, Ed only watches.
+    const other = await app.request(`/v1/jobs/${job.id}/cancel`, jsonAs(as(ed.email), {}))
+    expect(other.status).toBe(200)
+    const again = (await (await ask(app, owner.email, agent.id, "Owner's")).json()) as {
+      id: string
+    }
+    const byEd = await app.request(`/v1/jobs/${again.id}/cancel`, jsonAs(as(ed.email), {}))
+    expect(byEd.status).toBe(403)
+    const seen = await app.request(`/v1/jobs/${again.id}`, { headers: as(ed.email) })
+    expect(seen.status).toBe(200)
+  })
+
+  it("a refused late report still counts what the run spent", async () => {
+    const { app, meta } = await setup("jobs-late-cost")
+    const agent = await createAgent(app)
+    const job = (await (await ask(app, ed.email, agent.id, "Go")).json()) as { id: string }
+    const [p] = await pull(app, agent)
+    await app.request(`/v1/jobs/${job.id}/cancel`, jsonAs(as(ed.email), {}))
+    const late = await app.request(
+      `/v1/jobs/${job.id}/report`,
+      jsonAs(bearer(agent.token), {
+        started_at: p?.started_at,
+        status: "succeeded",
+        cost_micro_usd: 4200,
+      }),
+    )
+    expect(late.status).toBe(409)
+    expect(await meta.getJob(job.id)).toMatchObject({ status: "cancelled", cost_micro_usd: 4200 })
+  })
+})
+
 describe("jobs: schedules", () => {
   it("a schedule makes one job per window, not before it existed, and not while paused", async () => {
     const { app, meta } = await setup("jobs-schedule")
@@ -374,12 +441,16 @@ describe("jobs: schedules", () => {
     const jobs = await meta.listJobs({ orgId: "default", agentId: a.id })
     expect(jobs).toHaveLength(1)
     expect(jobs[0]).toMatchObject({ kind: "scheduled", instruction: "Rewrite the Stripe MRR page" })
+    // While that run still waits (its runner is offline), the next window folds into it.
+    await jobTick({ meta }, new Date(at.getTime() + 86_400_000))
+    expect(await meta.listJobs({ orgId: "default", agentId: a.id })).toHaveLength(1)
     // Paused: the next window makes nothing.
     await app.request(`/v1/agents/${a.id}`, {
       ...jsonAs(as(owner.email), { paused: true }),
       method: "PATCH",
     })
-    await jobTick({ meta }, new Date(at.getTime() + 86_400_000))
+    await meta.updateJob(jobs[0]?.id ?? "", { status: "succeeded" })
+    await jobTick({ meta }, new Date(at.getTime() + 2 * 86_400_000))
     expect(await meta.listJobs({ orgId: "default", agentId: a.id })).toHaveLength(1)
     // A schedule can be switched off and removed by its owner, not by another editor.
     expect(
@@ -420,7 +491,7 @@ describe("jobs: schedules", () => {
 })
 
 describe("jobs: which account a job runs with", () => {
-  it("the asker's own account, then the workspace's shared one; an assigned account wins", async () => {
+  it("an owner-machine job never runs on a teammate's key; shared, then assigned accounts cover it", async () => {
     const { app } = await setup("jobs-accounts")
     const a = await createAgent(app)
     const addAccount = async (who: string, body: Record<string, unknown>) => {
@@ -453,25 +524,29 @@ describe("jobs: which account a job runs with", () => {
     const [p] = await pull(app, a)
     const credFor = async () =>
       (await (
-        await app.request(`/v1/jobs/${job.id}/account`, { headers: bearer(a.token) })
+        await app.request(
+          `/v1/jobs/${job.id}/account?claim=${encodeURIComponent(p?.started_at ?? "")}`,
+          {
+            headers: bearer(a.token),
+          },
+        )
       ).json()) as {
         credential: { value: string } | null
         source: string
       }
-    expect(await credFor()).toMatchObject({ credential: { value: "sk-ed-2222" }, source: "asker" })
-
-    // Ed disconnects theirs: the shared account covers the job.
+    // The agent runs on its creator's machine, so Ed's own key never leaves for it: whoever
+    // runs a job holds its credential. The shared account covers Ed's ask.
+    expect(await credFor()).toMatchObject({
+      credential: { value: "sk-shared-1111" },
+      source: "pool",
+    })
     const accounts = (await (
       await app.request("/v1/accounts", { headers: as(ed.email) })
     ).json()) as {
       accounts: { id: string; mine: boolean; shared: boolean }[]
     }
     expect(accounts.accounts.filter((x) => x.shared)).toHaveLength(1)
-    await app.request(`/v1/accounts/${mine.id}`, { method: "DELETE", headers: as(ed.email) })
-    expect(await credFor()).toMatchObject({
-      credential: { value: "sk-shared-1111" },
-      source: "pool",
-    })
+    expect(accounts.accounts.find((x) => x.mine)?.id).toBe(mine.id)
 
     // Its manager assigns their own account; a teammate's cannot be assigned.
     const own = await addAccount(owner.email, { secret: "sk-owner-3333" })
@@ -488,7 +563,6 @@ describe("jobs: which account a job runs with", () => {
     expect(
       (await app.request(`/v1/jobs/${job.id}/account`, { headers: as(owner.email) })).status,
     ).toBe(401)
-    void p
   })
 })
 
@@ -526,12 +600,16 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
     expect(done.messages.at(-1)?.author_kind).toBe("agent")
   })
 
-  it("runs with the asker's account, and a retryable failure goes back in the queue", async () => {
+  it("runs with its creator's account, and a retryable failure goes back in the queue", async () => {
     const { app } = await setup("jobs-cli-account")
     const agent = await createAgent(app)
     await app.request(
       "/v1/accounts",
-      jsonAs(as(ed.email), { provider: "claude", kind: "api_key", secret: "sk-ant-ed-00001234" }),
+      jsonAs(as(owner.email), {
+        provider: "claude",
+        kind: "api_key",
+        secret: "sk-ant-own-0001234",
+      }),
     )
     const job = (await (await ask(app, ed.email, agent.id, "Go")).json()) as { id: string }
     const { cfg, client } = runnerFor(app, agent)
@@ -545,7 +623,9 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
       },
     })
     expect(out).toBe("failed")
-    expect(sawEnv.ANTHROPIC_API_KEY).toBe("sk-ant-ed-00001234")
+    expect(sawEnv.ANTHROPIC_API_KEY).toBe("sk-ant-own-0001234")
+    // The model never inherits the agent's key.
+    expect(sawEnv.DERIVE_TOKEN).toBeUndefined()
     const after = (await (
       await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
     ).json()) as {

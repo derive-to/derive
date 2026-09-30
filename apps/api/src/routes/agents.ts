@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 import {
   type AgentRecord,
+  capRole,
   JOB_OPEN_STATUSES,
   newId,
   normalizeSelectors,
@@ -10,6 +11,7 @@ import {
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
+import { connectionBindError } from "../lib/broker"
 import { readEnvironmentBindings } from "../lib/context-environment"
 import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
@@ -205,8 +207,39 @@ export const agentRoutes = (ctx: AppContext) => {
     if (full) return (await canManageAgent(meta, agent, full)) ? full : null
     const who = await ctx.actingHuman(c)
     const caller = await ctx.agentFor(c)
-    return who && caller?.id.startsWith("oauth:") && agent.created_by === who.id ? who.id : null
+    if (!who || !caller?.id.startsWith("oauth:") || caller.org_id !== agent.org_id) return null
+    if (!(await ctx.workspaceCan(c, "publish"))) return null
+    return (await canManageAgent(meta, agent, who.id)) && agent.created_by === who.id
+      ? who.id
+      : null
   }
+
+  /** Refuse a definition the manager could not grant: a role above their own seat, or
+   *  connections they may not attach (a teammate's personal ones; workspace ones without
+   *  manage). The agent acts with these, so they are checked where they are set. */
+  const definitionError = async (
+    c: Parameters<typeof requireUser>[0],
+    org: string,
+    manager: string | null,
+    b: { role?: unknown; connection_ids?: string[] },
+  ): Promise<string | null> => {
+    if (typeof b.role === "string" && manager) {
+      const seat = (await meta.getMembership(org, manager).catch(() => null))?.role
+      if (!seat || capRole(b.role as Role, seat) !== b.role)
+        return "an agent's role cannot be above your own"
+    }
+    if (b.connection_ids?.length)
+      return connectionBindError(
+        meta,
+        org,
+        { userId: manager, canManage: await ctx.workspaceCan(c, "manage") },
+        b.connection_ids,
+      )
+    return null
+  }
+
+  const openJobs = (orgId: string, agentId: string) =>
+    meta.listJobs({ orgId, agentId, status: [...JOB_OPEN_STATUSES], limit: 200 })
 
   // What an agent's definition may say, on create and on edit. Everything optional on edit.
   const AgentFields = z.object({
@@ -302,6 +335,11 @@ export const agentRoutes = (ctx: AppContext) => {
           return bail(fail(c, 400, "instructions must be a page in this workspace you can read"))
         instructionsId = art.id
       }
+      const creator = (await privateOwnerId(c)) ?? null
+      const refused = await definitionError(c, org, creator, b)
+      if (refused) return bail(fail(c, 400, refused))
+      if (b.machine === "derive")
+        return bail(fail(c, 400, "Derive machines are not available yet; use machine: owner"))
       if (b.schedule && !validCron(b.schedule.cron, b.schedule.tz))
         return bail(fail(c, 400, "schedule.cron is not a valid cron expression for that timezone"))
       const token = `dk_agt_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`
@@ -316,7 +354,7 @@ export const agentRoutes = (ctx: AppContext) => {
           // The agent acts on behalf of whoever created it: their id keys attribution
           // (author_id) and ownership at publish. privateOwnerId so a creation from an OAuth
           // session attributes to the GRANTOR, not to nobody.
-          created_by: (await privateOwnerId(c)) ?? null,
+          created_by: creator,
           description: b.description ?? null,
           instructions_artifact_id: instructionsId,
           machine: b.machine ?? "owner",
@@ -348,7 +386,7 @@ export const agentRoutes = (ctx: AppContext) => {
       const server = deps.baseUrl?.replace(/\/+$/, "") ?? "https://derive.to"
       const runner_command =
         agent.machine === "owner"
-          ? `npx -y @derive-to/cli runner serve --agent ${agent.id} --token ${token} --server ${server}`
+          ? `DERIVE_TOKEN=${token} npx -y @derive-to/cli runner serve --agent ${agent.id} --server ${server}`
           : null
       // The only place the raw key is ever exposed.
       return c.json(
@@ -444,6 +482,10 @@ export const agentRoutes = (ctx: AppContext) => {
           instructions_artifact_id = art.id
         }
       }
+      const refused = await definitionError(c, org, who, b)
+      if (refused) return bail(fail(c, 400, refused))
+      if (b.machine === "derive")
+        return bail(fail(c, 400, "Derive machines are not available yet; use machine: owner"))
       // An agent may run on its manager's own account or a shared one, never a teammate's.
       if (b.account_id) {
         const acct = await meta.getAccount(b.account_id)
@@ -630,9 +672,13 @@ export const agentRoutes = (ctx: AppContext) => {
       // Scope the delete to the caller's workspace: deleteAgent is keyed by
       // (id, org) so an Admin can't delete another workspace's agent by id.
       await meta.deleteAgent(id, org)
-      // Its open work has nobody left to do it.
-      const open = await meta.listJobs({ orgId: org, agentId: id, status: [...JOB_OPEN_STATUSES] })
-      for (const j of open) await cancelJob({ meta, bus: ctx.backplane }, j)
+      // Its open work and its schedules have nobody left to serve them.
+      for (let open = await openJobs(org, id); open.length; open = await openJobs(org, id)) {
+        let moved = 0
+        for (const j of open) if (await cancelJob({ meta, bus: ctx.backplane }, j)) moved++
+        if (moved === 0) break
+      }
+      for (const t of await meta.listTriggers(org, id)) await meta.deleteTrigger(t.id, org)
       // Drop it from the owner-lend list so stale ids don't accumulate in org settings.
       const settings = await meta.getOrgSettings(org)
       if (settings.ownerLendAgents?.includes(id))

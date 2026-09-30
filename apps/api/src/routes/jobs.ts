@@ -23,6 +23,7 @@ import {
   canAskAgent,
   cancelJob,
   canManageAgent,
+  canSteerJob,
   followUpJob,
   jobJson,
   pullJobs,
@@ -313,8 +314,10 @@ export const jobRoutes = (ctx: AppContext) => {
       const who = await personFor(c)
       if (who instanceof Response) return bail(who)
       const agent = await meta.getAgent(job.agent_id)
-      if (!agent || !(await canAskAgent(meta, agent, who.id)))
-        return bail(fail(c, 403, "you cannot ask this agent"))
+      if (!agent || !(await canSteerJob(meta, agent, job, who.id)))
+        return bail(
+          fail(c, 403, "only the person who asked, or the agent's manager, can follow up"),
+        )
       if (job.status === "cancelled") return bail(fail(c, 409, "this job was cancelled; ask again"))
       const b = await readJson(c, z.object({ body_md: z.string().trim().min(1).max(20_000) }))
       if (b instanceof Response) return bail(b)
@@ -350,8 +353,10 @@ export const jobRoutes = (ctx: AppContext) => {
         const who = await personFor(c)
         if (who instanceof Response) return bail(who)
         const agent = await meta.getAgent(job.agent_id)
-        if (!agent || !(await canAskAgent(meta, agent, who.id)))
-          return bail(fail(c, 403, "you cannot act on this agent's jobs"))
+        if (!agent || !(await canSteerJob(meta, agent, job, who.id)))
+          return bail(
+            fail(c, 403, "only the person who asked, or the agent's manager, can do that"),
+          )
         const out = await act(job, c, who.id)
         if (!out) return bail(fail(c, 409, "this job cannot do that from where it is"))
         if ("error" in out) return bail(fail(c, 400, out.error))
@@ -390,8 +395,14 @@ export const jobRoutes = (ctx: AppContext) => {
   const runnerFor = async (c: Context, agentId: string): Promise<AgentRecord | Response> => {
     const a = await agentFor(c)
     if (!a) return fail(c, 401, "an agent key is required")
+    // A capability token minted for one old-lane run or session is not a runner for the
+    // agent's other work.
+    if (ctx.agentRunScope(c) || ctx.agentSessionScope(c) || ctx.agentWorkflowScope(c))
+      return fail(c, 403, "this token is scoped to other work")
     if (a.id === agentId && !a.id.startsWith("oauth:")) return a
     if (a.id.startsWith("oauth:")) {
+      // Only the agent's own creator's session may run it: whoever runs a job holds the
+      // credential and environment it runs with.
       const who = await actingHuman(c)
       const target = await meta.getAgent(agentId)
       if (
@@ -399,7 +410,7 @@ export const jobRoutes = (ctx: AppContext) => {
         target &&
         target.machine === "owner" &&
         target.org_id === a.org_id &&
-        (await meta.getMembership(target.org_id, who.id)) &&
+        target.created_by === who.id &&
         (await canManageAgent(meta, target, who.id))
       )
         return target
@@ -417,8 +428,7 @@ export const jobRoutes = (ctx: AppContext) => {
     if (job.org_id !== agent.org_id) return fail(c, 404, "not found")
     if (job.status !== "running") return fail(c, 409, "this job is not running")
     const claim = c.req.header("x-derive-claim") ?? c.req.query("claim")
-    if (claim !== undefined && claim !== job.started_at)
-      return fail(c, 409, "this claim has been superseded")
+    if (claim !== job.started_at) return fail(c, 409, "this claim has been superseded")
     return { agent, job }
   }
 

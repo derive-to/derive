@@ -872,7 +872,7 @@ if (cmd === "runner") {
   const sub = positional.shift()
   if (!["serve", "once", "run", "doctor", "install"].includes(sub ?? "")) {
     console.error(`usage:
-  derive runner serve  --agent <id> --token <key> [--server url] [--cwd dir] [--model m] [--mock]
+  derive runner serve  --agent <id> [--server url] (key in DERIVE_TOKEN) [--cwd dir] [--model m] [--mock]
                        work an agent's jobs on this machine (the command an agent's page shows)
   derive runner serve  [ctx_id] [--server url] [--token t | --token-file f] [--env-file f]
                        [--cwd dir] [--claude-bin path] [--model m] [--poll ms] [--timeout ms] [--mock]

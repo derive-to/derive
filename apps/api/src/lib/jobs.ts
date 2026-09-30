@@ -81,10 +81,22 @@ export const canManageAgent = async (
   agent: AgentRecord,
   userId: string,
 ): Promise<boolean> => {
-  if (agent.created_by === userId) return true
+  // Both doors need a live seat: a creator who has left the workspace manages nothing.
   const m = await meta.getMembership(agent.org_id, userId).catch(() => null)
-  return m?.role === "owner"
+  if (!m) return false
+  return m.role === "owner" || (agent.created_by === userId && m.role !== "viewer")
 }
+
+/** A person may act on a job (follow up, cancel, retry, answer) when they asked it or manage
+ *  its agent. Seeing a job is wider (every member); steering someone else's is not. */
+export const canSteerJob = async (
+  meta: MetaStore,
+  agent: AgentRecord,
+  job: JobRecord,
+  userId: string,
+): Promise<boolean> =>
+  (job.asked_by === userId && (await canAskAgent(meta, agent, userId))) ||
+  (await canManageAgent(meta, agent, userId))
 
 // ---- Asking ------------------------------------------------------------------------------
 
@@ -294,9 +306,17 @@ export const reportJob = async (
   const job = await meta.getJob(jobId)
   if (!job || job.agent_id !== agent.id || job.org_id !== agent.org_id)
     return { error: "not found", status: 404 }
-  if (job.status !== "running") return { error: "this job is not running", status: 409 }
-  if (r.started_at !== job.started_at)
-    return { error: "this claim has been superseded", status: 409 }
+  if (job.status !== "running" || r.started_at !== job.started_at) {
+    // The answer lands nowhere, but the money a superseded or cancelled run spent is real:
+    // count it, or the workspace's spend undercounts exactly the runs that went wrong.
+    if (r.cost_micro_usd)
+      await meta
+        .updateJob(job.id, { cost_micro_usd: (job.cost_micro_usd ?? 0) + r.cost_micro_usd })
+        .catch(() => null)
+    return job.status !== "running"
+      ? { error: "this job is not running", status: 409 }
+      : { error: "this claim has been superseded", status: 409 }
+  }
   const fence = { status: "running" as JobStatus, started_at: job.started_at }
   const now = iso()
 
@@ -404,6 +424,9 @@ export const materializeTriggers = async (
     if (window < t.created_at) continue
     const last = await meta.latestJobForTrigger(t.id)
     if (last?.scheduled_for && last.scheduled_for >= window) continue
+    // One waiting run per schedule: while the last one is still queued (its runner is offline),
+    // later windows fold into it instead of piling up to replay all at once.
+    if (last?.status === "queued") continue
     if (!writesOn.has(t.org_id)) writesOn.set(t.org_id, !(await agentWritesOff(meta, t.org_id)))
     if (!writesOn.get(t.org_id)) continue
     if (!agents.has(t.agent_id)) agents.set(t.agent_id, await meta.getAgent(t.agent_id))

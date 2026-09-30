@@ -12,7 +12,10 @@ import { fallbackPayerTiers } from "./payer"
 // WHICH MODEL ACCOUNT A JOB RUNS WITH, resolved once for every runner.
 //
 // In order: the account assigned to the agent, the asker's own account for that provider,
-// the workspace pool. Until the cutover migrates stored credentials into `model_account`, the
+// the workspace pool. The asker's tier applies only where the asker's secret stays on a machine
+// nobody else holds: a Derive machine, or the asker's own agent. On a teammate's `owner`
+// machine the job runs on the agent creator's account instead, since whoever runs the job holds
+// the credential it runs with. Until the cutover migrates stored credentials into `model_account`, the
 // legacy tiers (the asker's model plan, an owner-lent plan, the pool plan) follow, so runners
 // that work today keep working.
 
@@ -55,10 +58,14 @@ export const resolveJobCredential = async (
     "agent",
   )
   if (assigned) return assigned
-  if (job.asked_by) {
+  const payer =
+    job.asked_by && (agent.machine === "derive" || job.asked_by === agent.created_by)
+      ? job.asked_by
+      : agent.created_by
+  if (payer) {
     const mine = tryAccount(
-      accounts.find((a) => a.user_id === job.asked_by && a.provider === want),
-      "asker",
+      accounts.find((a) => a.user_id === payer && a.provider === want),
+      payer === job.asked_by ? "asker" : "creator",
     )
     if (mine) return mine
   }
@@ -70,7 +77,7 @@ export const resolveJobCredential = async (
 
   // Legacy tiers, removed at cutover.
   const tiers = [
-    ...(job.asked_by ? [{ userId: job.asked_by, source: "asker" }] : []),
+    ...(payer ? [{ userId: payer, source: payer === job.asked_by ? "asker" : "creator" }] : []),
     ...(await fallbackPayerTiers(meta, agent.org_id, agent.id, agent.created_by)),
   ]
   for (const { userId, source } of tiers) {

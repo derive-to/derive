@@ -14,7 +14,8 @@ The machine is one of two:
 
 - **owner**: your computer. A runner you start (`runner_command`), or this session via `pull`.
 - **derive**: a Derive sandbox that keeps its files between jobs. Nothing to start. Boots in
-  15 to 30 seconds, so it suits scheduled and unattended work.
+  15 to 30 seconds, so it suits scheduled and unattended work. Only workspaces with Derive
+  machines turned on can choose it; elsewhere `create` refuses it and says so.
 
 ## Make one
 
@@ -22,12 +23,14 @@ Creation happens here, over MCP. Publish the instructions as a page first, then:
 
 ```
 agents({ action: "create", name: "Weekly churn digest", instructions: "<short_id>",
-         machine: "derive", schedule: { cron: "0 9 * * 1", tz: "America/New_York",
+         machine: "owner", schedule: { cron: "0 9 * * 1", tz: "America/New_York",
          instruction: "Write this week's digest." } })
 ```
 
 The reply carries the agent's key once. For an `owner` agent it also carries `runner_command`: give
-it to the person to run where the work should happen. When a step needs a person in a browser
+it to the person to run where the work should happen. The key rides `DERIVE_TOKEN` in that line;
+never echo it anywhere else. An agent may use only connections its creator could attach: their
+own, or the workspace's if they manage it. When a step needs a person in a browser
 (signing in a model account, authorizing a source), the reply lists it under `needs_browser` with a
 link. Pass those links on; do not try to do them yourself.
 

@@ -72,12 +72,14 @@ An agent whose machine is `owner` works on a computer you choose. Its page in De
 MCP `agents` tool that creates it, give you the one command to start it:
 
 ```bash
-npx -y @derive-to/cli runner serve --agent ag_... --token dk_agt_... --server https://derive.to
+DERIVE_TOKEN=dk_agt_... npx -y @derive-to/cli runner serve --agent ag_... --server https://derive.to
 ```
 
 The runner polls for the agent's jobs, does each one in `--cwd` (default: the current directory)
 with the agent's instructions and model account, and reports the result. `runner once --agent`
 drains the queue once and exits, for a scheduler. `--mock` checks the wiring without a model.
+The key rides the environment rather than a flag, so it stays out of the process list, and the
+runner never passes it on to the model.
 
 ## Preview a graph or bounded loop
 

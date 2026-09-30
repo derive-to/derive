@@ -93,6 +93,15 @@ export class JobClient {
   }
 }
 
+/** The environment the model inherits: no model tokens from this shell (the job's own account
+ *  is layered on), and never the agent's key or server, which would let a prompt pull other
+ *  jobs or fetch their credentials. */
+const runnerFreeEnv = (env) => {
+  const out = stripModelTokens(env)
+  for (const k of ["DERIVE_TOKEN", "DERIVE_AGENT", "DERIVE_SERVER"]) delete out[k]
+  return out
+}
+
 /** The system prompt for one job: the agent's standing instructions, then what this job is. */
 export function jobSystemPrompt(job) {
   const parts = []
@@ -159,12 +168,11 @@ export async function serveJob(client, job, cfg, deps = {}) {
   try {
     let env
     if (!cfg.mock) {
-      const [{ environment = {} } = {}, cred] = await Promise.all([
-        client.environment(job),
-        modelEnvFor(client, job, provider, providerName, cfg.server),
-      ])
+      // One after the other, so a credential file written for this job is always cleaned up.
+      const { environment = {} } = (await client.environment(job)) ?? {}
+      const cred = await modelEnvFor(client, job, provider, providerName, cfg.server)
       cleanup = cred.cleanup
-      env = { ...stripModelTokens(process.env), ...environment, ...cred.env }
+      env = { ...runnerFreeEnv(process.env), ...environment, ...cred.env }
     }
     const result = cfg.mock
       ? { ok: true, answer: { body_md: `Mock run of job ${job.id}.`, escalate: false } }
