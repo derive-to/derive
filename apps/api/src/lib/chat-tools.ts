@@ -1,4 +1,5 @@
 import type { AgentRecord, Role } from "@derive/core"
+import { syntheticAgent } from "@derive/core"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { AppContext } from "../context"
@@ -182,18 +183,8 @@ export const jsonSchemaOf = (schema: z.ZodType): Record<string, unknown> => {
 }
 
 /** The synthetic principal a chat turn acts as: the asker's seat, wearing Derive's name. */
-const chatAgent = (org: string, role: Role): AgentRecord => ({
-  id: "derive",
-  org_id: org,
-  name: "Derive",
-  token: "",
-  role,
-  created_by: null,
-  hosted: 0,
-  managed: 0,
-  runs_seen_at: null,
-  created_at: new Date(0).toISOString(),
-})
+const chatAgent = (org: string, role: Role): AgentRecord =>
+  syntheticAgent({ id: "derive", org_id: org, name: "Derive", role })
 
 export interface ChatPrincipal {
   /** The workspace this conversation lives in. */

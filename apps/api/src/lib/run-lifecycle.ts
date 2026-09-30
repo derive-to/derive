@@ -58,3 +58,13 @@ export const retryDelayMs = (attempt: number): number => (attempt <= 1 ? 60_000 
  *  Sized as the run cap is — attempts × lease — so an ask and a schedule give up after
  *  comparable effort rather than by coincidence. */
 export const SESSION_MAX_AGE_MS = RUN_MAX_ATTEMPTS * RUN_LEASE_MS
+
+/** An owner-machine claim's lease: the agent's run budget (default 10 minutes, clamped to
+ *  30 seconds .. 6 hours) plus a minute of margin. The lease must OUTLIVE the budget it is
+ *  derived from: a job that never ticks and finishes right at its budget would otherwise land
+ *  on an expired lease and be re-served, a double run. The margin covers the final write and
+ *  clock skew between the runner and the API. */
+export const leaseUntilFor = (maxRunMs: number | null, now = Date.now()): string => {
+  const ms = Math.min(Math.max(maxRunMs ?? 600_000, 30_000), 6 * 60 * 60_000)
+  return new Date(now + ms + 60_000).toISOString()
+}

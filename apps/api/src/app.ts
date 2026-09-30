@@ -16,6 +16,7 @@ import { isTemplateLibrarySchemaUnavailable } from "./lib/template-library-schem
 import { mutableCacheFor, versionCacheControl } from "./lib/version-cache"
 import { log } from "./log"
 import { mountMcp } from "./mcp"
+import { accountRoutes } from "./routes/accounts"
 import { activityRoutes } from "./routes/activity"
 import { agentDiscoveryRoutes } from "./routes/agent-discovery"
 import { agentRoutes } from "./routes/agents"
@@ -48,6 +49,7 @@ import { folderRoutes } from "./routes/folders"
 import { followRoutes } from "./routes/follows"
 import { githubRoutes } from "./routes/github"
 import { githubAppRoutes } from "./routes/github-app"
+import { jobRoutes } from "./routes/jobs"
 import { latexRoutes } from "./routes/latex"
 import { mcpOauthRoutes } from "./routes/mcp-oauth"
 import { modelCredentialRoutes } from "./routes/model-credentials"
@@ -495,6 +497,8 @@ export function createApp(deps: AppDeps): Hono {
     workspaceRoutes,
     workspaceJoinRoutes,
     agentRoutes,
+    jobRoutes,
+    accountRoutes,
     artifactRoutes,
     sharedStateRoutes,
     dynamicDataRoutes,
@@ -610,7 +614,16 @@ export function createApp(deps: AppDeps): Hono {
       {
         name: "Agents",
         description:
-          "Registered agents (bearer tokens) and the OAuth agents a user has authorized.",
+          "Agents: named workers with instructions, a machine, and what they can reach. Also the OAuth agents a user has authorized.",
+      },
+      {
+        name: "Accounts",
+        description: "Model accounts: the credential a machine uses to call a model. Write-only.",
+      },
+      {
+        name: "Jobs",
+        description:
+          "One unit of agent work: someone asked, a schedule fired, or a graph opened a node. People ask, follow, answer, cancel, and retry; runners pull and report.",
       },
       { name: "Assets", description: "Standalone binary image assets referenced from bundles." },
       { name: "Favorites", description: "The caller's favorited artifacts." },

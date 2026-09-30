@@ -66,6 +66,19 @@ This installs Derive's artifact and workflow skills in the native Codex and Clau
 locations and adds their project MCP configuration. Run `derive agent setup --update` to refresh
 the packaged skills without replacing your MCP configuration.
 
+## Run an agent on this machine
+
+An agent whose machine is `owner` works on a computer you choose. Its page in Derive, and the
+MCP `agents` tool that creates it, give you the one command to start it:
+
+```bash
+npx -y @derive-to/cli runner serve --agent ag_... --token dk_agt_... --server https://derive.to
+```
+
+The runner polls for the agent's jobs, does each one in `--cwd` (default: the current directory)
+with the agent's instructions and model account, and reports the result. `runner once --agent`
+drains the queue once and exits, for a scheduler. `--mock` checks the wiring without a model.
+
 ## Preview a graph or bounded loop
 
 The workflow skill authors a visible `bundle-manifest` plus a companion

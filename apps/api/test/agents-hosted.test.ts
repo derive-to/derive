@@ -16,14 +16,15 @@ describe("hostable agents + workspace agent settings", () => {
     return (await res.json()) as { id: string; hosted: boolean; role: string; token: string }
   }
 
-  it("the toggle is Admin-only and workspace-scoped", async () => {
+  it("the toggle is for the agent's manager and workspace-scoped", async () => {
     const created = await createAgent("Scoped")
-    // A commenter-seat member can't manage agents.
+    // A member who neither made the agent nor owns the workspace can't manage it, and gets
+    // the same answer as for an agent that isn't there.
     const denied = await app.request(`/v1/agents/${created.id}`, {
       ...jsonAs(as(member.email), { hosted: true }),
       method: "PATCH",
     })
-    expect(denied.status).toBe(403)
+    expect(denied.status).toBe(404)
     // An unknown id in this workspace is a 404, not a cross-tenant write.
     const missing = await app.request("/v1/agents/ag_not_here", {
       ...jsonAs(as(owner.email), { hosted: true }),

@@ -3144,6 +3144,252 @@ export function runStoreContract(
     })
   })
 
+  describe(`${label}: the agent model (agents, jobs, triggers, accounts)`, () => {
+    const mkAgent = (over: Record<string, unknown> = {}) =>
+      store.createAgent({
+        id: uuid(),
+        org_id: ORG,
+        name: `agent ${uuid().slice(0, 6)}`,
+        token: `tok_${uuid()}`,
+        role: "editor",
+        ...over,
+      })
+    const mkJob = (agentId: string, over: Record<string, unknown> = {}) =>
+      store.createJob({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: agentId,
+        kind: "ask",
+        instruction: "do the thing",
+        ...over,
+      })
+    const at = (msFromNow: number) => new Date(Date.now() + msFromNow).toISOString()
+
+    it("an agent carries its model fields with defaults, and updateAgent is org-scoped", async () => {
+      const a = await mkAgent()
+      expect(a).toMatchObject({
+        machine: "owner",
+        ask_policy: "workspace",
+        write_policy: "publish",
+        max_concurrency: 1,
+        paused_at: null,
+        instructions_artifact_id: null,
+      })
+      const upd = await store.updateAgent(a.id, ORG, {
+        machine: "derive",
+        description: "Keeps the MRR page current",
+        paused_at: "2026-09-30T00:00:00.000Z",
+      })
+      expect(upd).toMatchObject({ machine: "derive", description: "Keeps the MRR page current" })
+      expect(await store.updateAgent(a.id, "org_other", { machine: "owner" })).toBeNull()
+      await store.touchAgentSeen(a.id, "2026-09-30T01:00:00.000Z")
+      expect((await store.getAgent(a.id))?.seen_at).toBe("2026-09-30T01:00:00.000Z")
+    })
+
+    it("claims an agent's queued jobs oldest first, disjointly, and not before scheduled_for", async () => {
+      const a = await mkAgent()
+      const other = await mkAgent()
+      const j1 = await mkJob(a.id)
+      // Oldest first means by created_at; a same-millisecond pair has no oldest.
+      await new Promise((r) => setTimeout(r, 3))
+      const j2 = await mkJob(a.id)
+      await mkJob(a.id, { scheduled_for: at(60_000) })
+      await mkJob(other.id)
+      const now = at(0)
+      const first = await store.claimJobs(a.id, 1, at(600_000), now)
+      expect(first.map((j) => j.id)).toEqual([j1.id])
+      expect(first[0]).toMatchObject({ status: "running", started_at: now })
+      const second = await store.claimJobs(a.id, 10, at(600_000), now)
+      expect(second.map((j) => j.id)).toEqual([j2.id])
+      expect(await store.claimJobs(a.id, 10, at(600_000), now)).toEqual([])
+      expect(await store.countRunningJobs(a.id, now)).toBe(2)
+      // One job by id, only while queued.
+      const o = (await store.listJobs({ orgId: ORG, agentId: other.id }))[0]
+      expect(await store.claimJob(o?.id ?? "", at(600_000), now)).toMatchObject({
+        status: "running",
+      })
+      expect(await store.claimJob(o?.id ?? "", at(600_000), now)).toBeNull()
+    })
+
+    it("updateJob compare-and-sets on status and on the claim's started_at", async () => {
+      const a = await mkAgent()
+      await mkJob(a.id)
+      const [claimed] = await store.claimJobs(a.id, 1, at(600_000), at(0))
+      if (!claimed) throw new Error("no claim")
+      // A settle from a superseded claim (wrong started_at) lands nowhere.
+      expect(
+        await store.updateJob(
+          claimed.id,
+          { status: "succeeded" },
+          { started_at: "1999-01-01T00:00:00.000Z" },
+        ),
+      ).toBeNull()
+      const done = await store.updateJob(
+        claimed.id,
+        { status: "succeeded", finished_at: at(0), cost_micro_usd: 1500 },
+        { status: "running", started_at: claimed.started_at },
+      )
+      expect(done).toMatchObject({ status: "succeeded", cost_micro_usd: 1500 })
+      expect(
+        await store.updateJob(claimed.id, { status: "failed" }, { status: "running" }),
+      ).toBeNull()
+    })
+
+    it("reclaims lapsed leases: requeue with attempt + 1, lost at the cap, attended lost at once", async () => {
+      const a = await mkAgent()
+      const past = at(-60_000)
+      const now = at(0)
+      const fresh = await mkJob(a.id)
+      const tired = await mkJob(a.id)
+      const attended = await mkJob(a.id, { attended: 1 })
+      const live = await mkJob(a.id)
+      await store.claimJobs(a.id, 10, past, at(-120_000))
+      // A runner's pull never takes an attended job; the in-process turn claims it by id.
+      await store.claimJob(attended.id, past, at(-120_000))
+      await store.updateJob(tired.id, { attempt: 2 })
+      await store.updateJob(live.id, { lease_until: at(600_000) })
+      const { requeued, lost } = await store.reclaimStaleJobs(now, 3)
+      expect(requeued.map((j) => j.id)).toEqual([fresh.id])
+      expect(requeued[0]).toMatchObject({ status: "queued", attempt: 1, lease_until: null })
+      expect(lost.map((j) => j.id).sort()).toEqual([tired.id, attended.id].sort())
+      expect((await store.getJob(live.id))?.status).toBe("running")
+      // Scoped to a workspace list: another org's lapsed job is untouched.
+      expect(await store.reclaimStaleJobs(now, 3, ["org_nobody"])).toEqual({
+        requeued: [],
+        lost: [],
+      })
+    })
+
+    it("keeps one open job per dedupe key and one job per trigger window", async () => {
+      const a = await mkAgent()
+      const j = await mkJob(a.id, { asked_by: "u_1", dedupe_key: "k" })
+      await expect(mkJob(a.id, { asked_by: "u_1", dedupe_key: "k" })).rejects.toThrow()
+      expect(await store.findOpenJobByDedupe(a.id, "u_1", "k")).toMatchObject({ id: j.id })
+      await store.updateJob(j.id, { status: "succeeded", dedupe_key: null })
+      await mkJob(a.id, { asked_by: "u_1", dedupe_key: "k" })
+      const t = await store.createTrigger({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: a.id,
+        kind: "schedule",
+        cron: "0 9 * * *",
+        tz: "UTC",
+        instruction: "refresh",
+      })
+      const w = "2026-09-30T09:00:00.000Z"
+      await mkJob(a.id, { kind: "scheduled", trigger_id: t.id, scheduled_for: w })
+      await expect(
+        mkJob(a.id, { kind: "scheduled", trigger_id: t.id, scheduled_for: w }),
+      ).rejects.toThrow()
+      expect((await store.latestJobForTrigger(t.id))?.scheduled_for).toBe(w)
+    })
+
+    it("lists Derive-machine work only for unpaused agents, and sums cost", async () => {
+      const derive = await mkAgent({ machine: "derive" })
+      const paused = await mkAgent({ machine: "derive" })
+      await store.updateAgent(paused.id, ORG, { paused_at: at(0) })
+      const owner = await mkAgent()
+      const d = await mkJob(derive.id)
+      await mkJob(paused.id)
+      await mkJob(owner.id)
+      await mkJob(derive.id, { attended: 1 })
+      const due = (await store.listQueuedDeriveJobs(100, [ORG])).map((j) => j.id)
+      expect(due).toContain(d.id)
+      expect(due).toHaveLength(1)
+      const since = at(-1000)
+      const c = await mkJob(owner.id)
+      await store.updateJob(c.id, { cost_micro_usd: 2500 })
+      expect(await store.sumJobCostSince(ORG, since)).toBeGreaterThanOrEqual(2500)
+    })
+
+    it("lists jobs by filter, newest first, and keeps a transcript in order", async () => {
+      const a = await mkAgent()
+      const parent = await mkJob(a.id, { kind: "graph" })
+      const child = await mkJob(a.id, { kind: "node", parent_id: parent.id, node_id: "certify" })
+      expect((await store.listJobs({ orgId: ORG, parentId: parent.id })).map((j) => j.id)).toEqual([
+        child.id,
+      ])
+      expect(
+        (await store.listJobs({ orgId: ORG, agentId: a.id, kind: ["graph"] })).map((j) => j.id),
+      ).toEqual([parent.id])
+      await store.addJobMessage({
+        id: uuid(),
+        job_id: parent.id,
+        author_kind: "asker",
+        author_id: "u",
+        body_md: "one",
+      })
+      await store.addJobMessage({
+        id: uuid(),
+        job_id: parent.id,
+        author_kind: "agent",
+        author_id: a.id,
+        body_md: "two",
+      })
+      expect((await store.listJobMessages(parent.id)).map((m) => m.body_md)).toEqual(["one", "two"])
+    })
+
+    it("triggers: org-scoped updates bump revision; the schedule list is enabled schedules only", async () => {
+      const a = await mkAgent()
+      const t = await store.createTrigger({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: a.id,
+        kind: "schedule",
+        cron: "0 9 * * 1-5",
+        tz: "America/New_York",
+        instruction: "refresh",
+      })
+      expect(t).toMatchObject({ revision: 0, enabled: 1 })
+      expect(await store.updateTrigger(t.id, "org_other", { enabled: 0 })).toBeNull()
+      const off = await store.updateTrigger(t.id, ORG, { enabled: 0 })
+      expect(off).toMatchObject({ enabled: 0, revision: 1 })
+      expect((await store.listEnabledScheduleTriggers([ORG])).map((x) => x.id)).not.toContain(t.id)
+      await store.updateTrigger(t.id, ORG, { enabled: 1 })
+      expect((await store.listEnabledScheduleTriggers([ORG])).map((x) => x.id)).toContain(t.id)
+      expect((await store.listTriggers(ORG, a.id)).map((x) => x.id)).toEqual([t.id])
+      expect(await store.deleteTrigger(t.id, ORG)).toBe(true)
+      expect(await store.getTrigger(t.id)).toBeNull()
+    })
+
+    it("accounts: a person sees their own and the workspace pool, never a teammate's", async () => {
+      const mine = await store.createAccount({
+        id: uuid(),
+        org_id: ORG,
+        user_id: "u_me",
+        provider: "claude",
+        kind: "oauth",
+      })
+      const pool = await store.createAccount({
+        id: uuid(),
+        org_id: ORG,
+        user_id: "__workspace__",
+        provider: "codex",
+        kind: "api_key",
+      })
+      const theirs = await store.createAccount({
+        id: uuid(),
+        org_id: ORG,
+        user_id: "u_them",
+        provider: "claude",
+        kind: "oauth",
+      })
+      const seen = (await store.listAccounts(ORG, "u_me")).map((x) => x.id)
+      expect(seen).toContain(mine.id)
+      expect(seen).toContain(pool.id)
+      expect(seen).not.toContain(theirs.id)
+      expect(mine.status).toBe("not_checked")
+      expect(
+        await store.updateAccount(mine.id, ORG, { status: "ready", hint: "…abcd" }),
+      ).toMatchObject({
+        status: "ready",
+        hint: "…abcd",
+      })
+      expect(await store.deleteAccount(mine.id, "org_other")).toBe(false)
+      expect(await store.deleteAccount(mine.id, ORG)).toBe(true)
+    })
+  })
+
   describe(`${label}: contexts + sessions`, () => {
     const newContext = async () => {
       const manifest = await store.createArtifact(newArtifact({ kind: "bundle" }))

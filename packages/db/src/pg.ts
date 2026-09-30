@@ -216,6 +216,7 @@ import {
 } from "drizzle-orm"
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
 import { Pool } from "pg"
+import { agentModelRepos } from "./agent-model-repos"
 import {
   DYNAMIC_STATE_PREFIX,
   dynamicRecord,
@@ -227,6 +228,7 @@ import {
   activitySeen,
   agent,
   agentMention,
+  agentTrigger,
   artifact,
   artifactFavorite,
   artifactInvite,
@@ -259,7 +261,10 @@ import {
   importLease,
   instanceOperator,
   invitation,
+  job,
+  jobMessage,
   membership,
+  modelAccount,
   modelCredential,
   notification,
   oauthClientWorkspace,
@@ -324,6 +329,10 @@ const one = <T>(rows: T[]): T => {
 // Exported so the pg schema-conformance test can diff these defs against the
 // columns PG_SCHEMA_STATEMENTS actually creates in a real Postgres.
 export const schema = {
+  job,
+  jobMessage,
+  agentTrigger,
+  modelAccount,
   artifact,
   sharedState,
   sharedStateActivity,
@@ -401,6 +410,10 @@ export const schema = {
 // a pg column that drifts from its core Record → compile error here.
 const _schemaExhaustive: Exhaustive<typeof schema> = true
 const _schemaShapes: Shapes<typeof schema> = {
+  job: true,
+  jobMessage: true,
+  agentTrigger: true,
+  modelAccount: true,
   artifact: true,
   sharedState: true,
   sharedStateActivity: true,
@@ -725,6 +738,36 @@ const mapOverviewRows = (rows: OverviewRow[]): CollectionsOverviewRead => {
 type PgWriter = Pick<NodePgDatabase<typeof schema>, "insert" | "update" | "delete">
 
 export class PgMetaStore implements MetaStore {
+  private readonly agentModel = agentModelRepos(
+    async (statement) => (await this.db.execute(statement)).rows,
+  )
+  updateAgent = this.agentModel.updateAgent
+  touchAgentSeen = this.agentModel.touchAgentSeen
+  createJob = this.agentModel.createJob
+  getJob = this.agentModel.getJob
+  listJobs = this.agentModel.listJobs
+  claimJobs = this.agentModel.claimJobs
+  claimJob = this.agentModel.claimJob
+  updateJob = this.agentModel.updateJob
+  countRunningJobs = this.agentModel.countRunningJobs
+  reclaimStaleJobs = this.agentModel.reclaimStaleJobs
+  listQueuedDeriveJobs = this.agentModel.listQueuedDeriveJobs
+  latestJobForTrigger = this.agentModel.latestJobForTrigger
+  findOpenJobByDedupe = this.agentModel.findOpenJobByDedupe
+  sumJobCostSince = this.agentModel.sumJobCostSince
+  addJobMessage = this.agentModel.addJobMessage
+  listJobMessages = this.agentModel.listJobMessages
+  createTrigger = this.agentModel.createTrigger
+  getTrigger = this.agentModel.getTrigger
+  listTriggers = this.agentModel.listTriggers
+  listEnabledScheduleTriggers = this.agentModel.listEnabledScheduleTriggers
+  updateTrigger = this.agentModel.updateTrigger
+  deleteTrigger = this.agentModel.deleteTrigger
+  createAccount = this.agentModel.createAccount
+  getAccount = this.agentModel.getAccount
+  listAccounts = this.agentModel.listAccounts
+  updateAccount = this.agentModel.updateAccount
+  deleteAccount = this.agentModel.deleteAccount
   private readonly runtimes = runtimeRepos(
     async (statement) => (await this.db.execute(statement)).rows,
   )

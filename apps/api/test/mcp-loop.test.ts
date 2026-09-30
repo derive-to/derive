@@ -1412,3 +1412,157 @@ describe("catch_up({wait}) work queue — the cross-doc wake", () => {
     expect(res.pending).toHaveLength(1)
   })
 })
+
+describe("the agent model over MCP (agents, ask, jobs, pull)", () => {
+  const raw = async (app: App, token: string, name: string, args: Record<string, unknown>) => {
+    const out = await rpc(app, token, {
+      jsonrpc: "2.0",
+      id: 7,
+      method: "tools/call",
+      params: { name, arguments: args },
+    })
+    const r = out?.result as { content: { text: string }[]; isError?: boolean }
+    return { text: r.content[0]?.text ?? "", isError: !!r.isError }
+  }
+
+  it("creates an owner agent, asks it, runs it from the same session, and reads the result", async () => {
+    const { app, token } = loopApp("am-roundtrip")
+    const made = await call(app, token, "agents", { action: "create", name: "Digest" })
+    expect(made.token).toMatch(/^dk_agt_/)
+    expect(made.runner_command).toContain(`--agent ${made.id}`)
+    const listed = (await call(app, token, "agents", { action: "list" })).agents as { id: string }[]
+    expect(listed.map((a) => a.id)).toContain(made.id)
+
+    const asked = await call(app, token, "ask", {
+      agent: made.id,
+      instruction: "Summarize the week",
+      wait: 0,
+    })
+    expect(asked.status).toBe("queued")
+    expect(asked.note).toMatch(/Still open/)
+
+    // The person's own session is the runner for an owner agent they made.
+    const pulled = (await call(app, token, "pull", { agent: made.id })).jobs as {
+      id: string
+      started_at: string
+      instruction: string
+    }[]
+    expect(pulled).toHaveLength(1)
+    expect(pulled[0]?.id).toBe(asked.id)
+
+    // A report that does not echo the claim is refused; the real one settles the job.
+    const stale = await raw(app, token, "pull", {
+      report: { job_id: asked.id, started_at: "1970-01-01T00:00:00.000Z", status: "succeeded" },
+    })
+    expect(stale.isError).toBe(true)
+    expect(stale.text).toMatch(/superseded/)
+    await call(app, token, "pull", {
+      report: {
+        job_id: asked.id,
+        started_at: pulled[0]?.started_at,
+        status: "succeeded",
+        body_md: "Three renewals, one churn.",
+      },
+    })
+    const done = await call(app, token, "jobs", { job_id: asked.id })
+    expect(done.status).toBe("succeeded")
+    expect((done.messages as { body_md: string }[]).map((m) => m.body_md)).toEqual([
+      "Summarize the week",
+      "Three renewals, one churn.",
+    ])
+  })
+
+  it("ask({wait}) returns the moment the runner settles the job", async () => {
+    const { app, token } = loopApp("am-wait")
+    const made = await call(app, token, "agents", { action: "create", name: "Waiter" })
+    const key = made.token as string
+    const started = Date.now()
+    const waiting = call(app, token, "ask", { agent: made.id, instruction: "Go", wait: 30 })
+    // The agent's own runner, over REST with its key, picks it up and answers.
+    setTimeout(() => {
+      void (async () => {
+        const auth = { authorization: `Bearer ${key}`, "content-type": "application/json" }
+        const p = await app.request(`/v1/agents/${made.id}/pull`, {
+          method: "POST",
+          headers: auth,
+          body: "{}",
+        })
+        const [job] = ((await p.json()) as { jobs: { id: string; started_at: string }[] }).jobs
+        if (!job) return
+        await app.request(`/v1/jobs/${job.id}/report`, {
+          method: "POST",
+          headers: auth,
+          body: JSON.stringify({
+            started_at: job.started_at,
+            status: "succeeded",
+            body_md: "Done",
+          }),
+        })
+      })()
+    }, 150)
+    const out = await waiting
+    expect(Date.now() - started).toBeLessThan(10_000)
+    expect(out.status).toBe("succeeded")
+  })
+
+  it("a job that needs you is answered through jobs and goes back to the agent", async () => {
+    const { app, token } = loopApp("am-answer")
+    const made = await call(app, token, "agents", { action: "create", name: "Asker" })
+    const asked = await call(app, token, "ask", {
+      agent: made.id,
+      instruction: "Ship it?",
+      wait: 0,
+    })
+    const [job] = (await call(app, token, "pull", { agent: made.id })).jobs as {
+      started_at: string
+    }[]
+    await call(app, token, "pull", {
+      report: {
+        job_id: asked.id,
+        started_at: job?.started_at,
+        status: "needs_you",
+        needs: { question: "Which region?", options: ["us", "eu"] },
+      },
+    })
+    const waitingOnMe = (await call(app, token, "jobs", { status: ["needs_you"] })).jobs as {
+      id: string
+    }[]
+    expect(waitingOnMe.map((j) => j.id)).toEqual([asked.id])
+    const bad = await raw(app, token, "jobs", {
+      job_id: asked.id,
+      action: "answer",
+      option: "apac",
+    })
+    expect(bad.isError).toBe(true)
+    const answered = await call(app, token, "jobs", {
+      job_id: asked.id,
+      action: "answer",
+      option: "eu",
+    })
+    expect(answered.status).toBe("queued")
+  })
+
+  it("update changes the schedule in place, and delete cancels the agent's open work", async () => {
+    const { app, meta, token } = loopApp("am-manage")
+    const made = await call(app, token, "agents", {
+      action: "create",
+      name: "Nightly",
+      schedule: { cron: "0 3 * * *", instruction: "Tidy up" },
+    })
+    const updated = await call(app, token, "agents", {
+      action: "update",
+      agent: made.id,
+      paused: true,
+      schedule: { cron: "0 4 * * *", instruction: "Tidy up" },
+    })
+    expect(updated.paused).toBe(true)
+    const triggers = updated.triggers as { cron: string }[]
+    expect(triggers.map((t) => t.cron)).toEqual(["0 4 * * *"])
+
+    const asked = await call(app, token, "ask", { agent: made.id, instruction: "Now", wait: 0 })
+    await call(app, token, "agents", { action: "delete", agent: made.id })
+    expect((await meta.getJob(asked.id as string))?.status).toBe("cancelled")
+    const gone = await raw(app, token, "agents", { action: "get", agent: made.id })
+    expect(gone.isError).toBe(true)
+  })
+})

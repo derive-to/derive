@@ -149,6 +149,9 @@ export const placeholderTables = (iso: string): string[] => [
 /** Performance indexes (identical SQL across dialects; the unique ones are inline
  *  in each table's CREATE). Applied after every table + placeholder exists. */
 export const PERF_INDEXES: string[] = [
+  // One job per trigger window, and at most one OPEN job per (agent, asker, dedupe key).
+  `CREATE UNIQUE INDEX IF NOT EXISTS job_trigger_window ON job (trigger_id, scheduled_for) WHERE trigger_id IS NOT NULL AND scheduled_for IS NOT NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS job_dedupe_open ON job (agent_id, asked_by, dedupe_key) WHERE dedupe_key IS NOT NULL AND status IN ('queued', 'running', 'needs_you')`,
   `CREATE UNIQUE INDEX IF NOT EXISTS workflow_test_pending ON workflow_test (context_id) WHERE status = 'pending'`,
   `CREATE UNIQUE INDEX IF NOT EXISTS run_runtime_schedule_pending ON run (runtime_id) WHERE runtime_id IS NOT NULL AND reason = 'schedule' AND status IN ('queued', 'running')`,
   `CREATE UNIQUE INDEX IF NOT EXISTS automation_runtime ON automation (runtime_id)`,
