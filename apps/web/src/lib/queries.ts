@@ -659,6 +659,13 @@ export const jobQuery = (id: string) =>
   })
 
 // An imported paper (/papers/$id): its import state, code, and the paper artifact.
+// Every imported paper in the workspace: how a paper's artifact finds its /papers page.
+export const papersQuery = () =>
+  queryOptions({
+    queryKey: ["papers"] as const,
+    queryFn: () => api.listPapers().then((r) => r.contexts),
+  })
+
 export const paperQuery = (id: string) =>
   queryOptions({
     queryKey: ["paper", id] as const,
