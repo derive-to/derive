@@ -182,7 +182,21 @@ export const agentRoutes = (ctx: AppContext) => {
       responses: {
         200: {
           description: "The workspace's agents.",
-          content: { "application/json": { schema: z.object({ agents: z.array(Agent) }) } },
+          content: {
+            "application/json": {
+              schema: z.object({
+                agents: z.array(
+                  Agent.extend({
+                    triggers: z.array(Trigger),
+                    last_job_at: z
+                      .string()
+                      .nullable()
+                      .describe("When it last had work, among the workspace's recent jobs."),
+                  }),
+                ),
+              }),
+            },
+          },
         },
       },
     }),
@@ -191,7 +205,19 @@ export const agentRoutes = (ctx: AppContext) => {
       if (org instanceof Response) return bail(org)
       const agents = await meta.listAgents(org)
       const lent = new Set((await meta.getOrgSettings(org)).ownerLendAgents ?? [])
-      return c.json({ agents: agents.map((a) => agentJson(a, lent.has(a.id))) })
+      // What the Agents screen groups by, in two queries rather than one per agent: each
+      // agent's schedules, and when it last had work.
+      const triggers = await meta.listTriggers(org)
+      const recent = await meta.listJobs({ orgId: org, limit: 200 })
+      const lastJob = new Map<string, string>()
+      for (const j of recent) if (!lastJob.has(j.agent_id)) lastJob.set(j.agent_id, j.created_at)
+      return c.json({
+        agents: agents.map((a) => ({
+          ...agentJson(a, lent.has(a.id)),
+          triggers: triggers.filter((t) => t.agent_id === a.id).map(triggerJson),
+          last_job_at: lastJob.get(a.id) ?? null,
+        })),
+      })
     },
   )
 
@@ -638,7 +664,8 @@ export const agentRoutes = (ctx: AppContext) => {
       method: "post",
       path: "/v1/agents/{id}/rotate",
       tags: ["Agents"],
-      summary: "Rotate an agent's token (Admin only) — the old bearer dies at once.",
+      summary:
+        "Replace an agent's key (its creator or a workspace owner); the old one dies at once.",
       request: { params: z.object({ id: z.string() }) },
       responses: {
         200: {
@@ -648,8 +675,9 @@ export const agentRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const org = await requireWorkspace(c, "manage")
-      if (org instanceof Response) return bail(org)
+      const target = await meta.getAgent(c.req.param("id"))
+      if (!target || !(await managerOf(c, target))) return bail(fail(c, 404, "agent not found"))
+      const org = target.org_id
       // Same mint shape as registration; only the hash is stored. Identity, role,
       // hosting, and attribution are untouched — rotation is a credential event,
       // never an identity event.

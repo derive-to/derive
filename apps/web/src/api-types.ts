@@ -1225,7 +1225,11 @@ export interface paths {
                     };
                     content: {
                         "application/json": {
-                            agents: components["schemas"]["Agent"][];
+                            agents: (components["schemas"]["Agent"] & {
+                                triggers: components["schemas"]["AgentTrigger"][];
+                                /** @description When it last had work, among the workspace's recent jobs. */
+                                last_job_at: string | null;
+                            })[];
                         };
                     };
                 };
@@ -1251,7 +1255,7 @@ export interface paths {
                         "application/json": components["schemas"]["Agent"] & {
                             token: string;
                             runner_command: string | null;
-                            trigger: components["schemas"]["AgentTrigger"];
+                            trigger: components["schemas"]["AgentTrigger"] & unknown;
                         };
                     };
                 };
@@ -1452,7 +1456,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Rotate an agent's token (Admin only) — the old bearer dies at once. */
+        /** Replace an agent's key (its creator or a workspace owner); the old one dies at once. */
         post: {
             parameters: {
                 query?: never;
@@ -8366,6 +8370,32 @@ export interface components {
             /** @description True when the caller was already a member; their role is never changed. */
             already_member: boolean;
         };
+        AgentTrigger: {
+            id: string;
+            agent_id: string;
+            /** @enum {string} */
+            kind: "schedule" | "event";
+            cron: string | null;
+            tz: string | null;
+            on_event: string | null;
+            instruction: string;
+            subject: {
+                /** @enum {string} */
+                kind: "artifact";
+                id: string;
+            } | {
+                /** @enum {string} */
+                kind: "collection";
+                id: string;
+            } | {
+                /** @enum {string} */
+                kind: "tag";
+                tag: string;
+            } | unknown;
+            enabled: boolean;
+            revision: number;
+            created_at: string;
+        };
         Agent: {
             id: string;
             name: string;
@@ -8413,32 +8443,6 @@ export interface components {
             environment_names: string[];
             account_id: string | null;
         };
-        AgentTrigger: {
-            id: string;
-            agent_id: string;
-            /** @enum {string} */
-            kind: "schedule" | "event";
-            cron: string | null;
-            tz: string | null;
-            on_event: string | null;
-            instruction: string;
-            subject: {
-                /** @enum {string} */
-                kind: "artifact";
-                id: string;
-            } | {
-                /** @enum {string} */
-                kind: "collection";
-                id: string;
-            } | {
-                /** @enum {string} */
-                kind: "tag";
-                tag: string;
-            } | unknown;
-            enabled: boolean;
-            revision: number;
-            created_at: string;
-        } | null;
         ConnectedAgent: {
             /** @description OAuth client id of the authorized agent (e.g. an MCP client like Claude) */
             clientId: string;

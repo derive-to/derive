@@ -346,6 +346,35 @@ describe("jobs: who may ask, see, and run", () => {
   })
 })
 
+describe("jobs: the agents list the home screen reads", () => {
+  it("carries each agent's schedules and when it last had work, and its creator can replace its key", async () => {
+    const { app } = await setup("jobs-list-shape")
+    const quiet = await createAgent(app)
+    const busy = (await (
+      await app.request(
+        "/v1/agents",
+        jsonAs(as(ed.email), {
+          name: "Nightly",
+          schedule: { cron: "0 3 * * *", instruction: "Tidy" },
+        }),
+      )
+    ).json()) as { id: string }
+    await ask(app, ed.email, busy.id, "Now")
+    const list = (await (await app.request("/v1/agents", { headers: as(ed.email) })).json()) as {
+      agents: { id: string; triggers: { cron: string }[]; last_job_at: string | null }[]
+    }
+    const byId = new Map(list.agents.map((a) => [a.id, a]))
+    expect(byId.get(busy.id)?.triggers.map((t) => t.cron)).toEqual(["0 3 * * *"])
+    expect(byId.get(busy.id)?.last_job_at).toBeTruthy()
+    expect(byId.get(quiet.id)).toMatchObject({ triggers: [], last_job_at: null })
+    // Ed made "Nightly": Ed replaces its key; Ed cannot replace the owner's agent's.
+    const mine = await app.request(`/v1/agents/${busy.id}/rotate`, jsonAs(as(ed.email), {}))
+    expect(mine.status).toBe(200)
+    const theirs = await app.request(`/v1/agents/${quiet.id}/rotate`, jsonAs(as(ed.email), {}))
+    expect(theirs.status).toBe(404)
+  })
+})
+
 describe("jobs: what a teammate cannot do with someone else's agent or job", () => {
   it("an agent cannot be given a teammate's personal connection", async () => {
     const { app, meta } = await setup("jobs-conn-bind")
