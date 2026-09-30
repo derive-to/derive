@@ -86,11 +86,12 @@ export function AgentSettings({ agent, names, workspaceName, isWorkspaceOwner }:
             testId="agent-machine"
             value={agent.machine}
             disabled={!edit}
-            onChange={() => {}}
+            // Derive machines are on per workspace and nothing tells the web which; a
+            // workspace without them gets the API's refusal as the error toast.
+            onChange={(v) => set({ machine: v as AgentDetail["machine"] })}
             options={[
               { value: "owner", label: ownerMachineName(agent.created_by, names) },
-              // The API refuses Derive machines until they are turned on for a workspace.
-              { value: "derive", label: "Derive", disabled: true },
+              { value: "derive", label: "Derive" },
             ]}
           />
           {agent.machine === "owner" && (
@@ -100,7 +101,9 @@ export function AgentSettings({ agent, names, workspaceName, isWorkspaceOwner }:
                 : "Its runner has never checked in."}
             </Sub>
           )}
-          {edit && <Sub>Derive machines are not on in this workspace.</Sub>}
+          {agent.machine === "derive" && (
+            <Sub>A Derive sandbox that keeps its files between jobs.</Sub>
+          )}
         </Field>
         <AccountField agent={agent} edit={edit} onSave={set} />
         <SourcesField agent={agent} edit={edit} onSave={set} />

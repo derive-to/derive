@@ -357,8 +357,18 @@ function Transcript({
           </p>
         </div>
       ))}
-      {effects.length > 0 && (
+      {(effects.length > 0 || q.data.report_short_id) && (
         <div className="flex flex-wrap gap-2">
+          {q.data.report_short_id && (
+            <Link
+              to="/artifacts/$ref"
+              params={{ ref: q.data.report_short_id }}
+              data-testid={`job-report-${id}`}
+              className="rounded-lg border border-border px-2.5 py-1.5 text-sm font-medium hover:bg-secondary"
+            >
+              Report
+            </Link>
+          )}
           {effects.map((e, i) =>
             e.kind === "page" && e.ref ? (
               <Link

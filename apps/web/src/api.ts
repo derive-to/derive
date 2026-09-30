@@ -473,6 +473,7 @@ export type AgentPatch = Partial<
     | "connection_ids"
     | "account_id"
     | "paused"
+    | "machine"
   >
 >
 export type ScheduleInput = { cron: string; tz: string; instruction: string }
