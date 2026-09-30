@@ -1462,10 +1462,21 @@ export const api = {
 
   // Jobs: every piece of work an agent does (routes/jobs.ts).
   listJobs: (
-    q: { agent?: string; status?: JobStatus[]; before?: string; limit?: number } = {},
+    q: {
+      agent?: string
+      status?: JobStatus[]
+      before?: string
+      limit?: number
+      /** Only jobs you asked, or on agents you manage. */
+      mine?: boolean
+      /** The job whose report page has this short id. */
+      report?: string
+    } = {},
   ): Promise<{ jobs: Job[] }> => {
     const qs = new URLSearchParams()
     if (q.agent) qs.set("agent", q.agent)
+    if (q.mine) qs.set("mine", "1")
+    if (q.report) qs.set("report", q.report)
     if (q.status?.length) qs.set("status", q.status.join(","))
     if (q.before) qs.set("before", q.before)
     if (q.limit) qs.set("limit", String(q.limit))
@@ -1473,8 +1484,14 @@ export const api = {
     return f(`/v1/jobs${s ? `?${s}` : ""}`, opts()).then(j)
   },
   getJob: (id: string): Promise<JobDetail> => f(`/v1/jobs/${id}`, opts()).then(j),
-  askAgent: (agentId: string, instruction: string): Promise<JobDetail> =>
-    f("/v1/jobs", opts({ agent_id: agentId, instruction })).then(j),
+  askAgent: (
+    agentId: string,
+    instruction: string,
+    subject?: { kind: "artifact"; id: string },
+  ): Promise<JobDetail> =>
+    f("/v1/jobs", opts({ agent_id: agentId, instruction, ...(subject ? { subject } : {}) })).then(
+      j,
+    ),
   cancelJob: (id: string): Promise<Job> => f(`/v1/jobs/${id}/cancel`, opts({})).then(j),
   retryJob: (id: string): Promise<Job> => f(`/v1/jobs/${id}/retry`, opts({})).then(j),
   answerJob: (id: string, answer: { text?: string; option?: string }): Promise<Job> =>

@@ -252,6 +252,8 @@ export interface JobQuery {
   kind?: readonly JobKind[]
   parentId?: string
   askedBy?: string
+  /** Only the job whose report page is this artifact. */
+  reportArtifactId?: string
   /** Only jobs created at or after this ISO time. */
   since?: string
   /** Keyset cursor: only jobs created strictly before this ISO time. */

@@ -10,7 +10,7 @@ export const rosterOf = <A extends Agent>(agents: A[]): A[] => agents.filter((a)
 
 export const firstLine = (text: string): string => text.trim().split("\n")[0]?.trim() ?? ""
 
-const firstName = (name: string | null | undefined): string | null =>
+export const firstName = (name: string | null | undefined): string | null =>
   name?.trim().split(/\s+/)[0] || null
 
 /** A runner that pulled work in the last two minutes is on (it polls every few seconds). */

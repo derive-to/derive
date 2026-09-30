@@ -650,6 +650,22 @@ export const agentJobsQuery = (agentId: string) =>
       last.jobs.length === JOB_PAGE ? last.jobs[last.jobs.length - 1]?.created_at : undefined,
   })
 
+// The jobs waiting on you: needs_you, and either you asked or you manage the agent. Read by
+// the Inbox and the rail's count, so one key serves both.
+export const inboxJobsQuery = () =>
+  queryOptions({
+    queryKey: ["jobs", "inbox"] as const,
+    queryFn: () =>
+      api.listJobs({ mine: true, status: ["needs_you"], limit: 100 }).then((r) => r.jobs),
+  })
+
+// The job a report page belongs to, or null for an ordinary page.
+export const reportJobQuery = (shortId: string) =>
+  queryOptions({
+    queryKey: ["jobs", "report", shortId] as const,
+    queryFn: () => api.listJobs({ report: shortId, limit: 1 }).then((r) => r.jobs[0] ?? null),
+  })
+
 // One job with its transcript, read when its row is opened.
 export const jobQuery = (id: string) =>
   queryOptions({

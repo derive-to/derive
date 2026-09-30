@@ -423,6 +423,67 @@ describe("jobs: what a teammate cannot do with someone else's agent or job", () 
     expect(seen.status).toBe(200)
   })
 
+  it("the inbox lists the jobs you asked and your agents' jobs, not a teammate's", async () => {
+    const { app } = await setup("jobs-mine")
+    const ownerAgent = await createAgent(app)
+    const edAgent = (await (
+      await app.request("/v1/agents", jsonAs(as(ed.email), { name: "Ed's helper" }))
+    ).json()) as { id: string }
+    const edAsked = (await (await ask(app, ed.email, ownerAgent.id, "Ed asks")).json()) as {
+      id: string
+    }
+    const ownerAsked = (await (
+      await ask(app, owner.email, ownerAgent.id, "Owner asks")
+    ).json()) as {
+      id: string
+    }
+    const onEds = (await (await ask(app, owner.email, edAgent.id, "On Ed's agent")).json()) as {
+      id: string
+    }
+    const ids = async (email: string) =>
+      (
+        (await (await app.request("/v1/jobs?mine=1", { headers: as(email) })).json()) as {
+          jobs: { id: string }[]
+        }
+      ).jobs
+        .map((j) => j.id)
+        .sort()
+    // Ed: the job he asked, and the one on the agent he made. Not the owner's own ask.
+    expect(await ids(ed.email)).toEqual([edAsked.id, onEds.id].sort())
+    // A workspace owner manages every agent, so every job is theirs to act on.
+    expect(await ids(owner.email)).toEqual([edAsked.id, ownerAsked.id, onEds.id].sort())
+  })
+
+  it("a report page finds the job it reports on, and only in its own workspace", async () => {
+    const { app } = await setup("jobs-report-lookup")
+    const agent = await createAgent(app)
+    const job = (await (await ask(app, ed.email, agent.id, "Write it up")).json()) as {
+      id: string
+    }
+    const [p] = await pull(app, agent)
+    const page = (await (await publishAs(app, "# Report", {}, bearer(agent.token))).json()) as {
+      short_id: string
+    }
+    const settled = await report(app, agent.token, job.id, {
+      started_at: p?.started_at ?? null,
+      status: "succeeded",
+      report_short_id: page.short_id,
+    })
+    expect(settled.status).toBe(200)
+    const found = (await (
+      await app.request(`/v1/jobs?report=${page.short_id}`, { headers: as(ed.email) })
+    ).json()) as { jobs: { id: string; report_short_id: string }[] }
+    expect(found.jobs.map((j) => j.id)).toEqual([job.id])
+    expect(found.jobs[0]?.report_short_id).toBe(page.short_id)
+    const other = (await (await publishAs(app, "# Not a report", {}, as(ed.email))).json()) as {
+      short_id: string
+    }
+    const none = (await (
+      await app.request(`/v1/jobs?report=${other.short_id}`, { headers: as(ed.email) })
+    ).json()) as { jobs: unknown[] }
+    expect(none.jobs).toEqual([])
+  })
+
   it("a refused late report still counts what the run spent", async () => {
     const { app, meta } = await setup("jobs-late-cost")
     const agent = await createAgent(app)

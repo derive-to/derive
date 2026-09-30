@@ -211,6 +211,14 @@ export const jobRoutes = (ctx: AppContext) => {
           parent: z.string().optional(),
           before: z.string().optional().describe("Keyset cursor: created_at of the last row seen."),
           limit: z.string().optional(),
+          mine: z
+            .string()
+            .optional()
+            .describe("1: only jobs you asked, or on agents you manage (the inbox)."),
+          report: z
+            .string()
+            .optional()
+            .describe("A report page's short id: the job that report is for."),
         }),
       },
       responses: {
@@ -228,16 +236,32 @@ export const jobRoutes = (ctx: AppContext) => {
         v
           ? v.split(",").filter((s): s is T => (allowed as readonly string[]).includes(s))
           : undefined
+      let reportArtifactId: string | undefined
+      if (q.report) {
+        const art = await meta.getByShortId(q.report).catch(() => null)
+        if (!art || art.org_id !== org) return c.json({ jobs: [] })
+        reportArtifactId = art.id
+      }
+      const limit = Math.min(200, Number(q.limit) || 50)
       const jobs = await meta.listJobs({
         orgId: org,
         agentId: q.agent || undefined,
         status: split(q.status, STATUSES),
         kind: split(q.kind, KINDS),
         parentId: q.parent || undefined,
+        reportArtifactId,
         before: q.before || undefined,
-        limit: Math.min(200, Number(q.limit) || 50),
+        // `mine` filters after the read, so read the cap and trim to the asked limit below.
+        limit: q.mine === "1" ? 200 : limit,
       })
-      return c.json({ jobs: await shown(jobs) })
+      if (q.mine !== "1") return c.json({ jobs: await shown(jobs) })
+      const who = await actingHuman(c)
+      if (!who) return bail(fail(c, 401, "unauthenticated"))
+      const managed = new Set<string>()
+      for (const a of await meta.listAgents(org))
+        if (await canManageAgent(meta, a, who.id)) managed.add(a.id)
+      const mine = jobs.filter((j) => j.asked_by === who.id || managed.has(j.agent_id))
+      return c.json({ jobs: await shown(mine.slice(0, limit)) })
     },
   )
 

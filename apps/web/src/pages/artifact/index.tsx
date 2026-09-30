@@ -58,6 +58,7 @@ import { DynamicDataPanel } from "./dynamic-data-panel"
 import { EditBar, type EditViewport } from "./edit-bar"
 import { FloatingControl } from "./floating-control"
 import { InlineMentionMenu } from "./inline-mention-menu"
+import { JobHeader } from "./job-header"
 import { buildStream, countUnread } from "./lib/activity"
 import { canCommentWithRole } from "./lib/comment-access"
 import { bucketThreads } from "./lib/layout"
@@ -71,6 +72,7 @@ import {
   LinkedBundleWorkspace,
   linkedBundleAnchor,
 } from "./linked-bundle-workspace"
+import { MarginAsk } from "./margin-ask"
 import { parseRef, refFor } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
 import { PublicViewer } from "./public-viewer"
@@ -1784,6 +1786,8 @@ export function Artifact({ template = false }: { template?: boolean }) {
             {art.current_version === 1 && canEditDoc && !editing && !inlineEdit.active && (
               <DerivedFromBanner art={art} />
             )}
+            {/* A job's report page says which job, above the report itself. */}
+            {me && !isGuest && !editing && !inlineEdit.active && <JobHeader shortId={shortId} />}
             {/* A paper keeps its bar above the open editor: the chips switch files. */}
             {art.bundle && !importedPaper && (!editing || isPaperBundle(art)) && (
               <BundleBar
@@ -1992,6 +1996,8 @@ export function Artifact({ template = false }: { template?: boolean }) {
                 // Above the stream; members who can act only.
                 !isGuest && canComment ? (
                   <>
+                    {/* Ask one of the workspace's agents about this page; it opens a job. */}
+                    {me && <MarginAsk shortId={shortId} />}
                     {/* The one line that replaces the edit affordance for people who
                         cannot publish here: comments are the suggestion channel. */}
                     {!canPublish ? (

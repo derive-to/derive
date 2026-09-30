@@ -27,6 +27,7 @@ import { useBootGate } from "@/lib/bootstrap"
 import { getMonogram } from "@/lib/initials"
 import {
   collectionsQuery,
+  inboxJobsQuery,
   summaryQuery,
   workspaceActivityQuery,
   workspacesQuery,
@@ -149,7 +150,7 @@ function NavItem({
   icon: IconName
   label: string
   count?: number
-  to: "/agents"
+  to: "/agents" | "/inbox"
   active: boolean
   testId?: string
 }) {
@@ -272,10 +273,11 @@ function RailHeader({ showSearch }: { showSearch: boolean }) {
 }
 
 // Deterministic silhouette widths (no Math.random → no per-render jitter / SSR mismatch).
-// One per primary row: Agents, Pages.
+// One per primary row: Agents, Inbox, Pages.
 const RAIL_SKELETON_ROWS = [
   { id: "r1", w: "58%" },
-  { id: "r2", w: "54%" },
+  { id: "r2", w: "50%" },
+  { id: "r3", w: "54%" },
 ]
 const RAIL_SKELETON_COLLECTIONS = [
   { id: "c1", w: "80%" },
@@ -360,6 +362,13 @@ export function NavRail() {
     enabled: !!me && bootGate,
   })
   const { data: workspaces } = useQuery({ ...workspacesQuery(), enabled: !!me })
+  // The Inbox count: jobs waiting on this person. Not in the boot batch; it refetches on a
+  // slow timer so an answer given elsewhere clears the badge.
+  const { data: waiting } = useQuery({
+    ...inboxJobsQuery(),
+    enabled: !!me && bootGate,
+    refetchInterval: 30_000,
+  })
   // The pod subtitle: "Personal" for the auto-provisioned workspace (its stored
   // name is provisioning plumbing), else the summary's workspace name.
   const activeWs = workspaces?.workspaces.find((w) => w.id === workspaces.active)
@@ -372,6 +381,7 @@ export function NavRail() {
   // filter narrows it. (A ?query= search doesn't change which feed you're in.)
   const isAll = onLibrary && !search.collection
   const onAgents = loc.pathname.startsWith("/agents")
+  const onInbox = loc.pathname === "/inbox"
   const onSettings = loc.pathname.startsWith("/settings")
 
   // Picking a destination on mobile closes the drawer (no-op on desktop).
@@ -400,16 +410,24 @@ export function NavRail() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              {/* Agents, Pages; Search is the launcher above and Settings sits at the foot.
-                  Inbox joins between them once its page exists. Contexts, Workflows, Chat,
-                  Templates, and Skills left the rail with the agent model; their pages stay
-                  reachable by URL and from the palette until their data is cut over. */}
+              {/* Agents, Inbox, Pages; Search is the launcher above and Settings sits at the
+                  foot. Contexts, Workflows, Chat, Templates, and Skills left the rail with the
+                  agent model; their pages stay reachable by URL and from the palette until
+                  their data is cut over. */}
               <NavItem
                 icon="agent"
                 label="Agents"
                 to="/agents"
                 active={onAgents}
                 testId="nav-agents"
+              />
+              <NavItem
+                icon="inbox"
+                label="Inbox"
+                to="/inbox"
+                count={waiting?.length}
+                active={onInbox}
+                testId="nav-inbox"
               />
               <FilterItem
                 icon="page"

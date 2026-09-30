@@ -6638,6 +6638,26 @@
             "required": false,
             "name": "limit",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "1: only jobs you asked, or on agents you manage (the inbox)."
+            },
+            "required": false,
+            "description": "1: only jobs you asked, or on agents you manage (the inbox).",
+            "name": "mine",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "A report page's short id: the job that report is for."
+            },
+            "required": false,
+            "description": "A report page's short id: the job that report is for.",
+            "name": "report",
+            "in": "query"
           }
         ],
         "responses": {

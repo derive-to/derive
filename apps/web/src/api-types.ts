@@ -1581,6 +1581,10 @@ export interface paths {
                     /** @description Keyset cursor: created_at of the last row seen. */
                     before?: string;
                     limit?: string;
+                    /** @description 1: only jobs you asked, or on agents you manage (the inbox). */
+                    mine?: string;
+                    /** @description A report page's short id: the job that report is for. */
+                    report?: string;
                 };
                 header?: never;
                 path?: never;

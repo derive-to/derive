@@ -215,6 +215,16 @@ function JobRow({
         </button>
         <Meta>
           {asker && <span>{asker}</span>}
+          {job.report_short_id && (
+            <Link
+              to="/artifacts/$ref"
+              params={{ ref: job.report_short_id }}
+              data-testid={`job-report-link-${job.id}`}
+              className="font-medium text-foreground hover:underline"
+            >
+              Report
+            </Link>
+          )}
           {canSteer && (job.status === "running" || job.status === "queued" || needs) && (
             <Button
               type="button"
@@ -259,7 +269,7 @@ function JobRow({
 }
 
 /** A needs-you job's question, answered here: one of its options, or in words. */
-function AnswerBox({ job }: { job: Job }) {
+export function AnswerBox({ job }: { job: Job }) {
   const [text, setText] = useState("")
   const answer = useApiMutation({
     mutationFn: (a: { text?: string; option?: string }) => api.answerJob(job.id, a),

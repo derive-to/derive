@@ -59,7 +59,10 @@ export function MobileComments({
   inspectEnabled,
   openCount,
   editing = false,
+  hints,
 }: {
+  /** Above the stream (the margin Ask, suggestion hints), as on the desktop panel. */
+  hints?: ReactNode
   open: boolean
   /** The open threads in stream order — the stepper and the peek preview walk these. */
   openThreads: Comment[][]
@@ -399,6 +402,7 @@ export function MobileComments({
             data-testid="activity-stream"
             className="flex min-h-0 flex-1 flex-col overflow-auto px-3 pb-[max(14px,env(safe-area-inset-bottom))]"
           >
+            {hints}
             {!ready && <StreamSkeleton />}
             {ready && (
               <ActivityStream

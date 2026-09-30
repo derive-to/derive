@@ -1508,3 +1508,108 @@ test("Settings lists the machines agents run on and the accounts they use", asyn
   await owner.getByTestId("account-disconnect-confirm").click()
   await expect(owner.getByTestId("accounts")).toHaveCount(0)
 })
+
+/** Publish a page as the agent itself, the way its runner does. */
+async function publishAsAgent(page: Page, agent: Seeded, title: string): Promise<string> {
+  const r = await page.request.post("/v1/artifacts", {
+    headers: { authorization: `Bearer ${agent.token}` },
+    multipart: {
+      file: {
+        name: "page.md",
+        mimeType: "text/markdown",
+        buffer: Buffer.from(`# ${title}\n\nbody`),
+      },
+      title,
+    },
+  })
+  expect(r.ok(), await r.text()).toBeTruthy()
+  return ((await r.json()) as { short_id: string }).short_id
+}
+
+test("Inbox answers what needs you in place and lists what agents published today", async ({
+  owner,
+}, testInfo) => {
+  const agent = await makeAgent(owner, { name: "Scribe", role: "editor" })
+  const jobId = await askAgent(owner, agent, "Draft the release note")
+  const [held] = await pullAs(owner, agent)
+  if (held)
+    await reportAs(owner, agent, held, {
+      status: "needs_you",
+      needs: { kind: "decision", question: "Ship it to the changelog?", options: ["Ship", "Hold"] },
+    })
+  await publishAsAgent(owner, agent, "Release note draft")
+
+  await owner.goto("/")
+  await expect(owner.getByTestId("nav-inbox")).toContainText("1")
+  await owner.getByTestId("nav-inbox").click()
+  await expect(owner).toHaveURL(/\/inbox$/)
+  const row = owner.getByTestId(`inbox-job-${jobId}`)
+  await expect(row).toContainText("Ship it to the changelog?")
+  await expect(owner.getByTestId("inbox-today")).toContainText("Release note draft")
+  await expect(owner.getByTestId("inbox-today")).toContainText("Scribe")
+  await owner.screenshot({ path: testInfo.outputPath("inbox.png"), fullPage: true })
+
+  await owner.getByTestId(`job-option-${jobId}-0`).click()
+  await expect(row).toHaveCount(0)
+  await expect(owner.getByTestId("nav-inbox")).not.toContainText("1")
+  const job = await (await owner.request.get(`/v1/jobs/${jobId}`)).json()
+  expect(job.status).toBe("queued")
+})
+
+test("a job's report page says which job it is, and the job links to it", async ({
+  owner,
+}, testInfo) => {
+  const agent = await makeAgent(owner, { name: "Reporter", role: "editor" })
+  const jobId = await askAgent(owner, agent, "Summarize the week")
+  const [held] = await pullAs(owner, agent)
+  const report = await publishAsAgent(owner, agent, "Weekly summary")
+  if (held)
+    await reportAs(owner, agent, held, {
+      status: "succeeded",
+      body_md: "Wrote the summary.",
+      report_short_id: report,
+    })
+
+  await owner.goto(`/agents/${agent.id}`)
+  await owner.getByTestId(`job-report-link-${jobId}`).click()
+  await expect(owner).toHaveURL(new RegExp(`/artifacts/${report}`))
+  const header = owner.getByTestId("job-header")
+  await expect(header).toHaveAttribute("data-status", "succeeded")
+  await expect(header).toContainText("Done")
+  await expect(header).toContainText("Reporter")
+  await expect(header).toContainText("Asked by E2E")
+  await expect(owner.getByTestId("activity-stream")).toBeVisible()
+  await owner.waitForTimeout(600) // let the document finish fading in for the picture
+  await owner.screenshot({ path: testInfo.outputPath("report-header.png") })
+
+  // An ordinary page carries no job line.
+  const plain = await publishArtifact(owner, "plain.md", "# Plain\n\nbody")
+  await openArtifact(owner, plain)
+  await expect(owner.getByTestId("job-header")).toHaveCount(0)
+})
+
+test("asking an agent from a page's margin opens a job about that page and shows the reply", async ({
+  owner,
+}, testInfo) => {
+  const agent = await makeAgent(owner, { name: "Helper", role: "editor" })
+  const page = await publishArtifact(owner, "plan.md", "# The plan\n\nbody")
+  await openArtifact(owner, page)
+  await owner.getByTestId("margin-ask-input").fill("What is missing from this plan?")
+  await owner.getByTestId("margin-ask-send").click()
+  const follow = owner.getByTestId("margin-ask-job")
+  await expect(follow).toHaveAttribute("data-status", "queued")
+
+  // The job is about this page; its runner picks it up and answers.
+  const [held] = await pullAs(owner, agent)
+  expect(held).toBeTruthy()
+  const job = await (await owner.request.get(`/v1/jobs/${held?.id}`)).json()
+  expect(job.subject).toEqual({ kind: "artifact", id: page })
+  if (held)
+    await reportAs(owner, agent, held, {
+      status: "succeeded",
+      body_md: "It has no owner for the rollout.",
+    })
+  await expect(follow).toHaveAttribute("data-status", "succeeded", { timeout: 20_000 })
+  await expect(follow).toContainText("It has no owner for the rollout.")
+  await owner.screenshot({ path: testInfo.outputPath("margin-ask.png") })
+})
