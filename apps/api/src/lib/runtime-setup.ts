@@ -1,7 +1,7 @@
 // The runner a Derive machine (Ortam sandbox) installs once and then launches for every job.
 // job-machine.ts runs INSTALL_RUNTIME_RUNNER when it sets a sandbox up.
 
-export const RUNNER_VERSION = "0.7.2"
+export const RUNNER_VERSION = "0.8.0"
 const RUNNER_DIRECTORY = `/home/ortam/derive-runtime/${RUNNER_VERSION}`
 export const SETUP_RUNNER_PATH = `${RUNNER_DIRECTORY}/node_modules/@derive-to/cli/bin/derive.js`
 

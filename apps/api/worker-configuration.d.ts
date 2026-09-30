@@ -21,7 +21,7 @@ interface __BaseEnv_Env {
 	DERIVE_SUPERADMIN_EMAILS: "anir@derive.to,rob@derive.to,mert@derive.to";
 	DERIVE_SIGNUP_MODE: "open";
 	DERIVE_MANAGED_RUNS_ALLOWLIST: "ws_5b0iz1wp99ksykr7,ws_abfxtkvjfijoyeau";
-	DERIVE_ORTAM_RUNNER_PATH: "/home/ortam/derive-runtime/0.7.2/node_modules/@derive-to/cli/bin/derive.js";
+	DERIVE_ORTAM_RUNNER_PATH: "/home/ortam/derive-runtime/0.8.0/node_modules/@derive-to/cli/bin/derive.js";
 	BASE_URL: "https://derive.to";
 	EMAIL_FROM: "Derive <notifications@send.derive.to>";
 	DERIVE_SANDBOX_URL: "https://raw.derive.page";
