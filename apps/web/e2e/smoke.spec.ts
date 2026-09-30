@@ -628,7 +628,7 @@ test("settings destinations and their retired paths resolve", async ({ owner }) 
 
 test("Artifacts is the front door and Archived remains one of its filters", async ({ owner }) => {
   await owner.goto("/")
-  await expect(owner.getByTestId("sidebar-all")).toContainText("Pages")
+  await expect(owner.getByTestId("sidebar-all")).toContainText("Artifacts")
   await expect(owner.getByRole("heading", { name: /^Artifacts\b/ })).toBeVisible()
   await expect(owner.getByTestId("library-view")).toHaveAttribute("aria-label", "Artifact views")
   await expect(owner.getByTestId("library-view-artifacts")).toHaveText("All")
@@ -1377,8 +1377,10 @@ test("Agents home groups agents by what they need, and the rail leads with it", 
 
   await owner.goto("/agents")
   await expect(owner.getByTestId("nav-agents")).toHaveAttribute("aria-current", "page")
-  // The rail is Agents, Inbox, Pages; the retired rows are gone but their pages still resolve.
-  for (const gone of ["nav-contexts", "nav-workflows", "nav-chat", "nav-templates", "nav-skills"])
+  // The rail is Agents, Inbox, Artifacts, Skills; the retired rows are gone but their pages
+  // still resolve.
+  await expect(owner.getByTestId("nav-skills")).toHaveAttribute("href", "/skills")
+  for (const gone of ["nav-contexts", "nav-workflows", "nav-chat", "nav-templates"])
     await expect(owner.getByTestId(gone)).toHaveCount(0)
   await expect(owner.getByTestId("agents-group-needs")).toContainText("Merge all three now?")
   await expect(owner.getByTestId("agents-group-running")).toContainText("Builder")

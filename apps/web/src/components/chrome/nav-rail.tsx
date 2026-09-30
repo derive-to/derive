@@ -150,7 +150,7 @@ function NavItem({
   icon: IconName
   label: string
   count?: number
-  to: "/agents" | "/inbox"
+  to: "/agents" | "/inbox" | "/skills"
   active: boolean
   testId?: string
 }) {
@@ -273,11 +273,12 @@ function RailHeader({ showSearch }: { showSearch: boolean }) {
 }
 
 // Deterministic silhouette widths (no Math.random → no per-render jitter / SSR mismatch).
-// One per primary row: Agents, Inbox, Pages.
+// One per primary row: Agents, Inbox, Artifacts, Skills.
 const RAIL_SKELETON_ROWS = [
   { id: "r1", w: "58%" },
   { id: "r2", w: "50%" },
-  { id: "r3", w: "54%" },
+  { id: "r3", w: "64%" },
+  { id: "r4", w: "48%" },
 ]
 const RAIL_SKELETON_COLLECTIONS = [
   { id: "c1", w: "80%" },
@@ -382,6 +383,7 @@ export function NavRail() {
   const isAll = onLibrary && !search.collection
   const onAgents = loc.pathname.startsWith("/agents")
   const onInbox = loc.pathname === "/inbox"
+  const onSkills = loc.pathname.startsWith("/skills")
   const onSettings = loc.pathname.startsWith("/settings")
 
   // Picking a destination on mobile closes the drawer (no-op on desktop).
@@ -410,9 +412,9 @@ export function NavRail() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              {/* Agents, Inbox, Pages; Search is the launcher above and Settings sits at the
-                  foot. Contexts, Workflows, Chat, Templates, and Skills left the rail with the
-                  agent model; their pages stay reachable by URL and from the palette until
+              {/* Agents, Inbox, Artifacts, Skills; Search is the launcher above and Settings
+                  sits at the foot. Contexts, Workflows, Chat, and Templates left the rail with
+                  the agent model; their pages stay reachable by URL and from the palette until
                   their data is cut over. */}
               <NavItem
                 icon="agent"
@@ -430,12 +432,19 @@ export function NavRail() {
                 testId="nav-inbox"
               />
               <FilterItem
-                icon="page"
-                label="Pages"
+                icon="all"
+                label="Artifacts"
                 count={summary?.total}
                 search={{}}
                 active={isAll}
                 testId="sidebar-all"
+              />
+              <NavItem
+                icon="skill"
+                label="Skills"
+                to="/skills"
+                active={onSkills}
+                testId="nav-skills"
               />
             </SidebarMenu>
           </SidebarGroupContent>
