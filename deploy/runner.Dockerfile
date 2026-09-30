@@ -1,14 +1,12 @@
-# The context runner, containerized — owner-operated compute in a box. The
+# The agent runner, containerized — owner-operated compute in a box. The
 # container boundary IS the sandbox: the model runs headless with permissions
-# skipped inside, so the walls are the image contents, the mounted context dir,
+# skipped inside, so the walls are the image contents, the mounted working dir,
 # and the env you hand it. Derive-the-company still holds no keys.
 #
-# Config is purely environment (12-factor): DERIVE_SERVER / DERIVE_CONTEXT /
-# DERIVE_TOKEN, RUNNER_MODEL / RUNNER_TIMEOUT_MS / RUNNER_POLL_MS, the selected
-# provider's per-run credential, GH_TOKEN (private repo pointers + gh), plus whatever
-# the context's .mcp.json expects. The API resolves that credential from the requester,
-# an explicitly lending agent owner, or the workspace pool; no model key is baked in.
-# See runner.compose.example.yml.
+# Config is purely environment (12-factor): DERIVE_SERVER / DERIVE_AGENT /
+# DERIVE_TOKEN, RUNNER_MODEL / RUNNER_TIMEOUT_MS / RUNNER_POLL_MS, GH_TOKEN (gh), plus
+# whatever the agent's tools expect. Each job's model account comes from the API; no model
+# key is baked in. See runner.compose.example.yml.
 FROM node:24-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03
 
 # git: repo pointers clone at boot. python3 + gh: what context manifests most
@@ -83,11 +81,9 @@ ENV RUNNER_CWD=/work
 # sandbox. Owner-operated node runners do not inherit this flag and keep Codex workspace-scoped.
 ENV DERIVE_RUNNER_ISOLATED=1
 
-# Cloudflare's local Containers runtime requires at least one declared port even for a
-# one-shot job container. This is image metadata only: RunContainer starts the process directly,
-# never waits for a port, and no route or listener exposes the job to traffic.
+# Image metadata only: the runner never listens, and no route or listener exposes a job to
+# traffic. Kept so container platforms that require a declared port can still start it.
 EXPOSE 8080
 
 ENTRYPOINT ["runner-entrypoint.sh"]
-# `docker compose run --rm <svc> doctor` preflights the exact same image + env.
 CMD ["serve"]

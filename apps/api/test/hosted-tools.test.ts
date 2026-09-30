@@ -140,7 +140,7 @@ describe("hosted tool injection — least privilege (WO4)", () => {
     expect(calls).toHaveLength(1) // none of the hostile paths reached fetch
   })
 
-  it("the claim response carries tool defs and refs only — never the connection record", async () => {
+  it("the pull response carries tool defs and refs only — never the connection record", async () => {
     const created = await (
       await app.request(
         "/v1/connections",
@@ -152,31 +152,28 @@ describe("hosted tool injection — least privilege (WO4)", () => {
         }),
       )
     ).json()
-    const auto = await (
+    const agent = await (
       await app.request(
-        "/v1/automations",
-        jsonAs(as(owner.email), {
-          trigger: { kind: "manual" },
-          instruction: "Read the vault.",
-          connectionIds: [created.id],
-        }),
+        "/v1/agents",
+        jsonAs(as(owner.email), { name: "Vault reader", connection_ids: [created.id] }),
       )
     ).json()
-    await app.request(`/v1/automations/${auto.id}/run`, {
+    await app.request(
+      "/v1/jobs",
+      jsonAs(as(owner.email), { agent_id: agent.id, instruction: "Read the vault." }),
+    )
+    const claim = await app.request(`/v1/agents/${agent.id}/pull`, {
       method: "POST",
-      headers: as(owner.email),
-    })
-    const claim = await app.request("/v1/agent/runs/claim", {
-      method: "GET",
-      headers: { authorization: `Bearer ${auto.agent_token}` },
+      headers: { authorization: `Bearer ${agent.token}`, "content-type": "application/json" },
+      body: "{}",
     })
     const text = await claim.text()
     expect(text).not.toContain("super-secret-value-xyz")
     expect(text).not.toContain("secret_enc")
     // The routing fields RunTool carries for the proxy stop at the wire, too.
     expect(text).not.toContain("connectionId")
-    const [run] = JSON.parse(text).runs
-    expect(run.tools.map((t: { def: { name: string } }) => t.def.name).sort()).toEqual([
+    const [job] = JSON.parse(text).jobs
+    expect(job.tools.map((t: { def: { name: string } }) => t.def.name).sort()).toEqual([
       "vault.get",
       "vault.post",
     ])

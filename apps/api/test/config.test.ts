@@ -3,6 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { loadConfig, resolveAuthSecret, resolveDefaultOrg } from "../src/config"
+import { configWarnings } from "../src/config-manifest"
 
 // loadConfig should fail fast at boot on a malformed value rather than coercing it
 // to a silent default (or failing lazily on the first request that touches it).
@@ -143,5 +144,13 @@ describe("config: resolveDefaultOrg", () => {
     expect(id).toMatch(/^ws_[0-9a-f]+$/)
     expect(readFileSync(join(dir, ".org-id"), "utf8").trim()).toBe(id)
     expect(resolveDefaultOrg(dir)).toBe(id)
+  })
+})
+
+describe("config: boot warnings", () => {
+  it("says a retired hosted-runs setting does nothing, and stays quiet without it", () => {
+    const warned = configWarnings({ DERIVE_HOSTED_RUNS: "true", DERIVE_LOOP_RUNS: "1" })
+    expect(warned.filter((w) => w.includes("does nothing"))).toHaveLength(2)
+    expect(configWarnings({}).some((w) => w.includes("does nothing"))).toBe(false)
   })
 })

@@ -458,10 +458,6 @@ export const jobRoutes = (ctx: AppContext) => {
   ): Promise<AgentRecord | Response> => {
     const a = await agentFor(c)
     if (!a) return fail(c, 401, "an agent key is required")
-    // A capability token minted for one old-lane run or session is not a runner for the
-    // agent's other work.
-    if (ctx.agentRunScope(c) || ctx.agentSessionScope(c) || ctx.agentWorkflowScope(c))
-      return fail(c, 403, "this token is scoped to other work")
     // A job token runs exactly its one job: never a pull, never another job's routes.
     const scope = ctx.agentJobScope(c)
     if (scope && (scope !== forJob || a.id !== agentId))

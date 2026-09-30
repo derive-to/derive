@@ -536,23 +536,9 @@ curl -sN "$DERIVE_MODEL_BASE_URL/chat/completions" \
        "messages":[{"role":"user","content":"hi"}]}'
 ```
 
-**It pays for unattended runs too**, whenever they execute in-process (`DERIVE_LOOP_RUNS=1`):
-the loop substrate takes the same gateway, and the schedule materializer then skips the payer
-chain, because on a deployment that holds the key there is nothing for a chain to resolve and
-no plan for anyone to connect. That is the hosted posture; the workspace is metered against
-its tier allowance instead.
-
-Only a deployment WITHOUT these three leaves unattended runs to resolve their own credential
-per run through the payer chain. (An earlier version of this section said unattended runs were
-unaffected. They are not, and believing it cost a release: the materializer kept demanding a
-payer a hosted workspace never has, so scheduled automations silently never fired while
-`Run now` worked.)
-
 > `DERIVE_MODEL_NAME` is your **gateway's** model id and belongs only with the two vars
-> above. Unattended in-process runs (`DERIVE_LOOP_RUNS=1`) talk to the Anthropic Messages
-> API on each run's own resolved plan, so they take an **Anthropic** model id from the
-> separate `DERIVE_LOOP_MODEL` (unset = `claude-sonnet-5`). Do not set `DERIVE_LOOP_MODEL`
-> to a gateway path. `api.anthropic.com` will answer `model_not_found`.
+> above. Agent jobs do not use this gateway: each job runs on the model account its agent
+> resolves (the agent's own, its asker's or creator's, or the workspace's shared one).
 
 #### The model library (Settings → Instance → Models)
 
@@ -564,7 +550,7 @@ Models, with no redeploy and no restart:
 | --- | --- | --- |
 | Add a model id on the gateway you already configured | the library | no |
 | Rename a model for the picker | the library | no |
-| Pin chat, or automations, to a model | the library | no |
+| Pin chat to a model | the library | no |
 | Probe a model: does it answer, and how fast | the library | no |
 | A new gateway, or a second provider's key | `DERIVE_MODEL_*` | **yes** |
 
@@ -575,9 +561,7 @@ an operator can add to them, relabel them, and pin to them, but cannot delete on
 a settings change from removing the last reachable model from a running deployment.
 
 Pins take effect on the **next turn**, including in conversations that are already open. A pin
-names the model and never who pays: automation runs that resolve a connected plan through the
-payer chain keep their own Anthropic model id (`DERIVE_LOOP_MODEL`), because the library's ids
-are the gateway's and the two namespaces are not interchangeable.
+names the model and never who pays.
 
 Each model shows two timings, which answer different questions. **Observed** is the median and
 p95 of real turns, calculated from the answers Derive already stores. It is the more useful

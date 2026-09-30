@@ -49,7 +49,10 @@ export const scopeGapMessage = ({
 }: ScopeGapInput): string | null => {
   const effective = capRole(scopeRole, memberRole ?? "viewer")
   if (memberRole && roleAllows(effective, action)) return null
-  const settings = `${baseUrl.replace(/\/$/, "")}/settings/agents`
+  const base = baseUrl.replace(/\/$/, "")
+  // Where each lever lives: an agent key's role on the agent's own Settings tab (reached from
+  // the Agents page), a connection's scope by connecting it again from the client.
+  const agentsPage = `${base}/agents`
   if (!memberRole)
     return `You aren't a member of that workspace, so nothing there is reachable. An admin has to add you.`
 
@@ -62,13 +65,13 @@ export const scopeGapMessage = ({
   if (scopeShort && seatShort)
     return (
       `Can't ${action} here: this connection holds ${scopeRole} access and your membership is ${memberRole} — both are below what's needed. ` +
-      `Ask an admin to raise your role, then reconnect with the ${needed ?? "required"} scope at ${settings}.`
+      `Ask an admin to raise your role, then reconnect this client with the ${needed ?? "required"} scope.`
     )
   if (seatShort)
     return `Can't ${action} here: your membership in this workspace is ${memberRole}. Re-consenting won't change that — an admin has to raise your role.`
   if (scopeShort)
     return registered
-      ? `Can't ${action} here: this agent token's role is ${scopeRole}. An admin can rotate it at a higher role (${settings}).`
-      : `Can't ${action} here: this connection was consented with ${scopeRole} access only (your membership would allow it). Reconnect with the ${needed ?? "required"} scope at ${settings} to grant it.`
+      ? `Can't ${action} here: this agent's role is ${scopeRole}. Its manager can raise it on the agent's Settings tab (${agentsPage}).`
+      : `Can't ${action} here: this connection was consented with ${scopeRole} access only (your membership would allow it). Reconnect this client with the ${needed ?? "required"} scope to grant it.`
   return null
 }

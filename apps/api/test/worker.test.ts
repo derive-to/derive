@@ -27,8 +27,8 @@ describe("worker (edge): fail-closed auth secret", () => {
   })
 })
 
-describe("worker scheduled runtime diagnostics", () => {
-  it("keeps a failed controller in waitUntil and redacts the platform exception", async () => {
+describe("worker scheduled job tick diagnostics", () => {
+  it("keeps a failed job tick in waitUntil and redacts the platform exception", async () => {
     const pending: Promise<unknown>[] = []
     const privateError = "private database connection and task parameters"
     const info = vi.spyOn(log, "info").mockImplementation(() => {})
@@ -39,7 +39,6 @@ describe("worker scheduled runtime diagnostics", () => {
         {
           DERIVE_AUTH_SECRET: "scheduled-worker-test-secret",
           DERIVE_ORTAM_RUNNER_PATH: "/opt/derive/bin/derive.js",
-          DERIVE_HOSTED_RUNS_ALLOWLIST: "pilot-workspace",
           WEBHOOK_OUTBOX: {
             idFromName: () => "outbox",
             get: () => ({ fetch: async () => new Response("ok") }),
@@ -56,55 +55,11 @@ describe("worker scheduled runtime diagnostics", () => {
       )
       const results = await Promise.allSettled(pending)
       const rejected = results.filter((r) => r.status === "rejected")
-      expect(rejected).toHaveLength(1)
-      expect(String(rejected[0]?.reason)).toBe(
-        "Error: Runtime tick failed; inspect runtime dispatch diagnostics",
-      )
-      expect(warn).toHaveBeenCalledWith("runtime tick failed", { reason: "connection" })
+      // The tick logs its own failure rather than failing the whole scheduled invocation.
+      expect(rejected).toHaveLength(0)
+      expect(warn).toHaveBeenCalledWith("job tick failed", { reason: "connection" })
       expect(JSON.stringify([info.mock.calls, warn.mock.calls, rejected])).not.toContain(
         privateError,
-      )
-    } finally {
-      info.mockRestore()
-      warn.mockRestore()
-    }
-  })
-})
-
-describe("worker runtime queue wake-up", () => {
-  it("coalesces runtime nudges in one batch and keeps controller failures redacted", async () => {
-    const info = vi.spyOn(log, "info").mockImplementation(() => {})
-    const warn = vi.spyOn(log, "warn").mockImplementation(() => {})
-    try {
-      await expect(
-        worker.queue(
-          {
-            messages: [
-              { body: null },
-              { body: { kind: "unknown" } },
-              { body: { kind: "runtime" } },
-              { body: { kind: "runtime" } },
-            ],
-          },
-          {
-            DERIVE_AUTH_SECRET: "runtime-queue-test-secret",
-            DERIVE_ORTAM_RUNNER_PATH: "/opt/derive/bin/derive.js",
-            DB: {
-              prepare: () => {
-                throw Object.assign(new Error("private queue database input"), {
-                  code: "ECONNRESET",
-                })
-              },
-            },
-          } as unknown as Env,
-        ),
-      ).rejects.toThrow("Runtime tick failed; inspect runtime dispatch diagnostics")
-      expect(
-        info.mock.calls.filter(([message]) => message === "runtime tick started"),
-      ).toHaveLength(1)
-      expect(warn).toHaveBeenCalledWith("runtime tick failed", { reason: "connection" })
-      expect(JSON.stringify([info.mock.calls, warn.mock.calls])).not.toContain(
-        "private queue database input",
       )
     } finally {
       info.mockRestore()

@@ -30,7 +30,7 @@ export const localAgentHandoff = (
     : "\n"
   const confirmWorkspace = `Use Derive's find tool once to confirm the active workspace${workspace ? ` is ${workspace.name}` : ""}.`
   if (target.kind === "context")
-    return `Use this Derive Context template as a strong reference and make a new version for me.
+    return `Use this Derive agent template as a strong reference and make a new agent for me.
 
 Template: ${target.title}
 Exact reference: ${target.uri}
@@ -39,9 +39,9 @@ ${request}
 
 Use the template as a reference, then make the decisions this brief needs:
 1. ${confirmWorkspace} Use Derive's read tool to inspect the exact reference before creating anything.
-2. Preserve what makes the reference effective, but adapt its manifest, procedures, sources, and operating decisions to my brief. Use find when workspace evidence would improve the result.
+2. Preserve what makes the reference effective, but adapt its instructions, procedures, sources, and operating decisions to my brief. Use find when workspace evidence would improve the result.
 3. Leave the original unchanged. Ask only for authority, source, permission, or credential decisions you cannot safely infer.
-4. Publish the adapted manifest as a new artifact with \`derived_from: "${target.uri}"\`, then use automate with create_context once the setup is clear.
+4. Publish the adapted instructions as a new page with \`derived_from: "${target.uri}"\`, then create the agent with the agents tool (\`action: "create"\`, \`instructions\` set to that page) once the setup is clear.
 5. Return the new shareable Derive URL and briefly explain the important adaptations.`
 
   return `Use this Derive template as a strong reference and make a new artifact for me.

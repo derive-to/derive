@@ -1,7 +1,7 @@
 # `@derive-to/mcp`
 
 The local stdio compatibility server for [Derive](https://derive.to). It gives an
-MCP-compatible agent the same find, publish, comment, revision, and context tools exposed by
+MCP-compatible agent the same find, publish, comment, and revision tools exposed by
 a Derive instance's remote `/mcp` endpoint.
 
 ## Prefer the remote server
@@ -54,14 +54,16 @@ interactive clients. Treat static tokens as credentials and never commit them.
 
 ## Tools
 
-- `find`: search and browse artifacts and contexts.
+- `find`: search and browse artifacts.
 - `read`: read artifact content or a specific version.
 - `catch_up`: retrieve changed work, open feedback, history, or the current work queue.
 - `comment`: leave feedback, reply, resolve, or reopen a thread.
 - `publish`: create an artifact or save a revision; publishes live.
 - `stage`: upload images, fonts, and other bundle assets out of band.
-- `use`: ask a workspace context to perform work.
 - `checkpoint`: save resumable working state as a one-page artifact.
+
+The remote server also has the agent tools (`agents`, `ask`, `jobs`, `pull`) for making agents,
+handing them work, and running them; the stdio bridge does not.
 
 The server also exposes workflow resources under `derive://skills/*`. Agents should
 read the relevant workflow before performing a multi-step operation. The canonical

@@ -106,4 +106,29 @@ describe("@derive in a comment thread", () => {
     expect(after).toBe(first)
     expect(after).toBe(1)
   })
+  it("stays silent once the workspace has spent its monthly model budget", async () => {
+    const { app, meta, doc } = await setup("cm-budget", "should not be sent")
+    // The workspace pool's monthly limit, and a job this month that already spent past it.
+    await meta.createPlan({
+      id: newId("plan"),
+      org_id: "default",
+      user_id: null,
+      kind: "model",
+      provider: "anthropic",
+      secret_enc: "enc",
+      limits: JSON.stringify({ monthlyMicroUsd: 1_000 }),
+    })
+    const agent = (await (
+      await app.request("/v1/agents", jsonAs(as("own@x.com"), { name: "Spender" }))
+    ).json()) as { id: string }
+    const job = (await (
+      await app.request(
+        "/v1/jobs",
+        jsonAs(as("own@x.com"), { agent_id: agent.id, instruction: "Spend" }),
+      )
+    ).json()) as { id: string }
+    await meta.addJobCost(job.id, 5_000)
+    const { all } = await mention(app, meta, doc.short_id, "@derive how are seats billed?", DERIVE)
+    expect(all.some((c) => c.author_id === "derive")).toBe(false)
+  })
 })

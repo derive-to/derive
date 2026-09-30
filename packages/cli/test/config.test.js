@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { workflowDefinitionOf } from "../../core/src/workflow"
 import {
   agentScaffoldFiles,
   CONFIG_FILE,
@@ -28,11 +29,9 @@ import {
   setDefaultWorkspace,
   setWorkspaces,
   skillSyncPlan,
-  writeContextConfig,
   writeId,
   writeSkillPin,
 } from "../src/config.js"
-import { previewWorkflowSource } from "../src/workflow.js"
 
 const dirs = []
 const tmp = () => {
@@ -45,31 +44,23 @@ afterEach(() => {
 })
 
 describe("scaffold", () => {
-  it("workflow template starts graph-first and previews without a fake artifact member", () => {
+  it("workflow template is a graph the server can walk, without a fake artifact member", () => {
     const d = tmp()
     const { created } = scaffold(d, "Weekly brief", "workflow")
     expect(created).toContain("workflow.html")
     expect(JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8")).entry).toBe("workflow.html")
     const source = readFileSync(join(d, "workflow.html"), "utf8")
-    const preview = previewWorkflowSource(source)
-    expect(preview).toMatchObject({
-      status: "ready",
-      purpose: "Build and publish Weekly brief",
-      diagrams: [
-        {
-          context_sessions: [
-            { context_ref: "draft-builder", starts_when: "explicit run" },
-            { context_ref: "quality-checker", starts_when: "Draft completes" },
-            { context_ref: "artifact-publisher", starts_when: "Quality check returns ready" },
-          ],
-          side_effects: [expect.stringContaining("Publish Weekly brief to Derive — replay-safe")],
-        },
-      ],
-    })
-    expect(preview.diagrams[0]?.will_pause).toEqual([])
+    // The same reader the graph walker uses on an agent's instructions page.
+    const checked = workflowDefinitionOf(source)
+    expect(checked?.errors).toEqual([])
+    expect(checked?.definition?.purpose).toBe("Build and publish Weekly brief")
+    expect(
+      checked?.definition?.diagrams[0]?.nodes.map((n) => n.context_ref).filter(Boolean),
+    ).toEqual(["draft-builder", "quality-checker", "artifact-publisher"])
     expect(source).toContain('"members": []')
     expect(source).not.toContain("Publish without approval")
     expect(source).not.toContain("abc12345")
+    expect(source).not.toContain("derive workflow sync")
   })
 
   it("md template writes derive.json + index.md + the Codex/Claude agent on-ramp", () => {
@@ -79,10 +70,7 @@ describe("scaffold", () => {
       expect.arrayContaining([
         ".agents/skills/derive/SKILL.md",
         ".agents/skills/derive/agents/openai.yaml",
-        ".agents/skills/derive-workflows/SKILL.md",
-        ".agents/skills/derive-workflows/references/protocol.md",
         ".claude/skills/derive/SKILL.md",
-        ".claude/skills/derive-workflows/SKILL.md",
         ".codex/config.toml",
         ".mcp.json",
         "AGENTS.md",
@@ -121,9 +109,6 @@ describe("scaffold", () => {
     expect(readFileSync(join(d, ".agents/skills/derive/agents/openai.yaml"), "utf8")).toContain(
       'url: "https://derive.to/mcp"',
     )
-    const workflowSkill = readFileSync(join(d, ".agents/skills/derive-workflows/SKILL.md"), "utf8")
-    expect(workflowSkill).toContain("name: derive-workflows")
-    expect(workflowSkill).toContain("Preview includes structural validation")
   })
 
   it("installs the agent on-ramp alone and never clobbers an existing config", () => {
@@ -135,7 +120,7 @@ describe("scaffold", () => {
     expect(created).toContain(".codex/config.toml")
     expect(skipped).toContain(".mcp.json")
     expect(readFileSync(join(d, ".mcp.json"), "utf8")).toBe('{"mine":true}\n')
-    expect(Object.keys(agentScaffoldFiles())).toHaveLength(18)
+    expect(Object.keys(agentScaffoldFiles())).toHaveLength(10)
 
     const skillPath = join(d, ".agents/skills/derive/SKILL.md")
     writeFileSync(skillPath, "locally changed\n")
@@ -209,59 +194,6 @@ describe("scaffold", () => {
     expect(readFileSync(join(d, "AGENTS.md"), "utf8")).toContain(
       "<!-- derive:artifact-first:start -->",
     )
-  })
-
-  it("scaffolds a Context: manifest + references + tools + env hygiene", () => {
-    const files = scaffoldFiles("Analytics", "context")
-    const names = Object.keys(files)
-    expect(names).toContain("context/MANIFEST.md")
-    expect(names).toContain("context/references/example.md")
-    expect(names).toContain("context/.mcp.json")
-    expect(names).toContain("context/.env.example")
-    // .env, the minted agent token, and the clone workspace must never reach git.
-    expect(files[".gitignore"]).toContain("context/.env")
-    expect(files[".gitignore"]).toContain(".derive/")
-    expect(files[".gitignore"]).toContain("context/repos/")
-    // The repo-pointer example ships commented out — scaffolds must parse to zero repos.
-    expect(files["context/MANIFEST.md"]).toContain("# repos:")
-    const cfg = JSON.parse(files[CONFIG_FILE])
-    expect(cfg.entry).toBe("context")
-    expect(cfg.context).toEqual({ id: null, agent_id: null, name: "Analytics" })
-  })
-
-  it("keeps the Agent template as a compatibility alias", () => {
-    expect(scaffoldFiles("Analytics", "agent")).toEqual(scaffoldFiles("Analytics", "context"))
-  })
-
-  it("uses Context as the command name and keeps Agent as a compatibility alias", () => {
-    const d = tmp()
-    const bin = join(import.meta.dirname, "..", "bin", "derive.js")
-    const run = (noun) => spawnSync(process.execPath, [bin, noun, "push", d], { encoding: "utf8" })
-
-    const agent = run("agent")
-    const context = run("context")
-
-    expect(agent.status).toBe(1)
-    expect(agent.stderr).toContain('has no "context" block')
-    expect(context.status).toBe(1)
-    expect(context.stderr).toContain('has no "context" block')
-  })
-})
-
-describe("writeContextConfig", () => {
-  it("merges wiring ids into the context block, preserving everything else", () => {
-    const d = tmp()
-    writeFileSync(
-      join(d, CONFIG_FILE),
-      JSON.stringify({ title: "T", entry: "context", id: "abc", context: { id: null, name: "T" } }),
-    )
-    writeContextConfig(d, { agent_id: "ag_1" })
-    const cfg = writeContextConfig(d, { id: "ctx_1" })
-    expect(cfg).toMatchObject({
-      title: "T",
-      id: "abc",
-      context: { id: "ctx_1", agent_id: "ag_1", name: "T" },
-    })
   })
 })
 

@@ -12,7 +12,6 @@ import { afterAll } from "vitest"
 import { type AppDeps, createApp } from "../src/app"
 import { buildContext } from "../src/context"
 import { DEFAULT_WORKSPACE_NAME } from "../src/lib/http"
-import { POOL_USER } from "../src/lib/payer"
 
 export const dir = mkdtempSync(join(tmpdir(), "derive-test-"))
 
@@ -307,37 +306,6 @@ const fakeAuth = (users: TestUser[]): AppDeps["auth"] =>
     },
   }) as unknown as AppDeps["auth"]
 
-/**
- * Give a workspace a POOL model plan, so work in it can be paid for.
- *
- * Every enqueue lane now refuses to queue work nothing can pay for (src/lib/payer.ts). That is
- * right in production and pure noise in a test about retry backoff or webhook coalescing, so
- * makeAuthedApp connects one by DEFAULT and the tests that are ABOUT the payer opt out with
- * `{ noPlan: true }`.
- *
- * Written straight to the store rather than through the route: the route encrypts, while the
- * payer chain only asks whether a credential EXISTS. Keeping this dumb means a change to how
- * secrets are stored can never quietly make every fixture unpayable.
- */
-export const connectPoolPlan = async (
-  meta: MetaStore,
-  orgId = "default",
-  provider: "claude-code" | "codex" = "claude-code",
-) => {
-  const now = new Date().toISOString()
-  await meta.setModelCredential({
-    id: `mc_pool_${orgId}_${provider}`,
-    org_id: orgId,
-    user_id: POOL_USER,
-    provider,
-    kind: "api_key",
-    secret: "sk-test-pool",
-    hint: "test",
-    created_at: now,
-    updated_at: now,
-  })
-}
-
 export const makeAuthedApp = (
   name: string,
   users: TestUser[],
@@ -345,7 +313,6 @@ export const makeAuthedApp = (
   opts?: {
     isolated?: boolean
     deps?: Partial<AppDeps>
-    noPlan?: boolean
     operatorIds?: string[]
   },
 ) => {
@@ -361,22 +328,14 @@ export const makeAuthedApp = (
           role: i === 0 ? "owner" : (defaultRole ?? "editor"),
         }))
   const m = makeStore(name, users, team)
-  // The workspace plan, AWAITED ON FIRST REQUEST rather than fired and forgotten.
-  //
-  // Two earlier shapes were both wrong. A floating `void connectPoolPlan(...)` raced the Postgres
-  // pool: the file ends, the pool closes, the stray insert lands after it ("Cannot use a pool
-  // after calling end on the pool"). A `beforeAll` hook fixed that but broke the other call
-  // pattern — some suites build their app INSIDE a test, and a hook registered at that point
-  // never fires, so every ask came back 402 and sessions were undefined.
-  //
-  // Gating `app.request` covers both: whoever calls first pays the wait, it always completes
-  // before the pool closes, and there is no floating promise to go unhandled.
-  const planReady = (async () => {
+  // Instance operators, AWAITED ON FIRST REQUEST rather than fired and forgotten: a floating
+  // insert races the Postgres pool closing at the end of the file, and a `beforeAll` hook never
+  // fires for a suite that builds its app inside a test. Gating `app.request` covers both.
+  const seedReady = (async () => {
     const authorityStore = opts?.deps?.meta ?? m
     for (const userId of opts?.operatorIds ?? []) await authorityStore.addInstanceOperator(userId)
-    if (!opts?.noPlan) await connectPoolPlan(m, "default").catch(() => undefined)
   })()
-  appSeeds.push(planReady)
+  appSeeds.push(seedReady)
   const deps: AppDeps = {
     meta: m,
     blobs: new FsBlobStore(join(dir, "blobs")),
@@ -393,19 +352,17 @@ export const makeAuthedApp = (
     get: (target, prop, recv) => {
       if (prop !== "request") return Reflect.get(target, prop, recv)
       return async (...args: Parameters<typeof app.request>) => {
-        await planReady
+        await seedReady
         return app.request(...args)
       }
     },
   })
   // THE STORE IS GATED ON THE SAME PROMISE, and it has to be.
   //
-  // `planReady` does a READ-MODIFY-WRITE of org settings (it reads the row, then writes it back
-  // with the pool plan). A test that writes settings directly — comment-fanout's "email
-  // toggle off", say — goes through the store, which was NOT gated, so the two raced: when the
-  // seed's write landed second it put back the copy it had read BEFORE the test's write, and
-  // the toggle the test had just switched off came back on. The test then failed asserting on
-  // behaviour it had correctly configured, in a file nobody had touched.
+  // A seed that writes (it once read and rewrote org settings with a pool plan) raced a test that
+  // writes the same rows directly through the store, which was NOT gated: when the seed's write
+  // landed second it put back the copy it had read BEFORE the test's write. The test then failed
+  // asserting on behaviour it had correctly configured, in a file nobody had touched.
   //
   // It is timing-dependent, so it hid locally and surfaced on CI's parallel runner. Gating both
   // ends orders the seed first and leaves the test's write as the one that survives, which is
@@ -420,7 +377,7 @@ export const makeAuthedApp = (
       const value = Reflect.get(target, prop, recv)
       if (typeof prop !== "string" || prop === "then" || typeof value !== "function") return value
       const fn = value as (...a: unknown[]) => unknown
-      return (...args: unknown[]) => planReady.then(() => fn.apply(target, args))
+      return (...args: unknown[]) => seedReady.then(() => fn.apply(target, args))
     },
   })
   // The SAME deps the app runs on, assembled into a context — for the code that takes an

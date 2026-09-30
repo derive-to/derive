@@ -61,12 +61,6 @@ export const docsSections = [
         description:
           "Understand workspace access, link roles, listing, passwords, and anonymous viewing.",
       },
-      {
-        source: "apps/docs/content/hosted-runs.md",
-        slug: "concepts/hosted-runs",
-        title: "Hosted runs",
-        description: "How scheduled and interactive Context runs execute safely.",
-      },
     ],
   },
   {

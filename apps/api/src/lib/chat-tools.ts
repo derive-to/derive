@@ -39,21 +39,21 @@ import { AGENT_WRITES_OFF } from "./agent-writes"
 /**
  * The subset a chat turn is offered, and the reason each of the others is out.
  *
- * IN: `find` (what exists), `read` (what it says), `publish` (write it), `use` (hand work to a
- * packaged agent). That is "find content about X", "summarize this", "build me a page" and "ask
- * the analytics context" — the four things people actually open a chat to do.
+ * IN: `find` (what exists), `read` (what it says), `publish` (write it), and `call` (the
+ * workspace's connected sources). That is "find content about X", "summarize this", "build me a
+ * page" and "look this up in the tool we connected", the things people actually open a chat to do.
  *
  * OUT, deliberately: `stage` (an out-of-band upload workflow for a shell, meaningless mid-turn),
  * `list_workspaces` + the library tools + `checkpoint` (the workspace is pinned and there is
  * no agent state to save), `comment` (a chat turn talking into a document's comment threads is a
- * different feature with its own notification fan-out), `automate` (a different bet behind its
- * own flag), `derive_code` (it exists to collapse many approvals into one, which is a problem
+ * different feature with its own notification fan-out), the agent tools (`agents`, `ask`, `jobs`,
+ * `pull`: handing work to an agent is a person's decision, not a chat turn's), `derive_code` (it exists to collapse many approvals into one, which is a problem
  * attended chat does not have).
  *
  * Absent tools are NOT REGISTERED, so there is no handler to reach — the subset is enforced by
  * construction rather than by a check that could be skipped.
  */
-export const CHAT_TOOLS: ReadonlySet<string> = new Set(["find", "read", "publish", "use", "call"])
+export const CHAT_TOOLS: ReadonlySet<string> = new Set(["find", "read", "publish", "call"])
 
 /**
  * The DOCUMENT RAIL's subset: reach, and nothing that writes.
@@ -229,7 +229,6 @@ export const buildChatTools = (
     boundWorkspaces: [who.org],
     clientId: "chat",
     mintedToken: false,
-    workflowScope: null,
     defaultOrg: who.org,
     defaultRole: who.seatRole,
     pendingRequests: [],
@@ -295,24 +294,5 @@ export const chatPolicy = (
     const editing = typeof args.short_id === "string" && args.short_id.length > 0
     return editing ? { ...args, request_review: true } : args
   }
-  if (name === "use") {
-    // A packaged agent's run has its OWN budget, and a chat turn does not get to inherit it: a
-    // Maker context can work for minutes, and the person is sitting there. Cap the wait so the
-    // turn relays a pointer ("it is running, here is the session") instead of holding the
-    // conversation open. `use` already returns progress + result_url early, so this loses
-    // nothing except the stall.
-    const asked = typeof args.wait === "number" ? args.wait : Number(args.wait)
-    // Clamped at BOTH ends: the tool's own schema rejects a negative, and turning the model's
-    // bad argument into a tool error it has to recover from wastes a turn for nothing.
-    return {
-      ...args,
-      wait: Number.isFinite(asked)
-        ? Math.min(Math.max(asked, 0), CHAT_USE_WAIT_S)
-        : CHAT_USE_WAIT_S,
-    }
-  }
   return args
 }
-
-/** How long a chat turn will wait on a packaged agent before relaying a pointer instead. */
-export const CHAT_USE_WAIT_S = 8

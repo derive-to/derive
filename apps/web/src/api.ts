@@ -175,8 +175,6 @@ export interface Bibliography {
 }
 /** One change to the .bib: a complete entry over `key` (or appended), or a removal. */
 export type BibOp = { op: "set"; key?: string; raw: string } | { op: "delete"; key: string }
-export type WorkflowRunSummary =
-  paths["/v1/artifacts/{shortId}/workflow-runs"]["get"]["responses"][200]["content"]["application/json"]["runs"][number]
 export interface LocalArtifactActivity {
   activity: Array<{
     id: string
@@ -316,7 +314,6 @@ export interface DraftClaimPreview {
 export type ShareResult = components["schemas"]["ShareResult"]
 /** Per-workspace integration switches. Generated from the OpenAPI spec. */
 export type OrgSettings = components["schemas"]["OrgSettings"]
-export type ChatModelOption = components["schemas"]["ChatModel"]
 
 /**
  * THE MODEL LIBRARY, as the operator's settings page reads it.
@@ -492,8 +489,6 @@ export type NewModelAccount = {
   secret: string
   shared: boolean
 }
-export type WorkflowDirectoryItem =
-  paths["/v1/workflows"]["get"]["responses"][200]["content"]["application/json"]["workflows"][number]
 
 /** How an automation fires. Manual = a Run button; schedule = a cron in a timezone;
  *  event = a subscription. Hand-typed: the automation routes are the agent-facing plain
@@ -579,7 +574,6 @@ export interface Run {
     writes: unknown[]
   }
 }
-export type ContextEnvironment = components["schemas"]["ContextEnvironment"]
 /** An askable agent setup: a registered agent wired to a manifest artifact.
  *  Generated from the OpenAPI spec. */
 export type ContextInfo = components["schemas"]["ContextInfo"]
@@ -592,17 +586,6 @@ export type ContextDetail =
  *  stands, and the prompts that start or update it. Generated from the OpenAPI spec. */
 export type ContextAnalysis = components["schemas"]["ContextAnalysisInfo"]
 export type ManifestSkillInfo = components["schemas"]["ManifestSkillInfo"]
-/** One artifact a context produced, grouped across every run that bound it. Generated
- *  from the OpenAPI spec. */
-export type ContextOutput =
-  paths["/v1/contexts/{id}/outputs"]["get"]["responses"][200]["content"]["application/json"]["outputs"][number]
-/** The runner's structured payload on an agent message. Generated from the spec. */
-export type SessionMeta = components["schemas"]["SessionMeta"]
-export type BuilderCard = NonNullable<NonNullable<SessionMeta>["card"]>
-export type SessionMessage = components["schemas"]["SessionMessage"]
-/** An ask-conversation with a context's agent. Generated from the OpenAPI spec. */
-export type Session = components["schemas"]["Session"]
-export type SessionState = Session["state"]
 /** A shareable catalog of immutable starters. Generated from the Templates API contract. */
 export type TemplateLibrary = components["schemas"]["TemplateLibrary"]
 export type TemplateLibraryEntry = components["schemas"]["TemplateLibraryEntry"]
@@ -2124,6 +2107,6 @@ export interface Credential {
   can_use: boolean
 }
 export interface CredentialUsage {
-  items: { id: string; name: string; kind: "context" | "workflow" | "automation" }[]
+  items: { id: string; name: string; kind: "agent" }[]
   hidden_count: number
 }

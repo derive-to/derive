@@ -7,6 +7,7 @@ import {
   runOneJob,
   serveJob,
 } from "../../../packages/cli/src/job-runner.js"
+import { signCapabilityToken } from "../src/lib/capability-token"
 import { advanceGraph, graphAware, graphPass } from "../src/lib/job-graph"
 import { machinePass, machineWorkspaces } from "../src/lib/job-machine"
 import { jobTick } from "../src/lib/jobs"
@@ -21,10 +22,9 @@ const outsider: TestUser = { id: "u_job_out", email: "jobout@derive.test", name:
 
 type App = ReturnType<typeof makeAuthedApp>["app"]
 
-const setup = async (name: string, opts: { noPlan?: boolean } = {}) => {
+const setup = async (name: string) => {
   const made = makeAuthedApp(name, [owner, ed, outsider], "editor", {
     deps: { encryptionKey: "test-encryption-key" },
-    ...opts,
   })
   const { app, meta } = made
   await app.request("/v1/me", { headers: as(owner.email) })
@@ -275,6 +275,28 @@ describe("jobs: who may ask, see, and run", () => {
       can_manage: boolean
     }
     expect(detail).toMatchObject({ can_ask: false, can_manage: false })
+  })
+
+  it("a retired work token (dkrun_, dksess_, dkwfr_) resolves to nobody, even when well signed", async () => {
+    const { app } = await setup("jobs-retired-tokens")
+    const a = await createAgent(app)
+    const job = (await (await ask(app, ed.email, a.id, "for a")).json()) as { id: string }
+    const exp = Date.now() + 10 * 60_000
+    for (const [prefix, domain] of [
+      ["dkrun_", "derive-run-token:"],
+      ["dksess_", "derive-session-token:"],
+      ["dkwfr_", "derive-workflow-token:"],
+    ]) {
+      // Signed exactly as the retired lanes minted them, with the deployment's own key.
+      const token = `${prefix}${await signCapabilityToken(domain ?? "", "test-encryption-key", [job.id, a.id, "default"], exp)}`
+      // Anonymous: refused at the door for a write, and nothing to see for a read.
+      expect([401, 403]).toContain(
+        (await app.request(`/v1/agents/${a.id}/pull`, jsonAs(bearer(token), {}))).status,
+      )
+      expect([401, 404]).toContain(
+        (await app.request(`/v1/jobs/${job.id}`, { headers: bearer(token) })).status,
+      )
+    }
   })
 
   it("a runner pulls and reports only its own agent's work", async () => {
@@ -815,7 +837,7 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
   })
 
   it("a job with no account to run on fails with a sentence the owner can act on", async () => {
-    const { app } = await setup("jobs-cli-noaccount", { noPlan: true })
+    const { app } = await setup("jobs-cli-noaccount")
     const agent = await createAgent(app)
     const job = (await (await ask(app, ed.email, agent.id, "Go")).json()) as { id: string }
     const { cfg, client } = runnerFor(app, agent)

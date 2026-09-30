@@ -8,12 +8,12 @@ const monthStartIso = (): string => {
 
 /**
  * The enqueue budget guard (invariant 2). True when the owner's resolved MODEL plan carries a
- * monthly limit AND this org's run spend this month has reached it. A missing plan or a plan
+ * monthly limit AND this org's job spend this month has reached it. A missing plan or a plan
  * with no limit is NOT over budget here — a missing meter is the loud failure at execution
  * time (when a model key is actually needed), not at enqueue. `ownerUserId` is the person the
  * run bills to: the verb/automation owner (null → the workspace pool).
  *
- * Executors report `cost_micro_usd` when the selected provider exposes dollar cost. Some
+ * Jobs record `cost_micro_usd` when the selected provider exposes dollar cost. Some
  * subscription-backed CLIs (including Codex) expose token usage but no dollar amount, so their
  * rows remain unknown rather than being recorded as free. Concurrency and retry caps therefore
  * remain the hard backstops for providers whose CLI cannot report price.
@@ -32,6 +32,6 @@ export const overBudget = async (
     return false
   }
   if (!limit || limit <= 0) return false
-  const spent = await meta.sumRunCostSince(orgId, monthStartIso())
+  const spent = await meta.sumJobCostSince(orgId, monthStartIso())
   return spent >= limit
 }

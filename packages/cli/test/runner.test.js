@@ -1,41 +1,18 @@
-import { execFileSync, execSync, spawn } from "node:child_process"
-import { createHash } from "node:crypto"
+import { execSync, spawnSync } from "node:child_process"
 import {
   chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
-  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs"
-import http from "node:http"
 import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
-import { describe, expect, it, vi } from "vitest"
-import {
-  checkWritable,
-  configForRun,
-  doctor,
-  gitSafeEnv,
-  loadRunnerConfig,
-  OUTPUT_CONTRACT,
-  once,
-  parseAnswer,
-  parseManifest,
-  repoSlug,
-  resolveArtifactHtml,
-  resolveModelEnv,
-  runClaude,
-  runOnce,
-  serveRun,
-  serveSession,
-  syncRepos,
-} from "../src/runner.js"
-import { prepareRuntimeFiles } from "../src/runtime-files.js"
-import { configureRuntimeGit } from "../src/runtime-git.js"
+import { describe, expect, it } from "vitest"
+import { loadJobRunnerConfig } from "../src/job-runner.js"
+import { OUTPUT_CONTRACT, parseAnswer, resolveArtifactHtml, runClaude } from "../src/runner.js"
 import { materializeSkills, skillDigest, skillSlug, writeSkill } from "../src/skills.js"
 
 describe("parseAnswer", () => {
@@ -68,201 +45,6 @@ describe("parseAnswer", () => {
       artifact: { title: "t".repeat(300), html: "<p>x</p>" },
     })
     expect(parseAnswer(`<answer>${long}</answer>`).answer.artifact.title).toHaveLength(120)
-  })
-})
-
-describe("loadRunnerConfig", () => {
-  it("requires a token and context; flags win over env", () => {
-    expect(() => loadRunnerConfig({}, {})).toThrow(/required/)
-    const cfg = loadRunnerConfig(
-      { DERIVE_TOKEN: "env-tok", DERIVE_CONTEXT: "ctx_env", RUNNER_MODEL: "opus" },
-      { context: "ctx_flag", model: "sonnet" },
-    )
-    expect(cfg.contextId).toBe("ctx_flag")
-    expect(cfg.model).toBe("sonnet")
-    expect(cfg.token).toBe("env-tok")
-    expect(cfg.server).toBe("https://derive.to") // cloud default
-  })
-
-  it("reads the token from --token-file (whitespace-stripped)", () => {
-    const dir = mkdtempSync(join(tmpdir(), "runner-test-"))
-    const f = join(dir, "tok")
-    writeFileSync(f, "  dk_agt_abc\n")
-    const cfg = loadRunnerConfig({}, { "token-file": f, context: "ctx_x" })
-    expect(cfg.token).toBe("dk_agt_abc")
-  })
-
-  it("floors malformed poll/timeout values instead of passing NaN to setTimeout", () => {
-    const cfg = loadRunnerConfig(
-      { DERIVE_TOKEN: "t", DERIVE_CONTEXT: "ctx_x", RUNNER_POLL_MS: "5s", RUNNER_TIMEOUT_MS: "-1" },
-      {},
-    )
-    expect(cfg.pollMs).toBe(5_000)
-    expect(cfg.timeoutMs).toBe(600_000)
-  })
-
-  it("--env-file values override ambient env (source semantics), applied to the given env only", () => {
-    const dir = mkdtempSync(join(tmpdir(), "runner-test-"))
-    const f = join(dir, ".env")
-    writeFileSync(f, `# comment\nexport DERIVE_TOKEN="fresh"\nSNOWFLAKE_KEY='s3cr3t'\n`)
-    const env = { DERIVE_TOKEN: "stale-exported" }
-    const cfg = loadRunnerConfig(env, { "env-file": f, context: "ctx_x" })
-    expect(cfg.token).toBe("fresh")
-    expect(env.SNOWFLAKE_KEY).toBe("s3cr3t")
-    expect(process.env.SNOWFLAKE_KEY).toBeUndefined()
-  })
-
-  it("a missing env file names the flag, not just the errno", () => {
-    expect(() =>
-      loadRunnerConfig({ DERIVE_TOKEN: "t" }, { "env-file": "/nope/.env", context: "ctx_x" }),
-    ).toThrow(/--env-file \/nope\/\.env/)
-  })
-})
-
-describe("repo pointers", () => {
-  it("parses repos out of frontmatter and strips it from the prompt body", () => {
-    const md = `---
-repos:
-  - url: https://github.com/octo-org/octo-labs
-    ref: main
-    description: "the eda corpus"
-  - url: git@github.com:acme/private-notes.git
-other_key: ignored
----
-
-# The manifest body`
-    const { body, repos, skills, brandprint } = parseManifest(md)
-    expect(body).toBe("\n# The manifest body")
-    expect(skills).toEqual([])
-    expect(brandprint).toBe("live")
-    expect(repos).toEqual([
-      {
-        url: "https://github.com/octo-org/octo-labs",
-        ref: "main",
-        description: "the eda corpus",
-      },
-      { url: "git@github.com:acme/private-notes.git", ref: null, description: "" },
-    ])
-  })
-
-  it("passes a manifest without frontmatter through untouched", () => {
-    expect(parseManifest("# Plain")).toEqual({
-      body: "# Plain",
-      repos: [],
-      skills: [],
-      brandprint: "live",
-    })
-  })
-
-  it("the scaffolded example stays inert (commented) and junk urls are dropped", () => {
-    const commented = "---\n# repos:\n#   - url: https://github.com/you/x\n---\nbody"
-    expect(parseManifest(commented).repos).toEqual([])
-    const junk = "---\nrepos:\n  - url: not-a-url\n---\nbody"
-    expect(parseManifest(junk).repos).toEqual([])
-  })
-
-  it("parses a pinned skills list and the brandprint opt-out alongside repos", () => {
-    const md = `---
-repos:
-  - url: https://github.com/acme/warehouse
-skills:
-  - id: x7km2p4q
-    version: 3
-  - id: j9rw8n2v
-brandprint: off
----
-
-# Body`
-    const { skills, brandprint, repos } = parseManifest(md)
-    expect(repos).toHaveLength(1)
-    expect(skills).toEqual([
-      { id: "x7km2p4q", version: 3 },
-      { id: "j9rw8n2v", version: null }, // unpinned until push resolves it
-    ])
-    expect(brandprint).toBe("off")
-  })
-
-  it("strips the git variables that would retarget a clone at another repo", () => {
-    // Not a style preference. GIT_DIR outranks both `-C` and the cwd, and git exports
-    // it into everything it invokes — hooks, `rebase --exec`, `bisect run`. A runner
-    // booted from one of those would fetch and detach HEAD inside the surrounding
-    // repository instead of its own clone. This helper is the single place that is
-    // prevented, so it is the single place worth pinning.
-    const clean = gitSafeEnv({
-      PATH: "/usr/bin",
-      GIT_DIR: "/somewhere/.git",
-      GIT_WORK_TREE: "/somewhere",
-      GIT_INDEX_FILE: "/somewhere/.git/index",
-      GIT_PREFIX: "sub/",
-      GIT_COMMON_DIR: "/somewhere/.git",
-      GIT_OBJECT_DIRECTORY: "/somewhere/.git/objects",
-      GIT_ALTERNATE_OBJECT_DIRECTORIES: "/other/objects",
-    })
-    expect(Object.keys(clean).filter((k) => k.startsWith("GIT_"))).toEqual([])
-    // Everything else survives: private-repo auth rides the host's own environment.
-    expect(clean.PATH).toBe("/usr/bin")
-  })
-
-  it("syncRepos clones at boot and follows the tip on the next boot", async () => {
-    const src = mkdtempSync(join(tmpdir(), "runner-repo-src-"))
-    const cwd = mkdtempSync(join(tmpdir(), "runner-repo-cwd-"))
-    // `cwd` alone does not pin git: an ambient GIT_DIR outranks it, and these
-    // commands would then build the fixture inside the SURROUNDING repository —
-    // `git commit` there, on a real branch. Same scrub the runner applies to its
-    // own git calls, via the same helper, so the two cannot drift apart.
-    const sh = (cmd) => execSync(cmd, { cwd: src, stdio: "pipe", env: gitSafeEnv() })
-    sh("git init -q -b main && git config user.email t@t && git config user.name t")
-    writeFileSync(join(src, "notes.md"), "v1")
-    sh("git add . && git commit -qm one")
-    const repos = [{ url: `file://${src}`, ref: "main", description: "notes" }]
-
-    const first = await syncRepos(repos, cwd)
-    expect(first[0].sha).toMatch(/^[0-9a-f]{12}$/)
-    expect(readFileSync(join(cwd, "repos", repoSlug(repos[0].url), "notes.md"), "utf8")).toBe("v1")
-
-    writeFileSync(join(src, "notes.md"), "v2")
-    sh("git add . && git commit -qm two")
-    const second = await syncRepos(repos, cwd)
-    expect(second[0].sha).not.toBe(first[0].sha)
-    expect(readFileSync(join(cwd, "repos", repoSlug(repos[0].url), "notes.md"), "utf8")).toBe("v2")
-  }, 30_000)
-
-  it("a dead pointer is loud but non-fatal: catalog entry with sha null", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "runner-repo-cwd-"))
-    const out = await syncRepos(
-      [{ url: "file:///nonexistent/repo", ref: null, description: "" }],
-      cwd,
-    )
-    expect(out).toHaveLength(1)
-    expect(out[0].sha).toBeNull()
-  }, 30_000)
-
-  it("an unwritable cwd is non-fatal too — it must not crash-loop serve at boot", async () => {
-    // The field failure: a bind-mounted /work owned by the host uid, cloned into
-    // by a container running as a different one. The mkdir threw and, unlike a
-    // failed clone, took the whole daemon down under restart:unless-stopped.
-    const cwd = mkdtempSync(join(tmpdir(), "runner-ro-cwd-"))
-    chmodSync(cwd, 0o555)
-    try {
-      const out = await syncRepos([{ url: "file:///some/repo", ref: null, description: "" }], cwd)
-      expect(out).toHaveLength(1)
-      expect(out[0].sha).toBeNull()
-    } finally {
-      chmodSync(cwd, 0o755)
-    }
-  }, 30_000)
-
-  it("checkWritable tells a writable dir from one the runner only has read access to", () => {
-    const cwd = mkdtempSync(join(tmpdir(), "runner-probe-"))
-    expect(checkWritable(cwd)).toBeNull()
-    chmodSync(cwd, 0o555)
-    try {
-      expect(checkWritable(cwd)).toMatch(/EACCES|permission/i)
-    } finally {
-      chmodSync(cwd, 0o755)
-    }
-    // A missing dir reports rather than throws — doctor prints, it doesn't crash.
-    expect(checkWritable(join(cwd, "nope"))).toBeTruthy()
   })
 })
 
@@ -339,77 +121,6 @@ describe("artifact file channel", () => {
       /not a regular file/,
     )
   })
-
-  it("serveSession publishes the file's bytes, and a bad path is a caveat not a dead session", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "runner-serve-"))
-    writeFileSync(join(cwd, "page.html"), "<!doctype html><h1>companion</h1>")
-    const calls = { published: [], answered: [], failed: [] }
-    const client = {
-      publishArtifact: async (title, html) => {
-        calls.published.push({ title, html })
-        return { short_id: "art123" }
-      },
-      answer: async (id, body, meta, state) => calls.answered.push({ id, body, meta, state }),
-      fail: async (id) => calls.failed.push(id),
-      // The non-mock serve path resolves the run's plan first; the fake `claude` ignores the
-      // token, so any credential lets the artifact channel run end to end.
-      runtimeEnvironment: async () => ({}),
-      modelCredential: async () => ({ credential: { kind: "oauth", value: "t" }, reason: "none" }),
-    }
-    const session = () => ({
-      id: "ses_1",
-      messages: [{ id: "m1", author_kind: "asker", body_md: "build me a page" }],
-    })
-    const cfg = { cwd, mock: false }
-    // A fake `claude` that just emits the block, so the artifact channel runs
-    // end to end — parse → resolve from disk → publish → answer.
-    const fake = (answerJson) => {
-      const dir = mkdtempSync(join(tmpdir(), "runner-fake-"))
-      const bin = join(dir, "claude")
-      writeFileSync(
-        bin,
-        `#!/bin/sh\ncat <<'EOF'\n{"type":"result","result":"<answer>${answerJson}</answer>"}\nEOF\n`,
-      )
-      chmodSync(bin, 0o755)
-      return bin
-    }
-    const base = { ...cfg, model: "sonnet", timeoutMs: 30_000 }
-
-    await serveSession(
-      client,
-      session(),
-      "manifest",
-      {
-        ...base,
-        agentBin: fake(
-          '{\\"body_md\\":\\"page built\\",\\"artifact\\":{\\"title\\":\\"Companion\\",\\"path\\":\\"page.html\\"}}',
-        ),
-      },
-      [],
-      [],
-    )
-    expect(calls.published[0]).toMatchObject({ title: "Companion" })
-    expect(calls.published[0].html).toContain("<h1>companion</h1>") // the FILE's bytes
-    expect(calls.answered[0].meta.artifacts).toEqual([{ short_id: "art123", title: "Companion" }])
-
-    await serveSession(
-      client,
-      session(),
-      "manifest",
-      {
-        ...base,
-        agentBin: fake(
-          '{\\"body_md\\":\\"page built\\",\\"artifact\\":{\\"title\\":\\"Gone\\",\\"path\\":\\"nope.html\\"}}',
-        ),
-      },
-      [],
-      [],
-    )
-    expect(calls.published).toHaveLength(1) // nothing published for the missing file
-    expect(calls.failed).toHaveLength(0) // and the session still answered
-    expect(calls.answered[1].state).toBe("answered")
-    expect(calls.answered[1].meta.caveats.join(" ")).toMatch(/nope\.html/)
-  }, 30_000)
 })
 
 describe("runClaude transient-failure retry", () => {
@@ -569,61 +280,7 @@ echo '{"type":"result","result":"here is prose but no block"}'
   }, 30_000)
 })
 
-describe("doctor", () => {
-  // The point of the writability check is that DOCTOR reports it — testing
-  // checkWritable alone leaves the actual fix (and the field regression it
-  // exists for: doctor green while serve crash-looped) free to be reverted.
-  const runDoctor = async (cfg) => {
-    const lines = []
-    const spy =
-      (m) =>
-      (...a) => {
-        lines.push(a.join(" "))
-        return m
-      }
-    const orig = [console.log, console.error, console.warn]
-    console.log = spy()
-    console.error = spy()
-    console.warn = spy()
-    try {
-      const failures = await doctor({
-        server: "http://127.0.0.1:9",
-        token: "",
-        contextId: "",
-        agentBin: "/nonexistent/claude",
-        providerName: "claude-code",
-        ...cfg,
-      })
-      return { failures, out: lines.join("\n") }
-    } finally {
-      ;[console.log, console.error, console.warn] = orig
-    }
-  }
-
-  it.skipIf(process.getuid?.() === 0)(
-    "fails on a cwd it cannot write, and says why",
-    async () => {
-      const cwd = mkdtempSync(join(tmpdir(), "runner-doctor-"))
-      const before = await runDoctor({ cwd })
-      expect(before.out).toContain("(writable)")
-
-      chmodSync(cwd, 0o555)
-      try {
-        const after = await runDoctor({ cwd })
-        expect(after.out).toMatch(/cwd writable/)
-        expect(after.out).toMatch(/uid/) // names the bind-mount cause
-        // Without a manifest there are no repos or skills to materialize, so an
-        // unwritable cwd is survivable — a warning, not a refusal to start.
-        expect(after.failures).toBe(before.failures)
-      } finally {
-        chmodSync(cwd, 0o755)
-      }
-    },
-    60_000,
-  )
-})
-
-describe("output contract + service units", () => {
+describe("output contract", () => {
   it("the contract still demands the block, and no longer forbids the file channel", () => {
     // Weak by nature — it greps a prompt — so it asserts only the two things a
     // future edit could silently invert. The block is still mandatory...
@@ -635,107 +292,6 @@ describe("output contract + service units", () => {
       parseAnswer('<answer>{"body_md":"x","artifact":{"title":"t","path":"p.html"}}</answer>')
         .answer.artifact,
     ).toEqual({ title: "t", path: "p.html" })
-  })
-})
-
-describe("runner once (single drain)", () => {
-  // A real HTTP stub of the four routes the drain touches, so `once` is tested
-  // over the wire it actually speaks — mock mode skips only the model.
-  const startStub = async ({ failAnswerFor = [], contextStatus = 200 } = {}) => {
-    const calls = []
-    const sessions = [
-      { id: "s1", messages: [{ id: "m1", author_kind: "asker", body_md: "hello?" }] },
-      // Settled: last turn is a non-stale agent answer — must be skipped.
-      {
-        id: "s2",
-        messages: [
-          { id: "m2", author_kind: "asker", body_md: "old" },
-          { id: "m3", author_kind: "agent", body_md: "done", meta: {} },
-        ],
-      },
-      // Stale re-serve: the server marked the answer stale mid-run — must be served.
-      {
-        id: "s3",
-        messages: [
-          { id: "m4", author_kind: "asker", body_md: "follow-up" },
-          { id: "m5", author_kind: "agent", body_md: "old answer", meta: { stale: true } },
-        ],
-      },
-    ]
-    const srv = http.createServer((req, res) => {
-      const url = new URL(req.url, "http://stub")
-      calls.push(`${req.method} ${url.pathname}`)
-      const json = (o, status = 200) => {
-        res.statusCode = status
-        res.setHeader("content-type", "application/json")
-        res.end(JSON.stringify(o))
-      }
-      if (url.pathname === "/v1/contexts/ctx1")
-        return json(
-          contextStatus === 200
-            ? { name: "T", manifest_md: "Answer briefly.", manifest_version: 3, brandprint: null }
-            : { error: "nope" },
-          contextStatus,
-        )
-      if (url.pathname === "/v1/contexts/ctx1/queue") return json({ sessions })
-      const post = url.pathname.match(/^\/v1\/sessions\/(\w+)\/messages$/)
-      if (req.method === "POST" && post)
-        return json(
-          { ok: !failAnswerFor.includes(post[1]) },
-          failAnswerFor.includes(post[1]) ? 500 : 200,
-        )
-      if (req.method === "PATCH" && url.pathname.startsWith("/v1/sessions/"))
-        return json({ ok: true })
-      json({ error: "unexpected" }, 404)
-    })
-    await new Promise((r) => srv.listen(0, "127.0.0.1", r))
-    return { srv, calls, port: srv.address().port }
-  }
-
-  const cfgFor = (port) =>
-    loadRunnerConfig(
-      {
-        DERIVE_SERVER: `http://127.0.0.1:${port}`,
-        DERIVE_TOKEN: "t",
-        DERIVE_CONTEXT: "ctx1",
-        RUNNER_MOCK: "1",
-        RUNNER_CWD: mkdtempSync(join(tmpdir(), "runner-once-")),
-      },
-      {},
-    )
-
-  it("serves the open and stale sessions, skips the settled one, and reports counts", async () => {
-    const { srv, calls, port } = await startStub()
-    try {
-      const counts = await once(cfgFor(port))
-      expect(counts).toEqual({ considered: 2, served: 2, failed: 0 })
-      expect(calls.filter((c) => c === "POST /v1/sessions/s1/messages")).toHaveLength(1)
-      expect(calls.filter((c) => c === "POST /v1/sessions/s3/messages")).toHaveLength(1)
-      expect(calls.some((c) => c.includes("/v1/sessions/s2/"))).toBe(false)
-    } finally {
-      srv.close()
-    }
-  })
-
-  it("a failed answer post counts as failed without aborting the rest of the drain", async () => {
-    const { srv, calls, port } = await startStub({ failAnswerFor: ["s1"] })
-    try {
-      const counts = await once(cfgFor(port))
-      expect(counts).toEqual({ considered: 2, served: 1, failed: 1 })
-      // The failure did not starve s3 — the batch kept going.
-      expect(calls.filter((c) => c === "POST /v1/sessions/s3/messages")).toHaveLength(1)
-    } finally {
-      srv.close()
-    }
-  })
-
-  it("a boot failure throws (the scheduler's retry is the retry)", async () => {
-    const { srv, port } = await startStub({ contextStatus: 500 })
-    try {
-      await expect(once(cfgFor(port))).rejects.toThrow(/contexts\/ctx1/)
-    } finally {
-      srv.close()
-    }
   })
 })
 
@@ -821,413 +377,46 @@ describe("skills", () => {
   })
 })
 
-describe("task environment delivery", () => {
-  it.each([
-    "session",
-    "run",
-  ])("isolates %s variables and fails before launch when access is missing", async (kind) => {
-    const cwd = mkdtempSync(join(tmpdir(), "runner-environment-"))
-    try {
-      const bin = join(cwd, "agent.cjs")
-      writeFileSync(
-        bin,
-        `#!/usr/bin/env node
-const fs = require("node:fs");
-fs.writeFileSync("received", process.env.CONTEXT_ENV_TEST_VALUE ?? "missing");
-console.log(JSON.stringify({type:"result",result:'<answer>{"body_md":"done"}</answer><revision>{"content":"# Done","filename":"result.md"}</revision>'}));
-`,
-      )
-      chmodSync(bin, 0o755)
-      const scopes = []
-      const failures = []
-      const completed = []
-      const inherited = process.env.CONTEXT_ENV_TEST_VALUE
-      const client = {
-        runtimeEnvironment: async (scope) => {
-          scopes.push(scope)
-          return scope[kind] === "first" ? { CONTEXT_ENV_TEST_VALUE: "runtime-fixture" } : {}
-        },
-        modelCredential: async () => ({
-          credential: { kind: "oauth", value: "model-fixture" },
-          reason: "none",
-        }),
-        answer: async (id) => completed.push(id),
-        fail: async (id) => failures.push(id),
-        createRevision: async () => ({ short_id: "fixture" }),
-        finishRun: async (id, result) =>
-          (result.status === "failed" ? failures : completed).push(id),
-      }
-      const cfg = {
-        cwd,
-        mock: false,
-        agentBin: bin,
-        providerName: "claude-code",
-        model: "sonnet",
-        timeoutMs: 5000,
-      }
-      const serve = (id) =>
-        kind === "session"
-          ? serveSession(
-              client,
-              { id, messages: [{ author_kind: "asker", body_md: "check" }] },
-              "manifest",
-              cfg,
-            )
-          : serveRun(client, { id, instruction: "check", targets: [] }, "manifest", cfg)
-      await serve("first")
-      expect(readFileSync(join(cwd, "received"), "utf8")).toBe("runtime-fixture")
-      expect(process.env.CONTEXT_ENV_TEST_VALUE).toBe(inherited)
-      await serve("second")
-      expect(readFileSync(join(cwd, "received"), "utf8")).toBe(inherited ?? "missing")
-      expect(scopes).toEqual([{ [kind]: "first" }, { [kind]: "second" }])
-      expect(completed).toEqual(["first", "second"])
-      expect(failures).toEqual([])
-      client.runtimeEnvironment = async () => {
-        throw new Error("Environment unavailable")
-      }
-      writeFileSync(join(cwd, "received"), "not launched")
-      await serve("third")
-      expect(readFileSync(join(cwd, "received"), "utf8")).toBe("not launched")
-      expect(failures).toEqual(["third"])
-    } finally {
-      rmSync(cwd, { recursive: true, force: true })
-    }
-  })
-})
-
-describe("Ortam-managed model login", () => {
-  it("requires an explicit single-task launch and keeps the managed model default", () => {
-    const env = { DERIVE_TOKEN: "dkrun_fixture", RUNNER_MODEL_AUTH: "ortam" }
-    expect(() => loadRunnerConfig(env, {}, { partial: true })).toThrow(/single-task/)
-    expect(() =>
-      loadRunnerConfig(
-        { ...env, DERIVE_TOKEN: "dk_agt_fixture" },
-        {},
-        { partial: true, oneShot: true },
-      ),
-    ).toThrow(/single-task/)
-    expect(() => loadRunnerConfig({}, { "model-auth": "typo" }, { partial: true })).toThrow(
-      /model-auth/,
-    )
-    const cfg = loadRunnerConfig(env, {}, { partial: true, oneShot: true })
-    expect(cfg.model).toBeNull()
-    expect(
-      configForRun(
-        { ...cfg, providerName: "codex" },
-        { execution: { provider: "claude-code" } },
-        {},
-      ).model,
-    ).toBeNull()
-    expect(configForRun(cfg, { execution: { model: "explicit-model" } }).model).toBe(
-      "explicit-model",
-    )
-  })
-
-  it.each([
-    "session",
-    "run",
-  ])("uses Ortam's login for one %s without fetching or writing a Derive plan", async (kind) => {
-    const cwd = mkdtempSync(join(tmpdir(), "runner-ortam-"))
-    vi.stubEnv("ANTHROPIC_AUTH_TOKEN", "ortam-test-placeholder")
-    vi.stubEnv("ANTHROPIC_BASE_URL", "http://127.0.0.1:47070/anthropic")
-    try {
-      const bin = join(cwd, "agent.cjs")
-      writeFileSync(
-        bin,
-        `#!/usr/bin/env node
-const fs = require("node:fs");
-fs.writeFileSync("received.json", JSON.stringify({token:process.env.ANTHROPIC_AUTH_TOKEN,base:process.env.ANTHROPIC_BASE_URL,task:process.env.CONTEXT_ENV_TEST_VALUE,args:process.argv.slice(2)}));
-console.log(JSON.stringify({type:"result",result:'<answer>{"body_md":"done"}</answer><revision>{"content":"# Done","filename":"result.md"}</revision>'}));
-`,
-      )
-      chmodSync(bin, 0o755)
-      const client = {
-        runtimeEnvironment: vi.fn(async () => ({ CONTEXT_ENV_TEST_VALUE: "selected-access" })),
-        modelCredential: vi.fn(async () => {
-          throw new Error("must not fetch a Derive plan")
-        }),
-        updateModelCredential: vi.fn(),
-        answer: vi.fn(),
-        fail: vi.fn(),
-        createRevision: vi.fn(async () => ({ short_id: "fixture" })),
-        finishRun: vi.fn(async () => {}),
-      }
-      const cfg = loadRunnerConfig(
-        { DERIVE_TOKEN: kind === "session" ? "dksess_fixture" : "dkrun_fixture" },
-        { "model-auth": "ortam", "agent-bin": bin, cwd },
-        { partial: true, oneShot: true },
-      )
-      await expect(resolveModelEnv(cfg, client, {})).rejects.toThrow(/scoped/)
-      if (kind === "session")
-        await serveSession(
-          client,
-          { id: "fixture", messages: [{ body_md: "check" }] },
-          "manifest",
-          cfg,
-        )
-      else
-        await serveRun(
-          client,
-          { id: "fixture", instruction: "check", targets: [] },
-          "manifest",
-          cfg,
-        )
-      const received = JSON.parse(readFileSync(join(cwd, "received.json"), "utf8"))
-      expect(received).toMatchObject({
-        token: "ortam-test-placeholder",
-        base: "http://127.0.0.1:47070/anthropic",
-        task: "selected-access",
-      })
-      expect(received.args).not.toContain("--model")
-      expect(client.runtimeEnvironment).toHaveBeenCalledWith({ [kind]: "fixture" })
-      expect(client.modelCredential).not.toHaveBeenCalled()
-      expect(client.updateModelCredential).not.toHaveBeenCalled()
-      expect(client.fail).not.toHaveBeenCalled()
-      if (kind === "session") expect(client.answer).toHaveBeenCalledOnce()
-      else
-        expect(client.finishRun).toHaveBeenCalledWith(
-          "fixture",
-          expect.objectContaining({ status: "succeeded" }),
-        )
-    } finally {
-      vi.unstubAllEnvs()
-      rmSync(cwd, { recursive: true, force: true })
-    }
-  })
-})
-
-describe("persistent runtime runner", () => {
-  it("uses Git’s credential protocol without persisting tokens or falling through to saved helpers", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "derive-git-"))
-    const requests = []
-    let deny = false
-    const server = http.createServer(async (req, res) => {
-      let body = ""
-      for await (const chunk of req) body += chunk
-      requests.push({ url: req.url, auth: req.headers.authorization, body: JSON.parse(body) })
-      res.writeHead(deny ? 403 : 200, { "Content-Type": "application/json" })
-      res.end(
-        JSON.stringify(
-          deny
-            ? { error: "revoked" }
-            : { username: "x-access-token", password: "fixture-temporary-git" },
-        ),
-      )
+describe("the runner command", () => {
+  const bin = join(import.meta.dirname, "..", "bin", "derive.js")
+  const run = (...args) =>
+    spawnSync(process.execPath, [bin, ...args], {
+      encoding: "utf8",
+      env: { ...process.env, DERIVE_TOKEN: "" },
     })
-    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
-    const env = {
-      ...process.env,
-      DERIVE_TOKEN: "fixture-attempt",
-      DERIVE_ATTEMPT_URL: `http://127.0.0.1:${server.address().port}/v1/runtime-attempts/test`,
-    }
-    const git = (operation, input) =>
-      new Promise((resolve) => {
-        const child = spawn("git", ["credential", operation], {
-          cwd,
-          env,
-          stdio: ["pipe", "pipe", "pipe"],
-        })
-        let stdout = "",
-          stderr = ""
-        child.stdout.on("data", (s) => {
-          stdout += s
-        })
-        child.stderr.on("data", (s) => {
-          stderr += s
-        })
-        child.on("close", (code) => resolve({ code, stdout, stderr }))
-        child.stdin.end(input)
-      })
-    try {
-      execFileSync("git", ["init", "-q"], { cwd })
-      execFileSync("git", ["config", "credential.helper", "!touch leaked-helper"], { cwd })
-      configureRuntimeGit(env)
-      const request = "protocol=https\nhost=github.com\npath=acme/private.git\n\n"
-      const result = await git("fill", request)
-      expect(result.code).toBe(0)
-      expect(result.stdout).toContain("password=fixture-temporary-git")
-      expect(requests).toEqual([
-        {
-          url: "/v1/runtime-attempts/test/git-credential",
-          auth: "Bearer fixture-attempt",
-          body: { repository: "acme/private" },
-        },
-      ])
-      await git("approve", result.stdout)
-      await git("reject", result.stdout)
-      expect(requests).toHaveLength(1)
-      for (const input of [
-        request.replace("github.com", "github.com.evil.test"),
-        request.replace("https", "http"),
-        request.replace("acme/private.git", "../escape"),
-        "protocol=https\nhost=github.com\n\n",
-      ]) {
-        expect((await git("fill", input)).code).not.toBe(0)
-      }
-      expect(requests).toHaveLength(1)
-      expect(existsSync(join(cwd, "leaked-helper"))).toBe(false)
-      expect(readFileSync(join(cwd, ".git/config"), "utf8")).not.toContain("fixture-temporary-git")
-      deny = true
-      const denied = await git("fill", request)
-      expect(denied.code).not.toBe(0)
-      expect(denied.stdout).not.toContain("password")
-      expect(denied.stderr).not.toContain("fixture-attempt")
-    } finally {
-      await new Promise((resolve) => server.close(resolve))
-      rmSync(cwd, { recursive: true, force: true })
-    }
-  })
-  it("delivers verified versions once, keeps agent work, and fails closed on corrupt or unsafe inputs", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "derive-files-"))
-    const sha = (bytes) => createHash("sha256").update(bytes).digest("hex")
-    const content = Buffer.from("print('original')")
-    const input = {
-      artifact_id: "art_files",
-      version: 1,
-      blob_key: sha("manifest"),
-      files: [{ path: "scripts/check.py", sha256: sha(content), size: content.length }],
-    }
-    const downloads = vi.fn(async () => new Response(content))
-    try {
-      writeFileSync(join(cwd, "working.py"), "agent changes")
-      const first = await prepareRuntimeFiles(cwd, input, downloads)
-      expect(readFileSync(join(first, "scripts/check.py"), "utf8")).toBe(content.toString())
-      expect(await prepareRuntimeFiles(cwd, input, downloads)).toBe(first)
-      expect(downloads).toHaveBeenCalledTimes(1)
-      const second = await prepareRuntimeFiles(cwd, { ...input, version: 2 }, downloads)
-      expect(second).not.toBe(first)
-      expect(readFileSync(join(cwd, "working.py"), "utf8")).toBe("agent changes")
-      await expect(
-        prepareRuntimeFiles(cwd, { ...input, version: 3 }, async () => new Response("corrupt")),
-      ).rejects.toThrow(/verification|declared size/)
-      expect(
-        readdirSync(join(cwd, ".derive-inputs")).filter((name) => name.startsWith(".staging")),
-      ).toEqual([])
-      // A failed transfer is safely retried; a completed but modified input is never overwritten.
-      await prepareRuntimeFiles(cwd, { ...input, version: 3 }, downloads)
-      chmodSync(join(first, "scripts/check.py"), 0o600)
-      writeFileSync(join(first, "scripts/check.py"), "edited")
-      await expect(prepareRuntimeFiles(cwd, input, downloads)).rejects.toThrow(/modified/)
-      for (const path of ["../outside", "/absolute", "a/../b", "a\\b"]) {
-        await expect(
-          prepareRuntimeFiles(cwd, { ...input, files: [{ ...input.files[0], path }] }, downloads),
-        ).rejects.toThrow(/unsafe/)
-      }
-      const unsafe = join(cwd, "unsafe")
-      mkdirSync(unsafe)
-      symlinkSync(cwd, join(unsafe, ".derive-inputs"))
-      await expect(prepareRuntimeFiles(unsafe, input, downloads)).rejects.toThrow(/unsafe/)
-    } finally {
-      for (const name of readdirSync(join(cwd, ".derive-inputs")))
-        chmodSync(join(cwd, ".derive-inputs", name), 0o700)
-      rmSync(cwd, { recursive: true, force: true })
+
+  it("points every retired Context form at the agent runner in one line", () => {
+    for (const args of [
+      ["runner", "serve", "ctx_abc"],
+      ["runner", "serve", "--context", "ctx_abc"],
+      ["runner", "run", "dkrun_abc"],
+      ["runner", "run", "dksess_abc"],
+      ["runner", "doctor"],
+      ["runner", "install"],
+      ["context", "push"],
+      ["agent", "dev"],
+      ["workflow", "run"],
+    ]) {
+      const out = run(...args)
+      expect(out.status, args.join(" ")).toBe(1)
+      expect(out.stderr.trim().split("\n"), args.join(" ")).toHaveLength(1)
+      expect(out.stderr).toContain("derive runner serve --agent <id>")
     }
   })
 
-  it("runs the provider once, preserves working files, and replays only the receipt after a lost response", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "derive-attempt-"))
-    const bin = join(cwd, "agent.cjs")
-    writeFileSync(join(cwd, "previous-work"), "keep me")
-    writeFileSync(
-      bin,
-      `#!/usr/bin/env node
-const fs = require("node:fs");
-fs.readFileSync(".derive-inputs/" + fs.readdirSync(".derive-inputs")[0] + "/check.py");
-fs.appendFileSync("launches", "one\\n");
-fs.writeFileSync("environment.json", JSON.stringify({ value: process.env.SELECTED_VALUE, token: process.env.DERIVE_TOKEN, previous: fs.readFileSync("previous-work", "utf8") }));
-console.log(JSON.stringify({ type: "result", result: "# Report\\nEverything checked." }));
-`,
+  it("reads the agent key from --token-file, flags first, keeping it out of the process list", () => {
+    const d = mkdtempSync(join(tmpdir(), "runner-token-"))
+    const file = join(d, "key")
+    writeFileSync(file, "dk_agt_from_file\n")
+    expect(loadJobRunnerConfig({}, { agent: "ag_1", "token-file": file }).token).toBe(
+      "dk_agt_from_file",
     )
-    chmodSync(bin, 0o755)
-    const original = {
-      fetch: globalThis.fetch,
-      id: process.env.DERIVE_ATTEMPT_ID,
-      bin: process.env.AGENT_BIN,
-    }
-    const receipts = []
-    const fileBytes = Buffer.from("uploaded script")
-    const filePin = { artifact_id: "art_test", version: 1, blob_key: "a".repeat(64) }
-    let claims = 0
-    globalThis.fetch = async (url, init) => {
-      if (String(url).endsWith("/claim")) {
-        claims++
-        return Response.json(
-          claims === 1
-            ? {
-                claimed: true,
-                input: {
-                  provider: "claude-code",
-                  model: null,
-                  instruction: "Inspect the files",
-                  files: filePin,
-                },
-                files: {
-                  ...filePin,
-                  files: [
-                    {
-                      path: "check.py",
-                      sha256: createHash("sha256").update(fileBytes).digest("hex"),
-                      size: fileBytes.length,
-                    },
-                  ],
-                },
-                manifest: "Use the existing script",
-                environment: { SELECTED_VALUE: "task value" },
-                deadline_at: new Date(Date.now() + 60000).toISOString(),
-                tools: [],
-              }
-            : { claimed: false },
-        )
-      }
-      if (String(url).endsWith("/files")) {
-        expect(JSON.parse(init.body)).toEqual({ path: "check.py" })
-        return new Response(fileBytes)
-      }
-      expect(String(url)).toMatch(/\/result$/)
-      receipts.push(JSON.parse(init.body))
-      if (receipts.length === 1) throw new Error("Response lost after commit")
-      return Response.json({ accepted: true })
-    }
-    process.env.DERIVE_ATTEMPT_ID = "rta_test"
-    process.env.AGENT_BIN = bin
-    try {
-      const cfg = {
-        token: "dkattempt_fixture",
-        modelAuth: "ortam",
-        server: "https://derive.test",
-        cwd,
-        timeoutMs: 5000,
-      }
-      expect(await runOnce(cfg)).toEqual({ served: 1, failed: 0 })
-      expect(
-        readFileSync(
-          join(cwd, ".derive-inputs", `art_test-v1-${filePin.blob_key}`, "check.py"),
-          "utf8",
-        ),
-      ).toBe("uploaded script")
-      expect(receipts).toHaveLength(2)
-      expect(receipts[0]).toEqual(receipts[1])
-      expect(receipts[0].summary).toContain("Everything checked")
-      expect(JSON.parse(readFileSync(join(cwd, "environment.json"), "utf8"))).toEqual({
-        value: "task value",
-        previous: "keep me",
-      })
-      expect(await runOnce(cfg)).toEqual({ served: 0, failed: 0 })
-      expect(readFileSync(join(cwd, "launches"), "utf8")).toBe("one\n")
-    } finally {
-      if (existsSync(join(cwd, ".derive-inputs"))) {
-        for (const name of readdirSync(join(cwd, ".derive-inputs")))
-          chmodSync(join(cwd, ".derive-inputs", name), 0o700)
-      }
-      globalThis.fetch = original.fetch
-      for (const [name, value] of [
-        ["DERIVE_ATTEMPT_ID", original.id],
-        ["AGENT_BIN", original.bin],
-      ]) {
-        if (value === undefined) delete process.env[name]
-        else process.env[name] = value
-      }
-      rmSync(cwd, { recursive: true, force: true })
-    }
+    expect(
+      loadJobRunnerConfig({ DERIVE_TOKEN: "dk_agt_env" }, { agent: "ag_1", "token-file": file })
+        .token,
+    ).toBe("dk_agt_from_file")
+    expect(() => loadJobRunnerConfig({}, { agent: "ag_1", "token-file": join(d, "none") })).toThrow(
+      /--token-file/,
+    )
   })
 })

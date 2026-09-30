@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
+import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
 // WO3 — per-user connected accounts (Sources). Connect once via the broker (the LocalBroker
 // auto-authorizes in dev/test), then instructions name the tool. Always bound to one person;
@@ -97,19 +97,15 @@ describe("connections (Sources — per-user connected accounts)", () => {
 
   it("bind policy: a personal connection can be attached only by its OWNER — even a manager binding someone else's is refused", async () => {
     // The member's personal connection (act-as-me is consensual: nobody routes your
-    // account through an automation you didn't attach it to yourself).
+    // account through an agent you didn't attach it to yourself).
     const theirs = await (await connect(member.email, "notion")).json()
     const denied = await app.request(
-      "/v1/automations",
-      jsonAs(as(owner.email), {
-        trigger: { kind: "manual" },
-        instruction: "Summarize my Notion inbox.",
-        connectionIds: [theirs.id],
-      }),
+      "/v1/agents",
+      jsonAs(as(owner.email), { name: "Notion reader", connection_ids: [theirs.id] }),
     )
     expect(denied.status).toBe(400)
     expect((await denied.json()).error).toContain("its owner")
-    // The owner's own personal + a workspace connection bind fine in one automation.
+    // The owner's own personal + a workspace connection bind fine on one agent.
     const mine = await (await connect(owner.email, "calendar")).json()
     const ws = await (
       await app.request(
@@ -118,50 +114,40 @@ describe("connections (Sources — per-user connected accounts)", () => {
       )
     ).json()
     const ok = await app.request(
-      "/v1/automations",
-      jsonAs(as(owner.email), {
-        trigger: { kind: "manual" },
-        instruction: "Cross-check calendar against Sentry incidents.",
-        connectionIds: [mine.id, ws.id],
-      }),
+      "/v1/agents",
+      jsonAs(as(owner.email), { name: "Incident checker", connection_ids: [mine.id, ws.id] }),
     )
     expect(ok.status).toBe(201)
   })
 
   it("bind policy holds on EDIT too, not only on create", async () => {
-    // Sources used to be bindable only at create, so an automation could never be pointed at a
-    // source connected afterwards — which is the ordinary order: build the automation, then go
-    // connect the thing it should read. Adding the edit path also adds a second door, and the
-    // check on it has to be the same one, or it becomes the way to bind a credential that is not
-    // yours to spend.
-    const auto = await (
-      await app.request(
-        "/v1/automations",
-        jsonAs(as(owner.email), { trigger: { kind: "manual" }, instruction: "Read the source." }),
-      )
+    // A source is usually connected after the agent that reads it exists. The edit path is a
+    // second door, and the check on it has to be the same one, or it becomes the way to bind a
+    // credential that is not yours to spend.
+    const agent = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Source reader" }))
     ).json()
 
     const theirs = await (await connect(member.email, "notion")).json()
     const denied = await app.request(
-      `/v1/automations/${auto.id}`,
-      jsonAs(as(owner.email), { connectionIds: [theirs.id] }, "PATCH"),
+      `/v1/agents/${agent.id}`,
+      jsonAs(as(owner.email), { connection_ids: [theirs.id] }, "PATCH"),
     )
     expect(denied.status).toBe(400)
     expect((await denied.json()).error).toContain("its owner")
 
     const mine = await (await connect(owner.email, "calendar")).json()
     const ok = await app.request(
-      `/v1/automations/${auto.id}`,
-      jsonAs(as(owner.email), { connectionIds: [mine.id] }, "PATCH"),
+      `/v1/agents/${agent.id}`,
+      jsonAs(as(owner.email), { connection_ids: [mine.id] }, "PATCH"),
     )
     expect(ok.status).toBe(200)
     expect((await ok.json()).connection_ids).toEqual([mine.id])
 
-    // And unbinding is reachable: null clears, so a source can be detached without deleting the
-    // automation that used it.
+    // And unbinding is reachable, so a source can be detached without deleting the agent.
     const cleared = await app.request(
-      `/v1/automations/${auto.id}`,
-      jsonAs(as(owner.email), { connectionIds: null }, "PATCH"),
+      `/v1/agents/${agent.id}`,
+      jsonAs(as(owner.email), { connection_ids: [] }, "PATCH"),
     )
     expect(cleared.status).toBe(200)
     expect((await cleared.json()).connection_ids).toEqual([])
@@ -293,7 +279,7 @@ describe("connections (Sources — per-user connected accounts)", () => {
     expect(await retry.json()).toMatchObject({ id: first.id, status: "revoked" })
   })
 
-  it("replacement keeps assignments, refuses stale versions and revocation, and limits usage disclosure", async () => {
+  it("replacement keeps assignments, refuses stale versions and revocation, and names the agents that use it", async () => {
     const created = await app.request(
       "/v1/connections",
       jsonAs(as(member.email), {
@@ -304,31 +290,20 @@ describe("connections (Sources — per-user connected accounts)", () => {
       }),
     )
     const credential = await created.json()
-    const manifest = await publishAs(
-      app,
-      "# Report",
-      { title: "Report instructions" },
-      as(owner.email),
-    )
-    const context = await (
-      await app.request(
-        "/v1/contexts",
-        jsonAs(as(owner.email), {
-          name: "Confidential report",
-          manifest_short_id: (await manifest.json()).short_id,
-        }),
-      )
+    const agent = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Confidential report" }))
     ).json()
-    // A prior grant remains usable after the context becomes private to this credential owner.
-    await meta.setContextEnvironment(context.id, JSON.stringify({ DATABASE_URL: credential.id }))
-    await app.request(
-      `/v1/contexts/${context.id}/access`,
-      jsonAs(as(owner.email), { ask_policy: "invited" }),
-    )
+    // The agent reads the secret through its environment (the cutover carried these over).
+    await meta.updateAgent(agent.id, "default", {
+      environment_json: JSON.stringify({ DATABASE_URL: credential.id }),
+    })
     const usage = await app.request(`/v1/credentials/${credential.id}/usage`, {
       headers: as(member.email),
     })
-    expect(await usage.json()).toEqual({ items: [], hidden_count: 1 })
+    expect(await usage.json()).toEqual({
+      items: [{ id: agent.id, name: "Confidential report", kind: "agent" }],
+      hidden_count: 0,
+    })
     const catalog = await (
       await app.request("/v1/credentials", { headers: as(member.email) })
     ).json()
@@ -356,9 +331,8 @@ describe("connections (Sources — per-user connected accounts)", () => {
     })
     expect(updated.revision).not.toBe(original.revision)
     expect(JSON.stringify(updated)).not.toMatch(/replacement-fixture|secret_enc/)
-    expect(JSON.parse((await meta.getContext(context.id))?.environment_bindings ?? "{}")).toEqual({
-      DATABASE_URL: credential.id,
-    })
+    const kept = (await meta.listAgents("default")).find((a) => a.id === agent.id)
+    expect(JSON.parse(kept?.environment_json ?? "{}")).toEqual({ DATABASE_URL: credential.id })
     await app.request(`/v1/connections/${credential.id}`, {
       method: "DELETE",
       headers: as(member.email),

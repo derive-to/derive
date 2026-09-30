@@ -7,7 +7,7 @@
 // so a report from a claim the server already handed to another runner is refused. And a long
 // job reports `progress` at a third of its lease, which renews the lease; a runner that stops
 // ticking (a closed laptop) loses the job to the server's reclaim instead of holding it forever.
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { selectProvider } from "./providers/index.js"
@@ -27,10 +27,20 @@ const positiveMs = (raw, fallback, floor) => {
 /** Flags win over env, like every runner verb. */
 export function loadJobRunnerConfig(env = process.env, flags = {}) {
   const agentId = flags.agent ?? env.DERIVE_AGENT ?? ""
-  const token = flags.token ?? env.DERIVE_TOKEN ?? ""
+  // --token-file keeps the key out of the process list and shell history.
+  const tokenFile = flags["token-file"] ?? env.DERIVE_TOKEN_FILE ?? null
+  let token = flags.token ?? ""
+  if (!token && tokenFile) {
+    try {
+      token = readFileSync(tokenFile, "utf8").trim()
+    } catch (e) {
+      throw new Error(`--token-file ${tokenFile}: ${e.code ?? e.message}`)
+    }
+  }
+  if (!token) token = env.DERIVE_TOKEN ?? ""
   if (!agentId || !token)
     throw new Error(
-      "an agent id and its key are required (--agent + --token, or DERIVE_AGENT + DERIVE_TOKEN)",
+      "an agent id and its key are required (--agent with DERIVE_TOKEN, --token-file, or --token)",
     )
   return {
     server: (flags.server ?? env.DERIVE_SERVER ?? "https://derive.to").replace(/\/+$/, ""),

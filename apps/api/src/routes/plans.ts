@@ -5,9 +5,9 @@ import type { AppContext } from "../context"
 import { encryptSecret } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 
-// WO2 — bring-your-own plans. An owner attaches their own model or broker credential; runs
-// meter against it (personal → workspace pool → loud failure). Derive holds the gate and the
-// ledger, never the meter. Secrets are encrypted at rest and NEVER surfaced on read.
+// Workspace plans: a bring-your-own broker key (lib/broker.ts brokerFor) and a monthly limit
+// (lib/budget.ts), personal or the workspace pool. Model credentials moved to model accounts;
+// these rows stay listable and revocable. Secrets are encrypted at rest and NEVER surfaced.
 
 const LIMITS = z.object({ monthlyMicroUsd: z.number().int().positive() }).strict().optional()
 

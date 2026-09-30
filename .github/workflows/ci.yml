@@ -235,12 +235,12 @@ jobs:
       # this step; it just would not be building the thing that ships.)
       - name: Build runner image + start check
         if: steps.filter.outputs.runner == 'true'
-        # No token/context on purpose: a healthy image exits 1 with the house
+        # No agent/key on purpose: a healthy image exits 1 with the house
         # one-liner, not a stack trace — proves node, the CLI, and its deps wired.
         run: |
           docker build -f deploy/runner.Dockerfile -t derive-runner:ci .
           out=$(docker run --rm derive-runner:ci serve 2>&1) && exit 1 || true
-          echo "$out" | grep -q "error: a context id and an agent token are required"
+          echo "$out" | grep -q "error: an agent id and its key are required"
 
       # The self-host image is a release artifact in its own right. Build and boot
       # it on every affecting PR so a bad production dependency graph, non-root

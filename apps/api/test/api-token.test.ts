@@ -210,7 +210,7 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("api token on the wire", ()
     expect([401, 403]).toContain(res.status)
   })
 
-  it("THE STORY THIS EXISTS FOR: a manage-minted token creates a context over REST", async () => {
+  it("THE STORY THIS EXISTS FOR: a manage-minted token creates an agent over REST", async () => {
     // The exact failure that started the cleanup — authenticated over MCP, needing a
     // REST-only management route, unable to prove that authentication from the shell.
     // End to end on nothing but a minted bearer.
@@ -226,10 +226,10 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("api token on the wire", ()
     })
     expect(pub.status).toBe(201)
     const { short_id } = (await pub.json()) as { short_id: string }
-    const res = await a.request("/v1/contexts", {
+    const res = await a.request("/v1/agents", {
       method: "POST",
       headers: { ...authed(tok), "content-type": "application/json" },
-      body: JSON.stringify({ name: "QA", manifest_short_id: short_id }),
+      body: JSON.stringify({ name: "QA", instructions_short_id: short_id }),
     })
     expect(res.status).toBe(201)
     // Attributed to the HUMAN behind the grant, not to a synthetic principal.

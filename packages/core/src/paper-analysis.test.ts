@@ -226,7 +226,7 @@ describe("the prompts that start and update an analysis", () => {
     const start = paperAnalysisStartPrompt(input)
     for (const needle of [
       "claude mcp add --transport http derive https://derive.example/mcp",
-      "derive://skills/contexts",
+      "derive://skills/papers",
       'read({ short_id: "ctx_1" })',
       '"short_id": "p1", "arxiv_version": 2',
       `"repository": "github.com/o/r", "commit": "${COMMIT}"`,

@@ -94,13 +94,6 @@ export interface Config {
    *  (see scripts/dev-prod-db.sh) without joining that database's worker pool. */
   backgroundWorkers: boolean
   previews: boolean
-  /** EXPERIMENTAL: hosted automation runs on this Node deploy — the API process
-   *  materializes due schedules and executes each run by spawning the derive CLI as a
-   *  child process (`derive runner run <capability token>`). Default false: queued
-   *  runs wait for a polling `derive runner` instead. */
-  hostedRuns: boolean
-  /** The derive CLI the hosted-runs worker spawns; default `derive` on PATH. */
-  runnerBin: string
   /** From-address for notification emails (e.g. "Derive <notifications@derive.to>").
    *  Unset ⇒ email notifications are logged, not sent (the zero-config default). */
   emailFrom?: string
@@ -216,8 +209,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     signupMode: parseSignupMode(env.DERIVE_SIGNUP_MODE),
     backgroundWorkers: env.DERIVE_BACKGROUND_WORKERS !== "0",
     previews: env.DERIVE_PREVIEWS === "true",
-    hostedRuns: env.DERIVE_HOSTED_RUNS === "true",
-    runnerBin: env.DERIVE_RUNNER_BIN || "derive",
     analytics: env.DERIVE_ANALYTICS !== "false",
     rateLimit: env.DERIVE_RATE_LIMIT !== "false",
     sandboxOrigin: env.DERIVE_SANDBOX_URL,
