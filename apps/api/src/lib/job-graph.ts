@@ -271,7 +271,7 @@ async function walk(deps: GraphDeps, given: JobRecord): Promise<void> {
     if (!def)
       return settle("failed", "This agent's instructions page no longer holds a valid workflow.")
     await write({
-      meta_json: JSON.stringify({ ...parse(job.meta_json), graph: g }),
+      meta_json: JSON.stringify({ ...parse(job.meta_json), graph: { ...g, pass_until: hold } }),
       result_json: JSON.stringify({ ...jobResult(job), route: [] }),
     })
     toOpen.push({ to: def.diagram.entry, from: "entry" })
@@ -308,13 +308,15 @@ async function walk(deps: GraphDeps, given: JobRecord): Promise<void> {
       await write({ status: "needs_you", needs_json: needsFor(node) }, "queued")
       return
     }
+    // Hold first, then claim: a pass that read the row before the hold loses its writes, and
+    // one that reads it after backs off, so the decision is consumed by this pass or none.
+    await write(
+      { meta_json: JSON.stringify({ ...parse(job.meta_json), graph: { ...g, pass_until: hold } }) },
+      "queued",
+    )
     const claimed = await meta.claimJob(job.id, lease, at)
     if (!claimed) return
     job = claimed
-    await write(
-      { meta_json: JSON.stringify({ ...parse(job.meta_json), graph: { ...g, pass_until: hold } }) },
-      "running",
-    )
     route.push({
       node_id: node.id,
       attempt: route.filter((r) => r.node_id === node.id).length + 1,
@@ -455,7 +457,13 @@ async function walk(deps: GraphDeps, given: JobRecord): Promise<void> {
     )
     return
   }
-  if (pending.size === 0 && (await openChildren(since)).length === 0)
+  // Finished only when every step of this run is closed AND recorded: a step that settled while
+  // this pass held the graph is picked up by the next pass, not lost to an early settle.
+  const recordedNow = new Set(route.map((r) => r.job_id).filter(Boolean))
+  const all = (await meta.listJobs({ orgId: job.org_id, parentId: job.id, limit: 200 })).filter(
+    (c) => c.created_at >= since,
+  )
+  if (pending.size === 0 && all.every((c) => !isJobOpen(c.status) && recordedNow.has(c.id)))
     await settle("succeeded", `Done: ${route.map((r) => r.node_id).join(" → ")}.`)
 }
 
