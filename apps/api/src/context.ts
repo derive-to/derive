@@ -31,6 +31,7 @@ import {
   roleAllows,
   type SearchIndex,
   type SubscriptionRecord,
+  syntheticAgent,
   type WorkspaceRecord,
 } from "@derive/core"
 import type { Context } from "hono"
@@ -704,18 +705,14 @@ export function buildContext(deps: AppDeps) {
         const m = await meta.getMembership(claim.orgId, claim.userId)
         if (m) {
           const role = capRole(claim.role, m.role)
-          a = {
+          a = syntheticAgent({
             id: `oauth:${claim.clientId}`,
             org_id: claim.orgId,
             name: (await meta.getOAuthClientName(claim.clientId)) || claim.clientId || "An agent",
-            token: "",
             role,
             created_by: claim.userId,
-            hosted: 0,
-            managed: 0,
-            runs_seen_at: null,
             created_at: new Date().toISOString(),
-          }
+          })
           owner = claim.userId
           mintedApiCache.set(c, true)
           oauthGrantCache.set(c, {

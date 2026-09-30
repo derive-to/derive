@@ -36,6 +36,7 @@ import {
   superAdminsFromEnv,
   workspaceIdsFromEnv,
 } from "./lib/env"
+import { jobTick } from "./lib/jobs"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { getInstanceSlot } from "./lib/model-library"
 import { nativeLimiter } from "./lib/rate-limit"
@@ -614,6 +615,7 @@ export default {
     // queued for a polling runner and an un-opted deployment behaves exactly as before.
     ctx.waitUntil(hostedRunTick(env, ctx))
     ctx.waitUntil(runtimeTick(env))
+    ctx.waitUntil(jobTickEdge(env))
   },
 
   // Queue messages nudge hosted dispatch or Ortam reconciliation. Duplicate runtime
@@ -806,6 +808,22 @@ const hostedRunTick = (env: Env, ctx?: ExecutionContext): Promise<void> =>
     // which looks like a hang rather than the truncation it is.
     ctx,
   )
+
+/** The job tick on the edge: due schedule windows become jobs, lapsed leases are reclaimed.
+ *  Store bindings are request-scoped, so the pass runs inside the same scope the handlers use. */
+async function jobTickEdge(env: Env): Promise<void> {
+  const pass = async () => {
+    const meta = env.HYPERDRIVE ? PgMetaStore.fromPool(livePgPool) : createD1Store(liveD1)
+    await jobTick({ meta }, new Date())
+  }
+  try {
+    await (env.HYPERDRIVE
+      ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), pass)
+      : requestD1.run(env.DB, pass))
+  } catch (error) {
+    log.warn("job tick failed", { error: error instanceof Error ? error.message : String(error) })
+  }
+}
 
 async function runtimeTick(env: Env): Promise<void> {
   if (!env.DERIVE_ORTAM_RUNNER_PATH || !env.DERIVE_AUTH_SECRET) {

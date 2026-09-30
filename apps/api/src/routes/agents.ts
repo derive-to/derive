@@ -1,20 +1,44 @@
 import { randomUUID } from "node:crypto"
-import { type AgentRecord, newId, type Role } from "@derive/core"
+import {
+  type AgentRecord,
+  capRole,
+  JOB_OPEN_STATUSES,
+  newId,
+  normalizeSelectors,
+  type Role,
+  type TriggerRecord,
+} from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
+import { connectionBindError } from "../lib/broker"
+import { readEnvironmentBindings } from "../lib/context-environment"
 import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
+import { canAskAgent, cancelJob, canManageAgent } from "../lib/jobs"
+import { previousOccurrence } from "../lib/schedule"
 
 /** Agent registry (Admin-managed) + the agent's pull inbox of @mentions. The Agent +
  *  ConnectedAgent response schemas are the single source for the web client's types
  *  (generated from the OpenAPI spec). The agent inbox endpoints (bearer-authed, consumed
  *  by agents not the web UI) stay plain routes. */
 export const agentRoutes = (ctx: AppContext) => {
-  const { meta, agentFor, privateOwnerId, requireUser, requireWorkspace } = ctx
+  const { meta, deps, agentFor, privateOwnerId, requireUser, requireWorkspace } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
-  const agentJson = (a: AgentRecord, ownerLend = false) => ({
+  const parseIds = (raw: string | null): string[] => {
+    try {
+      const v = raw ? (JSON.parse(raw) as unknown) : []
+      return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []
+    } catch {
+      return []
+    }
+  }
+  const agentJson = (
+    a: AgentRecord,
+    ownerLend = false,
+    extra: { instructions_short_id?: string | null } = {},
+  ) => ({
     id: a.id,
     name: a.name,
     role: a.role,
@@ -23,7 +47,42 @@ export const agentRoutes = (ctx: AppContext) => {
     created_by: a.created_by,
     owner_lend: ownerLend,
     created_at: a.created_at,
+    description: a.description,
+    instructions_short_id: extra.instructions_short_id ?? null,
+    machine: a.machine,
+    provider: a.provider,
+    model: a.model,
+    ask_policy: a.ask_policy,
+    write_policy: a.write_policy,
+    paused: a.paused_at !== null,
+    seen_at: a.seen_at ?? a.runs_seen_at,
+    max_run_ms: a.max_run_ms,
+    max_concurrency: a.max_concurrency,
+    connection_ids: parseIds(a.connection_ids_json),
+    environment_names: Object.keys(readEnvironmentBindings(a.environment_json)),
+    account_id: a.account_id,
   })
+
+  const triggerJson = (t: TriggerRecord) => ({
+    id: t.id,
+    agent_id: t.agent_id,
+    kind: t.kind,
+    cron: t.cron,
+    tz: t.tz,
+    on_event: t.on_event,
+    instruction: t.instruction,
+    subject: t.subject_json ? (JSON.parse(t.subject_json) as unknown as object) : null,
+    enabled: t.enabled === 1,
+    revision: t.revision,
+    created_at: t.created_at,
+  })
+
+  /** The short id of an agent's instructions artifact, for the wire. */
+  const instructionsShortId = async (a: AgentRecord): Promise<string | null> =>
+    a.instructions_artifact_id
+      ? ((await meta.getArtifactById(a.instructions_artifact_id).catch(() => null))?.short_id ??
+        null)
+      : null
 
   // A workspace-registered agent, without its token hash.
   const Agent = z
@@ -55,8 +114,51 @@ export const agentRoutes = (ctx: AppContext) => {
           "When true, this agent may bill its OWNER's own model plan as a fallback (initiator -> owner -> pool). Only the owner toggles it; default off.",
         ),
       created_at: z.string(),
+      description: z.string().nullable().describe("One line: what this agent does."),
+      instructions_short_id: z
+        .string()
+        .nullable()
+        .describe("The artifact it reads before every job. Null for a connected tool."),
+      machine: z
+        .enum(["owner", "derive"])
+        .describe("Where its jobs run: the owner's runner or MCP session, or a Derive sandbox."),
+      provider: z.enum(["claude-code", "codex"]).describe("Which coding agent runs its jobs."),
+      model: z.string().nullable(),
+      ask_policy: z.enum(["workspace", "invited"]),
+      write_policy: z.enum(["publish", "review"]),
+      paused: z.boolean(),
+      seen_at: z.string().nullable().describe("When its runner last pulled work."),
+      max_run_ms: z.number().nullable(),
+      max_concurrency: z.number(),
+      connection_ids: z.array(z.string()).describe("Sources it can reach."),
+      environment_names: z
+        .array(z.string())
+        .describe("Environment variable names bound to credentials. Never values."),
+      account_id: z.string().nullable(),
     })
     .openapi("Agent")
+
+  const Trigger = z
+    .object({
+      id: z.string(),
+      agent_id: z.string(),
+      kind: z.enum(["schedule", "event"]),
+      cron: z.string().nullable(),
+      tz: z.string().nullable(),
+      on_event: z.string().nullable(),
+      instruction: z.string(),
+      subject: z
+        .union([
+          z.object({ kind: z.literal("artifact"), id: z.string() }),
+          z.object({ kind: z.literal("collection"), id: z.string() }),
+          z.object({ kind: z.literal("tag"), tag: z.string() }),
+        ])
+        .nullable(),
+      enabled: z.boolean(),
+      revision: z.number(),
+      created_at: z.string(),
+    })
+    .openapi("AgentTrigger")
 
   // An OAuth agent the signed-in user authorized to act on their behalf.
   const ConnectedAgent = z
@@ -75,7 +177,7 @@ export const agentRoutes = (ctx: AppContext) => {
       method: "get",
       path: "/v1/agents",
       tags: ["Agents"],
-      summary: "List the workspace's registered agents (Admin only).",
+      summary: "List the workspace's agents. Every member sees them, like the work they do.",
       responses: {
         200: {
           description: "The workspace's agents.",
@@ -84,7 +186,7 @@ export const agentRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const org = await requireWorkspace(c, "manage")
+      const org = await requireWorkspace(c, "read")
       if (org instanceof Response) return bail(org)
       const agents = await meta.listAgents(org)
       const lent = new Set((await meta.getOrgSettings(org)).ownerLendAgents ?? [])
@@ -92,69 +194,262 @@ export const agentRoutes = (ctx: AppContext) => {
     },
   )
 
-  // Create an agent + mint its token. The token is returned ONCE here; only its
-  // SHA-256 hash is stored, so a database leak can't expose usable credentials
-  // (the token is high-entropy random, so a plain hash is sufficient — no salt
-  // or slow KDF needed). Default role commenter (comment-only); editor is
-  // opt-in. Owner is never allowed for an agent.
+  /** Who is managing `agent` in this request, or null. A signed-in person or an owner-scope
+   *  grant manages what canManageAgent allows (their own agents, or any as workspace owner). A
+   *  narrower grant, such as the publish grant a coding session creates agents with, manages
+   *  only the agents its person created. */
+  const managerOf = async (
+    c: Parameters<typeof requireUser>[0],
+    agent: AgentRecord | null | undefined,
+  ): Promise<string | null> => {
+    if (!agent) return null
+    const full = await ctx.managementPrincipal(c)
+    if (full) return (await canManageAgent(meta, agent, full)) ? full : null
+    const who = await ctx.actingHuman(c)
+    const caller = await ctx.agentFor(c)
+    if (!who || !caller?.id.startsWith("oauth:") || caller.org_id !== agent.org_id) return null
+    if (!(await ctx.workspaceCan(c, "publish"))) return null
+    return (await canManageAgent(meta, agent, who.id)) && agent.created_by === who.id
+      ? who.id
+      : null
+  }
+
+  /** Refuse a definition the manager could not grant: a role above their own seat, or
+   *  connections they may not attach (a teammate's personal ones; workspace ones without
+   *  manage). The agent acts with these, so they are checked where they are set. */
+  const definitionError = async (
+    c: Parameters<typeof requireUser>[0],
+    org: string,
+    manager: string | null,
+    b: { role?: unknown; connection_ids?: string[] },
+  ): Promise<string | null> => {
+    if (typeof b.role === "string" && manager) {
+      const seat = (await meta.getMembership(org, manager).catch(() => null))?.role
+      if (!seat || capRole(b.role as Role, seat) !== b.role)
+        return "an agent's role cannot be above your own"
+    }
+    if (b.connection_ids?.length)
+      return connectionBindError(
+        meta,
+        org,
+        { userId: manager, canManage: await ctx.workspaceCan(c, "manage") },
+        b.connection_ids,
+      )
+    return null
+  }
+
+  const openJobs = (orgId: string, agentId: string) =>
+    meta.listJobs({ orgId, agentId, status: [...JOB_OPEN_STATUSES], limit: 200 })
+
+  // What an agent's definition may say, on create and on edit. Everything optional on edit.
+  const AgentFields = z.object({
+    name: z.string().trim().min(1).max(80),
+    role: z.enum(["viewer", "commenter", "editor"]),
+    description: z.string().trim().max(280).nullable(),
+    instructions_short_id: z.string().min(1).max(64).nullable(),
+    machine: z.enum(["owner", "derive"]),
+    provider: z.enum(["claude-code", "codex"]),
+    model: z.string().trim().min(1).max(120).nullable(),
+    ask_policy: z.enum(["workspace", "invited"]),
+    write_policy: z.enum(["publish", "review"]),
+    connection_ids: z.array(z.string().min(1).max(64)).max(20),
+    max_run_ms: z
+      .number()
+      .int()
+      .min(30_000)
+      .max(6 * 60 * 60_000)
+      .nullable(),
+    max_concurrency: z.number().int().min(1).max(10),
+  })
+  const ScheduleInput = z.object({
+    cron: z.string().trim().min(1).max(120),
+    tz: z.string().trim().min(1).max(64).default("UTC"),
+    instruction: z.string().trim().min(1).max(20_000),
+    subject: z.unknown().optional(),
+  })
+
+  /** The artifact an agent's instructions live in, if the caller may read it and it is in this
+   *  workspace. */
+  const instructionsFor = async (
+    c: Parameters<typeof requireUser>[0],
+    org: string,
+    shortId: string,
+  ) => {
+    const art = await ctx.requireArtifact(c, "read", { shortId })
+    if (art instanceof Response) return null
+    return art.org_id === org ? art : null
+  }
+  const validCron = (cron: string, tz: string) => {
+    try {
+      previousOccurrence(cron, tz, new Date())
+      return previousOccurrence(cron, tz, new Date()) !== null
+    } catch {
+      return false
+    }
+  }
+
+  // Create an agent. Its key is returned ONCE here; only its SHA-256 hash is stored, so a
+  // database leak cannot expose usable credentials. An agent on the owner's machine also gets the
+  // one command that starts its runner. Any publishing member may create an agent; it acts on
+  // their behalf. Owner is never allowed as an agent's role.
   app.openapi(
     createRoute({
       method: "post",
       path: "/v1/agents",
       tags: ["Agents"],
-      summary: "Register an agent and mint its token (returned once).",
+      summary: "Create an agent and mint its key (returned once).",
       responses: {
         201: {
-          description: "The created agent, plus its bearer token (shown only here).",
-          content: { "application/json": { schema: Agent.extend({ token: z.string() }) } },
+          description: "The created agent, its key (shown only here), and how to run it.",
+          content: {
+            "application/json": {
+              schema: Agent.extend({
+                token: z.string(),
+                runner_command: z.string().nullable(),
+                trigger: Trigger.nullable(),
+              }),
+            },
+          },
         },
       },
     }),
     async (c) => {
-      const org = await requireWorkspace(c, "manage")
+      const org = await requireWorkspace(c, "publish")
       if (org instanceof Response) return bail(org)
       const b = await readJson(
         c,
-        z.object({
+        AgentFields.partial().extend({
           name: z.string().refine((s) => s.trim() !== "", "name required"),
           role: z.unknown().optional(),
+          schedule: ScheduleInput.optional(),
         }),
       )
       if (b instanceof Response) return bail(b)
       const name = b.name.trim()
       const role: Role =
         b.role === "viewer" || b.role === "commenter" || b.role === "editor" ? b.role : "commenter"
+      let instructionsId: string | null = null
+      if (b.instructions_short_id) {
+        const art = await instructionsFor(c, org, b.instructions_short_id)
+        if (!art)
+          return bail(fail(c, 400, "instructions must be a page in this workspace you can read"))
+        instructionsId = art.id
+      }
+      const creator = (await privateOwnerId(c)) ?? null
+      const refused = await definitionError(c, org, creator, b)
+      if (refused) return bail(fail(c, 400, refused))
+      if (b.machine === "derive")
+        return bail(fail(c, 400, "Derive machines are not available yet; use machine: owner"))
+      if (b.schedule && !validCron(b.schedule.cron, b.schedule.tz))
+        return bail(fail(c, 400, "schedule.cron is not a valid cron expression for that timezone"))
       const token = `dk_agt_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`
+      let agent: AgentRecord
       try {
-        const agent = await meta.createAgent({
+        agent = await meta.createAgent({
           id: newId("ag"),
           org_id: org,
           name,
           token: sha256(token),
           role,
-          // The agent publishes on behalf of whoever registered it: their id keys
-          // attribution (author_id) and ownership (the owner-member row) at publish.
-          // privateOwnerId so a `derive context push` registration (an OAuth agent
-          // with the manage scope) attributes to the GRANTOR, not to nobody.
-          created_by: (await privateOwnerId(c)) ?? null,
+          // The agent acts on behalf of whoever created it: their id keys attribution
+          // (author_id) and ownership at publish. privateOwnerId so a creation from an OAuth
+          // session attributes to the GRANTOR, not to nobody.
+          created_by: creator,
+          description: b.description ?? null,
+          instructions_artifact_id: instructionsId,
+          machine: b.machine ?? "owner",
+          provider: b.provider ?? "claude-code",
+          model: b.model ?? null,
+          ask_policy: b.ask_policy ?? "workspace",
+          write_policy: b.write_policy ?? "publish",
+          connection_ids_json: b.connection_ids?.length ? JSON.stringify(b.connection_ids) : null,
+          max_run_ms: b.max_run_ms ?? null,
+          max_concurrency: b.max_concurrency ?? 1,
         })
-        // The only place the raw token is ever exposed.
-        return c.json({ ...agentJson(agent), token }, 201)
       } catch {
         return bail(fail(c, 409, "an agent with that name already exists"))
       }
+      const trigger = b.schedule
+        ? await meta.createTrigger({
+            id: newId("trg"),
+            org_id: org,
+            agent_id: agent.id,
+            kind: "schedule",
+            cron: b.schedule.cron,
+            tz: b.schedule.tz,
+            instruction: b.schedule.instruction,
+            subject_json: b.schedule.subject
+              ? JSON.stringify(normalizeSelectors([b.schedule.subject])[0] ?? null)
+              : null,
+          })
+        : null
+      const server = deps.baseUrl?.replace(/\/+$/, "") ?? "https://derive.to"
+      const runner_command =
+        agent.machine === "owner"
+          ? `DERIVE_TOKEN=${token} npx -y @derive-to/cli runner serve --agent ${agent.id} --server ${server}`
+          : null
+      // The only place the raw key is ever exposed.
+      return c.json(
+        {
+          ...agentJson(agent, false, { instructions_short_id: b.instructions_short_id ?? null }),
+          token,
+          runner_command,
+          trigger: trigger ? triggerJson(trigger) : null,
+        },
+        201,
+      )
     },
   )
 
-  // Flip whether Derive's managed executor serves this agent. Deliberately the ONLY
-  // mutable field here: name/role changes stay recreate-the-agent, so hosting can't
-  // become a side door for privilege edits.
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/agents/{id}",
+      tags: ["Agents"],
+      summary: "One agent, with its schedules. Any member of its workspace can read it.",
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        200: {
+          description: "The agent.",
+          content: {
+            "application/json": {
+              schema: Agent.extend({
+                triggers: z.array(Trigger),
+                can_ask: z.boolean(),
+                can_manage: z.boolean(),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const who = await ctx.actingHuman(c)
+      if (!who) return bail(fail(c, 401, "unauthenticated"))
+      const org = await requireWorkspace(c, "read")
+      if (org instanceof Response) return bail(org)
+      const agent = await meta.getAgent(c.req.param("id"))
+      if (!agent || agent.org_id !== org || !(await meta.getMembership(org, who.id)))
+        return bail(fail(c, 404, "agent not found"))
+      const lent = new Set((await meta.getOrgSettings(agent.org_id)).ownerLendAgents ?? [])
+      return c.json({
+        ...agentJson(agent, lent.has(agent.id), {
+          instructions_short_id: await instructionsShortId(agent),
+        }),
+        triggers: (await meta.listTriggers(agent.org_id, agent.id)).map(triggerJson),
+        can_ask: await canAskAgent(meta, agent, who.id),
+        can_manage: (await managerOf(c, agent)) !== null,
+      })
+    },
+  )
+
+  // Edit an agent: its creator or a workspace owner. `hosted` stays for the legacy executor.
   app.openapi(
     createRoute({
       method: "patch",
       path: "/v1/agents/{id}",
       tags: ["Agents"],
-      summary: "Update an agent's hosted flag (Admin only).",
+      summary: "Edit an agent (its creator or a workspace owner).",
       request: { params: z.object({ id: z.string() }) },
       responses: {
         200: {
@@ -164,14 +459,172 @@ export const agentRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const org = await requireWorkspace(c, "manage")
-      if (org instanceof Response) return bail(org)
-      const b = await readJson(c, z.object({ hosted: z.boolean() }))
+      const agent = await meta.getAgent(c.req.param("id"))
+      const who = await managerOf(c, agent)
+      if (!agent || !who) return bail(fail(c, 404, "agent not found"))
+      const org = agent.org_id
+      const b = await readJson(
+        c,
+        AgentFields.partial().extend({
+          hosted: z.boolean().optional(),
+          paused: z.boolean().optional(),
+          account_id: z.string().min(1).max(64).nullable().optional(),
+        }),
+      )
       if (b instanceof Response) return bail(b)
-      // Scoped to (id, org) like delete, so an Admin can't flip another workspace's agent.
-      const updated = await meta.setAgentHosted(c.req.param("id"), org, b.hosted ? 1 : 0)
+      let instructions_artifact_id: string | null | undefined
+      if (b.instructions_short_id !== undefined) {
+        if (b.instructions_short_id === null) instructions_artifact_id = null
+        else {
+          const art = await instructionsFor(c, org, b.instructions_short_id)
+          if (!art)
+            return bail(fail(c, 400, "instructions must be a page in this workspace you can read"))
+          instructions_artifact_id = art.id
+        }
+      }
+      const refused = await definitionError(c, org, who, b)
+      if (refused) return bail(fail(c, 400, refused))
+      if (b.machine === "derive")
+        return bail(fail(c, 400, "Derive machines are not available yet; use machine: owner"))
+      // An agent may run on its manager's own account or a shared one, never a teammate's.
+      if (b.account_id) {
+        const acct = await meta.getAccount(b.account_id)
+        if (
+          !acct ||
+          acct.org_id !== org ||
+          (acct.user_id !== who && acct.user_id !== "__workspace__")
+        )
+          return bail(fail(c, 400, "account must be yours or a shared workspace account"))
+      }
+      if (b.hosted !== undefined) await meta.setAgentHosted(agent.id, org, b.hosted ? 1 : 0)
+      let updated: AgentRecord | null
+      try {
+        updated = await meta.updateAgent(agent.id, org, {
+          name: b.name,
+          role: b.role,
+          description: b.description,
+          instructions_artifact_id,
+          machine: b.machine,
+          provider: b.provider,
+          model: b.model,
+          ask_policy: b.ask_policy,
+          write_policy: b.write_policy,
+          connection_ids_json:
+            b.connection_ids === undefined
+              ? undefined
+              : b.connection_ids.length
+                ? JSON.stringify(b.connection_ids)
+                : null,
+          max_run_ms: b.max_run_ms,
+          max_concurrency: b.max_concurrency,
+          account_id: b.account_id,
+          paused_at:
+            b.paused === undefined ? undefined : b.paused ? new Date().toISOString() : null,
+        })
+      } catch {
+        return bail(fail(c, 409, "an agent with that name already exists"))
+      }
       if (!updated) return bail(fail(c, 404, "agent not found"))
-      return c.json(agentJson(updated))
+      return c.json(
+        agentJson(updated, false, { instructions_short_id: await instructionsShortId(updated) }),
+      )
+    },
+  )
+
+  // ---- Schedules --------------------------------------------------------------------------
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/agents/{id}/triggers",
+      tags: ["Agents"],
+      summary: "Add a schedule to an agent.",
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        201: { description: "The schedule.", content: { "application/json": { schema: Trigger } } },
+      },
+    }),
+    async (c) => {
+      const agent = await meta.getAgent(c.req.param("id"))
+      const who = await managerOf(c, agent)
+      if (!agent || !who) return bail(fail(c, 404, "agent not found"))
+      const b = await readJson(c, ScheduleInput)
+      if (b instanceof Response) return bail(b)
+      if (!validCron(b.cron, b.tz))
+        return bail(fail(c, 400, "cron is not a valid cron expression for that timezone"))
+      const t = await meta.createTrigger({
+        id: newId("trg"),
+        org_id: agent.org_id,
+        agent_id: agent.id,
+        kind: "schedule",
+        cron: b.cron,
+        tz: b.tz,
+        instruction: b.instruction,
+        subject_json: b.subject ? JSON.stringify(normalizeSelectors([b.subject])[0] ?? null) : null,
+      })
+      return c.json(triggerJson(t), 201)
+    },
+  )
+
+  const triggerOwner = async (c: Parameters<typeof requireUser>[0]) => {
+    const t = await meta.getTrigger(c.req.param("id") ?? "")
+    const agent = t ? await meta.getAgent(t.agent_id) : null
+    if (!t || !agent || !(await managerOf(c, agent))) return fail(c, 404, "schedule not found")
+    return t
+  }
+
+  app.openapi(
+    createRoute({
+      method: "patch",
+      path: "/v1/triggers/{id}",
+      tags: ["Agents"],
+      summary: "Change or pause a schedule.",
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        200: { description: "The schedule.", content: { "application/json": { schema: Trigger } } },
+      },
+    }),
+    async (c) => {
+      const t = await triggerOwner(c)
+      if (t instanceof Response) return bail(t)
+      const b = await readJson(
+        c,
+        ScheduleInput.partial().extend({ enabled: z.boolean().optional() }),
+      )
+      if (b instanceof Response) return bail(b)
+      const cron = b.cron ?? t.cron ?? ""
+      const tz = b.tz ?? t.tz ?? "UTC"
+      if ((b.cron || b.tz) && !validCron(cron, tz))
+        return bail(fail(c, 400, "cron is not a valid cron expression for that timezone"))
+      const updated = await meta.updateTrigger(t.id, t.org_id, {
+        cron: b.cron,
+        tz: b.tz,
+        instruction: b.instruction,
+        subject_json:
+          b.subject === undefined
+            ? undefined
+            : JSON.stringify(normalizeSelectors([b.subject])[0] ?? null),
+        enabled: b.enabled === undefined ? undefined : b.enabled ? 1 : 0,
+      })
+      if (!updated) return bail(fail(c, 404, "schedule not found"))
+      return c.json(triggerJson(updated))
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "delete",
+      path: "/v1/triggers/{id}",
+      tags: ["Agents"],
+      summary: "Remove a schedule.",
+      request: { params: z.object({ id: z.string() }) },
+      responses: { 204: { description: "Removed." } },
+    }),
+    async (c) => {
+      const t = await triggerOwner(c)
+      if (t instanceof Response) return bail(t)
+      await meta.deleteTrigger(t.id, t.org_id)
+      return c.body(null, 204)
     },
   )
 
@@ -207,17 +660,25 @@ export const agentRoutes = (ctx: AppContext) => {
       method: "delete",
       path: "/v1/agents/{id}",
       tags: ["Agents"],
-      summary: "Delete an agent (Admin only).",
+      summary: "Delete an agent (its creator or a workspace owner).",
       request: { params: z.object({ id: z.string() }) },
       responses: { 204: { description: "The agent was deleted." } },
     }),
     async (c) => {
-      const org = await requireWorkspace(c, "manage")
-      if (org instanceof Response) return bail(org)
-      const id = c.req.param("id")
+      const target = await meta.getAgent(c.req.param("id"))
+      if (!target || !(await managerOf(c, target))) return bail(fail(c, 404, "agent not found"))
+      const org = target.org_id
+      const id = target.id
       // Scope the delete to the caller's workspace: deleteAgent is keyed by
       // (id, org) so an Admin can't delete another workspace's agent by id.
       await meta.deleteAgent(id, org)
+      // Its open work and its schedules have nobody left to serve them.
+      for (let open = await openJobs(org, id); open.length; open = await openJobs(org, id)) {
+        let moved = 0
+        for (const j of open) if (await cancelJob({ meta, bus: ctx.backplane }, j)) moved++
+        if (moved === 0) break
+      }
+      for (const t of await meta.listTriggers(org, id)) await meta.deleteTrigger(t.id, org)
       // Drop it from the owner-lend list so stale ids don't accumulate in org settings.
       const settings = await meta.getOrgSettings(org)
       if (settings.ownerLendAgents?.includes(id))

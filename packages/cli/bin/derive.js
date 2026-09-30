@@ -872,6 +872,8 @@ if (cmd === "runner") {
   const sub = positional.shift()
   if (!["serve", "once", "run", "doctor", "install"].includes(sub ?? "")) {
     console.error(`usage:
+  derive runner serve  --agent <id> [--server url] (key in DERIVE_TOKEN) [--cwd dir] [--model m] [--mock]
+                       work an agent's jobs on this machine (the command an agent's page shows)
   derive runner serve  [ctx_id] [--server url] [--token t | --token-file f] [--env-file f]
                        [--cwd dir] [--claude-bin path] [--model m] [--poll ms] [--timeout ms] [--mock]
   derive runner once   [same flags]        drain the queue once and exit — for schedulers (cron, Actions)
@@ -909,6 +911,23 @@ if (cmd === "runner") {
     try {
       const counts = await runOnce(rcfg)
       process.exit(counts.failed > 0 ? 1 : 0)
+    } catch (e) {
+      console.error(`error: ${e.message}`)
+      process.exit(1)
+    }
+  }
+  // An agent's runner (the agent model): `--agent <id>` works that agent's jobs through
+  // pull and report. The Context forms below stay until the old lanes are retired.
+  if (flags.agent && (sub === "serve" || sub === "once")) {
+    const { jobDrainPass, loadJobRunnerConfig, serveJobs } = await import("../src/job-runner.js")
+    try {
+      const jcfg = loadJobRunnerConfig(process.env, flags)
+      if (sub === "once") {
+        const counts = await jobDrainPass(jcfg)
+        console.log(`[runner] ${counts.served} done, ${counts.failed} failed`)
+        process.exit(0)
+      }
+      await serveJobs(jcfg)
     } catch (e) {
       console.error(`error: ${e.message}`)
       process.exit(1)

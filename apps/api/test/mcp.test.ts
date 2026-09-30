@@ -509,6 +509,8 @@ describe("remote MCP endpoint (/mcp)", () => {
     // became list_automations / automate. Consolidation is still the rule — this is the
     // one carve-out, because a parameter cannot change a tool's annotation.
     expect(names.sort()).toEqual([
+      "agents",
+      "ask",
       "automate",
       "browse_library",
       "catch_up",
@@ -516,10 +518,12 @@ describe("remote MCP endpoint (/mcp)", () => {
       "clear_queue",
       "comment",
       "find",
+      "jobs",
       "list_automations",
       "list_workspaces",
       "organize",
       "publish",
+      "pull",
       "read",
       "shelve",
       "stage",
@@ -553,7 +557,8 @@ describe("remote MCP endpoint (/mcp)", () => {
     const destructive = listed
       .filter((t) => t.annotations?.destructiveHint === true)
       .map((t) => t.name)
-    expect(destructive.sort()).toEqual(["shelve"])
+    // `agents` joins it: its delete removes an agent and cancels the agent's open work.
+    expect(destructive.sort()).toEqual(["agents", "shelve"])
     // Consolidated away — folded into find / catch_up / comment / publish / stage / use.
     for (const gone of [
       "whoami",
@@ -578,7 +583,7 @@ describe("remote MCP endpoint (/mcp)", () => {
       "stage_asset",
       "stage_publish",
       "setup_brandprint",
-      "ask",
+      // `ask` was retired into `use`, then came back as the agent model's own verb.
     ])
       expect(names).not.toContain(gone)
   })

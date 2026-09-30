@@ -1,3 +1,4 @@
+import type { AgentModelStore } from "./agent-model"
 import type {
   ContextRuntimeRecord,
   NewContextRuntime,
@@ -3236,7 +3237,8 @@ export interface SharedStateStore {
 }
 
 export interface MetaStore
-  extends RuntimeStore,
+  extends AgentModelStore<AgentRecord>,
+    RuntimeStore,
     ArtifactStore,
     CommentStore,
     ArtifactQueryStore,
@@ -3429,6 +3431,32 @@ export interface AgentRecord {
    *  honesty signal behind the "No executor" badge. */
   runs_seen_at: string | null
   created_at: string
+  // ---- The agent model (what a Context used to hold, plus where it runs) ----
+  /** One line: what this agent does. Shown on the Agents list. */
+  description: string | null
+  /** The artifact the agent reads before every job (a Context's manifest). Null for a
+   *  connected tool with no instructions of its own. */
+  instructions_artifact_id: string | null
+  /** Where its jobs run: the owner's runner or MCP session, or a Derive (Ortam) sandbox. */
+  machine: import("./agent-model").AgentMachine
+  sandbox_id: string | null
+  sandbox_state_json: string | null
+  /** The model account the Derive machine uses. Unused on `owner`. */
+  account_id: string | null
+  connection_ids_json: string | null
+  repositories_json: string | null
+  /** Encrypted env bindings, NAME → credential id. Never values. */
+  environment_json: string | null
+  ask_policy: import("./agent-model").AgentAskPolicy
+  write_policy: import("./agent-model").AgentWritePolicy
+  paused_at: string | null
+  /** Last claim by this agent's runner (any lane). */
+  seen_at: string | null
+  max_run_ms: number | null
+  max_concurrency: number
+  /** Which coding agent runs its jobs, and optionally which model. */
+  provider: import("./execution").ExecutionProvider
+  model: string | null
 }
 export interface NewAgent {
   id: string
@@ -3439,7 +3467,51 @@ export interface NewAgent {
   created_by?: string | null
   hosted?: 0 | 1
   managed?: 0 | 1
+  description?: string | null
+  instructions_artifact_id?: string | null
+  machine?: import("./agent-model").AgentMachine
+  connection_ids_json?: string | null
+  repositories_json?: string | null
+  environment_json?: string | null
+  ask_policy?: import("./agent-model").AgentAskPolicy
+  write_policy?: import("./agent-model").AgentWritePolicy
+  max_run_ms?: number | null
+  max_concurrency?: number
+  provider?: import("./execution").ExecutionProvider
+  model?: string | null
 }
+
+/** A principal that acts like an agent but has no row: an OAuth grant, the built-in Derive
+ *  agent. One constructor so a new agent column needs a default in exactly one place. */
+export const syntheticAgent = (
+  a: Pick<AgentRecord, "id" | "org_id" | "name" | "role"> &
+    Partial<Pick<AgentRecord, "created_by" | "token" | "created_at">>,
+): AgentRecord => ({
+  token: "",
+  created_by: null,
+  hosted: 0,
+  managed: 0,
+  runs_seen_at: null,
+  created_at: new Date(0).toISOString(),
+  description: null,
+  instructions_artifact_id: null,
+  machine: "owner",
+  sandbox_id: null,
+  sandbox_state_json: null,
+  account_id: null,
+  connection_ids_json: null,
+  repositories_json: null,
+  environment_json: null,
+  ask_policy: "workspace",
+  write_policy: "publish",
+  paused_at: null,
+  seen_at: null,
+  max_run_ms: null,
+  max_concurrency: 1,
+  provider: "claude-code",
+  model: null,
+  ...a,
+})
 
 // ---- Automations + runs: the generic agent-work primitive --------------
 // Two tables, industry-standard: a DEFINITION (what to run, and the rule for when) and its

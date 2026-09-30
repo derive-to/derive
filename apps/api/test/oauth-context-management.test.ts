@@ -38,6 +38,7 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("OAuth context management",
     const scopes = (list: string[]) => JSON.stringify(["openid", "derive:read", ...list])
     tok.run(sha256("tok_full"), "cli", "u_admin", scopes(["derive:publish", "derive:manage"]), exp)
     tok.run(sha256("tok_nomanage"), "cli", "u_admin", scopes(["derive:publish"]), exp)
+    tok.run(sha256("tok_readonly"), "cli", "u_admin", scopes([]), exp)
     tok.run(
       sha256("tok_editor"),
       "cli",
@@ -106,9 +107,11 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("OAuth context management",
     expect(del.status).toBe(204)
   })
 
-  it("no manage scope → 403, even for a workspace owner", async () => {
-    const { app } = managedApp("ctx-mgmt-noscope")
-    expect((await mintAgent(app, "tok_nomanage")).status).toBe(403)
+  it("a publish grant creates an agent for its person; a read-only grant cannot", async () => {
+    const { app, meta } = managedApp("ctx-mgmt-noscope")
+    expect((await mintAgent(app, "tok_nomanage")).status).toBe(201)
+    expect((await meta.listAgents("ws_main"))[0]?.created_by).toBe("u_admin")
+    expect((await mintAgent(app, "tok_readonly", "Nope")).status).toBe(403)
   })
 
   it("a publish-only grant can't create contexts either — manage is the key, not publish", async () => {
@@ -162,17 +165,32 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("OAuth context management",
 
   it("re-homing a manage grant re-caps by the target workspace's membership", async () => {
     const { app } = managedApp("ctx-mgmt-rehome")
-    const res = await app.request("/v1/agents", {
+    const res = await app.request("/v1/accounts", {
       method: "POST",
       headers: { ...auth("tok_full"), "x-derive-workspace": "ws_side" },
-      body: JSON.stringify({ name: "Side" }),
+      body: JSON.stringify({
+        provider: "claude",
+        kind: "api_key",
+        secret: "sk-ant-shared-0000",
+        shared: true,
+      }),
     })
     expect(res.status).toBe(403) // owner scope, but only editor over there
   })
 
-  it("manage scope can't outrank the human: editor member → 403 on agents", async () => {
+  it("manage scope can't outrank the human: an editor member adds no shared account", async () => {
     const { app } = managedApp("ctx-mgmt-editor")
-    expect((await mintAgent(app, "tok_editor")).status).toBe(403)
+    const res = await app.request("/v1/accounts", {
+      method: "POST",
+      headers: auth("tok_editor"),
+      body: JSON.stringify({
+        provider: "claude",
+        kind: "api_key",
+        secret: "sk-ant-shared-0000",
+        shared: true,
+      }),
+    })
+    expect(res.status).toBe(403)
   })
 
   it("no human behind the request → no context: anon 403 (global gate), static token 401", async () => {

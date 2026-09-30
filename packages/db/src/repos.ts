@@ -203,6 +203,7 @@ import {
   sql,
 } from "drizzle-orm"
 import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core"
+import { agentModelRepos } from "./agent-model-repos"
 import {
   DYNAMIC_STATE_PREFIX,
   dynamicRecord,
@@ -215,6 +216,7 @@ import {
   activitySeen,
   agent,
   agentMention,
+  agentTrigger,
   artifact,
   artifactFavorite,
   artifactInvite,
@@ -247,7 +249,10 @@ import {
   importLease,
   instanceOperator,
   invitation,
+  job,
+  jobMessage,
   membership,
+  modelAccount,
   modelCredential,
   notification,
   oauthClientWorkspace,
@@ -467,6 +472,10 @@ export const schema = {
   artifactTag,
   reviewRound,
   agent,
+  job,
+  jobMessage,
+  agentTrigger,
+  modelAccount,
   agentMention,
   automation,
   run,
@@ -542,6 +551,10 @@ const _schemaShapes: Shapes<typeof schema> = {
   follow: true,
   reviewRound: true,
   agent: true,
+  job: true,
+  jobMessage: true,
+  agentTrigger: true,
+  modelAccount: true,
   agentMention: true,
   automation: true,
   run: true,
@@ -708,6 +721,7 @@ export function makeRepos(db: SqliteDb) {
   const { createRuntimeRun, ...runtimes } = runtimeRepos(
     async (statement) => await db.all(statement),
   )
+  const agentModel = agentModelRepos(async (statement) => await db.all(statement))
   // ---- Artifacts + versions ----------------------------------------------
   const getByShortId = async (shortId: string): Promise<ArtifactRecord | null> =>
     (await db.select().from(artifact).where(eq(artifact.short_id, shortId)).get()) ?? null
@@ -6693,6 +6707,7 @@ export function makeRepos(db: SqliteDb) {
 
   return {
     ...runtimes,
+    ...agentModel,
     createArtifact,
     setAccess,
     setLocked,

@@ -58,6 +58,14 @@ const DOMAIN_EVENTS = [
   // that misses deltas loses the animation and nothing else. Not webhook-eligible —
   // partial text is not something anyone can act on.
   "session.delta",
+  // THE AGENT MODEL's wake signals (lib/jobs.ts). `job.queued` lands on the AGENT's `u:<id>`
+  // channel so a runner long-polling `pull` wakes at once; the other three land on the
+  // ASKER's channel so an `ask({wait})` or an open page follows the job. Wakes only, except
+  // `job.delta`, which carries streamed reply text exactly like `session.delta`.
+  "job.queued",
+  "job.progress",
+  "job.settled",
+  "job.delta",
 ] as const
 export type DomainEvent = (typeof DOMAIN_EVENTS)[number]
 

@@ -26,9 +26,9 @@ unavailable, or project policy forbids publishing.
 
 1. Confirm Derive tools are connected. The current remote surface is:
    <!-- tools:start -->
-   `automate`, `browse_library`, `catch_up`, `checkpoint`, `clear_queue`, `comment`,
-   `derive_code`, `find`, `list_automations`, `list_workspaces`, `organize`, `publish`, `read`,
-   `shelve`, `stage`, `use`.
+   `agents`, `ask`, `automate`, `browse_library`, `catch_up`, `checkpoint`, `clear_queue`,
+   `comment`, `derive_code`, `find`, `jobs`, `list_automations`, `list_workspaces`, `organize`,
+   `publish`, `pull`, `read`, `shelve`, `stage`, `use`.
    <!-- tools:end -->
    An installed copy of this file goes stale. `list_workspaces` reports what the server
    serves right now, and is the answer when the two disagree.

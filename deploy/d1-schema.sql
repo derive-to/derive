@@ -256,9 +256,95 @@ CREATE TABLE IF NOT EXISTS agent (
   hosted INTEGER NOT NULL DEFAULT 0,
   managed INTEGER NOT NULL DEFAULT 0,
   runs_seen_at TEXT,
+  description TEXT,
+  instructions_artifact_id TEXT,
+  machine TEXT NOT NULL DEFAULT 'owner',
+  sandbox_id TEXT,
+  sandbox_state_json TEXT,
+  account_id TEXT,
+  connection_ids_json TEXT,
+  repositories_json TEXT,
+  environment_json TEXT,
+  ask_policy TEXT NOT NULL DEFAULT 'workspace',
+  write_policy TEXT NOT NULL DEFAULT 'publish',
+  paused_at TEXT,
+  seen_at TEXT,
+  max_run_ms INTEGER,
+  max_concurrency INTEGER NOT NULL DEFAULT 1,
+  provider TEXT NOT NULL DEFAULT 'claude-code',
+  model TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (token),
   UNIQUE (org_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS job (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  parent_id TEXT,
+  node_id TEXT,
+  trigger_id TEXT,
+  asked_by TEXT,
+  attended INTEGER NOT NULL DEFAULT 0,
+  instruction TEXT NOT NULL,
+  subject_json TEXT,
+  status TEXT NOT NULL DEFAULT 'queued',
+  needs_json TEXT,
+  scheduled_for TEXT,
+  lease_until TEXT,
+  attempt INTEGER NOT NULL DEFAULT 0,
+  started_at TEXT,
+  finished_at TEXT,
+  cost_micro_usd INTEGER,
+  dedupe_key TEXT,
+  report_artifact_id TEXT,
+  result_json TEXT,
+  meta_json TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS job_message (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL,
+  author_kind TEXT NOT NULL,
+  author_id TEXT NOT NULL,
+  body_md TEXT NOT NULL,
+  meta_json TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  FOREIGN KEY (job_id) REFERENCES job(id)
+);
+
+CREATE TABLE IF NOT EXISTS agent_trigger (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  cron TEXT,
+  tz TEXT,
+  on_event TEXT,
+  instruction TEXT NOT NULL,
+  subject_json TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  revision INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS model_account (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  secret_enc TEXT,
+  hint TEXT,
+  status TEXT NOT NULL DEFAULT 'not_checked',
+  ortam_connection_json TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
 CREATE TABLE IF NOT EXISTS agent_mention (
@@ -1150,6 +1236,22 @@ CREATE TABLE IF NOT EXISTS view_read (
     PRIMARY KEY (artifact_id, viewer)
   );
 
+CREATE INDEX IF NOT EXISTS job_agent_status ON job (agent_id, status, created_at);
+
+CREATE INDEX IF NOT EXISTS job_org_created ON job (org_id, created_at);
+
+CREATE INDEX IF NOT EXISTS job_parent ON job (parent_id);
+
+CREATE INDEX IF NOT EXISTS job_status_lease ON job (status, lease_until);
+
+CREATE INDEX IF NOT EXISTS job_message_job ON job_message (job_id, created_at);
+
+CREATE INDEX IF NOT EXISTS agent_trigger_agent ON agent_trigger (agent_id);
+
+CREATE INDEX IF NOT EXISTS agent_trigger_org ON agent_trigger (org_id);
+
+CREATE INDEX IF NOT EXISTS model_account_org_user ON model_account (org_id, user_id);
+
 CREATE INDEX IF NOT EXISTS runtime_model_connection_owner ON runtime_model_connection (org_id, created_by);
 
 CREATE INDEX IF NOT EXISTS workflow_run_org_created ON workflow_run (org_id, created_at);
@@ -1201,6 +1303,10 @@ CREATE INDEX IF NOT EXISTS context_session_asker ON context_session (asker_id, c
 CREATE INDEX IF NOT EXISTS session_message_session ON session_message (session_id, created_at);
 
 CREATE INDEX IF NOT EXISTS asset_org ON asset (org_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS job_trigger_window ON job (trigger_id, scheduled_for) WHERE trigger_id IS NOT NULL AND scheduled_for IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS job_dedupe_open ON job (agent_id, asked_by, dedupe_key) WHERE dedupe_key IS NOT NULL AND status IN ('queued', 'running', 'needs_you');
 
 CREATE UNIQUE INDEX IF NOT EXISTS workflow_test_pending ON workflow_test (context_id) WHERE status = 'pending';
 

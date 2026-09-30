@@ -92,6 +92,12 @@ import type { Sandbox } from "./lib/code-sandbox"
 import { latexTemplateBundle } from "./lib/latex-templates"
 import { clientIp } from "./lib/rate-limit"
 import { makeToolContext, type ToolContext, type ToolContextBase } from "./mcp-tool-context"
+import {
+  registerAgentsTool,
+  registerAskTool,
+  registerJobsTool,
+  registerPullTool,
+} from "./mcp-tools/agents"
 import { registerAutomateTool, registerListAutomationsTool } from "./mcp-tools/automate"
 import { registerCallTool } from "./mcp-tools/call"
 import { registerCatchUpTool } from "./mcp-tools/catch-up"
@@ -689,6 +695,14 @@ export function registerToolSurface(
   if (wanted("publish")) registerPublishTool(tc)
   if (wanted("checkpoint")) registerCheckpointTool(tc)
   if (wanted("use")) registerUseTool(tc)
+  // The agent model. `use` and `automate` stay for one release as the old doors to the same
+  // work; they go when the CLI's next major ships.
+  if (wanted("agents")) {
+    registerAgentsTool(tc)
+    registerAskTool(tc)
+    registerJobsTool(tc)
+    registerPullTool(tc)
+  }
   if (wanted("automate")) {
     registerListAutomationsTool(tc)
     registerAutomateTool(tc)

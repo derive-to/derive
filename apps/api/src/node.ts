@@ -29,6 +29,7 @@ import { sweepExpiredDrafts } from "./lib/drafts"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
 import { workspaceIdsFromEnv } from "./lib/env"
 import { sharpShrinker } from "./lib/image-shrink-node"
+import { jobTick } from "./lib/jobs"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { getInstanceSlot, modelSource, readLibrary } from "./lib/model-library"
 import { NODE_REPO_CAPS } from "./lib/repo-fetch"
@@ -708,6 +709,24 @@ if (runtimeConfig && cfg.backgroundWorkers) {
   runtimeTimer = setInterval(tick, 10_000)
   runtimeTimer.unref()
 }
+// The job tick: turn due schedule windows into jobs and reclaim lapsed leases. Cheap, and
+// needed wherever background workers run, so it is not behind an opt-in.
+let jobTimer: ReturnType<typeof setInterval> | undefined
+if (cfg.backgroundWorkers) {
+  let ticking = false
+  const tick = () => {
+    if (ticking) return
+    ticking = true
+    void jobTick({ meta }, new Date())
+      .catch(() => log.warn("job tick failed"))
+      .finally(() => {
+        ticking = false
+      })
+  }
+  tick()
+  jobTimer = setInterval(tick, 30_000)
+  jobTimer.unref()
+}
 // EXPERIMENTAL hosted runs (DERIVE_HOSTED_RUNS=true, default off): this API process becomes
 // the executor host. A minutely tick materializes due schedules, reclaims runs whose executor
 // died, and starts each due run as a `derive runner run` child process on this box — so an
@@ -798,6 +817,8 @@ const shutdown = makeShutdown({
     if (pruneTimer) clearInterval(pruneTimer)
     if (draftSweepTimer) clearInterval(draftSweepTimer)
     if (runtimeTimer) clearInterval(runtimeTimer)
+    if (jobTimer) clearInterval(jobTimer)
+    if (hostedRunsTimer) clearInterval(hostedRunsTimer)
   },
   closeStores,
   log,

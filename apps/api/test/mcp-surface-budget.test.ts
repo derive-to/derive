@@ -197,10 +197,14 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // surfaces it for "write up the paper" the way it does for a deck; no param changed. Trimmed
 // the summary first (78 → 61 chars); measured instructions 2,874, so the raise keeps the ~2%
 // headroom rather than landing on the ceiling.
-const TOOL_DESCRIPTIONS_BUDGET = 3_800
-const PARAM_DESCRIPTIONS_BUDGET = 10_050
-const SURFACE_BUDGET = 13_850
-const INSTRUCTIONS_BUDGET = 2_950
+// 2026-09-30: the agent model added `agents`, `ask`, `jobs`, and `pull` (4,262 / 10,467 / 3,012
+// measured) while `use`, `automate`, and `list_automations` stay registered for one release as
+// the old doors to the same work. Deleting those three at the cutover must bring every number
+// back under the budget above this raise; lower these then, do not keep the headroom.
+const TOOL_DESCRIPTIONS_BUDGET = 4_350
+const PARAM_DESCRIPTIONS_BUDGET = 10_550
+const SURFACE_BUDGET = 14_850
+const INSTRUCTIONS_BUDGET = 3_050
 
 /** No single tool may sprawl: one sentence of routing, the one thing that silently breaks,
  *  and a pointer to its skill. */

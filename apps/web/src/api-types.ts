@@ -1208,7 +1208,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List the workspace's registered agents (Admin only). */
+        /** List the workspace's agents. Every member sees them, like the work they do. */
         get: {
             parameters: {
                 query?: never;
@@ -1232,7 +1232,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** Register an agent and mint its token (returned once). */
+        /** Create an agent and mint its key (returned once). */
         post: {
             parameters: {
                 query?: never;
@@ -1242,7 +1242,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description The created agent, plus its bearer token (shown only here). */
+                /** @description The created agent, its key (shown only here), and how to run it. */
                 201: {
                     headers: {
                         [name: string]: unknown;
@@ -1250,6 +1250,8 @@ export interface paths {
                     content: {
                         "application/json": components["schemas"]["Agent"] & {
                             token: string;
+                            runner_command: string | null;
+                            trigger: components["schemas"]["AgentTrigger"];
                         };
                     };
                 };
@@ -1268,10 +1270,36 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** One agent, with its schedules. Any member of its workspace can read it. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The agent. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Agent"] & {
+                            triggers: components["schemas"]["AgentTrigger"][];
+                            can_ask: boolean;
+                            can_manage: boolean;
+                        };
+                    };
+                };
+            };
+        };
         put?: never;
         post?: never;
-        /** Delete an agent (Admin only). */
+        /** Delete an agent (its creator or a workspace owner). */
         delete: {
             parameters: {
                 query?: never;
@@ -1294,7 +1322,7 @@ export interface paths {
         };
         options?: never;
         head?: never;
-        /** Update an agent's hosted flag (Admin only). */
+        /** Edit an agent (its creator or a workspace owner). */
         patch: {
             parameters: {
                 query?: never;
@@ -1313,6 +1341,102 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["Agent"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/v1/agents/{id}/triggers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add a schedule to an agent. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The schedule. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentTrigger"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/triggers/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove a schedule. */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Removed. */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Change or pause a schedule. */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The schedule. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentTrigger"];
                     };
                 };
             };
@@ -1420,6 +1544,367 @@ export interface paths {
             requestBody?: never;
             responses: {
                 /** @description The grant was revoked (idempotent). */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List jobs in the active workspace, newest first. */
+        get: {
+            parameters: {
+                query?: {
+                    agent?: string;
+                    /** @description Comma-separated statuses. */
+                    status?: string;
+                    /** @description Comma-separated kinds. */
+                    kind?: string;
+                    parent?: string;
+                    /** @description Keyset cursor: created_at of the last row seen. */
+                    before?: string;
+                    limit?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Jobs. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            jobs: components["schemas"]["Job"][];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Ask an agent to do something. Opens a job (or returns the open one for a dedupe key). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description An open job already holding this dedupe key. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["JobDetail"];
+                    };
+                };
+                /** @description The new job. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["JobDetail"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/jobs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One job with its transcript. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The job. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["JobDetail"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/jobs/{id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Write to a job. Running: appended for the next turn. Settled: the job reopens. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The job. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["JobDetail"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/jobs/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel an open job (and its children). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The job. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Job"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/jobs/{id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run a failed or lost job again. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The job. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Job"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/jobs/{id}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Answer a job that is waiting on a person. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The job. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Job"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Your model accounts, and the workspace's shared ones. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Accounts. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            accounts: components["schemas"]["ModelAccount"][];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Add a model account by pasting a key or a login. Shared accounts need an owner. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The account. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ModelAccount"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/accounts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Disconnect an account. Yours, or a shared one if you own the workspace. */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Disconnected. */
                 204: {
                     headers: {
                         [name: string]: unknown;
@@ -7898,7 +8383,62 @@ export interface components {
             /** @description When true, this agent may bill its OWNER's own model plan as a fallback (initiator -> owner -> pool). Only the owner toggles it; default off. */
             owner_lend: boolean;
             created_at: string;
+            /** @description One line: what this agent does. */
+            description: string | null;
+            /** @description The artifact it reads before every job. Null for a connected tool. */
+            instructions_short_id: string | null;
+            /**
+             * @description Where its jobs run: the owner's runner or MCP session, or a Derive sandbox.
+             * @enum {string}
+             */
+            machine: "owner" | "derive";
+            /**
+             * @description Which coding agent runs its jobs.
+             * @enum {string}
+             */
+            provider: "claude-code" | "codex";
+            model: string | null;
+            /** @enum {string} */
+            ask_policy: "workspace" | "invited";
+            /** @enum {string} */
+            write_policy: "publish" | "review";
+            paused: boolean;
+            /** @description When its runner last pulled work. */
+            seen_at: string | null;
+            max_run_ms: number | null;
+            max_concurrency: number;
+            /** @description Sources it can reach. */
+            connection_ids: string[];
+            /** @description Environment variable names bound to credentials. Never values. */
+            environment_names: string[];
+            account_id: string | null;
         };
+        AgentTrigger: {
+            id: string;
+            agent_id: string;
+            /** @enum {string} */
+            kind: "schedule" | "event";
+            cron: string | null;
+            tz: string | null;
+            on_event: string | null;
+            instruction: string;
+            subject: {
+                /** @enum {string} */
+                kind: "artifact";
+                id: string;
+            } | {
+                /** @enum {string} */
+                kind: "collection";
+                id: string;
+            } | {
+                /** @enum {string} */
+                kind: "tag";
+                tag: string;
+            } | unknown;
+            enabled: boolean;
+            revision: number;
+            created_at: string;
+        } | null;
         ConnectedAgent: {
             /** @description OAuth client id of the authorized agent (e.g. an MCP client like Claude) */
             clientId: string;
@@ -7906,6 +8446,100 @@ export interface components {
             /** @description The OAuth scopes this agent was granted */
             scopes: string[];
             grantedAt: string;
+        };
+        Job: {
+            id: string;
+            agent_id: string;
+            /** @enum {string} */
+            kind: "ask" | "scheduled" | "graph" | "node";
+            /** @enum {string} */
+            status: "queued" | "running" | "needs_you" | "succeeded" | "failed" | "cancelled" | "lost";
+            instruction: string;
+            asked_by: string | null;
+            attended: boolean;
+            parent_id: string | null;
+            node_id: string | null;
+            trigger_id: string | null;
+            subject: {
+                /** @enum {string} */
+                kind: "artifact";
+                id: string;
+            } | {
+                /** @enum {string} */
+                kind: "collection";
+                id: string;
+            } | {
+                /** @enum {string} */
+                kind: "tag";
+                tag: string;
+            } | unknown;
+            needs: {
+                /** @enum {string} */
+                kind: "review" | "decision" | "escalation" | "effect";
+                question: string;
+                options?: string[];
+                review_round_id?: string;
+            } | null;
+            result: {
+                effects?: {
+                    /** @enum {string} */
+                    kind: "page" | "pr" | "email" | "rows" | "other";
+                    label: string;
+                    ref?: string;
+                    version?: number;
+                    url?: string;
+                }[];
+                evidence?: {
+                    label: string;
+                    url?: string;
+                    ref?: string;
+                }[];
+                failure?: {
+                    reason: string;
+                    retryable: boolean;
+                };
+                route?: {
+                    node_id: string;
+                    attempt: number;
+                    selected?: string[];
+                    decision?: string;
+                }[];
+            };
+            scheduled_for: string | null;
+            started_at: string | null;
+            finished_at: string | null;
+            lease_until: string | null;
+            attempt: number;
+            cost_micro_usd: number | null;
+            report_artifact_id: string | null;
+            created_at: string;
+            updated_at: string;
+        };
+        JobDetail: components["schemas"]["Job"] & {
+            messages: components["schemas"]["JobMessage"][];
+        };
+        JobMessage: {
+            id: string;
+            /** @enum {string} */
+            author_kind: "asker" | "agent";
+            author_id: string;
+            body_md: string;
+            progress: boolean;
+            created_at: string;
+        };
+        ModelAccount: {
+            id: string;
+            /** @enum {string} */
+            provider: "claude" | "codex";
+            /** @enum {string} */
+            kind: "oauth" | "api_key" | "login" | "ortam_signin";
+            /** @description A workspace account every agent may fall back to. */
+            shared: boolean;
+            mine: boolean;
+            hint: string | null;
+            /** @enum {string} */
+            status: "ready" | "needs_signin" | "not_checked";
+            created_at: string;
         };
         BulkSummary: {
             /** @description Artifacts the operation applied to. */

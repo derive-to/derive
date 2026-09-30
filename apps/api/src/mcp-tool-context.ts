@@ -30,7 +30,7 @@ export interface ToolContextBase {
   /** In-process REST dispatch using this request’s original bearer; no token mint or network hop. */
   requestApi?: (
     path: string,
-    method: "GET" | "POST" | "PUT",
+    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
     body: unknown,
     workspace: string,
   ) => Promise<Response>

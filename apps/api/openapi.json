@@ -36,7 +36,15 @@
     },
     {
       "name": "Agents",
-      "description": "Registered agents (bearer tokens) and the OAuth agents a user has authorized."
+      "description": "Agents: named workers with instructions, a machine, and what they can reach. Also the OAuth agents a user has authorized."
+    },
+    {
+      "name": "Accounts",
+      "description": "Model accounts: the credential a machine uses to call a model. Write-only."
+    },
+    {
+      "name": "Jobs",
+      "description": "One unit of agent work: someone asked, a schedule fired, or a graph opened a node. People ask, follow, answer, cancel, and retry; runners pull and report."
     },
     {
       "name": "Assets",
@@ -1590,6 +1598,83 @@
           },
           "created_at": {
             "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true,
+            "description": "One line: what this agent does."
+          },
+          "instructions_short_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "The artifact it reads before every job. Null for a connected tool."
+          },
+          "machine": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "derive"
+            ],
+            "description": "Where its jobs run: the owner's runner or MCP session, or a Derive sandbox."
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "claude-code",
+              "codex"
+            ],
+            "description": "Which coding agent runs its jobs."
+          },
+          "model": {
+            "type": "string",
+            "nullable": true
+          },
+          "ask_policy": {
+            "type": "string",
+            "enum": [
+              "workspace",
+              "invited"
+            ]
+          },
+          "write_policy": {
+            "type": "string",
+            "enum": [
+              "publish",
+              "review"
+            ]
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "seen_at": {
+            "type": "string",
+            "nullable": true,
+            "description": "When its runner last pulled work."
+          },
+          "max_run_ms": {
+            "type": "number",
+            "nullable": true
+          },
+          "max_concurrency": {
+            "type": "number"
+          },
+          "connection_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Sources it can reach."
+          },
+          "environment_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Environment variable names bound to credentials. Never values."
+          },
+          "account_id": {
+            "type": "string",
+            "nullable": true
           }
         },
         "required": [
@@ -1600,6 +1685,137 @@
           "managed",
           "created_by",
           "owner_lend",
+          "created_at",
+          "description",
+          "instructions_short_id",
+          "machine",
+          "provider",
+          "model",
+          "ask_policy",
+          "write_policy",
+          "paused",
+          "seen_at",
+          "max_run_ms",
+          "max_concurrency",
+          "connection_ids",
+          "environment_names",
+          "account_id"
+        ]
+      },
+      "AgentTrigger": {
+        "type": "object",
+        "nullable": true,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agent_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "schedule",
+              "event"
+            ]
+          },
+          "cron": {
+            "type": "string",
+            "nullable": true
+          },
+          "tz": {
+            "type": "string",
+            "nullable": true
+          },
+          "on_event": {
+            "type": "string",
+            "nullable": true
+          },
+          "instruction": {
+            "type": "string"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "artifact"
+                    ]
+                  },
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "collection"
+                    ]
+                  },
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "tag"
+                    ]
+                  },
+                  "tag": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "tag"
+                ]
+              },
+              {
+                "nullable": true
+              }
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "revision": {
+            "type": "number"
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "agent_id",
+          "kind",
+          "cron",
+          "tz",
+          "on_event",
+          "instruction",
+          "subject",
+          "enabled",
+          "revision",
           "created_at"
         ]
       },
@@ -1629,6 +1845,422 @@
           "clientName",
           "scopes",
           "grantedAt"
+        ]
+      },
+      "Job": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agent_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "ask",
+              "scheduled",
+              "graph",
+              "node"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "needs_you",
+              "succeeded",
+              "failed",
+              "cancelled",
+              "lost"
+            ]
+          },
+          "instruction": {
+            "type": "string"
+          },
+          "asked_by": {
+            "type": "string",
+            "nullable": true
+          },
+          "attended": {
+            "type": "boolean"
+          },
+          "parent_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "node_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "trigger_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "artifact"
+                    ]
+                  },
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "collection"
+                    ]
+                  },
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "tag"
+                    ]
+                  },
+                  "tag": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "tag"
+                ]
+              },
+              {
+                "nullable": true
+              }
+            ]
+          },
+          "needs": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "review",
+                  "decision",
+                  "escalation",
+                  "effect"
+                ]
+              },
+              "question": {
+                "type": "string"
+              },
+              "options": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "review_round_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "question"
+            ]
+          },
+          "result": {
+            "type": "object",
+            "properties": {
+              "effects": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "page",
+                        "pr",
+                        "email",
+                        "rows",
+                        "other"
+                      ]
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "number"
+                    },
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "label"
+                  ]
+                }
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "label": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "label"
+                  ]
+                }
+              },
+              "failure": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  },
+                  "retryable": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "reason",
+                  "retryable"
+                ]
+              },
+              "route": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "node_id": {
+                      "type": "string"
+                    },
+                    "attempt": {
+                      "type": "number"
+                    },
+                    "selected": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "decision": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "node_id",
+                    "attempt"
+                  ]
+                }
+              }
+            }
+          },
+          "scheduled_for": {
+            "type": "string",
+            "nullable": true
+          },
+          "started_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "finished_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "lease_until": {
+            "type": "string",
+            "nullable": true
+          },
+          "attempt": {
+            "type": "number"
+          },
+          "cost_micro_usd": {
+            "type": "number",
+            "nullable": true
+          },
+          "report_artifact_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "agent_id",
+          "kind",
+          "status",
+          "instruction",
+          "asked_by",
+          "attended",
+          "parent_id",
+          "node_id",
+          "trigger_id",
+          "subject",
+          "needs",
+          "result",
+          "scheduled_for",
+          "started_at",
+          "finished_at",
+          "lease_until",
+          "attempt",
+          "cost_micro_usd",
+          "report_artifact_id",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "JobDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Job"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "messages": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/JobMessage"
+                }
+              }
+            },
+            "required": [
+              "messages"
+            ]
+          }
+        ]
+      },
+      "JobMessage": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "author_kind": {
+            "type": "string",
+            "enum": [
+              "asker",
+              "agent"
+            ]
+          },
+          "author_id": {
+            "type": "string"
+          },
+          "body_md": {
+            "type": "string"
+          },
+          "progress": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "author_kind",
+          "author_id",
+          "body_md",
+          "progress",
+          "created_at"
+        ]
+      },
+      "ModelAccount": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "claude",
+              "codex"
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "oauth",
+              "api_key",
+              "login",
+              "ortam_signin"
+            ]
+          },
+          "shared": {
+            "type": "boolean",
+            "description": "A workspace account every agent may fall back to."
+          },
+          "mine": {
+            "type": "boolean"
+          },
+          "hint": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "needs_signin",
+              "not_checked"
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "provider",
+          "kind",
+          "shared",
+          "mine",
+          "hint",
+          "status",
+          "created_at"
         ]
       },
       "BulkSummary": {
@@ -5557,7 +6189,7 @@
         "tags": [
           "Agents"
         ],
-        "summary": "List the workspace's registered agents (Admin only).",
+        "summary": "List the workspace's agents. Every member sees them, like the work they do.",
         "responses": {
           "200": {
             "description": "The workspace's agents.",
@@ -5586,10 +6218,10 @@
         "tags": [
           "Agents"
         ],
-        "summary": "Register an agent and mint its token (returned once).",
+        "summary": "Create an agent and mint its key (returned once).",
         "responses": {
           "201": {
-            "description": "The created agent, plus its bearer token (shown only here).",
+            "description": "The created agent, its key (shown only here), and how to run it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5602,10 +6234,19 @@
                       "properties": {
                         "token": {
                           "type": "string"
+                        },
+                        "runner_command": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "trigger": {
+                          "$ref": "#/components/schemas/AgentTrigger"
                         }
                       },
                       "required": [
-                        "token"
+                        "token",
+                        "runner_command",
+                        "trigger"
                       ]
                     }
                   ]
@@ -5617,11 +6258,65 @@
       }
     },
     "/v1/agents/{id}": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "One agent, with its schedules. Any member of its workspace can read it.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The agent.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Agent"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "triggers": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/AgentTrigger"
+                          }
+                        },
+                        "can_ask": {
+                          "type": "boolean"
+                        },
+                        "can_manage": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "triggers",
+                        "can_ask",
+                        "can_manage"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "Agents"
         ],
-        "summary": "Update an agent's hosted flag (Admin only).",
+        "summary": "Edit an agent (its creator or a workspace owner).",
         "parameters": [
           {
             "schema": {
@@ -5649,7 +6344,7 @@
         "tags": [
           "Agents"
         ],
-        "summary": "Delete an agent (Admin only).",
+        "summary": "Delete an agent (its creator or a workspace owner).",
         "parameters": [
           {
             "schema": {
@@ -5663,6 +6358,87 @@
         "responses": {
           "204": {
             "description": "The agent was deleted."
+          }
+        }
+      }
+    },
+    "/v1/agents/{id}/triggers": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Add a schedule to an agent.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The schedule.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTrigger"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/triggers/{id}": {
+      "patch": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Change or pause a schedule.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The schedule.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTrigger"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Remove a schedule.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed."
           }
         }
       }
@@ -5762,6 +6538,343 @@
         "responses": {
           "204": {
             "description": "The grant was revoked (idempotent)."
+          }
+        }
+      }
+    },
+    "/v1/jobs": {
+      "get": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "List jobs in the active workspace, newest first.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "agent",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated statuses."
+            },
+            "required": false,
+            "description": "Comma-separated statuses.",
+            "name": "status",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated kinds."
+            },
+            "required": false,
+            "description": "Comma-separated kinds.",
+            "name": "kind",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "parent",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Keyset cursor: created_at of the last row seen."
+            },
+            "required": false,
+            "description": "Keyset cursor: created_at of the last row seen.",
+            "name": "before",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Jobs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jobs": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Job"
+                      }
+                    }
+                  },
+                  "required": [
+                    "jobs"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Ask an agent to do something. Opens a job (or returns the open one for a dedupe key).",
+        "responses": {
+          "200": {
+            "description": "An open job already holding this dedupe key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobDetail"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "The new job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/jobs/{id}": {
+      "get": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "One job with its transcript.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/jobs/{id}/messages": {
+      "post": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Write to a job. Running: appended for the next turn. Settled: the job reopens.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/jobs/{id}/cancel": {
+      "post": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Cancel an open job (and its children).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/jobs/{id}/retry": {
+      "post": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Run a failed or lost job again.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/jobs/{id}/answer": {
+      "post": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Answer a job that is waiting on a person.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/accounts": {
+      "get": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Your model accounts, and the workspace's shared ones.",
+        "responses": {
+          "200": {
+            "description": "Accounts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "accounts": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ModelAccount"
+                      }
+                    }
+                  },
+                  "required": [
+                    "accounts"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Add a model account by pasting a key or a login. Shared accounts need an owner.",
+        "responses": {
+          "201": {
+            "description": "The account.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelAccount"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/accounts/{id}": {
+      "delete": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Disconnect an account. Yours, or a shared one if you own the workspace.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Disconnected."
           }
         }
       }
