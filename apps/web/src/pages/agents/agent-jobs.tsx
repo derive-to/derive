@@ -6,7 +6,13 @@ import { LoadError } from "@/components/shared/load-error"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
-import { agentJobsQuery, jobQuery } from "@/lib/queries"
+import {
+  accountsQuery,
+  agentJobsQuery,
+  jobQuery,
+  modelCredentialsQuery,
+  poolCredentialsQuery,
+} from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 import {
@@ -24,11 +30,17 @@ import { AgentRowsSkeleton } from "./skeleton"
 
 const first = (name: string | undefined) => name?.trim().split(/\s+/)[0] || undefined
 
-/** The one line that says why this agent's jobs will not start, or null when they will. */
-export function warningFor(agent: AgentDetail, names: Map<string, string>): string | null {
+/** The one line that says why this agent's jobs will not start, or null when they will.
+ *  `noAccount` is true only when the viewer can see that no model account would resolve. */
+export function warningFor(
+  agent: AgentDetail,
+  names: Map<string, string>,
+  noAccount = false,
+): string | null {
   if (agent.paused) return "Paused. Jobs wait until it is resumed."
-  if (agent.machine === "derive")
-    return agent.account_id ? null : "No model account. Jobs wait until one is picked in Settings."
+  if (noAccount)
+    return "No model account to run on. Its jobs fail until one is connected in Settings › Accounts."
+  if (agent.machine === "derive") return null
   if (!agent.seen_at) return "Its runner has never checked in. Jobs wait until it does."
   const mark = machineOf(agent, names)
   if (mark.on) return null
@@ -41,13 +53,15 @@ export function AgentJobs({
   agent,
   names,
   meId,
+  isWorkspaceOwner,
 }: {
   agent: AgentDetail
   names: Map<string, string>
   meId: string
+  isWorkspaceOwner: boolean
 }) {
   const jobs = useInfiniteQuery({ ...agentJobsQuery(agent.id), refetchInterval: 15_000 })
-  const warning = warningFor(agent, names)
+  const warning = warningFor(agent, names, useNoAccount(agent, meId, isWorkspaceOwner))
   const schedules = schedulesOf(agent.triggers)
   const rows = jobs.data?.pages.flatMap((p) => p.jobs) ?? []
 
@@ -112,7 +126,7 @@ export function AgentJobs({
               job={job}
               agent={agent}
               names={names}
-              canSteer={agent.can_manage || job.asked_by === meId}
+              canSteer={agent.can_manage || (job.asked_by === meId && agent.can_ask)}
             />
           ))}
           {jobs.hasNextPage && (
@@ -130,6 +144,20 @@ export function AgentJobs({
       )}
     </div>
   )
+}
+
+/** Whether the viewer can tell that no model account would resolve for this agent's jobs.
+ *  Only its creator can: the fallback is the creator's own account, and nobody else sees it.
+ *  Older stored plans count too, and the shared pool of those is visible to owners only, so
+ *  anyone else is never told. */
+function useNoAccount(agent: AgentDetail, meId: string, isWorkspaceOwner: boolean): boolean {
+  const mine = agent.machine === "owner" && !agent.account_id && agent.created_by === meId
+  const accounts = useQuery({ ...accountsQuery(), enabled: mine })
+  const plans = useQuery({ ...modelCredentialsQuery(), enabled: mine && isWorkspaceOwner })
+  const pool = useQuery({ ...poolCredentialsQuery(), enabled: mine && isWorkspaceOwner })
+  if (!mine || !isWorkspaceOwner || !accounts.data || !plans.data || !pool.data) return false
+  const usable = accounts.data.some((a) => a.mine || a.shared)
+  return !usable && plans.data.length === 0 && pool.data.length === 0
 }
 
 function detailOf(job: Job): string | undefined {
@@ -187,7 +215,7 @@ function JobRow({
         </button>
         <Meta>
           {asker && <span>{asker}</span>}
-          {canSteer && (job.status === "running" || job.status === "queued") && (
+          {canSteer && (job.status === "running" || job.status === "queued" || needs) && (
             <Button
               type="button"
               variant="ghost"
@@ -245,13 +273,13 @@ function AnswerBox({ job }: { job: Job }) {
   const options = job.needs?.options ?? []
   return (
     <form onSubmit={submit} className="flex flex-wrap items-center gap-2 pb-3 pl-8">
-      {options.map((o) => (
+      {options.map((o, i) => (
         <Button
           key={o}
           type="button"
           variant="outline"
           size="sm"
-          data-testid={`job-option-${job.id}`}
+          data-testid={`job-option-${job.id}-${i}`}
           disabled={answer.isPending}
           onClick={() => answer.mutate({ option: o })}
           className="bg-card"
@@ -331,24 +359,24 @@ function Transcript({
       ))}
       {effects.length > 0 && (
         <div className="flex flex-wrap gap-2">
-          {effects.map((e) =>
+          {effects.map((e, i) =>
             e.kind === "page" && e.ref ? (
               <Link
                 key={`${e.kind}-${e.ref}-${e.label}`}
                 to="/artifacts/$ref"
                 params={{ ref: e.ref }}
-                data-testid={`job-effect-${id}`}
+                data-testid={`job-effect-${id}-${i}`}
                 className="rounded-lg border border-border px-2.5 py-1.5 text-sm hover:bg-secondary"
               >
                 {e.label}
               </Link>
-            ) : e.url ? (
+            ) : e.url && /^https?:\/\//i.test(e.url) ? (
               <a
                 key={`${e.kind}-${e.url}-${e.label}`}
                 href={e.url}
                 target="_blank"
                 rel="noreferrer"
-                data-testid={`job-effect-${id}`}
+                data-testid={`job-effect-${id}-${i}`}
                 className="rounded-lg border border-border px-2.5 py-1.5 text-sm hover:bg-secondary"
               >
                 {e.label}

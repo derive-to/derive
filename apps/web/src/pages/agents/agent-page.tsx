@@ -34,7 +34,8 @@ export function AgentPage() {
   const { tab } = route.useSearch()
   const navigate = route.useNavigate()
   const { me } = useAuth()
-  const q = useQuery(agentQuery(id))
+  // Refetched on a timer so seen_at stays fresh and "machine off" is never a stale guess.
+  const q = useQuery({ ...agentQuery(id), refetchInterval: 30_000 })
   const workspace = useQuery(workspaceQuery())
   const names = useMemberNames()
   useDocumentTitle(q.data?.name ?? "Agent")
@@ -75,6 +76,14 @@ export function AgentPage() {
           agent.can_ask && <AskButton agent={agent} onAsked={() => navigate({ search: {} })} />
         }
       />
+      {workspace.isError && (
+        <LoadError
+          layout="inline"
+          title="Couldn’t load this workspace’s members."
+          testId="agent-workspace-retry"
+          onRetry={() => void workspace.refetch()}
+        />
+      )}
       <Tabs
         value={tab ?? "jobs"}
         onValueChange={(v) =>
@@ -90,7 +99,12 @@ export function AgentPage() {
           </TabsTrigger>
         </TabsList>
         <TabsContent value="jobs" className="pt-7">
-          <AgentJobs agent={agent} names={names} meId={me.id} />
+          <AgentJobs
+            agent={agent}
+            names={names}
+            meId={me.id}
+            isWorkspaceOwner={workspace.data?.role === "owner"}
+          />
         </TabsContent>
         <TabsContent value="settings" className="pt-7">
           <AgentSettings

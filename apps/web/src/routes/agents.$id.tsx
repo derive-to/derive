@@ -1,11 +1,16 @@
-import { createFileRoute } from "@tanstack/react-router"
+import { createFileRoute, redirect } from "@tanstack/react-router"
 import { agentJobsQuery, agentQuery, workspaceQuery } from "../lib/queries"
 import { requireOnboarded } from "../lib/route-guards"
 import { AgentPage } from "../pages/agents/agent-page"
 import { AgentPending } from "../pages/agents/skeleton"
 
 export const Route = createFileRoute("/agents/$id")({
-  beforeLoad: requireOnboarded,
+  beforeLoad: async (args) => {
+    await requireOnboarded(args)
+    // Old bookmarks: /agents/<id> used to open a Context. A context id is never an agent id.
+    if (args.params.id.startsWith("ctx_"))
+      throw redirect({ to: "/contexts/$id", params: { id: args.params.id }, replace: true })
+  },
   validateSearch: (search: Record<string, unknown>): { tab?: "settings" } =>
     search.tab === "settings" ? { tab: "settings" } : {},
   loader: ({ context, params }) =>

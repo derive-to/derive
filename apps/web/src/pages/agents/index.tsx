@@ -102,6 +102,14 @@ export function AgentsHome() {
   return (
     <PageShell width="wide" className="flex flex-col gap-9">
       {header}
+      {recent.isError && (
+        <LoadError
+          layout="inline"
+          title="Couldn’t load recent jobs, so when each agent last worked is missing."
+          testId="agents-recent-retry"
+          onRetry={() => void recent.refetch()}
+        />
+      )}
       {roster.length === 0 ? (
         <p data-testid="agents-empty" className="text-base text-muted-foreground">
           No agents in this workspace yet.

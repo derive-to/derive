@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { type FormEvent, useState } from "react"
 import { api, type ModelAccount, type NewModelAccount } from "@/api"
+import { ModelAccountPicker } from "@/components/accounts/model-account-picker"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { LoadError } from "@/components/shared/load-error"
 import { Button } from "@/components/ui/button"
@@ -18,6 +19,7 @@ import { accountsQuery, agentsQuery, workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { Group, Meta, RowLine, rowClass } from "@/pages/agents/rows"
 import { AgentRowsSkeleton } from "@/pages/agents/skeleton"
+import { ModelPlanManager } from "./model-plan-manager"
 import { SettingsSection } from "./settings-section"
 
 const PROVIDER: Record<ModelAccount["provider"], string> = { claude: "Claude", codex: "Codex" }
@@ -40,8 +42,11 @@ export function AccountsSection() {
   const agents = useQuery(agentsQuery())
   const workspace = useQuery(workspaceQuery())
   const isOwner = workspace.data?.role === "owner"
+  // Adding an account needs publish rights (Admin or Creator); viewers and commenters can't.
+  const canAdd = workspace.data?.role === "owner" || workspace.data?.role === "editor"
   const [adding, setAdding] = useState(false)
   const [removing, setRemoving] = useState<ModelAccount | null>(null)
+  const [legacyId, setLegacyId] = useState("")
   const disconnect = useApiMutation({
     mutationFn: (a: ModelAccount) => api.deleteAccount(a.id),
     invalidate: [["accounts"], ["agents"]],
@@ -101,10 +106,18 @@ export function AccountsSection() {
             </Group>
           )}
           <p className="text-sm text-muted-foreground">
-            Agents on your machine use whatever that machine is signed into. Agents on Derive need
-            an account here.
+            An agent uses the account picked on its Settings tab. Without one it uses its creator’s
+            own account here, then a shared one. With none of those, its jobs fail.
           </p>
-          {adding ? (
+          {workspace.isError && (
+            <LoadError
+              layout="inline"
+              title="Couldn’t load your role in this workspace."
+              testId="accounts-workspace-retry"
+              onRetry={() => void workspace.refetch()}
+            />
+          )}
+          {!canAdd ? null : adding ? (
             <AddAccount canShare={isOwner} onDone={() => setAdding(false)} />
           ) : (
             <Button
@@ -120,11 +133,20 @@ export function AccountsSection() {
           )}
         </div>
       )}
+      {/* Contexts and workflows still read the older per-person plans until the cutover
+          moves them onto accounts; runner errors and the model-plans redirect land here. */}
+      <section data-testid="accounts-older-plans" className="flex flex-col gap-4">
+        <h2 className="text-sm font-medium tracking-wider text-muted-foreground uppercase">
+          Older plans (contexts and workflows)
+        </h2>
+        <ModelAccountPicker value={legacyId} onChange={(account) => setLegacyId(account.id)} />
+        <ModelPlanManager scope="personal" />
+      </section>
       <ConfirmDialog
         open={!!removing}
         onOpenChange={(o) => !o && setRemoving(null)}
         title={removing ? `Disconnect ${accountLabel(removing)}?` : ""}
-        description="Agents assigned to it fall back to the machine's own sign-in, or a shared account."
+        description="Agents assigned to it fall back to their creator’s own account, then a shared one."
         confirmLabel="Disconnect"
         confirmTestId="account-disconnect-confirm"
         onConfirm={() =>

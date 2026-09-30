@@ -100,7 +100,7 @@ export function AgentSettings({ agent, names, workspaceName, isWorkspaceOwner }:
                 : "Its runner has never checked in."}
             </Sub>
           )}
-          {edit && <Sub>Derive machines are not available in this workspace yet.</Sub>}
+          {edit && <Sub>Derive machines are not on in this workspace.</Sub>}
         </Field>
         <AccountField agent={agent} edit={edit} onSave={set} />
         <SourcesField agent={agent} edit={edit} onSave={set} />
@@ -125,7 +125,7 @@ export function AgentSettings({ agent, names, workspaceName, isWorkspaceOwner }:
             onChange={(v) => set({ ask_policy: v as AgentDetail["ask_policy"] })}
             options={[
               { value: "workspace", label: `Everyone in ${workspaceName || "the workspace"}` },
-              { value: "invited", label: "Only people I pick" },
+              { value: "invited", label: "Only me and workspace owners" },
             ]}
           />
         </Field>
@@ -501,8 +501,12 @@ function ScheduleForm({
   )
 }
 
-const ON_MACHINE = "machine"
+const DEFAULT = "default"
+const DEFAULT_LABEL = "Default (creator’s account, then shared)"
 
+// The server picks the account a job runs on: the one assigned here; else, on an owner
+// machine, the agent creator's own account (on a Derive machine, the asker's); then the
+// workspace's shared account; then older stored plans. With none of those the job fails.
 function AccountField({
   agent,
   edit,
@@ -517,6 +521,7 @@ function AccountField({
   const usable = (accounts.data ?? []).filter((a) => a.mine || a.shared)
   const current = accounts.data?.find((a) => a.id === agent.account_id)
   const label = (a: ModelAccount) => `${accountLabel(a)}${a.hint ? ` ${a.hint}` : ""}`
+  const hidden = "An account you can’t see"
   return (
     <Field label="Account">
       {accounts.isError ? (
@@ -528,16 +533,16 @@ function AccountField({
         />
       ) : edit ? (
         <Select
-          value={agent.account_id ?? ON_MACHINE}
-          onValueChange={(v) => onSave({ account_id: v === ON_MACHINE ? null : v })}
+          value={agent.account_id ?? DEFAULT}
+          onValueChange={(v) => onSave({ account_id: v === DEFAULT ? null : v })}
         >
           <SelectTrigger data-testid="agent-account" aria-label="Account" className="min-w-56">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={ON_MACHINE}>On the machine</SelectItem>
+            <SelectItem value={DEFAULT}>{DEFAULT_LABEL}</SelectItem>
             {agent.account_id && !current && (
-              <SelectItem value={agent.account_id}>An account you cannot see</SelectItem>
+              <SelectItem value={agent.account_id}>{hidden}</SelectItem>
             )}
             {usable.map((a) => (
               <SelectItem key={a.id} value={a.id}>
@@ -547,10 +552,14 @@ function AccountField({
           </SelectContent>
         </Select>
       ) : (
-        <span>{current ? label(current) : "On the machine"}</span>
+        <span>{current ? label(current) : agent.account_id ? hidden : DEFAULT_LABEL}</span>
       )}
-      {!agent.account_id && agent.machine === "owner" && (
-        <Sub>Uses whatever the machine is signed into.</Sub>
+      {!agent.account_id && (
+        <Sub>
+          {agent.machine === "owner"
+            ? "Its creator’s own account from Settings › Accounts, then the workspace’s shared one."
+            : "The asker’s own account, then the workspace’s shared one."}
+        </Sub>
       )}
     </Field>
   )
@@ -669,7 +678,7 @@ function KeyField({ agent, canReplace }: { agent: AgentDetail; canReplace: boole
           </span>
           <Sub>
             {canReplace
-              ? "Replacing it logs the old runner out on its next check-in."
+              ? "Replacing it stops the old key at once; restart the runner with the new one."
               : "Only a workspace owner can replace it."}
           </Sub>
         </>
@@ -678,7 +687,7 @@ function KeyField({ agent, canReplace }: { agent: AgentDetail; canReplace: boole
         open={confirming}
         onOpenChange={setConfirming}
         title={`Replace ${agent.name}'s key?`}
-        description="The runner using the old key stops on its next check-in. You get a new runner command to start it again."
+        description="The old key stops working immediately, so its runner stops too. You get a new runner command to start it again."
         confirmLabel="Replace"
         confirmTestId="agent-key-confirm"
         onConfirm={() => rotate.mutateAsync().then(() => undefined)}

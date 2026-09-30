@@ -37,6 +37,7 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 | `/shared` | Documents other people gave them access to. |
 | `/following` | Recent work by the people they follow. |
 | `/feedback` | Documents waiting on their review or reply. |
+| `/contexts` | Reusable Contexts: the instructions, skills, sources, and permissions an agent can use. Off the sidebar now (open it from search) until contexts move onto agents. |
 | `/people` | Who is in the workspace, and who they follow. |
 | `/new` | Write or paste a new document (Markdown or HTML) and publish it. |
 | `/welcome` | How to connect an agent over MCP, and how to publish from the CLI. Reachable any time. |
@@ -52,7 +53,7 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 | `/settings/profile` | Their name, handle, avatar. |
 | `/settings/security` | Password and sessions. |
 | `/settings/notifications` | Slack DMs, account linking, and what opens automatically for you. |
-| `/settings/accounts` | Claude and Codex accounts agents call a model with: yours, and the workspace's shared ones. Paste a key to connect one; disconnect it here. Only an Admin adds a shared one. |
+| `/settings/accounts` | Claude and Codex accounts agents call a model with: yours, and the workspace's shared ones. Paste a key to connect one; disconnect it here. Only an Admin adds a shared one. Below them, the older model plans contexts and workflows still use. |
 | `/settings/appearance` | Theme. |
 | `/settings/general` | Workspace name and its defaults. |
 | `/settings/machines` | Where agents run: each person's machine running a runner, when it last checked in, and the command that starts a runner. |
@@ -65,6 +66,7 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 | `/settings/brandprint` | The workspace's brand: what published pages look like. |
 | `/settings/webhooks` | Send Derive events to a URL. |
 | `/settings/agents` | Manage Agent execution connections and rotate their tokens. |
+| `/workflows` | Reusable work: coordinated graphs and loops, plus scheduled or triggered agent work. Off the sidebar now (open it from search) until workflows move onto agents. |
 | `/settings/domains` | Serve published pages on a custom domain. |
 | `/settings/reports` | Content reports, when there are open ones. Admin only. |
 
@@ -136,8 +138,10 @@ on that same screen. Derive can also send direct messages. Each person controls 
 **Make an agent.** `/agents/new` gives a prompt to paste into Claude Code or Codex with Derive
 connected; the coding session creates it. Change it afterwards on its Settings tab.
 
-**Connect a model account.** `/settings/accounts`: paste a Claude or Codex key. Agents on your own
-machine use whatever that machine is signed into. Only the account's owner disconnects it.
+**Connect a model account.** `/settings/accounts`: paste a Claude or Codex key. An agent runs on
+the account picked on its Settings tab; otherwise on its creator's own account, then the
+workspace's shared one. With none of those its jobs fail. Only the account's owner disconnects it.
+Contexts and workflows still use the older plans further down the same page.
 
 ## Words people ask about
 

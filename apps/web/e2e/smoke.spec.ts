@@ -599,6 +599,7 @@ test("settings destinations and their retired paths resolve", async ({ owner }) 
   await expect(owner).toHaveURL(/\/settings\/accounts$/)
   await expect(owner.getByTestId("settings-tab-accounts")).toHaveAttribute("aria-current", "page")
   await expect(owner.getByTestId("account-connect")).toBeVisible()
+  await expect(owner.getByTestId("model-plan-import")).toBeVisible()
 
   // People is a standalone directory page; its retired settings path redirects out.
   await owner.goto("/people")
@@ -1113,7 +1114,7 @@ test("cloud workflows keep manual runs available after pausing and link their re
   })
 })
 
-test("workflow accounts connect in place without submitting the setup form", async ({
+test("workflow accounts connect in place and preserve imported task logins", async ({
   owner,
 }, testInfo) => {
   const accounts: {
@@ -1123,17 +1124,8 @@ test("workflow accounts connect in place without submitting the setup form", asy
     revision: number
     revoked_at: string | null
     unavailable_reason: null
-  }[] = [
-    {
-      id: "rmc_browser_fixture",
-      name: "Review account",
-      provider: "codex",
-      revision: 0,
-      revoked_at: null,
-      unavailable_reason: null,
-    },
-  ]
-  let creates = 1
+  }[] = []
+  let creates = 0
   let signIns = 0
   let workflowCreates = 0
   let signInState = "pending"
@@ -1191,16 +1183,49 @@ test("workflow accounts connect in place without submitting the setup form", asy
       })
     } else await route.fallback()
   })
+  await owner.goto("/settings/model-plans")
+  await expect(owner).toHaveURL(/\/settings\/accounts$/)
+  await expect(owner.getByTestId("model-plan-row-codex")).toContainText("imported")
+  await expect(owner.getByTestId("model-plan-token")).toBeHidden()
+  await owner.getByTestId("context-model-account-add").click()
+  await owner.getByTestId("context-model-account-name").fill("Review account")
+  await owner.getByTestId("context-model-account-create").click()
+  await expect(owner.getByTestId("context-managed-model-authorize")).toBeVisible()
+  await expect(owner.getByTestId("model-account-select")).toHaveValue("rmc_browser_fixture")
+  await owner.getByTestId("context-managed-model-cancel").click()
+  await expect(owner.getByText("Sign-in cancelled. Your setup is unchanged.")).toBeVisible()
+  await owner.getByTestId("context-managed-model-connect").click()
+  await expect(owner.getByTestId("context-managed-model-authorize")).toBeVisible()
+  expect(creates).toBe(1)
+  expect(signIns).toBe(2)
+  await expect(owner.getByTestId("model-account-workflow-ctx_usage")).toHaveText("Daily review")
+  await owner.getByTestId("context-managed-model-disconnect").click()
+  await expect(owner.getByRole("dialog")).toContainText("2 affected workflow(s)")
+  await expect(owner.getByRole("dialog")).toContainText("Daily review")
+  await owner.getByTestId("confirm-dialog-cancel").click()
+  await owner.getByTestId("settings-tab-profile").click()
+  await owner.getByTestId("settings-tab-accounts").click()
+  await owner.getByTestId("model-account-select").selectOption("rmc_browser_fixture")
+  await expect(owner.getByTestId("context-managed-model-authorize")).toBeVisible()
+  expect(creates).toBe(1)
+  expect(signIns).toBe(2)
+  await testInfo.attach("Accounts", {
+    body: await owner.screenshot({ fullPage: true, animations: "disabled" }),
+    contentType: "image/png",
+  })
+
   await owner.route("**/v1/workflow-runtimes", (route) => {
     if (route.request().method() === "POST") workflowCreates++
     return route.fulfill({ json: { available: true, can_create: true, items: [] } })
   })
-  await owner.goto("/workflows")
+  // In-app navigation (the palette's Jump to), so the sign-in state above survives.
+  await owner.getByTestId("open-command-palette").click()
+  await owner.keyboard.type("workflows")
+  await owner.getByRole("option", { name: "Workflows" }).click()
+  await expect(owner).toHaveURL(/\/workflows$/)
   await owner.getByTestId("workflows-new").click()
   await owner.getByTestId("workflow-create-name").fill("Daily integrity review")
   await owner.getByTestId("model-account-select").selectOption("rmc_browser_fixture")
-  await owner.getByTestId("context-managed-model-connect").click()
-  await expect(owner.getByTestId("context-managed-model-authorize")).toBeVisible()
   await owner.getByTestId("context-managed-model-cancel").click()
   await expect(owner.getByText("Sign-in cancelled. Your setup is unchanged.")).toBeVisible()
   await expect(owner.getByTestId("workflow-create-name")).toHaveValue("Daily integrity review")
@@ -1209,7 +1234,7 @@ test("workflow accounts connect in place without submitting the setup form", asy
   await owner.getByTestId("context-managed-model-connect").click()
   await expect(owner.getByTestId("context-managed-model-authorize")).toBeVisible()
   expect(creates).toBe(1)
-  expect(signIns).toBe(2)
+  expect(signIns).toBe(3)
   await owner.getByTestId("context-model-account-add").click()
   await owner.getByTestId("context-model-account-name").fill("Second review account")
   await owner.getByTestId("context-model-account-name").press("Enter")
@@ -1374,6 +1399,9 @@ test("Agents home groups agents by what they need, and the rail leads with it", 
 
   await owner.goto("/contexts")
   await expect(owner).toHaveURL(/\/contexts$/)
+  // An old /agents/<context id> bookmark still lands on the Context.
+  await owner.goto("/agents/ctx_legacy")
+  await expect(owner).toHaveURL(/\/contexts\/ctx_legacy$/)
 })
 
 test("New agent is a prompt to paste into a coding session", async ({ owner }, testInfo) => {
@@ -1419,7 +1447,7 @@ test("an agent's page answers, retries, and changes the agent", async ({ owner }
 
   const needsRow = owner.getByTestId(`job-${needsId}`)
   await expect(needsRow).toContainText("Publish it to the team?")
-  await owner.getByTestId(`job-option-${needsId}`).click()
+  await owner.getByTestId(`job-option-${needsId}-0`).click()
   await expect(needsRow).toHaveAttribute("data-status", "queued")
 
   // Opening a row reads its transcript.

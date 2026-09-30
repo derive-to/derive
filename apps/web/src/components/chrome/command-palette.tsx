@@ -266,6 +266,9 @@ export function CommandPalette() {
     .filter((w) => w.id !== workspaces?.active && w.display.toLowerCase().includes(q))
   const showAll = "pages".includes(q) || "all artifacts".includes(q) || "library".includes(q)
   const showAgents = "agents".includes(q) || "new agent".includes(q)
+  // Off the rail but still live until their data moves onto agents.
+  const showContexts = "contexts".includes(q)
+  const showWorkflows = "workflows".includes(q)
   const showFav = "favorites".includes(q)
   const showFollowing = "following".includes(q)
   const showTemplates = "templates".includes(q) || "start from a template".includes(q)
@@ -292,6 +295,8 @@ export function CommandPalette() {
     otherWorkspaces.length === 0 &&
     !showAll &&
     !showAgents &&
+    !showContexts &&
+    !showWorkflows &&
     !showFav &&
     !showFollowing &&
     !showTemplates &&
@@ -382,6 +387,8 @@ export function CommandPalette() {
 
             {(showAll ||
               showAgents ||
+              showContexts ||
+              showWorkflows ||
               showFav ||
               showFollowing ||
               showTemplates ||
@@ -442,6 +449,22 @@ export function CommandPalette() {
                     onSelect={() => go(() => nav({ to: "/skills" }))}
                   >
                     <Icon name="skill" size={16} /> Skills
+                  </CommandItem>
+                )}
+                {showContexts && (
+                  <CommandItem
+                    value="jump-contexts"
+                    onSelect={() => go(() => nav({ to: "/contexts" }))}
+                  >
+                    <Icon name="context" size={16} /> Contexts
+                  </CommandItem>
+                )}
+                {showWorkflows && (
+                  <CommandItem
+                    value="jump-workflows"
+                    onSelect={() => go(() => nav({ to: "/workflows" }))}
+                  >
+                    <Icon name="workflow" size={16} /> Workflows
                   </CommandItem>
                 )}
                 {showConnect && (

@@ -272,11 +272,10 @@ function RailHeader({ showSearch }: { showSearch: boolean }) {
 }
 
 // Deterministic silhouette widths (no Math.random → no per-render jitter / SSR mismatch).
-// One per primary row: Agents, Inbox, Pages.
+// One per primary row: Agents, Pages.
 const RAIL_SKELETON_ROWS = [
   { id: "r1", w: "58%" },
-  { id: "r2", w: "50%" },
-  { id: "r3", w: "54%" },
+  { id: "r2", w: "54%" },
 ]
 const RAIL_SKELETON_COLLECTIONS = [
   { id: "c1", w: "80%" },
@@ -401,10 +400,10 @@ export function NavRail() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              {/* Agents, Inbox, Pages; Search is the launcher above and Settings sits at the
-                  foot. Contexts, Workflows, Chat, Templates, and Skills left the rail with the
-                  agent model; their pages stay reachable by URL (and Templates and Skills from
-                  the palette) until their data is cut over. */}
+              {/* Agents, Pages; Search is the launcher above and Settings sits at the foot.
+                  Inbox joins between them once its page exists. Contexts, Workflows, Chat,
+                  Templates, and Skills left the rail with the agent model; their pages stay
+                  reachable by URL and from the palette until their data is cut over. */}
               <NavItem
                 icon="agent"
                 label="Agents"
@@ -412,8 +411,6 @@ export function NavRail() {
                 active={onAgents}
                 testId="nav-agents"
               />
-              {/* The inbox is the Agents home's Needs you group until its own page lands. */}
-              <NavItem icon="inbox" label="Inbox" to="/agents" active={false} testId="nav-inbox" />
               <FilterItem
                 icon="page"
                 label="Pages"
