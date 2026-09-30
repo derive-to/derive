@@ -2,9 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { Link, useNavigate, useSearch } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
 import type { SearchHit } from "@/api"
-import { useShell } from "@/components/chrome/shell-context"
 import { Icon } from "@/components/icons"
-import { AskButton } from "@/components/shared/ask-button"
 import { EmptyState } from "@/components/shared/empty-state"
 import { LoadError } from "@/components/shared/load-error"
 import { PageHeader } from "@/components/shared/page-header"
@@ -26,7 +24,6 @@ const MIN_CHARS = 2
 export function SearchResults() {
   const urlQ = (useSearch({ strict: false }) as { q?: string }).q ?? ""
   const nav = useNavigate()
-  const { openAssistant } = useShell()
   const [input, setInput] = useState(urlQ)
   const [debounced, setDebounced] = useState(urlQ.trim())
   useDocumentTitle(urlQ.trim() ? `Search: ${urlQ.trim()}` : "Search")
@@ -65,7 +62,6 @@ export function SearchResults() {
             value={input}
             onValueChange={setInput}
             onEnter={(v) => setDebounced(v)}
-            onAsk={(v) => openAssistant(v || undefined)}
             placeholder="Search all artifacts…"
             aria-label="Search all artifacts by keyword or meaning"
             testId="search-field"
@@ -74,10 +70,6 @@ export function SearchResults() {
             loading={active && isFetching}
             className="flex-1"
           />
-          {/* The ranked list answers "show me everything"; this answers "just tell me". Both stay
-              on screen — asking never rearranges the results, because the answer arrives in the
-              dock beside them (on a phone, on /chat). */}
-          <AskButton text={input} testId="search-ask" />
         </div>
       </div>
 

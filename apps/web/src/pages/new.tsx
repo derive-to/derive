@@ -136,18 +136,7 @@ export function NewArtifact() {
       // not an abandon), so the blocker doesn't intercept it. Ref, so it's in effect the
       // instant nav() runs — see the note on `publishing` above.
       publishing.current = true
-      if (search.next === "context") {
-        nav({
-          to: "/contexts",
-          search: {
-            manifest: a.short_id,
-            name: search.contextName,
-            origin: search.contextName,
-          },
-        })
-      } else {
-        nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })
-      }
+      nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })
     },
   })
   const publish = () => {

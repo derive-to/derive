@@ -99,12 +99,7 @@ export function AgentPage() {
           </TabsTrigger>
         </TabsList>
         <TabsContent value="jobs" className="pt-7">
-          <AgentJobs
-            agent={agent}
-            names={names}
-            meId={me.id}
-            isWorkspaceOwner={workspace.data?.role === "owner"}
-          />
+          <AgentJobs agent={agent} names={names} meId={me.id} />
         </TabsContent>
         <TabsContent value="settings" className="pt-7">
           <AgentSettings

@@ -66,9 +66,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   // Immersive (the artifact's focus mode): the rail + mobile top bar unmount and
   // the inset mat drops (see ShellValue.immersive). Ephemeral — never persisted.
   const [immersive, setImmersive] = useState(false)
-  // A question handed to the palette by another surface (the rail row, a page's Ask button).
-  // Transient by design: it is consumed on open, so reopening the palette later starts clean.
-  const [pendingAsk, setPendingAsk] = useState<string | null>(null)
   const navigate = useNavigate()
   const qc = useQueryClient()
   // Workspaces power the switcher's no-op check below; the rail + command palette
@@ -174,25 +171,6 @@ export function AppShell({ children }: { children: ReactNode }) {
     reloadAfterWorkspaceChange()
   }
 
-  // THE ONE ASK ACTION, and the only place in the app that knows a phone has no dock.
-  //
-  // Callers pass a question or nothing. On a desktop that opens the dock beside the page; on a
-  // phone the same ask becomes a navigation to /chat, which is a real route, so the phone's own
-  // back gesture works and there is no bespoke sheet to dismiss. Keeping the branch here is what
-  // lets every call site stay one line.
-  const openAssistant = (text?: string) => {
-    const question = text?.trim() ?? ""
-    if (isMobile) {
-      void navigate({
-        to: "/chat",
-        search: { ask: question || undefined, session: undefined, model: undefined },
-      })
-      return
-    }
-    setPendingAsk(question)
-    setPaletteOpen(true)
-  }
-
   // A plain value object — the React Compiler keeps it reference-stable across
   // renders, so consumers re-render only when the palette state or a workspace
   // action changes (the nav data now lives in react-query, not here).
@@ -201,9 +179,6 @@ export function AppShell({ children }: { children: ReactNode }) {
     setPaletteOpen,
     immersive,
     setImmersive,
-    openAssistant,
-    pendingAsk,
-    clearPendingAsk: () => setPendingAsk(null),
     switchWorkspace,
     createWorkspace,
     deleteWorkspace,
@@ -343,9 +318,6 @@ function PageLabel({ pathname, newSkill }: { pathname: string; newSkill: boolean
   if (pathname === "/inbox") return "Inbox"
   if (pathname === "/agents/new") return "New agent"
   if (pathname.startsWith("/agents")) return "Agents"
-  if (pathname.startsWith("/contexts")) return "Contexts"
-  if (pathname.startsWith("/workflows")) return "Workflows"
-  if (pathname === "/chat") return "Chat"
   if (pathname.startsWith("/settings")) return "Settings"
   if (pathname.startsWith("/artifacts/")) return "Artifact"
   if (pathname.startsWith("/users/")) return "Profile"

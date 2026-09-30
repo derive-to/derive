@@ -29,8 +29,6 @@ export const Route = createFileRoute("/new")({
     source: typeof search.source === "string" ? search.source : undefined,
     library: typeof search.library === "string" ? search.library : undefined,
     entry: typeof search.entry === "string" ? search.entry : undefined,
-    next: search.next === "context" ? "context" : undefined,
-    contextName: typeof search.contextName === "string" ? search.contextName : undefined,
   }),
   component: NewArtifact,
 })

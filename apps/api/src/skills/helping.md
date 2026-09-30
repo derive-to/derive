@@ -38,7 +38,6 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 | `/shared` | Documents other people gave them access to. |
 | `/following` | Recent work by the people they follow. |
 | `/feedback` | Documents waiting on their review or reply. |
-| `/contexts` | Reusable Contexts: the instructions, skills, sources, and permissions an agent can use. Off the sidebar now (open it from search) until contexts move onto agents. |
 | `/people` | Who is in the workspace, and who they follow. |
 | `/new` | Write or paste a new document (Markdown or HTML) and publish it. |
 | `/welcome` | How to connect an agent over MCP, and how to publish from the CLI. Reachable any time. |
@@ -54,7 +53,7 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 | `/settings/profile` | Their name, handle, avatar. |
 | `/settings/security` | Password and sessions. |
 | `/settings/notifications` | Slack DMs, account linking, and what opens automatically for you. |
-| `/settings/accounts` | Claude and Codex accounts agents call a model with: yours, and the workspace's shared ones. Paste a key to connect one; disconnect it here. Only an Admin adds a shared one. Below them, the older model plans contexts and workflows still use. |
+| `/settings/accounts` | Claude and Codex accounts agents call a model with: yours, and the workspace's shared ones. Paste a key to connect one; disconnect it here. Only an Admin adds a shared one. |
 | `/settings/appearance` | Theme. |
 | `/settings/general` | Workspace name and its defaults. |
 | `/settings/machines` | Where agents run: each person's machine running a runner, when it last checked in, and the command that starts a runner. |
@@ -62,12 +61,9 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 | `/people` | The workspace people directory. |
 | `/settings/billing` | Plan, seats, invoices. Admin only. |
 | `/settings/integrations` | Connect Slack and GitHub; manage workspace email notifications. |
-| `/settings/credentials` | Named personal or workspace secrets. Add, replace or revoke values and see assignments. Values are write-only; “Not checked” does not promise remote access. Assign credentials under a workflow’s Agent access. |
 | `/settings/sources` | Connect an MCP server so an agent can read from it. |
 | `/settings/brandprint` | The workspace's brand: what published pages look like. |
 | `/settings/webhooks` | Send Derive events to a URL. |
-| `/settings/agents` | Manage Agent execution connections and rotate their tokens. |
-| `/workflows` | Reusable work: coordinated graphs and loops, plus scheduled or triggered agent work. Off the sidebar now (open it from search) until workflows move onto agents. |
 | `/settings/domains` | Serve published pages on a custom domain. |
 | `/settings/reports` | Content reports, when there are open ones. Admin only. |
 
@@ -104,7 +100,7 @@ an agent or the CLI (`derive publish`) after connecting at `/welcome`.
 how the CLI is authorised.
 
 **Connect a source.** `/settings/sources`, add the MCP server's URL. An agent reaches it once it is added
-under Reaches on the agent's Settings tab. This is different from `/settings/agents`, which manages execution connections.
+under Reaches on the agent's Settings tab.
 
 **Make a collection.** The + beside Collections in the sidebar. Then drag documents in, or use the
 organize control on a document.
@@ -113,7 +109,7 @@ organize control on a document.
 bar.
 
 **Suggest a change instead of making it.** Select the text and leave a comment saying what to
-change. Someone with publish access (or an agent asked in the document's chat) applies it.
+change. Someone with publish access (or an agent asked from the page's margin) applies it.
 
 **Review what is waiting on me.** `/feedback`.
 
@@ -142,7 +138,6 @@ connected; the coding session creates it. Change it afterwards on its Settings t
 **Connect a model account.** `/settings/accounts`: paste a Claude or Codex key. An agent runs on
 the account picked on its Settings tab; otherwise on its creator's own account, then the
 workspace's shared one. With none of those its jobs fail. Only the account's owner disconnects it.
-Contexts and workflows still use the older plans further down the same page.
 
 ## Words people ask about
 
@@ -161,7 +156,6 @@ Contexts and workflows still use the older plans further down the same page.
 - **Job:** one piece of work an agent does: an ask, a scheduled run, or a graph. It ends done,
   failed, or cancelled, or waits on a person.
 - **Machine:** where an agent's jobs run: its owner's computer (a runner) or Derive.
-- **Agent connection:** the registered principal and token an Agent uses to act in Derive.
 - **Brandprint:** the workspace's design and writing guidance for published work.
 - **Source:** a connected MCP server an agent can read from.
 - **Workspace:** the tenant. People, documents, settings, and billing all belong to one.
