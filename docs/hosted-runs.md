@@ -1,5 +1,11 @@
 # Hosted automation runs (experimental)
 
+> **Retired.** This records the hosted automation lane (automations, `dkrun_` capabilities, the
+> Cloudflare run container and the in-process loop), which the agents cutover removed. Scheduled
+> and asked work now runs as jobs on an agent's machine: the owner's runner, or a Derive machine
+> (`apps/api/src/lib/jobs.ts`, `job-machine.ts`). Kept as a record; the routes, commands and
+> settings it names no longer exist.
+
 Run an automation with **no machine on**: Derive itself materializes due schedules, mints a
 short-lived credential, and boots a disposable executor that pulls from bound sources and writes
 the artifact. Off by default on every deployment; opt in per host.
