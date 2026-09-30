@@ -44,6 +44,8 @@ interface GraphMeta {
   waiting?: string
   /** Steps where branches meet, waiting for their last branch to finish. */
   pending?: string[]
+  /** Until when a pass holds the graph (see PASS_HOLD_MS). */
+  pass_until?: string
 }
 
 /** A graph job holds no machine; its lease only keeps reclaim off it and is renewed each pass. */
@@ -137,6 +139,31 @@ const lastReply = async (meta: MetaStore, jobId: string, kind: "agent" | "asker"
   [...(await meta.listJobMessages(jobId))].reverse().find((m) => m.author_kind === kind)?.body_md ??
   ""
 
+/** How long one pass holds a graph before another may act on it. */
+const PASS_HOLD_MS = 30_000
+
+/** What a waiting graph asks the person, from its human step. */
+const needsFor = (node: WorkflowNodeDefinition | undefined) =>
+  JSON.stringify({
+    kind: "decision",
+    question: node?.decision ?? "What should happen next?",
+    ...(node?.options?.length ? { options: node.options } : {}),
+  })
+
+/** Can the walk get from one step to another along the definition's routes? */
+const reaches = (d: WorkflowDiagramDefinition, from: string, to: string): boolean => {
+  const seen = new Set<string>()
+  const queue = [from]
+  while (queue.length) {
+    const at = queue.shift() as string
+    if (at === to) return true
+    if (seen.has(at)) continue
+    seen.add(at)
+    for (const r of d.routes) if (r.from === at) queue.push(r.to)
+  }
+  return false
+}
+
 /** A pass lost the race for the graph row to another pass; it stops and leaves the rest. */
 class Superseded extends Error {}
 
@@ -159,10 +186,15 @@ async function walk(deps: GraphDeps, given: JobRecord): Promise<void> {
   const agent = await meta.getAgent(job.agent_id)
   if (!agent) return
   // A paused graph agent, or a workspace with agent writes off, holds its graphs where they are.
-  if (agent.paused_at || (await agentWritesOff(meta, agent.org_id))) return
   const now = new Date()
   const at = now.toISOString()
   const lease = new Date(now.getTime() + GRAPH_LEASE_MS).toISOString()
+  if (agent.paused_at || (await agentWritesOff(meta, agent.org_id))) {
+    // Held, not abandoned: keep the lease so reclaim never restarts it under its children.
+    if (job.status === "running")
+      await meta.updateJob(job.id, { lease_until: lease }, { status: "running" })
+    return
+  }
   let g = parse<{ graph?: GraphMeta }>(job.meta_json)?.graph
 
   const write = async (
@@ -206,7 +238,12 @@ async function walk(deps: GraphDeps, given: JobRecord): Promise<void> {
 
   // Reopened after it settled (a follow-up or a retry) and not waiting on a person: run again
   // from the entry, on the definition as it is now, with the latest message as the ask.
+  const prior = g
   if (g && !g.waiting && job.status === "queued") g = undefined
+  // A pass holds the graph briefly: another pass that finds the hold backs off (the next tick
+  // or report picks up from where the holder left it), so two passes never both act.
+  if (g?.pass_until && g.pass_until > at) return
+  const hold = new Date(now.getTime() + PASS_HOLD_MS).toISOString()
 
   const toOpen: { to: string; from: string }[] = []
   if (!g) {
@@ -215,7 +252,14 @@ async function walk(deps: GraphDeps, given: JobRecord): Promise<void> {
     const claimed = await meta.claimJob(job.id, lease, at)
     if (!claimed) return
     job = claimed
-    const ask = (await lastReply(meta, job.id, "asker")) || job.instruction
+    // The ask is the follow-up that reopened it, if one did; a retry reruns the original ask.
+    const since0 = prior?.since ?? ""
+    const followUp = [...(await meta.listJobMessages(job.id))]
+      .reverse()
+      .find(
+        (m) => m.author_kind === "asker" && m.created_at > since0 && !/^Decision:/i.test(m.body_md),
+      )
+    const ask = prior && followUp ? followUp.body_md : job.instruction
     g = {
       artifact_id: agent.instructions_artifact_id ?? "",
       version: def?.version ?? 0,
@@ -258,14 +302,19 @@ async function walk(deps: GraphDeps, given: JobRecord): Promise<void> {
       out.find(
         (r) => r.when.trim().toLowerCase() === msg.trim().toLowerCase() || r.to === msg.trim(),
       )?.when
-    if (!node || named === undefined) {
-      await write({ status: "needs_you" }, "queued")
+    const next = node && named !== undefined ? decide(d, node, named) : []
+    if (!node || next.length === 0) {
+      // Not a decision this step can take: back to waiting, with its question.
+      await write({ status: "needs_you", needs_json: needsFor(node) }, "queued")
       return
     }
     const claimed = await meta.claimJob(job.id, lease, at)
     if (!claimed) return
     job = claimed
-    const next = decide(d, node, named)
+    await write(
+      { meta_json: JSON.stringify({ ...parse(job.meta_json), graph: { ...g, pass_until: hold } }) },
+      "running",
+    )
     route.push({
       node_id: node.id,
       attempt: route.filter((r) => r.node_id === node.id).length + 1,
@@ -275,7 +324,13 @@ async function walk(deps: GraphDeps, given: JobRecord): Promise<void> {
     for (const to of next) toOpen.push({ to, from: `decision:${route.length}` })
     waiting = undefined
   } else if (job.status === "running") {
-    await write({ lease_until: lease }, "running")
+    await write(
+      {
+        lease_until: lease,
+        meta_json: JSON.stringify({ ...parse(job.meta_json), graph: { ...g, pass_until: hold } }),
+      },
+      "running",
+    )
   } else return
 
   // Children that settled since the last pass move the walk on.
@@ -307,7 +362,8 @@ async function walk(deps: GraphDeps, given: JobRecord): Promise<void> {
   const openNow = children.filter((c) => isJobOpen(c.status))
   const askedBy = job.asked_by ?? agent.created_by ?? agent.id
   const joined = new Set<string>()
-  for (const { to, from } of toOpen) {
+  for (let i = 0; i < toOpen.length; i++) {
+    const { to, from } = toOpen[i] as { to: string; from: string }
     if (failure) break
     const node = nodeOf(d, to)
     if (!node) {
@@ -317,9 +373,12 @@ async function walk(deps: GraphDeps, given: JobRecord): Promise<void> {
     // A join opens once, after every branch into it has finished in this run.
     const sources = [...new Set(d.routes.filter((r) => r.to === to).map((r) => r.from))]
     if (sources.length > 1) {
+      // Wait while anything still in flight can reach it: an open step, the step waiting on a
+      // person, or a step this pass is about to open.
       const live =
-        openNow.some((c) => c.node_id && sources.includes(c.node_id)) ||
-        (waiting !== undefined && sources.includes(waiting))
+        openNow.some((c) => c.node_id && c.node_id !== to && reaches(d, c.node_id, to)) ||
+        (waiting !== undefined && reaches(d, waiting, to)) ||
+        toOpen.slice(i + 1).some((o) => o.to !== to && reaches(d, o.to, to))
       if (live) {
         pending.add(to)
         continue
@@ -332,6 +391,18 @@ async function walk(deps: GraphDeps, given: JobRecord): Promise<void> {
       waiting = node.id
       continue
     }
+    const target = node.context_ref ? await nodeAgent(meta, job.org_id, node.context_ref) : null
+    if (!target) {
+      failure = `Step "${node.id}" names "${node.context_ref ?? ""}", which is not an agent here.`
+      break
+    }
+    const dedupeKey = `${job.id}:${since}:${node.id}:${from}`
+    // Already opened for this same reason (by an earlier pass): it is this step, not another try.
+    const already = await meta.findOpenJobByDedupe(target.id, askedBy, dedupeKey)
+    if (already) {
+      if (!openNow.some((c) => c.id === already.id)) openNow.push(already)
+      continue
+    }
     const attempt =
       route.filter((r) => r.node_id === node.id).length +
       openNow.filter((c) => c.node_id === node.id).length +
@@ -339,11 +410,6 @@ async function walk(deps: GraphDeps, given: JobRecord): Promise<void> {
     const cap = attemptCap(d, node.id)
     if (attempt > cap) {
       failure = `Step "${node.id}" reached its limit of ${cap} tries.`
-      break
-    }
-    const target = node.context_ref ? await nodeAgent(meta, job.org_id, node.context_ref) : null
-    if (!target) {
-      failure = `Step "${node.id}" names "${node.context_ref ?? ""}", which is not an agent here.`
       break
     }
     if (!(await canAskAgent(meta, target, askedBy))) {
@@ -366,12 +432,12 @@ async function walk(deps: GraphDeps, given: JobRecord): Promise<void> {
       parentId: job.id,
       nodeId: node.id,
       kind: "node",
-      dedupeKey: `${job.id}:${since}:${node.id}:${from}`,
+      dedupeKey,
     })
     openNow.push(child)
   }
 
-  g = { ...g, waiting, pending: [...pending] }
+  g = { ...g, waiting, pending: [...pending], pass_until: undefined }
   await write({
     result_json: JSON.stringify({ ...jobResult(job), route }),
     meta_json: JSON.stringify({ ...parse(job.meta_json), graph: g }),
@@ -383,11 +449,7 @@ async function walk(deps: GraphDeps, given: JobRecord): Promise<void> {
       {
         status: "needs_you",
         lease_until: null,
-        needs_json: JSON.stringify({
-          kind: "decision",
-          question: node?.decision ?? "What should happen next?",
-          ...(node?.options?.length ? { options: node.options } : {}),
-        }),
+        needs_json: needsFor(node),
       },
       "running",
     )

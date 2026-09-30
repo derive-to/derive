@@ -1389,6 +1389,103 @@ describe("jobs: graphs (a workflow on an agent's instructions page)", () => {
     expect(await meta.listJobs({ orgId: "default", parentId: asked.id, limit: 50 })).toHaveLength(1)
   })
 
+  it("a step where a longer branch meets a shorter one waits for the longer", async () => {
+    const made = await setup("jobs-graph-uneven")
+    const { app, meta } = made
+    const worker = await createAgent(app, { name: "Worker", max_concurrency: 4 })
+    // split → left → merge, and split → long → right → merge
+    const html = joinHtml(worker.id)
+      .replaceAll(
+        '{"from":"split","to":"right","label":"always"}',
+        '{"from":"split","to":"long","label":"always"},{"from":"long","to":"right","label":"then"}',
+      )
+      .replaceAll(
+        '{"from":"split","to":"right","when":"always"}',
+        '{"from":"split","to":"long","when":"always"},{"from":"long","to":"right","when":"then"}',
+      )
+      .replace(
+        '"nodes":[{"id":"split"',
+        '"nodes":[{"id":"long","label":"long","note":"long"},{"id":"split"',
+      )
+      .replace(
+        '{"id":"left","kind":"context"',
+        `{"id":"long","kind":"context","context_ref":"${worker.id}","instruction":"Do long.","result":"long"},{"id":"left","kind":"context"`,
+      )
+      .replace('<a href="#split">', '<a href="#long">long</a><a href="#split">')
+    const page = (await (
+      await publishAs(app, html, { title: "Uneven" }, as(owner.email))
+    ).json()) as { short_id: string }
+    const graph = await createAgent(app, { name: "Uneven", instructions_short_id: page.short_id })
+    const deps = graphAware({ meta, blobs: made.ctx.blobs })
+    const asked = (await (await ask(app, ed.email, graph.id, "Go")).json()) as { id: string }
+    expect((await meta.getJob(asked.id))?.kind).toBe("graph")
+    await graphPass(deps)
+    const done = (j: { id: string; started_at: string }) =>
+      app.request(
+        `/v1/jobs/${j.id}/report`,
+        jsonAs(bearer(worker.token), {
+          started_at: j.started_at,
+          status: "succeeded",
+          body_md: "ok",
+        }),
+      )
+    const byNode = async () => {
+      const got = await pull(app, worker)
+      return new Map(got.map((j) => [j.node_id as string, j]))
+    }
+    let open = await byNode()
+    await done(open.get("split") as { id: string; started_at: string })
+    open = await byNode()
+    expect([...open.keys()].sort()).toEqual(["left", "long"])
+    await done(open.get("left") as { id: string; started_at: string })
+    // Left arrived at merge, but the long branch can still reach it: merge waits.
+    await done(open.get("long") as { id: string; started_at: string })
+    open = await byNode()
+    expect([...open.keys()]).toEqual(["right"])
+    await done(open.get("right") as { id: string; started_at: string })
+    open = await byNode()
+    expect([...open.keys()]).toEqual(["merge"])
+    await done(open.get("merge") as { id: string; started_at: string })
+    expect((await meta.getJob(asked.id))?.status).toBe("succeeded")
+  })
+
+  it("a pass right after a step settles never counts that step's successor as a second try", async () => {
+    const made = await setup("jobs-graph-race2")
+    const { app, meta } = made
+    const writer = await createAgent(app, { name: "Writer" })
+    await createAgent(app, { name: "Publisher" })
+    const page = (await (
+      await publishAs(
+        app,
+        graphHtml(writer.id, "Publisher"),
+        { title: "Ship flow" },
+        as(owner.email),
+      )
+    ).json()) as { short_id: string }
+    const graph = await createAgent(app, { name: "Race2", instructions_short_id: page.short_id })
+    const deps = graphAware({ meta, blobs: made.ctx.blobs })
+    const asked = (await (await ask(app, ed.email, graph.id, "Go")).json()) as { id: string }
+    await graphPass(deps)
+    const [j] = await pull(app, writer)
+    if (!j) throw new Error("no draft")
+    const stale = await meta.getJob(asked.id)
+    await app.request(
+      `/v1/jobs/${j.id}/report`,
+      jsonAs(bearer(writer.token), { started_at: j.started_at, status: "succeeded", body_md: "x" }),
+    )
+    await Promise.all([graphPass(deps), stale ? advanceGraph(deps, stale) : null])
+    expect((await meta.getJob(asked.id))?.status).toBe("needs_you")
+    // An answer that names no route is not a decision: still waiting, question intact.
+    await app.request(
+      `/v1/jobs/${asked.id}/messages`,
+      jsonAs(as(ed.email), { body_md: "Decision: maybe" }),
+    )
+    await graphPass(deps)
+    const still = await meta.getJob(asked.id)
+    expect(still?.status).toBe("needs_you")
+    expect(JSON.parse(still?.needs_json ?? "{}")).toMatchObject({ question: "Ship it?" })
+  })
+
   it("stops at the loop's limit instead of revising forever", async () => {
     const made = await setup("jobs-graph-limit")
     const { app, meta } = made
