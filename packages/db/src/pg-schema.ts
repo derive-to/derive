@@ -324,6 +324,13 @@ export const exportJob = pgTable(
   (t) => [uniqueIndex("export_job_input").on(t.input_hash)],
 )
 
+// UNREAD AFTER THE AGENTS CUTOVER. From `automation` down to `workflow_artifact_activity`
+// (automation, run, runtime_model_connection, runtime_model_binding, workflow_files,
+// workflow_draft, workflow_test, runtime_owner, runtime_setup, context_runtime, run_attempt,
+// workflow_run, workflow_step_attempt, workflow_publish_receipt, workflow_artifact_activity)
+// nothing in the app writes these tables any more: agents, jobs, triggers and accounts
+// replaced them. They stay so an upgraded database keeps its rows until a separate, reviewed
+// change drops them (boot-DDL rules; see deploy/drop-*.sql for the pattern).
 // An automation: a standing agent job (agent + trigger + instruction + refs). The
 // definition only; every firing is a `run`. See schema.ts for the full contract.
 export const automation = pgTable("automation", {
@@ -1364,6 +1371,9 @@ export const userNotificationPref = pgTable(
   },
   (t) => [uniqueIndex("user_notification_pref_key").on(t.org_id, t.user_id)],
 )
+// UNREAD AFTER THE AGENTS CUTOVER: model accounts (`model_account`) replaced these rows, which
+// stay until the old tables are dropped in a separate change. Only the account-deletion purges
+// still touch them.
 // Per-user model-plan credential (Claude/Codex plan token or API key), encrypted at rest
 // and scoped (org, user, provider). Used only for that user's own runs — see schema.ts.
 export const modelCredential = pgTable(

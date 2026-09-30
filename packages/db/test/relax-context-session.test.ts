@@ -93,14 +93,18 @@ describe("relaxing context_session on an existing database", () => {
     const dir = mkdtempSync(join(tmpdir(), "relax2-"))
     const path = legacyDb(dir)
     const store = new SqliteMetaStore(path)
-    const s = await store.createSession({
-      id: "ses_chat",
-      context_id: null,
-      context_version: null,
-      org_id: "default",
-      asker_id: "u-ed",
-      subject_ref: JSON.stringify({ kind: "artifact", id: "doc1", mode: "publish" }),
-    })
+    const { session: s } = await store.createSessionWithMessage(
+      {
+        id: "ses_chat",
+        context_id: null,
+        context_version: null,
+        org_id: "default",
+        asker_id: "u-ed",
+        subject_ref: JSON.stringify({ kind: "artifact", id: "doc1", mode: "publish" }),
+      },
+      { id: "sm_chat", author_kind: "asker", author_id: "u-ed", body_md: "q" },
+      "open",
+    )
     expect(s.context_id).toBeNull()
     expect(s.subject_ref).toContain("doc1")
     ;(store as unknown as { close(): void }).close()

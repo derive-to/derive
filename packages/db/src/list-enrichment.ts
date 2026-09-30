@@ -1,7 +1,6 @@
 import type {
   ArtifactDetail,
   ArtifactDetailOpts,
-  AutomationRecord,
   BootstrapRead,
   CollectionsOverviewRead,
   CollectionsViewer,
@@ -263,20 +262,6 @@ export const composeNotificationsPage = async (
     store.unreadNotificationCount(userId),
   ])
   return { notifications, unread }
-}
-
-/** See `composeListEnrichment` — the automations list's executor-liveness join. */
-export const composeAutomationsWithExecutors = async (
-  store: Pick<MetaStore, "listAutomations" | "listAgents">,
-  orgId: string,
-  limit?: number,
-): Promise<(AutomationRecord & { executor_seen_at: string | null })[]> => {
-  const [autos, agents] = await Promise.all([
-    store.listAutomations(orgId, limit),
-    store.listAgents(orgId),
-  ])
-  const seen = new Map(agents.map((a) => [a.id, a.runs_seen_at]))
-  return autos.map((a) => ({ ...a, executor_seen_at: seen.get(a.agent_id) ?? null }))
 }
 
 /** See `composeListEnrichment` — the collections list with viewer decoration. */
