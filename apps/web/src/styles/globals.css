@@ -210,7 +210,7 @@
   --text-lg--line-height: 1.4;
   --text-xl: 1.125rem; /* 18px */
   --text-xl--line-height: 1.3;
-  --text-2xl: 1.375rem; /* 22px */
+  --text-2xl: 1.5rem; /* 24px — the one page title */
   --text-2xl--line-height: 1.2;
   --text-3xl: 1.75rem; /* 28px */
   --text-3xl--line-height: 1.1;

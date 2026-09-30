@@ -264,7 +264,11 @@ export function CommandPalette() {
   const otherWorkspaces = (workspaces?.workspaces ?? [])
     .map((w) => ({ ...w, display: workspaceDisplayName(w) }))
     .filter((w) => w.id !== workspaces?.active && w.display.toLowerCase().includes(q))
-  const showAll = "all artifacts".includes(q) || "library".includes(q)
+  const showAll = "pages".includes(q) || "all artifacts".includes(q) || "library".includes(q)
+  const showAgents = "agents".includes(q) || "new agent".includes(q)
+  // Off the rail but still live until their data moves onto agents.
+  const showContexts = "contexts".includes(q)
+  const showWorkflows = "workflows".includes(q)
   const showFav = "favorites".includes(q)
   const showFollowing = "following".includes(q)
   const showTemplates = "templates".includes(q) || "start from a template".includes(q)
@@ -290,6 +294,9 @@ export function CommandPalette() {
     matchedCollections.length === 0 &&
     otherWorkspaces.length === 0 &&
     !showAll &&
+    !showAgents &&
+    !showContexts &&
+    !showWorkflows &&
     !showFav &&
     !showFollowing &&
     !showTemplates &&
@@ -379,18 +386,37 @@ export function CommandPalette() {
             )}
 
             {(showAll ||
+              showAgents ||
+              showContexts ||
+              showWorkflows ||
               showFav ||
               showFollowing ||
               showTemplates ||
               showSkills ||
               showConnect) && (
               <CommandGroup heading="Jump to">
+                {showAgents && (
+                  <CommandItem
+                    value="jump-agents"
+                    onSelect={() => go(() => nav({ to: "/agents" }))}
+                  >
+                    <Icon name="agent" size={16} /> Agents
+                  </CommandItem>
+                )}
+                {showAgents && (
+                  <CommandItem
+                    value="jump-new-agent"
+                    onSelect={() => go(() => nav({ to: "/agents/new" }))}
+                  >
+                    <Icon name="plus" size={16} /> New agent
+                  </CommandItem>
+                )}
                 {showAll && (
                   <CommandItem
                     value="jump-all"
                     onSelect={() => go(() => nav({ to: "/", search: {} }))}
                   >
-                    <Icon name="all" size={16} /> All artifacts
+                    <Icon name="page" size={16} /> Pages
                   </CommandItem>
                 )}
                 {showFav && (
@@ -423,6 +449,22 @@ export function CommandPalette() {
                     onSelect={() => go(() => nav({ to: "/skills" }))}
                   >
                     <Icon name="skill" size={16} /> Skills
+                  </CommandItem>
+                )}
+                {showContexts && (
+                  <CommandItem
+                    value="jump-contexts"
+                    onSelect={() => go(() => nav({ to: "/contexts" }))}
+                  >
+                    <Icon name="context" size={16} /> Contexts
+                  </CommandItem>
+                )}
+                {showWorkflows && (
+                  <CommandItem
+                    value="jump-workflows"
+                    onSelect={() => go(() => nav({ to: "/workflows" }))}
+                  >
+                    <Icon name="workflow" size={16} /> Workflows
                   </CommandItem>
                 )}
                 {showConnect && (
