@@ -1,5 +1,4 @@
 import { useQuery } from "@tanstack/react-query"
-import { Link } from "@tanstack/react-router"
 import { useState } from "react"
 import { api, type Credential } from "@/api"
 import { CredentialForm, credentialInvalidations } from "@/components/credentials/credential-form"
@@ -18,7 +17,7 @@ export function CredentialsSection() {
   return (
     <SettingsSection
       title="Credentials"
-      description="Save database passwords, API keys and other secrets for your workflows. Model accounts live in Accounts."
+      description="Save database passwords, API keys and other secrets your agents read as environment variables. Model accounts live in Accounts."
     >
       <div className="flex flex-col gap-4">
         {credentials.isError ? (
@@ -39,9 +38,7 @@ export function CredentialsSection() {
               Add credential
             </Button>
             {credentials.data.items.length === 0 && (
-              <p className="text-sm text-muted-foreground">
-                No credentials yet. Add one here or while setting up a workflow.
-              </p>
+              <p className="text-sm text-muted-foreground">No credentials yet.</p>
             )}
             {credentials.data.items.map((credential) => (
               <div
@@ -134,7 +131,7 @@ function CredentialDetails({
       </p>
       {usage.isError ? (
         <LoadError
-          title="Couldn’t load affected workflows"
+          title="Couldn’t load where it is used"
           testId="credential-usage-retry"
           onRetry={() => void usage.refetch()}
         />
@@ -147,31 +144,11 @@ function CredentialDetails({
             {usage.data.items.length === 0 && usage.data.hidden_count === 0 && (
               <p className="text-muted-foreground">No current assignments.</p>
             )}
-            {usage.data.items.map((item) =>
-              item.kind === "workflow" ? (
-                <Link
-                  key={item.id}
-                  to="/workflows"
-                  search={{ workflow: item.id, tab: "configuration" }}
-                  data-testid={`credential-usage-${item.id}`}
-                  className="text-primary underline"
-                >
-                  {item.name}
-                </Link>
-              ) : item.kind === "context" ? (
-                <Link
-                  key={item.id}
-                  to="/contexts/$id"
-                  params={{ id: item.id }}
-                  data-testid={`credential-usage-${item.id}`}
-                  className="text-primary underline"
-                >
-                  {item.name}
-                </Link>
-              ) : (
-                <p key={item.id}>{item.name}</p>
-              ),
-            )}
+            {usage.data.items.map((item) => (
+              <p key={item.id} data-testid={`credential-usage-${item.id}`}>
+                {item.name}
+              </p>
+            ))}
             {usage.data.hidden_count > 0 && (
               <p className="text-muted-foreground">
                 {usage.data.hidden_count} other assignment(s) you cannot view.

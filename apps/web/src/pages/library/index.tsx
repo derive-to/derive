@@ -3,7 +3,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate, useSearch } from "@tanstack/react-router"
 import { useEffect, useRef, useState } from "react"
 import { type Artifact, api } from "@/api"
-import { useShell } from "@/components/chrome/shell-context"
 import { Icon } from "@/components/icons"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { ConnectAgentButton } from "@/components/shared/connect-agent"
@@ -110,11 +109,6 @@ function LibraryBody({ view }: { view: LibraryView }) {
   const qc = useQueryClient()
   // The library is the scroll container; the virtualized grid windows against it.
   const scrollRef = useRef<HTMLDivElement>(null)
-
-  const { openAssistant } = useShell()
-  // ⌘↵ in the filter box hands whatever is typed to the agent (empty simply opens the
-  // conversation).
-  const askFromField = (v: string) => openAssistant(v.trim() || undefined)
 
   const [shareCol, setShareCol] = useState<(typeof collections)[number] | null>(null)
   const [query, setQuery] = useState(search.query ?? "")
@@ -403,7 +397,6 @@ function LibraryBody({ view }: { view: LibraryView }) {
       aria-label="Search artifacts by name, tag, or collection; press Enter to search content"
       testId="library-search"
       hotkey
-      onAsk={(v) => askFromField(v)}
       className="w-44 transition-[width] duration-state focus-within:w-72"
     />
   )

@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { type FormEvent, useState } from "react"
 import { api, type ModelAccount, type NewModelAccount } from "@/api"
-import { ModelAccountPicker } from "@/components/accounts/model-account-picker"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { LoadError } from "@/components/shared/load-error"
 import { Button } from "@/components/ui/button"
@@ -19,7 +18,6 @@ import { accountsQuery, agentsQuery, workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { Group, Meta, RowLine, rowClass } from "@/pages/agents/rows"
 import { AgentRowsSkeleton } from "@/pages/agents/skeleton"
-import { ModelPlanManager } from "./model-plan-manager"
 import { SettingsSection } from "./settings-section"
 
 const PROVIDER: Record<ModelAccount["provider"], string> = { claude: "Claude", codex: "Codex" }
@@ -46,7 +44,6 @@ export function AccountsSection() {
   const canAdd = workspace.data?.role === "owner" || workspace.data?.role === "editor"
   const [adding, setAdding] = useState(false)
   const [removing, setRemoving] = useState<ModelAccount | null>(null)
-  const [legacyId, setLegacyId] = useState("")
   const disconnect = useApiMutation({
     mutationFn: (a: ModelAccount) => api.deleteAccount(a.id),
     invalidate: [["accounts"], ["agents"]],
@@ -133,15 +130,6 @@ export function AccountsSection() {
           )}
         </div>
       )}
-      {/* Contexts and workflows still read the older per-person plans until the cutover
-          moves them onto accounts; runner errors and the model-plans redirect land here. */}
-      <section data-testid="accounts-older-plans" className="flex flex-col gap-4">
-        <h2 className="text-sm font-medium tracking-wider text-muted-foreground uppercase">
-          Older plans (contexts and workflows)
-        </h2>
-        <ModelAccountPicker value={legacyId} onChange={(account) => setLegacyId(account.id)} />
-        <ModelPlanManager scope="personal" />
-      </section>
       <ConfirmDialog
         open={!!removing}
         onOpenChange={(o) => !o && setRemoving(null)}

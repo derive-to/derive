@@ -7,7 +7,6 @@ import { useAuth } from "@/ctx"
 import { modelLibraryQuery, reportsQuery } from "@/lib/queries"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { AccountsSection } from "./accounts-section"
-import { AgentsSection } from "./agents-section"
 import { AppearanceSection } from "./appearance-section"
 import { BillingSection } from "./billing-section"
 import { BrandprintSettings } from "./brandprint-settings"
@@ -57,7 +56,6 @@ const SECTIONS: { id: string; label: string; group: (typeof GROUP_ORDER)[number]
   { id: "sources", label: "Sources", group: "Workspace" },
   { id: "brandprint", label: "Brandprint", group: "Workspace" },
   { id: "webhooks", label: "Webhooks", group: "Workspace" },
-  { id: "agents", label: "Agent connections", group: "Workspace" },
   { id: "domains", label: "Domains", group: "Workspace" },
   { id: "models", label: "Models", group: "Operator" },
   { id: "reports", label: "Reports", group: "Operator" },
@@ -156,7 +154,6 @@ export function Settings() {
             {active === "sources" && <SourcesSection />}
             {active === "brandprint" && <BrandprintSettings />}
             {active === "webhooks" && <WebhooksSection />}
-            {active === "agents" && <AgentsSection meId={me.id} />}
             {active === "domains" && <CustomDomainsSection />}
             {active === "models" && <ModelsSection />}
             {active === "reports" && (

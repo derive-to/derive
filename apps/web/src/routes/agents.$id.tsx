@@ -7,9 +7,9 @@ import { AgentPending } from "../pages/agents/skeleton"
 export const Route = createFileRoute("/agents/$id")({
   beforeLoad: async (args) => {
     await requireOnboarded(args)
-    // Old bookmarks: /agents/<id> used to open a Context. A context id is never an agent id.
-    if (args.params.id.startsWith("ctx_"))
-      throw redirect({ to: "/contexts/$id", params: { id: args.params.id }, replace: true })
+    // Old bookmarks: /agents/<id> used to open a Context. Contexts are gone and a context id
+    // is never an agent id, so it lands on the Agents home.
+    if (args.params.id.startsWith("ctx_")) throw redirect({ to: "/agents", replace: true })
   },
   validateSearch: (search: Record<string, unknown>): { tab?: "settings" } =>
     search.tab === "settings" ? { tab: "settings" } : {},

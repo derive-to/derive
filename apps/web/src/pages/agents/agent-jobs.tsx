@@ -6,14 +6,7 @@ import { LoadError } from "@/components/shared/load-error"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  accountsQuery,
-  agentJobsQuery,
-  agentQuery,
-  jobQuery,
-  modelCredentialsQuery,
-  poolCredentialsQuery,
-} from "@/lib/queries"
+import { accountsQuery, agentJobsQuery, agentQuery, jobQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 import {
@@ -54,15 +47,13 @@ export function AgentJobs({
   agent,
   names,
   meId,
-  isWorkspaceOwner,
 }: {
   agent: AgentDetail
   names: Map<string, string>
   meId: string
-  isWorkspaceOwner: boolean
 }) {
   const jobs = useInfiniteQuery({ ...agentJobsQuery(agent.id), refetchInterval: 15_000 })
-  const warning = warningFor(agent, names, useNoAccount(agent, meId, isWorkspaceOwner))
+  const warning = warningFor(agent, names, useNoAccount(agent, meId))
   const schedules = schedulesOf(agent.triggers)
   const rows = jobs.data?.pages.flatMap((p) => p.jobs) ?? []
 
@@ -148,17 +139,13 @@ export function AgentJobs({
 }
 
 /** Whether the viewer can tell that no model account would resolve for this agent's jobs.
- *  Only its creator can: the fallback is the creator's own account, and nobody else sees it.
- *  Older stored plans count too, and the shared pool of those is visible to owners only, so
- *  anyone else is never told. */
-function useNoAccount(agent: AgentDetail, meId: string, isWorkspaceOwner: boolean): boolean {
+ *  Only its creator can: the fallback is the creator's own account, then a shared one, and
+ *  nobody else sees the creator's accounts. */
+function useNoAccount(agent: AgentDetail, meId: string): boolean {
   const mine = agent.machine === "owner" && !agent.account_id && agent.created_by === meId
   const accounts = useQuery({ ...accountsQuery(), enabled: mine })
-  const plans = useQuery({ ...modelCredentialsQuery(), enabled: mine && isWorkspaceOwner })
-  const pool = useQuery({ ...poolCredentialsQuery(), enabled: mine && isWorkspaceOwner })
-  if (!mine || !isWorkspaceOwner || !accounts.data || !plans.data || !pool.data) return false
-  const usable = accounts.data.some((a) => a.mine || a.shared)
-  return !usable && plans.data.length === 0 && pool.data.length === 0
+  if (!mine || !accounts.data) return false
+  return !accounts.data.some((a) => a.mine || a.shared)
 }
 
 function detailOf(job: Job): string | undefined {

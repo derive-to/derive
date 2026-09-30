@@ -6,11 +6,11 @@ import { Button } from "@/components/ui/button"
 import { useKeyboardInset } from "@/lib/use-keyboard-inset"
 import { cn } from "@/lib/utils"
 import { ActivityStream, StreamSkeleton } from "./activity-stream"
-import { type RailTab, RailTabs } from "./artifact-chat"
 import { Composer } from "./comment-composer"
 import type { StreamItem } from "./lib/activity"
 import { useCommentScope } from "./lib/comment-scope"
 import { CommentTreeProvider, useCommentTree } from "./lib/comment-tree"
+import { type RailTab, RailTabs } from "./rail-tabs"
 import { type ComposerState, selLabel } from "./types"
 
 // Touch has no hover, so the mobile sheet overrides the tree's onHover with this.
@@ -47,15 +47,11 @@ export function MobileComments({
   onHeightChange,
   rail,
   onRail,
-  chatPanel,
-  mapPanel,
   dataPanel,
   referencesPanel,
   inspectPanel,
-  mapEnabled,
   dataEnabled,
   referencesEnabled,
-  chatEnabled,
   inspectEnabled,
   openCount,
   editing = false,
@@ -84,19 +80,15 @@ export function MobileComments({
    *  closed). The page reserves exactly this under the document so no black band
    *  is left below it. */
   onHeightChange?: (px: number) => void
-  /** THE RAIL on a phone. The peek bar carries Comments → Chat while reading, then adds
-   *  Inspect only during an eligible HTML edit session — never a second competing sheet. */
+  /** THE RAIL on a phone. The peek bar carries Activity (and Data or References where the
+   *  page has them), then Inspect only during an eligible HTML edit session. */
   rail?: RailTab
   onRail?: (r: RailTab) => void
-  chatPanel?: ReactNode
-  mapPanel?: ReactNode
   dataPanel?: ReactNode
   referencesPanel?: ReactNode
   inspectPanel?: ReactNode
-  mapEnabled?: boolean
   dataEnabled?: boolean
   referencesEnabled?: boolean
-  chatEnabled?: boolean
   inspectEnabled?: boolean
   openCount?: number
 }) {
@@ -288,18 +280,15 @@ export function MobileComments({
           <div className="h-1 w-10 rounded-full bg-border" />
         </div>
         <div className="flex items-center gap-2 border-b border-border-soft pb-3 pl-3 pr-2.5 pt-2">
-          {/* The strip REPLACES the static heading when chat is on: same always-docked bar,
-              now the way you choose which conversation the sheet is showing. Without chat it
-              is the heading it has always been. */}
+          {/* The strip REPLACES the static heading when the page has more than one tab:
+              same always-docked bar. Otherwise it is the heading it has always been. */}
           {rail && onRail ? (
             <div className="flex min-w-0 flex-1 items-center">
               <RailTabs
                 tab={rail}
                 commentCount={openCount ?? openThreads.length}
-                mapEnabled={mapEnabled}
                 dataEnabled={dataEnabled}
                 referencesEnabled={referencesEnabled}
-                chatEnabled={chatEnabled}
                 inspectEnabled={inspectEnabled}
                 onTab={onRail}
               />
@@ -357,16 +346,10 @@ export function MobileComments({
           </Button>
         </div>
       </div>
-      {rail === "map" && mapEnabled ? (
-        mapPanel
-      ) : rail === "data" && dataEnabled ? (
+      {rail === "data" && dataEnabled ? (
         dataPanel
       ) : rail === "references" && referencesEnabled ? (
         referencesPanel
-      ) : rail === "chat" && chatEnabled ? (
-        // CHAT owns the body, and brings its own composer — so the comments composer and
-        // its keyboard handling stay untouched rather than being taught a second mode.
-        chatPanel
       ) : rail === "inspect" && inspectEnabled ? (
         inspectPanel
       ) : composing ? (

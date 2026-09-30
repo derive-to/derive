@@ -6,13 +6,27 @@ import { Input } from "@/components/ui/input"
 import { previewArxivRef } from "@/lib/arxiv-ref"
 import { previewRepoRef } from "@/lib/repo-ref"
 import { useApiMutation } from "@/lib/use-api-mutation"
-import { BUILDER_COPY } from "./builder-copy"
 import { importErrorCopy } from "./import-copy"
 
-// The paper door: an arXiv link in, a read-only Context out. The form previews what the
-// server will parse as the person types (the same grammar, client-side), submits, and
-// lands on the new Context's console, which shows the paper arriving. The Context exists
-// from the first response, so a second paste of the same paper opens the same page.
+// The paper door: an arXiv link in, a locked paper out. The form previews what the server
+// will parse as the person types (the same grammar, client-side), submits, and lands on the
+// paper's page, which shows it arriving. The import exists from the first response, so a
+// second paste of the same paper opens the same page.
+
+const COPY = {
+  arxivTitle: "Import a paper from arXiv",
+  arxivBody:
+    "Paste an arXiv link or id. Derive fetches the LaTeX source and BibTeX and publishes the paper locked, where your agents can read and cite it.",
+  arxivPlaceholder: "https://arxiv.org/abs/2401.12345 or 2401.12345",
+  arxivFetch: "Fetch",
+  arxivInvalid: "Not an arXiv link",
+  arxivQueued: "Fetching from arXiv",
+  codeLabel: "Implementation (optional)",
+  codeBody:
+    "A public GitHub or GitLab repository. Derive stores it inside the paper so your agents can read the code beside the method; you get a link to the repository itself.",
+  codePlaceholder: "https://github.com/owner/project",
+  codeInvalid: "Not a GitHub or GitLab repository",
+}
 export function ArxivImportForm({ initialUrl = "" }: { initialUrl?: string }) {
   const [url, setUrl] = useState(initialUrl)
   // The paper's implementation, optional. Empty is fine; anything that is not a
@@ -25,13 +39,13 @@ export function ArxivImportForm({ initialUrl = "" }: { initialUrl?: string }) {
   const codeReady = codeUrl.trim() === "" || codeRef !== null
   const create = useApiMutation({
     mutationFn: () => api.importArxivContext(url.trim(), codeRef?.webUrl),
-    success: BUILDER_COPY.arxivQueued,
+    success: COPY.arxivQueued,
     // The refusal reads under the field, in the form's own words for its code.
     errorToast: false,
     onSuccess: (ctx) => {
       setUrl("")
       setCodeUrl("")
-      nav({ to: "/contexts/$id", params: { id: ctx.id } })
+      nav({ to: "/papers/$id", params: { id: ctx.id } })
     },
   })
   const error = create.error
@@ -48,14 +62,14 @@ export function ArxivImportForm({ initialUrl = "" }: { initialUrl?: string }) {
       data-testid="context-arxiv-form"
     >
       <div className="flex flex-col gap-1">
-        <p className="text-sm font-medium text-foreground">{BUILDER_COPY.arxivTitle}</p>
-        <p className="text-sm text-muted-foreground">{BUILDER_COPY.arxivBody}</p>
+        <p className="text-sm font-medium text-foreground">{COPY.arxivTitle}</p>
+        <p className="text-sm text-muted-foreground">{COPY.arxivBody}</p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Input
           data-testid="context-arxiv-link"
           aria-label="arXiv link or id"
-          placeholder={BUILDER_COPY.arxivPlaceholder}
+          placeholder={COPY.arxivPlaceholder}
           value={url}
           onChange={(e) => {
             setUrl(e.target.value)
@@ -71,18 +85,18 @@ export function ArxivImportForm({ initialUrl = "" }: { initialUrl?: string }) {
           onClick={submit}
           disabled={!ref || !codeReady || create.isPending}
         >
-          {BUILDER_COPY.arxivFetch}
+          {COPY.arxivFetch}
         </Button>
       </div>
       <div className="flex flex-col gap-1">
         <label htmlFor="context-arxiv-code" className="text-sm font-medium text-foreground">
-          {BUILDER_COPY.codeLabel}
+          {COPY.codeLabel}
         </label>
-        <p className="text-sm text-muted-foreground">{BUILDER_COPY.codeBody}</p>
+        <p className="text-sm text-muted-foreground">{COPY.codeBody}</p>
         <Input
           id="context-arxiv-code"
           data-testid="context-arxiv-code"
-          placeholder={BUILDER_COPY.codePlaceholder}
+          placeholder={COPY.codePlaceholder}
           value={codeUrl}
           onChange={(e) => {
             setCodeUrl(e.target.value)
@@ -98,7 +112,7 @@ export function ArxivImportForm({ initialUrl = "" }: { initialUrl?: string }) {
           data-testid="context-arxiv-code-preview"
           className="font-mono text-2xs text-muted-foreground"
         >
-          {codeUrl.trim() ? (codeRef ? codeRef.canonical : BUILDER_COPY.codeInvalid) : " "}
+          {codeUrl.trim() ? (codeRef ? codeRef.canonical : COPY.codeInvalid) : " "}
         </p>
       </div>
       {errorText ? (
@@ -111,7 +125,7 @@ export function ArxivImportForm({ initialUrl = "" }: { initialUrl?: string }) {
           data-testid="context-arxiv-preview"
           className="font-mono text-2xs text-muted-foreground"
         >
-          {url.trim() ? (ref ? `arXiv:${ref.canonical}` : BUILDER_COPY.arxivInvalid) : " "}
+          {url.trim() ? (ref ? `arXiv:${ref.canonical}` : COPY.arxivInvalid) : " "}
         </p>
       )}
     </div>

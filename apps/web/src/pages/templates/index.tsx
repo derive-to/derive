@@ -196,8 +196,8 @@ export function Templates() {
         <section className="flex flex-col gap-3" data-testid="templates-academic">
           <SectionHeading count={papers.data.templates.length + 1}>Academic</SectionHeading>
           <CardGrid>
-            {/* Not a starter: a paper someone else wrote, read as a Context. Lives with the
-                starters because that is where a person looking for papers looks. */}
+            {/* Not a starter: a paper someone else wrote, imported to read and cite. Lives with
+                the starters because that is where a person looking for papers looks. */}
             <Card data-testid="template-academic-arxiv" className="h-full gap-0 py-0">
               <CardContent className="flex min-w-0 flex-col gap-2 p-4">
                 <div className="flex items-center gap-2">
@@ -220,8 +220,8 @@ export function Templates() {
                   size="sm"
                   data-testid="template-academic-arxiv-import"
                 >
-                  <Link to="/contexts/new" search={{ door: "arxiv" }}>
-                    <Icon name="plus" /> Import a paper as a Context
+                  <Link to="/papers/new">
+                    <Icon name="plus" /> Import a paper
                   </Link>
                 </Button>
               </CardFooter>

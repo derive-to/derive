@@ -1,4 +1,4 @@
-import { Download, Maximize2, MousePointer2Off, Zap } from "lucide-react"
+import { Download, Maximize2, MousePointer2Off } from "lucide-react"
 import { useState } from "react"
 import type { CollectionGrant, LinkRole, Listed, Role, WorkspaceAccess } from "@/api"
 import { Icon } from "@/components/icons"
@@ -14,9 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { useCursorPref } from "@/ctx"
 import { cn } from "@/lib/utils"
-import { AutomateDialog } from "./automate-dialog"
 import { MoveToWorkspaceDialog, ReportDialog, StarButton } from "./header-actions"
-import { ReworkConnectDialog, ReworkMenuItem } from "./rework-menu-item"
 import { ShareButton } from "./share-dialog"
 
 /** Actions for signed-in artifact readers. Members receive workspace controls;
@@ -69,11 +67,6 @@ export function ArtifactTopBar(props: {
   canArchive: boolean
   /** Owner-only: may move this artifact to a different workspace. */
   canMove: boolean
-  /** BETA: automations are off per workspace. Hidden rather than shown-and-refused, since the
-   *  routes 404 either way and a visible item would only offer an action that cannot work.
-   *  Passed down rather than queried here: the page already reads workspace settings for the Chat
-   *  tab, so both gates come from one fetch. */
-  automateBeta: boolean
   onFavorite: (fav: boolean) => void
   onCollections: (ids: string[]) => void
   onInsights: () => void
@@ -98,8 +91,6 @@ export function ArtifactTopBar(props: {
   const [reportOpen, setReportOpen] = useState(false)
   const [collectionsOpen, setCollectionsOpen] = useState(false)
   const [moveOpen, setMoveOpen] = useState(false)
-  const [automateOpen, setAutomateOpen] = useState(false)
-  const [reworkConnectOpen, setReworkConnectOpen] = useState(false)
   return (
     <>
       {/* Actions cluster — the filled Share leads (the one primary), then the favorited
@@ -205,13 +196,6 @@ export function ArtifactTopBar(props: {
               </DropdownMenuItem>
             )}
 
-            {/* Apply the Brandprint — the ask-agent handoff scoped to the whole artifact.
-                The item brings its own leading separator, so both vanish together when it
-                renders nothing (anonymous viewer, pending or failed reads). */}
-            {!isGuest && (
-              <ReworkMenuItem shortId={shortId} onConnect={() => setReworkConnectOpen(true)} />
-            )}
-
             {/* Activity. */}
             {(!isGuest || props.publicHistory || props.showEdit) && <DropdownMenuSeparator />}
             {!isGuest && (
@@ -257,14 +241,6 @@ export function ArtifactTopBar(props: {
             {!isGuest && props.canMove && (
               <DropdownMenuItem data-testid="artifact-move" onSelect={() => setMoveOpen(true)}>
                 <Icon name="move" size={16} /> Move to workspace…
-              </DropdownMenuItem>
-            )}
-            {!isGuest && props.canMove && props.automateBeta && (
-              <DropdownMenuItem
-                data-testid="artifact-automate"
-                onSelect={() => setAutomateOpen(true)}
-              >
-                <Zap className="size-4" aria-hidden /> Automate…
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />
@@ -330,8 +306,6 @@ export function ArtifactTopBar(props: {
             open={moveOpen}
             onOpenChange={setMoveOpen}
           />
-          <ReworkConnectDialog open={reworkConnectOpen} onOpenChange={setReworkConnectOpen} />
-          <AutomateDialog shortId={shortId} open={automateOpen} onOpenChange={setAutomateOpen} />
         </>
       )}
     </>

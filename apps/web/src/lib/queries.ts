@@ -473,15 +473,6 @@ export const workspaceJoinLinkQuery = () =>
     meta: { persist: false },
   })
 
-/** The deploy-wide model plus the catalog to choose from — operator-only, so its failure is
- *  also the signal that the person is not one. */
-export const instanceChatModelQuery = () =>
-  queryOptions({
-    queryKey: ["instance-chat-model"] as const,
-    queryFn: () => api.getInstanceChatModel(),
-    retry: false,
-  })
-
 /** The whole model library — operator-only, so its failure is also the signal that the person is
  *  not one. NOT cached long: the page exists to be looked at while a provider is misbehaving, and
  *  a probe or a pin has to be visible the moment it lands. */
@@ -500,15 +491,6 @@ export const operatorQuery = () =>
     queryKey: ["system-capabilities"] as const,
     queryFn: () => api.systemCapabilities(),
     retry: false,
-    staleTime: 5 * 60_000,
-  })
-
-/** The deploy's model catalog. A capability of the instance, not of a workspace, so it is
- *  fetched once and kept — it changes only when the operator reconfigures providers. */
-export const chatModelsQuery = () =>
-  queryOptions({
-    queryKey: ["chat-models"] as const,
-    queryFn: () => api.chatModels(),
     staleTime: 5 * 60_000,
   })
 
@@ -676,39 +658,43 @@ export const jobQuery = (id: string) =>
     queryFn: () => api.getJob(id),
   })
 
+// An imported paper (/papers/$id): its import state, code, and the paper artifact.
+export const paperQuery = (id: string) =>
+  queryOptions({
+    queryKey: ["paper", id] as const,
+    queryFn: () => api.getContext(id),
+  })
+
+// An imported paper's implementation analysis and its prompts. Polled only while a copied
+// prompt is waiting on an agent (see pages/papers/analysis-view).
+export const contextAnalysisQuery = (id: string) =>
+  queryOptions({
+    queryKey: ["context-analysis", id] as const,
+    queryFn: () => api.getContextAnalysis(id),
+  })
+
+// Named secrets, write-only: what Settings › Credentials lists, and where each is used.
+export const credentialsQuery = () =>
+  queryOptions({
+    queryKey: ["credentials"] as const,
+    queryFn: () => api.credentials(),
+    meta: { persist: false },
+    staleTime: 0,
+    refetchOnMount: "always",
+  })
+export const credentialUsageQuery = (id: string) =>
+  queryOptions({
+    queryKey: ["credentials", id, "usage"] as const,
+    queryFn: () => api.credentialUsage(id),
+    meta: { persist: false },
+    staleTime: 0,
+  })
+
 // Model accounts: the caller's own and the workspace's shared ones.
 export const accountsQuery = () =>
   queryOptions({
     queryKey: ["accounts"] as const,
     queryFn: () => api.listAccounts().then((r) => r.accounts),
-  })
-
-export const workflowsQuery = () =>
-  queryOptions({
-    queryKey: ["workflows"] as const,
-    queryFn: () => api.listWorkflows().then((r) => r.workflows),
-  })
-
-// Automations (standing agent jobs) + runs (their executions — the activity ledger).
-// Invalidated on create / delete / run-now.
-export const automationsQuery = () =>
-  queryOptions({
-    queryKey: ["automations"] as const,
-    queryFn: () => api.listAutomations().then((r) => r.automations),
-  })
-
-// The caller's own connected model-plan credentials (hints only). Personal, so keyed plainly.
-export const modelCredentialsQuery = () =>
-  queryOptions({
-    queryKey: ["model-credentials"] as const,
-    queryFn: () => api.listModelCredentials().then((r) => r.credentials),
-  })
-
-// The workspace's shared model-plan pool (hints only, admin surface).
-export const poolCredentialsQuery = () =>
-  queryOptions({
-    queryKey: ["pool-model-credentials"] as const,
-    queryFn: () => api.listPoolCredentials().then((r) => r.credentials),
   })
 
 /** The home's "Needs you" + "Recent activity", in one request so the sections paint
@@ -731,16 +717,6 @@ export const workspaceActivityQuery = () =>
     staleTime: 30_000,
   })
 
-export const runsQuery = () =>
-  queryOptions({
-    queryKey: ["runs"] as const,
-    queryFn: () => api.listRuns().then((r) => r.runs),
-    // The ledger changes out-of-band (the executor writes runs the tab never saw),
-    // so revalidate whenever the Automations view mounts — never strand a cached page
-    // that predates the latest runs.
-    refetchOnMount: "always",
-  })
-
 // The agents an artifact viewer may address (the "ask an agent to revise" flow). Read
 // off the @mention directory (which any commenter can see, unlike /v1/agents which is
 // owner-only), filtered to kind:"agent". Stable per artifact.
@@ -755,139 +731,10 @@ export const artifactAgentsQuery = (shortId: string) =>
 
 // ---- Contexts + sessions ------------------------------------------------------
 
-// The workspace's askable contexts. Invalidated on create (deletion is
-// API-only for now — no web surface).
-export const contextsQuery = () =>
-  queryOptions({
-    queryKey: ["contexts"] as const,
-    queryFn: () => api.listContexts().then((r) => r.contexts),
-  })
-
-export const contextQuery = (id: string) =>
-  queryOptions({
-    queryKey: ["context", id] as const,
-    queryFn: () => api.getContext(id),
-  })
-
-// An imported paper's implementation analysis and its prompts. Polled only while a copied
-// prompt is waiting on an agent (see pages/context/analysis-view).
-export const contextAnalysisQuery = (id: string) =>
-  queryOptions({
-    queryKey: ["context-analysis", id] as const,
-    queryFn: () => api.getContextAnalysis(id),
-  })
-
-// The caller's sessions on a context (the owner sees everyone's). Invalidated
-// when a new session opens.
-// Infinite: a context that has been run for months has more sessions than one page,
-// and Activity is the record of ALL of them. Keyset cursor (`created_at|id`), so a
-// session opening mid-scroll never repeats or hides a row the way an offset would.
-export const contextSessionsQuery = (id: string) =>
-  infiniteQueryOptions({
-    queryKey: ["context-sessions", id] as const,
-    queryFn: ({ pageParam }) => api.listContextSessions(id, pageParam || undefined),
-    initialPageParam: "",
-    getNextPageParam: (last) => last.next_cursor ?? undefined,
-  })
-
-// What a context has PRODUCED — one row per artifact with a run count, newest first.
-// Invalidated alongside the sessions list: a run that binds a result changes both.
-export const contextOutputsQuery = (id: string) =>
-  queryOptions({
-    queryKey: ["context-outputs", id] as const,
-    queryFn: () => api.listContextOutputs(id).then((r) => r.outputs),
-  })
-
-// One session + transcript, polled the activeSyncsQuery way: fast while the
-// runner owes a reply (`open`), off once the conversation is settled — the
-// composer's send flips it back by invalidating this key.
-export const sessionQuery = (id: string) =>
-  queryOptions({
-    queryKey: ["session", id] as const,
-    queryFn: () => api.getSession(id),
-    refetchInterval: (q) => (q.state.data?.session.state === "open" ? 1500 : false),
-    refetchOnWindowFocus: true,
-  })
-
 // Open abuse reports for the active workspace — drives the owner-only Moderation
 // nav item's visibility + the Reports section. Invalidated after a takedown / dismiss.
 export const reportsQuery = () =>
   queryOptions({
     queryKey: ["reports"] as const,
     queryFn: () => api.listReports().then((r) => r.reports),
-  })
-
-export const contextEnvironmentQuery = (id: string) =>
-  queryOptions({
-    queryKey: ["contexts", id, "environment"] as const,
-    queryFn: () => api.getContextEnvironment(id),
-    staleTime: 0,
-    meta: { persist: false },
-  })
-export const contextRuntimeQuery = (id: string) =>
-  queryOptions({
-    queryKey: ["contexts", id, "runtime"] as const,
-    queryFn: () => api.getContextRuntime(id),
-    staleTime: 0,
-    // A failed initial capability read must recover even though the tab is still hidden.
-    // A successful denial or permanent auth failure does not poll.
-    refetchInterval: (q) => {
-      if (q.state.status === "error") return isTransient(q.state.error) ? 5000 : false
-      return q.state.data?.enabled ? 5000 : false
-    },
-    meta: { persist: false },
-  })
-
-export const workflowRuntimesQuery = () =>
-  queryOptions({
-    queryKey: ["workflow-runtimes"],
-    queryFn: api.workflowRuntimes,
-    refetchInterval: 15000,
-  })
-
-export const runtimeModelConnectionsQuery = () =>
-  queryOptions({
-    queryKey: ["runtime-model-connections"] as const,
-    queryFn: api.runtimeModelConnections,
-    meta: { persist: false },
-  })
-
-export const runtimeModelBindingQuery = (id: string) =>
-  queryOptions({
-    queryKey: ["runtime-model-binding", id] as const,
-    queryFn: () => api.runtimeModelBinding(id),
-    refetchInterval: 15000,
-    meta: { persist: false },
-  })
-
-export const credentialsQuery = () =>
-  queryOptions({
-    queryKey: ["credentials"] as const,
-    queryFn: () => api.credentials(),
-    meta: { persist: false },
-    staleTime: 0,
-    refetchOnMount: "always",
-  })
-export const credentialUsageQuery = (id: string) =>
-  queryOptions({
-    queryKey: ["credentials", id, "usage"] as const,
-    queryFn: () => api.credentialUsage(id),
-    meta: { persist: false },
-    staleTime: 0,
-  })
-
-export const workflowConfigurationQuery = (id: string) =>
-  queryOptions({
-    queryKey: ["workflow-runtimes", id, "configuration"],
-    queryFn: () => api.workflowConfiguration(id),
-    staleTime: 0,
-    meta: { persist: false },
-  })
-
-export const workflowRepositoriesQuery = (id: string, connectionId: string, page: number) =>
-  queryOptions({
-    queryKey: ["workflow-runtimes", id, "repositories", connectionId, page],
-    queryFn: () => api.workflowRepositories(id, connectionId, page),
-    staleTime: 0,
-    meta: { persist: false },
   })

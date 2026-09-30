@@ -34,7 +34,7 @@ const LENS_LABEL: Record<Lens, string> = { all: "All", comments: "Comments" }
  */
 export function ActivityPanel(p: {
   /** The rail's tab strip, when the rail has more than one tab — it takes the heading's
-   *  place so the row reads "Activity · Chat", never a strip over a repeated title. */
+   *  place so the row reads "Activity · Data", never a strip over a repeated title. */
   tabs?: ReactNode
   items: StreamItem[]
   openCount: number
