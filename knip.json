@@ -27,7 +27,7 @@
       ]
     },
     "packages/cli": {
-      "ignore": ["src/runner.d.ts", "src/job-runner.d.ts"]
+      "ignore": ["src/job-runner.d.ts"]
     },
     "packages/core": {
       "entry": ["src/anchor-client.ts"]

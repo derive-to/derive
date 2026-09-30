@@ -26,7 +26,7 @@ derive publish
 
 `derive login` uses browser OAuth and defaults to the hosted service. `derive init`
 creates `derive.json` plus the selected starter. Templates: `md`, `html`, `workflow`,
-`slides`, `site`, `skill`, `context`, and two papers, `siggraph` (acmart) and `cvpr`
+`slides`, `site`, `skill`, and two papers, `siggraph` (acmart) and `cvpr`
 (the CVPR author kit's layout; add its `cvpr.sty` and `ieeenat_fullname.bst` next to
 `paper/main.tex` before compiling). `derive publish` zips the `paper/` folder and Derive
 renders `main.tex` as a page. The first publish records the artifact
@@ -62,7 +62,7 @@ suggests the change in a comment for a person to apply.
 derive agent setup
 ```
 
-This installs Derive's artifact and workflow skills in the native Codex and Claude project
+This installs Derive's skill in the native Codex and Claude project
 locations and adds their project MCP configuration. Run `derive agent setup --update` to refresh
 the packaged skills without replacing your MCP configuration.
 
@@ -81,78 +81,20 @@ drains the queue once and exits, for a scheduler. `--mock` checks the wiring wit
 The key rides the environment rather than a flag, so it stays out of the process list, and the
 runner never passes it on to the model.
 
-## Preview a graph or bounded loop
+## Run a graph or bounded loop
 
-The workflow skill authors a visible `bundle-manifest` plus a companion
-`workflow-definition` fact. Preview explains the likely paths and runs structural/scenario checks
-as one step; there is no separate validation gate.
+`derive init --template workflow` starts a page that holds both the visible graph
+(`bundle-manifest`) and the runnable `workflow-definition`, joined by the same node IDs:
 
 ```bash
 derive init weekly-brief --template workflow --title "Weekly brief"
 cd weekly-brief
-derive workflow preview workflow.html
-derive workflow preview workflow.html --json
+derive publish
 ```
 
-A ready preview exits `0`. A preview with blockers exits `1` and names the `WF-*` repairs. Preview
-does not execute nodes, call tools, or mutate external systems. It lists the Context sessions that
-an explicit run would open; the connected Codex or Claude harness runs the work through those
-existing Derive sessions.
-
-## Run one assigned graph from GitHub Actions
-
-`derive workflow run` is a one-shot adapter deliberately exposed as `derive-*.yml`. It does not
-accept a caller-authored prompt or standing Derive bearer. In GitHub Actions it requests an OIDC
-assertion with the fixed `derive-graph-runner` audience, exchanges the bounded run id and one-time
-nonce for a short-lived run capability, and only then fetches the pinned instruction.
-
-The command runs inside a repository-owned Codex environment. That environment must install and
-authenticate Codex before this step starts. Derive does not create an agent, select a sandbox,
-choose a model provider, or read model credentials. A managed-agent GitHub Action can own that
-setup and invoke this command after its environment is ready.
-
-```yaml
-name: Derive graph harness
-on:
-  workflow_dispatch:
-    inputs:
-      derive_run_id:
-        description: Derive workflow run id
-        required: true
-        type: string
-      derive_exchange_nonce:
-        description: One-time Derive exchange nonce
-        required: true
-        type: string
-
-permissions:
-  contents: read
-  id-token: write
-
-jobs:
-  graph:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: Check out the repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install the pinned adapter
-        run: npm install --global "@derive-to/cli@0.7.2"
-      # Your repository or runner provider installs and authenticates Codex.
-      - name: Run the assigned graph
-        env:
-          DERIVE_WORKFLOW_RUN_ID: ${{ inputs.derive_run_id }}
-          DERIVE_EXCHANGE_NONCE: ${{ inputs.derive_exchange_nonce }}
-        run: derive workflow run
-```
-
-GitHub supplies `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN` when
-`id-token: write` is present. The command never prints those values, the nonce, the OIDC assertion,
-or the exchanged capability. The command uses the runner's existing Codex identity and limits its
-Derive connection to the one-run capability and the `use` tool. Agent provisioning and lifecycle
-stay outside Derive and remain the repository workflow's responsibility.
+To run it, make the published page an agent's instructions and ask that agent. Derive walks the
+graph as one job: each step becomes a job for the agent it names, and a human step waits for an
+answer. The MCP `derive://skills/workflows` skill covers authoring and running one.
 
 ## Hosted and self-hosted servers
 
@@ -191,8 +133,8 @@ the complete contract.
 
 ## More commands
 
-The CLI also manages accounts and workspaces, pulls artifact source, scaffolds skills and Contexts,
-and serves Context sessions. `derive --help` is the current command index;
+The CLI also manages accounts and workspaces, pulls artifact source, scaffolds skills, and runs
+agents. `derive --help` is the current command index;
 the [Derive documentation](https://docs.derive.to/)
 explains the surrounding workflows.
 
