@@ -23,7 +23,7 @@ const setup = async (
      *  exercise time-to-first-token. Optional, exactly as the adapters treat it. */
     onDelta?: (text: string) => void
   }) => Promise<ModelTurn>,
-  opts?: { chatBeta?: boolean; extraUsers?: { id: string; email: string; name: string }[] },
+  opts?: { extraUsers?: { id: string; email: string; name: string }[] },
 ) => {
   const users = [{ id: "u-ws", email: "ws@x.com", name: "Wes" }, ...(opts?.extraUsers ?? [])]
   const seen: { system: string; tools: string[] }[] = []
@@ -63,7 +63,6 @@ const setup = async (
     ...(await meta.getOrgSettings("default")),
     // Beta and off by default, so every test opts in — which is itself the proof the default
     // is closed (and the flag-off case below proves the gate).
-    chatBeta: opts?.chatBeta ?? true,
   })
   return { app, meta, seen }
 }
@@ -168,16 +167,6 @@ describe("the workspace chat", () => {
     }))
     const { res } = await ask(app, meta, "hi", { model: "model-zzz" })
     expect(res.status).toBe(400)
-  })
-
-  it("is 404 when the workspace has not enabled chat", async () => {
-    const { app, meta } = await setup(
-      "ws-flagoff",
-      async () => ({ text: "x", toolUses: [], costUsd: null, done: true }),
-      { chatBeta: false },
-    )
-    const { res } = await ask(app, meta, "hi")
-    expect(res.status).toBe(404)
   })
 
   it("is 404 for a signed-in NON-MEMBER: being able to sign in is not standing to spend the key", async () => {
@@ -303,7 +292,6 @@ describe("the workspace chat", () => {
     })
     await meta.setOrgSettings("default", {
       ...(await meta.getOrgSettings("default")),
-      chatBeta: true,
     })
     const opened = await app.request("/v1/chat-session", {
       method: "POST",

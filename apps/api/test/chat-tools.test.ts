@@ -181,11 +181,6 @@ describe("chat source binding", () => {
     // must not thereby hand every chat turn in the workspace a payments API.
     expect(DEFAULT_ORG_SETTINGS.chatSources).toEqual([])
   })
-
-  it("is separate from chatBeta — being able to chat is not being able to reach a source", () => {
-    expect(DEFAULT_ORG_SETTINGS.chatBeta).toBe(true)
-    expect(DEFAULT_ORG_SETTINGS.chatSources).toHaveLength(0)
-  })
 })
 
 describe("which declared sources a person reaches", () => {

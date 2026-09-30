@@ -11,7 +11,7 @@ import { as, jsonAs, makeAuthedApp, publishAs } from "./helpers"
 const revision = (content: string) =>
   `<revision>${JSON.stringify({ content, filename: "doc.md", confidence: 0.95, message: "tightened" })}</revision>`
 
-const setup = async (name: string, reply: string, opts?: { chatBeta?: boolean }) => {
+const setup = async (name: string, reply: string) => {
   const users = [
     { id: "u-own", email: "own@x.com", name: "Owner" },
     { id: "u-two", email: "two@x.com", name: "Second" },
@@ -30,7 +30,6 @@ const setup = async (name: string, reply: string, opts?: { chatBeta?: boolean })
   })
   await meta.setOrgSettings("default", {
     ...(await meta.getOrgSettings("default")),
-    chatBeta: opts?.chatBeta ?? true,
   })
   const doc = (await (
     await publishAs(
@@ -92,15 +91,6 @@ describe("@derive in a comment thread", () => {
     const answer = all.at(-1)
     expect(answer?.author).toBe("Derive")
     expect(answer?.body_md ?? "").toContain("# Pricing")
-  })
-
-  it("does not answer when the workspace has not enabled chat", async () => {
-    const { app, meta, doc } = await setup("cm-off", "should not appear", { chatBeta: false })
-    const { created } = await mention(app, meta, doc.short_id, "@derive hello", DERIVE)
-    const all = await meta.listComments(created.artifact_id, { threadId: created.thread_id })
-    expect(all.filter((c) => c.author_id === "derive")).toHaveLength(0)
-    // The comment itself still posted: a disabled feature must not swallow someone's comment.
-    expect(all).toHaveLength(1)
   })
 
   it("never answers its own reply — the recursion guard", async () => {

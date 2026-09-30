@@ -46,8 +46,7 @@ export async function runtimeScheduleAllows(meta: MetaStore, run: RunRecord): Pr
     (await scheduleOwnerAllowed(meta, a)) &&
     a.org_id === run.org_id &&
     a.runtime_id === run.runtime_id &&
-    (run.reason === "manual:runtime" ||
-      (a.enabled === 1 && (await meta.getOrgSettings(run.org_id)).automateBeta)) &&
+    (run.reason === "manual:runtime" || a.enabled === 1) &&
     (runtime?.connection_id === null || a.created_by === run.initiated_by) &&
     a.revision === input?.schedule_revision
   )
@@ -75,14 +74,8 @@ export async function materializeRuntimeSchedules(
       }
       stage = "settings"
       const settings = await meta.getOrgSettings(a.org_id)
-      if (!settings.hostedAgentsEnabled || !settings.agentWrites || !settings.automateBeta) {
-        skip(
-          !settings.hostedAgentsEnabled
-            ? "hosted_agents_disabled"
-            : !settings.agentWrites
-              ? "agent_writes_disabled"
-              : "automations_disabled",
-        )
+      if (!settings.agentWrites) {
+        skip("agent_writes_disabled")
         continue
       }
       stage = "owner"

@@ -203,7 +203,7 @@ due run. `wrangler tail` shows the boots.
    `cd apps/api && pnpm build:web && npx wrangler deploy --dry-run`
    Expect `env.RUN_CONTAINER (RunContainer)` and `env.RUN_QUEUE (derive-runs)` in the binding
    list, and the container image to build.
-4. `wrangler deploy`. Hosted execution is still gated per workspace by `hostedAgentsEnabled`
+4. `wrangler deploy`. Hosted execution is still gated per workspace by `agentWrites`
    in org settings: set it false and the next tick dispatches nothing for that workspace, no
    redeploy needed. Two caveats worth knowing before you rely on it as an emergency stop.
    **There is no UI** — it is `PATCH /v1/workspace/settings`, one workspace at a time, so it

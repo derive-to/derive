@@ -636,6 +636,11 @@ export const parseOrgSettings = (raw: string | null): OrgSettings => {
     defaultLinkAudience: _retiredC,
     agentKillswitch,
     agentAutoEnabled: _retiredE,
+    // Retired 2026-09: agent work is one switch (`agentWrites`). Chat, automations, and
+    // hosted runs no longer have their own opt-ins; stored values are ignored.
+    chatBeta: _retiredF,
+    automateBeta: _retiredG,
+    hostedAgentsEnabled: _retiredH,
     ...rest
   } = parsed as Partial<OrgSettings> & {
     defaultUnlistedRole?: unknown
@@ -643,6 +648,9 @@ export const parseOrgSettings = (raw: string | null): OrgSettings => {
     defaultLinkAudience?: unknown
     agentKillswitch?: unknown
     agentAutoEnabled?: unknown
+    chatBeta?: unknown
+    automateBeta?: unknown
+    hostedAgentsEnabled?: unknown
   }
   // An ENGAGED emergency stop survives the retirement of its key: a stored blob that
   // pinned the old killswitch on, and says nothing newer, reads as writes-off. Nothing

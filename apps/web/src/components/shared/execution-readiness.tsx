@@ -6,17 +6,15 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { automationsQuery, workspaceQuery, workspaceSettingsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 
-/** Workspace consent is visible at the point of use. Rollout and account access remain separate. */
+/** The one brake, visible at the point of use: when agent writes are paused nothing runs, so say
+ *  so here instead of letting a run button lead to a wall. Rollout and account access are separate. */
 export function ExecutionReadiness({ cloud = false }: { cloud?: boolean }) {
   const workspace = useQuery(workspaceQuery())
   const settings = useQuery(workspaceSettingsQuery())
   const enable = useApiMutation({
-    mutationFn: () =>
-      api.updateWorkspaceSettings(
-        cloud ? { hostedAgentsEnabled: true, agentWrites: true } : { automateBeta: true },
-      ),
+    mutationFn: () => api.updateWorkspaceSettings({ agentWrites: true }),
     invalidate: [workspaceSettingsQuery().queryKey, automationsQuery().queryKey],
-    success: "Workflow execution enabled",
+    success: "Agent writes turned on",
   })
   if (workspace.isError || settings.isError)
     return (
@@ -31,10 +29,7 @@ export function ExecutionReadiness({ cloud = false }: { cloud?: boolean }) {
       />
     )
   if (!settings.data || !workspace.data) return <Skeleton className="h-20 rounded-lg" />
-  const enabled = cloud
-    ? settings.data.hostedAgentsEnabled && settings.data.agentWrites
-    : settings.data.automateBeta
-  if (enabled) return null
+  if (settings.data.agentWrites) return null
   const owner = workspace.data.role === "owner"
   return (
     <div
@@ -42,15 +37,11 @@ export function ExecutionReadiness({ cloud = false }: { cloud?: boolean }) {
       data-testid="workflow-readiness"
     >
       <div className="flex flex-col gap-1">
-        <p className="text-sm font-medium">
-          {cloud ? "Cloud execution is off" : "Automated execution is off"}
-        </p>
+        <p className="text-sm font-medium">Agent writes are paused</p>
         <p className="max-w-xl text-sm text-muted-foreground">
           {owner
-            ? cloud
-              ? "Enable hosted agents and artifact writes for this workspace. This allows authorized cloud runs; it does not start any work."
-              : "Enable automation triggers and direct task execution for this workspace. This does not start a workflow or schedule."
-            : "A workspace owner must enable execution before you can run this workflow."}
+            ? "Nothing an agent does will run or publish in this workspace until agent writes are back on. Turning them on does not start any work."
+            : "A workspace owner has paused agent writes. Nothing will run until they turn them back on."}
         </p>
       </div>
       {owner && (
@@ -62,7 +53,7 @@ export function ExecutionReadiness({ cloud = false }: { cloud?: boolean }) {
           disabled={enable.isPending}
           onClick={() => enable.mutate()}
         >
-          Enable {cloud ? "cloud execution" : "workflows"}
+          Turn agent writes on
         </Button>
       )}
     </div>

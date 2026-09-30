@@ -40,26 +40,21 @@ const materializeFor = async (
   let created = 0
   let unpayable = 0
   let gated = 0
-  // THE BETA GATE, on the one trigger that fires with nobody watching. `automateBeta` was
-  // enforced only on the REST lanes a person drives, so with the flag OFF
-  // `POST /v1/automations/:id/run` correctly 404'd while the cron tick went right on
-  // materializing, dispatching and LIVE-PUBLISHING a document replacement. A switch that stops
-  // the button but not the clock is not a kill switch.
+  // THE BRAKE, on the one trigger that fires with nobody watching. A switch that stops the
+  // button but not the clock is not a kill switch, so `agentWrites` binds materialization too.
   //
-  // Read at most once per org per pass, and FAIL CLOSED — the same stance dispatch takes for
-  // hostedAgentsEnabled. A settings read that errors must not be able to start work a workspace
-  // deliberately switched off.
+  // Read at most once per org per pass, and FAIL CLOSED. A settings read that errors must not
+  // be able to start work a workspace deliberately switched off.
   const optedIn = new Map<string, boolean>()
   const automateOn = async (orgId: string): Promise<boolean> => {
     const known = optedIn.get(orgId)
     if (known !== undefined) return known
     const on = await meta
       .getOrgSettings(orgId)
-      // `agentWrites` binds the clock exactly like the beta flag: a workspace that switched
-      // agents off must not accumulate a queued run per cron window while paused — the runs
-      // could not be claimed anyway, and flipping the switch back on must resume with the
-      // CURRENT window, not a burst of stale ones.
-      .then((s) => s?.automateBeta === true && s?.agentWrites === true)
+      // A workspace that switched agents off must not accumulate a queued run per cron
+      // window while paused: the runs could not be claimed anyway, and flipping the switch
+      // back on must resume with the CURRENT window, not a burst of stale ones.
+      .then((s) => s?.agentWrites === true)
       .catch(() => false)
     optedIn.set(orgId, on)
     return on
@@ -153,10 +148,10 @@ const materializeFor = async (
   if (unpayable > 0)
     log.warn("schedule: skipped occurrences with no connected model plan", { unpayable })
   // Same shape, same reason: a schedule that quietly stops materializing must be
-  // distinguishable from one that is working. `info`, not `warn` — a workspace that has simply
-  // not opted into the beta is the expected state, not a fault.
+  // distinguishable from one that is working. `info`, not `warn`: a paused workspace is an
+  // expected state, not a fault.
   if (gated > 0)
-    log.info("schedule: skipped automations in workspaces without automateBeta", { gated })
+    log.info("schedule: skipped automations in workspaces with agent writes paused", { gated })
   return created
 }
 

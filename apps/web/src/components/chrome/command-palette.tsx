@@ -91,7 +91,7 @@ export function CommandPalette() {
   // Chat defaults on, so an unresolved read keeps the ask offered rather than hiding a control
   // that is about to appear — the same rule the rail row follows.
   const { data: settings } = useQuery(workspaceSettingsQuery())
-  const chatOn = settings ? settings.chatBeta === true : true
+  const chatOn = true
   const nav = useNavigate()
   const prefetch = usePrefetchArtifact()
   const [query, setQuery] = useState("")

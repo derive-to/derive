@@ -84,11 +84,9 @@ names the artifact, comment thread, and requested work. An OAuth connection with
 schedule or an event. Four actions share one schema, so pass only the parameters the action reads.
 Reading what already exists is the separate `list_automations` tool, which writes nothing.
 
-**Two gates, both refusing in the tool result rather than failing later.** Standing jobs need a
-manage-level (owner) grant, which `list_automations` needs too. The workspace must also have
-turned automations on (`automateBeta`, which ships off); that second gate binds `create` and
-`run_now` only, so `list_automations` works either way and reports `automations_enabled`. Check
-there before building a `create` that will be refused.
+**One gate, refusing in the tool result rather than failing later.** Standing jobs need a
+manage-level (owner) grant, which `list_automations` needs too. When the workspace has paused
+agent writes, nothing is materialized, dispatched, or claimed until they are back on.
 
 - **`create`** needs `trigger` + `instruction`.
   - `trigger` is `{kind:"manual"|"schedule"|"event"}`. A schedule carries `cron` and `tz`. An
@@ -115,7 +113,7 @@ there before building a `create` that will be refused.
   returned here.
 
 `list_automations` takes no arguments and returns each automation's id, truncated instruction,
-bound Context, provider and enabled flag, plus the beta-gate state described above.
+bound Context, provider and enabled flag.
 
 Automations are not the way to answer a comment or ship one revision; that is the loop above.
 Reach for one when the same instruction should run again without anyone remembering to start it.

@@ -122,19 +122,6 @@ export const automationRoutes = (ctx: AppContext) => {
   } = ctx
   const app = new Hono()
 
-  /**
-   * BETA GATE: `automateBeta`, the workspace's own opt-in, OFF by default.
-   *
-   * Applied to the lanes that CREATE or RUN work, never to reads or deletes, so a workspace that
-   * made automations before the gate can still see and remove them. 404 rather than 403, because
-   * an un-enabled surface should not confirm it exists.
-   *
-   * NOTE for upgrades: automations ran before this gate existed, so an existing deployment stops
-   * running them until each workspace opts in.
-   */
-  const automateOff = async (orgId: string): Promise<boolean> =>
-    !(await meta.getOrgSettings(orgId))?.automateBeta
-
   // The run lane reads "no run scope" as "a standing polling runner", which is the only
   // thing entitled to claim a BATCH, tick the schedule and sweep the queue. A session
   // capability token also has no run scope — so without this guard it inherited every one
@@ -171,7 +158,6 @@ export const automationRoutes = (ctx: AppContext) => {
   app.post("/v1/automations", async (c) => {
     const org = await requireWorkspace(c, "manage")
     if (org instanceof Response) return org
-    if (await automateOff(org)) return fail(c, 404, "not found")
     const b = await readJson(
       c,
       z.object({
@@ -509,7 +495,6 @@ export const automationRoutes = (ctx: AppContext) => {
   app.post("/v1/automations/:id/run", async (c) => {
     const org = await requireWorkspace(c, "publish")
     if (org instanceof Response) return org
-    if (await automateOff(org)) return fail(c, 404, "not found")
     const me = await requireUser(c)
     if (me instanceof Response) return me
     const a = await meta.getAutomation(c.req.param("id"))
@@ -580,7 +565,6 @@ export const automationRoutes = (ctx: AppContext) => {
     if (trigger.on !== "webhook" || !trigger.secret_hash) return fail(c, 404, "not found")
     // Same 404 as above, and for the same reason: a fire URL minted before the gate must stop
     // creating work once the workspace is no longer enabled, and must not reveal that it exists.
-    if (await automateOff(a.org_id)) return fail(c, 404, "not found")
     // Constant-time check of the presented bearer against the stored hash.
     const presented = (c.req.header("authorization") ?? "").replace(/^Bearer\s+/i, "")
     if (!safeEqual(trigger.secret_hash, sha256(presented))) return fail(c, 401, "invalid secret")

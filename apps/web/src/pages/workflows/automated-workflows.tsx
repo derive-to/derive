@@ -40,7 +40,7 @@ export function AutomatedWorkflows() {
   const { data: settings } = settingsQuery
   const isAdmin = ws?.role === "owner"
   const canRun = ws?.role === "owner" || ws?.role === "editor"
-  const standingRunsEnabled = settings?.automateBeta === true
+  const standingRunsEnabled = true
   const reload = () => {
     qc.invalidateQueries({ queryKey: automationsQuery().queryKey })
     qc.invalidateQueries({ queryKey: runsQuery().queryKey })

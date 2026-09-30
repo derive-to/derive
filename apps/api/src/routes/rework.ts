@@ -644,8 +644,6 @@ export const reworkRoutes = (ctx: AppContext) => {
         // preserves both halves of the boundary: live human standing and the agent's scope.
         if (!(await authorizeStanding(c, "publish", artifact)))
           return bail(fail(c, 403, "publish access is required to run GitHub Actions"))
-        if (!(await meta.getOrgSettings(artifact.org_id))?.automateBeta)
-          return bail(fail(c, 404, "not found"))
         if (!deps.encryptionKey) return bail(fail(c, 502, "GitHub Actions is not configured"))
         if (!github) return bail(fail(c, 400, "github setup is required for GitHub Actions"))
         const connection = await meta.getConnection(github.connectionId)

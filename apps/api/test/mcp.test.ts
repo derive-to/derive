@@ -190,9 +190,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     })
     await meta.setOrgSettings(org, {
       ...(await meta.getOrgSettings(org)),
-      hostedAgentsEnabled: true,
       agentWrites: true,
-      automateBeta: true,
     })
     const tool = async (name: string, input: Record<string, unknown>, bearer = token) =>
       JSON.parse(toolText(await call(app, bearer, name, input)))
@@ -3826,15 +3824,6 @@ describe("automate record — local work lands in the same ledger", () => {
       "openid derive:read derive:publish derive:manage",
     )
     await rpc(app, token, initBody)
-    // `automate create` sits behind the same `automateBeta` opt-in as the REST route, so this
-    // suite — which builds its own app rather than inheriting a fixture's seed — opts in
-    // explicitly. The CLOSED case is proved in automate-gate.test.ts.
-    for (const ws of await meta.listWorkspaces("u_o"))
-      await meta.setOrgSettings(ws.id, {
-        ...(await meta.getOrgSettings(ws.id)),
-        automateBeta: true,
-      })
-
     const created = JSON.parse(
       toolText(
         await call(app, token, "automate", {

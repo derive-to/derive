@@ -501,13 +501,9 @@ guarded at boot. Check with:
 wrangler d1 execute <db> --remote --command "SELECT sql FROM sqlite_master WHERE name='slack_thread_link'"
 ```
 
-### Chat (beta, off by default)
+### Chat
 
-Chat is gated per workspace by `chatBeta` and ships **off**. The server enforces this: the
-route 404s for a workspace that has not opted in, so a stray build cannot expose it. Turn
-it on for one workspace with `PATCH /v1/workspace/settings {"chatBeta": true}`.
-
-It also needs a model. Set all three as Worker secrets, or chat answers honestly that none
+Chat needs a model. Set all three as Worker secrets, or chat answers honestly that none
 is configured:
 
 ```
@@ -589,16 +585,11 @@ number and is absent for a model nobody has used yet. **Probe** is one synthetic
 takes, so it is comparable across models and available immediately. Adding a model probes it
 first and refuses an id the provider will not answer for.
 
-### Automations (beta, off by default)
+### Pausing agents
 
-Automations are gated per workspace by `automateBeta` and ship **off**. The server checks the
-gate wherever work is created or run. `POST
-/v1/automations/:id/run` and the REST create route 404, the MCP `automate` tool refuses
-`create` and `run_now`, and the deployment's cron tick will not materialize a due schedule
-for a workspace that has not opted in. Reads and deletes stay open, so a workspace that
-made automations before the gate can still see and remove them.
-
-Turn it on for one workspace with `PATCH /v1/workspace/settings {"automateBeta": true}`.
+Every workspace has one switch for agent work, `agentWrites`, on by default. Turn it off with
+`PATCH /v1/workspace/settings {"agentWrites": false}` and nothing an agent does is
+materialized, dispatched, claimed, or published in that workspace until it is back on.
 
 ### Semantic search (optional)
 

@@ -4552,17 +4552,6 @@ export interface OrgSettings {
    *  footer, embed plaque) and honor the bare `?chrome=none` embed. The Team-tier
    *  affordance; free workspaces keep the badge and the bare embed is ignored. */
   whiteLabel: boolean
-  /** Master switch for Derive-hosted agent runs in this workspace. Off silences every
-   *  hosted run (the managed executor skips the workspace); owner-run agents are
-   *  unaffected. */
-  hostedAgentsEnabled: boolean
-  /** BETA: chat with a document (the right-rail Chat tab). OFF by default — unlike every
-   *  other setting here, it is now ON by default: the surface shipped, and an opt-in nobody
-   *  finds is a feature nobody has. Setting it FALSE still turns chat off completely — the tab
-   *  does not render and the chat routes refuse — so a half-enabled state cannot leave someone
-   *  typing into a panel that will never answer. On a shared host DERIVE_CHAT_ALLOWLIST still
-   *  bounds WHICH workspaces may spend the operator's model key. */
-  chatBeta: boolean
   /**
    * WHICH CONNECTIONS CHAT MAY REACH. Connection ids, declared by an admin.
    *
@@ -4592,12 +4581,6 @@ export interface OrgSettings {
    * typo here must cost the override, never every turn in the workspace.
    */
   chatModel?: string
-  /** BETA: automations (the artifact's "Automate…" surface). Same shape and same reasoning as
-   *  {@link chatBeta}, and separate from it because they are different bets: chat is attended
-   *  and answers in the request, an automation runs unattended on a trigger and can write while
-   *  nobody is watching. Off means the entry point does not render and the create/run/fire lanes
-   *  refuse, so a workspace cannot queue work that will never be executed. */
-  automateBeta: boolean
   /** THE one agent-write switch, read fresh per turn/claim/publish. On (the default),
    *  agent writes publish live like a person's — versioned, with the publish fan-out,
    *  and a review round when one was asked for. Off, agents stop writing everywhere an
@@ -4719,21 +4702,11 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   defaultLinkRole: "none",
   defaultListed: "none",
   whiteLabel: false,
-  // Hosting on by default: it does nothing until an agent is flagged hosted, and
-  // the run-time safety is the loop itself — every write is a kept version with the
-  // publish fan-out, restore is one click, and `agentWrites` is the brake.
-  hostedAgentsEnabled: true,
-  // Chat is ON by default now: it left beta, and an opt-in that everybody has to find is a
-  // feature nobody uses. Explicitly setting it FALSE still turns it off, so a workspace that
-  // does not want it keeps that. Automations stay opt-in — they run unattended and can write
-  // while nobody is watching, which is a different bet from an attended answer.
-  chatBeta: true,
   // Empty: chat reaches no connected source until an admin names one. Connecting a server
   // must never silently widen what a conversation can do.
   chatSources: [],
   // Unset: the deploy's configured default answers, exactly as it did before this existed.
   chatModel: undefined,
-  automateBeta: false,
   // ON by default: an agent product whose agents cannot write out of the box undercuts
   // the model. The switch exists for the day a workspace wants them stopped.
   agentWrites: true,

@@ -75,7 +75,6 @@ async function advance(deps: SetupDeps, setup: RuntimeSetupRecord) {
     (managed
       ? deps.config.managed?.workspaceIds.has(setup.org_id)
       : deps.config.pilotWorkspaceIds.has(setup.org_id)) &&
-    settings.hostedAgentsEnabled &&
     settings.agentWrites &&
     context?.org_id === setup.org_id &&
     context.agent_id === setup.agent_id &&

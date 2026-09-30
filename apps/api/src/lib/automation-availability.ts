@@ -25,7 +25,6 @@ export const automationRunBlocker = (
     return "Hosted execution is not available for this workspace. An instance operator must enable it."
   if (!config.providers.includes(provider))
     return `No hosted ${provider === "codex" ? "Codex" : "Claude"} runner is configured on this instance.`
-  if (!settings.hostedAgentsEnabled) return "Hosted agents are disabled in workspace settings."
   if (!settings.agentWrites) return "Agent writes are paused in workspace settings."
   return null
 }

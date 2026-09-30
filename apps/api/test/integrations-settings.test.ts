@@ -4,10 +4,7 @@ import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 const owner: TestUser = { id: "u-own", email: "own@x.com", name: "Owner", username: "owner" }
 const editor: TestUser = { id: "u-ed", email: "ed@x.com", name: "Ed", username: "ed" }
 
-const { app } = makeAuthedApp("integ-settings", [owner, editor], "editor", {
-  // This suite asserts the SHIPPED defaults, so it declines the harness' convenience opt-in.
-  noAutomate: true,
-})
+const { app } = makeAuthedApp("integ-settings", [owner, editor], "editor")
 
 describe("workspace integration settings", () => {
   it("returns the shipped workspace defaults", async () => {
@@ -21,15 +18,9 @@ describe("workspace integration settings", () => {
       defaultListed: "none",
       // Branding stays on until a workspace white-labels (the Team affordance).
       whiteLabel: false,
-      // Hosted-agent controls: hosting available, and writes on by default — the
-      // agentWrites switch below is the deliberate brake.
-      hostedAgentsEnabled: true,
-      // Chat ships BETA and OFF: a workspace opts in deliberately. This line failing is the
-      // signal that someone flipped the default, which is the whole point of asserting it.
-      chatBeta: true,
+      // Chat reaches no source until an admin names one; agent writes on by default, the
+      // one deliberate brake.
       chatSources: [],
-      // Automations ship the same way, and the same reasoning applies to this line.
-      automateBeta: false,
       agentWrites: true,
     })
   })

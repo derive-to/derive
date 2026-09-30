@@ -221,13 +221,12 @@ export const dispatchPass = async (deps: DispatchDeps): Promise<DispatchResult> 
         r.org_id,
         !(await deps.meta
           .getOrgSettings(r.org_id)
-          // Both switches bind here, where runs actually start: `hostedAgentsEnabled` is the
-          // hosting master switch, and `agentWrites` is the workspace's agent brake — a
+          // The brake binds here, where runs actually start: `agentWrites` off means a
           // paused workspace must not boot an executor whose claim would return nothing.
           // Fail CLOSED on a read error: an emergency stop that an error can defeat is not
           // an emergency stop. Deferring costs a tick; the alternative costs money and
           // writes to someone's documents.
-          .then((s) => s.hostedAgentsEnabled && s.agentWrites)
+          .then((s) => s.agentWrites)
           .catch(() => false)),
       )
     if (hostedOff.get(r.org_id)) {
@@ -339,11 +338,11 @@ const dispatchSessions = async (
           s.org_id,
           !(await deps.meta
             .getOrgSettings(s.org_id)
-            // Both switches, as the run loop above: hosting on, AND agent writes on.
+            // The brake, as the run loop above.
             // Fail CLOSED: a settings read that throws must not be a way to run hosted work
             // in a workspace that may have switched it off. The kill switch is only a kill
             // switch if an error can't defeat it.
-            .then((x) => x.hostedAgentsEnabled && x.agentWrites)
+            .then((x) => x.agentWrites)
             .catch(() => false)),
         )
       if (hostedOff.get(s.org_id)) continue
@@ -423,7 +422,7 @@ export const dispatchRunNow = async (deps: DispatchDeps, runId: string): Promise
     // the tick will pick the run up if the read was a blip, so refusing costs a minute while
     // proceeding could spend money a workspace had switched off.
     const settings = await deps.meta.getOrgSettings(r.org_id).catch(() => null)
-    if (!settings?.hostedAgentsEnabled || !settings.agentWrites) return false
+    if (!settings?.agentWrites) return false
     const now = deps.now?.() ?? new Date()
     // The SAME ceilings the tick applies. Without these the nudge was an unbounded spend
     // path: it is wired to every run creation (Run now, and every webhook fire), so a caller

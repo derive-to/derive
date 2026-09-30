@@ -707,11 +707,8 @@ export const workspaceRoutes = (ctx: AppContext) => {
             defaultLinkRole: z.enum(["none", "viewer", "commenter", "editor"]),
             defaultListed: z.enum(["none", "workspace", "public"]),
             whiteLabel: z.boolean(),
-            hostedAgentsEnabled: z.boolean(),
-            chatBeta: z.boolean(),
             // Connection ids chat may reach. Admin-set, empty by default — see OrgSettings.
             chatSources: z.array(z.string()),
-            automateBeta: z.boolean(),
             agentWrites: z.boolean(),
             defaultAgentId: z.string().nullable(),
             brandprint: BrandprintSchema.nullable(),

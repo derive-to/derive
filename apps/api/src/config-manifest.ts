@@ -390,7 +390,7 @@ const CONFIG_VARS: ConfigVar[] = [
   {
     name: "DERIVE_CHAT_ALLOWLIST",
     group: "advanced",
-    doc: "Comma-separated workspace ids allowed to turn chat on, when DERIVE_MODEL_BASE_URL is set.\n\nWhy it exists: `chatBeta` is a workspace setting, gated on `manage` — so on a MULTI-TENANT\nhost any workspace owner could enable chat for themselves and spend the operator's model\nkey. On a single-tenant box that is fine (the operator IS the user), which is why an unset\nallowlist means no restriction. Set it on a shared host and only those workspaces can\nenable chat, however many owners ask.",
+    doc: "Comma-separated workspace ids allowed to turn chat on, when DERIVE_MODEL_BASE_URL is set.\n\nWhy it exists: chat is on in every workspace, so on a MULTI-TENANT host any workspace\ncould spend the operator's model key. On a single-tenant box that is fine (the operator IS\nthe user), which is why an unset allowlist means no restriction. Set it on a shared host and\nonly those workspaces can use chat.",
     example: "ws_abc123,ws_def456",
   },
   {

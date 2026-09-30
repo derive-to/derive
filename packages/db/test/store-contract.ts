@@ -2652,9 +2652,9 @@ export function runStoreContract(
       expect(before.artifact?.id).toBe(a.id)
       expect(before.settings).toEqual(await store.getOrgSettings(org))
       // …and after one is written, the joined value tracks it.
-      await store.setOrgSettings(org, { ...DEFAULT_ORG_SETTINGS, chatBeta: true })
+      await store.setOrgSettings(org, { ...DEFAULT_ORG_SETTINGS })
       const after = await store.artifactWithSettings(a.short_id)
-      expect(after.settings.chatBeta).toBe(true)
+      expect(after.settings.agentWrites).toBe(true)
       expect(after.settings).toEqual(await store.getOrgSettings(org))
       expect(after.artifact).toEqual(await store.getByShortId(a.short_id))
       // An unknown short id ⇒ null artifact + defaults, never a throw.
@@ -4546,28 +4546,25 @@ export function runStoreContract(
 
     it("compare-and-sets settings by revision across insert and update paths", async () => {
       const settingsOrg = `org_${uuid()}`
-      const first = { ...DEFAULT_ORG_SETTINGS, settingsRevision: 1, chatBeta: true }
+      const first = { ...DEFAULT_ORG_SETTINGS, settingsRevision: 1 }
       expect(await store.setOrgSettingsIfRevision(settingsOrg, 0, first)).toBe(true)
       // A second writer holding revision zero loses and cannot overwrite the winner.
       expect(
         await store.setOrgSettingsIfRevision(settingsOrg, 0, {
           ...DEFAULT_ORG_SETTINGS,
           settingsRevision: 1,
-          chatBeta: false,
+          agentWrites: false,
         }),
       ).toBe(false)
-      expect((await store.getOrgSettings(settingsOrg)).chatBeta).toBe(true)
+      expect((await store.getOrgSettings(settingsOrg)).agentWrites).toBe(true)
       expect(
         await store.setOrgSettingsIfRevision(settingsOrg, 1, {
           ...first,
           settingsRevision: 2,
-          automateBeta: true,
         }),
       ).toBe(true)
       expect(await store.getOrgSettings(settingsOrg)).toMatchObject({
         settingsRevision: 2,
-        chatBeta: true,
-        automateBeta: true,
       })
     })
 

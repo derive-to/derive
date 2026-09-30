@@ -2405,14 +2405,6 @@ export const contextRoutes = (ctx: AppContext) => {
         return bail(fail(c, 400, "subject is not a valid selector"))
       if (subject && subject.kind !== "artifact")
         return bail(fail(c, 400, "only an artifact subject is supported"))
-      // A SUBJECT on the ask lane is the chat feature wearing a context, so it needs the same
-      // opt-in the chat route needs. Without this, gating only /v1/artifacts/chat-session left
-      // the front door locked and this one open: any member could name a doc here and spend
-      // the operator's key in a workspace that never enabled chat.
-      if (subject) {
-        const st = await meta.getOrgSettings(x.org_id).catch(() => null)
-        if (!st?.chatBeta) return bail(fail(c, 404, "chat is not enabled for this workspace"))
-      }
       if (subject) {
         // Ask-access to the CONTEXT is not read-access to the DOCUMENT. Re-check the
         // artifact separately, or a session becomes a way to read anything by naming it.
@@ -2628,14 +2620,9 @@ export const contextRoutes = (ctx: AppContext) => {
         .catch(() => ({ artifact: null, settings: null }))
       if (!art || art.current_version === 0 || !(await authorize(c, "read", art)))
         return bail(fail(c, 404, "not found"))
-      // BETA GATE, enforced on the SERVER as well as hidden in the UI. A flag that only
-      // hides a button is not a gate: the route is reachable directly, and this is the
-      // lane that spends the operator's model key.
-      if (!settings?.chatBeta) return bail(fail(c, 404, "chat is not enabled for this workspace"))
-      // ALLOWLIST, on top of the workspace's own opt-in. `chatBeta` is gated on `manage`, so on
-      // a shared host any workspace owner could switch it on and spend the operator's key. An
-      // empty list means no restriction — right for a single-tenant box, where the operator is
-      // the user — so this only bites where it should.
+      // ALLOWLIST: on a shared host, which workspaces may spend the operator's model key. An
+      // empty list means no restriction, right for a single-tenant box where the operator is
+      // the user, so this only bites where it should.
       if (!chatAllowed(art.org_id))
         return bail(fail(c, 404, "chat is not enabled for this workspace"))
       // MEMBERSHIP, not merely read-access. `authorize(c, "read", art)` is satisfied by a viewer
@@ -2760,7 +2747,7 @@ export const contextRoutes = (ctx: AppContext) => {
     async (c) => {
       const me = await requireUser(c)
       if (me instanceof Response) return bail(me)
-      // Deliberately NOT gated on chatBeta: this is the deploy's model list, not a workspace's
+      // Not gated per workspace: this is the deploy's model list, not a workspace's
       // capability, and it carries no workspace data. A signed-in person asking what models
       // exist learns nothing about who may use them.
       return c.json({
@@ -2877,7 +2864,7 @@ export const contextRoutes = (ctx: AppContext) => {
       const me = await requireUser(c)
       if (me instanceof Response) return bail(me)
       const org = c.req.query("workspace") ?? ""
-      // Membership only — no chatBeta gate. Turning the flag off must not hide a person's own
+      // Membership only. Nothing may hide a person's own
       // past conversations: they are their record, and hiding them would read as data loss.
       if (!(await meta.getMembership(org, me.id).catch(() => null)))
         return bail(fail(c, 404, "not found"))
@@ -3303,23 +3290,6 @@ export const contextRoutes = (ctx: AppContext) => {
       // ATTENDED: someone is sitting there, so serve the turn HERE instead of queuing it for a
       // runner that may not be running. Detached — the response returns now and the TRANSCRIPT is
       // what the surface follows, so closing the tab mid-turn loses nothing.
-      // The beta gate again, on the lane that actually SPENDS the key. Gating only session
-      // CREATION would mean turning the flag off leaves every existing conversation running —
-      // a kill switch that does not kill.
-      //
-      // It binds EVERY session chat can reach, which is the fix: the check used to hang off
-      // `!s.context_id`, and chat also wears a context — a session opened through
-      // `POST /v1/contexts/:id/sessions` with a `subject` is the chat feature with a packaged
-      // agent behind it, gated on `chatBeta` at creation (see above) and then, once open,
-      // serving turns forever after the flag came off. Mirroring the creation gate exactly is
-      // what makes the switch actually kill: contextless OR subject-bearing needs the opt-in;
-      // a plain context ask (no subject) is the pre-existing lane, predates chat, and is
-      // deliberately untouched — gating it would take contexts away from every workspace that
-      // never enabled chat.
-      if (!s.context_id || s.subject_ref) {
-        const st = await meta.getOrgSettings(s.org_id).catch(() => null)
-        if (!st?.chatBeta) return c.json({ message: messageJson(m) }, 201)
-      }
       await ctx.background(
         serveAttended(s, me, linked?.context.agent_id ?? null, {
           modelId: b.model ?? null,

@@ -7810,14 +7810,8 @@ export interface components {
             defaultListed: "none" | "workspace" | "public";
             /** @description Hide the Made-with-Derive marks on public artifacts and embeds, and honor the bare ?chrome=none embed. */
             whiteLabel: boolean;
-            /** @description Master switch for Derive-hosted agent runs; off silences every hosted run. */
-            hostedAgentsEnabled: boolean;
-            /** @description The Chat tab on a document, and the workspace chat. ON by default; set it false to turn chat off for a workspace entirely (the tab hides and the chat routes refuse). */
-            chatBeta: boolean;
             /** @description Connection ids the workspace's CHAT may reach through the call tool. Empty means none — connecting a server does not by itself let a conversation use it. Unattended runs are unaffected: they declare their own connections per run. */
             chatSources: string[];
-            /** @description BETA: automations on a document. Off by default — the Automate entry point is hidden and the create/run/fire routes refuse, so a workspace opts in deliberately. */
-            automateBeta: boolean;
             /** @description The one agent-write switch, on by default. Off: hosted runs and asks are not materialized, dispatched, or claimed, chat's publish tool refuses (the draft surfaces in the reply), and any agent-credentialed publish is refused at the API. */
             agentWrites: boolean;
             /** @description The workspace's default agent: the fallback actor for users with no connected agent. Absent = none. */

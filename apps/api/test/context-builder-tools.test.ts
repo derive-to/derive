@@ -219,7 +219,6 @@ describe("builder session", () => {
     await made.app.request("/v1/me", { headers: as(owner.email) })
     await made.meta.setOrgSettings("default", {
       ...(await made.meta.getOrgSettings("default")),
-      chatBeta: true,
     })
     return made
   }

@@ -301,10 +301,6 @@ test("a Ready graph exposes a bounded GitHub Actions harness on mobile", async (
     `<script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify(workflow)}</script>` +
     `</body></html>`
   const shortId = await publishArtifact(owner, "github-proof.html", html, "text/html")
-  const gate = await owner.request.patch("/v1/workspace/settings", {
-    data: { automateBeta: true },
-  })
-  expect(gate.ok(), "workspace Automate gate should opt in explicitly").toBeTruthy()
 
   await owner.route("**/v1/connections?*", async (route) => {
     const url = new URL(route.request().url())
@@ -933,7 +929,7 @@ test("cloud workflows keep manual runs available after pausing and link their re
 }, testInfo) => {
   await owner.emulateMedia({ reducedMotion: "reduce" })
   const configured = await owner.request.patch("/v1/workspace/settings", {
-    data: { hostedAgentsEnabled: true, agentWrites: true, automateBeta: true },
+    data: { agentWrites: true },
   })
   expect(configured.ok()).toBeTruthy()
   const id = "ctx_workflow_ui"

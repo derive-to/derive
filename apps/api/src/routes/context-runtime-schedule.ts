@@ -30,11 +30,8 @@ export const contextRuntimeScheduleRoutes = (ctx: AppContext) => {
     // A manual workflow has no automatic trigger to enable.
     const enabled = body.enabled && body.cron !== null
     const settings = await ctx.meta.getOrgSettings(context.org_id)
-    if (
-      enabled &&
-      (!settings.hostedAgentsEnabled || !settings.agentWrites || !settings.automateBeta)
-    )
-      return fail(c, 403, "Enable hosted agents, agent writes and automations for this workspace")
+    if (enabled && !settings.agentWrites)
+      return fail(c, 403, "Agent writes are paused for this workspace")
     const owner = await ctx.managementPrincipal(c)
     if (!runtime || runtime.disabled_at || !owner)
       return fail(c, 409, "Connect an active runtime first")
