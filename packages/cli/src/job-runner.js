@@ -245,6 +245,29 @@ export async function jobDrainPass(cfg, client = new JobClient(cfg)) {
   return counts
 }
 
+/** The Derive machine's entry: one `dkjob_` token, one job, then exit. The job is already
+ *  claimed server-side; this fetches it, does it, and reports it. */
+export function loadOneJobConfig(env = process.env, flags = {}) {
+  const token = flags.token ?? env.DERIVE_TOKEN ?? ""
+  const jobId = flags.job ?? env.DERIVE_JOB_ID ?? ""
+  if (!token.startsWith("dkjob_") || !jobId)
+    throw new Error("runner run needs a job token (DERIVE_TOKEN=dkjob_...) and DERIVE_JOB_ID")
+  return {
+    ...loadJobRunnerConfig(env, { ...flags, token, agent: "from-job" }),
+    jobId,
+  }
+}
+
+export async function runOneJob(cfg, client = new JobClient(cfg), deps = {}) {
+  const { job } = await client.req(`/v1/jobs/${encodeURIComponent(cfg.jobId)}/work`)
+  return serveJob(
+    client,
+    job,
+    { ...cfg, agentId: job.agent_id },
+    { meter: { costUsd: null }, ...deps },
+  )
+}
+
 export async function serveJobs(cfg) {
   const client = new JobClient(cfg)
   console.log(

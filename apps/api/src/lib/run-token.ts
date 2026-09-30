@@ -14,7 +14,8 @@
  * context; a `workflow` is one externally hosted, version-pinned graph run. They get the same
  * credential shape and executor identity. The prefix (`dkrun_` / `dksess_` / `dkwfr_`)
  * lets bearer resolution route without trial verification, and keeps the three scopes from ever
- * being confused for one another: a session token can never claim a run, or vice versa.
+ * being confused for one another: a session token can never claim a run, or vice versa. A `job`
+ * (`dkjob_`) is one unit of the agent model's work, dispatched to a Derive machine.
  *
  * A thin wrapper over lib/capability-token.ts (the HMAC format publish/upload tokens share).
  */
@@ -22,17 +23,19 @@ import { signCapabilityToken, verifyCapabilityToken } from "./capability-token"
 import { RUN_TOKEN_TTL_MS } from "./run-lifecycle"
 
 /** What a capability token authorizes work on. */
-export type WorkKind = "run" | "session" | "workflow"
+export type WorkKind = "run" | "session" | "workflow" | "job"
 
 const DOMAIN: Record<WorkKind, string> = {
   run: "derive-run-token:",
   session: "derive-session-token:",
   workflow: "derive-workflow-token:",
+  job: "derive-job-token:",
 }
 const PREFIX: Record<WorkKind, string> = {
   run: "dkrun_",
   session: "dksess_",
   workflow: "dkwfr_",
+  job: "dkjob_",
 }
 
 // The TTL belongs to the run lifecycle clock (run-lifecycle.ts), not to this file: it must
@@ -47,6 +50,7 @@ export const workTokenKind = (bearer: string): WorkKind | null => {
   if (bearer.startsWith(PREFIX.run)) return "run"
   if (bearer.startsWith(PREFIX.session)) return "session"
   if (bearer.startsWith(PREFIX.workflow)) return "workflow"
+  if (bearer.startsWith(PREFIX.job)) return "job"
   return null
 }
 

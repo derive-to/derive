@@ -15,6 +15,7 @@ import { connectionBindError } from "../lib/broker"
 import { readEnvironmentBindings } from "../lib/context-environment"
 import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
+import { machineWorkspaces } from "../lib/job-machine"
 import { canAskAgent, cancelJob, canManageAgent } from "../lib/jobs"
 import { previousOccurrence } from "../lib/schedule"
 
@@ -338,8 +339,10 @@ export const agentRoutes = (ctx: AppContext) => {
       const creator = (await privateOwnerId(c)) ?? null
       const refused = await definitionError(c, org, creator, b)
       if (refused) return bail(fail(c, 400, refused))
-      if (b.machine === "derive")
-        return bail(fail(c, 400, "Derive machines are not available yet; use machine: owner"))
+      if (b.machine === "derive" && !machineWorkspaces(deps.runtime).has(org))
+        return bail(
+          fail(c, 400, "Derive machines are not turned on for this workspace; use machine: owner"),
+        )
       if (b.schedule && !validCron(b.schedule.cron, b.schedule.tz))
         return bail(fail(c, 400, "schedule.cron is not a valid cron expression for that timezone"))
       const token = `dk_agt_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`
@@ -484,8 +487,10 @@ export const agentRoutes = (ctx: AppContext) => {
       }
       const refused = await definitionError(c, org, who, b)
       if (refused) return bail(fail(c, 400, refused))
-      if (b.machine === "derive")
-        return bail(fail(c, 400, "Derive machines are not available yet; use machine: owner"))
+      if (b.machine === "derive" && !machineWorkspaces(deps.runtime).has(org))
+        return bail(
+          fail(c, 400, "Derive machines are not turned on for this workspace; use machine: owner"),
+        )
       // An agent may run on its manager's own account or a shared one, never a teammate's.
       if (b.account_id) {
         const acct = await meta.getAccount(b.account_id)

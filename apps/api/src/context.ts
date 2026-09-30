@@ -685,6 +685,8 @@ export function buildContext(deps: AppDeps) {
   const runScopeCache = new WeakMap<Context, string>()
   // The same, for a session-scoped bearer (the ask lane's half of hosted execution).
   const sessionScopeCache = new WeakMap<Context, string>()
+  // The one job a `dkjob_` bearer may touch.
+  const jobScopeCache = new WeakMap<Context, string>()
   // One version-pinned workflow run, for a dkwfr_ GitHub harness capability.
   const workflowScopeCache = new WeakMap<Context, string>()
   const agentFor = async (c: Context): Promise<AgentRecord | null> => {
@@ -773,6 +775,15 @@ export function buildContext(deps: AppDeps) {
             s.org_id === claim.orgId &&
             (s.state === "open" || s.state === "working")
           )
+        } else if (workKind === "job") {
+          // A job token lives exactly as long as its job runs on the machine it was sent to.
+          const j = await meta.getJob(claim.id)
+          live = !!(
+            j &&
+            j.agent_id === claim.agentId &&
+            j.org_id === claim.orgId &&
+            j.status === "running"
+          )
         } else {
           const r = await meta.getWorkflowRunById(claim.id)
           live = !!(
@@ -789,6 +800,7 @@ export function buildContext(deps: AppDeps) {
             owner = ag.created_by ?? null
             if (workKind === "run") runScopeCache.set(c, claim.id)
             else if (workKind === "session") sessionScopeCache.set(c, claim.id)
+            else if (workKind === "job") jobScopeCache.set(c, claim.id)
             else workflowScopeCache.set(c, claim.id)
           }
         }
@@ -1865,6 +1877,8 @@ export function buildContext(deps: AppDeps) {
     /** The session id a dksess_ capability bearer is pinned to (null for every other
      *  principal) — the ask lane's twin of agentRunScope. */
     agentSessionScope: (c: Context): string | null => sessionScopeCache.get(c) ?? null,
+    /** The job a `dkjob_` bearer is pinned to, or null for any other principal. */
+    agentJobScope: (c: Context): string | null => jobScopeCache.get(c) ?? null,
     /** The workflow run id a dkwfr_ capability bearer is pinned to. */
     agentWorkflowScope: (c: Context): string | null => workflowScopeCache.get(c) ?? null,
     /** Is this request authenticated by a MINTED api token (dkapi_)? The mint refuses

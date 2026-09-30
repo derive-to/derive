@@ -3,8 +3,11 @@ import {
   JobClient,
   jobDrainPass,
   loadJobRunnerConfig,
+  loadOneJobConfig,
+  runOneJob,
   serveJob,
 } from "../../../packages/cli/src/job-runner.js"
+import { machinePass } from "../src/lib/job-machine"
 import { jobTick } from "../src/lib/jobs"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
@@ -671,5 +674,186 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
     }
     expect(after.status).toBe("failed")
     expect(after.messages.at(-1)?.body_md).toMatch(/no claude-code account for this agent/)
+  })
+})
+
+describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
+  const config = {
+    apiUrl: "https://ortam.test/v1",
+    runnerPath: "/home/ortam/derive-runtime/x/node_modules/@derive-to/cli/bin/derive.js",
+    pilotWorkspaceIds: new Set<string>(),
+    managed: { apiKey: "integration fixture", workspaceIds: new Set(["default"]) },
+  }
+  /** A fake Ortam: sandboxes, operations that finish on the next read, and processes whose
+   *  launch hands the test the env the runner would get. */
+  const fakeOrtam = () => {
+    const sandboxes = new Map<string, { id: string; state: string }>()
+    const ops = new Map<string, { id: string; sandbox_id: string; kind: string; state: string }>()
+    const procs = new Map<string, { id: string; status: string }>()
+    const launches: Record<string, string>[] = []
+    let n = 0
+    const json = (v: unknown) =>
+      new Response(JSON.stringify(v), { headers: { "content-type": "application/json" } })
+    const sandbox = (s: { id: string; state: string }) => ({
+      ...s,
+      version: 1,
+      current_operation_id: null,
+      auto_stop_after_seconds: 1200,
+      agent_connections: null,
+    })
+    const op = (sandbox_id: string, kind: string) => {
+      const o = { id: `op_${++n}`, sandbox_id, kind, state: "running" }
+      ops.set(o.id, o)
+      return o
+    }
+    const fetcher: typeof fetch = async (url, init) => {
+      const path = new URL(String(url)).pathname.replace("/v1", "")
+      const method = init?.method ?? "GET"
+      if (path === "/auth/token")
+        return json({
+          token: `h.${Buffer.from(JSON.stringify({ sub: "svc", organization_id: "o" })).toString("base64url")}.s`,
+        })
+      if (path === "/integration") {
+        const subject = new Headers(init?.headers).get("X-Ortam-Integration-Subject")
+        return json({ organization_id: "o", user_id: `u:${subject}` })
+      }
+      if (path === "/sandboxes" && method === "POST") {
+        const s = { id: `sbx_${++n}`, state: "ready" }
+        sandboxes.set(s.id, s)
+        return json({ sandbox: sandbox(s), operation: op(s.id, "create") })
+      }
+      const opm = path.match(/^\/operations\/(.+)$/)
+      if (opm) {
+        const o = ops.get(decodeURIComponent(opm[1] ?? ""))
+        if (!o) return new Response(null, { status: 404 })
+        // Every operation completes by the time it is read.
+        o.state = "succeeded"
+        const s = sandboxes.get(o.sandbox_id)
+        if (s) s.state = o.kind === "stop" ? "stopped" : "ready"
+        return json(o)
+      }
+      const life = path.match(/^\/sandboxes\/([^/]+)\/(resume|stop)$/)
+      if (life) return json(op(decodeURIComponent(life[1] ?? ""), life[2] ?? ""))
+      const launch = path.match(/^\/sandboxes\/([^/]+)\/processes$/)
+      if (launch && method === "POST") {
+        const body = JSON.parse(String(init?.body)) as { env: Record<string, string> }
+        launches.push(body.env)
+        const p = { id: `proc_${++n}`, status: "running" }
+        procs.set(p.id, p)
+        return json(p)
+      }
+      const proc = path.match(/^\/sandboxes\/[^/]+\/processes\/([^/?]+)/)
+      if (proc) return json(procs.get(decodeURIComponent(proc[1] ?? "")))
+      const one = path.match(/^\/sandboxes\/([^/]+)$/)
+      if (one) {
+        const s = sandboxes.get(decodeURIComponent(one[1] ?? ""))
+        return s ? json(sandbox(s)) : new Response(null, { status: 404 })
+      }
+      return new Response(null, { status: 404 })
+    }
+    return { fetcher, sandboxes, procs, launches }
+  }
+
+  it("brings up the agent's sandbox, runs the job with a job token, and stops it again", async () => {
+    const made = makeAuthedApp("jobs-machine", [owner, ed, outsider], "editor", {
+      deps: { encryptionKey: "test-encryption-key", runtime: config },
+    })
+    const { app, meta } = made
+    await app.request("/v1/me", { headers: as(owner.email) })
+    await app.request("/v1/me", { headers: as(ed.email) })
+    const created = await app.request(
+      "/v1/agents",
+      jsonAs(as(owner.email), { name: "Nightly digest", machine: "derive" }),
+    )
+    expect(created.status).toBe(201)
+    const agent = (await created.json()) as { id: string; runner_command: string | null }
+    expect(agent.runner_command).toBeNull()
+    const job = (await (await ask(app, ed.email, agent.id, "Write the digest")).json()) as {
+      id: string
+    }
+
+    const ortam = fakeOrtam()
+    const deps = {
+      meta,
+      secret: "test-encryption-key",
+      server: "http://derive.test",
+      config,
+      fetcher: ortam.fetcher,
+    }
+    // Each pass moves things one step; a handful brings the sandbox up and the job running.
+    for (let i = 0; i < 12 && ortam.launches.length === 0; i++) await machinePass(deps)
+    expect(ortam.launches).toHaveLength(1)
+    const env = ortam.launches[0] ?? {}
+    expect(env.DERIVE_TOKEN).toMatch(/^dkjob_/)
+    expect(env.DERIVE_JOB_ID).toBe(job.id)
+
+    // The job token reaches only its own job.
+    const pullWithIt = await app.request(
+      `/v1/agents/${agent.id}/pull`,
+      jsonAs(bearer(env.DERIVE_TOKEN ?? ""), {}),
+    )
+    expect(pullWithIt.status).toBe(403)
+
+    // The runner the sandbox launched: the real CLI one-job mode against the real routes.
+    const cfg = loadOneJobConfig(
+      { DERIVE_TOKEN: env.DERIVE_TOKEN, DERIVE_JOB_ID: env.DERIVE_JOB_ID },
+      { server: "http://derive.test", mock: "true" },
+    )
+    const client = new JobClient(cfg, (url, init) => Promise.resolve(app.request(url, init)))
+    expect(await runOneJob(cfg, client)).toBe("succeeded")
+    expect((await meta.getJob(job.id))?.status).toBe("succeeded")
+
+    // The job is done: the machine stops the sandbox and hands it back.
+    for (const p of ortam.procs.values()) p.status = "exited"
+    for (let i = 0; i < 6; i++) await machinePass(deps)
+    expect(await meta.getJob(job.id)).toMatchObject({ machine_phase: "released" })
+    expect(await meta.getAgent(agent.id)).toMatchObject({ sandbox_phase: "ready" })
+    expect([...ortam.sandboxes.values()].map((s) => s.state)).toEqual(["stopped"])
+    // And the finished job's token is dead.
+    const after = await app.request(`/v1/jobs/${job.id}/work`, {
+      headers: bearer(env.DERIVE_TOKEN ?? ""),
+    })
+    expect(after.status).toBe(401)
+  })
+
+  it("a runner that dies without reporting fails the job back into the queue", async () => {
+    const made = makeAuthedApp("jobs-machine-dead", [owner, ed, outsider], "editor", {
+      deps: { encryptionKey: "test-encryption-key", runtime: config },
+    })
+    const { app, meta } = made
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const agent = (await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Flaky", machine: "derive" }))
+    ).json()) as { id: string }
+    const job = (await (await ask(app, owner.email, agent.id, "Go")).json()) as { id: string }
+    const ortam = fakeOrtam()
+    const deps = {
+      meta,
+      secret: "test-encryption-key",
+      server: "http://derive.test",
+      config,
+      fetcher: ortam.fetcher,
+    }
+    for (let i = 0; i < 12 && ortam.launches.length === 0; i++) await machinePass(deps)
+    for (const p of ortam.procs.values()) p.status = "failed"
+    // The machine stops, fails the silent attempt, and the retry goes out on a fresh launch.
+    for (let i = 0; i < 12 && ortam.launches.length < 2; i++) await machinePass(deps)
+    expect(ortam.launches).toHaveLength(2)
+    expect(await meta.getJob(job.id)).toMatchObject({ status: "running", attempt: 1 })
+    const transcript = (await (
+      await app.request(`/v1/jobs/${job.id}`, { headers: as(owner.email) })
+    ).json()) as { messages: { body_md: string }[] }
+    expect(transcript.messages.map((m) => m.body_md)).toContain(
+      "The machine stopped before the job reported back.",
+    )
+  })
+
+  it("is refused where Derive machines are off", async () => {
+    const { app } = await setup("jobs-machine-off")
+    const res = await app.request(
+      "/v1/agents",
+      jsonAs(as(owner.email), { name: "Nope", machine: "derive" }),
+    )
+    expect(res.status).toBe(400)
   })
 })

@@ -392,13 +392,21 @@ export const jobRoutes = (ctx: AppContext) => {
   /** The agent a runner acts as for `agentId`: the agent's own key, or a person's own coding
    *  session (an MCP grant) running an `owner`-machine agent they manage. That second door is
    *  the MCP `pull` tool; it goes through these same routes so the fences live in one place. */
-  const runnerFor = async (c: Context, agentId: string): Promise<AgentRecord | Response> => {
+  const runnerFor = async (
+    c: Context,
+    agentId: string,
+    forJob: string | null = null,
+  ): Promise<AgentRecord | Response> => {
     const a = await agentFor(c)
     if (!a) return fail(c, 401, "an agent key is required")
     // A capability token minted for one old-lane run or session is not a runner for the
     // agent's other work.
     if (ctx.agentRunScope(c) || ctx.agentSessionScope(c) || ctx.agentWorkflowScope(c))
       return fail(c, 403, "this token is scoped to other work")
+    // A job token runs exactly its one job: never a pull, never another job's routes.
+    const scope = ctx.agentJobScope(c)
+    if (scope && (scope !== forJob || a.id !== agentId))
+      return fail(c, 403, "this token is scoped to another job")
     if (a.id === agentId && !a.id.startsWith("oauth:")) return a
     if (a.id.startsWith("oauth:")) {
       // Only the agent's own creator's session may run it: whoever runs a job holds the
@@ -423,7 +431,7 @@ export const jobRoutes = (ctx: AppContext) => {
   ): Promise<{ agent: AgentRecord; job: JobRecord } | Response> => {
     const job = await meta.getJob(c.req.param("id") ?? "")
     if (!job) return fail(c, 404, "not found")
-    const agent = await runnerFor(c, job.agent_id)
+    const agent = await runnerFor(c, job.agent_id, job.id)
     if (agent instanceof Response) return agent.status === 403 ? fail(c, 404, "not found") : agent
     if (job.org_id !== agent.org_id) return fail(c, 404, "not found")
     if (job.status !== "running") return fail(c, 409, "this job is not running")
@@ -489,7 +497,7 @@ export const jobRoutes = (ctx: AppContext) => {
   app.post("/v1/jobs/:id/report", async (c) => {
     const held = await meta.getJob(c.req.param("id"))
     if (!held) return fail(c, 404, "not found")
-    const agent = await runnerFor(c, held.agent_id)
+    const agent = await runnerFor(c, held.agent_id, held.id)
     if (agent instanceof Response) return agent.status === 403 ? fail(c, 404, "not found") : agent
     const b = await readJson(
       c,
@@ -509,6 +517,18 @@ export const jobRoutes = (ctx: AppContext) => {
     const out = await reportJob(jobDeps, agent, c.req.param("id"), b)
     if ("error" in out) return fail(c, out.status as 404 | 409, out.error)
     return c.json({ job: jobJson(out.job) })
+  })
+
+  // The one job a Derive machine's runner was launched for, shaped like a pull's entry.
+  app.get("/v1/jobs/:id/work", async (c) => {
+    const job = await meta.getJob(c.req.param("id"))
+    if (!job) return fail(c, 404, "not found")
+    const agent = await runnerFor(c, job.agent_id, job.id)
+    if (agent instanceof Response) return agent.status === 403 ? fail(c, 404, "not found") : agent
+    if (!ctx.agentJobScope(c)) return fail(c, 403, "a job token is required")
+    if (job.status !== "running") return fail(c, 409, "this job is not running")
+    const [work] = await payload(agent, [job])
+    return c.json({ job: work })
   })
 
   app.get("/v1/jobs/:id/environment", async (c) => {
