@@ -529,18 +529,19 @@ export const jobRoutes = (ctx: AppContext) => {
       }),
     )
     if (b instanceof Response) return b
-    // A report page must be one in the job's own workspace. Runners name it by the short id
-    // their publish returned.
+    // A report page must be one this agent made (its first version is the agent's), in the
+    // job's workspace: pointing a job at a teammate's page would show it to everyone watching
+    // the job, and the next turn would write over it. Runners name it by the short id their
+    // publish returned.
     const { report_short_id, ...report } = b
-    if (report_short_id) {
-      const art = await meta.getByShortId(report_short_id).catch(() => null)
-      if (!art || art.org_id !== agent.org_id)
-        return fail(c, 400, "report_short_id is not a page here")
+    if (report_short_id || report.report_artifact_id) {
+      const art = report_short_id
+        ? await meta.getByShortId(report_short_id).catch(() => null)
+        : await meta.getArtifactById(report.report_artifact_id ?? "").catch(() => null)
+      const first = art ? await meta.getVersion(art.id, 1).catch(() => null) : null
+      if (!art || art.org_id !== agent.org_id || first?.agent_id !== agent.id)
+        return fail(c, 400, "a report must be a page this agent made")
       report.report_artifact_id = art.id
-    } else if (report.report_artifact_id) {
-      const art = await meta.getArtifactById(report.report_artifact_id).catch(() => null)
-      if (!art || art.org_id !== agent.org_id)
-        return fail(c, 400, "report_artifact_id is not a page here")
     }
     const out = await reportJob(jobDeps, agent, c.req.param("id"), report)
     if ("error" in out) return fail(c, out.status as 404 | 409, out.error)

@@ -641,6 +641,27 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
     expect(await source()).toContain("## Asked\n\nAnd last week?")
   })
 
+  it("a report must be a page the agent made, not a teammate's", async () => {
+    const { app } = await setup("jobs-report-owner")
+    const agent = await createAgent(app)
+    const theirs = (await (
+      await publishAs(app, "# Ed's private notes", {}, as(ed.email))
+    ).json()) as {
+      short_id: string
+    }
+    const job = (await (await ask(app, ed.email, agent.id, "Go")).json()) as { id: string }
+    const [p] = await pull(app, agent)
+    const res = await app.request(
+      `/v1/jobs/${job.id}/report`,
+      jsonAs(bearer(agent.token), {
+        started_at: p?.started_at,
+        status: "succeeded",
+        report_short_id: theirs.short_id,
+      }),
+    )
+    expect(res.status).toBe(400)
+  })
+
   it("runs with its creator's account, and a retryable failure goes back in the queue", async () => {
     const { app } = await setup("jobs-cli-account")
     const agent = await createAgent(app)
@@ -973,6 +994,36 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
     })
     expect(del.status).toBe(204)
     expect([...m.ortam.sandboxes.values()].map((s) => s.state)).toEqual(["deleted"])
+  })
+
+  it("a Derive agent's work is never pulled by another runner", async () => {
+    const m = await machineApp("jobs-machine-nopull")
+    await ask(m.app, ed.email, m.agent.id, "Go")
+    const key = (await (
+      await m.app.request(`/v1/agents/${m.agent.id}/rotate`, jsonAs(as(owner.email), {}))
+    ).json()) as { token: string }
+    const pulled = await m.app.request(
+      `/v1/agents/${m.agent.id}/pull`,
+      jsonAs(bearer(key.token), {}),
+    )
+    expect(((await pulled.json()) as { jobs: unknown[] }).jobs).toEqual([])
+  })
+
+  it("after a machine fails to start three times, the work waiting for it fails and says so", async () => {
+    const m = await machineApp("jobs-machine-giveup")
+    m.ortam.state.failCreates = 3
+    const job = (await (await ask(m.app, ed.email, m.agent.id, "Go")).json()) as { id: string }
+    let clock = Date.now()
+    const deps = { ...m.deps, now: () => new Date(clock) }
+    for (let i = 0; i < 60 && (await m.meta.getJob(job.id))?.status === "queued"; i++) {
+      await machinePass(deps)
+      clock += 31 * 60_000
+    }
+    const after = (await (
+      await m.app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
+    ).json()) as { status: string; messages: { body_md: string }[] }
+    expect(after.status).toBe("failed")
+    expect(after.messages.at(-1)?.body_md).toBe("Derive could not start a machine for this agent.")
   })
 
   it("waits for a sandbox runner that knows job tokens", () => {

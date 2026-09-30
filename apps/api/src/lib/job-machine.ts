@@ -40,8 +40,6 @@ export const MACHINE_JOB_MS = 15 * 60_000
 const GLOBAL_LIMIT = 10
 const ORG_LIMIT = 3
 const WORKDIR = "/home/ortam/work"
-/** A sandbox that has not come up within this long is abandoned and deleted. */
-const CREATE_DEADLINE_MS = 30 * 60_000
 /** After a failed sandbox, wait this long times the failure count before trying again, and
  *  after this many failures in a row, fail the work that was waiting for it. */
 const RETRY_BACKOFF_MS = 10 * 60_000
@@ -57,7 +55,6 @@ interface SandboxState {
   /** One id per sandbox this agent ever has: the create and delete idempotency keys carry it,
    *  so a recreate after a failure never gets the old sandbox back. */
   generation: string
-  created_at: string
   create_op?: string
   stop_op?: string
   delete_op?: string
@@ -101,6 +98,14 @@ export const machineWorkspaces = (config: AppDeps["runtime"] | undefined): Reado
   config?.managed?.apiKey && runnerRunsJobs(config.runnerPath, config.runnerVersion)
     ? config.managed.workspaceIds
     : new Set()
+
+/** The one create request for an agent's sandbox; a replay with its key must send the same. */
+const sandboxRequest = (agent: AgentRecord) => ({
+  name: `derive-${agent.id.replaceAll("_", "-")}`,
+  size: "small",
+  auto_stop_after_seconds: 1200,
+  setup_script: INSTALL_RUNTIME_RUNNER,
+})
 
 /** One integration subject per agent, so each agent's sandbox belongs to its own Ortam user. */
 const clientFor = (deps: MachineDeps, agent: AgentRecord) => {
@@ -155,7 +160,6 @@ export async function advanceSandbox(
         api_url: deps.config.apiUrl,
         identity: { organization_id: auth.organization_id, user_id: auth.user_id },
         generation: newId("sbg"),
-        created_at: iso(deps),
         failures: prior?.failures ?? 0,
       } satisfies SandboxState),
     })
@@ -165,8 +169,10 @@ export async function advanceSandbox(
     throw new Error("Sandbox belongs to a different Ortam API")
   const client = clientFor(deps, agent)
   const id = agent.sandbox_id
-  const fail = () => move("failed", { failures: (state.failures ?? 0) + 1, failed_at: iso(deps) })
-  const late = Date.parse(iso(deps)) - Date.parse(state.created_at) > CREATE_DEADLINE_MS
+  // `failed` ends a sandbox's life; only a failed operation counts toward the backoff, not a
+  // deliberate delete (an agent moved off Derive, admission withdrawn).
+  const failed = () => move("failed", { failed_at: iso(deps) })
+  const broke = () => (state.failures ?? 0) + 1
 
   switch (agent.sandbox_phase) {
     case "creating": {
@@ -174,26 +180,23 @@ export async function advanceSandbox(
       // lost may have made a sandbox, and only the same key finds it to delete.
       // The same immutable request and key, so a lost response resolves to the same sandbox.
       const result = await client.create(
-        {
-          name: `derive-${agent.id.replaceAll("_", "-")}`,
-          size: "small",
-          auto_stop_after_seconds: 1200,
-          setup_script: INSTALL_RUNTIME_RUNNER,
-        },
+        sandboxRequest(agent),
         `derive-agent-${agent.id}-${state.generation}-create`,
         state.identity,
       )
       return move("provisioning", { create_op: result.operation.id }, result.sandbox.id)
     }
     case "provisioning": {
-      if (!id || !state.create_op) return fail()
+      if (!id || !state.create_op)
+        return move("failed", { failures: broke(), failed_at: iso(deps) })
       const op = await client.operation(state.create_op, id, "create", state.identity)
       if (op.state === "succeeded") return move(allowed ? "stopping" : "deleting")
-      if (op.state === "failed" || late) return move("deleting")
+      // Never race an in-flight create with deletion: a create still going is waited out.
+      if (op.state === "failed") return move("deleting", { failures: broke() })
       return agent
     }
     case "stopping": {
-      if (!id) return fail()
+      if (!id) return move("failed", { failures: broke(), failed_at: iso(deps) })
       const sandbox = await client.sandbox(id, state.identity)
       if (sandbox.state === "stopped")
         return move(allowed ? "ready" : "deleting", { stop_op: undefined, failures: 0 })
@@ -207,13 +210,13 @@ export async function advanceSandbox(
         return move("stopping", { stop_op: op.id })
       }
       const op = await client.operation(state.stop_op, id, "stop", state.identity)
-      if (op.state === "failed") return move("deleting", { stop_op: undefined })
+      if (op.state === "failed") return move("deleting", { stop_op: undefined, failures: broke() })
       return agent
     }
     case "deleting": {
-      if (!id) return fail()
+      if (!id) return failed()
       if (!state.delete_op) {
-        if (await client.isSandboxDeleted(id, state.identity)) return fail()
+        if (await client.isSandboxDeleted(id, state.identity)) return failed()
         const op = await client.deleteSandbox(
           id,
           `derive-agent-${agent.id}-${state.generation}-delete`,
@@ -226,7 +229,7 @@ export async function advanceSandbox(
         op.state === "succeeded" ||
         (op.state === "failed" && (await client.isSandboxDeleted(id, state.identity)))
       )
-        return fail()
+        return failed()
       return agent
     }
     default:
@@ -562,12 +565,14 @@ export async function machinePass(
 /** Fail the queued work of an agent whose machine will not come up, so it shows instead of
  *  waiting silently. Not retryable: asking again tries a fresh machine. */
 async function failWaiting(deps: MachineDeps, agent: AgentRecord, why: string) {
+  const now = iso(deps)
   for (const job of await deps.meta.listJobs({
     orgId: agent.org_id,
     agentId: agent.id,
     status: ["queued"],
     limit: 200,
   })) {
+    if (job.attended === 1 || (job.scheduled_for && job.scheduled_for > now)) continue
     const claimed = await deps.meta.claimJob(job.id, iso(deps), iso(deps))
     if (!claimed) continue
     await reportJob(deps, agent, job.id, {
@@ -587,7 +592,7 @@ export async function retireSandbox(
   agent: AgentRecord,
 ): Promise<void> {
   const state = parse<SandboxState>(agent.sandbox_state_json)
-  if (!agent.sandbox_id || !state?.identity || !config?.managed?.apiKey) return
+  if (!state?.identity || !config?.managed?.apiKey) return
   if (agent.sandbox_phase === null || agent.sandbox_phase === "failed") return
   try {
     const client = new OrtamClient(
@@ -596,9 +601,19 @@ export async function retireSandbox(
       fetcher,
       sha256(JSON.stringify([agent.org_id, "agent", agent.id])),
     )
-    if (await client.isSandboxDeleted(agent.sandbox_id, state.identity)) return
+    // A create whose answer never arrived still made a sandbox; its key finds it.
+    const id =
+      agent.sandbox_id ??
+      (
+        await client.create(
+          sandboxRequest(agent),
+          `derive-agent-${agent.id}-${state.generation}-create`,
+          state.identity,
+        )
+      ).sandbox.id
+    if (await client.isSandboxDeleted(id, state.identity)) return
     await client.deleteSandbox(
-      agent.sandbox_id,
+      id,
       `derive-agent-${agent.id}-${state.generation}-delete`,
       state.identity,
     )
