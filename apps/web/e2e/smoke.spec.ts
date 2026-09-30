@@ -665,6 +665,10 @@ test("Agents home groups agents by what they need, and the rail leads with it", 
   await owner.getByTestId(`agent-row-${scheduled.id}`).click()
   await expect(owner).toHaveURL(new RegExp(`/agents/${scheduled.id}$`))
   await expect(owner.getByTestId("agent-title")).toHaveText("Digest writer")
+
+  // An old Context bookmark that is not an imported paper lands on the Agents home.
+  await owner.goto("/contexts/ctx_legacy")
+  await expect(owner).toHaveURL(/\/agents$/)
 })
 
 test("New agent is a prompt to paste into a coding session", async ({ owner }, testInfo) => {

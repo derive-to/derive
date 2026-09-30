@@ -41,6 +41,7 @@ import { Route as PapersNewRouteImport } from './routes/papers.new'
 import { Route as PapersIdRouteImport } from './routes/papers.$id'
 import { Route as JoinTokenRouteImport } from './routes/join.$token'
 import { Route as InviteTokenRouteImport } from './routes/invite.$token'
+import { Route as ContextsIdRouteImport } from './routes/contexts.$id'
 import { Route as CollectionsIdRouteImport } from './routes/collections.$id'
 import { Route as ClaimTokenRouteImport } from './routes/claim.$token'
 import { Route as ArtifactsRefRouteImport } from './routes/artifacts.$ref'
@@ -209,6 +210,11 @@ const InviteTokenRoute = InviteTokenRouteImport.update({
   path: '/invite/$token',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ContextsIdRoute = ContextsIdRouteImport.update({
+  id: '/contexts/$id',
+  path: '/contexts/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CollectionsIdRoute = CollectionsIdRouteImport.update({
   id: '/collections/$id',
   path: '/collections/$id',
@@ -271,6 +277,7 @@ export interface FileRoutesByFullPath {
   '/artifacts/$ref': typeof ArtifactsRefRoute
   '/claim/$token': typeof ClaimTokenRoute
   '/collections/$id': typeof CollectionsIdRoute
+  '/contexts/$id': typeof ContextsIdRoute
   '/invite/$token': typeof InviteTokenRoute
   '/join/$token': typeof JoinTokenRoute
   '/papers/$id': typeof PapersIdRoute
@@ -311,6 +318,7 @@ export interface FileRoutesByTo {
   '/artifacts/$ref': typeof ArtifactsRefRoute
   '/claim/$token': typeof ClaimTokenRoute
   '/collections/$id': typeof CollectionsIdRoute
+  '/contexts/$id': typeof ContextsIdRoute
   '/invite/$token': typeof InviteTokenRoute
   '/join/$token': typeof JoinTokenRoute
   '/papers/$id': typeof PapersIdRoute
@@ -353,6 +361,7 @@ export interface FileRoutesById {
   '/artifacts/$ref': typeof ArtifactsRefRoute
   '/claim/$token': typeof ClaimTokenRoute
   '/collections/$id': typeof CollectionsIdRoute
+  '/contexts/$id': typeof ContextsIdRoute
   '/invite/$token': typeof InviteTokenRoute
   '/join/$token': typeof JoinTokenRoute
   '/papers/$id': typeof PapersIdRoute
@@ -396,6 +405,7 @@ export interface FileRouteTypes {
     | '/artifacts/$ref'
     | '/claim/$token'
     | '/collections/$id'
+    | '/contexts/$id'
     | '/invite/$token'
     | '/join/$token'
     | '/papers/$id'
@@ -436,6 +446,7 @@ export interface FileRouteTypes {
     | '/artifacts/$ref'
     | '/claim/$token'
     | '/collections/$id'
+    | '/contexts/$id'
     | '/invite/$token'
     | '/join/$token'
     | '/papers/$id'
@@ -477,6 +488,7 @@ export interface FileRouteTypes {
     | '/artifacts/$ref'
     | '/claim/$token'
     | '/collections/$id'
+    | '/contexts/$id'
     | '/invite/$token'
     | '/join/$token'
     | '/papers/$id'
@@ -519,6 +531,7 @@ export interface RootRouteChildren {
   ArtifactsRefRoute: typeof ArtifactsRefRoute
   ClaimTokenRoute: typeof ClaimTokenRoute
   CollectionsIdRoute: typeof CollectionsIdRoute
+  ContextsIdRoute: typeof ContextsIdRoute
   InviteTokenRoute: typeof InviteTokenRoute
   JoinTokenRoute: typeof JoinTokenRoute
   PapersIdRoute: typeof PapersIdRoute
@@ -759,6 +772,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof InviteTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/contexts/$id': {
+      id: '/contexts/$id'
+      path: '/contexts/$id'
+      fullPath: '/contexts/$id'
+      preLoaderRoute: typeof ContextsIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/collections/$id': {
       id: '/collections/$id'
       path: '/collections/$id'
@@ -851,6 +871,7 @@ const rootRouteChildren: RootRouteChildren = {
   ArtifactsRefRoute: ArtifactsRefRoute,
   ClaimTokenRoute: ClaimTokenRoute,
   CollectionsIdRoute: CollectionsIdRoute,
+  ContextsIdRoute: ContextsIdRoute,
   InviteTokenRoute: InviteTokenRoute,
   JoinTokenRoute: JoinTokenRoute,
   PapersIdRoute: PapersIdRoute,

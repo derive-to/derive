@@ -1506,6 +1506,8 @@ export const api = {
 
   // Imported papers (/papers): an arXiv paper imported as a locked artifact. The server still
   // stores each one as a read-only Context, so these read the context routes.
+  // The workspace's imported papers, each with the short id of its paper artifact.
+  listPapers: (): Promise<{ contexts: ContextInfo[] }> => f("/v1/contexts", opts()).then(j),
   getContext: (id: string): Promise<ContextDetail> => f(`/v1/contexts/${id}`, opts()).then(j),
   // An imported paper's implementation analysis, written by an agent, with the prompts a person
   // copies into theirs to start or update it.

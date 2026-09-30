@@ -63,6 +63,7 @@ import { bucketThreads } from "./lib/layout"
 import { artifactLoginSearch } from "./lib/login-return"
 import { takeUseIntent } from "./lib/use-intent"
 import { MarginAsk } from "./margin-ask"
+import { PaperLink } from "./paper-link"
 import { parseRef, refFor } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
 import { PublicViewer } from "./public-viewer"
@@ -1676,6 +1677,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
             {inActiveWorkspace && couldBeReport && !editing && !inlineEdit.active && (
               <JobHeader shortId={shortId} />
             )}
+            {inActiveWorkspace && importedPaper && !editing && <PaperLink shortId={shortId} />}
             {/* A paper keeps its bar above the open editor: the chips switch files. */}
             {art.bundle && !importedPaper && (!editing || isPaperBundle(art)) && (
               <BundleBar
