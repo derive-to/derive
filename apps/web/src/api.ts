@@ -2107,6 +2107,6 @@ export interface Credential {
   can_use: boolean
 }
 export interface CredentialUsage {
-  items: { id: string; name: string; kind: "context" | "workflow" | "automation" }[]
+  items: { id: string; name: string; kind: "agent" }[]
   hidden_count: number
 }
