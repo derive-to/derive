@@ -298,6 +298,8 @@ export interface AgentModelStore<Agent = unknown> {
   ): Promise<JobRecord | null>
   /** Sum of reported job cost since `since`, in micro-USD. Unknown costs are skipped. */
   sumJobCostSince(orgId: string, since: string): Promise<number>
+  /** Add spend to a job in one statement, whatever its status: a late report's cost is real. */
+  addJobCost(id: string, microUsd: number): Promise<void>
   addJobMessage(m: NewJobMessage): Promise<JobMessageRecord>
   listJobMessages(jobId: string): Promise<JobMessageRecord[]>
 

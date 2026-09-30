@@ -755,6 +755,7 @@ export class PgMetaStore implements MetaStore {
   latestJobForTrigger = this.agentModel.latestJobForTrigger
   findOpenJobByDedupe = this.agentModel.findOpenJobByDedupe
   sumJobCostSince = this.agentModel.sumJobCostSince
+  addJobCost = this.agentModel.addJobCost
   addJobMessage = this.agentModel.addJobMessage
   listJobMessages = this.agentModel.listJobMessages
   createTrigger = this.agentModel.createTrigger

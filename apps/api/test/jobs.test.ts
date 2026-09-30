@@ -406,6 +406,22 @@ describe("jobs: what a teammate cannot do with someone else's agent or job", () 
     )
     expect(late.status).toBe(409)
     expect(await meta.getJob(job.id)).toMatchObject({ status: "cancelled", cost_micro_usd: 4200 })
+
+    // A settling report sent twice is counted once.
+    const second = (await (await ask(app, ed.email, agent.id, "Again")).json()) as { id: string }
+    const [q] = await pull(app, agent)
+    const settle = () =>
+      app.request(
+        `/v1/jobs/${second.id}/report`,
+        jsonAs(bearer(agent.token), {
+          started_at: q?.started_at,
+          status: "succeeded",
+          cost_micro_usd: 1000,
+        }),
+      )
+    expect((await settle()).status).toBe(200)
+    expect((await settle()).status).toBe(409)
+    expect((await meta.getJob(second.id))?.cost_micro_usd).toBe(1000)
   })
 })
 

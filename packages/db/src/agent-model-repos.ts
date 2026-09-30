@@ -230,6 +230,11 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
           AND status IN (${list(OPEN)})
         ORDER BY created_at DESC LIMIT 1`)
     },
+    async addJobCost(id, microUsd) {
+      await first(sql`
+        UPDATE job SET cost_micro_usd = coalesce(cost_micro_usd, 0) + ${microUsd}
+        WHERE id = ${id} RETURNING id`)
+    },
     async sumJobCostSince(orgId, since) {
       const r = await first<{ n: unknown }>(sql`
         SELECT coalesce(sum(cost_micro_usd), 0) AS n FROM job

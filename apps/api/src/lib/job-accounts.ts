@@ -76,8 +76,10 @@ export const resolveJobCredential = async (
   if (pool) return pool
 
   // Legacy tiers, removed at cutover.
+  // A creator's old stored plan pays for a teammate's ask only through the owner-lend opt-in,
+  // which fallbackPayerTiers applies; only the asker's own plan is taken without it.
   const tiers = [
-    ...(payer ? [{ userId: payer, source: payer === job.asked_by ? "asker" : "creator" }] : []),
+    ...(payer && payer === job.asked_by ? [{ userId: payer, source: "asker" }] : []),
     ...(await fallbackPayerTiers(meta, agent.org_id, agent.id, agent.created_by)),
   ]
   for (const { userId, source } of tiers) {

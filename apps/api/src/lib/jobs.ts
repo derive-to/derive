@@ -309,10 +309,10 @@ export const reportJob = async (
   if (job.status !== "running" || r.started_at !== job.started_at) {
     // The answer lands nowhere, but the money a superseded or cancelled run spent is real:
     // count it, or the workspace's spend undercounts exactly the runs that went wrong.
-    if (r.cost_micro_usd)
-      await meta
-        .updateJob(job.id, { cost_micro_usd: (job.cost_micro_usd ?? 0) + r.cost_micro_usd })
-        .catch(() => null)
+    // Only when the run was stopped under it: a resent settling report finds the job settled
+    // under its own claim, and its cost is already counted.
+    if (r.cost_micro_usd && (job.status === "cancelled" || job.status === "lost"))
+      await meta.addJobCost(job.id, r.cost_micro_usd).catch(() => null)
     return job.status !== "running"
       ? { error: "this job is not running", status: 409 }
       : { error: "this claim has been superseded", status: 409 }
