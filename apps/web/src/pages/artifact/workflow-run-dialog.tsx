@@ -92,7 +92,7 @@ export function WorkflowRunDialog({
 }) {
   const queryClient = useQueryClient()
   const settings = useQuery({ ...workspaceSettingsQuery(), enabled: open })
-  const githubEnabled = settings.data?.automateBeta === true
+  const githubEnabled = true
   const connections = useQuery({
     ...automationConnectionsQuery(),
     enabled: open && githubEnabled,

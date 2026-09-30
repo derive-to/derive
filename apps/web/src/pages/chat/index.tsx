@@ -65,7 +65,7 @@ export function ChatPage() {
     ...workspaceQuery(),
     staleTime: 60_000,
   })
-  const settings = useQuery({ ...workspaceSettingsQuery(), staleTime: 60_000 }).data
+  const _settings = useQuery({ ...workspaceSettingsQuery(), staleTime: 60_000 }).data
   const org = ws?.id ?? ""
 
   // Past conversations, this person's own. Refetched when a new one opens so the picker does
@@ -127,7 +127,7 @@ export function ChatPage() {
     }
   }, [chat.sessionId, sessionParam, modelParam, navigate, history.refetch])
 
-  const chatOff = settings ? settings.chatBeta !== true : false
+  const chatOff = false
 
   // A QUESTION HANDED OVER, sent once.
   //
@@ -149,7 +149,7 @@ export function ChatPage() {
     if (!ask || sessionParam || !org || chatOff || asked.current === ask) return
     asked.current = ask
     void chat.send(ask)
-  }, [ask, sessionParam, org, chatOff, chat.send])
+  }, [ask, sessionParam, org, chat.send])
 
   // The picker queries above degrade on their own (a picker with nothing to show simply does
   // not render), but this one cannot: with no workspace there is no conversation to have, and

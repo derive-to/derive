@@ -1,7 +1,3 @@
-import { useQuery } from "@tanstack/react-query"
-import { useAuth } from "@/ctx"
-import { workspaceSettingsQuery } from "./queries"
-
 /**
  * IS THE AGENT AVAILABLE HERE — the one answer four surfaces need.
  *
@@ -15,7 +11,5 @@ import { workspaceSettingsQuery } from "./queries"
  * The settings read rides the boot batch the shell already makes, so this costs no request.
  */
 export function useChatEnabled(): boolean {
-  const { me } = useAuth()
-  const { data } = useQuery({ ...workspaceSettingsQuery(), staleTime: 60_000, enabled: !!me })
-  return data ? data.chatBeta === true : true
+  return true
 }

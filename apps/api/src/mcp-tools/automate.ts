@@ -93,18 +93,6 @@ async function ownerRefusal(tc: ToolContext): Promise<string | null> {
   )
 }
 
-/**
- * The beta gate, the same rule the REST surface applies (routes/automations.ts): the
- * `automateBeta` opt-in ships OFF and binds the lanes that CREATE or RUN work, never the
- * reads. Fails CLOSED on a settings read error, matching the cron tick and hosted dispatch.
- */
-async function automateOff(tc: ToolContext): Promise<boolean> {
-  return !(await tc.ctx.meta
-    .getOrgSettings(tc.defaultOrg)
-    .then((s) => s?.automateBeta === true)
-    .catch(() => false))
-}
-
 /** READ. The automations this workspace holds, and whether automations are on for it. */
 export function registerListAutomationsTool(tc: ToolContext): void {
   const { server, ctx, defaultOrg } = tc
@@ -172,17 +160,9 @@ export function registerListAutomationsTool(tc: ToolContext): void {
       // The gate state rides along with the read: a bare `count: 0` in a gated workspace
       // reads as "none yet", and the agent would only learn the flag exists when its create
       // is refused. Saying so here is what lets it plan.
-      const [rows, off] = await Promise.all([ctx.meta.listAutomations(defaultOrg), automateOff(tc)])
+      const rows = await ctx.meta.listAutomations(defaultOrg)
       return json({
         count: rows.length,
-        automations_enabled: !off,
-        ...(off
-          ? {
-              note:
-                "automations are not enabled for this workspace (automateBeta) — create and " +
-                "run_now will be refused until an owner turns them on in workspace settings.",
-            }
-          : {}),
         automations: rows.map((a) => ({
           id: a.id,
           instruction: a.instruction.slice(0, 140),
@@ -343,12 +323,6 @@ export function registerAutomateTool(tc: ToolContext): void {
       const refusal = await ownerRefusal(tc)
       if (refusal) return json({ error: refusal })
       const org = defaultOrg
-      if ((input.action === "create" || input.action === "run_now") && (await automateOff(tc)))
-        return json({
-          error:
-            "automations are not enabled for this workspace (automateBeta). An owner can turn " +
-            "them on in workspace settings.",
-        })
 
       if (input.action === "run_now") {
         if (!input.automation_id) return json({ error: "run_now needs automation_id" })

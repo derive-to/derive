@@ -332,36 +332,6 @@ describe("run retries", () => {
 })
 
 describe("the workspace master switch", () => {
-  it("hostedAgentsEnabled=false stops every hosted run — the operator's emergency stop", async () => {
-    const auto = await mkAutomation({ trigger: { kind: "manual" }, instruction: "Should not run." })
-    const run = await runNow(auto.id)
-    // Flip the master switch the settings UI exposes.
-    const patched = await app.request("/v1/workspace/settings", {
-      method: "PATCH",
-      headers: { "content-type": "application/json", ...as(owner.email) },
-      body: JSON.stringify({ hostedAgentsEnabled: false }),
-    })
-    expect(patched.status).toBeLessThan(300)
-
-    const { substrate, started } = fakeSubstrate()
-    const res = await dispatchPass(deps(substrate))
-    expect(res.started).toBe(0)
-    expect(started).toHaveLength(0)
-    // The fast path honors it too, or "Run now" would bypass the one control an operator
-    // reaches for to stop everything.
-    expect(await dispatchRunNow(deps(substrate), run.id)).toBe(false)
-    // Deferred, not failed: flipping the switch back on resumes the work.
-    expect((await meta.getRun(run.id))?.status).toBe("queued")
-
-    await app.request("/v1/workspace/settings", {
-      method: "PATCH",
-      headers: { "content-type": "application/json", ...as(owner.email) },
-      body: JSON.stringify({ hostedAgentsEnabled: true }),
-    })
-    const after = await dispatchPass(deps(substrate))
-    expect(after.started).toBeGreaterThanOrEqual(1)
-  })
-
   it("agentWrites=false stops dispatch the same way — no executor boots for a paused workspace", async () => {
     // The claim endpoints refuse a paused workspace, so dispatching anyway would boot an
     // executor per tick whose claim returns nothing — pure churn. The switch binds where
@@ -715,29 +685,5 @@ describe("the unattended lane on a deployment that holds the model key", () => {
     // Still idempotent inside the window — paying for everyone must not mean firing every tick.
     await dispatchPass({ ...deps(substrate), meta: noPlans, operatorPays: true })
     expect(await mine()).toHaveLength(1)
-  })
-
-  it("still obeys automateBeta when the operator pays — the gate is not a payer question", async () => {
-    const auto = await mkAutomation({
-      trigger: { kind: "schedule", cron: "* * * * *" },
-      instruction: "Should never fire with the beta off.",
-    })
-    const patched = await app.request("/v1/workspace/settings", {
-      method: "PATCH",
-      headers: { "content-type": "application/json", ...as(owner.email) },
-      body: JSON.stringify({ automateBeta: false }),
-    })
-    expect(patched.status).toBeLessThan(300)
-
-    const { substrate } = fakeSubstrate()
-    await dispatchPass({ ...deps(substrate), operatorPays: true })
-    const runs = (await meta.listRuns("default", 200)).filter((r) => r.automation_id === auto.id)
-    expect(runs).toHaveLength(0)
-
-    await app.request("/v1/workspace/settings", {
-      method: "PATCH",
-      headers: { "content-type": "application/json", ...as(owner.email) },
-      body: JSON.stringify({ automateBeta: true }),
-    })
   })
 })

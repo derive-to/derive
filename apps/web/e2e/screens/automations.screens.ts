@@ -95,14 +95,6 @@ test("MCP sources: connect, automate, run", async ({ page }) => {
   await settle(page)
   note(`signed in at ${BASE ?? "local"}`)
 
-  // 1. Automate is gated per workspace, ships OFF, and has no UI control. Record the prior value
-  //    so it goes back exactly as found.
-  const before = await api(page, "/v1/workspace/settings")
-  const priorAutomate = (before.body as { automateBeta?: boolean })?.automateBeta
-  note(`automateBeta was ${String(priorAutomate)}`)
-  if (!priorAutomate)
-    await api(page, "/v1/workspace/settings", { method: "PATCH", body: { automateBeta: true } })
-
   // 2. Connect the MCP source THROUGH THE SOURCES SCREEN.
   await page.goto("/settings")
   await settle(page)
@@ -250,10 +242,6 @@ test("MCP sources: connect, automate, run", async ({ page }) => {
     note(
       `cleanup agent -> ${(await api(page, `/v1/agents/${agentId}`, { method: "DELETE" })).status}`,
     )
-  if (!priorAutomate) {
-    await api(page, "/v1/workspace/settings", { method: "PATCH", body: { automateBeta: false } })
-    note("automateBeta restored to false")
-  }
 
   writeFileSync(join(OUT, "walkthrough-log.txt"), notes.join("\n"))
 })

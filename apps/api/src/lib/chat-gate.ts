@@ -73,7 +73,7 @@ export const chatArrival = async (
   who: { org: string; userId: string; rateKey?: string; modelId?: string | null },
 ): Promise<ChatArrival> => {
   const settings = await deps.meta.getOrgSettings(who.org).catch(() => null)
-  if (!settings?.chatBeta) return { ok: false, reason: "not_enabled" }
+  if (!settings) return { ok: false, reason: "not_enabled" }
   if (deps.chatAllowlist?.length && !deps.chatAllowlist.includes(who.org))
     return { ok: false, reason: "not_allowlisted" }
 

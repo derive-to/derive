@@ -34,7 +34,6 @@ import {
 } from "../src/lib/runtime-schedule"
 import { INSTALL_RUNTIME_RUNNER, SETUP_RUNNER_PATH } from "../src/lib/runtime-setup"
 import { materializeAllDueRuns } from "../src/lib/schedule"
-import { log } from "../src/log"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // P3.5 — a context's connections are its hands in EVERY lane. Before this, connection ids
@@ -728,7 +727,6 @@ describe("Ortam runtime lifecycle", () => {
     const settings = await meta.getOrgSettings("default")
     await meta.setOrgSettings("default", {
       ...settings,
-      hostedAgentsEnabled: true,
       agentWrites: true,
     })
     const manifest = await publishAs(
@@ -828,7 +826,6 @@ describe("Ortam runtime lifecycle", () => {
     await meta.cancelQueuedRuntimeRun(f.run.id, "default", now.toISOString())
     await meta.setOrgSettings("default", {
       ...(await meta.getOrgSettings("default")),
-      automateBeta: true,
     })
     const saved = await saveSchedule(f.context.id, dailyTask)
     expect(saved.status).toBe(200)
@@ -1186,61 +1183,6 @@ describe("Ortam runtime lifecycle", () => {
     expect(f.sandbox.starts).toBe(0)
     expect(first && (await meta.getRun(first.id))?.status).toBe("failed")
     expect((await meta.getAutomation(f.schedule.id))?.instruction).toBe("Updated task")
-  })
-
-  it("explains gated and failed schedule admission without logging task or driver contents", async () => {
-    const f = await scheduled()
-    const info = vi.spyOn(log, "info").mockImplementation(() => {})
-    const warn = vi.spyOn(log, "warn").mockImplementation(() => {})
-    const privateError = "private task and database parameter contents"
-    try {
-      const settings = await meta.getOrgSettings("default")
-      await meta.setOrgSettings("default", { ...settings, automateBeta: false })
-      await materializeRuntimeSchedules(meta, now, config.pilotWorkspaceIds)
-      expect(await meta.latestRunForAutomation(f.schedule.id, "schedule")).toBeNull()
-      expect(info).toHaveBeenCalledWith(
-        "runtime schedule skipped",
-        expect.objectContaining({ automation: f.schedule.id, reason: "automations_disabled" }),
-      )
-      await meta.setOrgSettings("default", settings)
-      const create = vi.spyOn(meta, "createRun").mockImplementationOnce(async () => {
-        throw new Error(privateError, {
-          cause: Object.assign(new Error(privateError), { code: "42P01" }),
-        })
-      })
-      // Keep this failure on the selected schedule even if another test left a definition.
-      const list = vi.spyOn(meta, "listRuntimeSchedules").mockResolvedValue([f.schedule])
-      try {
-        await materializeRuntimeSchedules(meta, now, config.pilotWorkspaceIds)
-        expect(await meta.latestRunForAutomation(f.schedule.id, "schedule")).toBeNull()
-        expect(warn).toHaveBeenCalledWith(
-          "runtime schedule admission deferred",
-          expect.objectContaining({ automation: f.schedule.id, stage: "insert", reason: "schema" }),
-        )
-        const recovered = await materializeRuntimeSchedules(meta, now, config.pilotWorkspaceIds)
-        expect(recovered).toEqual({ schedules: 1, admitted: 1, skipped: {} })
-        expect(await meta.latestRunForAutomation(f.schedule.id, "schedule")).toMatchObject({
-          status: "queued",
-          scheduled_for: now.toISOString(),
-        })
-        expect(await materializeRuntimeSchedules(meta, now, config.pilotWorkspaceIds)).toEqual({
-          schedules: 1,
-          admitted: 0,
-          skipped: { already_admitted: 1 },
-        })
-        const recorded = JSON.stringify([info.mock.calls, warn.mock.calls])
-        expect(recorded).not.toContain(privateError)
-        expect(recorded).not.toContain(dailyTask.instruction)
-        expect(recorded).not.toContain(f.connection.secret_enc)
-      } finally {
-        create.mockRestore()
-        list.mockRestore()
-      }
-    } finally {
-      info.mockRestore()
-      warn.mockRestore()
-      await saveSchedule(f.context.id, { ...dailyTask, revision: 0, enabled: false })
-    }
   })
 
   it("rejects a launched but unclaimed task after pause and still shuts down", async () => {
@@ -1645,7 +1587,6 @@ describe("runtime provisioning and shared model accounts", () => {
     const settings = await meta.getOrgSettings("default")
     await meta.setOrgSettings("default", {
       ...settings,
-      hostedAgentsEnabled: true,
       agentWrites: true,
     })
     const manifest = await (
@@ -1852,7 +1793,7 @@ describe("runtime provisioning and shared model accounts", () => {
     const f = await fixture()
     const model = await modelAccount(f.context.id, existingId)
     const settings = await meta.getOrgSettings("default")
-    await meta.setOrgSettings("default", { ...settings, automateBeta: true })
+    await meta.setOrgSettings("default", { ...settings })
     expect((await app.request(`${f.path}/setup`, jsonAs(as(owner.email), {}))).status).toBe(202)
     for (let i = 0; i < 9; i++) await pass()
     const runtime = await meta.getContextRuntimeForContext(f.context.id, "default")
@@ -2406,10 +2347,6 @@ describe("runtime provisioning and shared model accounts", () => {
   it("runs a saved cloud workflow on demand with automation disabled and after pausing its schedule", async () => {
     for (const cron of [null, "0 9 * * *"]) {
       const f = await managedJob()
-      await meta.setOrgSettings("default", {
-        ...(await meta.getOrgSettings("default")),
-        automateBeta: false,
-      })
       const saved = await app.request(`${f.path}/schedule`, {
         ...jsonAs(as(owner.email), {
           instruction: "Check saved files",
@@ -2788,7 +2725,7 @@ describe("runtime provisioning and shared model accounts", () => {
     config.managed.workspaceIds.add("default")
     config.pilotWorkspaceIds.clear()
     const settings = await meta.getOrgSettings("default")
-    await meta.setOrgSettings("default", { ...settings, automateBeta: true })
+    await meta.setOrgSettings("default", { ...settings })
     const model = await modelAccount(f.context.id)
     expect(
       (

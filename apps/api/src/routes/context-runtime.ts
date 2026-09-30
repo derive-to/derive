@@ -166,8 +166,7 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
     if (!(await runtimeAvailable(ctx, c, context.org_id)))
       return fail(c, 403, "Cloud run pilot is unavailable")
     const settings = await meta.getOrgSettings(context.org_id)
-    if (!settings.hostedAgentsEnabled || !settings.agentWrites)
-      return fail(c, 403, "Enable hosted agents and agent writes for this workspace")
+    if (!settings.agentWrites) return fail(c, 403, "Agent writes are paused for this workspace")
     const runtime = await meta.getContextRuntimeForContext(context.id, context.org_id)
     if (!runtime || runtime.disabled_at) return fail(c, 409, "Context runtime is unavailable")
     const managed = runtime.connection_id === null

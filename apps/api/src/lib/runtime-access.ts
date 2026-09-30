@@ -57,7 +57,7 @@ export async function runtimeRunContext(
   )
     return null
   const settings = await meta.getOrgSettings(run.org_id)
-  if (!settings.hostedAgentsEnabled || !settings.agentWrites) return null
+  if (!settings.agentWrites) return null
   const context = await meta.getContext(runtime.context_id)
   const agent = await meta.getAgent(run.agent_id)
   const member = await meta.getMembership(run.org_id, run.initiated_by)

@@ -1701,12 +1701,8 @@ test("formats a selection that starts inside a link and crosses an annotation", 
 })
 
 test("Inspect appears only inside an editor's HTML edit session", async ({ owner, secondUser }) => {
-  // Make the shared chat tab explicit for this isolated workspace. The resting artifact
-  // is conversation-only; Inspect appears only after the existing Edit entry point.
-  const settings = await owner.request.patch("/v1/workspace/settings", {
-    data: { chatBeta: true },
-  })
-  expect(settings.ok(), `settings patch failed: ${settings.status()}`).toBeTruthy()
+  // The resting artifact is conversation-only; Inspect appears only after the existing Edit
+  // entry point.
 
   const shortId = await publishArtifact(owner, "rail.html", RESIZE_DOC, "text/html")
   await openArtifact(owner, shortId)

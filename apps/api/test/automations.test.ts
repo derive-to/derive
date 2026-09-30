@@ -99,10 +99,6 @@ describe("automations + runs", () => {
     })
     providers.push("codex")
     const settings = await hosted.meta.getOrgSettings("default")
-    await hosted.meta.setOrgSettings("default", { ...settings, hostedAgentsEnabled: false })
-    expect(await (await start()).json()).toMatchObject({
-      error: "Hosted agents are disabled in workspace settings.",
-    })
     await hosted.meta.setOrgSettings("default", { ...settings, agentWrites: false })
     expect(await (await start()).json()).toMatchObject({
       error: "Agent writes are paused in workspace settings.",

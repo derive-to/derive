@@ -152,9 +152,7 @@ function WorkflowIndex() {
             </TabsContent>
             <TabsContent value="task" className="flex flex-col gap-4 pt-4">
               <ExecutionReadiness />
-              {owner && settings.data?.automateBeta && (
-                <AutomationForm onDone={() => setCreating(false)} />
-              )}
+              {owner && <AutomationForm onDone={() => setCreating(false)} />}
             </TabsContent>
           </Tabs>
         </DialogContent>

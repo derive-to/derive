@@ -74,10 +74,10 @@ export async function workflowReadiness(
     add("workspace_unavailable", "Cloud workflows are not available in this workspace.")
   if (!canRun)
     add("permission_required", "Ask the workflow owner for permission to run this workflow.")
-  if (!settings.hostedAgentsEnabled || !settings.agentWrites)
+  if (!settings.agentWrites)
     add(
       "workspace_consent_required",
-      "A workspace administrator needs to enable hosted agents and agent writes.",
+      "A workspace administrator needs to turn agent writes back on.",
       member && roleAllows(member.role, "manage") ? "settings" : null,
     )
   if (!config || config.runnerPath !== SETUP_RUNNER_PATH)

@@ -858,7 +858,6 @@ describe("workflow run: explicit local-agent handoff", () => {
     ).json()
     await meta.setOrgSettings("default", {
       ...(await meta.getOrgSettings("default")),
-      automateBeta: true,
     })
     await meta.setGithubApp({
       id: "default",

@@ -401,9 +401,8 @@ export function Artifact({ template = false }: { template?: boolean }) {
     staleTime: 60_000,
     enabled: !!me && art?.is_workspace_member === true,
   }).data
-  const chatBeta = settings?.chatBeta === true
-  // Automations are BETA the same way, read from the same fetch.
-  const automateBeta = settings?.automateBeta === true
+  const chatBeta = !!settings
+  const automateBeta = !!settings
   const chat = useArtifactChat(shortId)
   const [composer, setComposer] = useState<ComposerState>(null)
   const [activeThread, setActiveThread] = useState<string | null>(null)

@@ -388,7 +388,7 @@ export function NavRail() {
   // — `undefined` (still loading, or the read failed) keeps the row rather than blinking it out
   // and back on every cold boot. It rides the boot batch the rail already waits for, so this
   // costs no request of its own.
-  const chatOn = settings ? settings.chatBeta === true : true
+  const chatOn = true
 
   // Picking a destination on mobile closes the drawer (no-op on desktop).
   const closeMobile = () => setOpenMobile(false)

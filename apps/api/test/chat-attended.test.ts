@@ -30,7 +30,6 @@ const setup = async (name: string, reply: string) => {
   // — which is itself the proof that the default is closed.
   await meta.setOrgSettings("default", {
     ...(await meta.getOrgSettings("default")),
-    chatBeta: true,
   })
 
   // The document being chatted about.
@@ -135,7 +134,6 @@ describe("the document rail obeys the operator's deploy-wide model", () => {
     })
     await meta.setOrgSettings("default", {
       ...(await meta.getOrgSettings("default")),
-      chatBeta: true,
     })
     const res = await app.request("/v1/artifacts", {
       method: "POST",
@@ -275,41 +273,6 @@ describe("the subject is authorized separately from the context", () => {
   })
 })
 
-describe("the beta gate", () => {
-  it("REFUSES a workspace that has explicitly turned chat OFF", async () => {
-    // Chat is ON by default now, so the case worth gating is the workspace that opted OUT.
-    // A flag that only hides a button is not a gate: the route is reachable directly, and this
-    // is the lane that spends the operator's model key.
-    const users = [{ id: "u-ed", email: "ed@x.com", name: "Ed" }]
-    const { app } = makeAuthedApp("chat-beta-off", users, undefined, {
-      deps: { callModel: async () => ({ text: "hi", toolUses: [], costUsd: null, done: true }) },
-    })
-    const made = await app.request("/v1/artifacts", {
-      method: "POST",
-      headers: as("ed@x.com"),
-      body: (() => {
-        const f = new FormData()
-        f.set("file", new Blob(["# Doc"], { type: "text/markdown" }), "doc.md")
-        f.set("title", "Doc")
-        return f
-      })(),
-    })
-    const { short_id } = (await made.json()) as { short_id: string }
-    // Opt OUT, which is now the deliberate act.
-    await app.request("/v1/workspace/settings", {
-      method: "PATCH",
-      headers: { ...as("ed@x.com"), "content-type": "application/json" },
-      body: JSON.stringify({ chatBeta: false }),
-    })
-    const res = await app.request("/v1/artifacts/chat-session", {
-      method: "POST",
-      headers: { ...as("ed@x.com"), "content-type": "application/json" },
-      body: JSON.stringify({ short_id, body_md: "hello" }),
-    })
-    expect(res.status).toBe(404)
-  })
-})
-
 describe("chat obeys the workspace's agent-write switch", () => {
   const withSettings = async (name: string, settings: Record<string, unknown>) => {
     const users = [{ id: "u-ed", email: "ed@x.com", name: "Ed" }]
@@ -325,7 +288,6 @@ describe("chat obeys the workspace's agent-write switch", () => {
     })
     await meta.setOrgSettings("default", {
       ...(await meta.getOrgSettings("default")),
-      chatBeta: true,
       ...settings,
     })
     const made = await app.request("/v1/artifacts", {
@@ -389,7 +351,6 @@ describe("access is re-checked on every turn, not just at session open", () => {
     })
     await meta.setOrgSettings("default", {
       ...(await meta.getOrgSettings("default")),
-      chatBeta: true,
     })
     const made = await app.request("/v1/artifacts", {
       method: "POST",
@@ -447,7 +408,6 @@ describe("the allowlist, when the OPERATOR's key pays", () => {
     // The workspace opts ITSELF in — which is exactly the move the allowlist has to survive.
     await meta.setOrgSettings("default", {
       ...(await meta.getOrgSettings("default")),
-      chatBeta: true,
     })
     const made = await app.request("/v1/artifacts", {
       method: "POST",
@@ -468,8 +428,7 @@ describe("the allowlist, when the OPERATOR's key pays", () => {
   }
 
   it("REFUSES a workspace that enabled chat but is not on the list", async () => {
-    // The abuse this closes: chatBeta is gated on `manage`, so on a shared host any workspace
-    // owner can switch it on. Without the allowlist that is a self-serve licence to spend the
+    // The abuse this closes: on a shared host, any workspace could otherwise spend the
     // operator's model key.
     const res = await setup("allow-no", ["ws_someone_else"])
     expect(res.status).toBe(404)
@@ -511,7 +470,6 @@ describe("chat requires membership, not merely read access", () => {
     })
     await meta.setOrgSettings("default", {
       ...(await meta.getOrgSettings("default")),
-      chatBeta: true,
     })
     const made = await app.request("/v1/artifacts", {
       method: "POST",
@@ -611,7 +569,6 @@ describe("follow-ups are limited, budgeted, and gated", () => {
     })
     await meta.setOrgSettings("default", {
       ...(await meta.getOrgSettings("default")),
-      chatBeta: true,
     })
     const made = await app.request("/v1/artifacts", {
       method: "POST",
@@ -686,27 +643,6 @@ describe("follow-ups are limited, budgeted, and gated", () => {
     const msgs = await meta.listSessionMessages(session.id)
     expect(msgs.some((m) => m.body_md === "and again")).toBe(false)
   })
-
-  it("stops serving a SUBJECT-bearing context session once chatBeta is off", async () => {
-    // The gate used to hang off `!s.context_id`. Chat also wears a context: a session opened
-    // through POST /v1/contexts/:id/sessions with a `subject` is gated on chatBeta at creation
-    // and then, once open, served turns forever after the flag came off. A kill switch that
-    // leaves every existing conversation running is not a kill switch.
-    const { app, meta, session, followUp } = await chatApp("chat-followup-gate")
-    await meta.setOrgSettings("default", {
-      ...(await meta.getOrgSettings("default")),
-      chatBeta: false,
-    })
-    const before = (await meta.listSessionMessages(session.id)).length
-    const res = await followUp("keep going")
-    // The message is recorded (the asker typed it) but NOTHING is served.
-    expect(res.status).toBe(201)
-    await new Promise((r) => setTimeout(r, 150))
-    const after = await meta.listSessionMessages(session.id)
-    expect(after.length).toBe(before + 1)
-    expect(after.at(-1)?.author_kind).toBe("asker")
-    void app
-  })
 })
 
 // ---- Streaming the reply --------------------------------------------------
@@ -747,7 +683,6 @@ describe("an attended reply streams, then settles", () => {
     })
     await meta.setOrgSettings("default", {
       ...(await meta.getOrgSettings("default")),
-      chatBeta: true,
     })
     const created = await app.request("/v1/artifacts", {
       method: "POST",

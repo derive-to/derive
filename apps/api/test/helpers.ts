@@ -346,7 +346,6 @@ export const makeAuthedApp = (
     isolated?: boolean
     deps?: Partial<AppDeps>
     noPlan?: boolean
-    noAutomate?: boolean
     operatorIds?: string[]
   },
 ) => {
@@ -372,24 +371,10 @@ export const makeAuthedApp = (
   //
   // Gating `app.request` covers both: whoever calls first pays the wait, it always completes
   // before the pool closes, and there is no floating promise to go unhandled.
-  // Seeded on the same awaited-on-first-request promise as the plan, and for the same reason: a
-  // floating write races the pool's close, and a beforeAll hook never fires for suites that build
-  // their app inside a test.
-  //
-  // AUTOMATIONS ARE BETA and off per workspace, so the shared test workspace opts IN here rather
-  // than in each of the fifteen suites that create one. That the default is closed is proved
-  // deliberately in automate-gate.test.ts, which builds apps WITHOUT this seed, instead of being
-  // proved incidentally by every other suite having to remember.
   const planReady = (async () => {
     const authorityStore = opts?.deps?.meta ?? m
     for (const userId of opts?.operatorIds ?? []) await authorityStore.addInstanceOperator(userId)
     if (!opts?.noPlan) await connectPoolPlan(m, "default").catch(() => undefined)
-    // `noAutomate` opts OUT: the suite that asserts the shipped DEFAULTS has to see the real ones,
-    // and a blanket seed would have made that assertion quietly lie about this exact field.
-    if (opts?.noAutomate) return
-    const current = await m.getOrgSettings("default").catch(() => null)
-    if (current)
-      await m.setOrgSettings("default", { ...current, automateBeta: true }).catch(() => undefined)
   })()
   appSeeds.push(planReady)
   const deps: AppDeps = {
@@ -416,7 +401,7 @@ export const makeAuthedApp = (
   // THE STORE IS GATED ON THE SAME PROMISE, and it has to be.
   //
   // `planReady` does a READ-MODIFY-WRITE of org settings (it reads the row, then writes it back
-  // with automateBeta on). A test that writes settings directly — comment-fanout's "email
+  // with the pool plan). A test that writes settings directly — comment-fanout's "email
   // toggle off", say — goes through the store, which was NOT gated, so the two raced: when the
   // seed's write landed second it put back the copy it had read BEFORE the test's write, and
   // the toggle the test had just switched off came back on. The test then failed asserting on

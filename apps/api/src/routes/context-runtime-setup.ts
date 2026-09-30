@@ -27,8 +27,7 @@ export const contextRuntimeSetupRoutes = (ctx: AppContext) => {
       return fail(c, 503, "Pinned runtime provisioning is not configured")
     if (context.import_source) return fail(c, 400, "Imported Contexts cannot run agents")
     const settings = await meta.getOrgSettings(context.org_id)
-    if (!settings.hostedAgentsEnabled || !settings.agentWrites)
-      return fail(c, 403, "Enable hosted agents and agent writes for this workspace")
+    if (!settings.agentWrites) return fail(c, 403, "Agent writes are paused for this workspace")
     const body = await readJson(
       c,
       z.object({ connection_id: z.string().min(1).max(64).optional() }),
