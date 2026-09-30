@@ -18,7 +18,8 @@ export function Inbox() {
   useDocumentTitle("Inbox")
   const jobs = useQuery({ ...inboxJobsQuery(), refetchInterval: 15_000 })
   const agents = useQuery(agentsQuery())
-  const activity = useQuery(workspaceActivityQuery())
+  // Shared with the rail, which keeps it warm for 30s; the inbox always reads it fresh.
+  const activity = useQuery({ ...workspaceActivityQuery(), refetchOnMount: "always" })
   const names = new Map((agents.data ?? []).map((a) => [a.id, a]))
 
   return (

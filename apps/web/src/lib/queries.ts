@@ -657,6 +657,9 @@ export const inboxJobsQuery = () =>
     queryKey: ["jobs", "inbox"] as const,
     queryFn: () =>
       api.listJobs({ mine: true, status: ["needs_you"], limit: 100 }).then((r) => r.jobs),
+    // A count of what waits on you must never paint from a stale or restored copy.
+    staleTime: 0,
+    meta: { persist: false },
   })
 
 // The job a report page belongs to, or null for an ordinary page.
