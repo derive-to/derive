@@ -17,6 +17,7 @@ import { readEnvironmentBindings } from "../lib/context-environment"
 import { decryptSecret } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 import { resolveJobCredential } from "../lib/job-accounts"
+import { advanceGraph, graphAware } from "../lib/job-graph"
 import {
   answerJob,
   askAgent,
@@ -30,6 +31,8 @@ import {
   reportJob,
   retryJob,
 } from "../lib/jobs"
+import { runtimeFailureReason } from "../lib/runtime-diagnostics"
+import { log } from "../log"
 
 // JOBS: the one unit of agent work (lib/jobs.ts). Two audiences:
 //
@@ -140,7 +143,7 @@ const KINDS = ["ask", "scheduled", "graph", "node"] as const
 export const jobRoutes = (ctx: AppContext) => {
   const { meta, deps, agentFor, actingHuman } = ctx
   const app = new OpenAPIHono<BlankEnv>()
-  const jobDeps = { meta, bus: ctx.backplane }
+  const jobDeps = graphAware({ meta, bus: ctx.backplane, blobs: ctx.blobs })
 
   const messageJson = (m: {
     id: string
@@ -545,6 +548,14 @@ export const jobRoutes = (ctx: AppContext) => {
     }
     const out = await reportJob(jobDeps, agent, c.req.param("id"), report)
     if ("error" in out) return fail(c, out.status as 404 | 409, out.error)
+    // A graph step settled: move its graph on now rather than at the next tick.
+    if (out.job.parent_id && out.job.status !== "running") {
+      const parent = await meta.getJob(out.job.parent_id)
+      if (parent?.kind === "graph")
+        await advanceGraph(jobDeps, parent).catch((e) =>
+          log.warn("graph advance deferred", { job: parent.id, reason: runtimeFailureReason(e) }),
+        )
+    }
     return c.json({ job: await showOne(out.job) })
   })
 

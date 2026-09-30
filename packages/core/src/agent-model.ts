@@ -347,6 +347,8 @@ export interface AgentModelStore<Agent = unknown> {
   ): Promise<JobRecord | null>
   /** Jobs still holding or returning a sandbox (machine_phase set and not released). */
   listMachineJobs(limit: number): Promise<JobRecord[]>
+  /** Graph jobs the server is walking or about to start (queued or running). */
+  listOpenGraphJobs(limit: number): Promise<JobRecord[]>
   addJobMessage(m: NewJobMessage): Promise<JobMessageRecord>
   listJobMessages(jobId: string): Promise<JobMessageRecord[]>
 

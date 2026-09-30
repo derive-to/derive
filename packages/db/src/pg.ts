@@ -760,6 +760,7 @@ export class PgMetaStore implements MetaStore {
   listAgentsInSandboxPhase = this.agentModel.listAgentsInSandboxPhase
   transitionJobMachine = this.agentModel.transitionJobMachine
   listMachineJobs = this.agentModel.listMachineJobs
+  listOpenGraphJobs = this.agentModel.listOpenGraphJobs
   addJobMessage = this.agentModel.addJobMessage
   listJobMessages = this.agentModel.listJobMessages
   createTrigger = this.agentModel.createTrigger

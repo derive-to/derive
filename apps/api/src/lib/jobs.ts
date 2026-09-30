@@ -35,6 +35,9 @@ export const JOB_MAX_ATTEMPTS = RUN_MAX_ATTEMPTS
 export interface JobDeps {
   meta: MetaStore
   bus?: Pick<Backplane, "publish">
+  /** Is this agent a graph (its instructions page holds a workflow)? Its work opens as `graph`
+   *  jobs the server walks. Absent: never (a caller with no page store). */
+  isGraph?: (agent: AgentRecord) => Promise<boolean>
 }
 
 const iso = (ms = Date.now()) => new Date(ms).toISOString()
@@ -125,12 +128,14 @@ export const askAgent = async (
     if (open) return { job: open, created: false }
   }
   let job: JobRecord
+  const kind =
+    input.kind ?? ((await deps.isGraph?.(input.agent).catch(() => false)) ? "graph" : "ask")
   try {
     job = await meta.createJob({
       id: newId("job"),
       org_id: input.agent.org_id,
       agent_id: input.agent.id,
-      kind: input.kind ?? "ask",
+      kind,
       instruction: input.instruction,
       asked_by: input.askedBy,
       attended: input.attended ? 1 : 0,
@@ -269,9 +274,12 @@ export const pullJobs = async (
   if (agent.paused_at || (await agentWritesOff(meta, agent.org_id))) return []
   // A Derive machine's work is dispatched to its sandbox, never pulled by another runner.
   if (agent.machine === "derive") return []
-  await materializeTriggers(meta, now, { agentId: agent.id, orgId: agent.org_id }).catch((e) =>
-    log.warn("jobs: materialize on pull failed", { reason: runtimeFailureReason(e) }),
-  )
+  await materializeTriggers(
+    meta,
+    now,
+    { agentId: agent.id, orgId: agent.org_id },
+    deps.isGraph,
+  ).catch((e) => log.warn("jobs: materialize on pull failed", { reason: runtimeFailureReason(e) }))
   const running = await meta.countRunningJobs(agent.id, stamp)
   const room = Math.max(0, agent.max_concurrency - running)
   if (room === 0) return []
@@ -414,6 +422,7 @@ export const materializeTriggers = async (
   meta: MetaStore,
   now: Date,
   scope: { agentId?: string; orgId?: string; orgIds?: readonly string[] } = {},
+  isGraph?: JobDeps["isGraph"],
 ): Promise<number> => {
   const triggers: TriggerRecord[] = scope.orgId
     ? (await meta.listTriggers(scope.orgId, scope.agentId)).filter(
@@ -446,7 +455,7 @@ export const materializeTriggers = async (
         id: newId("job"),
         org_id: t.org_id,
         agent_id: t.agent_id,
-        kind: "scheduled",
+        kind: (await isGraph?.(agent).catch(() => false)) ? "graph" : "scheduled",
         instruction: t.instruction,
         trigger_id: t.id,
         scheduled_for: window,
@@ -469,7 +478,7 @@ export const jobTick = async (
 ): Promise<{ materialized: number; requeued: number; lost: number }> => {
   const out = { materialized: 0, requeued: 0, lost: 0 }
   try {
-    out.materialized = await materializeTriggers(deps.meta, now, { orgIds })
+    out.materialized = await materializeTriggers(deps.meta, now, { orgIds }, deps.isGraph)
   } catch (e) {
     log.warn("jobs: materialize failed", { reason: runtimeFailureReason(e) })
   }
