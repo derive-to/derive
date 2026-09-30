@@ -11,7 +11,13 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { selectProvider } from "./providers/index.js"
-import { buildPrompt, runAgent, stripModelTokens, toMicroUsd } from "./runner.js"
+import {
+  buildPrompt,
+  resolveArtifactHtml,
+  runAgent,
+  stripModelTokens,
+  toMicroUsd,
+} from "./runner.js"
 
 const positiveMs = (raw, fallback, floor) => {
   const n = Number(raw)
@@ -71,6 +77,34 @@ export class JobClient {
     return parsed
   }
 
+  /** Publish a new page through the ordinary publish route, as the agent. */
+  async publish({ title, filename, type, body, shortId }) {
+    const form = new FormData()
+    form.set("file", new Blob([body], { type }), filename)
+    if (!shortId) form.set("title", title)
+    const res = await this.fetch(
+      `${this.cfg.server}/v1/artifacts${shortId ? `/${encodeURIComponent(shortId)}/versions` : ""}`,
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${this.cfg.token}` },
+        body: form,
+      },
+    )
+    if (!res.ok) throw new Error(`publish → ${res.status}: ${(await res.text()).slice(0, 200)}`)
+    return res.json()
+  }
+
+  /** The job's report page: a new version of the one it already has, or its first. */
+  publishReport(job, md) {
+    return this.publish({
+      title: reportTitle(job),
+      filename: "report.md",
+      type: "text/markdown",
+      body: md,
+      shortId: job.report_short_id ?? undefined,
+    })
+  }
+
   pull(limit = 10) {
     return this.req(`/v1/agents/${this.cfg.agentId}/pull`, { method: "POST", body: { limit } })
   }
@@ -100,6 +134,36 @@ const runnerFreeEnv = (env) => {
   const out = stripModelTokens(env)
   for (const k of ["DERIVE_TOKEN", "DERIVE_AGENT", "DERIVE_SERVER"]) delete out[k]
   return out
+}
+
+const firstLine = (s) =>
+  (s ?? "")
+    .split("\n")
+    .find((l) => l.trim())
+    ?.trim() ?? ""
+const reportTitle = (job) => firstLine(job.instruction).slice(0, 120) || `Job ${job.id}`
+
+/** The report every job leaves: what was asked, what was done, what to look at twice, what it
+ *  made, and how it knows. Sections with nothing to say are left out. */
+export function reportMarkdown(job, answer, { made = [], flagged = [], cfg = {} } = {}) {
+  const asked = [...(job.messages ?? [])].reverse().find((m) => m.author_kind === "asker")?.body_md
+  const parts = [
+    `# ${reportTitle(job)}`,
+    "",
+    "## Asked",
+    "",
+    asked ?? job.instruction ?? "",
+    "",
+    "## Did",
+    "",
+    answer.body_md ?? "",
+  ]
+  if (flagged.length) parts.push("", "## Flagged", "", ...flagged.map((f) => `- ${f}`))
+  if (made.length) parts.push("", "## Made", "", ...made.map((m) => `- ${m.title} (${m.short_id})`))
+  if (answer.query) parts.push("", "## Evidence", "", "```", answer.query, "```")
+  const model = cfg.model ?? job.execution?.model ?? job.execution?.provider ?? ""
+  parts.push("", "---", "", `\`${[job.id, model].filter(Boolean).join(" · ")}\``)
+  return `${parts.join("\n")}\n`
 }
 
 /** The system prompt for one job: the agent's standing instructions, then what this job is. */
@@ -203,20 +267,45 @@ export async function serveJob(client, job, cfg, deps = {}) {
       return "failed"
     }
     const a = result.answer
+    // What the answer made (a chart page), then the job's report page. Either failing demotes
+    // to a line in the reply: the answer itself still lands.
+    const made = []
+    const flagged = [...(a.caveats ?? [])]
+    if (a.artifact && !cfg.mock) {
+      try {
+        const src = resolveArtifactHtml(a.artifact, cfg.cwd)
+        if (src.error) throw new Error(src.error)
+        const pub = await client.publish({
+          title: a.artifact.title,
+          filename: "page.html",
+          type: "text/html",
+          body: src.html,
+        })
+        made.push({ title: a.artifact.title, short_id: pub.short_id })
+      } catch (e) {
+        flagged.push(`The page it made could not be published: ${e.message}`)
+      }
+    }
+    let report = null
+    try {
+      report = await client.publishReport(job, reportMarkdown(job, a, { made, flagged, cfg }))
+    } catch (e) {
+      console.error(`[runner] job ${job.id}: report not published: ${e.message}`)
+    }
+    const common = {
+      body_md: a.body_md,
+      ...(report?.short_id ? { report_short_id: report.short_id } : {}),
+      ...(cost !== null ? { cost_micro_usd: cost } : {}),
+    }
     if (a.escalate) {
       await client.report(job, {
         status: "needs_you",
-        body_md: a.body_md,
+        ...common,
         needs: { kind: "escalation", question: a.escalation_reason ?? "This needs a person." },
-        ...(cost !== null ? { cost_micro_usd: cost } : {}),
       })
       return "needs_you"
     }
-    await client.report(job, {
-      status: "succeeded",
-      body_md: a.body_md,
-      ...(cost !== null ? { cost_micro_usd: cost } : {}),
-    })
+    await client.report(job, { status: "succeeded", ...common })
     return "succeeded"
   } catch (e) {
     console.error(`[runner] job ${job.id} failed: ${e.message}`)
@@ -243,6 +332,29 @@ export async function jobDrainPass(cfg, client = new JobClient(cfg)) {
     }),
   )
   return counts
+}
+
+/** The Derive machine's entry: one `dkjob_` token, one job, then exit. The job is already
+ *  claimed server-side; this fetches it, does it, and reports it. */
+export function loadOneJobConfig(env = process.env, flags = {}) {
+  const token = flags.token ?? env.DERIVE_TOKEN ?? ""
+  const jobId = flags.job ?? env.DERIVE_JOB_ID ?? ""
+  if (!token.startsWith("dkjob_") || !jobId)
+    throw new Error("runner run needs a job token (DERIVE_TOKEN=dkjob_...) and DERIVE_JOB_ID")
+  return {
+    ...loadJobRunnerConfig(env, { ...flags, token, agent: "from-job" }),
+    jobId,
+  }
+}
+
+export async function runOneJob(cfg, client = new JobClient(cfg), deps = {}) {
+  const { job } = await client.req(`/v1/jobs/${encodeURIComponent(cfg.jobId)}/work`)
+  return serveJob(
+    client,
+    job,
+    { ...cfg, agentId: job.agent_id },
+    { meter: { costUsd: null }, ...deps },
+  )
 }
 
 export async function serveJobs(cfg) {

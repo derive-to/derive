@@ -36,6 +36,7 @@ import {
   superAdminsFromEnv,
   workspaceIdsFromEnv,
 } from "./lib/env"
+import { machineDepsFrom, machinePass } from "./lib/job-machine"
 import { jobTick } from "./lib/jobs"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { getInstanceSlot } from "./lib/model-library"
@@ -815,13 +816,31 @@ async function jobTickEdge(env: Env): Promise<void> {
   const pass = async () => {
     const meta = env.HYPERDRIVE ? PgMetaStore.fromPool(livePgPool) : createD1Store(liveD1)
     await jobTick({ meta }, new Date())
+    const machines = machineDepsFrom(meta, {
+      secret: env.DERIVE_AUTH_SECRET,
+      server: env.BASE_URL,
+      config: env.DERIVE_ORTAM_RUNNER_PATH
+        ? {
+            runnerPath: env.DERIVE_ORTAM_RUNNER_PATH,
+            apiUrl: env.DERIVE_ORTAM_API_URL ?? "https://api.ortam.dev/v1",
+            pilotWorkspaceIds: new Set<string>(),
+            managed: env.DERIVE_ORTAM_INTEGRATION_KEY
+              ? {
+                  apiKey: env.DERIVE_ORTAM_INTEGRATION_KEY,
+                  workspaceIds: workspaceIdsFromEnv(env.DERIVE_MANAGED_RUNS_ALLOWLIST),
+                }
+              : undefined,
+          }
+        : undefined,
+    })
+    if (machines) await machinePass(machines)
   }
   try {
     await (env.HYPERDRIVE
       ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), pass)
       : requestD1.run(env.DB, pass))
   } catch (error) {
-    log.warn("job tick failed", { error: error instanceof Error ? error.message : String(error) })
+    log.warn("job tick failed", { reason: runtimeFailureReason(error) })
   }
 }
 

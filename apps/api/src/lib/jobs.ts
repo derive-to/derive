@@ -267,6 +267,8 @@ export const pullJobs = async (
   if (!agent.seen_at || now.getTime() - new Date(agent.seen_at).getTime() > 60_000)
     await meta.touchAgentSeen(agent.id, stamp).catch(() => {})
   if (agent.paused_at || (await agentWritesOff(meta, agent.org_id))) return []
+  // A Derive machine's work is dispatched to its sandbox, never pulled by another runner.
+  if (agent.machine === "derive") return []
   await materializeTriggers(meta, now, { agentId: agent.id, orgId: agent.org_id }).catch((e) =>
     log.warn("jobs: materialize on pull failed", { reason: runtimeFailureReason(e) }),
   )
@@ -331,9 +333,16 @@ export const reportJob = async (
     })
 
   if (r.status === "progress") {
+    // On a Derive machine the lease was set past the machine's own deadline; a progress tick
+    // must not pull it in, or reclaim would race a machine that is still stopping.
+    const renew = leaseUntilFor(agent.max_run_ms)
+    const onMachine = job.machine_phase !== null && job.machine_phase !== "released"
     const renewed = await meta.updateJob(
       job.id,
-      { lease_until: leaseUntilFor(agent.max_run_ms) },
+      {
+        lease_until:
+          onMachine && job.lease_until && job.lease_until > renew ? job.lease_until : renew,
+      },
       fence,
     )
     if (!renewed) return { error: "this claim has been superseded", status: 409 }

@@ -29,6 +29,7 @@ import { sweepExpiredDrafts } from "./lib/drafts"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
 import { workspaceIdsFromEnv } from "./lib/env"
 import { sharpShrinker } from "./lib/image-shrink-node"
+import { machineDepsFrom, machinePass } from "./lib/job-machine"
 import { jobTick } from "./lib/jobs"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { getInstanceSlot, modelSource, readLibrary } from "./lib/model-library"
@@ -717,7 +718,13 @@ if (cfg.backgroundWorkers) {
   const tick = () => {
     if (ticking) return
     ticking = true
+    const machines = machineDepsFrom(meta, {
+      secret: authSecret,
+      server: cfg.baseUrl,
+      config: runtimeConfig,
+    })
     void jobTick({ meta }, new Date())
+      .then(() => (machines ? machinePass(machines) : undefined))
       .catch(() => log.warn("job tick failed"))
       .finally(() => {
         ticking = false

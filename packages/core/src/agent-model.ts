@@ -57,6 +57,26 @@ export interface JobResult {
   route?: { node_id: string; attempt: number; selected?: string[]; decision?: string }[]
 }
 
+/** A Derive machine (one Ortam sandbox per agent): created lazily, then stopped between jobs.
+ *  `ready` is stopped and idle; `busy` is lent to one job (its id in sandbox_state_json). */
+export type AgentSandboxPhase =
+  | "creating"
+  | "provisioning"
+  | "stopping"
+  | "ready"
+  | "busy"
+  | "deleting"
+  | "failed"
+/** One job's turn on its agent's sandbox. `released` means the sandbox is stopped and handed
+ *  back; nothing further happens. */
+export type JobMachinePhase =
+  | "starting"
+  | "ready"
+  | "launching"
+  | "running"
+  | "stopping"
+  | "released"
+
 export interface JobRecord {
   id: string
   org_id: string
@@ -81,6 +101,10 @@ export interface JobRecord {
   report_artifact_id: string | null
   result_json: string | null
   meta_json: string | null
+  /** Where the job stands on a Derive machine; null on owner machines. */
+  machine_phase: JobMachinePhase | null
+  machine_json: string | null
+  machine_rev: number
   created_at: string
   updated_at: string
 }
@@ -300,6 +324,29 @@ export interface AgentModelStore<Agent = unknown> {
   sumJobCostSince(orgId: string, since: string): Promise<number>
   /** Add spend to a job in one statement, whatever its status: a late report's cost is real. */
   addJobCost(id: string, microUsd: number): Promise<void>
+
+  // ---- Derive machines ------------------------------------------------------------------
+  /** Compare-and-set the agent's sandbox state on sandbox_rev; null when another writer won. */
+  transitionAgentSandbox(
+    id: string,
+    orgId: string,
+    expectRev: number,
+    next: {
+      phase: AgentSandboxPhase | null
+      state_json?: string | null
+      sandbox_id?: string | null
+    },
+  ): Promise<Agent | null>
+  /** Agents whose sandbox is mid-lifecycle (not null, ready, busy, or failed). */
+  listAgentsInSandboxPhase(phases: readonly AgentSandboxPhase[], limit: number): Promise<Agent[]>
+  /** Compare-and-set a job's machine state on machine_rev; null when another writer won. */
+  transitionJobMachine(
+    id: string,
+    expectRev: number,
+    next: { phase: JobMachinePhase; machine_json?: string | null },
+  ): Promise<JobRecord | null>
+  /** Jobs still holding or returning a sandbox (machine_phase set and not released). */
+  listMachineJobs(limit: number): Promise<JobRecord[]>
   addJobMessage(m: NewJobMessage): Promise<JobMessageRecord>
   listJobMessages(jobId: string): Promise<JobMessageRecord[]>
 

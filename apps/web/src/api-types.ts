@@ -8512,6 +8512,8 @@ export interface components {
             attempt: number;
             cost_micro_usd: number | null;
             report_artifact_id: string | null;
+            /** @description The job's report page, once it has one. */
+            report_short_id: string | null;
             created_at: string;
             updated_at: string;
         };

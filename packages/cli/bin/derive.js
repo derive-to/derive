@@ -888,6 +888,21 @@ if (cmd === "runner") {
   const { doctor, loadRunnerConfig, once, renderServiceUnit, runOnce, serve } = await import(
     "../src/runner.js"
   )
+  if (
+    sub === "run" &&
+    (positional[0] ?? flags.token ?? process.env.DERIVE_TOKEN ?? "").startsWith("dkjob_")
+  ) {
+    // A Derive machine's one job (the agent model): the token names it, the server claimed it.
+    if (positional[0]) flags.token = positional[0]
+    const { loadOneJobConfig, runOneJob } = await import("../src/job-runner.js")
+    try {
+      const out = await runOneJob(loadOneJobConfig(process.env, flags))
+      process.exit(out === "failed" ? 1 : 0)
+    } catch (e) {
+      console.error(`error: ${e.message}`)
+      process.exit(1)
+    }
+  }
   if (sub === "run") {
     // The hosted one-shot: no context, no poll loop. The bearer is a per-run capability token
     // (dkrun_…) minted at dispatch; partial config because there is no context id to require.

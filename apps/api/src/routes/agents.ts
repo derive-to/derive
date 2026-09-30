@@ -15,6 +15,7 @@ import { connectionBindError } from "../lib/broker"
 import { readEnvironmentBindings } from "../lib/context-environment"
 import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
+import { machineWorkspaces, retireSandbox } from "../lib/job-machine"
 import { canAskAgent, cancelJob, canManageAgent } from "../lib/jobs"
 import { previousOccurrence } from "../lib/schedule"
 
@@ -338,8 +339,10 @@ export const agentRoutes = (ctx: AppContext) => {
       const creator = (await privateOwnerId(c)) ?? null
       const refused = await definitionError(c, org, creator, b)
       if (refused) return bail(fail(c, 400, refused))
-      if (b.machine === "derive")
-        return bail(fail(c, 400, "Derive machines are not available yet; use machine: owner"))
+      if (b.machine === "derive" && !machineWorkspaces(deps.runtime).has(org))
+        return bail(
+          fail(c, 400, "Derive machines are not turned on for this workspace; use machine: owner"),
+        )
       if (b.schedule && !validCron(b.schedule.cron, b.schedule.tz))
         return bail(fail(c, 400, "schedule.cron is not a valid cron expression for that timezone"))
       const token = `dk_agt_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`
@@ -484,8 +487,10 @@ export const agentRoutes = (ctx: AppContext) => {
       }
       const refused = await definitionError(c, org, who, b)
       if (refused) return bail(fail(c, 400, refused))
-      if (b.machine === "derive")
-        return bail(fail(c, 400, "Derive machines are not available yet; use machine: owner"))
+      if (b.machine === "derive" && !machineWorkspaces(deps.runtime).has(org))
+        return bail(
+          fail(c, 400, "Derive machines are not turned on for this workspace; use machine: owner"),
+        )
       // An agent may run on its manager's own account or a shared one, never a teammate's.
       if (b.account_id) {
         const acct = await meta.getAccount(b.account_id)
@@ -669,6 +674,7 @@ export const agentRoutes = (ctx: AppContext) => {
       if (!target || !(await managerOf(c, target))) return bail(fail(c, 404, "agent not found"))
       const org = target.org_id
       const id = target.id
+      await retireSandbox(deps.runtime, deps.runtimeFetch, target)
       // Scope the delete to the caller's workspace: deleteAgent is keyed by
       // (id, org) so an Admin can't delete another workspace's agent by id.
       await meta.deleteAgent(id, org)
