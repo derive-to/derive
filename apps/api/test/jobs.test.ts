@@ -7,7 +7,7 @@ import {
   runOneJob,
   serveJob,
 } from "../../../packages/cli/src/job-runner.js"
-import { machinePass } from "../src/lib/job-machine"
+import { machinePass, machineWorkspaces } from "../src/lib/job-machine"
 import { jobTick } from "../src/lib/jobs"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
@@ -846,6 +846,17 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
     expect(transcript.messages.map((m) => m.body_md)).toContain(
       "The machine stopped before the job reported back.",
     )
+  })
+
+  it("waits for a sandbox runner that knows job tokens", () => {
+    expect(
+      machineWorkspaces({ ...config, runnerPath: "/home/ortam/derive-runtime/0.7.2/x.js" }).size,
+    ).toBe(0)
+    expect(
+      machineWorkspaces({ ...config, runnerPath: "/home/ortam/derive-runtime/0.8.0/x.js" }).has(
+        "default",
+      ),
+    ).toBe(true)
   })
 
   it("is refused where Derive machines are off", async () => {

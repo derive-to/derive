@@ -68,9 +68,20 @@ const parse = <T>(s: string | null): T | null => {
   }
 }
 
-/** Which workspaces may run Derive machines: the managed Ortam allowlist. */
+/** Does the pinned sandbox runner know job tokens? `runner run` with a `dkjob_` token arrived
+ *  in CLI 0.8.0; an older pinned install would fail every job. A path with no version (a
+ *  self-host's own install) is trusted. */
+export const runnerRunsJobs = (runnerPath: string): boolean => {
+  const v = /derive-runtime\/(\d+)\.(\d+)\.(\d+)\//.exec(runnerPath)
+  return !v || Number(v[1]) > 0 || Number(v[2]) >= 8
+}
+
+/** Which workspaces may run Derive machines: the managed Ortam allowlist, once the sandbox
+ *  runner can run jobs. */
 export const machineWorkspaces = (config: AppDeps["runtime"] | undefined): ReadonlySet<string> =>
-  config?.managed?.apiKey ? config.managed.workspaceIds : new Set()
+  config?.managed?.apiKey && runnerRunsJobs(config.runnerPath)
+    ? config.managed.workspaceIds
+    : new Set()
 
 /** One integration subject per agent, so each agent's sandbox belongs to its own Ortam user. */
 const clientFor = (deps: MachineDeps, agent: AgentRecord) => {
