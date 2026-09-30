@@ -1,16 +1,18 @@
-import { createFileRoute, redirect } from "@tanstack/react-router"
+import { createFileRoute } from "@tanstack/react-router"
+import { agentsQuery, openJobsQuery, recentJobsQuery, workspaceQuery } from "../lib/queries"
 import { requireOnboarded } from "../lib/route-guards"
-import type { ContextsSearch } from "../pages/templates/types"
+import { AgentsHome } from "../pages/agents"
+import { AgentsPending } from "../pages/agents/skeleton"
 
-// Keep existing /agents bookmarks working without maintaining a second surface.
 export const Route = createFileRoute("/agents/")({
-  validateSearch: (search: Record<string, unknown>): ContextsSearch => ({
-    manifest: typeof search.manifest === "string" ? search.manifest : undefined,
-    name: typeof search.name === "string" ? search.name : undefined,
-    origin: typeof search.origin === "string" ? search.origin : undefined,
-  }),
-  beforeLoad: async (args) => {
-    await requireOnboarded(args)
-    throw redirect({ to: "/contexts", search: args.search, replace: true })
-  },
+  beforeLoad: requireOnboarded,
+  loader: ({ context }) =>
+    Promise.all([
+      context.queryClient.ensureQueryData(agentsQuery()).catch(() => {}),
+      context.queryClient.ensureQueryData(openJobsQuery()).catch(() => {}),
+      context.queryClient.prefetchQuery(recentJobsQuery()),
+      context.queryClient.prefetchQuery(workspaceQuery()),
+    ]),
+  pendingComponent: AgentsPending,
+  component: AgentsHome,
 })

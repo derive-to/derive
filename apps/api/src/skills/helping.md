@@ -28,14 +28,15 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 
 | Path | What is there |
 | --- | --- |
-| `/` | The library: everything in the workspace, most recently updated first. Filter by title, or press Enter to search everything. Collections narrow it. |
+| `/agents` | Agents: every agent in the workspace, grouped by what needs a person, what is running, what runs on a schedule, and what runs when asked. |
+| `/agents/new` | New agent: a prompt to paste into Claude Code or Codex. The coding session creates the agent over MCP. |
+| `/agents/{id}` | One agent. Jobs: what it is doing and has done, with Cancel, Retry, and answers to its questions. Settings: pause, schedules, account, sources, who can ask, its key, delete. |
+| `/` | Pages, the library: everything in the workspace, most recently updated first. Filter by title, or press Enter to search everything. Collections narrow it. |
 | `/search` | Full search across the workspace, by keyword and by meaning. |
-| `/chat` | The full-page chat with Derive. The same conversation as the dock beside the page. |
 | `/favorites` | Documents they starred. |
 | `/shared` | Documents other people gave them access to. |
 | `/following` | Recent work by the people they follow. |
 | `/feedback` | Documents waiting on their review or reply. |
-| `/contexts` | Reusable Contexts: the instructions, skills, sources, and permissions an agent can use. New context → "Import a paper from arXiv" wraps a paper's LaTeX source as a read-only Context. |
 | `/people` | Who is in the workspace, and who they follow. |
 | `/new` | Write or paste a new document (Markdown or HTML) and publish it. |
 | `/welcome` | How to connect an agent over MCP, and how to publish from the CLI. Reachable any time. |
@@ -51,9 +52,10 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 | `/settings/profile` | Their name, handle, avatar. |
 | `/settings/security` | Password and sessions. |
 | `/settings/notifications` | Slack DMs, account linking, and what opens automatically for you. |
-| `/settings/accounts` | Codex and Claude accounts: provider sign-in for workflows that retain files, and existing manual imports for tasks and conversations. |
+| `/settings/accounts` | Claude and Codex accounts agents call a model with: yours, and the workspace's shared ones. Paste a key to connect one; disconnect it here. Only an Admin adds a shared one. |
 | `/settings/appearance` | Theme. |
 | `/settings/general` | Workspace name and its defaults. |
+| `/settings/machines` | Where agents run: each person's machine running a runner, when it last checked in, and the command that starts a runner. |
 | `/settings/members` | Invite people, change roles, remove them. Admin only. |
 | `/people` | The workspace people directory. |
 | `/settings/billing` | Plan, seats, invoices. Admin only. |
@@ -63,7 +65,6 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 | `/settings/brandprint` | The workspace's brand: what published pages look like. |
 | `/settings/webhooks` | Send Derive events to a URL. |
 | `/settings/agents` | Manage Agent execution connections and rotate their tokens. |
-| `/workflows` | Reusable work: coordinated graphs and loops, plus scheduled or triggered agent work. |
 | `/settings/domains` | Serve published pages on a custom domain. |
 | `/settings/reports` | Content reports, when there are open ones. Admin only. |
 
@@ -99,8 +100,8 @@ an agent or the CLI (`derive publish`) after connecting at `/welcome`.
 **Connect an agent (MCP).** `/welcome` has the setup for whichever agent they use. That is also
 how the CLI is authorised.
 
-**Connect a source.** `/settings/sources`, add the MCP server's URL. A Context may permit an agent
-to use it. This is different from `/settings/agents`, which manages execution connections.
+**Connect a source.** `/settings/sources`, add the MCP server's URL. An agent reaches it once it is added
+under Reaches on the agent's Settings tab. This is different from `/settings/agents`, which manages execution connections.
 
 **Make a collection.** The + beside Collections in the sidebar. Then drag documents in, or use the
 organize control on a document.
@@ -130,11 +131,13 @@ on that same screen. Derive can also send direct messages. Each person controls 
 
 **Change how published pages look.** `/settings/brandprint`.
 
-**Schedule agent work.** `/workflows`.
+**Schedule agent work.** The agent's Settings tab at `/agents/{id}`, under Runs. Make the agent first from `/agents/new`.
 
-**Connect a model account.** `/settings/accounts`, or connect in workflow setup. Provider sign-in connects an account for workflows that retain files. Existing imported JSON/token accounts remain available for tasks and conversations; they are not silently converted. Only the account owner can manage sign-in or disconnect it.
+**Make an agent.** `/agents/new` gives a prompt to paste into Claude Code or Codex with Derive
+connected; the coding session creates it. Change it afterwards on its Settings tab.
 
-**Turn chat off for the workspace.** `/settings/general`. Admin only.
+**Connect a model account.** `/settings/accounts`: paste a Claude or Codex key. Agents on your own
+machine use whatever that machine is signed into. Only the account's owner disconnects it.
 
 ## Words people ask about
 
@@ -148,10 +151,12 @@ on that same screen. Derive can also send direct messages. Each person controls 
 - **Thread:** a comment anchored to a passage. Open until somebody resolves it.
 - **Collection:** a folder of documents. A document can be in several.
 - **Tag:** a workspace-wide label for finding things across collections.
-- **Context:** a reusable package of instructions, knowledge, skills, sources, and permissions.
-- **Agent:** an actor that can read a Context or use it to execute work.
+- **Agent:** a named worker in the workspace: instructions (a page), the sources it may use, a
+  model account, and a machine to run on.
+- **Job:** one piece of work an agent does: an ask, a scheduled run, or a graph. It ends done,
+  failed, or cancelled, or waits on a person.
+- **Machine:** where an agent's jobs run: its owner's computer (a runner) or Derive.
 - **Agent connection:** the registered principal and token an Agent uses to act in Derive.
-- **Automation:** agent work on a schedule or a trigger.
 - **Brandprint:** the workspace's design and writing guidance for published work.
 - **Source:** a connected MCP server an agent can read from.
 - **Workspace:** the tenant. People, documents, settings, and billing all belong to one.

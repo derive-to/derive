@@ -452,6 +452,42 @@ export type Notification = components["schemas"]["Notification"]
 export type Webhook = components["schemas"]["Webhook"]
 /** A workspace-registered agent. Generated from the OpenAPI spec. */
 export type Agent = components["schemas"]["Agent"]
+/** One schedule on an agent (routes/agents.ts Trigger). */
+export type AgentTrigger = NonNullable<components["schemas"]["AgentTrigger"]>
+/** One agent with its schedules and what the caller may do with it. The spec marks the shared
+ *  Trigger schema nullable (it is also the create response's optional `trigger`), but a list
+ *  of an agent's schedules never holds a null. */
+export type AgentDetail = Omit<
+  paths["/v1/agents/{id}"]["get"]["responses"][200]["content"]["application/json"],
+  "triggers"
+> & { triggers: AgentTrigger[] }
+/** Fields an agent's manager may change (PATCH /v1/agents/{id}). */
+export type AgentPatch = Partial<
+  Pick<
+    Agent,
+    | "name"
+    | "description"
+    | "instructions_short_id"
+    | "ask_policy"
+    | "write_policy"
+    | "connection_ids"
+    | "account_id"
+    | "paused"
+  >
+>
+export type ScheduleInput = { cron: string; tz: string; instruction: string }
+/** One unit of agent work (routes/jobs.ts). */
+export type Job = components["schemas"]["Job"]
+export type JobStatus = Job["status"]
+export type JobDetail = components["schemas"]["JobDetail"]
+/** A model account: the credential a machine calls a model with. Never the secret. */
+export type ModelAccount = components["schemas"]["ModelAccount"]
+export type NewModelAccount = {
+  provider: ModelAccount["provider"]
+  kind: "oauth" | "api_key" | "login"
+  secret: string
+  shared: boolean
+}
 export type WorkflowDirectoryItem =
   paths["/v1/workflows"]["get"]["responses"][200]["content"]["application/json"]["workflows"][number]
 
@@ -1408,6 +1444,44 @@ export const api = {
     f(`/v1/agents/${id}/rotate`, opts({})).then(j),
   deleteAgent: (id: string): Promise<void> =>
     f(`/v1/agents/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
+  getAgent: (id: string): Promise<AgentDetail> => f(`/v1/agents/${id}`, opts()).then(j),
+  updateAgent: (id: string, patch: AgentPatch): Promise<Agent> =>
+    f(`/v1/agents/${id}`, { ...opts(patch), method: "PATCH" }).then(j),
+  addTrigger: (agentId: string, body: ScheduleInput): Promise<AgentTrigger> =>
+    f(`/v1/agents/${agentId}/triggers`, opts(body)).then(j),
+  updateTrigger: (
+    id: string,
+    patch: Partial<ScheduleInput> & { enabled?: boolean },
+  ): Promise<AgentTrigger> => f(`/v1/triggers/${id}`, { ...opts(patch), method: "PATCH" }).then(j),
+  deleteTrigger: (id: string): Promise<void> =>
+    f(`/v1/triggers/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
+
+  // Jobs: every piece of work an agent does (routes/jobs.ts).
+  listJobs: (
+    q: { agent?: string; status?: JobStatus[]; before?: string; limit?: number } = {},
+  ): Promise<{ jobs: Job[] }> => {
+    const qs = new URLSearchParams()
+    if (q.agent) qs.set("agent", q.agent)
+    if (q.status?.length) qs.set("status", q.status.join(","))
+    if (q.before) qs.set("before", q.before)
+    if (q.limit) qs.set("limit", String(q.limit))
+    const s = qs.toString()
+    return f(`/v1/jobs${s ? `?${s}` : ""}`, opts()).then(j)
+  },
+  getJob: (id: string): Promise<JobDetail> => f(`/v1/jobs/${id}`, opts()).then(j),
+  askAgent: (agentId: string, instruction: string): Promise<JobDetail> =>
+    f("/v1/jobs", opts({ agent_id: agentId, instruction })).then(j),
+  cancelJob: (id: string): Promise<Job> => f(`/v1/jobs/${id}/cancel`, opts({})).then(j),
+  retryJob: (id: string): Promise<Job> => f(`/v1/jobs/${id}/retry`, opts({})).then(j),
+  answerJob: (id: string, answer: { text?: string; option?: string }): Promise<Job> =>
+    f(`/v1/jobs/${id}/answer`, opts(answer)).then(j),
+
+  // Model accounts (routes/accounts.ts): yours, and the workspace's shared ones.
+  listAccounts: (): Promise<{ accounts: ModelAccount[] }> => f("/v1/accounts", opts()).then(j),
+  addAccount: (body: NewModelAccount): Promise<ModelAccount> =>
+    f("/v1/accounts", opts(body)).then(j),
+  deleteAccount: (id: string): Promise<void> =>
+    f(`/v1/accounts/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
 
   listWorkflows: (): Promise<{ workflows: WorkflowDirectoryItem[] }> =>
     f("/v1/workflows", opts()).then(j),

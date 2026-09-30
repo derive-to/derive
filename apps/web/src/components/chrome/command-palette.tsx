@@ -264,7 +264,8 @@ export function CommandPalette() {
   const otherWorkspaces = (workspaces?.workspaces ?? [])
     .map((w) => ({ ...w, display: workspaceDisplayName(w) }))
     .filter((w) => w.id !== workspaces?.active && w.display.toLowerCase().includes(q))
-  const showAll = "all artifacts".includes(q) || "library".includes(q)
+  const showAll = "pages".includes(q) || "all artifacts".includes(q) || "library".includes(q)
+  const showAgents = "agents".includes(q) || "new agent".includes(q)
   const showFav = "favorites".includes(q)
   const showFollowing = "following".includes(q)
   const showTemplates = "templates".includes(q) || "start from a template".includes(q)
@@ -290,6 +291,7 @@ export function CommandPalette() {
     matchedCollections.length === 0 &&
     otherWorkspaces.length === 0 &&
     !showAll &&
+    !showAgents &&
     !showFav &&
     !showFollowing &&
     !showTemplates &&
@@ -379,18 +381,35 @@ export function CommandPalette() {
             )}
 
             {(showAll ||
+              showAgents ||
               showFav ||
               showFollowing ||
               showTemplates ||
               showSkills ||
               showConnect) && (
               <CommandGroup heading="Jump to">
+                {showAgents && (
+                  <CommandItem
+                    value="jump-agents"
+                    onSelect={() => go(() => nav({ to: "/agents" }))}
+                  >
+                    <Icon name="agent" size={16} /> Agents
+                  </CommandItem>
+                )}
+                {showAgents && (
+                  <CommandItem
+                    value="jump-new-agent"
+                    onSelect={() => go(() => nav({ to: "/agents/new" }))}
+                  >
+                    <Icon name="plus" size={16} /> New agent
+                  </CommandItem>
+                )}
                 {showAll && (
                   <CommandItem
                     value="jump-all"
                     onSelect={() => go(() => nav({ to: "/", search: {} }))}
                   >
-                    <Icon name="all" size={16} /> All artifacts
+                    <Icon name="page" size={16} /> Pages
                   </CommandItem>
                 )}
                 {showFav && (

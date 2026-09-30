@@ -29,7 +29,6 @@ import {
   collectionsQuery,
   summaryQuery,
   workspaceActivityQuery,
-  workspaceSettingsQuery,
   workspacesQuery,
 } from "@/lib/queries"
 import { useBrandprintCollectionIds } from "@/lib/use-brandprint-ids"
@@ -150,7 +149,7 @@ function NavItem({
   icon: IconName
   label: string
   count?: number
-  to: "/following" | "/contexts" | "/skills" | "/workflows" | "/templates" | "/chat"
+  to: "/agents"
   active: boolean
   testId?: string
 }) {
@@ -273,11 +272,11 @@ function RailHeader({ showSearch }: { showSearch: boolean }) {
 }
 
 // Deterministic silhouette widths (no Math.random → no per-render jitter / SSR mismatch).
+// One per primary row: Agents, Inbox, Pages.
 const RAIL_SKELETON_ROWS = [
-  { id: "r1", w: "72%" },
-  { id: "r2", w: "58%" },
-  { id: "r3", w: "64%" },
-  { id: "r4", w: "50%" },
+  { id: "r1", w: "58%" },
+  { id: "r2", w: "50%" },
+  { id: "r3", w: "54%" },
 ]
 const RAIL_SKELETON_COLLECTIONS = [
   { id: "c1", w: "80%" },
@@ -362,11 +361,6 @@ export function NavRail() {
     enabled: !!me && bootGate,
   })
   const { data: workspaces } = useQuery({ ...workspacesQuery(), enabled: !!me })
-  // Seeded by the same boot batch as the counts above, so the Chat row costs no extra request.
-  const { data: settings } = useQuery({
-    ...workspaceSettingsQuery(),
-    enabled: !!me && bootGate,
-  })
   // The pod subtitle: "Personal" for the auto-provisioned workspace (its stored
   // name is provisioning plumbing), else the summary's workspace name.
   const activeWs = workspaces?.workspaces.find((w) => w.id === workspaces.active)
@@ -378,17 +372,8 @@ export function NavRail() {
   // Feeds are routes now; the home library reads "active > All" only when no collection
   // filter narrows it. (A ?query= search doesn't change which feed you're in.)
   const isAll = onLibrary && !search.collection
-  const onContexts = loc.pathname.startsWith("/contexts") || loc.pathname.startsWith("/agents")
-  const onWorkflows = loc.pathname.startsWith("/workflows")
-  const onSkills = loc.pathname.startsWith("/skills")
-  const onTemplates = loc.pathname.startsWith("/templates")
+  const onAgents = loc.pathname.startsWith("/agents")
   const onSettings = loc.pathname.startsWith("/settings")
-  const onChat = loc.pathname.startsWith("/chat")
-  // Chat is on by default, so the row hides only once settings have RESOLVED and said otherwise
-  // — `undefined` (still loading, or the read failed) keeps the row rather than blinking it out
-  // and back on every cold boot. It rides the boot batch the rail already waits for, so this
-  // costs no request of its own.
-  const chatOn = true
 
   // Picking a destination on mobile closes the drawer (no-op on desktop).
   const closeMobile = () => setOpenMobile(false)
@@ -416,58 +401,27 @@ export function NavRail() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
+              {/* Agents, Inbox, Pages; Search is the launcher above and Settings sits at the
+                  foot. Contexts, Workflows, Chat, Templates, and Skills left the rail with the
+                  agent model; their pages stay reachable by URL (and Templates and Skills from
+                  the palette) until their data is cut over. */}
+              <NavItem
+                icon="agent"
+                label="Agents"
+                to="/agents"
+                active={onAgents}
+                testId="nav-agents"
+              />
+              {/* The inbox is the Agents home's Needs you group until its own page lands. */}
+              <NavItem icon="inbox" label="Inbox" to="/agents" active={false} testId="nav-inbox" />
               <FilterItem
-                icon="all"
-                label="Artifacts"
+                icon="page"
+                label="Pages"
                 count={summary?.total}
                 search={{}}
                 active={isAll}
                 testId="sidebar-all"
               />
-              <NavItem
-                icon="templates"
-                label="Templates"
-                to="/templates"
-                active={onTemplates}
-                testId="nav-templates"
-              />
-              <NavItem
-                icon="skill"
-                label="Skills"
-                to="/skills"
-                active={onSkills}
-                testId="nav-skills"
-              />
-              <NavItem
-                icon="context"
-                label="Contexts"
-                to="/contexts"
-                active={onContexts}
-                testId="nav-contexts"
-              />
-              <NavItem
-                icon="workflow"
-                label="Workflows"
-                to="/workflows"
-                active={onWorkflows}
-                testId="nav-workflows"
-              />
-              {/* CHAT CLOSES THE TIER. A real route, like every other row here — it goes straight
-                  to the full conversation (history, Stop, model choice) instead of the palette's
-                  lightweight answer view, which is the AskButton's surface (search boxes), not
-                  this row's. It sits after the feeds rather than above them, where it would push
-                  the library itself down a line. Hidden only once settings have actually said
-                  chat is off; chat defaults on, so an unresolved read must not blink the row out
-                  and back. */}
-              {chatOn && (
-                <NavItem
-                  icon="sparkles"
-                  label="Chat"
-                  to="/chat"
-                  active={onChat}
-                  testId="nav-chat"
-                />
-              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
