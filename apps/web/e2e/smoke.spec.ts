@@ -1609,7 +1609,8 @@ test("asking an agent from a page's margin opens a job about that page and shows
       status: "succeeded",
       body_md: "It has no owner for the rollout.",
     })
-  await expect(follow).toHaveAttribute("data-status", "succeeded", { timeout: 20_000 })
+  // A queued job is re-read every 20s, so allow one full interval.
+  await expect(follow).toHaveAttribute("data-status", "succeeded", { timeout: 30_000 })
   await expect(follow).toContainText("It has no owner for the rollout.")
   await owner.screenshot({ path: testInfo.outputPath("margin-ask.png") })
 })

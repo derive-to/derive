@@ -4,9 +4,10 @@ import type { Agent, Job, WorkspaceActivity } from "@/api"
 import { LoadError } from "@/components/shared/load-error"
 import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
+import { useAuth } from "@/ctx"
 import { agentsQuery, inboxJobsQuery, workspaceActivityQuery } from "@/lib/queries"
 import { useDocumentTitle } from "@/lib/use-document-title"
-import { AnswerBox } from "./agents/agent-jobs"
+import { AnswerBox, useCanSteer } from "./agents/agent-jobs"
 import { firstLine, when } from "./agents/format"
 import { Group, Meta, RowLine, rowClass, Time } from "./agents/rows"
 import { AgentRowsSkeleton } from "./agents/skeleton"
@@ -62,6 +63,8 @@ export function Inbox() {
 }
 
 function NeedsRow({ job, agent }: { job: Job; agent: Agent | undefined }) {
+  const { me } = useAuth()
+  const canSteer = useCanSteer(job, me?.id)
   const subject =
     job.subject && typeof job.subject === "object" && "kind" in job.subject
       ? (job.subject as { kind: string; id?: string })
@@ -115,7 +118,7 @@ function NeedsRow({ job, agent }: { job: Job; agent: Agent | undefined }) {
           </Link>
         </div>
       ) : (
-        <AnswerBox job={job} />
+        canSteer && <AnswerBox job={job} />
       )}
     </div>
   )

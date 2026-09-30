@@ -140,6 +140,14 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
       if (q.parentId) where.push(sql`parent_id = ${q.parentId}`)
       if (q.askedBy) where.push(sql`asked_by = ${q.askedBy}`)
       if (q.reportArtifactId) where.push(sql`report_artifact_id = ${q.reportArtifactId}`)
+      if (q.askedByOrAgent) {
+        const { askedBy, agentIds } = q.askedByOrAgent
+        where.push(
+          agentIds.length
+            ? sql`(asked_by = ${askedBy} OR agent_id IN (${list(agentIds)}))`
+            : sql`asked_by = ${askedBy}`,
+        )
+      }
       if (q.since) where.push(sql`created_at >= ${q.since}`)
       if (q.before) where.push(sql`created_at < ${q.before}`)
       const limit = Math.max(1, Math.min(500, q.limit ?? 50))

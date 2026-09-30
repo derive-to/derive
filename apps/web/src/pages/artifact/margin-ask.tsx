@@ -16,7 +16,7 @@ import { useAuth } from "@/ctx"
 import { agentsQuery, jobQuery, workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
-import { AnswerBox } from "@/pages/agents/agent-jobs"
+import { AnswerBox, useCanSteer } from "@/pages/agents/agent-jobs"
 import { OPEN_STATUSES, rosterOf } from "@/pages/agents/format"
 
 /** Mirrors the server's canAskAgent: anyone in the workspace, or for an invited-only agent,
@@ -139,9 +139,20 @@ function AskFollow({
 }) {
   const q = useQuery({
     ...jobQuery(id),
-    refetchInterval: (query) =>
-      query.state.data && !OPEN_STATUSES.includes(query.state.data.status) ? false : 3000,
+    // Quick while it is working; slow while it waits on a machine or on a person.
+    refetchInterval: (query) => {
+      const status = query.state.data?.status
+      if (!status || status === "running") return 3000
+      if (status === "queued" || status === "needs_you") return 20_000
+      return false
+    },
   })
+  const job = q.data
+  const { me } = useAuth()
+  const agents = useQuery(agentsQuery())
+  const canSteer = useCanSteer(job, me?.id)
+  // The job's own agent, which is the one asked even if the picker has moved on since.
+  const name = agents.data?.find((a) => a.id === job?.agent_id)?.name ?? agentName
   if (q.isError)
     return (
       <LoadError
@@ -151,14 +162,13 @@ function AskFollow({
         onRetry={() => void q.refetch()}
       />
     )
-  const job = q.data
   const replies = (job?.messages ?? []).filter((m) => m.author_kind === "agent")
   const open = !job || OPEN_STATUSES.includes(job.status)
   return (
     <div data-testid="margin-ask-job" data-status={job?.status} className="flex flex-col gap-2">
       <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
         <span>
-          <span className="font-medium text-foreground">{agentName}</span> ·{" "}
+          <span className="font-medium text-foreground">{name}</span> ·{" "}
           {job ? WORD[job.status] : "Asking"}
         </span>
         {job?.report_short_id && (
@@ -183,7 +193,7 @@ function AskFollow({
           {m.body_md}
         </p>
       ))}
-      {job?.status === "needs_you" && <AnswerBox job={job} />}
+      {job?.status === "needs_you" && canSteer && <AnswerBox job={job} />}
       {!open && (
         <Button
           type="button"

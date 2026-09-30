@@ -242,7 +242,22 @@ export const jobRoutes = (ctx: AppContext) => {
         if (!art || art.org_id !== org) return c.json({ jobs: [] })
         reportArtifactId = art.id
       }
-      const limit = Math.min(200, Number(q.limit) || 50)
+      // `mine`: jobs you asked, or on agents you manage (canManageAgent's rule, read with one
+      // membership lookup). A workspace owner manages every agent, so every job is theirs.
+      let askedByOrAgent: { askedBy: string; agentIds: string[] } | undefined
+      if (q.mine === "1") {
+        const who = await actingHuman(c)
+        if (!who) return bail(fail(c, 401, "unauthenticated"))
+        const seat = await meta.getMembership(org, who.id).catch(() => null)
+        if (!seat) return c.json({ jobs: [] })
+        if (seat.role !== "owner") {
+          const own =
+            seat.role === "viewer"
+              ? []
+              : (await meta.listAgents(org)).filter((a) => a.created_by === who.id)
+          askedByOrAgent = { askedBy: who.id, agentIds: own.map((a) => a.id) }
+        }
+      }
       const jobs = await meta.listJobs({
         orgId: org,
         agentId: q.agent || undefined,
@@ -250,18 +265,11 @@ export const jobRoutes = (ctx: AppContext) => {
         kind: split(q.kind, KINDS),
         parentId: q.parent || undefined,
         reportArtifactId,
+        askedByOrAgent,
         before: q.before || undefined,
-        // `mine` filters after the read, so read the cap and trim to the asked limit below.
-        limit: q.mine === "1" ? 200 : limit,
+        limit: Math.min(200, Number(q.limit) || 50),
       })
-      if (q.mine !== "1") return c.json({ jobs: await shown(jobs) })
-      const who = await actingHuman(c)
-      if (!who) return bail(fail(c, 401, "unauthenticated"))
-      const managed = new Set<string>()
-      for (const a of await meta.listAgents(org))
-        if (await canManageAgent(meta, a, who.id)) managed.add(a.id)
-      const mine = jobs.filter((j) => j.asked_by === who.id || managed.has(j.agent_id))
-      return c.json({ jobs: await shown(mine.slice(0, limit)) })
+      return c.json({ jobs: await shown(jobs) })
     },
   )
 
@@ -306,6 +314,16 @@ export const jobRoutes = (ctx: AppContext) => {
       const subject: Selector | null = b.subject
         ? (normalizeSelectors([b.subject])[0] ?? null)
         : null
+      // A page as the subject: it must be in the agent's workspace, and the asker must be able
+      // to read it, so asking can never hand an agent a page its asker could not open. The id
+      // is a short id (or, leniently, an artifact id).
+      if (subject?.kind === "artifact") {
+        const byId = await meta.getArtifactById(subject.id).catch(() => null)
+        const shortId = byId?.short_id ?? subject.id
+        const page = await ctx.requireArtifact(c, "read", { shortId })
+        if (page instanceof Response || page.org_id !== agent.org_id)
+          return bail(fail(c, 404, "no such page you can read in this agent's workspace"))
+      }
       const { job, created } = await askAgent(jobDeps, {
         agent,
         askedBy: who.id,

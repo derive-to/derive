@@ -454,6 +454,32 @@ describe("jobs: what a teammate cannot do with someone else's agent or job", () 
     expect(await ids(owner.email)).toEqual([edAsked.id, ownerAsked.id, onEds.id].sort())
   })
 
+  it("asking about a page needs a page the asker can read, in the agent's workspace", async () => {
+    const { app } = await setup("jobs-subject")
+    const agent = await createAgent(app)
+    const privatePage = (await (
+      await publishAs(
+        app,
+        "# Owner only",
+        { workspace_access: "none", link_role: "none" },
+        as(owner.email),
+      )
+    ).json()) as { short_id: string }
+    const edsPage = (await (await publishAs(app, "# Ed's page", {}, as(ed.email))).json()) as {
+      short_id: string
+    }
+    const about = (id: string) =>
+      ask(app, ed.email, agent.id, "What is missing?", { subject: { kind: "artifact", id } })
+    expect((await about(privatePage.short_id)).status).toBe(404)
+    expect((await about("nosuchpage")).status).toBe(404)
+    const ok = await about(edsPage.short_id)
+    expect(ok.status).toBe(201)
+    expect(((await ok.json()) as { subject: unknown }).subject).toEqual({
+      kind: "artifact",
+      id: edsPage.short_id,
+    })
+  })
+
   it("a report page finds the job it reports on, and only in its own workspace", async () => {
     const { app } = await setup("jobs-report-lookup")
     const agent = await createAgent(app)
