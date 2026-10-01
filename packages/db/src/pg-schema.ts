@@ -43,9 +43,6 @@ import type {
   ReportState,
   ReviewRoundState,
   Role,
-  RunStatus,
-  SessionMessageAuthor,
-  SessionState,
   SharedStateAction,
   SkillClient,
   SkillInstallPolicy,
@@ -62,12 +59,6 @@ import type {
   TemplateLibraryScope,
   VersionSource,
   WebhookKind,
-  WorkflowArtifactActivityRole,
-  WorkflowArtifactActivitySource,
-  WorkflowRequestedExecution,
-  WorkflowRunStatus,
-  WorkflowStepAttemptStatus,
-  WorkflowStepKind,
   WorkspaceAccess,
 } from "@derive/core"
 import { getTableConfig, index, integer, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core"
@@ -324,354 +315,6 @@ export const exportJob = pgTable(
     expires_at: text("expires_at"),
   },
   (t) => [uniqueIndex("export_job_input").on(t.input_hash)],
-)
-
-// UNREAD AFTER THE AGENTS CUTOVER. From `automation` down to `workflow_artifact_activity`
-// (automation, run, runtime_model_connection, runtime_model_binding, workflow_files,
-// workflow_draft, workflow_test, runtime_owner, runtime_setup, context_runtime, run_attempt,
-// workflow_run, workflow_step_attempt, workflow_publish_receipt, workflow_artifact_activity)
-// nothing in the app writes these tables any more: agents, jobs, triggers and accounts
-// replaced them. They stay so an upgraded database keeps its rows until a separate, reviewed
-// change drops them (boot-DDL rules; see deploy/drop-*.sql for the pattern).
-// An automation: a standing agent job (agent + trigger + instruction + refs). The
-// definition only; every firing is a `run`. See schema.ts for the full contract.
-export const automation = pgTable("automation", {
-  id: text("id").primaryKey(),
-  org_id: text("org_id").notNull(),
-  agent_id: text("agent_id").notNull(),
-  trigger: text("trigger").notNull(),
-  instruction: text("instruction").notNull(),
-  provider: text("provider")
-    .$type<import("@derive/core").ExecutionProvider>()
-    .notNull()
-    .default("claude-code"),
-  refs: text("refs"),
-  connection_ids: text("connection_ids"),
-  context_id: text("context_id"),
-  runtime_id: text("runtime_id"),
-  created_by: text("created_by"),
-  revision: integer("revision").notNull().default(0),
-  updated_at: text("updated_at"),
-  enabled: integer("enabled").$type<0 | 1>().notNull().default(1),
-  created_at: text("created_at").notNull().$defaultFn(isoNow),
-})
-
-// A run: one execution — the queue and the ledger in one table. See schema.ts.
-export const run = pgTable("run", {
-  id: text("id").primaryKey(),
-  org_id: text("org_id").notNull(),
-  automation_id: text("automation_id"),
-  agent_id: text("agent_id").notNull(),
-  reason: text("reason").notNull(),
-  // The initiating person (wallet key) — null for clock/event runs. See RunRecord.
-  initiated_by: text("initiated_by"),
-  status: text("status").$type<RunStatus>().notNull(),
-  scheduled_for: text("scheduled_for"),
-  started_at: text("started_at"),
-  finished_at: text("finished_at"),
-  cost_micro_usd: integer("cost_micro_usd"),
-  runtime_id: text("runtime_id"),
-  input_snapshot: text("input_snapshot"),
-  meta: text("meta"),
-  created_at: text("created_at").notNull().$defaultFn(isoNow),
-})
-
-export const runtimeModelConnection = pgTable(
-  "runtime_model_connection",
-  {
-    id: text("id").primaryKey(),
-    org_id: text("org_id").notNull(),
-    created_by: text("created_by").notNull(),
-    name: text("name").notNull(),
-    provider: text("provider")
-      .$type<import("@derive/core").RuntimeModelConnectionRecord["provider"]>()
-      .notNull(),
-    api_url: text("api_url").notNull(),
-    ortam_org_id: text("ortam_org_id").notNull(),
-    ortam_user_id: text("ortam_user_id").notNull(),
-    revision: integer("revision").notNull().default(0),
-    revoked_at: text("revoked_at"),
-    created_at: text("created_at").notNull(),
-    updated_at: text("updated_at").notNull(),
-  },
-  (t) => [index("runtime_model_connection_owner").on(t.org_id, t.created_by)],
-)
-
-// Persistent environments and execution ownership outlive deleted Contexts and automations.
-// One permanent admission slot serializes manual binding and automatic setup on every store.
-export const runtimeModelBinding = pgTable("runtime_model_binding", {
-  context_id: text("context_id").primaryKey(),
-  org_id: text("org_id").notNull(),
-  model_connection_id: text("model_connection_id"),
-  granted_by: text("granted_by").notNull(),
-  revision: integer("revision").notNull().default(0),
-  updated_at: text("updated_at").notNull(),
-})
-
-export const workflowFiles = pgTable("workflow_files", {
-  context_id: text("context_id").primaryKey(),
-  org_id: text("org_id").notNull(),
-  artifact_id: text("artifact_id"),
-  blob_key: text("blob_key"),
-  version: integer("version"),
-  granted_by: text("granted_by").notNull(),
-  revision: integer("revision").notNull().default(0),
-  updated_at: text("updated_at").notNull(),
-})
-
-export const workflowDraft = pgTable("workflow_draft", {
-  context_id: text("context_id").primaryKey(),
-  org_id: text("org_id").notNull(),
-  instruction: text("instruction").notNull(),
-  sealed_at: text("sealed_at"),
-  provider: text("provider").$type<"codex" | "claude-code">().notNull(),
-  revision: integer("revision").notNull().default(0),
-  updated_at: text("updated_at").notNull(),
-})
-export const workflowTest = pgTable("workflow_test", {
-  id: text("id").primaryKey(),
-  context_id: text("context_id").notNull(),
-  org_id: text("org_id").notNull(),
-  initiated_by: text("initiated_by").notNull(),
-  config_revision: text("config_revision").notNull(),
-  input_snapshot: text("input_snapshot").notNull(),
-  status: text("status").$type<"pending" | "submitted" | "failed">().notNull(),
-  created_at: text("created_at").notNull(),
-})
-
-export const runtimeOwner = pgTable("runtime_owner", {
-  context_id: text("context_id").primaryKey(),
-  org_id: text("org_id").notNull(),
-  owner: text("owner").notNull(),
-})
-
-export const runtimeSetup = pgTable(
-  "runtime_setup",
-  {
-    id: text("id").primaryKey(),
-    org_id: text("org_id").notNull(),
-    context_id: text("context_id").notNull(),
-    agent_id: text("agent_id").notNull(),
-    created_by: text("created_by").notNull(),
-    connection_id: text("connection_id"),
-    api_url: text("api_url").notNull(),
-    ortam_org_id: text("ortam_org_id").notNull(),
-    ortam_user_id: text("ortam_user_id").notNull(),
-    model_connection_id: text("model_connection_id"),
-    model_binding_revision: integer("model_binding_revision"),
-    request_json: text("request_json").notNull(),
-    phase: text("phase").$type<import("@derive/core").RuntimeSetupRecord["phase"]>().notNull(),
-    revision: integer("revision").notNull().default(0),
-    sandbox_id: text("sandbox_id"),
-    create_operation_id: text("create_operation_id"),
-    stop_operation_id: text("stop_operation_id"),
-    delete_operation_id: text("delete_operation_id"),
-    cancelled_at: text("cancelled_at"),
-    deadline_at: text("deadline_at").notNull(),
-    created_at: text("created_at").notNull(),
-    updated_at: text("updated_at").notNull(),
-  },
-  (t) => [uniqueIndex("runtime_setup_context").on(t.context_id)],
-)
-
-export const contextRuntime = pgTable(
-  "context_runtime",
-  {
-    id: text("id").primaryKey(),
-    org_id: text("org_id").notNull(),
-    context_id: text("context_id").notNull(),
-    agent_id: text("agent_id").notNull(),
-    api_url: text("api_url").notNull(),
-    ortam_org_id: text("ortam_org_id").notNull(),
-    ortam_user_id: text("ortam_user_id").notNull(),
-    sandbox_id: text("sandbox_id").notNull(),
-    connection_id: text("connection_id"),
-    model_connection_id: text("model_connection_id"),
-    disabled_at: text("disabled_at"),
-    created_at: text("created_at").notNull(),
-  },
-  (t) => [
-    uniqueIndex("context_runtime_context").on(t.context_id),
-    uniqueIndex("context_runtime_sandbox").on(t.api_url, t.ortam_org_id, t.sandbox_id),
-  ],
-)
-
-export const runAttempt = pgTable(
-  "run_attempt",
-  {
-    id: text("id").primaryKey(),
-    org_id: text("org_id").notNull(),
-    run_id: text("run_id").notNull(),
-    runtime_id: text("runtime_id").notNull(),
-    attempt: integer("attempt").notNull(),
-    revision: integer("revision").notNull().default(0),
-    phase: text("phase").$type<import("@derive/core").RunAttemptPhase>().notNull(),
-    model_source_connection_id: text("model_source_connection_id"),
-    model_source_user_id: text("model_source_user_id"),
-    startup_operation_id: text("startup_operation_id"),
-    launch_started_at: text("launch_started_at"),
-    runner_claimed_at: text("runner_claimed_at"),
-    process_id: text("process_id"),
-    stop_operation_id: text("stop_operation_id"),
-    deadline_at: text("deadline_at").notNull(),
-    result_json: text("result_json"),
-    save_status: text("save_status")
-      .$type<import("@derive/core").RuntimeSaveStatus>()
-      .notNull()
-      .default("pending"),
-    saved_snapshot_id: text("saved_snapshot_id"),
-    released_at: text("released_at"),
-    created_at: text("created_at").notNull(),
-    updated_at: text("updated_at").notNull(),
-  },
-  (t) => [uniqueIndex("run_attempt_number").on(t.run_id, t.attempt)],
-)
-
-// One start of a version-pinned Workflow diagram.
-export const workflowRun = pgTable(
-  "workflow_run",
-  {
-    id: text("id").primaryKey(),
-    org_id: text("org_id").notNull(),
-    workflow_artifact_id: text("workflow_artifact_id").notNull(),
-    workflow_version: integer("workflow_version").notNull(),
-    workflow_blob_key: text("workflow_blob_key").notNull(),
-    workflow_content_type: text("workflow_content_type").notNull(),
-    diagram_id: text("diagram_id").notNull(),
-    status: text("status").$type<WorkflowRunStatus>().notNull().default("queued"),
-    state_revision: integer("state_revision").notNull().default(0),
-    reason: text("reason").notNull(),
-    initiated_by: text("initiated_by"),
-    request_id: text("request_id"),
-    assigned_agent_id: text("assigned_agent_id"),
-    executor_id: text("executor_id"),
-    requested_execution: text("requested_execution")
-      .$type<WorkflowRequestedExecution>()
-      .notNull()
-      .default("any"),
-    actual_execution: text("actual_execution").$type<"local" | "hosted" | "github_actions">(),
-    external_execution: text("external_execution"),
-    external_run_id: text("external_run_id"),
-    created_at: text("created_at").notNull().$defaultFn(isoNow),
-    updated_at: text("updated_at").notNull(),
-    started_at: text("started_at"),
-    finished_at: text("finished_at"),
-  },
-  (t) => [
-    index("workflow_run_org_created").on(t.org_id, t.created_at),
-    index("workflow_run_definition").on(
-      t.workflow_artifact_id,
-      t.workflow_version,
-      t.diagram_id,
-      t.created_at,
-    ),
-    index("workflow_run_external").on(t.external_run_id),
-  ],
-)
-
-export const workflowStepAttempt = pgTable(
-  "workflow_step_attempt",
-  {
-    id: text("id").primaryKey(),
-    workflow_run_id: text("workflow_run_id")
-      .notNull()
-      .references(() => workflowRun.id),
-    node_id: text("node_id").notNull(),
-    attempt: integer("attempt").notNull(),
-    kind: text("kind").$type<WorkflowStepKind>().notNull(),
-    status: text("status").$type<WorkflowStepAttemptStatus>().notNull().default("queued"),
-    state_revision: integer("state_revision").notNull().default(0),
-    context_id: text("context_id"),
-    context_manifest_artifact_id: text("context_manifest_artifact_id"),
-    context_version: integer("context_version"),
-    context_blob_key: text("context_blob_key"),
-    context_content_type: text("context_content_type"),
-    session_id: text("session_id"),
-    decision: text("decision"),
-    selected_routes: text("selected_routes"),
-    route_sources: text("route_sources"),
-    route_basis: text("route_basis"),
-    result_artifact_id: text("result_artifact_id"),
-    output: text("output"),
-    error: text("error"),
-    created_at: text("created_at").notNull().$defaultFn(isoNow),
-    updated_at: text("updated_at").notNull(),
-    started_at: text("started_at"),
-    finished_at: text("finished_at"),
-  },
-  (t) => [
-    uniqueIndex("workflow_step_attempt_number").on(t.workflow_run_id, t.node_id, t.attempt),
-    uniqueIndex("workflow_step_attempt_session").on(t.session_id),
-    index("workflow_step_attempt_run").on(t.workflow_run_id, t.created_at),
-  ],
-)
-
-// A claim is completed within the same transaction/batch as its version and activity.
-// artifact_version starts at zero only inside that transaction. The final update must
-// resolve a real version; its NOT NULL constraint aborts an incomplete D1 batch.
-export const workflowPublishReceipt = pgTable(
-  "workflow_publish_receipt",
-  {
-    id: text("id").primaryKey(),
-    org_id: text("org_id").notNull(),
-    workflow_run_id: text("workflow_run_id")
-      .notNull()
-      .references(() => workflowRun.id, { onDelete: "cascade" }),
-    node_id: text("node_id").notNull(),
-    attempt: integer("attempt").notNull(),
-    dedupe_key: text("dedupe_key").notNull(),
-    request_hash: text("request_hash").notNull(),
-    artifact_id: text("artifact_id").notNull(),
-    artifact_short_id: text("artifact_short_id").notNull(),
-    artifact_version: integer("artifact_version").notNull(),
-    version_id: text("version_id").notNull(),
-    activity_id: text("activity_id").notNull(),
-    role: text("role").$type<WorkflowArtifactActivityRole>().notNull(),
-    created_at: text("created_at").notNull(),
-  },
-  (t) => [
-    uniqueIndex("workflow_publish_receipt_key").on(
-      t.workflow_run_id,
-      t.node_id,
-      t.attempt,
-      t.dedupe_key,
-    ),
-  ],
-)
-
-export const workflowArtifactActivity = pgTable(
-  "workflow_artifact_activity",
-  {
-    id: text("id").primaryKey(),
-    org_id: text("org_id").notNull(),
-    workflow_run_id: text("workflow_run_id")
-      .notNull()
-      .references(() => workflowRun.id),
-    node_id: text("node_id").notNull(),
-    attempt: integer("attempt").notNull(),
-    artifact_short_id: text("artifact_short_id").notNull(),
-    artifact_version: integer("artifact_version").notNull(),
-    artifact_title: text("artifact_title"),
-    role: text("role").$type<WorkflowArtifactActivityRole>().notNull(),
-    source: text("source").$type<WorkflowArtifactActivitySource>().notNull(),
-    created_at: text("created_at").notNull().$defaultFn(isoNow),
-  },
-  (t) => [
-    uniqueIndex("workflow_artifact_activity_exact").on(
-      t.workflow_run_id,
-      t.node_id,
-      t.attempt,
-      t.artifact_short_id,
-      t.artifact_version,
-      t.role,
-    ),
-    index("workflow_artifact_activity_run").on(t.workflow_run_id, t.created_at),
-    index("workflow_artifact_activity_version").on(
-      t.artifact_short_id,
-      t.artifact_version,
-      t.source,
-    ),
-  ],
 )
 
 export const artifactScanEvent = pgTable(
@@ -938,14 +581,9 @@ export const agent = pgTable(
     role: text("role").$type<Role>().notNull().default("commenter"),
     // Who registered the agent — the person it publishes on behalf of (see schema.ts).
     created_by: text("created_by"),
-    // Served by Derive's managed executor when 1 (see schema.ts).
-    hosted: integer("hosted").notNull().default(0).$type<0 | 1>(),
     // 1 = auto-minted for one context at creation (never user-named): the context's
     // Derive access, not a persona. The UI hides managed agents from the roster.
     managed: integer("managed").notNull().default(0).$type<0 | 1>(),
-    // The runs-lane liveness mark (twin of context.runner_seen_at): stamped when the
-    // agent's bearer polls the run claim endpoint. Null = no executor has ever polled.
-    runs_seen_at: text("runs_seen_at"),
     // ---- The agent model: what a Context held, plus where it runs (core agent-model.ts).
     // All nullable or constant-defaulted, so they ALTER onto existing rows cleanly.
     description: text("description"),
@@ -1379,26 +1017,6 @@ export const userNotificationPref = pgTable(
   },
   (t) => [uniqueIndex("user_notification_pref_key").on(t.org_id, t.user_id)],
 )
-// UNREAD AFTER THE AGENTS CUTOVER: model accounts (`model_account`) replaced these rows, which
-// stay until the old tables are dropped in a separate change. Only the account-deletion purges
-// still touch them.
-// Per-user model-plan credential (Claude/Codex plan token or API key), encrypted at rest
-// and scoped (org, user, provider). Used only for that user's own runs — see schema.ts.
-export const modelCredential = pgTable(
-  "model_credential",
-  {
-    id: text("id").primaryKey(),
-    org_id: text("org_id").notNull(),
-    user_id: text("user_id").notNull(),
-    provider: text("provider").notNull(),
-    kind: text("kind").$type<"oauth" | "api_key" | "login">().notNull(),
-    secret: text("secret").notNull(),
-    hint: text("hint").notNull().default(""),
-    created_at: text("created_at").notNull().$defaultFn(isoNow),
-    updated_at: text("updated_at").notNull().$defaultFn(isoNow),
-  },
-  (t) => [uniqueIndex("model_credential_key").on(t.org_id, t.user_id, t.provider)],
-)
 export const slackThreadLink = pgTable(
   "slack_thread_link",
   {
@@ -1585,8 +1203,7 @@ export const templateLibraryEntry = pgTable(
 )
 
 // A context: an askable agent setup — agent + manifest artifact. Mirror of the
-// sqlite def; see schema.ts for the design notes (loose agent_id, hard manifest FK,
-// context_session naming vs Better Auth's `session` table).
+// sqlite def; see schema.ts for the design notes (loose agent_id, hard manifest FK).
 export const context = pgTable(
   "context",
   {
@@ -1681,48 +1298,6 @@ export const contextAsker = pgTable(
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   (t) => [uniqueIndex("context_asker_user").on(t.context_id, t.user_id)],
-)
-
-export const contextSession = pgTable(
-  "context_session",
-  {
-    id: text("id").primaryKey(),
-    context_id: text("context_id").references(() => context.id),
-    org_id: text("org_id").notNull(),
-    asker_id: text("asker_id").notNull(),
-    context_version: integer("context_version"),
-    state: text("state").$type<SessionState>().notNull().default("open"),
-    created_at: text("created_at").notNull().$defaultFn(isoNow),
-    updated_at: text("updated_at"),
-    // Lease bookkeeping + ask-idempotency key — mirror of the sqlite def (see
-    // schema.ts). All nullable; the partial-unique index is raw DDL below.
-    started_at: text("started_at"),
-    lease_until: text("lease_until"),
-    result_artifact_id: text("result_artifact_id"),
-    dedupe_key: text("dedupe_key"),
-    // What this session is about, as a Selector — mirror of the sqlite def.
-    subject_ref: text("subject_ref"),
-  },
-  (t) => [
-    index("context_session_queue").on(t.context_id, t.state, t.created_at),
-    index("context_session_asker").on(t.asker_id, t.created_at),
-  ],
-)
-
-export const sessionMessage = pgTable(
-  "session_message",
-  {
-    id: text("id").primaryKey(),
-    session_id: text("session_id")
-      .notNull()
-      .references(() => contextSession.id),
-    author_kind: text("author_kind").$type<SessionMessageAuthor>().notNull(),
-    author_id: text("author_id").notNull(),
-    body_md: text("body_md").notNull(),
-    meta: text("meta"),
-    created_at: text("created_at").notNull().$defaultFn(isoNow),
-  },
-  (t) => [index("session_message_session").on(t.session_id, t.created_at)],
 )
 
 export const report = pgTable("report", {
@@ -1821,21 +1396,6 @@ const TABLES = [
   agentTrigger,
   modelAccount,
   agentMention,
-  automation,
-  run,
-  contextRuntime,
-  runtimeSetup,
-  runtimeOwner,
-  runtimeModelConnection,
-  runtimeModelBinding,
-  workflowDraft,
-  workflowFiles,
-  workflowTest,
-  runAttempt,
-  workflowRun,
-  workflowStepAttempt,
-  workflowArtifactActivity,
-  workflowPublishReceipt,
   artifactScanEvent,
   artifactScanCoverage,
   skillRelation,
@@ -1875,14 +1435,11 @@ const TABLES = [
   reviewRound,
   context,
   contextAsker,
-  contextSession,
-  sessionMessage,
   importJob,
   importLease,
   report,
   auditLog,
   asset,
-  modelCredential,
 ]
 
 /** Build the Postgres boot DDL: table CREATEs + placeholder tables, then the idempotent
@@ -1900,27 +1457,6 @@ const ARTIFACT_SEARCH_PG = [
   `CREATE INDEX IF NOT EXISTS artifact_search_tsv ON artifact_search USING gin (tsv)`,
   `CREATE INDEX IF NOT EXISTS artifact_search_org ON artifact_search (org_id)`,
 ]
-
-// Ask-idempotency guard — the Postgres twin of context_session_dedupe in schema.ts:
-// at most one live (open|working) session per (context, asker, dedupe_key). Scoped by
-// asker so one asker's key can't collide with or join onto another's session. Partial +
-// expression-scoped, so it's raw DDL, not a drizzle uniqueIndex. It references
-// dedupe_key, which the `alters` add on an existing DB, so it MUST run AFTER them
-// (the PG boot has no per-statement try/catch — see pg.ts) — hence its position at
-// the tail of the statement list below, not inline here.
-const CONTEXT_SESSION_DEDUPE_UNIQUE_PG =
-  `CREATE UNIQUE INDEX IF NOT EXISTS context_session_dedupe ON context_session ` +
-  `(context_id, asker_id, dedupe_key) WHERE dedupe_key IS NOT NULL AND state IN ('open', 'working')`
-
-// One run per automation per cron occurrence — the Postgres twin of run_schedule_occurrence
-// in schema.ts. That comment carries the reasoning: the tick's dedupe is a read-then-write, so
-// two ticks racing can both materialize the same occurrence, and this makes losing that race
-// harmless rather than expensive. Scoped to reason='schedule' because manual runs, webhook
-// fires and retries legitimately share a timestamp.
-const RUN_SCHEDULE_OCCURRENCE_UNIQUE_PG =
-  `CREATE UNIQUE INDEX IF NOT EXISTS run_schedule_occurrence ON run ` +
-  `(automation_id, scheduled_for) WHERE reason = 'schedule' AND automation_id IS NOT NULL ` +
-  `AND scheduled_for IS NOT NULL`
 
 const SLACK_THREAD_LINK_REKEY_PG = `DO $$
 DECLARE stale text;
@@ -1961,17 +1497,6 @@ export const buildPgSchemaStatements = (): string[] => {
     ...ddl.createIndexes,
     ...PERF_INDEXES,
     ...ARTIFACT_SEARCH_PG,
-    // Partial indexes follow the same dependency rule: their predicates reference columns
-    // that the additive phase may just have introduced on a populated database.
-    CONTEXT_SESSION_DEDUPE_UNIQUE_PG,
-    RUN_SCHEDULE_OCCURRENCE_UNIQUE_PG,
-    // A session no longer requires a context (chat with a document). Postgres can say this
-    // directly, and DROP NOT NULL on an already-nullable column is a no-op, so it is safe to
-    // run on every boot. SQLite needs a table rebuild instead — see CONTEXT_SESSION_RELAX_SQLITE.
-    `ALTER TABLE context_runtime ALTER COLUMN connection_id DROP NOT NULL`,
-    `ALTER TABLE runtime_setup ALTER COLUMN connection_id DROP NOT NULL`,
-    `ALTER TABLE context_session ALTER COLUMN context_id DROP NOT NULL`,
-    `ALTER TABLE context_session ALTER COLUMN context_version DROP NOT NULL`,
     // A Derive thread mirrors into every subscribed channel, so slack_thread_link is keyed
     // (thread_id, channel). A fresh database gets that from the CREATE above; an existing one
     // still carries the old single-column unique, which would reject the second channel's

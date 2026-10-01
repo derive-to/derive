@@ -43,9 +43,6 @@ import type {
   ReportState,
   ReviewRoundState,
   Role,
-  RunStatus,
-  SessionMessageAuthor,
-  SessionState,
   SharedStateAction,
   SkillClient,
   SkillInstallPolicy,
@@ -62,12 +59,6 @@ import type {
   TemplateLibraryScope,
   VersionSource,
   WebhookKind,
-  WorkflowArtifactActivityRole,
-  WorkflowArtifactActivitySource,
-  WorkflowRequestedExecution,
-  WorkflowRunStatus,
-  WorkflowStepAttemptStatus,
-  WorkflowStepKind,
   WorkspaceAccess,
 } from "@derive/core"
 import { sql } from "drizzle-orm"
@@ -374,374 +365,6 @@ export const exportJob = sqliteTable(
   (t) => [uniqueIndex("export_job_input").on(t.input_hash)],
 )
 
-// UNREAD AFTER THE AGENTS CUTOVER. From `automation` down to `workflow_artifact_activity`
-// (automation, run, runtime_model_connection, runtime_model_binding, workflow_files,
-// workflow_draft, workflow_test, runtime_owner, runtime_setup, context_runtime, run_attempt,
-// workflow_run, workflow_step_attempt, workflow_publish_receipt, workflow_artifact_activity)
-// nothing in the app writes these tables any more: agents, jobs, triggers and accounts
-// replaced them. They stay so an upgraded database keeps its rows until a separate, reviewed
-// change drops them (boot-DDL rules; see deploy/drop-*.sql for the pattern).
-// The run ledger: one row per hosted/owner agent invocation — the durable
-// An automation: a standing agent job — WHO (agent), WHEN (trigger, open-ended
-// JSON), WHAT (free-form instruction), on WHAT (refs). The definition only; every firing
-// is a `run`. A "living doc" is just an automation whose instruction keeps a doc current.
-export const automation = sqliteTable("automation", {
-  id: text("id").primaryKey(),
-  org_id: text("org_id").notNull(),
-  agent_id: text("agent_id").notNull(),
-  // Serialized AutomationTrigger { kind: manual|schedule|event, cron?, tz?, on? }. A new
-  // trigger kind adds no columns — it is a new value in this blob.
-  trigger: text("trigger").notNull(),
-  instruction: text("instruction").notNull(),
-  // Coding-agent runtime. Existing rows stay on the historical Claude default; new work can
-  // choose Codex explicitly and snapshots that choice onto each run.
-  provider: text("provider")
-    .$type<import("@derive/core").ExecutionProvider>()
-    .notNull()
-    .default("claude-code"),
-  // Serialized inputs/targets (artifact ids, urls, arbitrary), or null.
-  refs: text("refs"),
-  // JSON array of bound connection ids — the sources a run may read from (least privilege).
-  // Nullable + no default, so it ALTER ADDs cleanly on existing databases.
-  connection_ids: text("connection_ids"),
-  // The context this automation runs AS (nullable): its manifest + skills become the run's
-  // system prompt, making an automation literally a scheduled use(context, instruction).
-  // Unset = the bare run contract (an artifact-freshness job needs no methodology).
-  context_id: text("context_id"),
-  runtime_id: text("runtime_id"),
-  created_by: text("created_by"),
-  revision: integer("revision").notNull().default(0),
-  updated_at: text("updated_at"),
-  enabled: integer("enabled").$type<0 | 1>().notNull().default(1),
-  created_at: text("created_at").notNull().default(now),
-})
-
-// A run: one execution of an automation (or an ad-hoc one-off). The queue and
-// the ledger in ONE table (pg-boss's model): a `queued` row is pending work, a terminal
-// row is history. A worker claims the oldest due queued run under a row lock, runs it, and
-// finishes it. Runtime ownership and accepted inputs are separate from runner-writable
-// metadata; ordinary polling executors cannot claim a runtime-assigned run.
-export const run = sqliteTable("run", {
-  id: text("id").primaryKey(),
-  org_id: text("org_id").notNull(),
-  automation_id: text("automation_id"),
-  agent_id: text("agent_id").notNull(),
-  reason: text("reason").notNull(),
-  // The initiating person (wallet key) — null for clock/event runs. See RunRecord.
-  initiated_by: text("initiated_by"),
-  status: text("status").$type<RunStatus>().notNull(),
-  scheduled_for: text("scheduled_for"),
-  started_at: text("started_at"),
-  finished_at: text("finished_at"),
-  cost_micro_usd: integer("cost_micro_usd"),
-  runtime_id: text("runtime_id"),
-  input_snapshot: text("input_snapshot"),
-  meta: text("meta"),
-  created_at: text("created_at").notNull().default(now),
-})
-
-export const runtimeModelConnection = sqliteTable(
-  "runtime_model_connection",
-  {
-    id: text("id").primaryKey(),
-    org_id: text("org_id").notNull(),
-    created_by: text("created_by").notNull(),
-    name: text("name").notNull(),
-    provider: text("provider")
-      .$type<import("@derive/core").RuntimeModelConnectionRecord["provider"]>()
-      .notNull(),
-    api_url: text("api_url").notNull(),
-    ortam_org_id: text("ortam_org_id").notNull(),
-    ortam_user_id: text("ortam_user_id").notNull(),
-    revision: integer("revision").notNull().default(0),
-    revoked_at: text("revoked_at"),
-    created_at: text("created_at").notNull(),
-    updated_at: text("updated_at").notNull(),
-  },
-  (t) => [index("runtime_model_connection_owner").on(t.org_id, t.created_by)],
-)
-
-// Persistent environments and execution ownership outlive deleted Contexts and automations.
-// One permanent admission slot serializes manual binding and automatic setup on every store.
-export const runtimeModelBinding = sqliteTable("runtime_model_binding", {
-  context_id: text("context_id").primaryKey(),
-  org_id: text("org_id").notNull(),
-  model_connection_id: text("model_connection_id"),
-  granted_by: text("granted_by").notNull(),
-  revision: integer("revision").notNull().default(0),
-  updated_at: text("updated_at").notNull(),
-})
-
-export const workflowFiles = sqliteTable("workflow_files", {
-  context_id: text("context_id").primaryKey(),
-  org_id: text("org_id").notNull(),
-  artifact_id: text("artifact_id"),
-  blob_key: text("blob_key"),
-  version: integer("version"),
-  granted_by: text("granted_by").notNull(),
-  revision: integer("revision").notNull().default(0),
-  updated_at: text("updated_at").notNull(),
-})
-
-export const workflowDraft = sqliteTable("workflow_draft", {
-  context_id: text("context_id").primaryKey(),
-  org_id: text("org_id").notNull(),
-  instruction: text("instruction").notNull(),
-  sealed_at: text("sealed_at"),
-  provider: text("provider").$type<"codex" | "claude-code">().notNull(),
-  revision: integer("revision").notNull().default(0),
-  updated_at: text("updated_at").notNull(),
-})
-export const workflowTest = sqliteTable("workflow_test", {
-  id: text("id").primaryKey(),
-  context_id: text("context_id").notNull(),
-  org_id: text("org_id").notNull(),
-  initiated_by: text("initiated_by").notNull(),
-  config_revision: text("config_revision").notNull(),
-  input_snapshot: text("input_snapshot").notNull(),
-  status: text("status").$type<"pending" | "submitted" | "failed">().notNull(),
-  created_at: text("created_at").notNull(),
-})
-
-export const runtimeOwner = sqliteTable("runtime_owner", {
-  context_id: text("context_id").primaryKey(),
-  org_id: text("org_id").notNull(),
-  owner: text("owner").notNull(),
-})
-
-export const runtimeSetup = sqliteTable(
-  "runtime_setup",
-  {
-    id: text("id").primaryKey(),
-    org_id: text("org_id").notNull(),
-    context_id: text("context_id").notNull(),
-    agent_id: text("agent_id").notNull(),
-    created_by: text("created_by").notNull(),
-    connection_id: text("connection_id"),
-    api_url: text("api_url").notNull(),
-    ortam_org_id: text("ortam_org_id").notNull(),
-    ortam_user_id: text("ortam_user_id").notNull(),
-    model_connection_id: text("model_connection_id"),
-    model_binding_revision: integer("model_binding_revision"),
-    request_json: text("request_json").notNull(),
-    phase: text("phase").$type<import("@derive/core").RuntimeSetupRecord["phase"]>().notNull(),
-    revision: integer("revision").notNull().default(0),
-    sandbox_id: text("sandbox_id"),
-    create_operation_id: text("create_operation_id"),
-    stop_operation_id: text("stop_operation_id"),
-    delete_operation_id: text("delete_operation_id"),
-    cancelled_at: text("cancelled_at"),
-    deadline_at: text("deadline_at").notNull(),
-    created_at: text("created_at").notNull(),
-    updated_at: text("updated_at").notNull(),
-  },
-  (t) => [uniqueIndex("runtime_setup_context").on(t.context_id)],
-)
-
-export const contextRuntime = sqliteTable(
-  "context_runtime",
-  {
-    id: text("id").primaryKey(),
-    org_id: text("org_id").notNull(),
-    context_id: text("context_id").notNull(),
-    agent_id: text("agent_id").notNull(),
-    api_url: text("api_url").notNull(),
-    ortam_org_id: text("ortam_org_id").notNull(),
-    ortam_user_id: text("ortam_user_id").notNull(),
-    sandbox_id: text("sandbox_id").notNull(),
-    connection_id: text("connection_id"),
-    model_connection_id: text("model_connection_id"),
-    disabled_at: text("disabled_at"),
-    created_at: text("created_at").notNull(),
-  },
-  (t) => [
-    uniqueIndex("context_runtime_context").on(t.context_id),
-    uniqueIndex("context_runtime_sandbox").on(t.api_url, t.ortam_org_id, t.sandbox_id),
-  ],
-)
-
-export const runAttempt = sqliteTable(
-  "run_attempt",
-  {
-    id: text("id").primaryKey(),
-    org_id: text("org_id").notNull(),
-    run_id: text("run_id").notNull(),
-    runtime_id: text("runtime_id").notNull(),
-    attempt: integer("attempt").notNull(),
-    revision: integer("revision").notNull().default(0),
-    phase: text("phase").$type<import("@derive/core").RunAttemptPhase>().notNull(),
-    model_source_connection_id: text("model_source_connection_id"),
-    model_source_user_id: text("model_source_user_id"),
-    startup_operation_id: text("startup_operation_id"),
-    launch_started_at: text("launch_started_at"),
-    runner_claimed_at: text("runner_claimed_at"),
-    process_id: text("process_id"),
-    stop_operation_id: text("stop_operation_id"),
-    deadline_at: text("deadline_at").notNull(),
-    result_json: text("result_json"),
-    save_status: text("save_status")
-      .$type<import("@derive/core").RuntimeSaveStatus>()
-      .notNull()
-      .default("pending"),
-    saved_snapshot_id: text("saved_snapshot_id"),
-    released_at: text("released_at"),
-    created_at: text("created_at").notNull(),
-    updated_at: text("updated_at").notNull(),
-  },
-  (t) => [uniqueIndex("run_attempt_number").on(t.run_id, t.attempt)],
-)
-
-// One start of a version-pinned Workflow diagram.
-export const workflowRun = sqliteTable(
-  "workflow_run",
-  {
-    id: text("id").primaryKey(),
-    org_id: text("org_id").notNull(),
-    // Deliberately not an FK: execution history outlives the source artifact.
-    workflow_artifact_id: text("workflow_artifact_id").notNull(),
-    workflow_version: integer("workflow_version").notNull(),
-    workflow_blob_key: text("workflow_blob_key").notNull(),
-    workflow_content_type: text("workflow_content_type").notNull(),
-    diagram_id: text("diagram_id").notNull(),
-    status: text("status").$type<WorkflowRunStatus>().notNull().default("queued"),
-    state_revision: integer("state_revision").notNull().default(0),
-    reason: text("reason").notNull(),
-    initiated_by: text("initiated_by"),
-    request_id: text("request_id"),
-    assigned_agent_id: text("assigned_agent_id"),
-    executor_id: text("executor_id"),
-    requested_execution: text("requested_execution")
-      .$type<WorkflowRequestedExecution>()
-      .notNull()
-      .default("any"),
-    actual_execution: text("actual_execution").$type<"local" | "hosted" | "github_actions">(),
-    external_execution: text("external_execution"),
-    external_run_id: text("external_run_id"),
-    created_at: text("created_at").notNull().default(now),
-    updated_at: text("updated_at").notNull(),
-    started_at: text("started_at"),
-    finished_at: text("finished_at"),
-  },
-  (t) => [
-    index("workflow_run_org_created").on(t.org_id, t.created_at),
-    index("workflow_run_definition").on(
-      t.workflow_artifact_id,
-      t.workflow_version,
-      t.diagram_id,
-      t.created_at,
-    ),
-    index("workflow_run_external").on(t.external_run_id),
-  ],
-)
-
-// One materialized node attempt. Unselected branches do not create rows.
-export const workflowStepAttempt = sqliteTable(
-  "workflow_step_attempt",
-  {
-    id: text("id").primaryKey(),
-    workflow_run_id: text("workflow_run_id")
-      .notNull()
-      .references(() => workflowRun.id),
-    node_id: text("node_id").notNull(),
-    attempt: integer("attempt").notNull(),
-    kind: text("kind").$type<WorkflowStepKind>().notNull(),
-    status: text("status").$type<WorkflowStepAttemptStatus>().notNull().default("queued"),
-    state_revision: integer("state_revision").notNull().default(0),
-    context_id: text("context_id"),
-    context_manifest_artifact_id: text("context_manifest_artifact_id"),
-    context_version: integer("context_version"),
-    context_blob_key: text("context_blob_key"),
-    context_content_type: text("context_content_type"),
-    session_id: text("session_id"),
-    decision: text("decision"),
-    selected_routes: text("selected_routes"),
-    route_sources: text("route_sources"),
-    route_basis: text("route_basis"),
-    result_artifact_id: text("result_artifact_id"),
-    output: text("output"),
-    error: text("error"),
-    created_at: text("created_at").notNull().default(now),
-    updated_at: text("updated_at").notNull(),
-    started_at: text("started_at"),
-    finished_at: text("finished_at"),
-  },
-  (t) => [
-    uniqueIndex("workflow_step_attempt_number").on(t.workflow_run_id, t.node_id, t.attempt),
-    uniqueIndex("workflow_step_attempt_session").on(t.session_id),
-    index("workflow_step_attempt_run").on(t.workflow_run_id, t.created_at),
-  ],
-)
-
-// A claim is completed within the same transaction/batch as its version and activity.
-// artifact_version starts at zero only inside that transaction. The final update must
-// resolve a real version; its NOT NULL constraint aborts an incomplete D1 batch.
-export const workflowPublishReceipt = sqliteTable(
-  "workflow_publish_receipt",
-  {
-    id: text("id").primaryKey(),
-    org_id: text("org_id").notNull(),
-    workflow_run_id: text("workflow_run_id")
-      .notNull()
-      .references(() => workflowRun.id, { onDelete: "cascade" }),
-    node_id: text("node_id").notNull(),
-    attempt: integer("attempt").notNull(),
-    dedupe_key: text("dedupe_key").notNull(),
-    request_hash: text("request_hash").notNull(),
-    artifact_id: text("artifact_id").notNull(),
-    artifact_short_id: text("artifact_short_id").notNull(),
-    artifact_version: integer("artifact_version").notNull(),
-    version_id: text("version_id").notNull(),
-    activity_id: text("activity_id").notNull(),
-    role: text("role").$type<WorkflowArtifactActivityRole>().notNull(),
-    created_at: text("created_at").notNull(),
-  },
-  (t) => [
-    uniqueIndex("workflow_publish_receipt_key").on(
-      t.workflow_run_id,
-      t.node_id,
-      t.attempt,
-      t.dedupe_key,
-    ),
-  ],
-)
-
-// Exact artifact versions observed during a workflow run. These rows are provenance only.
-// Step completion remains an explicit workflow receipt.
-export const workflowArtifactActivity = sqliteTable(
-  "workflow_artifact_activity",
-  {
-    id: text("id").primaryKey(),
-    org_id: text("org_id").notNull(),
-    workflow_run_id: text("workflow_run_id")
-      .notNull()
-      .references(() => workflowRun.id),
-    node_id: text("node_id").notNull(),
-    attempt: integer("attempt").notNull(),
-    artifact_short_id: text("artifact_short_id").notNull(),
-    artifact_version: integer("artifact_version").notNull(),
-    artifact_title: text("artifact_title"),
-    role: text("role").$type<WorkflowArtifactActivityRole>().notNull(),
-    source: text("source").$type<WorkflowArtifactActivitySource>().notNull(),
-    created_at: text("created_at").notNull().default(now),
-  },
-  (t) => [
-    uniqueIndex("workflow_artifact_activity_exact").on(
-      t.workflow_run_id,
-      t.node_id,
-      t.attempt,
-      t.artifact_short_id,
-      t.artifact_version,
-      t.role,
-    ),
-    index("workflow_artifact_activity_run").on(t.workflow_run_id, t.created_at),
-    index("workflow_artifact_activity_version").on(
-      t.artifact_short_id,
-      t.artifact_version,
-      t.source,
-    ),
-  ],
-)
-
 // Privacy-safe observations from local Codex and Claude structured logs. The scanner never
 // uploads prompts, responses, tool arguments, content, paths, or a raw session identifier.
 export const artifactScanEvent = sqliteTable(
@@ -1025,15 +648,9 @@ export const agent = sqliteTable(
     // user). Null for agents from before the column existed — those publish as
     // themselves, so recreating the agent is the upgrade path.
     created_by: text("created_by"),
-    // Served by Derive's managed executor when 1. Hosting changes WHERE the
-    // agent runs — never its principal, role cap, or attribution.
-    hosted: integer("hosted").notNull().default(0).$type<0 | 1>(),
     // 1 = auto-minted for one context at creation (never user-named): the context's
     // Derive access, not a persona. The UI hides managed agents from the roster.
     managed: integer("managed").notNull().default(0).$type<0 | 1>(),
-    // The runs-lane liveness mark (twin of context.runner_seen_at): stamped when the
-    // agent's bearer polls the run claim endpoint. Null = no executor has ever polled.
-    runs_seen_at: text("runs_seen_at"),
     // ---- The agent model: what a Context held, plus where it runs (core agent-model.ts).
     // All nullable or constant-defaulted, so they ALTER onto existing rows cleanly.
     description: text("description"),
@@ -1583,30 +1200,6 @@ export const userNotificationPref = sqliteTable(
   (t) => [uniqueIndex("user_notification_pref_key").on(t.org_id, t.user_id)],
 )
 
-// UNREAD AFTER THE AGENTS CUTOVER: model accounts (`model_account`) replaced these rows, which
-// stay until the old tables are dropped in a separate change. Only the account-deletion purges
-// still touch them.
-// A team member's OWN model-plan credential — their Claude/Codex plan token (or an API
-// key) — encrypted at rest (AES-GCM, lib/crypto, keyed by DERIVE_AUTH_SECRET), scoped
-// (org, user, provider) and used ONLY for that user's own agent runs. Never a shared
-// token: this is what replaces the single global model-credential env for hosted runs.
-// `secret` is the encrypted blob; `hint` is a safe label (e.g. last 4) for the UI.
-export const modelCredential = sqliteTable(
-  "model_credential",
-  {
-    id: text("id").primaryKey(),
-    org_id: text("org_id").notNull(),
-    user_id: text("user_id").notNull(),
-    provider: text("provider").notNull(),
-    kind: text("kind").$type<"oauth" | "api_key" | "login">().notNull(),
-    secret: text("secret").notNull(),
-    hint: text("hint").notNull().default(""),
-    created_at: text("created_at").notNull().default(now),
-    updated_at: text("updated_at").notNull().default(now),
-  },
-  (t) => [uniqueIndex("model_credential_key").on(t.org_id, t.user_id, t.provider)],
-)
-
 // Derive comment thread ↔ the Slack message Derive posted for it (for two-way threading).
 export const slackThreadLink = sqliteTable(
   "slack_thread_link",
@@ -1931,63 +1524,6 @@ export const contextAsker = sqliteTable(
   (t) => [uniqueIndex("context_asker_user").on(t.context_id, t.user_id)],
 )
 
-// One ask-conversation with a context. Named context_session because Better Auth
-// owns a `session` table in the same database. `state` doubles as the turn signal:
-// `open` = the runner owes a reply, which makes the queue read one indexed predicate
-// instead of a last-message join.
-export const contextSession = sqliteTable(
-  "context_session",
-  {
-    id: text("id").primaryKey(),
-    // NULLABLE since chat: a session that names no context is served by the default agent
-    // (the model plus the document). A context is how you opt INTO a packaged agent, not a
-    // requirement for having a conversation. Relaxed on existing DBs by RELAX_STATEMENTS.
-    context_id: text("context_id").references(() => context.id),
-    org_id: text("org_id").notNull(),
-    asker_id: text("asker_id").notNull(),
-    /** The manifest version this session opened against; null when there is no context. */
-    context_version: integer("context_version"),
-    state: text("state").$type<SessionState>().notNull().default("open"),
-    created_at: text("created_at").notNull().default(now),
-    updated_at: text("updated_at"),
-    // Lease bookkeeping for the concurrency-safe claim (mirrors webhook_delivery /
-    // render_job). All nullable: a session is unclaimed until a runner claims it,
-    // and these ALTER onto existing rows cleanly.
-    started_at: text("started_at"),
-    lease_until: text("lease_until"),
-    result_artifact_id: text("result_artifact_id"),
-    // Ask idempotency key. The partial-unique index below keeps at most one live
-    // (open|working) session per (context, dedupe_key). Nullable = not deduped.
-    dedupe_key: text("dedupe_key"),
-    // What this session is ABOUT, as a Selector (packages/core/src/selectors.ts) —
-    // the same JSON shape automation.refs stores, so one address type serves both
-    // lanes. Null = a plain ask with no subject, which is every session before this.
-    subject_ref: text("subject_ref"),
-  },
-  (t) => [
-    index("context_session_queue").on(t.context_id, t.state, t.created_at),
-    index("context_session_asker").on(t.asker_id, t.created_at),
-  ],
-)
-
-// A session's transcript, one row per turn. `meta` is the runner's structured
-// payload (query, confidence, caveats, artifact refs) as TEXT JSON, like comment.meta.
-export const sessionMessage = sqliteTable(
-  "session_message",
-  {
-    id: text("id").primaryKey(),
-    session_id: text("session_id")
-      .notNull()
-      .references(() => contextSession.id),
-    author_kind: text("author_kind").$type<SessionMessageAuthor>().notNull(),
-    author_id: text("author_id").notNull(),
-    body_md: text("body_md").notNull(),
-    meta: text("meta"),
-    created_at: text("created_at").notNull().default(now),
-  },
-  (t) => [index("session_message_session").on(t.session_id, t.created_at)],
-)
-
 // Abuse reports against public artifacts; anyone can file one.
 export const report = sqliteTable("report", {
   id: text("id").primaryKey(),
@@ -2087,21 +1623,6 @@ const TABLES = [
   agentTrigger,
   modelAccount,
   agentMention,
-  automation,
-  run,
-  contextRuntime,
-  runtimeSetup,
-  runtimeOwner,
-  runtimeModelConnection,
-  runtimeModelBinding,
-  workflowDraft,
-  workflowFiles,
-  workflowTest,
-  runAttempt,
-  workflowRun,
-  workflowStepAttempt,
-  workflowArtifactActivity,
-  workflowPublishReceipt,
   artifactScanEvent,
   artifactScanCoverage,
   skillRelation,
@@ -2130,7 +1651,6 @@ const TABLES = [
   templateLibraryEntry,
   orgSettings,
   subscription,
-  modelCredential,
   slackInstall,
   slackThreadLink,
   slackUserLink,
@@ -2142,8 +1662,6 @@ const TABLES = [
   reviewRound,
   context,
   contextAsker,
-  contextSession,
-  sessionMessage,
   importJob,
   importLease,
   report,
@@ -2159,7 +1677,7 @@ const ddl = generateDdl(TABLES, getTableConfig, {
 /**
  * Raw DDL run at boot for the self-host SQLite default (zero-config), and used to
  * seed D1 (deploy/d1-schema.sql). Table/index CREATEs come from the drizzle defs;
- * the not-yet-queried placeholder tables (principal/view) and the perf indexes
+ * the placeholder tables (view/view_read) and the perf indexes
  * have no drizzle def and stay explicit (see ./ddl).
  */
 // Full-text search index (workspace search substrate). A contentless FTS5 virtual table:
@@ -2178,44 +1696,12 @@ const ARTIFACT_SEARCH_FTS5 =
   `CREATE VIRTUAL TABLE IF NOT EXISTS artifact_search USING fts5(` +
   `text, artifact_id UNINDEXED, org_id UNINDEXED, tokenize='unicode61 remove_diacritics 0')`
 
-// Ask-idempotency guard: at most one LIVE (open|working) session per
-// (context, asker, dedupe_key). Scoped by asker so one asker's key can't collide with —
-// or, via findInflightSession, join onto — another asker's session (sessions are private
-// to asker + owner). Partial + expression-scoped, so drizzle's uniqueIndex can't express
-// it — raw DDL like the FTS table. SQLite and Postgres both honor `CREATE UNIQUE INDEX …
-// WHERE …`. On a fresh DB the CREATE TABLE above already carries dedupe_key, so this is
-// safe in the initial schema pass.
-const CONTEXT_SESSION_DEDUPE_UNIQUE =
-  `CREATE UNIQUE INDEX IF NOT EXISTS context_session_dedupe ON context_session ` +
-  `(context_id, asker_id, dedupe_key) WHERE dedupe_key IS NOT NULL AND state IN ('open', 'working')`
-
-// One run per automation per cron occurrence — as a CONSTRAINT rather than a convention.
-//
-// The schedule tick dedupes by reading the newest schedule run and comparing its scheduled_for
-// (lib/schedule.ts). That is a read-then-write, so two ticks racing — the every-minute cron,
-// plus every polling agent's claim, plus a second API replica — can both decide an occurrence
-// is unmaterialized and both create it. Two runs for one occurrence means two executors, two
-// model bills, and two versions of the same artifact. The read-then-write stays and still does
-// the work; this makes LOSING that race harmless rather than expensive, because the loser's
-// INSERT simply fails.
-//
-// Scoped to reason='schedule' deliberately: manual runs, webhook fires and retries all stamp
-// scheduled_for as well (with `now`, or now+backoff), so an unscoped constraint would reject a
-// second Run now in the same instant — which is legitimate. Partial and expression-scoped, so
-// drizzle's uniqueIndex cannot express it: raw DDL, exactly like the session dedupe above.
-const RUN_SCHEDULE_OCCURRENCE_UNIQUE =
-  `CREATE UNIQUE INDEX IF NOT EXISTS run_schedule_occurrence ON run ` +
-  `(automation_id, scheduled_for) WHERE reason = 'schedule' AND automation_id IS NOT NULL ` +
-  `AND scheduled_for IS NOT NULL`
-
 export const SCHEMA_STATEMENTS: string[] = [
   ...ddl.createTables,
   ...placeholderTables(SQLITE_TIMESTAMP_DEFAULT),
   ...ddl.createIndexes,
   ...PERF_INDEXES,
   ARTIFACT_SEARCH_FTS5,
-  CONTEXT_SESSION_DEDUPE_UNIQUE,
-  RUN_SCHEDULE_OCCURRENCE_UNIQUE,
 ]
 
 /**
@@ -2228,19 +1714,6 @@ export const SCHEMA_STATEMENTS: string[] = [
 export const MIGRATION_STATEMENTS: string[] = ddl.addColumns
 
 /**
- * NOT-NULL RELAXATIONS for existing databases.
- *
- * `ADD COLUMN` cannot express "this column may now be null", and SQLite has no
- * `ALTER COLUMN` at all — the only way is to rebuild the table. That is why these are a
- * separate list from MIGRATION_STATEMENTS rather than generated: a rebuild is destructive
- * if it goes wrong, so each one is written out and reviewed rather than inferred.
- *
- * Runs INSIDE a transaction, and only when the old constraint is still present (the caller
- * checks `PRAGMA table_info`), so a second boot is a no-op rather than a second rebuild.
- * Column order matches the CREATE in ddl.ts; `subject_ref` is last because it was the most
- * recent add.
- */
-/**
  * Re-key `slack_thread_link` from UNIQUE(thread_id) to UNIQUE(thread_id, channel).
  *
  * A Derive thread now mirrors into every channel subscribed to its artifact, so one thread
@@ -2250,7 +1723,7 @@ export const MIGRATION_STATEMENTS: string[] = ddl.addColumns
  * MIGRATION_STATEMENTS only ever emits ADD COLUMN. So an upgraded database would silently keep
  * the old constraint and break the moment a second channel subscribed.
  *
- * Hence the documented SQLite create-copy-drop-rename, same as CONTEXT_SESSION_RELAX_SQLITE.
+ * Hence the documented SQLite create-copy-drop-rename.
  * Applied only when a stale single-column unique on thread_id is actually present (see
  * sqlite.ts), so it runs once and is a no-op on a fresh database.
  */
@@ -2277,59 +1750,6 @@ export const SLACK_THREAD_LINK_REKEY_SQLITE: string[] = [
   `ALTER TABLE slack_thread_link__new RENAME TO slack_thread_link`,
 ]
 
-export const CONTEXT_SESSION_RELAX_SQLITE: string[] = [
-  `CREATE TABLE context_session__new (
-  id TEXT PRIMARY KEY,
-  context_id TEXT,
-  org_id TEXT NOT NULL,
-  asker_id TEXT NOT NULL,
-  context_version INTEGER,
-  state TEXT NOT NULL DEFAULT 'open',
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  updated_at TEXT,
-  started_at TEXT,
-  lease_until TEXT,
-  result_artifact_id TEXT,
-  dedupe_key TEXT,
-  subject_ref TEXT,
-  FOREIGN KEY (context_id) REFERENCES context(id)
-)`,
-  `INSERT INTO context_session__new (id, context_id, org_id, asker_id, context_version, state,
-     created_at, updated_at, started_at, lease_until, result_artifact_id, dedupe_key, subject_ref)
-   SELECT id, context_id, org_id, asker_id, context_version, state,
-     created_at, updated_at, started_at, lease_until, result_artifact_id, dedupe_key, subject_ref
-   FROM context_session`,
-  // schema-ignore — the ONE sanctioned drop, and only as the middle step of the documented
-  // SQLite table-rebuild (create-copy-drop-rename). The guardrail is right in general: you
-  // evolve by adding. But `ADD COLUMN` cannot express "may now be null" and SQLite has no
-  // ALTER COLUMN, so relaxing a NOT NULL has no additive form. The copy above has already
-  // run inside the same transaction, and the test asserts every pre-existing row survives.
-  `DROP TABLE context_session`, // schema-ignore: middle step of the rebuild above
-  `ALTER TABLE context_session__new RENAME TO context_session`,
-  `CREATE INDEX IF NOT EXISTS context_session_queue ON context_session (context_id, state, created_at)`,
-  `CREATE INDEX IF NOT EXISTS context_session_asker ON context_session (asker_id, created_at)`,
-  CONTEXT_SESSION_DEDUPE_UNIQUE,
-]
-
 // Schema parity is enforced in repos.ts, where the shared `schema` object lives:
 // `Exhaustive`/`Shapes` (./parity) force every table to be classified and every
 // typed table's row shape to match its @derive/core Record. See ./parity.
-
-/** Rebuild only when the legacy controller column is NOT NULL. Generated from
- * the current schema so every receipt and uniqueness constraint survives. */
-export function runtimeControllerRelaxation(table: "context_runtime" | "runtime_setup") {
-  const definition = table === "context_runtime" ? contextRuntime : runtimeSetup
-  const columns = getTableConfig(definition)
-    .columns.map((column) => column.name)
-    .join(", ")
-  const create = SCHEMA_STATEMENTS.find((statement) =>
-    statement.startsWith(`CREATE TABLE IF NOT EXISTS ${table} (`),
-  )
-  if (!create) throw new Error("Runtime schema is missing")
-  return [
-    create.replace(`IF NOT EXISTS ${table}`, `${table}__new`),
-    `INSERT INTO ${table}__new (${columns}) SELECT ${columns} FROM ${table}`,
-    `DROP TABLE ${table}`, // schema-ignore: transactional rebuild after complete receipt copy; only stale NOT NULL triggers it
-    `ALTER TABLE ${table}__new RENAME TO ${table}`,
-  ]
-}

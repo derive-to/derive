@@ -81,8 +81,6 @@ import type {
   NewRenderJob,
   NewReport,
   NewReviewRound,
-  NewSession,
-  NewSessionMessage,
   NewSharedStateActivity,
   NewSignupAttribution,
   NewSkillInstallation,
@@ -111,9 +109,6 @@ import type {
   ReportState,
   ReviewRoundRecord,
   Role,
-  SessionMessageRecord,
-  SessionRecord,
-  SessionState,
   SharedStateActivityRecord,
   SharedStateRecord,
   SharedStateWrite,
@@ -207,7 +202,6 @@ import {
   artifactTag,
   asset,
   auditLog,
-  automation,
   collection,
   collectionFavorite,
   collectionInvite,
@@ -217,8 +211,6 @@ import {
   connection,
   context,
   contextAsker,
-  contextRuntime,
-  contextSession,
   domain,
   dynamicRevision,
   exportJob,
@@ -233,7 +225,6 @@ import {
   jobMessage,
   membership,
   modelAccount,
-  modelCredential,
   notification,
   oauthClientWorkspace,
   orgSettings,
@@ -242,13 +233,6 @@ import {
   renderJob,
   report,
   reviewRound,
-  run,
-  runAttempt,
-  runtimeModelBinding,
-  runtimeModelConnection,
-  runtimeOwner,
-  runtimeSetup,
-  sessionMessage,
   sharedState,
   sharedStateActivity,
   signupAttribution,
@@ -268,13 +252,6 @@ import {
   versionData,
   webhook,
   webhookDelivery,
-  workflowArtifactActivity,
-  workflowDraft,
-  workflowFiles,
-  workflowPublishReceipt,
-  workflowRun,
-  workflowStepAttempt,
-  workflowTest,
   workspace,
   workspaceJoinLink,
 } from "./pg-schema"
@@ -322,21 +299,6 @@ export const schema = {
   reviewRound,
   agent,
   agentMention,
-  automation,
-  run,
-  contextRuntime,
-  runtimeSetup,
-  runtimeOwner,
-  runtimeModelConnection,
-  runtimeModelBinding,
-  workflowDraft,
-  workflowFiles,
-  workflowTest,
-  runAttempt,
-  workflowRun,
-  workflowStepAttempt,
-  workflowArtifactActivity,
-  workflowPublishReceipt,
   artifactScanEvent,
   artifactScanCoverage,
   skillRelation,
@@ -355,8 +317,6 @@ export const schema = {
   oauthClientWorkspace,
   context,
   contextAsker,
-  contextSession,
-  sessionMessage,
   collection,
   collectionItem,
   collectionMember,
@@ -401,20 +361,6 @@ const _schemaShapes: Shapes<typeof schema> = {
   reviewRound: true,
   agent: true,
   agentMention: true,
-  automation: true,
-  run: true,
-  contextRuntime: true,
-  runtimeSetup: true,
-  runtimeModelConnection: true,
-  runtimeModelBinding: true,
-  workflowDraft: true,
-  workflowFiles: true,
-  workflowTest: true,
-  runAttempt: true,
-  workflowRun: true,
-  workflowStepAttempt: true,
-  workflowArtifactActivity: true,
-  workflowPublishReceipt: true,
   artifactScanEvent: true,
   artifactScanCoverage: true,
   skillRelation: true,
@@ -431,8 +377,6 @@ const _schemaShapes: Shapes<typeof schema> = {
   subscription: true,
   context: true,
   contextAsker: true,
-  contextSession: true,
-  sessionMessage: true,
   collection: true,
   collectionMember: true,
   folder: true,
@@ -3036,12 +2980,7 @@ export class PgMetaStore implements MetaStore {
     await this.db
       .delete(membership)
       .where(and(eq(membership.org_id, orgId), eq(membership.user_id, userId)))
-    // A removed member's connected plan must stop being billable here — otherwise a lent
-    // agent would keep charging their token after they've lost workspace access.
-    await this.db
-      .delete(modelCredential)
-      .where(and(eq(modelCredential.org_id, orgId), eq(modelCredential.user_id, userId)))
-    // Their personal model accounts and plans too, and their agents stand down (see the
+    // Their personal model accounts and plans go, and their agents stand down (see the
     // SQLite store).
     await this.db
       .delete(modelAccount)
@@ -3077,10 +3016,6 @@ export class PgMetaStore implements MetaStore {
       await tx.delete(templateLibrary).where(eq(templateLibrary.org_id, orgId))
     })
     await this.db.delete(membership).where(eq(membership.org_id, orgId))
-    // Every connected plan for this org, INCLUDING the workspace-pool sentinel row, so no
-    // encrypted token is orphaned (the pool row would otherwise have no API path left to
-    // delete once memberships are gone). One predicate covers members and the pool.
-    await this.db.delete(modelCredential).where(eq(modelCredential.org_id, orgId))
     // The agent model's rows (see the SQLite store): accounts, agents, schedules, jobs and
     // their transcripts.
     await this.db
@@ -3111,9 +3046,6 @@ export class PgMetaStore implements MetaStore {
       )
     await this.db.delete(webhook).where(eq(webhook.org_id, orgId))
     await this.db.delete(workspaceJoinLink).where(eq(workspaceJoinLink.org_id, orgId))
-    await this.db.delete(workflowFiles).where(eq(workflowFiles.org_id, orgId))
-    await this.db.delete(workflowDraft).where(eq(workflowDraft.org_id, orgId))
-    await this.db.delete(workflowTest).where(eq(workflowTest.org_id, orgId))
     await this.db.delete(workspace).where(eq(workspace.id, orgId))
   }
   listWorkspaces(userId: string): Promise<(WorkspaceRecord & { role: Role })[]> {
@@ -4948,9 +4880,8 @@ export class PgMetaStore implements MetaStore {
       manifest_short_id: r.manifest_short_id ?? null,
     }))
   }
-  // Sequential cascade (messages → sessions → context), like deleteCollection.
-  // The org scope gates the WHOLE cascade, not just the context row — otherwise a
-  // wrong-workspace call would wipe another tenant's sessions and leave the context.
+  // The org scope gates the WHOLE cascade, not just the context row: a wrong-workspace
+  // call must not touch another tenant's rows.
   async deleteContext(id: string, orgId: string): Promise<void> {
     const owned = await this.db
       .select({ id: context.id })
@@ -4958,27 +4889,10 @@ export class PgMetaStore implements MetaStore {
       .where(and(eq(context.id, id), eq(context.org_id, orgId)))
       .limit(1)
     if (owned.length === 0) return
-    // Subquery, not a materialized id list — kept identical to the sqlite/d1
-    // layer, where an expanded IN (...) would blow D1's bound-parameter cap.
-    await this.db
-      .delete(sessionMessage)
-      .where(
-        inArray(
-          sessionMessage.session_id,
-          this.db
-            .select({ id: contextSession.id })
-            .from(contextSession)
-            .where(eq(contextSession.context_id, id)),
-        ),
-      )
-    await this.db.delete(contextSession).where(eq(contextSession.context_id, id))
     // The asker roster and the import job FK the context — clear them before the
     // parent row. Deleting the job is how a running import learns it was cancelled.
     await this.db.delete(contextAsker).where(eq(contextAsker.context_id, id))
     await this.db.delete(importJob).where(eq(importJob.context_id, id))
-    await this.db.delete(workflowFiles).where(eq(workflowFiles.context_id, id))
-    await this.db.delete(workflowDraft).where(eq(workflowDraft.context_id, id))
-    await this.db.delete(workflowTest).where(eq(workflowTest.context_id, id))
     await this.db.delete(context).where(eq(context.id, id))
   }
   async setContextCodeUrl(id: string, codeUrl: string | null): Promise<void> {
@@ -5187,89 +5101,6 @@ export class PgMetaStore implements MetaStore {
       .where(and(eq(contextAsker.context_id, contextId), eq(contextAsker.user_id, userId)))
       .limit(1)
     return (rows[0] as ContextAskerRecord) ?? null
-  }
-  async createSessionWithMessage(
-    s: NewSession,
-    m: Omit<NewSessionMessage, "session_id">,
-    state: SessionState,
-  ): Promise<{ session: SessionRecord; message: SessionMessageRecord }> {
-    // Three statements (insert session, insert message, set state) as ONE, in a single
-    // implicit transaction — one round trip, and atomic, where the three loose statements it
-    // replaces could leave a session with no first message if the isolate died between them.
-    //
-    // THE STATE IS WRITTEN BY THE INSERT, not by a follow-up UPDATE. That is not a shortcut:
-    // data-modifying CTEs in one statement all see the SAME snapshot and cannot observe each
-    // other's effects on the target table, so an `UPDATE context_session WHERE id = (SELECT
-    // id FROM ins)` matches ZERO rows — the row `ins` just wrote is not visible to it. The
-    // first version of this did exactly that, returned no rows at all, and 500'd every chat
-    // open on Postgres while passing the entire SQLite suite.
-    //
-    // `msg` reading from `ins` IS allowed, and is the difference that matters: it consumes
-    // `ins`'s RETURNING output (a CTE result set), not the table's post-insert state.
-    const now = new Date().toISOString()
-    const { rows } = await this.pool.query<{
-      session: SessionRecord
-      message: SessionMessageRecord
-    }>(
-      `WITH ins AS (
-         INSERT INTO context_session
-           (id, context_id, org_id, asker_id, context_version, dedupe_key, subject_ref, state, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *
-       ), msg AS (
-         INSERT INTO session_message (id, session_id, author_kind, author_id, body_md, meta)
-         SELECT $10, ins.id, $11, $12, $13, $14 FROM ins RETURNING *
-       )
-       SELECT row_to_json(ins) session, row_to_json(msg) message FROM ins, msg`,
-      [
-        s.id,
-        s.context_id ?? null,
-        s.org_id,
-        s.asker_id,
-        s.context_version ?? null,
-        s.dedupe_key ?? null,
-        s.subject_ref ?? null,
-        state,
-        now,
-        m.id,
-        m.author_kind,
-        m.author_id,
-        m.body_md,
-        m.meta ?? null,
-      ],
-    )
-    const row = rows[0]
-    if (!row) throw new Error("createSessionWithMessage: insert returned no row")
-    return { session: row.session, message: row.message }
-  }
-  async getSession(id: string): Promise<SessionRecord | null> {
-    const rows = await this.db
-      .select()
-      .from(contextSession)
-      .where(eq(contextSession.id, id))
-      .limit(1)
-    return rows[0] ?? null
-  }
-  // Two writes, no transaction (the createReviewRound pattern, kept identical to
-  // the sqlite/d1 layer). A crash between them leaves state stale: an unsettled
-  // agent turn is caught by the runner's last-turn guard; a lost asker `open`
-  // waits for the asker's next message. Both windows are milliseconds.
-  async addSessionMessage(
-    m: NewSessionMessage,
-    state: SessionState,
-  ): Promise<SessionMessageRecord> {
-    const rows = await this.db.insert(sessionMessage).values(m).returning()
-    await this.db
-      .update(contextSession)
-      .set({ state, updated_at: new Date().toISOString() })
-      .where(eq(contextSession.id, m.session_id))
-    return one(rows)
-  }
-  listSessionMessages(sessionId: string): Promise<SessionMessageRecord[]> {
-    return this.db
-      .select()
-      .from(sessionMessage)
-      .where(eq(sessionMessage.session_id, sessionId))
-      .orderBy(asc(sessionMessage.created_at))
   }
 
   // ---- User directory (Better Auth's "user" table; raw, may be absent) ---
@@ -6531,9 +6362,8 @@ export class PgMetaStore implements MetaStore {
     await this.db.delete(follow).where(eq(follow.user_id, userId))
     await this.db.delete(artifactFavorite).where(eq(artifactFavorite.user_id, userId))
     await this.db.delete(notification).where(eq(notification.user_id, userId))
-    // Encrypted plan tokens must not linger after the account is gone; the workspace pool's
+    // Encrypted model keys must not linger after the account is gone; the workspace pool's
     // sentinel-user row is keyed differently, so it is never in scope.
-    await this.db.delete(modelCredential).where(eq(modelCredential.user_id, userId))
     await this.db.delete(modelAccount).where(eq(modelAccount.user_id, userId))
     await this.db.delete(plan).where(eq(plan.user_id, userId))
     // Before created_by is cleared below: their agents' keys die and the agents stay paused.
@@ -6644,25 +6474,13 @@ export class PgMetaStore implements MetaStore {
   // Atomic delete: all FK-dependent rows and the artifact row commit together.
   async deleteArtifact(id: string): Promise<void> {
     await this.db.transaction(async (tx) => {
-      // A context's manifest FK means deleting a manifest deletes its context
-      // (and sessions) — a context cannot outlive its definition, by design.
-      // Subqueries, matching the sqlite/d1 layer (D1 bound-parameter cap).
+      // A context's manifest FK means deleting a manifest deletes its context: a
+      // context cannot outlive its definition, by design. Subqueries, matching the
+      // sqlite/d1 layer (D1 bound-parameter cap).
       const ctxIds = tx
         .select({ id: context.id })
         .from(context)
         .where(eq(context.manifest_artifact_id, id))
-      await tx
-        .delete(sessionMessage)
-        .where(
-          inArray(
-            sessionMessage.session_id,
-            tx
-              .select({ id: contextSession.id })
-              .from(contextSession)
-              .where(inArray(contextSession.context_id, ctxIds)),
-          ),
-        )
-      await tx.delete(contextSession).where(inArray(contextSession.context_id, ctxIds))
       await tx.delete(contextAsker).where(inArray(contextAsker.context_id, ctxIds))
       await tx.delete(importJob).where(inArray(importJob.context_id, ctxIds))
       await tx.delete(context).where(eq(context.manifest_artifact_id, id))

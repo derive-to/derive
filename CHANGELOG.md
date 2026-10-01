@@ -452,6 +452,9 @@ note in the [self-hosting quickstart](apps/docs/content/self-hosting/quickstart.
   nobody; `dkjob_` is the only work token.
 - **The chat, automations and hosted-agent workspace opt-ins.** `agentWrites` is the one
   switch for agent work.
+- **The retired tables** (the 18 the old agent work used, `principal`, `agent.hosted`,
+  `agent.runs_seen_at`): drop them once after upgrading with `deploy/drop-agents-retired.sql`
+  (Postgres) or `deploy/drop-agents-retired-sqlite.sql` (SQLite, D1).
 - **The built-in template catalog and `@derive-to/templates`.** The 30 code-defined
   starters, the `derive://templates/catalog` and `derive://templates/<id>` MCP
   resources, and the built-in form of `derived_from` are gone; templates are artifacts

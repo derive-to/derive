@@ -255,9 +255,7 @@ CREATE TABLE IF NOT EXISTS agent (
   token TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'commenter',
   created_by TEXT,
-  hosted INTEGER NOT NULL DEFAULT 0,
   managed INTEGER NOT NULL DEFAULT 0,
-  runs_seen_at TEXT,
   description TEXT,
   instructions_artifact_id TEXT,
   machine TEXT NOT NULL DEFAULT 'owner',
@@ -367,262 +365,6 @@ CREATE TABLE IF NOT EXISTS agent_mention (
   kind TEXT NOT NULL DEFAULT 'mention',
   state TEXT NOT NULL DEFAULT 'pending',
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-);
-
-CREATE TABLE IF NOT EXISTS automation (
-  id TEXT PRIMARY KEY,
-  org_id TEXT NOT NULL,
-  agent_id TEXT NOT NULL,
-  trigger TEXT NOT NULL,
-  instruction TEXT NOT NULL,
-  provider TEXT NOT NULL DEFAULT 'claude-code',
-  refs TEXT,
-  connection_ids TEXT,
-  context_id TEXT,
-  runtime_id TEXT,
-  created_by TEXT,
-  revision INTEGER NOT NULL DEFAULT 0,
-  updated_at TEXT,
-  enabled INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-);
-
-CREATE TABLE IF NOT EXISTS run (
-  id TEXT PRIMARY KEY,
-  org_id TEXT NOT NULL,
-  automation_id TEXT,
-  agent_id TEXT NOT NULL,
-  reason TEXT NOT NULL,
-  initiated_by TEXT,
-  status TEXT NOT NULL,
-  scheduled_for TEXT,
-  started_at TEXT,
-  finished_at TEXT,
-  cost_micro_usd INTEGER,
-  runtime_id TEXT,
-  input_snapshot TEXT,
-  meta TEXT,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-);
-
-CREATE TABLE IF NOT EXISTS context_runtime (
-  id TEXT PRIMARY KEY,
-  org_id TEXT NOT NULL,
-  context_id TEXT NOT NULL,
-  agent_id TEXT NOT NULL,
-  api_url TEXT NOT NULL,
-  ortam_org_id TEXT NOT NULL,
-  ortam_user_id TEXT NOT NULL,
-  sandbox_id TEXT NOT NULL,
-  connection_id TEXT,
-  model_connection_id TEXT,
-  disabled_at TEXT,
-  created_at TEXT NOT NULL,
-  UNIQUE (context_id),
-  UNIQUE (api_url, ortam_org_id, sandbox_id)
-);
-
-CREATE TABLE IF NOT EXISTS runtime_setup (
-  id TEXT PRIMARY KEY,
-  org_id TEXT NOT NULL,
-  context_id TEXT NOT NULL,
-  agent_id TEXT NOT NULL,
-  created_by TEXT NOT NULL,
-  connection_id TEXT,
-  api_url TEXT NOT NULL,
-  ortam_org_id TEXT NOT NULL,
-  ortam_user_id TEXT NOT NULL,
-  model_connection_id TEXT,
-  model_binding_revision INTEGER,
-  request_json TEXT NOT NULL,
-  phase TEXT NOT NULL,
-  revision INTEGER NOT NULL DEFAULT 0,
-  sandbox_id TEXT,
-  create_operation_id TEXT,
-  stop_operation_id TEXT,
-  delete_operation_id TEXT,
-  cancelled_at TEXT,
-  deadline_at TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  UNIQUE (context_id)
-);
-
-CREATE TABLE IF NOT EXISTS runtime_owner (
-  context_id TEXT PRIMARY KEY,
-  org_id TEXT NOT NULL,
-  owner TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS runtime_model_connection (
-  id TEXT PRIMARY KEY,
-  org_id TEXT NOT NULL,
-  created_by TEXT NOT NULL,
-  name TEXT NOT NULL,
-  provider TEXT NOT NULL,
-  api_url TEXT NOT NULL,
-  ortam_org_id TEXT NOT NULL,
-  ortam_user_id TEXT NOT NULL,
-  revision INTEGER NOT NULL DEFAULT 0,
-  revoked_at TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS runtime_model_binding (
-  context_id TEXT PRIMARY KEY,
-  org_id TEXT NOT NULL,
-  model_connection_id TEXT,
-  granted_by TEXT NOT NULL,
-  revision INTEGER NOT NULL DEFAULT 0,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS workflow_draft (
-  context_id TEXT PRIMARY KEY,
-  org_id TEXT NOT NULL,
-  instruction TEXT NOT NULL,
-  sealed_at TEXT,
-  provider TEXT NOT NULL,
-  revision INTEGER NOT NULL DEFAULT 0,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS workflow_files (
-  context_id TEXT PRIMARY KEY,
-  org_id TEXT NOT NULL,
-  artifact_id TEXT,
-  blob_key TEXT,
-  version INTEGER,
-  granted_by TEXT NOT NULL,
-  revision INTEGER NOT NULL DEFAULT 0,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS workflow_test (
-  id TEXT PRIMARY KEY,
-  context_id TEXT NOT NULL,
-  org_id TEXT NOT NULL,
-  initiated_by TEXT NOT NULL,
-  config_revision TEXT NOT NULL,
-  input_snapshot TEXT NOT NULL,
-  status TEXT NOT NULL,
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS run_attempt (
-  id TEXT PRIMARY KEY,
-  org_id TEXT NOT NULL,
-  run_id TEXT NOT NULL,
-  runtime_id TEXT NOT NULL,
-  attempt INTEGER NOT NULL,
-  revision INTEGER NOT NULL DEFAULT 0,
-  phase TEXT NOT NULL,
-  model_source_connection_id TEXT,
-  model_source_user_id TEXT,
-  startup_operation_id TEXT,
-  launch_started_at TEXT,
-  runner_claimed_at TEXT,
-  process_id TEXT,
-  stop_operation_id TEXT,
-  deadline_at TEXT NOT NULL,
-  result_json TEXT,
-  save_status TEXT NOT NULL DEFAULT 'pending',
-  saved_snapshot_id TEXT,
-  released_at TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  UNIQUE (run_id, attempt)
-);
-
-CREATE TABLE IF NOT EXISTS workflow_run (
-  id TEXT PRIMARY KEY,
-  org_id TEXT NOT NULL,
-  workflow_artifact_id TEXT NOT NULL,
-  workflow_version INTEGER NOT NULL,
-  workflow_blob_key TEXT NOT NULL,
-  workflow_content_type TEXT NOT NULL,
-  diagram_id TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'queued',
-  state_revision INTEGER NOT NULL DEFAULT 0,
-  reason TEXT NOT NULL,
-  initiated_by TEXT,
-  request_id TEXT,
-  assigned_agent_id TEXT,
-  executor_id TEXT,
-  requested_execution TEXT NOT NULL DEFAULT 'any',
-  actual_execution TEXT,
-  external_execution TEXT,
-  external_run_id TEXT,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  updated_at TEXT NOT NULL,
-  started_at TEXT,
-  finished_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS workflow_step_attempt (
-  id TEXT PRIMARY KEY,
-  workflow_run_id TEXT NOT NULL,
-  node_id TEXT NOT NULL,
-  attempt INTEGER NOT NULL,
-  kind TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'queued',
-  state_revision INTEGER NOT NULL DEFAULT 0,
-  context_id TEXT,
-  context_manifest_artifact_id TEXT,
-  context_version INTEGER,
-  context_blob_key TEXT,
-  context_content_type TEXT,
-  session_id TEXT,
-  decision TEXT,
-  selected_routes TEXT,
-  route_sources TEXT,
-  route_basis TEXT,
-  result_artifact_id TEXT,
-  output TEXT,
-  error TEXT,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  updated_at TEXT NOT NULL,
-  started_at TEXT,
-  finished_at TEXT,
-  UNIQUE (workflow_run_id, node_id, attempt),
-  UNIQUE (session_id),
-  FOREIGN KEY (workflow_run_id) REFERENCES workflow_run(id)
-);
-
-CREATE TABLE IF NOT EXISTS workflow_artifact_activity (
-  id TEXT PRIMARY KEY,
-  org_id TEXT NOT NULL,
-  workflow_run_id TEXT NOT NULL,
-  node_id TEXT NOT NULL,
-  attempt INTEGER NOT NULL,
-  artifact_short_id TEXT NOT NULL,
-  artifact_version INTEGER NOT NULL,
-  artifact_title TEXT,
-  role TEXT NOT NULL,
-  source TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  UNIQUE (workflow_run_id, node_id, attempt, artifact_short_id, artifact_version, role),
-  FOREIGN KEY (workflow_run_id) REFERENCES workflow_run(id)
-);
-
-CREATE TABLE IF NOT EXISTS workflow_publish_receipt (
-  id TEXT PRIMARY KEY,
-  org_id TEXT NOT NULL,
-  workflow_run_id TEXT NOT NULL,
-  node_id TEXT NOT NULL,
-  attempt INTEGER NOT NULL,
-  dedupe_key TEXT NOT NULL,
-  request_hash TEXT NOT NULL,
-  artifact_id TEXT NOT NULL,
-  artifact_short_id TEXT NOT NULL,
-  artifact_version INTEGER NOT NULL,
-  version_id TEXT NOT NULL,
-  activity_id TEXT NOT NULL,
-  role TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  UNIQUE (workflow_run_id, node_id, attempt, dedupe_key),
-  FOREIGN KEY (workflow_run_id) REFERENCES workflow_run(id)
 );
 
 CREATE TABLE IF NOT EXISTS artifact_scan_event (
@@ -966,19 +708,6 @@ CREATE TABLE IF NOT EXISTS subscription (
   updated_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS model_credential (
-  id TEXT PRIMARY KEY,
-  org_id TEXT NOT NULL,
-  user_id TEXT NOT NULL,
-  provider TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  secret TEXT NOT NULL,
-  hint TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  UNIQUE (org_id, user_id, provider)
-);
-
 CREATE TABLE IF NOT EXISTS slack_install (
   org_id TEXT PRIMARY KEY,
   team_id TEXT NOT NULL,
@@ -1123,34 +852,6 @@ CREATE TABLE IF NOT EXISTS context_asker (
   FOREIGN KEY (context_id) REFERENCES context(id)
 );
 
-CREATE TABLE IF NOT EXISTS context_session (
-  id TEXT PRIMARY KEY,
-  context_id TEXT,
-  org_id TEXT NOT NULL,
-  asker_id TEXT NOT NULL,
-  context_version INTEGER,
-  state TEXT NOT NULL DEFAULT 'open',
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  updated_at TEXT,
-  started_at TEXT,
-  lease_until TEXT,
-  result_artifact_id TEXT,
-  dedupe_key TEXT,
-  subject_ref TEXT,
-  FOREIGN KEY (context_id) REFERENCES context(id)
-);
-
-CREATE TABLE IF NOT EXISTS session_message (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL,
-  author_kind TEXT NOT NULL,
-  author_id TEXT NOT NULL,
-  body_md TEXT NOT NULL,
-  meta TEXT,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  FOREIGN KEY (session_id) REFERENCES context_session(id)
-);
-
 CREATE TABLE IF NOT EXISTS import_job (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,
@@ -1220,14 +921,6 @@ CREATE TABLE IF NOT EXISTS asset (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
-CREATE TABLE IF NOT EXISTS principal (
-    id TEXT PRIMARY KEY,
-    org_id TEXT NOT NULL,
-    email TEXT,
-    kind TEXT NOT NULL DEFAULT 'human',
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-  );
-
 CREATE TABLE IF NOT EXISTS view (
     id TEXT PRIMARY KEY,
     artifact_id TEXT NOT NULL REFERENCES artifact(id),
@@ -1260,20 +953,6 @@ CREATE INDEX IF NOT EXISTS agent_trigger_org ON agent_trigger (org_id);
 
 CREATE INDEX IF NOT EXISTS model_account_org_user ON model_account (org_id, user_id);
 
-CREATE INDEX IF NOT EXISTS runtime_model_connection_owner ON runtime_model_connection (org_id, created_by);
-
-CREATE INDEX IF NOT EXISTS workflow_run_org_created ON workflow_run (org_id, created_at);
-
-CREATE INDEX IF NOT EXISTS workflow_run_definition ON workflow_run (workflow_artifact_id, workflow_version, diagram_id, created_at);
-
-CREATE INDEX IF NOT EXISTS workflow_run_external ON workflow_run (external_run_id);
-
-CREATE INDEX IF NOT EXISTS workflow_step_attempt_run ON workflow_step_attempt (workflow_run_id, created_at);
-
-CREATE INDEX IF NOT EXISTS workflow_artifact_activity_run ON workflow_artifact_activity (workflow_run_id, created_at);
-
-CREATE INDEX IF NOT EXISTS workflow_artifact_activity_version ON workflow_artifact_activity (artifact_short_id, artifact_version, source);
-
 CREATE INDEX IF NOT EXISTS artifact_scan_event_artifact ON artifact_scan_event (org_id, artifact_id, occurred_at);
 
 CREATE INDEX IF NOT EXISTS artifact_scan_event_session ON artifact_scan_event (org_id, scanned_by, opaque_session_id, occurred_at);
@@ -1304,12 +983,6 @@ CREATE INDEX IF NOT EXISTS slack_subscription_org ON slack_subscription (org_id,
 
 CREATE INDEX IF NOT EXISTS review_round_artifact ON review_round (artifact_id, requested_for);
 
-CREATE INDEX IF NOT EXISTS context_session_queue ON context_session (context_id, state, created_at);
-
-CREATE INDEX IF NOT EXISTS context_session_asker ON context_session (asker_id, created_at);
-
-CREATE INDEX IF NOT EXISTS session_message_session ON session_message (session_id, created_at);
-
 CREATE INDEX IF NOT EXISTS asset_org ON asset (org_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS job_trigger_window ON job (trigger_id, scheduled_for) WHERE trigger_id IS NOT NULL AND scheduled_for IS NOT NULL;
@@ -1319,18 +992,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS job_dedupe_open ON job (agent_id, asked_by, de
 CREATE UNIQUE INDEX IF NOT EXISTS job_machine_holder ON job (agent_id) WHERE machine_phase IS NOT NULL AND machine_phase <> 'released';
 
 CREATE INDEX IF NOT EXISTS job_report ON job (org_id, report_artifact_id) WHERE report_artifact_id IS NOT NULL;
-
-CREATE UNIQUE INDEX IF NOT EXISTS workflow_test_pending ON workflow_test (context_id) WHERE status = 'pending';
-
-CREATE UNIQUE INDEX IF NOT EXISTS run_runtime_schedule_pending ON run (runtime_id) WHERE runtime_id IS NOT NULL AND reason = 'schedule' AND status IN ('queued', 'running');
-
-CREATE UNIQUE INDEX IF NOT EXISTS automation_runtime ON automation (runtime_id);
-
-CREATE UNIQUE INDEX IF NOT EXISTS run_attempt_runtime_owner ON run_attempt (runtime_id) WHERE released_at IS NULL;
-
-CREATE UNIQUE INDEX IF NOT EXISTS run_attempt_run_owner ON run_attempt (run_id) WHERE released_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS run_attempt_cleanup ON run_attempt (released_at, updated_at);
 
 CREATE INDEX IF NOT EXISTS artifact_org_created ON artifact (org_id, created_at, id);
 
@@ -1387,7 +1048,3 @@ CREATE INDEX IF NOT EXISTS audit_artifact ON audit_log (artifact_id, created_at)
 CREATE INDEX IF NOT EXISTS job_message_author_recent ON job_message (author_id, created_at);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS artifact_search USING fts5(text, artifact_id UNINDEXED, org_id UNINDEXED, tokenize='unicode61 remove_diacritics 0');
-
-CREATE UNIQUE INDEX IF NOT EXISTS context_session_dedupe ON context_session (context_id, asker_id, dedupe_key) WHERE dedupe_key IS NOT NULL AND state IN ('open', 'working');
-
-CREATE UNIQUE INDEX IF NOT EXISTS run_schedule_occurrence ON run (automation_id, scheduled_for) WHERE reason = 'schedule' AND automation_id IS NOT NULL AND scheduled_for IS NOT NULL;

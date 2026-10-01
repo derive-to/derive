@@ -8,13 +8,6 @@ import type { DynamicKind } from "./dynamic-data"
 import type { LinkRole, Listed, Role, WorkspaceAccess } from "./roles"
 import type { SharedStateAction } from "./shared-state"
 import type { SortMode } from "./sort"
-import type {
-  WorkflowExecutionLane,
-  WorkflowRequestedExecution,
-  WorkflowRunStatus,
-  WorkflowStepAttemptStatus,
-  WorkflowStepKind,
-} from "./workflow-run"
 
 export interface BlobStore {
   /** Content-addressed put; returns the sha256 hex key. Idempotent. */
@@ -1913,29 +1906,6 @@ export interface ContextStore {
   getImportLease(kind: ImportKind, scope: string): Promise<ImportLeaseRecord | null>
   /** Is this user on the context's asker roster? (Membership is checked separately.) */
   getContextAsker(contextId: string, userId: string): Promise<ContextAskerRecord | null>
-  // The session methods below are retired tables (context_session, session_message): nothing
-  // in the app reads or writes them since the agents cutover. They stay only so the store
-  // tests can seed legacy rows for the delete cascades, and go with the table drop.
-  /**
-   * Open a session AND write its first message AND set the resulting state, in one call.
-   * Chat's enqueue did these as three sequential statements — on the edge tier that is
-   * three ~80ms round trips (see edge-pg.ts) for one logical act. Postgres does all three
-   * in a single statement with a CTE chain, which also makes them ATOMIC: three loose
-   * statements outside a transaction can leave a session with no first message if the
-   * isolate dies between them, and nothing reopens that.
-   */
-  createSessionWithMessage(
-    s: NewSession,
-    m: Omit<NewSessionMessage, "session_id">,
-    state: SessionState,
-  ): Promise<{ session: SessionRecord; message: SessionMessageRecord }>
-  getSession(id: string): Promise<SessionRecord | null>
-  /** Append a message and set the session's state in the same call (the turn flip:
-   *  an asker message re-opens; an agent message settles to answered/escalated).
-   *  The caller decides the state — the store just applies both writes. */
-  addSessionMessage(m: NewSessionMessage, state: SessionState): Promise<SessionMessageRecord>
-  /** A session's transcript, oldest first. */
-  listSessionMessages(sessionId: string): Promise<SessionMessageRecord[]>
 }
 
 /**
@@ -3107,16 +3077,9 @@ export interface AgentRecord {
   /** The user who registered the agent — who it publishes on behalf of.
    *  Null for pre-column agents (they publish as themselves). */
   created_by: string | null
-  /** 1 = served by Derive's managed executor. Hosting changes where the agent
-   *  runs, never its principal, role cap, or attribution. */
-  hosted: 0 | 1
   /** 1 = auto-minted for one context at creation — the context's Derive access,
    *  not a user-named persona. Hidden from the roster UI. */
   managed: 0 | 1
-  /** Runs-lane liveness (twin of ContextRecord.runner_seen_at): when this agent's
-   *  bearer last polled the run claim endpoint. Null = no executor, ever — the
-   *  honesty signal behind the "No executor" badge. */
-  runs_seen_at: string | null
   created_at: string
   // ---- The agent model (what a Context used to hold, plus where it runs) ----
   /** One line: what this agent does. Shown on the Agents list. */
@@ -3156,7 +3119,6 @@ export interface NewAgent {
   token: string
   role: Role
   created_by?: string | null
-  hosted?: 0 | 1
   managed?: 0 | 1
   description?: string | null
   instructions_artifact_id?: string | null
@@ -3180,9 +3142,7 @@ export const syntheticAgent = (
 ): AgentRecord => ({
   token: "",
   created_by: null,
-  hosted: 0,
   managed: 0,
-  runs_seen_at: null,
   created_at: new Date(0).toISOString(),
   description: null,
   instructions_artifact_id: null,
@@ -3205,363 +3165,6 @@ export const syntheticAgent = (
   model: null,
   ...a,
 })
-
-// ---- Automations + runs: the generic agent-work primitive --------------
-// Two tables, industry-standard: a DEFINITION (what to run, and the rule for when) and its
-// EXECUTIONS (each firing, with state + result — the queue and the ledger in one table,
-// pg-boss's model). Living-doc refresh, a scheduled digest, an event-driven update, an
-// ad-hoc "run once" are all rows here with different triggers and instructions.
-
-export type TriggerKind = "manual" | "schedule" | "event"
-
-/** A direct action executes without a coding agent or model plan. GitHub Actions is the first
- * adapter; the tagged shape leaves room for other outbound runners without another column. */
-export interface GithubWorkflowAutomationAction {
-  kind: "github_workflow"
-  owner: string
-  repo: string
-  workflow: string
-  ref: string
-  inputs?: Record<string, string | number | boolean>
-}
-
-export type AutomationAction = GithubWorkflowAutomationAction
-
-/** How an automation fires. Open-ended JSON on the row — a new kind adds no columns. */
-export interface AutomationTrigger {
-  kind: TriggerKind
-  /** schedule: a 5-field cron. */
-  cron?: string
-  /** schedule: an IANA timezone. */
-  tz?: string
-  /** event: the event name (e.g. "comment.opened", "upstream.published", "webhook"). */
-  on?: string
-  /** Optional direct outbound work. Omitted means the normal agent instruction lane. */
-  action?: AutomationAction
-  /** event/webhook: sha256 of the fire secret. The raw secret rides only the create
-   *  response that mints it; the fire endpoint verifies a presented bearer against this
-   *  hash. Never surfaced on read — redacted to a boolean when an automation is presented. */
-  secret_hash?: string
-}
-
-/** A standing agent job: WHAT to do (instruction), WHO does it (agent), and the rule for
- *  WHEN (trigger). The definition only — every firing is a `run`. A "living artifact" is
- *  just an automation whose instruction is "keep this current" with a ref to the doc. */
-export interface AutomationRecord {
-  /** Runtime-bound schedules use the Context cloud controller, never a polling executor. */
-  runtime_id: string | null
-  created_by: string | null
-  revision: number
-  updated_at: string | null
-  id: string
-  org_id: string
-  /** The agent that runs it — the runs act as this principal. */
-  agent_id: string
-  /** Serialized AutomationTrigger (JSON text); parse with parseTrigger. */
-  trigger: string
-  /** Free-form: what the agent should do. */
-  instruction: string
-  /** The coding-agent runtime this automation executes with. */
-  provider: import("./execution").ExecutionProvider
-  /** Serialized inputs/targets (artifact ids, urls, arbitrary), or null. */
-  refs: string | null
-  /** Serialized JSON array of bound connection ids — the SOURCES a run may read from. A run
-   *  gets the tools of these connections only (least privilege); null = no sources. */
-  connection_ids: string | null
-  /** The context this automation runs AS, or null. Bound, the run materializes that context's
-   *  manifest + skills — a scheduled use(context, instruction). */
-  context_id: string | null
-  enabled: 0 | 1
-  created_at: string
-}
-
-export interface NewAutomation {
-  id: string
-  org_id: string
-  agent_id: string
-  trigger: string
-  instruction: string
-  provider?: import("./execution").ExecutionProvider
-  refs?: string | null
-  connection_ids?: string | null
-  context_id?: string | null
-  enabled?: 0 | 1
-}
-
-/** How a run's work landed — the semantic outcome, kept in the run's meta blob (not a
- *  column). A run writes (`published`) or answers; `escalated` is the ask lane's
- *  hand-to-a-human terminal. */
-export type RunOutcome = "answered" | "published" | "escalated"
-
-/** A run's execution state. queued = pending work in the queue; a terminal state = history
- *  in the ledger. The same table serves both. */
-export type RunStatus = "queued" | "running" | "succeeded" | "failed"
-
-/** One execution of an automation (or an ad-hoc one-off). The queue and the ledger in one
- *  table: a worker claims the oldest queued run due now, runs it, and finishes it. Cost is
- *  snapshotted at finish (micro-USD, integer). */
-export interface RunRecord {
-  id: string
-  org_id: string
-  /** The automation that produced it, or null for an ad-hoc run. */
-  automation_id: string | null
-  agent_id: string
-  /** What fired it: "manual:<userId>", "schedule", "event:<name>" (free text). */
-  reason: string
-  /** The person whose action fired it — the WALLET key (their plan bills the run).
-   *  Null = a clock or event started it (no person), which resolves to the
-   *  registrant today and the workspace pool once it lands. First-class on
-   *  purpose: `reason` is display text, never a resolution key. */
-  initiated_by: string | null
-  status: RunStatus
-  /** When it should run (queue time); claimed once this is <= now. Null = as soon as possible. */
-  scheduled_for: string | null
-  started_at: string | null
-  finished_at: string | null
-  cost_micro_usd: number | null
-  /** Null uses the existing executor lane; otherwise only the runtime coordinator may claim. */
-  runtime_id: string | null
-  /** Immutable RuntimeRunInput JSON; never includes credential values. */
-  input_snapshot: string | null
-  /** Serialized meta (model, tokens, outcome, refs, anything), or null. */
-  meta: string | null
-  created_at: string
-}
-
-export interface NewRun {
-  id: string
-  org_id: string
-  automation_id?: string | null
-  agent_id: string
-  reason: string
-  /** The initiating person (wallet key); omit for clock/event runs. */
-  initiated_by?: string | null
-  /** Defaults to "queued". */
-  status?: RunStatus
-  scheduled_for?: string | null
-  started_at?: string | null
-  finished_at?: string | null
-  cost_micro_usd?: number | null
-  runtime_id?: string | null
-  input_snapshot?: string | null
-  meta?: string | null
-}
-
-/** One execution of an exact Workflow definition and diagram. */
-export interface WorkflowRunRecord {
-  id: string
-  org_id: string
-  workflow_artifact_id: string
-  workflow_version: number
-  workflow_blob_key: string
-  workflow_content_type: string
-  diagram_id: string
-  status: WorkflowRunStatus
-  /** Incremented on every transition to fence stale executors across waiting/resume cycles. */
-  state_revision: number
-  reason: string
-  initiated_by: string | null
-  /** Inbox request that delivered this run, when it was assigned to a registered agent. */
-  request_id: string | null
-  /** Registered agent selected at handoff; null for copy/manual execution. */
-  assigned_agent_id: string | null
-  /** User or registered-agent principal that first claimed execution. */
-  executor_id: string | null
-  requested_execution: WorkflowRequestedExecution
-  /** The lane that first started the run. */
-  actual_execution: WorkflowExecutionLane | null
-  /** JSON-encoded, adapter-specific assignment and downstream receipt. The workflow run remains
-   * the sole ledger; this is not a second queue or execution record. */
-  external_execution: string | null
-  /** Provider run id used only to correlate an authenticated callback to this ledger row. */
-  external_run_id: string | null
-  created_at: string
-  updated_at: string
-  started_at: string | null
-  finished_at: string | null
-}
-
-export interface NewWorkflowRun {
-  id: string
-  org_id: string
-  workflow_artifact_id: string
-  workflow_version: number
-  workflow_blob_key: string
-  workflow_content_type: string
-  diagram_id: string
-  reason: string
-  initiated_by?: string | null
-  request_id?: string | null
-  assigned_agent_id?: string | null
-  requested_execution?: WorkflowRequestedExecution
-  external_execution?: string | null
-  external_run_id?: string | null
-  created_at?: string
-}
-
-export interface WorkflowRunTransition {
-  status: WorkflowRunStatus
-  at: string
-  /** Required when starting or advancing a claimed run. */
-  actualExecution?: WorkflowExecutionLane
-  /** Required when starting or advancing a claimed run. */
-  executorId?: string
-  /** Replacement JSON receipt for an external execution assignment. */
-  externalExecution?: string | null
-  externalRunId?: string | null
-}
-
-/** One materialized attempt of a Workflow node. */
-export interface WorkflowStepAttemptRecord {
-  id: string
-  workflow_run_id: string
-  node_id: string
-  attempt: number
-  kind: WorkflowStepKind
-  status: WorkflowStepAttemptStatus
-  state_revision: number
-  context_id: string | null
-  context_manifest_artifact_id: string | null
-  context_version: number | null
-  context_blob_key: string | null
-  context_content_type: string | null
-  session_id: string | null
-  /** JSON-encoded human choice or agent outcome used for routing. */
-  decision: string | null
-  /** JSON-encoded destination node ids selected by the router. */
-  selected_routes: string | null
-  /** JSON attempt ids whose selected routes opened this attempt; null means legacy. */
-  route_sources: string | null
-  /** Explanation captured when the route was selected. */
-  route_basis: string | null
-  /** Primary result artifact short id, when the node produced one. */
-  result_artifact_id: string | null
-  /** JSON-encoded node output. */
-  output: string | null
-  error: string | null
-  created_at: string
-  updated_at: string
-  started_at: string | null
-  finished_at: string | null
-}
-
-interface NewWorkflowStepAttemptBase {
-  id: string
-  workflow_run_id: string
-  node_id: string
-  attempt: number
-  route_sources?: string
-  created_at?: string
-}
-
-export type NewWorkflowStepAttempt = NewWorkflowStepAttemptBase &
-  (
-    | {
-        kind: "context"
-        context_id: string
-        context_manifest_artifact_id: string
-        context_version: number
-        context_blob_key: string
-        context_content_type: string
-        session_id?: string
-      }
-    | {
-        kind: "human" | "terminal"
-        context_id?: never
-        context_manifest_artifact_id?: never
-        context_version?: never
-        context_blob_key?: never
-        context_content_type?: never
-        session_id?: never
-      }
-  )
-
-export interface WorkflowStepAttemptTransition {
-  /** Seal the first receipt after a Context session observed failure or cancellation. */
-  recordReceipt?: boolean
-  status: WorkflowStepAttemptStatus
-  at: string
-  sessionId?: string | null
-  decision?: string | null
-  selectedRoutes?: string | null
-  routeBasis?: string | null
-  resultArtifactId?: string | null
-  output?: string | null
-  error?: string | null
-}
-
-export type WorkflowArtifactActivityRole = "output" | "evidence" | "input"
-export type WorkflowArtifactActivitySource = "observed" | "suggested" | "dismissed"
-
-/** One exact artifact version observed during a workflow run, or a durable suggestion dismissal.
- * Observed rows record provenance only. They never imply success or evaluation quality. */
-export interface WorkflowArtifactActivityRecord {
-  id: string
-  org_id: string
-  workflow_run_id: string
-  node_id: string
-  attempt: number
-  artifact_short_id: string
-  artifact_version: number
-  artifact_title: string | null
-  role: WorkflowArtifactActivityRole
-  source: WorkflowArtifactActivitySource
-  created_at: string
-}
-
-export interface NewWorkflowArtifactActivity {
-  id: string
-  org_id: string
-  workflow_run_id: string
-  node_id: string
-  attempt: number
-  artifact_short_id: string
-  artifact_version: number
-  artifact_title?: string | null
-  role: WorkflowArtifactActivityRole
-  source: WorkflowArtifactActivitySource
-  created_at?: string
-}
-
-/** An immutable retry key scoped to one workflow attempt. */
-export interface WorkflowPublishKey {
-  org_id: string
-  workflow_run_id: string
-  node_id: string
-  attempt: number
-  dedupe_key: string
-}
-
-export interface WorkflowPublishReceiptRecord extends WorkflowPublishKey {
-  id: string
-  request_hash: string
-  artifact_id: string
-  artifact_short_id: string
-  artifact_version: number
-  version_id: string
-  activity_id: string
-  role: WorkflowArtifactActivityRole
-  created_at: string
-}
-
-/** All metadata for one bound publish commits together. Blob storage precedes this write. */
-export interface WorkflowVersionPublish {
-  receipt: WorkflowPublishKey & {
-    request_hash: string
-    role: WorkflowArtifactActivityRole
-    activity_id: string
-    created_at: string
-  }
-  target:
-    | { create: NewArtifact; owner_id: string }
-    | {
-        artifact_id: string
-        short_id: string
-        title?: string
-        slug?: string | null
-      }
-  version: NewVersion
-}
 
 /** What a plan pays for: the model (thinking) or the tool broker (hands). */
 export type PlanKind = "model" | "broker"
@@ -3992,98 +3595,6 @@ export interface NewContextAsker {
   added_by: string
 }
 
-/** A session's lifecycle. `state` also encodes whose turn it is: `open` means the
- *  runner owes a reply (the queue predicate); `working` = a runner has claimed and
- *  is answering it (leased, so overlapping runners don't double-run); an asker
- *  follow-up on an `answered` session flips it back to `open`. `escalated` means the
- *  runner needs explicit human input before it can continue; `failed` = the run
- *  crashed (surfaced, never auto-retried); `closed` = the asker or owner ended it. */
-export type SessionState = "open" | "working" | "answered" | "escalated" | "failed" | "closed"
-
-/** Who wrote a session message: the human asking, or the context's agent. */
-export type SessionMessageAuthor = "asker" | "agent"
-
-/** One ask-conversation with a context, on behalf of one asker. Private to the
- *  asker and the context owner — session content is bounded by whatever the
- *  runner's credentials can reach, so it never gets artifact-style visibility. */
-export interface SessionRecord {
-  id: string
-  /** The packaged agent answering, or NULL when the default agent is (chat with a document
-   *  needs no context). A context is how you opt INTO a packaged agent. */
-  context_id: string | null
-  org_id: string
-  asker_id: string
-  /** The manifest version the session started against (provenance); null with no context. */
-  context_version: number | null
-  state: SessionState
-  created_at: string
-  /** Bumped on every message/state change; null until then (read as ?? created_at). */
-  updated_at: string | null
-  /** When a runner first claimed this session (ISO); null while still `open`. */
-  started_at: string | null
-  /** The claim lease expiry (ISO); once it lapses another claim may reclaim a
-   *  `working` session (crash recovery). Null while unclaimed. */
-  lease_until: string | null
-  /** The short_id of the artifact the run produced, if any (soft ref — the
-   *  artifact may be deleted out from under the session). Null until set. */
-  result_artifact_id: string | null
-  /** Optional idempotency key; the partial-unique index keeps at most one live
-   *  (open|working) session per (context, dedupe_key). Null = not deduped. */
-  dedupe_key: string | null
-  /** What this session is ABOUT, as a JSON-encoded `Selector` — the same shape
-   *  `automation.refs` stores, so one address type serves both lanes. Read it with
-   *  `parseSubject`. Null = a plain ask with no subject, which is every session
-   *  opened before this column existed. */
-  subject_ref: string | null
-}
-
-/** One artifact a context has produced, grouped across every session that bound it —
- *  the row behind the console's Output tab. Carries no title or version on purpose:
- *  those come from resolving `short_id` through the normal visibility-gated artifact
- *  read, so an output can never show a viewer a document they cannot open. */
-export interface ContextOutput {
-  short_id: string
-  /** How many of this context's sessions bound this artifact as their result. */
-  runs: number
-  /** The most recent of those sessions' last activity (its `updated_at`). */
-  last_run_at: string
-}
-
-export interface NewSession {
-  id: string
-  context_id?: string | null
-  org_id: string
-  asker_id: string
-  context_version?: number | null
-  /** Optional idempotency key; when set, a matching in-flight session is reused. */
-  dedupe_key?: string | null
-  /** JSON-encoded `Selector`; null/absent for a plain ask. */
-  subject_ref?: string | null
-}
-
-export interface SessionMessageRecord {
-  id: string
-  session_id: string
-  author_kind: SessionMessageAuthor
-  /** The asker's user id, or the agent's id — stable identity, like comment.author_id. */
-  author_id: string
-  body_md: string
-  /** JSON blob: the runner's { query?, confidence?, caveats?, escalation_reason?,
-   *  artifacts? } plus the server-stamped `stale` (an answer superseded by a
-   *  mid-run follow-up — the runner's re-serve filter keys on it). TEXT like
-   *  comment.meta — parsed at the route layer, never by the store. */
-  meta: string | null
-  created_at: string
-}
-export interface NewSessionMessage {
-  id: string
-  session_id: string
-  author_kind: SessionMessageAuthor
-  author_id: string
-  body_md: string
-  meta?: string | null
-}
-
 /** A GitHub commit author, denormalized onto an artifact / stored per version.
  *  `name` is the display name; `login`/`avatar` are the GitHub handle + avatar URL;
  *  `ghId` is the numeric GitHub user id as a string (matches account.accountId). Any
@@ -4482,24 +3993,6 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
  *  left in place unused (lint:schema forbids DROP COLUMN) but is no longer read or written.
  *  Historically `default_channel` was where Derive posted when an artifact
  *  has no more specific channel. */
-/** A team member's own model-plan credential, encrypted at rest. `secret` is the AES-GCM
- *  blob (lib/crypto); `provider` matches a runner provider ("claude-code" | "codex"); `kind`
- *  distinguishes an OAuth/plan token from a plain API key. Scoped (org, user, provider). */
-export interface ModelCredentialRecord {
-  id: string
-  org_id: string
-  user_id: string
-  provider: string
-  // oauth = an env-var plan token (Claude's setup-token). api_key = a provider API key.
-  // login = a file-delivered plan login blob (Codex's ~/.codex/auth.json), materialized into
-  // a private CODEX_HOME per run.
-  kind: "oauth" | "api_key" | "login"
-  secret: string
-  hint: string
-  created_at: string
-  updated_at: string
-}
-
 export interface SlackInstallRecord {
   org_id: string
   team_id: string

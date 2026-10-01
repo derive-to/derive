@@ -72,7 +72,7 @@ const { preIndex, indexes } = partitionStatements(sql)
 
 console.log(`[d1] applying schema to "${DB}" (${TARGET})`)
 // 1. Create any missing tables/virtual tables (IF NOT EXISTS → no-op for existing ones).
-//    NOT the indexes: a partial index (context_session_dedupe) references a column the
+//    NOT the indexes: a partial index (job_dedupe_open, say) can reference a column the
 //    step-2 alters add on an existing DB, so it must wait until step 3 — otherwise its
 //    CREATE fails "no such column" and aborts the apply before a single ALTER runs.
 applySql("tables", preIndex)
@@ -119,26 +119,7 @@ if (alters.length === 0) {
   wrangler(["--command", alters.join(" ")])
 }
 
-// Hosted runtimes can use the deployment controller, so legacy controller refs
-// are nullable. D1 executes each submitted SQL file as one transaction.
-for (const table of ["context_runtime", "runtime_setup"]) {
-  const info = JSON.parse(wrangler(["--json", "--command", `PRAGMA table_info(${table})`], true))[0]
-    .results
-  if (!info.some((column) => column.name === "connection_id" && column.notnull === 1)) continue
-  const create = preIndex.find((statement) =>
-    statement.startsWith(`CREATE TABLE IF NOT EXISTS ${table} (`),
-  )
-  if (!create) throw new Error(`Missing ${table} schema`)
-  const columns = Object.keys(expected[table]).join(", ")
-  applySql(`relax-${table}`, [
-    create.replace(`IF NOT EXISTS ${table}`, `${table}__new`),
-    `INSERT INTO ${table}__new (${columns}) SELECT ${columns} FROM ${table};`,
-    `DROP TABLE ${table};`,
-    `ALTER TABLE ${table}__new RENAME TO ${table};`,
-  ])
-}
-
-// 3. Indexes last — every column they reference (e.g. context_session.dedupe_key) now
+// 3. Indexes last: every column they reference (e.g. job.dedupe_key) now
 //    exists, whether just ALTER-added above or already present. IF NOT EXISTS → idempotent.
 applySql("indexes", indexes)
 console.log("[d1] schema up to date")

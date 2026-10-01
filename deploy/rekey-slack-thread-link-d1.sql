@@ -20,7 +20,7 @@
 --
 -- WHAT D1 CANNOT DO. No `BEGIN` / `COMMIT` — D1 rejects explicit transaction control inside an
 -- executed file, so every statement below stands alone and each leaves the database consistent
--- by itself. The foreign-key trap that shaped deploy/relax-context-session-d1.sql does NOT apply
+-- by itself. D1 enforces foreign keys and cannot defer them away, but that does NOT matter
 -- here: slack_thread_link declares no foreign keys and nothing references it, so the DROP below
 -- orphans nothing.
 --

@@ -62,16 +62,6 @@ export function runStoreContract(
     ...over,
   })
 
-  // A session opens through the one door the store keeps: with its first message.
-  const openSession = async (x: Parameters<MetaStore["createSessionWithMessage"]>[0]) =>
-    (
-      await store.createSessionWithMessage(
-        x,
-        { id: uuid(), author_kind: "asker", author_id: x.asker_id, body_md: "q" },
-        "open",
-      )
-    ).session
-
   beforeAll(async () => {
     ;({ store, cleanup } = await setup())
   })
@@ -3781,47 +3771,20 @@ export function runStoreContract(
       ).rejects.toThrow()
     })
 
-    it("deleteArtifact on a manifest cascades its context, sessions, and messages", async () => {
+    it("deleteArtifact on a manifest cascades its context", async () => {
       const ctx = await newContext()
-      const s = await openSession({
-        id: uuid(),
-        context_id: ctx.id,
-        org_id: ORG,
-        asker_id: "daniel",
-        context_version: 1,
-      })
-      await store.addSessionMessage(
-        { id: uuid(), session_id: s.id, author_kind: "asker", author_id: "daniel", body_md: "q" },
-        "open",
-      )
       // Without the cascade this FK-throws on pg/D1 (context.manifest_artifact_id).
       await store.deleteArtifact(ctx.manifest_artifact_id, ORG)
       expect(await store.getContext(ctx.id)).toBeNull()
-      expect(await store.getSession(s.id)).toBeNull()
     })
 
-    it("deleteContext cascades sessions and messages, scoped to its workspace", async () => {
+    it("deleteContext is scoped to its workspace", async () => {
       const ctx = await newContext()
-      const s = await openSession({
-        id: uuid(),
-        context_id: ctx.id,
-        org_id: ORG,
-        asker_id: "daniel",
-        context_version: 1,
-      })
-      await store.addSessionMessage(
-        { id: uuid(), session_id: s.id, author_kind: "asker", author_id: "daniel", body_md: "hi" },
-        "open",
-      )
-      // Wrong workspace: a no-op — the scope gates the whole cascade, so another
-      // tenant's delete can't wipe the sessions either.
+      // Wrong workspace: a no-op, so another tenant's delete cannot touch the context.
       await store.deleteContext(ctx.id, `other_${uuid()}`)
       expect(await store.getContext(ctx.id)).not.toBeNull()
-      expect(await store.getSession(s.id)).not.toBeNull()
       await store.deleteContext(ctx.id, ORG)
       expect(await store.getContext(ctx.id)).toBeNull()
-      expect(await store.getSession(s.id)).toBeNull()
-      expect(await store.listSessionMessages(s.id)).toHaveLength(0)
     })
 
     // Imported contexts (a paper fetched from arXiv). The queue and the request gate are
