@@ -1164,7 +1164,7 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
   })
 
   it("with no stored account, a laptop runner uses its own model login; opted out, it fails plainly", async () => {
-    const { app } = await setup("jobs-cli-noaccount", { noPlan: true })
+    const { app } = await setup("jobs-cli-noaccount")
     const agent = await createAgent(app)
     // Default: the job runs on whatever login this machine's model CLI has, from this shell.
     const first = (await (await ask(app, ed.email, agent.id, "Go")).json()) as { id: string }
