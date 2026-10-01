@@ -72,6 +72,10 @@ export const overBudgetFor = async (
   askedBy: string | null,
 ): Promise<boolean> => jobsOverBudget(meta, agent.org_id, await jobPayer(meta, agent, askedBy))
 
+/** Is the person this job bills (its payer_id, fixed when it opened) past their limit? */
+export const jobOverBudget = (meta: MetaStore, job: JobRecord): Promise<boolean> =>
+  jobsOverBudget(meta, job.org_id, job.payer_id)
+
 export const HELD_FOR_BUDGET =
   "Held: the monthly budget is used up. This job waits, and runs once the limit is raised or the month turns."
 
@@ -86,8 +90,58 @@ export const noteHeldForBudget = async (meta: MetaStore, job: JobRecord): Promis
     author_kind: "agent",
     author_id: job.agent_id,
     body_md: HELD_FOR_BUDGET,
-    meta_json: JSON.stringify({ progress: true, held: "budget" }),
+    meta_json: JSON.stringify({ progress: true, held: "budget", server: true }),
   })
+}
+
+/** A note the server wrote about a job (held for budget, its agent's owner left), rather than
+ *  something a person or the agent said. People watching the job see it; the model never
+ *  reads it as part of the conversation. */
+export const isServerNote = (m: { meta_json: string | null }): boolean => {
+  if (!m.meta_json) return false
+  try {
+    const meta = JSON.parse(m.meta_json) as { server?: boolean; held?: string }
+    return meta.server === true || meta.held !== undefined
+  } catch {
+    return false
+  }
+}
+
+// ---- A person leaves ---------------------------------------------------------------------
+
+export const OWNER_LEFT =
+  "This agent's owner left the workspace, so it is paused and this job was cancelled. Ask another agent, or ask a workspace owner to take it over."
+
+/** Someone left a workspace (removed, or their account deleted). Call it with their agents
+ *  still attributed to them. The open jobs they asked are cancelled, and so are teammates'
+ *  waiting jobs on the agents they created (paused by the store as the seat went), each with a
+ *  short note, so every asker hears it rather than finding a job that never moves. Running
+ *  jobs are left to settle or lapse: the departed creator's agent key stops authenticating. */
+export const standDownMember = async (
+  deps: JobDeps,
+  orgId: string,
+  userId: string,
+): Promise<void> => {
+  const { meta } = deps
+  const open = (q: Omit<Parameters<MetaStore["listJobs"]>[0], "orgId">) =>
+    meta.listJobs({ ...q, orgId, limit: 200 })
+  for (const job of await open({ askedBy: userId, status: ["queued", "running", "needs_you"] }))
+    await cancelJob(deps, job)
+  const theirs = (await meta.listAgents(orgId)).filter((a) => a.created_by === userId)
+  for (const agent of theirs) {
+    await meta.updateAgent(agent.id, orgId, { paused_at: agent.paused_at ?? iso() })
+    for (const job of await open({ agentId: agent.id, status: ["queued", "needs_you"] })) {
+      await meta.addJobMessage({
+        id: newId("jm"),
+        job_id: job.id,
+        author_kind: "agent",
+        author_id: agent.id,
+        body_md: OWNER_LEFT,
+        meta_json: JSON.stringify({ server: true }),
+      })
+      await cancelJob(deps, job)
+    }
+  }
 }
 
 // ---- Who may ask -------------------------------------------------------------------------
@@ -170,6 +224,8 @@ export const askAgent = async (
       kind,
       instruction: input.instruction,
       asked_by: input.askedBy,
+      // Who it bills, fixed now: the budget reads this for the job's whole life.
+      payer_id: await jobPayer(meta, input.agent, input.askedBy),
       attended: input.attended ? 1 : 0,
       subject_json: input.subject ? JSON.stringify(input.subject) : null,
       dedupe_key: input.dedupeKey ?? null,
@@ -308,24 +364,22 @@ export const pullJobs = async (
   if (agent.machine === "derive") return []
   // Its creator has left the workspace: nobody's machine or key may run it any more.
   if (await creatorLeft(meta, agent)) return []
-  // Past its payer's monthly budget: the work waits, queued, and says why. On an owner machine
-  // the payer does not depend on who asked, so one check covers every queued job.
-  if (await overBudgetFor(meta, agent, null)) {
-    for (const j of await meta.listJobs({
-      orgId: agent.org_id,
-      agentId: agent.id,
-      status: ["queued"],
-      limit: 10,
-    }))
-      if (j.attended === 0 && j.kind !== "graph") await noteHeldForBudget(meta, j)
-    return []
-  }
   await materializeTriggers(
     meta,
     now,
     { agentId: agent.id, orgId: agent.org_id },
     deps.isGraph,
   ).catch((e) => log.warn("jobs: materialize on pull failed", { reason: runtimeFailureReason(e) }))
+  // A job whose payer is past their monthly budget waits, queued, and says why; the claim
+  // skips it and takes the next one that can run.
+  const queued = (
+    await meta.listJobs({ orgId: agent.org_id, agentId: agent.id, status: ["queued"], limit: 50 })
+  ).filter((j) => j.attended === 0 && j.kind !== "graph")
+  const held: (string | null)[] = []
+  for (const payer of new Set(queued.map((j) => j.payer_id)))
+    if (await jobsOverBudget(meta, agent.org_id, payer)) held.push(payer)
+  for (const j of queued.filter((x) => held.includes(x.payer_id)).slice(0, 10))
+    await noteHeldForBudget(meta, j)
   const running = await meta.countRunningJobs(agent.id, stamp)
   const room = Math.max(0, agent.max_concurrency - running)
   if (room === 0) return []
@@ -334,6 +388,7 @@ export const pullJobs = async (
     Math.min(room, opts.limit ?? 10),
     leaseUntilFor(agent.max_run_ms, now.getTime()),
     stamp,
+    held,
   )
 }
 
@@ -499,7 +554,9 @@ export const materializeTriggers = async (
     if (!agent || agent.org_id !== t.org_id || agent.paused_at) continue
     // Past its payer's monthly budget, the window still opens its job, which waits and says
     // why. The one-waiting-run rule above keeps a held schedule from piling up.
-    if (!overBudget.has(agent.id)) overBudget.set(agent.id, await overBudgetFor(meta, agent, null))
+    const payer = await jobPayer(meta, agent, null)
+    if (!overBudget.has(agent.id))
+      overBudget.set(agent.id, await jobsOverBudget(meta, agent.org_id, payer))
     try {
       const job = await meta.createJob({
         id: newId("job"),
@@ -510,6 +567,7 @@ export const materializeTriggers = async (
         trigger_id: t.id,
         scheduled_for: window,
         subject_json: t.subject_json,
+        payer_id: payer,
       })
       created += 1
       if (overBudget.get(agent.id)) await noteHeldForBudget(meta, job).catch(() => {})

@@ -9,10 +9,9 @@ import {
   serveJob,
 } from "../../../packages/cli/src/job-runner.js"
 import { signCapabilityToken } from "../src/lib/capability-token"
-import { encryptSecret } from "../src/lib/crypto"
 import { advanceGraph, graphAware, graphPass } from "../src/lib/job-graph"
 import { machinePass, machineWorkspaces } from "../src/lib/job-machine"
-import { HELD_FOR_BUDGET, jobTick } from "../src/lib/jobs"
+import { HELD_FOR_BUDGET, jobTick, OWNER_LEFT } from "../src/lib/jobs"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // THE AGENT MODEL, through the surface people and runners use: an agent is created, asked,
@@ -801,7 +800,11 @@ describe("jobs: the monthly model budget", () => {
     expect(await lastMessage(meta, scheduled?.id ?? "")).toBe(HELD_FOR_BUDGET)
 
     await meta.deletePlan(plan.id, "default")
-    expect((await pull(app, a))[0]?.id).toBe(waiting.id)
+    const [resumed] = await pull(app, a)
+    expect(resumed?.id).toBe(waiting.id)
+    // The note was for the people watching; the runner's transcript is only what was said.
+    const said = (resumed?.messages as { body_md: string }[]).map((m) => m.body_md)
+    expect(said).toEqual(["queued before the limit"])
   })
 
   it("a personal limit counts only the spend that bills that person", async () => {
@@ -938,16 +941,17 @@ describe("jobs: which account a job runs with", () => {
     const edsAsk = (await (await ask(app, ed.email, edsAgent.id, "mine")).json()) as {
       id: string
     }
+    const waiting = (await (await ask(app, owner.email, edsAgent.id, "later")).json()) as {
+      id: string
+    }
     const [held] = await pull(app, edsAgent)
     expect(held?.id).toBe(job.id)
-    const credFor = async () =>
-      (await (
-        await app.request(
-          `/v1/jobs/${job.id}/account?claim=${encodeURIComponent(held?.started_at ?? "")}`,
-          { headers: bearer(edsAgent.token) },
-        )
-      ).json()) as { credential: { value: string } | null; source: string }
-    expect(await credFor()).toMatchObject({
+    const credFor = (headers: Record<string, string>) =>
+      app.request(
+        `/v1/jobs/${job.id}/account?claim=${encodeURIComponent(held?.started_at ?? "")}`,
+        { headers },
+      )
+    expect(await (await credFor(bearer(edsAgent.token))).json()).toMatchObject({
       credential: { value: "sk-ed-secret-2222" },
       source: "agent",
     })
@@ -960,33 +964,31 @@ describe("jobs: which account a job runs with", () => {
         })
       ).status,
     ).toBe(204)
-    // Their key left with them, and their agent's machine was theirs: its job runs on nobody's
-    // key, not even the workspace's shared one.
     expect(await meta.getAccount(edsKey.id)).toBeNull()
-    expect(await credFor()).toMatchObject({ credential: null })
-    // Their agent is paused and the job they asked is cancelled; a teammate's ask stays.
+    // The agent's key acted for Ed, so it now authenticates nobody: no key to read, no work
+    // to pull, nothing to publish.
+    expect((await credFor(bearer(edsAgent.token))).status).toBe(401)
+    // An anonymous write is turned away before any route (403); a read says 401.
+    expect([401, 403]).toContain(
+      (await app.request(`/v1/agents/${edsAgent.id}/pull`, jsonAs(bearer(edsAgent.token), {})))
+        .status,
+    )
+    expect([401, 403]).toContain(
+      (await publishAs(app, "<h1>after</h1>", { title: "After" }, bearer(edsAgent.token))).status,
+    )
+    // Their agent is paused. The job they asked is cancelled, and so is a teammate's waiting
+    // job on it, which says why. The job already running is left to settle or lapse.
     const agentNow = (await (
       await app.request(`/v1/agents/${edsAgent.id}`, { headers: as(owner.email) })
     ).json()) as { paused: boolean }
     expect(agentNow.paused).toBe(true)
     expect((await meta.getJob(edsAsk.id))?.status).toBe("cancelled")
+    const told = (await (
+      await app.request(`/v1/jobs/${waiting.id}`, { headers: as(owner.email) })
+    ).json()) as { status: string; messages: { body_md: string }[] }
+    expect(told.status).toBe("cancelled")
+    expect(told.messages.at(-1)?.body_md).toBe(OWNER_LEFT)
     expect((await meta.getJob(job.id))?.status).toBe("running")
-    // Unpaused by hand, it still hands its runner nothing.
-    await ask(app, owner.email, edsAgent.id, "after Ed left")
-    await meta.updateAgent(edsAgent.id, "default", { paused_at: null })
-    expect(await pull(app, edsAgent)).toEqual([])
-    // A key row of theirs that outlived the removal (written before it was purged) still
-    // never pays.
-    const leftover = await meta.createAccount({
-      id: newId("acct"),
-      org_id: "default",
-      user_id: ed.id,
-      provider: "claude",
-      kind: "api_key",
-      secret_enc: encryptSecret("sk-ed-leftover-3333", "test-encryption-key"),
-    })
-    await meta.updateAgent(edsAgent.id, "default", { account_id: leftover.id })
-    expect(await credFor()).toMatchObject({ credential: null })
   })
 
   it("an agent's tools run on its creator's personal broker plan", async () => {

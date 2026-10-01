@@ -3,7 +3,7 @@ import type { AppDeps } from "../context"
 import { log } from "../log"
 import { agentWritesOff } from "./agent-writes"
 import { sha256 } from "./crypto"
-import { type JobDeps, noteHeldForBudget, overBudgetFor, reportJob } from "./jobs"
+import { type JobDeps, jobOverBudget, noteHeldForBudget, reportJob } from "./jobs"
 import { OrtamClient } from "./ortam-client"
 import { signWorkToken } from "./run-token"
 import { runtimeFailureReason } from "./runtime-diagnostics"
@@ -525,7 +525,7 @@ export async function machinePass(
       let agent = await meta.getAgent(job.agent_id)
       if (!agent || !(await admitted(deps, agent))) return
       // Past its payer's monthly budget: no sandbox comes up, and the job says why it waits.
-      if (await overBudgetFor(meta, agent, job.asked_by)) {
+      if (await jobOverBudget(meta, job)) {
         await noteHeldForBudget(meta, job)
         return
       }

@@ -121,10 +121,11 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
       const now = iso()
       const row = await first<JobRecord>(sql`
         INSERT INTO job (id, org_id, agent_id, kind, parent_id, node_id, trigger_id, asked_by,
-          attended, instruction, subject_json, status, scheduled_for, attempt, dedupe_key,
-          meta_json, created_at, updated_at)
+          payer_id, attended, instruction, subject_json, status, scheduled_for, attempt,
+          dedupe_key, meta_json, created_at, updated_at)
         VALUES (${j.id}, ${j.org_id}, ${j.agent_id}, ${j.kind}, ${j.parent_id ?? null},
-          ${j.node_id ?? null}, ${j.trigger_id ?? null}, ${j.asked_by ?? null}, ${j.attended ?? 0},
+          ${j.node_id ?? null}, ${j.trigger_id ?? null}, ${j.asked_by ?? null},
+          ${j.payer_id ?? null}, ${j.attended ?? 0},
           ${j.instruction}, ${j.subject_json ?? null}, 'queued', ${j.scheduled_for ?? null}, 0,
           ${j.dedupe_key ?? null}, ${j.meta_json ?? null}, ${now}, ${now})
         RETURNING *`)
@@ -155,8 +156,12 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
         SELECT * FROM job WHERE ${sql.join(where, sql` AND `)}
         ORDER BY created_at DESC, id DESC LIMIT ${limit}`)
     },
-    claimJobs(agentId, limit, leaseUntil, now) {
+    claimJobs(agentId, limit, leaseUntil, now, heldPayers) {
       const n = Math.max(1, Math.min(50, limit))
+      // The pool is `null` on the row; compare through '' so one NOT IN covers both.
+      const held = heldPayers?.length
+        ? sql`AND coalesce(payer_id, '') NOT IN (${list(heldPayers.map((p) => p ?? ""))})`
+        : sql``
       return rows<JobRecord>(sql`
         UPDATE job SET status = 'running', lease_until = ${leaseUntil}, started_at = ${now},
           updated_at = ${now}
@@ -164,7 +169,7 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
           SELECT id FROM job WHERE agent_id = ${agentId} AND status = 'queued' AND attended = 0
             AND kind <> 'graph'
             AND (scheduled_for IS NULL OR scheduled_for <= ${now})
-            AND (machine_phase IS NULL OR machine_phase = 'released')
+            AND (machine_phase IS NULL OR machine_phase = 'released') ${held}
           ORDER BY created_at, id LIMIT ${n})
         RETURNING *`)
     },
@@ -283,28 +288,17 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
         WHERE id = ${id} RETURNING id`)
     },
     async sumJobCostSince(orgId, since, payer) {
-      // A job's payer, as lib/job-accounts.ts picks it: who asked on a Derive machine, the
-      // agent's creator otherwise.
-      const mine = payer
-        ? sql`AND (CASE WHEN a.machine = 'derive' AND j.asked_by IS NOT NULL THEN j.asked_by
-            ELSE a.created_by END) = ${payer}`
-        : sql``
       const r = await first<{ n: unknown }>(sql`
-        SELECT coalesce(sum(j.cost_micro_usd), 0) AS n FROM job j
-        LEFT JOIN agent a ON a.id = j.agent_id AND a.org_id = j.org_id
-        WHERE j.org_id = ${orgId} AND j.created_at >= ${since} AND j.cost_micro_usd IS NOT NULL
-          ${mine}`)
+        SELECT coalesce(sum(cost_micro_usd), 0) AS n FROM job
+        WHERE org_id = ${orgId} AND created_at >= ${since} AND cost_micro_usd IS NOT NULL
+          ${payer ? sql`AND payer_id = ${payer}` : sql``}`)
       return num(r?.n)
     },
-    async standDownPerson(userId, orgId, now) {
+    async pauseAgentsCreatedBy(userId, orgId, now) {
       const inOrg = orgId ? sql`AND org_id = ${orgId}` : sql``
       await execute(sql`
         UPDATE agent SET paused_at = ${now}
         WHERE created_by = ${userId} AND paused_at IS NULL ${inOrg} RETURNING id`)
-      await execute(sql`
-        UPDATE job SET status = 'cancelled', finished_at = ${now}, lease_until = NULL,
-          dedupe_key = NULL, updated_at = ${now}
-        WHERE asked_by = ${userId} AND status IN (${list(OPEN)}) ${inOrg} RETURNING id`)
     },
     async addJobMessage(m) {
       // A transcript is ordered by created_at, and two messages written in the same millisecond

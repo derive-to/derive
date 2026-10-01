@@ -2253,9 +2253,9 @@ export function makeRepos(db: SqliteDb) {
       .delete(plan)
       .where(and(eq(plan.org_id, orgId), eq(plan.user_id, userId)))
       .run()
-    // Nobody is left to run or pay for what they started here: their agents pause and the
-    // open jobs they asked are cancelled.
-    await agentModel.standDownPerson(userId, orgId, new Date().toISOString())
+    // Nobody is left to run or pay for what they started here: their agents pause. (Their
+    // open jobs are cancelled by the caller, lib/jobs.ts standDownMember, which wakes askers.)
+    await agentModel.pauseAgentsCreatedBy(userId, orgId, new Date().toISOString())
   }
   const getWorkspace = async (orgId: string): Promise<WorkspaceRecord | null> =>
     (await db.select().from(workspace).where(eq(workspace.id, orgId)).get()) ?? null
@@ -2309,6 +2309,16 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(plan).where(eq(plan.org_id, orgId)).run()
     await db.delete(connection).where(eq(connection.org_id, orgId)).run()
     await db.delete(slackInstall).where(eq(slackInstall.org_id, orgId)).run()
+    // Queued deliveries carry their webhook's signing secret: they go first, then the hooks.
+    await db
+      .delete(webhookDelivery)
+      .where(
+        inArray(
+          webhookDelivery.webhook_id,
+          db.select({ id: webhook.id }).from(webhook).where(eq(webhook.org_id, orgId)),
+        ),
+      )
+      .run()
     await db.delete(webhook).where(eq(webhook.org_id, orgId)).run()
     await db.delete(workspaceJoinLink).where(eq(workspaceJoinLink.org_id, orgId)).run()
     await db.delete(workflowFiles).where(eq(workflowFiles.org_id, orgId)).run()
@@ -5249,8 +5259,8 @@ export function makeRepos(db: SqliteDb) {
     // And their model accounts, in every workspace (the pool sentinel is never a user id).
     await db.delete(modelAccount).where(eq(modelAccount.user_id, userId)).run()
     await db.delete(plan).where(eq(plan.user_id, userId)).run()
-    // Before created_by is cleared below: their agents pause, their open asks cancel.
-    await agentModel.standDownPerson(userId, null, new Date().toISOString())
+    // Before created_by is cleared below: their agents pause.
+    await agentModel.pauseAgentsCreatedBy(userId, null, new Date().toISOString())
     // Authorship is anonymized (nullable), so others' artifacts/threads survive intact.
     await db.update(artifact).set({ author_id: null }).where(eq(artifact.author_id, userId)).run()
     await db.update(version).set({ author_id: null }).where(eq(version.author_id, userId)).run()

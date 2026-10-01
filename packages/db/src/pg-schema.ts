@@ -988,6 +988,9 @@ export const job = pgTable(
     node_id: text("node_id"),
     trigger_id: text("trigger_id"),
     asked_by: text("asked_by"),
+    // Who the job bills (lib/job-accounts.ts jobPayer), fixed when it opens: the budget
+    // check and the spend sum both read it, so they always agree. Null = the workspace pool.
+    payer_id: text("payer_id"),
     attended: integer("attended").notNull().default(0).$type<0 | 1>(),
     instruction: text("instruction").notNull(),
     subject_json: text("subject_json"),

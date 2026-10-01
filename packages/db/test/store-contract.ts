@@ -3501,13 +3501,14 @@ export function runStoreContract(
       })
 
       // A removed member's personal account and plan go; a teammate's and the pool stay. Their
-      // agents pause and their open asks are cancelled; a teammate's are untouched.
+      // agents pause in the same write; a teammate's do not. (Cancelling their open jobs, with
+      // a wake for each asker, is the API's job: lib/jobs.ts standDownMember.)
       await store.removeMembership(org, leaver)
       expect(await store.getAccount(leaverKey.id)).toBeNull()
       expect(await store.getPlan(leaverPlan.id)).toBeNull()
       expect((await store.getAgent(leaversAgent.id))?.paused_at).toBeTruthy()
       expect((await store.getAgent(stayersAgent.id))?.paused_at).toBeNull()
-      expect((await store.getJob(leaversAsk.id))?.status).toBe("cancelled")
+      expect((await store.getJob(leaversAsk.id))?.status).toBe("queued")
       expect((await store.getJob(stayersAsk.id))?.status).toBe("queued")
       expect(await store.getAccount(stayerKey.id)).not.toBeNull()
       expect(await store.getAccount(pool.id)).not.toBeNull()
@@ -3583,7 +3584,7 @@ export function runStoreContract(
         bot_user_id: "UBOT",
         created_at: new Date().toISOString(),
       })
-      await store.createWebhook({
+      const hook = await store.createWebhook({
         id: uuid(),
         org_id: org,
         url: "https://hooks.test/x",
@@ -3591,6 +3592,17 @@ export function runStoreContract(
         kind: "generic",
         events: "*",
       })
+      await store.enqueueDeliveries([
+        {
+          id: uuid(),
+          webhook_id: hook.id,
+          url: hook.url,
+          secret: hook.secret,
+          kind: "generic",
+          event_type: "version.published",
+          payload: "{}",
+        },
+      ])
       await store.replaceJoinLink({
         id: `wjl_${uuid()}`,
         org_id: org,
@@ -3608,6 +3620,7 @@ export function runStoreContract(
       expect(await store.listConnections(org, stayer)).toEqual([])
       expect(await store.getSlackInstall(org)).toBeNull()
       expect(await store.listWebhooks(org)).toEqual([])
+      expect(await store.recentDeliveries(hook.id, 10)).toEqual([])
       expect(await store.getJoinLink(org)).toBeNull()
       expect(await store.getAccount(pool.id)).toBeNull()
       expect(await store.getAgent(agent.id)).toBeNull()
@@ -3642,31 +3655,33 @@ export function runStoreContract(
       await store.addJobCost(`job_${uuid()}`, 5)
     })
 
-    it("sumJobCostSince with a payer counts only the jobs that bill that person", async () => {
+    it("a job keeps its payer; spend sums and claims follow it", async () => {
       const org = `org_payer_${uuid()}`
-      const owners = await mkAgent({ org_id: org, created_by: "u_maker" })
-      const derive = await mkAgent({ org_id: org, created_by: "u_maker", machine: "derive" })
-      const job = async (agent_id: string, asked_by: string | null, cost: number) => {
+      const a = await mkAgent({ org_id: org, created_by: "u_maker", max_concurrency: 10 })
+      const job = async (payer_id: string | null, cost: number) => {
         const j = await store.createJob({
           id: uuid(),
           org_id: org,
-          agent_id,
+          agent_id: a.id,
           kind: "ask",
           instruction: "x",
-          asked_by,
+          payer_id,
         })
-        await store.addJobCost(j.id, cost)
+        if (cost) await store.addJobCost(j.id, cost)
+        return j
       }
-      // An owner machine bills its creator, whoever asked.
-      await job(owners.id, "u_asker", 100)
-      // A Derive machine bills who asked; a scheduled job (nobody asked) bills the creator.
-      await job(derive.id, "u_asker", 20)
-      await job(derive.id, null, 3)
+      const maker = await job("u_maker", 100)
+      expect(maker.payer_id).toBe("u_maker")
+      await job("u_asker", 20)
+      await job(null, 3)
       const since = at(-60_000)
       expect(await store.sumJobCostSince(org, since)).toBe(123)
-      expect(await store.sumJobCostSince(org, since, "u_maker")).toBe(103)
+      expect(await store.sumJobCostSince(org, since, "u_maker")).toBe(100)
       expect(await store.sumJobCostSince(org, since, "u_asker")).toBe(20)
       expect(await store.sumJobCostSince(org, since, "u_nobody")).toBe(0)
+      // A claim leaves held payers' jobs queued, the pool included when named.
+      const claimed = await store.claimJobs(a.id, 10, at(600_000), at(0), ["u_maker", null])
+      expect(claimed.map((j) => j.payer_id)).toEqual(["u_asker"])
     })
 
     it("listOpenGraphJobs lists queued and running graph jobs only", async () => {

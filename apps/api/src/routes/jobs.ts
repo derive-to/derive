@@ -27,7 +27,9 @@ import {
   canManageAgent,
   canSteerJob,
   followUpJob,
+  isServerNote,
   jobJson,
+  jobOverBudget,
   overBudgetFor,
   pullJobs,
   reportJob,
@@ -388,7 +390,7 @@ export const jobRoutes = (ctx: AppContext) => {
           fail(c, 403, "only the person who asked, or the agent's manager, can follow up"),
         )
       if (job.status === "cancelled") return bail(fail(c, 409, "this job was cancelled; ask again"))
-      if (await reopensOverBudget(job, agent)) return bail(fail(c, 402, OVER_BUDGET))
+      if (await reopensOverBudget(job)) return bail(fail(c, 402, OVER_BUDGET))
       const b = await readJson(c, z.object({ body_md: z.string().trim().min(1).max(20_000) }))
       if (b instanceof Response) return bail(b)
       const next = await followUpJob(jobDeps, job, who.id, b.body_md)
@@ -398,13 +400,13 @@ export const jobRoutes = (ctx: AppContext) => {
   )
 
   /** A write that reopens a settled job is new work, so it meets the same budget an ask does,
-   *  billed to whoever the job already bills. A graph itself spends nothing; its steps meet
+   *  billed to the payer it opened with. A graph itself spends nothing; its steps meet
    *  the budget when they open. */
-  const reopensOverBudget = async (job: JobRecord, agent: AgentRecord) =>
+  const reopensOverBudget = async (job: JobRecord) =>
     job.status !== "running" &&
     job.status !== "queued" &&
     job.kind !== "graph" &&
-    (await overBudgetFor(meta, agent, job.asked_by))
+    (await jobOverBudget(meta, job))
 
   const personAction = (
     path: string,
@@ -437,7 +439,7 @@ export const jobRoutes = (ctx: AppContext) => {
           return bail(
             fail(c, 403, "only the person who asked, or the agent's manager, can do that"),
           )
-        if (reopens && (await reopensOverBudget(job, agent))) return bail(fail(c, 402, OVER_BUDGET))
+        if (reopens && (await reopensOverBudget(job))) return bail(fail(c, 402, OVER_BUDGET))
         const out = await act(job, c, who.id)
         if (!out) return bail(fail(c, 409, "this job cannot do that from where it is"))
         if ("error" in out) return bail(fail(c, 400, out.error))
@@ -556,7 +558,11 @@ export const jobRoutes = (ctx: AppContext) => {
     return Promise.all(
       jobs.map(async (j) => ({
         ...(await showOne(j)),
-        messages: (await meta.listJobMessages(j.id)).map(messageJson),
+        // The transcript the model reads: what people and the agent said. Notes the server
+        // wrote about the job itself (held for budget) are for the people watching it.
+        messages: (await meta.listJobMessages(j.id))
+          .filter((m) => !isServerNote(m))
+          .map(messageJson),
         instructions,
         execution: { provider: agent.provider, model: agent.model },
         tools,

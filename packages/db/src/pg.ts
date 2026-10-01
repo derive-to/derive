@@ -708,7 +708,7 @@ export class PgMetaStore implements MetaStore {
   findOpenJobByDedupe = this.agentModel.findOpenJobByDedupe
   sumJobCostSince = this.agentModel.sumJobCostSince
   addJobCost = this.agentModel.addJobCost
-  standDownPerson = this.agentModel.standDownPerson
+  pauseAgentsCreatedBy = this.agentModel.pauseAgentsCreatedBy
   transitionAgentSandbox = this.agentModel.transitionAgentSandbox
   listAgentsInSandboxPhase = this.agentModel.listAgentsInSandboxPhase
   transitionJobMachine = this.agentModel.transitionJobMachine
@@ -3041,7 +3041,7 @@ export class PgMetaStore implements MetaStore {
       .delete(modelAccount)
       .where(and(eq(modelAccount.org_id, orgId), eq(modelAccount.user_id, userId)))
     await this.db.delete(plan).where(and(eq(plan.org_id, orgId), eq(plan.user_id, userId)))
-    await this.agentModel.standDownPerson(userId, orgId, new Date().toISOString())
+    await this.agentModel.pauseAgentsCreatedBy(userId, orgId, new Date().toISOString())
   }
   async getWorkspace(orgId: string): Promise<WorkspaceRecord | null> {
     const rows = await this.db.select().from(workspace).where(eq(workspace.id, orgId))
@@ -3094,6 +3094,15 @@ export class PgMetaStore implements MetaStore {
     await this.db.delete(plan).where(eq(plan.org_id, orgId))
     await this.db.delete(connection).where(eq(connection.org_id, orgId))
     await this.db.delete(slackInstall).where(eq(slackInstall.org_id, orgId))
+    // Queued deliveries carry their webhook's signing secret: they go first, then the hooks.
+    await this.db
+      .delete(webhookDelivery)
+      .where(
+        inArray(
+          webhookDelivery.webhook_id,
+          this.db.select({ id: webhook.id }).from(webhook).where(eq(webhook.org_id, orgId)),
+        ),
+      )
     await this.db.delete(webhook).where(eq(webhook.org_id, orgId))
     await this.db.delete(workspaceJoinLink).where(eq(workspaceJoinLink.org_id, orgId))
     await this.db.delete(workflowFiles).where(eq(workflowFiles.org_id, orgId))
@@ -6632,8 +6641,8 @@ export class PgMetaStore implements MetaStore {
     await this.db.delete(modelCredential).where(eq(modelCredential.user_id, userId))
     await this.db.delete(modelAccount).where(eq(modelAccount.user_id, userId))
     await this.db.delete(plan).where(eq(plan.user_id, userId))
-    // Before created_by is cleared below: their agents pause, their open asks cancel.
-    await this.agentModel.standDownPerson(userId, null, new Date().toISOString())
+    // Before created_by is cleared below: their agents pause.
+    await this.agentModel.pauseAgentsCreatedBy(userId, null, new Date().toISOString())
     await this.db.update(artifact).set({ author_id: null }).where(eq(artifact.author_id, userId))
     await this.db.update(version).set({ author_id: null }).where(eq(version.author_id, userId))
     await this.db.update(comment).set({ author_id: null }).where(eq(comment.author_id, userId))

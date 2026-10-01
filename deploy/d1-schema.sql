@@ -290,6 +290,7 @@ CREATE TABLE IF NOT EXISTS job (
   node_id TEXT,
   trigger_id TEXT,
   asked_by TEXT,
+  payer_id TEXT,
   attended INTEGER NOT NULL DEFAULT 0,
   instruction TEXT NOT NULL,
   subject_json TEXT,
