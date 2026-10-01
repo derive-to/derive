@@ -560,7 +560,7 @@ function AccountField({
       {!agent.account_id && (
         <Sub>
           {agent.machine === "owner"
-            ? "Its creator’s own account from Settings › Accounts, then the workspace’s shared one."
+            ? "Its creator’s own account from Settings › Accounts, then the workspace’s shared one, then whatever the runner’s machine is signed into."
             : "The asker’s own account, then the workspace’s shared one."}
         </Sub>
       )}

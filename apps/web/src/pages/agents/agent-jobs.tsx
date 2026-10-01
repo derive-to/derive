@@ -32,7 +32,9 @@ export function warningFor(
   noAccount = false,
 ): string | null {
   if (agent.paused) return "Paused. Jobs wait until it is resumed."
-  if (noAccount)
+  // Only a Derive machine needs a stored account; a runner on someone's own machine falls back
+  // to the login on that machine.
+  if (noAccount && agent.machine === "derive")
     return "No model account to run on. Its jobs fail until one is connected in Settings › Accounts."
   if (agent.machine === "derive") return null
   if (!agent.seen_at) return "Its runner has never checked in. Jobs wait until it does."

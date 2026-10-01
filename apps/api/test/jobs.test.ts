@@ -1163,24 +1163,47 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
     expect(after).toMatchObject({ status: "queued", attempt: 1 })
   })
 
-  it("a job with no account to run on fails with a sentence the owner can act on", async () => {
+  it("with no stored account, a laptop runner uses its own model login; opted out, it fails plainly", async () => {
     const { app } = await setup("jobs-cli-noaccount")
     const agent = await createAgent(app)
-    const job = (await (await ask(app, ed.email, agent.id, "Go")).json()) as { id: string }
+    // Default: the job runs on whatever login this machine's model CLI has, from this shell.
+    const first = (await (await ask(app, ed.email, agent.id, "Go")).json()) as { id: string }
     const { cfg, client } = runnerFor(app, agent)
     const [pulled] = (await client.pull()).jobs
     if (!pulled) throw new Error("nothing pulled")
+    const before = process.env.ANTHROPIC_API_KEY
+    process.env.ANTHROPIC_API_KEY = "sk-ant-local-shell"
+    let sawEnv: Record<string, string> = {}
+    try {
+      expect(
+        await serveJob(client, pulled, cfg, {
+          runAgent: async (_p, opts) => {
+            sawEnv = opts.env as Record<string, string>
+            return { ok: true, answer: { body_md: "done locally" } }
+          },
+        }),
+      ).toBe("succeeded")
+    } finally {
+      if (before === undefined) delete process.env.ANTHROPIC_API_KEY
+      else process.env.ANTHROPIC_API_KEY = before
+    }
+    expect(sawEnv.ANTHROPIC_API_KEY).toBe("sk-ant-local-shell")
+    expect(sawEnv.DERIVE_TOKEN).toBeUndefined()
+    void first
+
+    // Opted out, the runner refuses rather than spending the machine's login.
+    const second = (await (await ask(app, ed.email, agent.id, "Again")).json()) as { id: string }
+    const strict = runnerFor(app, agent, { "no-local-login": "true" })
+    const [next] = (await strict.client.pull()).jobs
+    if (!next) throw new Error("nothing pulled")
     expect(
-      await serveJob(client, pulled, cfg, {
+      await serveJob(strict.client, next, strict.cfg, {
         runAgent: async () => ({ ok: true, answer: { body_md: "x" } }),
       }),
     ).toBe("failed")
     const after = (await (
-      await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
-    ).json()) as {
-      status: string
-      messages: { body_md: string }[]
-    }
+      await app.request(`/v1/jobs/${second.id}`, { headers: as(ed.email) })
+    ).json()) as { status: string; messages: { body_md: string }[] }
     expect(after.status).toBe("failed")
     expect(after.messages.at(-1)?.body_md).toMatch(/no claude-code account for this agent/)
   })

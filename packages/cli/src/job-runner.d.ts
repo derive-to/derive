@@ -12,6 +12,7 @@ export interface JobRunnerCfg {
   timeoutMs?: number
   pollMs?: number
   mock?: boolean
+  localLogin?: boolean
 }
 
 export interface PulledJob {
