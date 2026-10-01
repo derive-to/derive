@@ -1,7 +1,6 @@
-// Materializing Derive skill bundles (and Brandprint notes) onto disk. Shared by the
-// context runner (boot: pull the workspace Brandprint + the manifest's pinned skills
-// into .claude/skills/, where the spawned claude auto-discovers them) and the CLI
-// (`derive skill add` / `derive brandprint pull` into a repo). Pure of any Derive
+// Materializing Derive skill bundles (and Brandprint notes) onto disk, for the CLI's
+// `derive skill add` / `derive brandprint pull` (into .claude/skills/ and brandprint/, where a
+// coding agent auto-discovers them). Pure of any Derive
 // client: callers pass a small `api` of three fetchers, so this module is unit-testable
 // against a mock and stays free of the @derive/core dependency (the CLI is standalone).
 //
@@ -131,20 +130,10 @@ export function writeSkill(destRoot, dir, files) {
   return skillDigest(files)
 }
 
-/** Merge the ambient Brandprint skill layer with the manifest's own `skills:` into one
- *  deduped list. A skill named in BOTH must materialize ONCE (not twice under a collided
- *  dir); the manifest pin wins — it's the deliberate, context-specific choice over the
- *  ambient default. Order follows first appearance (Brandprint, then new manifest ids). */
-export function mergeSkillLayers(brandprintSkills, manifestSkills) {
-  const byId = new Map()
-  for (const s of [...brandprintSkills, ...manifestSkills]) byId.set(s.id, s)
-  return [...byId.values()]
-}
-
 /** Materialize a set of pinned skills into destRoot, deduping directory names by short
  *  id (two skills whose frontmatter name collides get `<name>-<id>`). A failed skill is
- *  loud but NON-fatal — the runner still answers and the catalog marks it unavailable,
- *  exactly the syncRepos posture. Returns the catalog. */
+ *  loud but NON-fatal: the catalog marks it unavailable and the rest still land. Returns
+ *  the catalog. */
 export async function materializeSkills(api, skills, destRoot) {
   const used = new Set()
   const out = []

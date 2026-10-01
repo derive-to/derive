@@ -77,8 +77,7 @@ export const parseLibrary = (raw: {
   // A deploy that pinned a model before lanes existed keeps that pin, and the next write moves
   // it into the slot. Nothing has to run, and nothing is rewritten on read.
   const chat = trimmed(raw.slots?.chat) || trimmed(raw.chatModel)
-  const automation = trimmed(raw.slots?.automation)
-  return { models, slots: { ...(chat ? { chat } : {}), ...(automation ? { automation } : {}) } }
+  return { models, slots: chat ? { chat } : {} }
 }
 
 /** The library as stored on the reserved instance row. */
@@ -121,7 +120,7 @@ export const updateLibrary = async (
       // Every successful update completes the lazy migration from the old flat field.
       chatModel: undefined,
       models: next.models.length ? next.models : undefined,
-      slots: next.slots.chat || next.slots.automation ? next.slots : undefined,
+      slots: next.slots.chat ? next.slots : undefined,
       settingsRevision: revision + 1,
     })
     if (saved) return next
@@ -296,39 +295,3 @@ const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
     const t = setTimeout(() => reject(new Error(`no reply within ${Math.round(ms / 1000)}s`)), ms)
     p.then(resolve, reject).finally(() => clearTimeout(t))
   })
-
-/**
- * WHICH MODEL SERVES A LANE, read and written by lane rather than by four near-identical
- * functions.
- *
- * The two lanes differ in what they MEAN, not in how they are stored, and the meaning lives on
- * {@link InstanceSlots} where a reader of the type finds it. Four accessors put the same
- * read-modify-write in four places and made adding a third lane a copy-paste — which is exactly
- * the shape a lane list wants to grow out of.
- *
- * Reading falls back to the legacy flat `chatModel` for the chat lane (see parseLibrary), so a
- * deploy that pinned a model before lanes existed keeps that pin with nothing to run.
- */
-export const getInstanceSlot = async (
-  meta: MetaStore,
-  lane: keyof InstanceSlots,
-): Promise<string | null> => (await readLibrary(meta)).slots[lane] ?? null
-
-/**
- * Pin a lane, or clear it with null. Read fresh on every turn, so it lands on the next message
- * rather than the next deploy.
- *
- * Clears the legacy flat `chatModel` on EVERY write, including when setting a new model: leaving
- * a stale one behind a live `slots.chat` means the read fallback resurrects a model the operator
- * already moved off, the moment anyone clears the slot.
- */
-export const setInstanceSlot = async (
-  meta: MetaStore,
-  lane: keyof InstanceSlots,
-  model: string | null,
-): Promise<void> => {
-  await updateLibrary(meta, (cur) => ({
-    ...cur,
-    slots: { ...cur.slots, [lane]: model?.trim() || undefined },
-  }))
-}

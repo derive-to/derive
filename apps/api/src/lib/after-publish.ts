@@ -192,7 +192,7 @@ export const laterSaveWins = (artifactId: string, n: number, wait: boolean) => {
   }
 }
 
-export const indexSkillVersion = async (
+const indexSkillVersion = async (
   meta: MetaStore,
   blobs: BlobStore,
   artifact: ArtifactRecord,

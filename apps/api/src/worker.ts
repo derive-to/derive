@@ -30,10 +30,10 @@ import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { cloudflareSandbox } from "./lib/code-sandbox-cloudflare"
 import { buildAuthEmail } from "./lib/email"
 import {
+  ortamRuntimeFromEnv,
   slackFromEnv,
   subdomainBaseFromEnv,
   superAdminsFromEnv,
-  workspaceIdsFromEnv,
 } from "./lib/env"
 import { graphAware, graphPass } from "./lib/job-graph"
 import { machineDepsFrom, machinePass } from "./lib/job-machine"
@@ -321,18 +321,7 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
       })
       const models = catalogFromGateway(workerGateway(env))
       app = createApp({
-        runtime: env.DERIVE_ORTAM_RUNNER_PATH
-          ? {
-              runnerPath: env.DERIVE_ORTAM_RUNNER_PATH,
-              apiUrl: env.DERIVE_ORTAM_API_URL ?? "https://api.ortam.dev/v1",
-              managed: env.DERIVE_ORTAM_INTEGRATION_KEY
-                ? {
-                    apiKey: env.DERIVE_ORTAM_INTEGRATION_KEY,
-                    workspaceIds: workspaceIdsFromEnv(env.DERIVE_MANAGED_RUNS_ALLOWLIST),
-                  }
-                : undefined,
-            }
-          : undefined,
+        runtime: ortamRuntimeFromEnv(env),
         meta,
         // The static operator/CI bearer (isToken). The Node entry wires this via
         // loadConfig(process.env); the edge builds deps by hand from the CF binding and
@@ -340,10 +329,9 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // was dead on prod. Undefined when unset ⇒ isToken stays false, as before.
         token: env.DERIVE_TOKEN,
         buildId: env.BUILD_SHA,
-        // ATTENDED chat needs a model here too. Without it the Chat tab renders, accepts a
-        // message, and answers "no model is configured" — the surface works and the product
-        // does not. Same three vars as self-host, delivered as Worker secrets. Unattended runs
-        // are unaffected: they still resolve their own credential through the payer chain.
+        // @Derive replies (comments, Slack) need a model here too; without it they answer "no
+        // model is configured". Same three vars as self-host, delivered as Worker secrets.
+        // Agent jobs are unaffected: they run on their machine's own account.
         // Both from ONE construction: `callModel` is the catalog's default entry, so a lane that
         // picks a model and a lane that does not can never disagree about what "the model" is.
         callModel: models?.resolve(null)?.callModel,
@@ -365,12 +353,6 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           .map((x) => x.trim())
           .filter(Boolean),
         blobs: new R2BlobStore(env.BUCKET),
-        // THE CEILING THIS TIER ACTUALLY HAS. An attended turn is detached through
-        // `background()` → waitUntil, which the runtime ends a short while after the response is
-        // sent — the isolate stops, so a turn that overruns writes nothing and leaves its session
-        // `working` for ever. This leaves the turn several seconds of live isolate to write its
-        // own failure instead. Set only here; Node awaits inline and has no such ceiling.
-        attendedTurnBudgetMs: 22_000,
         // Hybrid search's dense arm, embeddings from Workers AI (env.AI). The vectors live in
         // pgvector in the SAME Postgres as metadata (HYPERDRIVE) — the table is created out of band
         // by apply-pg-schema, and PgVectorStore rides the request-scoped livePgPool exactly as the
@@ -631,18 +613,7 @@ async function jobTickEdge(env: Env): Promise<void> {
     const machines = machineDepsFrom(meta, {
       secret: env.DERIVE_AUTH_SECRET,
       server: env.BASE_URL,
-      config: env.DERIVE_ORTAM_RUNNER_PATH
-        ? {
-            runnerPath: env.DERIVE_ORTAM_RUNNER_PATH,
-            apiUrl: env.DERIVE_ORTAM_API_URL ?? "https://api.ortam.dev/v1",
-            managed: env.DERIVE_ORTAM_INTEGRATION_KEY
-              ? {
-                  apiKey: env.DERIVE_ORTAM_INTEGRATION_KEY,
-                  workspaceIds: workspaceIdsFromEnv(env.DERIVE_MANAGED_RUNS_ALLOWLIST),
-                }
-              : undefined,
-          }
-        : undefined,
+      config: ortamRuntimeFromEnv(env),
       bus,
       announce,
     })

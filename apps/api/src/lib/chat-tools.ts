@@ -55,17 +55,6 @@ import { AGENT_WRITES_OFF } from "./agent-writes"
  */
 export const CHAT_TOOLS: ReadonlySet<string> = new Set(["find", "read", "publish", "call"])
 
-/**
- * The DOCUMENT RAIL's subset: reach, and nothing that writes.
- *
- * That rail already has a write path — the revision contract plus the in-process landing port,
- * which checks write standing, surfaces on a mid-turn race and runs the post-publish fan-out.
- * A `publish` tool beside it would be a SECOND write path for the same document, deciding by
- * different rules; two answers to "how does this land" is exactly the drift turn-core exists
- * to prevent. So the rail gets reading tools and keeps one writer.
- */
-export const RAIL_CHAT_TOOLS: ReadonlySet<string> = new Set(["find", "read"])
-
 export interface ChatToolSurface {
   /** The tools as the model is told about them. Empty when the subset is empty. */
   tools: LoopTool[]
@@ -93,7 +82,6 @@ const SKILL_FOR_TOOL: Record<string, readonly string[]> = {
   read: ["finding"],
   publish: ["publishing", "assets"],
   stage: ["publishing", "assets"],
-  use: ["contexts"],
   call: ["sources"],
   comment: ["loop"],
   catch_up: ["loop"],
@@ -196,11 +184,11 @@ export interface ChatPrincipal {
   /** The workspace's agent-write switch, read fresh for THIS turn. Absent = on (the
    *  default): only an explicit `false` refuses.
    *
-   *  The switch has to reach here, and that is not obvious: hosted runs and asks stop at
-   *  their claim endpoints, but a chat turn's writes go through the publish tool in-process.
-   *  A workspace that switched agents off would otherwise have kept getting live creates
-   *  from chat while every claimed lane correctly stopped — a switch documented as "agents
-   *  stop writing" that only half of them obeyed. */
+   *  The switch has to reach here, and that is not obvious: agent jobs stop at their claim
+   *  and dispatch, but an @Derive turn's writes go through the publish tool in-process. A
+   *  workspace that switched agents off would otherwise have kept getting live creates from
+   *  @Derive while every job correctly stopped: a switch documented as "agents stop writing"
+   *  that only half of them obeyed. */
   flags?: { agentWrites?: boolean }
 }
 

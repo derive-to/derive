@@ -416,9 +416,7 @@ export function NavRail() {
           <SidebarGroupContent>
             <SidebarMenu>
               {/* Agents, Inbox, Artifacts, Skills; Search is the launcher above and Settings
-                  sits at the foot. Contexts, Workflows, Chat, and Templates left the rail with
-                  the agent model; their pages stay reachable by URL and from the palette until
-                  their data is cut over. */}
+                  sits at the foot. Templates stays reachable by URL and from the palette. */}
               <NavItem
                 icon="agent"
                 label="Agents"

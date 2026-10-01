@@ -26,7 +26,7 @@ import { nodeSandbox } from "./lib/code-sandbox-node"
 import { answerDeriveMention } from "./lib/comment-turn"
 import { sweepExpiredDrafts } from "./lib/drafts"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
-import { workspaceIdsFromEnv } from "./lib/env"
+import { ortamRuntimeFromEnv } from "./lib/env"
 import { sharpShrinker } from "./lib/image-shrink-node"
 import { graphAware, graphPass } from "./lib/job-graph"
 import { machineDepsFrom, machinePass } from "./lib/job-machine"
@@ -476,18 +476,7 @@ const importWorker = cfg.backgroundWorkers
 
 const gateway = modelGateway()
 
-const runtimeConfig = process.env.DERIVE_ORTAM_RUNNER_PATH
-  ? {
-      runnerPath: process.env.DERIVE_ORTAM_RUNNER_PATH,
-      apiUrl: process.env.DERIVE_ORTAM_API_URL ?? "https://api.ortam.dev/v1",
-      managed: process.env.DERIVE_ORTAM_INTEGRATION_KEY
-        ? {
-            apiKey: process.env.DERIVE_ORTAM_INTEGRATION_KEY,
-            workspaceIds: workspaceIdsFromEnv(process.env.DERIVE_MANAGED_RUNS_ALLOWLIST),
-          }
-        : undefined,
-    }
-  : undefined
+const runtimeConfig = ortamRuntimeFromEnv(process.env)
 const app = createApp({
   // An attended editor save answers once its version is stored; indexing and realtime follow.
   detachAfterResponse: true,

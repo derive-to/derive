@@ -173,11 +173,6 @@ export function IntegrationsSection() {
     success: "GitHub disconnected",
     invalidate: [githubQuery().queryKey, connectionsQuery().queryKey],
   })
-  const configureGithubWebhook = useApiMutation({
-    mutationFn: () => api.configureGithubWebhook(),
-    success: "GitHub completion updates enabled",
-    invalidate: [githubQuery().queryKey],
-  })
   const confirmDisconnectGithub = () => {
     const connectionId = disconnectingGithub?.connection_id
     if (!connectionId) return
@@ -188,7 +183,7 @@ export function IntegrationsSection() {
   return (
     <SettingsSection
       title="Integrations"
-      description="Connect workspace tools once, then make them available to contexts and automations."
+      description="Connect workspace tools once, then make them available to agents."
     >
       {isPending ? (
         <SettingsListSkeleton />
@@ -309,9 +304,9 @@ export function IntegrationsSection() {
               }
               meta={
                 github.app_permissions_state === "update_required"
-                  ? `${github.app_owner_login ? `@${github.app_owner_login} owns this App. ` : ""}An App owner or manager must grant Contents, Pull requests and Actions read and write, and enable workflow run events. Workflow repository tokens are limited to the selected repositories and access level.`
+                  ? `${github.app_owner_login ? `@${github.app_owner_login} owns this App. ` : ""}An App owner or manager must grant Contents, Pull requests and Actions read and write. Workflow repository tokens are limited to the selected repositories and access level.`
                   : github.app_permissions_state === "ready"
-                    ? `${github.app_owner_login ? `Owned by @${github.app_owner_login}. ` : ""}The App permissions and events are current.`
+                    ? `${github.app_owner_login ? `Owned by @${github.app_owner_login}. ` : ""}The App permissions are current.`
                     : "Derive could not confirm the App settings. Existing connections remain available."
               }
               actions={
@@ -324,41 +319,6 @@ export function IntegrationsSection() {
                 ) : undefined
               }
             />
-            {github.app_permissions_state === "ready" && (
-              <ListRow
-                title={
-                  <span className="flex flex-wrap items-center gap-2">
-                    Workflow completion updates
-                    {github.app_webhook_state === "ready" ? (
-                      <StatusBadge tone="ok">Active</StatusBadge>
-                    ) : github.app_webhook_state === "update_required" ? (
-                      <StatusBadge tone="attention">Setup required</StatusBadge>
-                    ) : (
-                      <StatusBadge tone="muted">Status unknown</StatusBadge>
-                    )}
-                  </span>
-                }
-                meta={
-                  github.app_webhook_state === "ready"
-                    ? "GitHub sends signed workflow completion events to Derive."
-                    : "Finish the signed webhook setup so Derive can receive workflow completion events."
-                }
-                actions={
-                  github.can_manage_app && github.app_webhook_state !== "ready" ? (
-                    <Button
-                      data-testid="github-configure-webhook"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => configureGithubWebhook.mutate()}
-                      loading={configureGithubWebhook.isPending}
-                      disabled={configureGithubWebhook.isPending}
-                    >
-                      Enable updates
-                    </Button>
-                  ) : undefined
-                }
-              />
-            )}
             {github.accounts.map((account) => (
               <ListRow
                 key={account.installation_id}
@@ -384,7 +344,7 @@ export function IntegrationsSection() {
                         account.permissions_state === "approval_required"
                       ? "A GitHub account owner must approve the App's updated permissions."
                       : account.state === "active"
-                        ? "Available to this workspace's contexts and automations."
+                        ? "Available to this workspace's agents."
                         : "Installed, but disconnected from agent use."
                 }
                 actions={

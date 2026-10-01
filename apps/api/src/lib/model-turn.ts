@@ -347,8 +347,8 @@ export const turnFor = (opts: TurnOptions): AgentLoopInput["callModel"] => {
       })
     }
 
-    // Stream ONLY when someone is listening, so every non-streaming caller (the loop's tests, the
-    // substrate, automations) makes the same request it always has — and a gateway that cannot do
+    // Stream ONLY when someone is listening, so every non-streaming caller (the loop's tests, a
+    // comment or Slack turn) makes the same request it always has, and a gateway that cannot do
     // SSE is only asked for it when a person is actually watching.
     if (opts.stream === false || typeof onDelta !== "function") return buffered()
 
@@ -379,8 +379,7 @@ export const turnFor = (opts: TurnOptions): AgentLoopInput["callModel"] => {
         // swallows the process event outright). workerd is stricter: an unhandled rejection can
         // tear down the request context, and an attended turn runs DETACHED inside one
         // (ctx.background → waitUntil), so the turn would die before the loop could classify the
-        // failure and settle the session — leaving a transcript stuck in "working" with no error
-        // and no retry.
+        // failure and answer, leaving the asker with no reply and no error.
         const handled = <T>(p: PromiseLike<T>): Promise<T> => {
           const q = Promise.resolve(p)
           q.catch(() => {})

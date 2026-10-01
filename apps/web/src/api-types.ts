@@ -7321,14 +7321,10 @@ export interface components {
              * @enum {string}
              */
             role: "viewer" | "commenter" | "editor" | "owner";
-            /** @description A stored flag from before Derive machines. Nothing reads it; `machine` says where the agent runs. */
-            hosted: boolean;
             /** @description Made automatically for one imported paper, not named by a person. Never listed over MCP, asked, or used as a workflow step. */
             managed: boolean;
             /** @description The user who registered the agent — who it publishes and bills on behalf of. */
             created_by: string | null;
-            /** @description A stored per-agent setting from before model accounts. Job billing does not read it: the agent's assigned account, then its creator's or asker's, then the shared one, pays. */
-            owner_lend: boolean;
             created_at: string;
             /** @description One line: what this agent does. */
             description: string | null;
@@ -7638,15 +7634,10 @@ export interface components {
             app_slug: string | null;
             app_owner_login: string | null;
             /**
-             * @description Whether the instance App has every current permission and event; null when no live App exists
+             * @description Whether the instance App has every current permission; null when no live App exists
              * @enum {string|null}
              */
             app_permissions_state: "ready" | "update_required" | "unknown" | null;
-            /**
-             * @description Whether signed GitHub workflow completion events can reach this instance
-             * @enum {string|null}
-             */
-            app_webhook_state: "ready" | "update_required" | "unknown" | null;
             app_settings_url: string | null;
             /** @description Whether the caller is an instance operator who can configure the shared App */
             can_manage_app: boolean;

@@ -1,12 +1,12 @@
-// @derive IN A COMMENT — the third arrival on the same turn.
+// @derive IN A COMMENT.
 //
 // A comment thread is where questions about a document already live, so this lane adds no new
 // place to ask: someone @mentions Derive in a thread, and the answer lands in that thread as a
 // reply. What it is NOT is a new conversation surface — there is no session, because the THREAD
 // is the transcript and the record.
 //
-// The document is the ground (the same `documentContract` the rail's chat uses), the thread is
-// the conversation, and the settle is a comment. This lane NEVER writes the document — a
+// The document is the ground (`documentContract`), the thread is the conversation, and the
+// settle is a comment. This lane NEVER writes the document — a
 // drafted change becomes part of the reply — so there is no landing decision to make here.
 // Everything else — the model call, the tool loop, the nudge — is turn-core's, exactly as it
 // is for every other lane.
@@ -62,7 +62,7 @@ const suggestionComment = (revision: Revision): string =>
   suggestionText(revision, {
     lead: "Here is the change I suggest:",
     tooBig:
-      "The change I drafted is too large to paste into this thread. Open the document's chat rail and ask there, and I can apply it.",
+      "The change I drafted is too large to paste into this thread. Ask me for a smaller part of it, or ask an agent to make the change.",
   })
 
 /**
@@ -120,7 +120,7 @@ export const runCommentTurn = async (
   for (const u of await meta.getUsers(humanIds).catch(() => []))
     names.set(u.id, u.name ?? "someone")
 
-  const contract = documentContract(source, true)
+  const contract = documentContract(source)
   const quote = quoteOf(comment.anchor)
   const system = `You are Derive, answering an @mention in a comment thread on a document.
 
@@ -191,11 +191,9 @@ ${documentBlock(source, documentName(artifact.short_id, artifact.current_content
 /**
  * THE COMMENT LANE'S ARRIVAL: every gate a chat arrival walks, then the turn.
  *
- * The gates are the same five the HTTP lanes walk (see `chatGates` in routes/contexts.ts), in
- * the same order and for the same reasons — a mention is a way to spend the operator's model
- * key, and a lane that inherited four of the five would be the whole point of collecting them.
- * They are re-stated rather than shared because this arrival has no Hono context: there is no
- * request to refuse, so a refusal here is SILENCE (logged), not a status code.
+ * The gates are lib/chat-gate.ts's, the same ones the Slack lane walks: a mention is a way to
+ * spend the operator's model key. This arrival has no Hono context, so there is no request to
+ * refuse, and a refusal here is SILENCE (logged), not a status code.
  */
 export const answerDeriveMention =
   (deps: {

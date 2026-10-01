@@ -5,6 +5,7 @@ import { agentWritesOff } from "./agent-writes"
 import { sha256 } from "./crypto"
 import { type JobDeps, jobOverBudget, noteHeldForBudget, reportJob, wakeClaimed } from "./jobs"
 import { OrtamClient } from "./ortam-client"
+import { RUN_LEASE_MS, RUN_TIMEOUT_MS } from "./run-lifecycle"
 import { signWorkToken } from "./run-token"
 import { runtimeFailureReason } from "./runtime-diagnostics"
 import { INSTALL_RUNTIME_RUNNER, RUNNER_VERSION } from "./runtime-setup"
@@ -34,8 +35,6 @@ export interface MachineDeps extends JobDeps {
   now?: () => Date
 }
 
-/** A job's whole turn on the machine, boot to stop. */
-export const MACHINE_JOB_MS = 15 * 60_000
 /** Global and per-workspace ceilings on jobs holding a sandbox at once. */
 const GLOBAL_LIMIT = 10
 const ORG_LIMIT = 3
@@ -260,11 +259,12 @@ async function borrow(
       state_json: JSON.stringify({ ...state, holder: null }),
     })
   const now = deps.now?.() ?? new Date()
-  const deadline = new Date(now.getTime() + MACHINE_JOB_MS)
-  // The lease outlasts the deadline, so reclaim never races a machine that is still stopping.
+  // A job's whole turn on the machine, boot to stop. The lease outlasts the deadline (and the
+  // job's token), so reclaim never races a machine that is still stopping.
+  const deadline = new Date(now.getTime() + RUN_TIMEOUT_MS)
   const claimed = await meta.claimJob(
     job.id,
-    new Date(deadline.getTime() + 10 * 60_000).toISOString(),
+    new Date(now.getTime() + RUN_LEASE_MS).toISOString(),
     now.toISOString(),
   )
   if (!claimed) {

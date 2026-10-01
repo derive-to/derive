@@ -19,8 +19,8 @@ prompt small: their schemas are fetched when you need them, not carried in every
 
 ## What to expect
 
-**Only declared sources are here.** An admin names which connections chat may use. A
-workspace can have a Stripe connected for its automations and still expose nothing to a
+**Only declared sources are here.** An admin names which connections a conversation may use.
+A workspace can have a Stripe connected for one of its agents and still expose nothing to a
 conversation. If `derive://sources` is empty, say so instead of
 guessing at what might exist.
 

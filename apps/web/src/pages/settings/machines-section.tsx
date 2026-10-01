@@ -1,12 +1,8 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
-import { type Agent, api, type OrgSettings } from "@/api"
+import type { Agent } from "@/api"
 import { LoadError } from "@/components/shared/load-error"
-import { SettingRow } from "@/components/shared/setting-row"
-import { SettingsGroup } from "@/components/shared/settings-group"
-import { Switch } from "@/components/ui/switch"
-import { agentsQuery, workspaceQuery, workspaceSettingsQuery } from "@/lib/queries"
-import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
+import { agentsQuery } from "@/lib/queries"
 import { machineOf, ownerMachineName, rosterOf, runnerCommand, when } from "@/pages/agents/format"
 import { Group, Machine, Meta, RowLine, rowClass } from "@/pages/agents/rows"
 import { AgentRowsSkeleton } from "@/pages/agents/skeleton"
@@ -21,7 +17,6 @@ export function MachinesSection() {
   const names = useMemberNames()
   return (
     <SettingsSection title="Machines">
-      <AgentWritesRow />
       {agents.isError ? (
         <LoadError
           title="Couldn’t load machines."
@@ -119,42 +114,5 @@ function AgentLinks({ agents }: { agents: Agent[] }) {
         </span>
       ))}
     </>
-  )
-}
-
-/** The one workspace-wide agent brake, on by default. On, an agent's change publishes like a
- *  person's: a kept, restorable version, with the publish fan-out. Off, agents stop writing and
- *  no machine is handed work. Workspace owners only, like the PATCH behind it. */
-function AgentWritesRow() {
-  const qc = useQueryClient()
-  const { data: settings } = useQuery(workspaceSettingsQuery())
-  const { data: ws } = useQuery(workspaceQuery())
-  const update = useApiMutation({
-    mutationFn: (patch: Partial<OrgSettings>) => api.updateWorkspaceSettings(patch),
-    optimistic: (patch, client) => {
-      const qk = workspaceSettingsQuery().queryKey
-      const rollback = snapshot(client, qk)
-      client.setQueryData(qk, (prev) => (prev ? { ...prev, ...patch } : prev))
-      return rollback
-    },
-    onSuccess: (next) => qc.setQueryData(workspaceSettingsQuery().queryKey, next),
-  })
-  if (!settings || ws?.role !== "owner") return null
-  return (
-    <SettingsGroup>
-      <SettingRow
-        htmlFor="toggle-agent-writes"
-        label="Agents can write"
-        description="On, an agent's change publishes like a person's: versioned, restorable, and announced. Off, agents stop writing and their jobs wait."
-      >
-        <Switch
-          id="toggle-agent-writes"
-          data-testid="toggle-agent-writes"
-          checked={settings.agentWrites}
-          disabled={update.isPending}
-          onCheckedChange={(next) => update.mutate({ agentWrites: next })}
-        />
-      </SettingRow>
-    </SettingsGroup>
   )
 }

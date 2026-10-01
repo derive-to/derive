@@ -10,19 +10,24 @@ import {
   type SlackUserLinkRecord,
 } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
-import { describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import type { ModelTurn } from "../src/lib/agent-loop"
 import { parseMeta } from "../src/lib/comments"
+import { encryptSecret } from "../src/lib/crypto"
+import { catalogOf } from "../src/lib/model-catalog"
 import { SLACK_BOT_SCOPES, slackOidcUserinfo, verifySlackSignature } from "../src/lib/slack"
 import { ingestSlackReply } from "../src/lib/slack-comments"
 import { chatSeatFor, isVerifiedLink } from "../src/lib/slack-identity"
 import {
   artifactRefIn,
+  handleSlackMention,
   identityVerdict,
   MISS_TTL_MS,
   parseSlackTs,
   questionFrom,
 } from "../src/lib/slack-mention"
 import { buildSlackManifest } from "../src/slack-app-setup"
+import { as, makeAuthedApp, type TestUser } from "./helpers"
 
 describe("slack signature verification", () => {
   const secret = "shh"
@@ -343,5 +348,137 @@ describe("recognising a redelivered Slack message", () => {
     expect(parseSlackTs(undefined)).toBeNull()
     expect(parseSlackTs("{oops")).toBeNull()
     expect(parseSlackTs(JSON.stringify({ outcome: "answered" }))).toBeNull()
+  })
+})
+
+describe("@Derive in a Slack thread is one attended job", () => {
+  const KEY = "slack-mention-key"
+  const asker: TestUser = { id: "u_sm_ask", email: "ask@derive.test", name: "Asker" }
+  const teammate: TestUser = { id: "u_sm_mate", email: "mate@derive.test", name: "Mate" }
+  afterEach(() => vi.unstubAllGlobals())
+
+  it("records the thread as one job, follow-ups append, cost lands on the job, and only the asker sees it", async () => {
+    const answer = (text: string): ModelTurn => ({
+      text,
+      toolUses: [],
+      costUsd: 0.002,
+      done: true,
+    })
+    const { app, ctx, meta } = makeAuthedApp("slack-mention-job", [asker, teammate], "editor", {
+      deps: {
+        encryptionKey: KEY,
+        models: catalogOf([
+          {
+            id: "m1",
+            label: "M1",
+            isDefault: true,
+            build: () => async () => answer("Here it is."),
+          },
+        ]),
+      },
+    })
+    await meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Team",
+      bot_token: encryptSecret("xoxb-test", KEY),
+      bot_user_id: "UBOT",
+      created_at: new Date().toISOString(),
+    })
+    const said: string[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        const method = new URL(String(url)).pathname.split("/").pop()
+        if (method === "users.info")
+          return Response.json({ ok: true, user: { profile: { email: asker.email } } })
+        if (method === "chat.postMessage" || method === "chat.update") {
+          said.push(String((JSON.parse(String(init?.body)) as { text?: string }).text))
+          return Response.json({ ok: true, ts: "200.1", channel: "C1" })
+        }
+        return Response.json({ ok: false, error: "unknown_method" })
+      }),
+    )
+    const deps = {
+      meta,
+      bus: ctx.backplane,
+      baseUrl: "http://derive.test",
+      models: ctx.modelsFor,
+      encryptionKey: KEY,
+      ctx,
+    }
+    const mention = (ts: string, text: string) =>
+      handleSlackMention(deps, {
+        teamId: "T1",
+        channel: "C1",
+        ts,
+        threadTs: "100.1",
+        userId: "U1",
+        text,
+      })
+
+    expect(await mention("100.1", "<@UBOT> what changed?")).toEqual({ status: "answered" })
+    // The Slack side is unchanged: a placeholder, rewritten in place with the answer.
+    expect(said[0]).toMatch(/thinking/i)
+    expect(said.at(-1)).toContain("Here it is.")
+
+    const jobsOf = () => meta.listJobs({ orgId: "default", askedBy: asker.id })
+    const [job] = await jobsOf()
+    expect(job).toMatchObject({
+      kind: "ask",
+      attended: 1,
+      asked_by: asker.id,
+      payer_id: asker.id,
+      subject_json: null,
+      status: "succeeded",
+      cost_micro_usd: 2000,
+    })
+
+    // A follow-up in the same thread continues the same job, and its cost adds up there.
+    expect(await mention("100.5", "<@UBOT> and since then?")).toEqual({ status: "answered" })
+    // Slack delivers at least once: the same message again is not a second paid turn.
+    expect(await mention("100.5", "<@UBOT> and since then?")).toEqual({
+      status: "duplicate slack delivery",
+    })
+    const jobs = await jobsOf()
+    expect(jobs).toHaveLength(1)
+    expect(jobs[0]?.cost_micro_usd).toBe(4000)
+    const transcript = await meta.listJobMessages(job?.id ?? "")
+    expect(transcript.map((m) => [m.author_kind, m.body_md])).toEqual([
+      ["asker", "what changed?"],
+      ["agent", "Here it is."],
+      ["asker", "and since then?"],
+      ["agent", "Here it is."],
+    ])
+    // The monthly budget reads job spend, so the Slack turns count against it.
+    expect(await meta.sumJobCostSince("default", "2000-01-01T00:00:00.000Z")).toBe(4000)
+
+    // The answer was read with the asker's own permissions: a teammate cannot open it.
+    const own = await app.request(`/v1/jobs/${job?.id}`, { headers: as(asker.email) })
+    expect(own.status).toBe(200)
+    const other = await app.request(`/v1/jobs/${job?.id}`, { headers: as(teammate.email) })
+    expect(other.status).toBe(404)
+    // In the query, not after it: a teammate's one-row page is their own job, not an empty page
+    // left after the asker's newer Slack job was dropped.
+    const theirs = await meta.createJob({
+      id: newId("job"),
+      org_id: "default",
+      agent_id: "ag_elsewhere",
+      kind: "ask",
+      instruction: "older work",
+      asked_by: teammate.id,
+    })
+    // A new thread: a newer Derive job of the asker's.
+    await handleSlackMention(deps, {
+      teamId: "T1",
+      channel: "C1",
+      ts: "300.1",
+      userId: "U1",
+      text: "<@UBOT> new topic",
+    })
+    const listed = (await (
+      await app.request("/v1/jobs?limit=1", { headers: as(teammate.email) })
+    ).json()) as { jobs: { id: string }[] }
+    expect(listed.jobs.map((j) => j.id)).toEqual([theirs.id])
   })
 })

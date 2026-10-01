@@ -1333,9 +1333,8 @@ export const artifactRoutes = (ctx: AppContext) => {
       const parsedTags = parseTagsField(body["tags"])
       if (parsedTags !== null) await meta.setArtifactTags(artifact.id, normalizeTags(parsedTags))
       // `add_tags` is the ADDITIVE variant: union with whatever's already on the artifact,
-      // never a replace. This is the platform-side stamp for automation tag-targets — the
-      // executor passes the run's tag labels here so stamping is deterministic (the model
-      // never has to remember), and a stamp can't wipe tags a human curated.
+      // never a replace, so a stamp (a runner passing a job's tag labels, so stamping is
+      // deterministic and the model never has to remember) can't wipe tags a human curated.
       const addTags = parseTagsField(body["add_tags"])
       if (addTags !== null && addTags.length > 0) {
         const current = (await meta.tagsForArtifacts([artifact.id]))[artifact.id] ?? []

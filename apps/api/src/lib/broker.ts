@@ -7,7 +7,7 @@ import { githubSourcePolicy, workflowGithubPolicy } from "./github-source-policy
 import { ResponseTooLargeError, readCappedBytes } from "./http"
 import { liveBearer } from "./mcp-oauth"
 
-/** One tool a hosted run may call, paired with the connected-account ref it executes through.
+/** One tool an agent job may call, paired with the connected-account ref it executes through.
  *  `kind` and `connectionId` are how the tool proxy routes the call without a second lookup;
  *  the connection RECORD is deliberately not here — it carries secret_enc, and this struct
  *  flows toward the claim response, which is the last stop before the wire.
@@ -91,10 +91,10 @@ export const spendableConnections = async (
 }
 
 /**
- * WO4 — the least-privilege tool set for a hosted run. Given the run's BOUND connection ids,
+ * The least-privilege tool set for an agent job. Given the agent's BOUND connection ids,
  * resolve ONLY those connections (never the workspace's whole list), keep the ones that are
- * ACTIVE and in THIS org, and expose each connection's broker tools paired with its ref. A run
- * bound to a Stripe connection can therefore see Stripe tools and nothing else — a Gmail
+ * ACTIVE and in THIS org, and expose each connection's broker tools paired with its ref. An
+ * agent bound to a Stripe connection can therefore see Stripe tools and nothing else; a Gmail
  * connection it did not bind contributes zero tools.
  */
 export const toolsForRun = async (
@@ -221,11 +221,10 @@ export const authTarget = (ref: string, connectionId: string): string => `${ref}
 /** The tools a direct connection exposes. Named `<toolkit>.<verb>` to match the broker's
  *  convention, so the runner's shim treats every kind of connection identically.
  *
- *  FROZEN SURFACE — do not grow this. Its only remaining consumer is the MACHINELESS lane:
- *  the in-process Workers loop (lib/substrate-loop.ts, the run and session `toolProxy` call
- *  sites), which has no container and therefore cannot run code. Everywhere a machine exists,
- *  a context's credentials are DELIVERED to the run and the agent uses ordinary libraries —
- *  which is both more capable and less for us to maintain.
+ *  FROZEN SURFACE — do not grow this. Its consumers are the job tool proxy
+ *  (POST /v1/jobs/{id}/tool) and @Derive's `call` tool, neither of which can run code. Where a
+ *  machine exists, an agent's credentials are DELIVERED to the job and the agent uses ordinary
+ *  libraries, which is both more capable and less for us to maintain.
  *
  *  So: a new credential shape (a database URL, an MCP server, a webhook, a key that rides a
  *  custom header) must NOT arrive here as another tool kind or another verb. That road ends in
@@ -446,7 +445,7 @@ export const executeHttpTool = async (
 
 /** A connection-id list as stored (a JSON array in a text column), parsed defensively: a
  *  hand-edited or truncated row yields no tools rather than 500ing the lane that read it.
- *  Both the automation column and the context column carry this shape. */
+ *  The agent's connection_ids_json carries this shape. */
 export const parseConnectionIds = (raw: string | null): string[] => {
   if (!raw) return []
   try {
@@ -466,14 +465,14 @@ export type ToolCallOutcome =
   | { ok: false; status: 403 | 404 | 409 | 502; message: string }
 
 /**
- * Execute one tool call against a lane's already-resolved least-privilege list. Both proxies
- * are this function plus their own authorization: match the requested NAME to one of this
- * work item's tools (a supplied ref must be that tool's, never another's), then execute —
- * ourselves for a direct connection, through the broker otherwise.
+ * Execute one tool call against a lane's already-resolved least-privilege list. Every caller
+ * (the job tool proxy, @Derive's `call`) is this function plus its own authorization: match the
+ * requested NAME to one of this work item's tools (a supplied ref must be that tool's, never
+ * another's), then execute, ourselves for a direct connection, through the broker otherwise.
  *
- * Shared on purpose. The run lane and the ask lane serve the same contexts, so a difference
- * in what a tool call may do would be a difference in what a context can reach depending on
- * how it was triggered — the thing bound connections exist to make impossible.
+ * Shared on purpose: a difference in what a tool call may do would be a difference in what an
+ * agent can reach depending on how it was asked, the thing bound connections exist to make
+ * impossible.
  */
 export const callTool = async (opts: {
   meta: MetaStore
@@ -540,7 +539,7 @@ export const callTool = async (opts: {
 }
 
 /**
- * The bind-time policy for attaching connections to an automation or context. Returns the
+ * The bind-time policy for attaching connections to an agent. Returns the
  * 400 message, or null when every id is attachable by this actor:
  *   - the id exists and belongs to THIS workspace (never another tenant's);
  *   - a workspace connection needs a managing actor — otherwise anyone who can write an

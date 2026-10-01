@@ -43,7 +43,7 @@ export function ModelsSection() {
   // to anyone else in the first place (see Settings) — this state is for a genuine load failure.
   const { data, isError, refetch } = useQuery(modelLibraryQuery())
   const models = data?.models ?? []
-  const slots = data?.slots ?? { chat: null, automation: null }
+  const slots = data?.slots ?? { chat: null }
   const configured = models.find((m) => m.is_default)
   const [newId, setNewId] = useState("")
   const [probing, setProbing] = useState<string | null>(null)
@@ -52,14 +52,10 @@ export function ModelsSection() {
   const invalidate = () => qc.invalidateQueries({ queryKey: modelLibraryQuery().queryKey })
 
   const pin = useApiMutation({
-    mutationFn: ({ lane, model }: { lane: "chat" | "automation"; model: string | null }) =>
+    mutationFn: ({ lane, model }: { lane: "chat"; model: string | null }) =>
       api.setModelSlot(lane, model),
     success: (_d, v) =>
-      v.model
-        ? v.lane === "chat"
-          ? "Chat answers with that model now, everywhere"
-          : "Automations run on that model now"
-        : "Back to the configured default",
+      v.model ? "@Derive replies with that model now" : "Back to the configured default",
     onSuccess: invalidate,
   })
 
@@ -109,7 +105,7 @@ export function ModelsSection() {
   return (
     <SettingsSection
       title="Models"
-      description="Choose the models used for chat and automations. Changes apply to the next turn, including in open conversations."
+      description="Choose the model @Derive replies with. Changes apply to the next reply."
       actions={
         models.length > 0 ? (
           <Button
@@ -153,28 +149,18 @@ export function ModelsSection() {
       ) : (
         <>
           <SettingsGroup
-            title="Lanes"
-            description="Choose a model for chat and another for automations. This does not change which account pays for a run."
+            title="Replies"
+            description="This does not change which account pays for an agent's jobs."
           >
             <Lane
-              label="Chat"
-              hint="The document rail, workspace chat, @derive in a comment, and @Derive in Slack."
+              label="@Derive replies"
+              hint="@Derive in a comment, and @Derive in Slack."
               current={slots.chat}
               fallback={configured?.label}
               models={models}
               busy={pin.isPending}
               onPick={(model) => pin.mutate({ lane: "chat", model })}
               testId="slot-chat"
-            />
-            <Lane
-              label="Automations"
-              hint="Unattended runs on this deploy's own gateway. Runs that bill a connected plan keep their own model."
-              current={slots.automation}
-              fallback={configured?.label}
-              models={models}
-              busy={pin.isPending}
-              onPick={(model) => pin.mutate({ lane: "automation", model })}
-              testId="slot-automation"
             />
           </SettingsGroup>
 
@@ -190,10 +176,7 @@ export function ModelsSection() {
               <Row
                 key={m.id}
                 model={m}
-                pinnedTo={[
-                  slots.chat === m.id ? "Chat" : null,
-                  slots.automation === m.id ? "Automations" : null,
-                ].filter(Boolean as unknown as (v: string | null) => v is string)}
+                pinnedTo={slots.chat === m.id ? ["@Derive replies"] : []}
                 probing={probing === m.id}
                 busy={probingAll || probe.isPending || remove.isPending || relabel.isPending}
                 onProbe={() => runProbe(m.id)}

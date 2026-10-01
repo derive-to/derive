@@ -13,10 +13,8 @@ import {
   PublishError,
   parseAsk,
   parseEdits,
-  parseRevision,
   proseOf,
   REVISION_CONTRACT,
-  REVISION_NUDGE,
   type Revision,
 } from "@derive/core"
 import {
@@ -30,30 +28,14 @@ import {
 import { BillingBlockedError } from "./billing"
 
 /**
- * ONE TURN, for every lane that runs one.
+ * ONE TURN, for every in-process lane that runs one: @Derive in a comment thread
+ * (comment-turn.ts) and @Derive in Slack (chat-turn.ts). Both call the model, hold it to a
+ * contract with one nudge, land what came back, and record the outcome; the middle (the model
+ * call, the nudge, the parse) is here so the two never disagree about what a reply means.
  *
- * Four paths in this repo run the same shape: call the model, hold it to a contract with one
- * nudge, land what came back, and record the outcome. They are attended chat (in-request,
- * in-process), an automation run on the loop substrate (claimed over HTTP, settled over HTTP),
- * an ask on the loop substrate, and the CLI runner. Written four times, the four quietly stop
- * agreeing about what a reply means — which is the one contract nobody may re-implement.
- *
- * So the middle is here, and it is genuinely the middle: the model call, the nudge, the parse.
- * Not the ends.
- *
- * THE LANDING PORT is the seam, and the reason this is not just an extracted function. Attended
- * chat writes IN-PROCESS — it is the API, it has the store and the blob store in hand. The loop
- * substrate writes OVER HTTP against this same API, on purpose: a runner is an HTTP CLIENT of
- * Derive, not a privileged insider, so it goes through the same authorization the container
- * executor does and runs unchanged on Node and on Workers. Neither is a worse version of the
- * other, and faking one shared write path would have to pick a loser. Above the port everything
- * is shared; below it each lane keeps its own.
- *
- * WORK ARRIVAL and SETTLE stay below the port too, and stay explicit. In-request versus
- * `GET /v1/agent/runs/claim` versus `POST /v1/agent/sessions/claim` are three different things,
- * and the third returns ONE session where the second returns a list. A "unified" arrival would
- * have to paper over that, and papering over exactly that is what made handing a session id to
- * the runs claim a silent no-op.
+ * THE LANDING PORT is the seam: what a turn does with a drafted revision is the lane's own
+ * decision (a comment turn posts it as a suggestion; the Slack turn has none to land). Agent
+ * jobs run on their machines and report over HTTP instead (lib/jobs.ts).
  */
 
 // ---- contracts ------------------------------------------------------------------------------
@@ -79,30 +61,12 @@ export const proseContract: ReplyContract = {
   read: (text) => ({ product: { revision: null, prose: text, ask: null } }),
 }
 
-/** The AUTOMATION contract: a <revision> block, or nothing happened. No prose channel, because
- *  nobody is reading — a run that "explained itself" instead of writing produced nothing. */
-export const revisionContract: ReplyContract = {
-  text: REVISION_CONTRACT,
-  read: (text) => {
-    const p = parseRevision(text)
-    return p.revision
-      ? { product: { revision: p.revision, prose: proseOf(text), ask: null } }
-      : { miss: { detail: p.error, nudge: REVISION_NUDGE } }
-  },
-}
-
 /**
- * A turn where an ANSWER is a legitimate outcome — the same block, now optional.
+ * A turn where an ANSWER is a legitimate outcome: the revision block, optional.
  *
- * This is the whole of "an ask": not a third contract, but the revision contract on a turn where
- * the model was allowed to decide it had nothing to write. A reply with no block is therefore an
- * answer and is NEVER nudged; only a block that was present and unreadable is a miss, because
- * that is the model trying and failing rather than choosing.
- *
- * The contract TEXT is a parameter because the two answerable lanes legitimately ask in
- * different words — attended chat is talking to someone about a document in front of them, the
- * unattended ask lane is a packaged agent answering a question — while the READING is shared,
- * which is the half that must not fork.
+ * A reply with no block is an answer and is NEVER nudged; only a block that was present and
+ * unreadable is a miss, because that is the model trying and failing rather than choosing. The
+ * contract TEXT is a parameter so a lane can ask in its own words while the READING is shared.
  */
 export const answerContract = (text: string = ASK_CONTRACT): ReplyContract => ({
   text,
@@ -149,9 +113,8 @@ export const editsContract = (source: string): ReplyContract => ({
         }
       }
     }
-    // No block at all is a plain answer here, exactly as with a revision: the attended caller
-    // reads a missing block as "they asked a question". Handing it back as a product with no
-    // revision lets that caller answer, and an unattended caller treat it as producing nothing.
+    // No block at all is a plain answer here, exactly as with a revision: the caller reads a
+    // missing block as "they asked a question", and answers.
     if (ed.error === NO_EDITS_BLOCK)
       return { product: { revision: null, prose: proseOf(text), ask: null } }
     return { miss: { detail: ed.error, nudge: editsNudge(ed.error) } }
@@ -161,23 +124,15 @@ export const editsContract = (source: string): ReplyContract => ({
 // ---- revising an EXISTING document -------------------------------------------------------------
 
 /**
- * WHICH CONTRACT to ask for when the turn revises a document that already exists.
+ * WHICH CONTRACT to ask for when the turn may revise a document that already exists.
  *
  * A revision's reply is bounded by the DOCUMENT; an edit's by the CHANGE. Below the threshold,
- * whole-document is the better ask — it cannot miss on an exact match. Above it a whole-document
- * reply cannot fit in the model's output budget at all, so search/replace is not a preference but
- * the only thing that works.
- *
- * `answerable` is the attended/unattended difference, and the only one. A person may be asking a
- * QUESTION about the document, so a reply with no block is a perfectly good answer. An automation
- * that "answered" instead of writing produced nothing, so its contract does not offer the option.
+ * whole-document is the better ask: it cannot miss on an exact match. Above it a whole-document
+ * reply cannot fit in the model's output budget at all, so search/replace is the only thing that
+ * works. Either way a reply with no block is an answer: a person may be asking a QUESTION.
  */
-export const documentContract = (source: string, answerable: boolean): ReplyContract =>
-  source.length > EDITS_THRESHOLD_CHARS
-    ? editsContract(source)
-    : answerable
-      ? answerContract(REVISION_CONTRACT)
-      : revisionContract
+export const documentContract = (source: string): ReplyContract =>
+  source.length > EDITS_THRESHOLD_CHARS ? editsContract(source) : answerContract(REVISION_CONTRACT)
 
 /**
  * THE DOCUMENT ITSELF, as a delimited block for the system prompt.
@@ -349,8 +304,7 @@ export const runTurn = async (input: TurnInput): Promise<TurnOutcome> => {
     ask,
     turns: res.turns,
   }
-  // The model chose not to write. On an ask that is the answer; on an automation run the
-  // contract never produces this, so the lane above decides what "nothing" means.
+  // The model chose not to write: that is the answer, and the lane decides what to do with it.
   if (!revision) return { outcome: "answered", reply: prose, wrote: null, ...base }
 
   try {
@@ -388,17 +342,17 @@ export const runTurn = async (input: TurnInput): Promise<TurnOutcome> => {
 /**
  * A TRANSCRIPT, as the model reads it.
  *
- * Every lane keeps its history in its own row type — session messages for chat, comments for a
- * mention thread — and every lane has to answer the same two questions about each row: was this
+ * Every lane keeps its history in its own row type (job messages for Slack, comments for a
+ * mention thread), and every lane has to answer the same two questions about each row: was this
  * US, and what was said. The mapping is trivial and was written per lane, which is exactly the
  * kind of duplication that rots quietly: a row wrongly labelled `assistant` makes the model
  * believe it said something it never said, and it will then defend it. There is no error, no
  * failed test, just a confidently wrong conversation.
  *
  * So the SHAPE lives here once and the PREDICATES stay per-lane, because they genuinely differ:
- * chat decides by `author_kind`, a comment thread by whether the author is Derive.
+ * Slack decides by `author_kind`, a comment thread by whether the author is Derive.
  *
- * The speaker's name is prefixed only where one is given. A chat session has two participants
+ * The speaker's name is prefixed only where one is given. A Slack thread's job has two participants
  * and needs no labels; a comment thread can have five, and an unattributed transcript there
  * turns a conversation into one voice arguing with itself.
  */

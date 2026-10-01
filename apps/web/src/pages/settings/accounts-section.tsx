@@ -32,7 +32,7 @@ const KIND: Record<ModelAccount["kind"], string> = {
 export const accountLabel = (a: ModelAccount): string =>
   `${a.shared ? "Shared" : a.mine ? "Your" : "A teammate's"} ${PROVIDER[a.provider]}`
 
-// Settings › Accounts: the model accounts agents call a model with. Yours, and the
+// Settings › Model accounts: the model accounts agents call a model with. Yours, and the
 // workspace's shared ones. A key is pasted once and never shown again; only its last four
 // characters come back.
 export function AccountsSection() {
@@ -52,7 +52,7 @@ export function AccountsSection() {
     (agents.data ?? []).filter((g) => g.account_id === a.id).map((g) => g.name)
 
   return (
-    <SettingsSection title="Accounts">
+    <SettingsSection title="Model accounts">
       {accounts.isError ? (
         <LoadError
           title="Couldn’t load accounts."

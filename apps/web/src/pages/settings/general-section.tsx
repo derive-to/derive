@@ -113,7 +113,7 @@ export function GeneralSection() {
   return (
     <SettingsSection
       title="General"
-      description="Your workspace's name and lifecycle."
+      description="Your workspace's name, its defaults, and whether agents can write."
       actions={
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild>
@@ -245,7 +245,8 @@ export function GeneralSection() {
   )
 }
 
-// Sharing defaults — where an agent (MCP) publish lands when it doesn't say.
+// Workspace defaults: where an agent (MCP) publish lands when it doesn't say, and whether
+// agents may write at all.
 // The select applies instantly with an optimistic cache write (the toggle
 // contract from Integrations), reverting on error. Admin-gated by the server;
 // the caller renders this only for admins.
@@ -283,92 +284,111 @@ function SharingDefaults() {
     )
   if (!settings) return null
   return (
-    <SettingsGroup>
-      <SettingRow
-        label="Who can open new artifacts?"
-        description="Choose whether new artifacts start open to workspace members or only invited people. Existing artifacts do not change."
-      >
-        <SelectMenu
-          value={settings.defaultWorkspaceAccess}
-          onValueChange={(v) =>
-            set("defaultWorkspaceAccess", v as OrgSettings["defaultWorkspaceAccess"])
-          }
+    <>
+      <SettingsGroup>
+        <SettingRow
+          label="Who can open new artifacts?"
+          description="Choose whether new artifacts start open to workspace members or only invited people. Existing artifacts do not change."
         >
-          <SelectMenuTrigger
-            aria-label="Default workspace access"
-            data-testid="default-workspace-access"
+          <SelectMenu
+            value={settings.defaultWorkspaceAccess}
+            onValueChange={(v) =>
+              set("defaultWorkspaceAccess", v as OrgSettings["defaultWorkspaceAccess"])
+            }
           >
-            {WORKSPACE_ACCESS_LABELS[settings.defaultWorkspaceAccess] ??
-              settings.defaultWorkspaceAccess}
-          </SelectMenuTrigger>
-          <SelectMenuContent>
-            <SelectMenuItem value="member">Everyone in the workspace</SelectMenuItem>
-            <SelectMenuItem value="none">Only invited people</SelectMenuItem>
-          </SelectMenuContent>
-        </SelectMenu>
-      </SettingRow>
-      <SettingRow
-        label="What can anyone with the link do?"
-        description="Set the default for new artifact links. Existing artifacts do not change."
-      >
-        <SelectMenu
-          value={settings.defaultLinkRole}
-          onValueChange={(v) => set("defaultLinkRole", v as OrgSettings["defaultLinkRole"])}
+            <SelectMenuTrigger
+              aria-label="Default workspace access"
+              data-testid="default-workspace-access"
+            >
+              {WORKSPACE_ACCESS_LABELS[settings.defaultWorkspaceAccess] ??
+                settings.defaultWorkspaceAccess}
+            </SelectMenuTrigger>
+            <SelectMenuContent>
+              <SelectMenuItem value="member">Everyone in the workspace</SelectMenuItem>
+              <SelectMenuItem value="none">Only invited people</SelectMenuItem>
+            </SelectMenuContent>
+          </SelectMenu>
+        </SettingRow>
+        <SettingRow
+          label="What can anyone with the link do?"
+          description="Set the default for new artifact links. Existing artifacts do not change."
         >
-          <SelectMenuTrigger aria-label="Default link grant" data-testid="default-link-role">
-            {LINK_ROLE_LABELS[settings.defaultLinkRole] ?? settings.defaultLinkRole}
-          </SelectMenuTrigger>
-          <SelectMenuContent>
-            <SelectMenuItem value="none">Nothing</SelectMenuItem>
-            <SelectMenuItem value="viewer">Can view</SelectMenuItem>
-            <SelectMenuItem value="commenter">Can comment</SelectMenuItem>
-            <SelectMenuItem value="editor">Can edit</SelectMenuItem>
-          </SelectMenuContent>
-        </SelectMenu>
-      </SettingRow>
-      <SettingRow
-        label="Where should new artifacts appear?"
-        description="Choose whether new artifacts appear in a library. Existing artifacts do not change."
-      >
-        <SelectMenu
-          value={settings.defaultListed}
-          onValueChange={(v) => set("defaultListed", v as OrgSettings["defaultListed"])}
-        >
-          <SelectMenuTrigger aria-label="Default listing" data-testid="default-listed">
-            {LISTED_LABELS[settings.defaultListed] ?? settings.defaultListed}
-          </SelectMenuTrigger>
-          <SelectMenuContent>
-            <SelectMenuItem value="none">Nowhere</SelectMenuItem>
-            <SelectMenuItem value="workspace">Workspace library</SelectMenuItem>
-            <SelectMenuItem value="public">Public directory</SelectMenuItem>
-          </SelectMenuContent>
-        </SelectMenu>
-      </SettingRow>
-      <SettingRow
-        htmlFor={whiteLabelLocked ? undefined : "toggle-white-label"}
-        label="White-label shared pages"
-        description="Hide the Made-with-Derive mark on public artifacts and embeds, and allow the bare embed (?chrome=none). A Team-plan feature."
-      >
-        {whiteLabelLocked ? (
-          <Link
-            to="/settings/$section"
-            params={{ section: "billing" }}
-            data-testid="white-label-upgrade"
-            className="text-sm font-medium underline underline-offset-2 hover:text-foreground"
+          <SelectMenu
+            value={settings.defaultLinkRole}
+            onValueChange={(v) => set("defaultLinkRole", v as OrgSettings["defaultLinkRole"])}
           >
-            Upgrade to Team
-          </Link>
-        ) : (
+            <SelectMenuTrigger aria-label="Default link grant" data-testid="default-link-role">
+              {LINK_ROLE_LABELS[settings.defaultLinkRole] ?? settings.defaultLinkRole}
+            </SelectMenuTrigger>
+            <SelectMenuContent>
+              <SelectMenuItem value="none">Nothing</SelectMenuItem>
+              <SelectMenuItem value="viewer">Can view</SelectMenuItem>
+              <SelectMenuItem value="commenter">Can comment</SelectMenuItem>
+              <SelectMenuItem value="editor">Can edit</SelectMenuItem>
+            </SelectMenuContent>
+          </SelectMenu>
+        </SettingRow>
+        <SettingRow
+          label="Where should new artifacts appear?"
+          description="Choose whether new artifacts appear in a library. Existing artifacts do not change."
+        >
+          <SelectMenu
+            value={settings.defaultListed}
+            onValueChange={(v) => set("defaultListed", v as OrgSettings["defaultListed"])}
+          >
+            <SelectMenuTrigger aria-label="Default listing" data-testid="default-listed">
+              {LISTED_LABELS[settings.defaultListed] ?? settings.defaultListed}
+            </SelectMenuTrigger>
+            <SelectMenuContent>
+              <SelectMenuItem value="none">Nowhere</SelectMenuItem>
+              <SelectMenuItem value="workspace">Workspace library</SelectMenuItem>
+              <SelectMenuItem value="public">Public directory</SelectMenuItem>
+            </SelectMenuContent>
+          </SelectMenu>
+        </SettingRow>
+        <SettingRow
+          htmlFor={whiteLabelLocked ? undefined : "toggle-white-label"}
+          label="White-label shared pages"
+          description="Hide the Made-with-Derive mark on public artifacts and embeds, and allow the bare embed (?chrome=none). A Team-plan feature."
+        >
+          {whiteLabelLocked ? (
+            <Link
+              to="/settings/$section"
+              params={{ section: "billing" }}
+              data-testid="white-label-upgrade"
+              className="text-sm font-medium underline underline-offset-2 hover:text-foreground"
+            >
+              Upgrade to Team
+            </Link>
+          ) : (
+            <Switch
+              id="toggle-white-label"
+              data-testid="toggle-white-label"
+              checked={settings.whiteLabel}
+              disabled={!billing}
+              onCheckedChange={(next) => set("whiteLabel", next)}
+            />
+          )}
+        </SettingRow>
+      </SettingsGroup>
+      {/* The one workspace-wide agent brake, on by default. Off, agents stop writing and no
+        machine is handed work. Workspace owners only, like the PATCH behind it. */}
+      <SettingsGroup title="Agents">
+        <SettingRow
+          htmlFor="toggle-agent-writes"
+          label="Agents can write"
+          description="On, an agent's change publishes like a person's: versioned, restorable, and announced. Off, agents stop writing and their jobs wait."
+        >
           <Switch
-            id="toggle-white-label"
-            data-testid="toggle-white-label"
-            checked={settings.whiteLabel}
-            disabled={!billing}
-            onCheckedChange={(next) => set("whiteLabel", next)}
+            id="toggle-agent-writes"
+            data-testid="toggle-agent-writes"
+            checked={settings.agentWrites}
+            disabled={update.isPending}
+            onCheckedChange={(next) => set("agentWrites", next)}
           />
-        )}
-      </SettingRow>
-    </SettingsGroup>
+        </SettingRow>
+      </SettingsGroup>
+    </>
   )
 }
 

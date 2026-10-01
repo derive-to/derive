@@ -15,7 +15,7 @@ a child job for the agent the step names, a human step stops the graph at `needs
 authored options, and a terminal step ends its branch. The agents that do the steps run on their
 own machines, as they would for any ask.
 
-A step binds an agent through `kind:"context"` and `context_ref`: the agent's id or name in this
+A step binds an agent through `kind:"context"` and `context_ref` (historical names): the agent's id or name in this
 workspace. That agent does the step with its own instructions, sources, and permissions.
 
 ## One Preview gate
@@ -32,7 +32,7 @@ sensitive actions later.
 2. Choose the smallest useful shape: linear handoff, fan-out/join, human decision, router, or bounded
    evaluator–optimizer loop.
 3. Publish one ordinary HTML linked bundle with two facts generated from the same model:
-   - `bundle-manifest` remains the visible topology and #799 authored working state.
+   - `bundle-manifest` remains the visible topology and authored working state.
    - `workflow-definition` adds agent bindings, route conditions, bounds, effects, gates,
      forbidden actions, and scenarios.
 4. Join the facts only by stable diagram/node IDs. Every visible node and edge must have exactly one
@@ -111,7 +111,7 @@ The companion fact has this shape:
     }],
     "scenarios": [
       {"id":"expected","kind":"expected","path":["research","evaluate","publish"],"outcome":"Ready brief is published"},
-      {"id":"failure","kind":"failure","path":["research"],"outcome":"Failed session is visible and the run stops"},
+      {"id":"failure","kind":"failure","path":["research"],"outcome":"Failed step is visible and the run stops"},
       {"id":"revision","kind":"expected","path":["research","evaluate","research","evaluate","publish"],"outcome":"One bounded revision lands before publication"}
     ]
   }]

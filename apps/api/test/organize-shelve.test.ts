@@ -249,37 +249,32 @@ describe("shelve state — retire an artifact and put it back", () => {
     expect(back.state.moderation_hold).toBeUndefined()
   })
 
-  it("warns when the artifact is a live context's manifest", async () => {
-    // A context cannot outlive its manifest — hard delete cascades it — but shelving is
-    // not a delete, so the context stays askable and its RUNNER hits the takedown error
-    // minutes later, in another process, with nothing pointing back here.
-    const { app, meta, token } = await setup("shelve-manifest")
+  it("warns when the artifact is an agent's instructions page", async () => {
+    // Shelving is not a delete, so the agent stays askable and its next JOB hits the takedown
+    // error minutes later, on another machine, with nothing pointing back here.
+    const { app, token } = await setup("shelve-manifest")
     const man = await call(app, token, "publish", {
-      title: "Manifest",
-      content: "---\nname: c\n---\n\n# Manifest",
+      title: "Instructions",
+      content: "# Instructions",
     })
-    const art = await meta.getByShortId(man.short_id)
-    if (!art) throw new Error("artifact missing")
-    const bot = await (
-      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "CtxBot", role: "editor" }))
-    ).json()
-    await meta.createContext({
-      id: "ctx_shelf_1",
-      org_id: art.org_id,
-      name: "qa-ctx",
-      agent_id: bot.id,
-      manifest_artifact_id: art.id,
-      created_by: owner.id,
-    })
+    const made = await app.request(
+      "/v1/agents",
+      jsonAs(as(owner.email), {
+        name: "Briefed",
+        role: "editor",
+        instructions_short_id: man.short_id,
+      }),
+    )
+    expect(made.status).toBe(201)
 
     const gone = await call(app, token, "shelve", {
       short_ids: [man.short_id],
       state: "removed",
     })
-    // Allowed — decommissioning a context is a real thing to want — but never silent.
+    // Allowed (retiring an agent's brief is a real thing to want) but never silent.
     expect(gone.state.changed).toBe(1)
-    expect(gone.state.in_use_by_contexts).toEqual([{ short_id: man.short_id, context: "qa-ctx" }])
-    expect(gone.state.in_use_by_contexts_note).toContain("runner will fail")
+    expect(gone.state.in_use_by_agents).toEqual([{ short_id: man.short_id, agent: "Briefed" }])
+    expect(gone.state.in_use_by_agents_note).toContain("next job will fail")
   })
 })
 

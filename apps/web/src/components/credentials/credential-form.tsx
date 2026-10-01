@@ -4,12 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useApiMutation } from "@/lib/use-api-mutation"
 
-export const credentialInvalidations = [
-  ["credentials"],
-  ["connections"],
-  ["contexts"],
-  ["workflow-runtimes"],
-]
+export const credentialInvalidations = [["credentials"], ["connections"]]
 
 /** Values live only in this mounted form; mutation variables and query data contain no secrets. */
 export function CredentialForm({

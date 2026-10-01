@@ -33,7 +33,6 @@ import {
   roleAllows,
   type SearchIndex,
   type SubscriptionRecord,
-  syntheticAgent,
   type WorkspaceRecord,
 } from "@derive/core"
 import type { Context } from "hono"
@@ -60,7 +59,7 @@ import { INSTANCE_SETTINGS_ID } from "./lib/instance-settings"
 import { catalogOf, type GatewayConfig, type ModelCatalog } from "./lib/model-catalog"
 import { type ModelLibrary, modelSource, readLibrary } from "./lib/model-library"
 import { jobAnnouncer } from "./lib/notify-job"
-import { makeOauthAgent } from "./lib/oauth-agent"
+import { makeOauthAgent, oauthClientAgent } from "./lib/oauth-agent"
 import {
   clientIp,
   inMemoryRateLimiters,
@@ -80,7 +79,7 @@ import type { Summarizer } from "./summarizer"
 import { enqueueForEvent, type WebhookEvent } from "./webhooks"
 
 /** The refusal copy for blocked billing actions, keyed by reason. Built from baseUrl
- *  so every surface (HTTP 402/413 bodies, MCP tool errors, session-turn apologies)
+ *  so every surface (HTTP 402/413 bodies, MCP tool errors, @Derive apologies)
  *  hands the human the direct upgrade link. Lives here (not lib/http.ts) because the
  *  MCP surfaces need it too, and both import from context.ts already. No em dashes
  *  (support copy convention). */
@@ -151,18 +150,6 @@ export interface AppDeps {
 
   meta: MetaStore
   blobs: BlobStore
-  /**
-   * How long an ATTENDED turn may run before it must settle itself, in ms.
-   *
-   * Set ONLY where the runtime imposes a deadline the turn cannot see. On Workers an attended
-   * turn is detached through `background()` → `waitUntil`, which the runtime ends a short while
-   * after the response is sent: the isolate stops, so no timer fires, no catch runs, and the
-   * session is left `working` for ever with no answer and no error.
-   *
-   * So the turn has to give up while it is still ALIVE and can still write its own failure.
-   * Unset on Node, where `background()` awaits inline and nothing reclaims the turn.
-   */
-  attendedTurnBudgetMs?: number
   /** Let work handed to `afterResponse()` outlive the response on Node, as it does on
    *  Workers (waitUntil). The Node server sets it; tests leave it off so that work finishes
    *  before they assert. */
@@ -727,13 +714,12 @@ export function buildContext(deps: AppDeps) {
         const m = await meta.getMembership(claim.orgId, claim.userId)
         if (m) {
           const role = capRole(claim.role, m.role)
-          a = syntheticAgent({
-            id: `oauth:${claim.clientId}`,
-            org_id: claim.orgId,
+          a = oauthClientAgent({
+            clientId: claim.clientId,
+            orgId: claim.orgId,
             name: (await clientName(meta, claim.clientId)) || claim.clientId || "An agent",
             role,
-            created_by: claim.userId,
-            created_at: new Date().toISOString(),
+            userId: claim.userId,
           })
           owner = claim.userId
           mintedApiCache.set(c, true)
@@ -955,7 +941,7 @@ export function buildContext(deps: AppDeps) {
   if (billingEnforceAt && Number.isNaN(billingEnforceAt.getTime()))
     throw new Error(`invalid DERIVE_BILLING_ENFORCE_AT: ${deps.billingEnforceAt}`)
   // Built once per app, from this deployment's baseUrl — every blocked-billing surface
-  // (HTTP bodies, MCP tool errors, storage refusals, session-turn apologies) reads from
+  // (HTTP bodies, MCP tool errors, storage refusals, @Derive apologies) reads from
   // this single record so the copy and the link can never drift between them.
   const blockCopy = billingBlockCopy(deps.baseUrl)
   // The whole billing decision from local state only: the webhook-fed subscription row
@@ -1912,7 +1898,6 @@ export function buildContext(deps: AppDeps) {
     overKnownUsage,
     recountUsage: usage.recount,
     rememberSource,
-    attendedTurnBudgetMs: deps.attendedTurnBudgetMs,
     /**
      * Answer an @derive mention in a comment thread — the comment lane's arrival, built once
      * here because it needs the model catalog, the store and the publish path in one hand.

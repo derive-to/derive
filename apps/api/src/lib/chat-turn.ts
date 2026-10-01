@@ -1,16 +1,12 @@
-// ONE TURN of a chat that is about the WORKSPACE rather than one document — the global chat.
+// ONE TURN of @Derive answering about the WORKSPACE rather than one document: the Slack lane
+// (slack-mention.ts). Its sibling is comment-turn.ts, which has a document in front of it. This
+// lane has no document. What it has instead is TOOLS, so everything it does (find, read, and
+// later write) happens inside the loop, and the reply is only prose.
 //
-// Its sibling is session-turn.ts ("chat with a derive"), and the difference is exactly one thing:
-// that lane has a document in front of it, so its turn reads the source, asks for a revision and
-// lands it through a port. This lane has no document. What it has instead is TOOLS, so everything
-// it does — find, read, and later write — happens inside the loop, and the reply is only prose.
-//
-// That makes the turn itself smaller, not bigger: no landing port, no revision contract, no
-// nudge, no race with a human publishing mid-turn. The parts that must never drift (the model
-// call, the tool loop, the turn ceiling, cost accounting) are turn-core's, which the unattended
-// lanes run too.
+// The parts that must never drift (the model call, the tool loop, the turn ceiling, cost
+// accounting) are turn-core's.
 
-import { type Role, type SessionMessageRecord, type SessionRecord, toMicroUsd } from "@derive/core"
+import { type JobMessageRecord, type Role, toMicroUsd } from "@derive/core"
 import { log } from "../log"
 import type { AgentLoopInput } from "./agent-loop"
 import type { ChatToolSurface } from "./chat-tools"
@@ -23,15 +19,17 @@ export interface ChatTurnDeps {
   model: ResolvedChatModel
 }
 
-/** What a chat turn produced, for the transcript and the ledger. Deliberately the same shape
- *  session-turn returns, minus the write refs it cannot produce. */
+/** What a chat turn produced, for the transcript and the ledger. */
 export interface ChatTurnResult {
   reply: string
   outcome: "answered" | "failed"
   costMicroUsd: number | null
-  /** Which model answered, recorded on the message so a transcript can say so and a picker can
-   *  default to it. */
+  /** Which model answered, recorded on the message so a transcript can say so and the
+   *  operator's model timings can bucket by it. */
   model: { id: string; label: string }
+  /** Time spent inside model calls, ms (tool time excluded), for the operator's model timings
+   *  (lib/model-timing.ts). */
+  modelMs: number
   /** WHICH TOOLS THIS TURN ACTUALLY RAN, in order, first use only.
    *
    * The surface promises "Derive searches and reads with your own permissions, and links what it
@@ -43,8 +41,9 @@ export interface ChatTurnResult {
 }
 
 export interface ChatTurnInput {
-  session: SessionRecord
-  transcript: SessionMessageRecord[]
+  /** The job this turn answers, for logs. */
+  jobId: string
+  transcript: Pick<JobMessageRecord, "author_kind" | "body_md">[]
   tools: ChatToolSurface
   /** The workspace's name, so the model can say where it is rather than printing an id. */
   workspaceName: string
@@ -65,8 +64,7 @@ export interface ChatTurnInput {
      * Why `role` is lower than this person's real seat, when it is — one sentence, rendered
      * verbatim into the prompt.
      *
-     * The web lane never sets it: a session IS the account, so the seat is the seat. Slack does,
-     * because an identity resolved from a Slack profile email acts at `viewer` whatever the
+     * Slack sets it because an identity resolved from a Slack profile email acts at `viewer` whatever the
      * person actually holds (lib/slack-identity.ts). Without it the agent commits both halves
      * of the mistake this input exists to prevent — it tells a Creator they are a Viewer, and
      * then relays a tool's refusal verbatim, which talks about re-authorizing an MCP connector
@@ -80,7 +78,6 @@ export interface ChatTurnInput {
   skills: { name: string; summary: string }[]
 }
 
-/** The transcript as plain chat turns, oldest first. */
 /** What to tell the person when the turn produced nothing. Classification is turn-core's and
  *  shared; the WORDING is this lane's, because somebody is reading it. */
 const apologyFor = (failure: { reason: string; error: string }): string => {
@@ -151,6 +148,9 @@ export const runChatTurn = async (
 ): Promise<ChatTurnResult> => {
   const model = { id: deps.model.id, label: deps.model.label }
   const used: string[] = []
+  // Model time only: a tool that spends seconds on somebody's API is not the model being slow.
+  let modelMs = 0
+  const callModel = deps.model.callModel as AgentLoopInput["callModel"]
   const out = await runTurn({
     system: systemPrompt(input),
     messages: asTurns(input.transcript, (m) => ({
@@ -158,7 +158,14 @@ export const runChatTurn = async (
       body: m.body_md,
     })),
     contract: proseContract,
-    callModel: deps.model.callModel as AgentLoopInput["callModel"],
+    callModel: async (call) => {
+      const started = Date.now()
+      try {
+        return await callModel(call)
+      } finally {
+        modelMs += Date.now() - started
+      }
+    },
     tools: input.tools.tools,
     executeTool: async (name, args) => {
       if (!used.includes(name)) used.push(name)
@@ -175,7 +182,7 @@ export const runChatTurn = async (
 
   if (out.failure) {
     log.warn("chat turn produced nothing", {
-      session: input.session.id,
+      job: input.jobId,
       reason: out.failure.reason,
       error: out.failure.error,
       model: model.id,
@@ -185,6 +192,7 @@ export const runChatTurn = async (
       outcome: "failed",
       costMicroUsd: toMicroUsd(out.costUsd),
       model,
+      modelMs,
       tools: used,
     }
   }
@@ -193,6 +201,7 @@ export const runChatTurn = async (
     outcome: "answered",
     costMicroUsd: toMicroUsd(out.costUsd),
     model,
+    modelMs,
     tools: used,
   }
 }

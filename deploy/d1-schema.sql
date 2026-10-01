@@ -1384,7 +1384,7 @@ CREATE INDEX IF NOT EXISTS report_state ON report (state, created_at);
 
 CREATE INDEX IF NOT EXISTS audit_artifact ON audit_log (artifact_id, created_at);
 
-CREATE INDEX IF NOT EXISTS session_message_recent ON session_message (author_kind, created_at);
+CREATE INDEX IF NOT EXISTS job_message_author_recent ON job_message (author_id, created_at);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS artifact_search USING fts5(text, artifact_id UNINDEXED, org_id UNINDEXED, tokenize='unicode61 remove_diacritics 0');
 

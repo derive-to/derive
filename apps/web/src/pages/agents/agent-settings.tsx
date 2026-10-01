@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { accountsQuery, automationConnectionsQuery } from "@/lib/queries"
+import { accountsQuery, agentConnectionsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 import { accountLabel } from "../settings/accounts-section"
@@ -560,7 +560,7 @@ function AccountField({
       {!agent.account_id && (
         <Sub>
           {agent.machine === "owner"
-            ? "Its creator’s own account from Settings › Accounts, then the workspace’s shared one, then whatever the runner’s machine is signed into."
+            ? "Its creator’s own account from Settings › Model accounts, then the workspace’s shared one, then whatever the runner’s machine is signed into."
             : "The asker’s own account, then the workspace’s shared one."}
         </Sub>
       )}
@@ -581,7 +581,7 @@ function SourcesField({
   onSave: (p: AgentPatch) => void
 }) {
   const conns = useQuery({
-    ...automationConnectionsQuery(),
+    ...agentConnectionsQuery(),
     enabled: agent.connection_ids.length > 0 || edit,
   })
   const byId = new Map((conns.data ?? []).map((c) => [c.id, c]))

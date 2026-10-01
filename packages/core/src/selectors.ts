@@ -1,7 +1,6 @@
 // The selector: ONE generic way to point at a set of artifacts, used wherever the
-// platform needs an address — an automation's targets today, a context's sources next,
-// event scopes later. The same house pattern as AutomationTrigger: a tiny JSON
-// discriminated union, extensible by adding a kind, never by adding a table.
+// platform needs an address: a job's subject, a trigger's targets, event scopes later. A
+// tiny JSON discriminated union, extensible by adding a kind, never by adding a table.
 //
 // Read side (sources): artifact = this doc; collection = its current members, live;
 // tag = every doc carrying it, live. Write side (targets): artifact = revise it;
@@ -31,7 +30,7 @@ export const normalizeSelector = (v: unknown): Selector | null => {
   return null
 }
 
-/** Read ONE stored selector back from its JSON column (`context_session.subject_ref`).
+/** Read ONE stored selector back from its JSON column (`job.subject_json`).
  *  Lenient on purpose: absent, unparseable and malformed all read as null, the same
  *  as "no subject". A corrupt column must degrade a session to a plain ask, never
  *  wedge it — the caller cannot do anything useful with a throw here either. */

@@ -1,20 +1,28 @@
-// @Derive IN SLACK, anywhere the bot is invited — the fourth arrival on the same turn.
+// @Derive IN SLACK, anywhere the bot is invited.
 //
 // Its sibling is the Slack THREAD lane (slack-comments.ts): that one answers where a Derive
 // comment thread is already mirrored, so the document is known and the answer is a comment. This
-// one has no mirrored thread and no document, so it is the WORKSPACE chat wearing Slack — the
-// same session, the same tools, the same skills — and its settle is a threaded Slack reply.
+// one has no mirrored thread and no document, so it answers about the WORKSPACE with tools and
+// skills, records the thread as one attended job, and settles with a threaded Slack reply.
 //
 // What makes it Slack-specific is only the three questions Slack cannot answer for us: WHO is
 // asking (a Slack user id is not a principal), WHICH workspace this channel belongs to (one
 // Slack team can back several), and WHERE the answer goes (a thread, not a channel).
 
-import { type ArtifactRecord, artifactUrl, type MetaStore, newId } from "@derive/core"
+import {
+  type ArtifactRecord,
+  artifactUrl,
+  DERIVE_AGENT_ID,
+  type JobRecord,
+  type MetaStore,
+  newId,
+} from "@derive/core"
 import type { Backplane } from "../bus"
 import { log } from "../log"
 import { liveChatArrival, refusalMessage } from "./chat-gate"
 import { buildChatTools } from "./chat-tools"
 import { runChatTurn } from "./chat-turn"
+import { isServerNote } from "./jobs"
 import type { ModelSource } from "./model-library"
 import { slackUserEmail, updateSlackMessage } from "./slack"
 import { mrkdwnBody } from "./slack-cards"
@@ -24,6 +32,20 @@ import { CHAT_UNVERIFIED_NOTE, chatSeatFor, isVerifiedLink } from "./slack-ident
 /** How much of a Slack thread the turn is given. A mention usually arrives with a little
  *  context above it and the answer belongs to that, not to the channel's whole day. */
 const THREAD_CONTEXT = 12
+
+/** How long a Slack turn holds its job before the reaper may call it lost. Far past any turn
+ *  ceiling, so only a crashed request ever reaches it. */
+const SLACK_TURN_LEASE_MS = 10 * 60 * 1000
+
+/** The Slack thread a job answers, from its meta_json, or null. */
+const slackThreadOf = (raw: string | null): string | null => {
+  if (!raw) return null
+  try {
+    return (JSON.parse(raw) as { slack_thread?: string }).slack_thread ?? null
+  } catch {
+    return null
+  }
+}
 
 /** The Slack message ts recorded on an asker message, or null. Tolerates unparseable meta:
  *  a missing marker means "not seen", which costs a duplicate at worst and never a lost turn. */
@@ -341,68 +363,105 @@ export const handleSlackMention = async (
     return quiet("empty question")
   }
 
-  // ONE SESSION PER THREAD, so a follow-up mention continues the conversation instead of
-  // starting a new one — and so the transcript is readable on /chat, which is what makes an
-  // answer that outgrows Slack portable rather than stranded.
-  const dedupe = `slack:${p.teamId}:${p.channel}:${p.threadTs ?? p.ts}`
-  // Reuses `listChatSessions` rather than adding a by-key lookup: it is this person's own
-  // sessions in this workspace, newest first and already capped, so the scan is bounded by the
-  // page size and needs no new store method on three dialects.
-  const existing = (await meta.listChatSessions(install.org_id, asker.id, 50).catch(() => [])).find(
-    (x) => x.dedupe_key === dedupe,
-  )
+  // ONE JOB PER THREAD, so a follow-up mention continues the conversation instead of starting a
+  // new one, and so the turn's cost lands on job.cost_micro_usd where the monthly budget reads
+  // it. The job is attended (someone is waiting in the thread, and this request serves it), on
+  // the built-in Derive rather than an agent row, and private to the asker (routes/jobs.ts).
+  const thread = `slack:${p.teamId}:${p.channel}:${p.threadTs ?? p.ts}`
+  const lease = () => new Date(Date.now() + SLACK_TURN_LEASE_MS).toISOString()
+  // This person's own recent Derive jobs in this workspace, newest first and capped, so the
+  // scan is bounded by the page size and needs no by-key store method on three dialects.
+  let existing = (
+    await meta
+      .listJobs({
+        orgId: install.org_id,
+        agentId: DERIVE_AGENT_ID,
+        askedBy: asker.id,
+        kind: ["ask"],
+        limit: 50,
+      })
+      .catch(() => [])
+  ).find((j) => slackThreadOf(j.meta_json) === thread)
 
-  let sessionId: string
-  if (existing) {
-    // SLACK DELIVERS AT LEAST ONCE. A redelivery (30s/1min/5min later, routinely on another
-    // isolate) lands here, finds the live session, and would append the same question again —
-    // a second paid turn and a second answer posted into the thread. dedupe_key does not stop
-    // it: that key is per-THREAD, deliberately, so follow-ups continue one conversation.
-    //
-    // So the guard is the Slack message ts, scanned off the transcript — the same shape the
-    // ingest path uses (slack-comments.ts). It is DB state, which is what makes it survive the
-    // retry landing somewhere else. The marker is written IN THE SAME insert as the message,
-    // for the reason spelled out there: written afterwards, a retry racing the first attempt
-    // would not see it.
-    const already = (await meta.listSessionMessages(existing.id).catch(() => [])).some(
-      (m) => parseSlackTs(m.meta) === p.ts,
-    )
-    if (already) return quiet("duplicate slack delivery")
-    await meta.appendFollowupReopen({
-      id: newId("sm"),
-      session_id: existing.id,
-      author_kind: "asker",
-      author_id: asker.id,
-      body_md: question,
-      meta: JSON.stringify({ slack: { ts: p.ts } }),
-    })
-    sessionId = existing.id
-  } else {
-    const created = await meta.createSessionWithMessage(
-      {
-        id: newId("ses"),
-        context_id: null,
-        context_version: null,
+  let created: JobRecord | null = null
+  if (!existing) {
+    try {
+      created = await meta.createJob({
+        id: newId("job"),
         org_id: install.org_id,
-        asker_id: asker.id,
-        dedupe_key: dedupe,
-        // A Derive link in the message pins the document; otherwise the workspace is the ground.
-        subject_ref: null,
-      },
-      {
-        id: newId("sm"),
-        author_kind: "asker",
-        author_id: asker.id,
-        body_md: question,
-        meta: JSON.stringify({ slack: { ts: p.ts } }),
-      },
-      "open",
-    )
-    sessionId = created.session.id
+        agent_id: DERIVE_AGENT_ID,
+        kind: "ask",
+        instruction: question,
+        asked_by: asker.id,
+        // The asker's: a personal budget counts only their jobs, the pool's counts every job.
+        payer_id: asker.id,
+        attended: 1,
+        // A Derive link in the message is named in the question below; otherwise the
+        // workspace is the ground.
+        subject_json: null,
+        meta_json: JSON.stringify({ via: "slack", slack_thread: thread }),
+        // Two first deliveries racing would otherwise open two jobs for one thread: the
+        // open-job dedupe index lets one win, and the loser continues the winner's job.
+        dedupe_key: thread,
+      })
+    } catch (error) {
+      existing = (await meta.findOpenJobByDedupe(DERIVE_AGENT_ID, asker.id, thread)) ?? undefined
+      if (!existing) throw error
+    }
   }
 
-  const session = await meta.getSession(sessionId)
-  if (!session) return quiet("session vanished")
+  let job: JobRecord | null
+  if (existing) {
+    // SLACK DELIVERS AT LEAST ONCE. A redelivery (30s/1min/5min later, routinely on another
+    // isolate) lands here, finds the thread's job, and would append the same question again:
+    // a second paid turn and a second answer posted into the thread. The thread key does not
+    // stop it, deliberately, so follow-ups continue one conversation.
+    //
+    // So the guard is the Slack message ts, scanned off the transcript (the same shape the
+    // ingest path uses, slack-comments.ts). It is DB state, which is what makes it survive the
+    // retry landing somewhere else. The marker is written IN THE SAME insert as the message:
+    // written afterwards, a retry racing the first attempt would not see it.
+    const already = (await meta.listJobMessages(existing.id).catch(() => [])).some(
+      (m) => parseSlackTs(m.meta_json) === p.ts,
+    )
+    if (already) return quiet("duplicate slack delivery")
+    job = existing
+  } else if (created) {
+    job = created
+  } else {
+    return quiet("job not opened")
+  }
+  await meta.addJobMessage({
+    id: newId("jm"),
+    job_id: job.id,
+    author_kind: "asker",
+    author_id: asker.id,
+    body_md: question,
+    meta_json: JSON.stringify({ slack: { ts: p.ts } }),
+  })
+  // Running under a lease while this request serves it: a crash mid-turn leaves the job to
+  // lapse to `lost` (the reaper's rule for attended jobs) rather than read as running for ever.
+  const startedAt = new Date().toISOString()
+  job = await meta.updateJob(job.id, {
+    status: "running",
+    started_at: startedAt,
+    finished_at: null,
+    needs_json: null,
+    lease_until: lease(),
+  })
+  if (!job) return quiet("job vanished")
+  const jobId = job.id
+  /** Settle the thread's job. Best effort: the answer in Slack matters more than the row. */
+  const settleJob = async (status: "succeeded" | "failed", costMicroUsd: number | null) => {
+    if (costMicroUsd) await meta.addJobCost(jobId, costMicroUsd).catch(() => null)
+    await meta
+      .updateJob(
+        jobId,
+        { status, finished_at: new Date().toISOString(), lease_until: null },
+        { status: "running", started_at: startedAt },
+      )
+      .catch((e) => log.warn("slack mention job settle failed", { job: jobId, error: String(e) }))
+  }
 
   // A document named in the message is the strongest available ground, so say so in the
   // question rather than modelling it as a subject: this lane's tools can read it by short_id,
@@ -464,18 +523,13 @@ export const handleSlackMention = async (
     const res = await runChatTurn(
       { model },
       {
-        session,
+        jobId,
         transcript: [
-          ...(await meta.listSessionMessages(sessionId)).slice(0, -1).slice(-THREAD_CONTEXT),
-          {
-            id: "pending",
-            session_id: sessionId,
-            author_kind: "asker",
-            author_id: asker.id,
-            body_md: grounded,
-            meta: null,
-            created_at: new Date().toISOString(),
-          },
+          ...(await meta.listJobMessages(jobId))
+            .filter((m) => !isServerNote(m))
+            .slice(0, -1)
+            .slice(-THREAD_CONTEXT),
+          { author_kind: "asker", body_md: grounded },
         ],
         tools,
         workspaceName:
@@ -491,19 +545,22 @@ export const handleSlackMention = async (
       },
     )
 
-    // The transcript is the record on every other lane, so it is here too: the Slack message is a
-    // rendering of the answer, not the answer itself. That is what makes the /chat link work.
-    await meta.addSessionMessage(
-      {
-        id: newId("sm"),
-        session_id: sessionId,
-        author_kind: "agent",
-        author_id: "derive",
-        body_md: res.reply,
-        meta: JSON.stringify({ outcome: res.outcome, model: res.model, via: "slack" }),
-      },
-      res.outcome === "failed" ? "failed" : "answered",
-    )
+    // The transcript is the record: the Slack message is a rendering of the answer, not the
+    // answer itself. `model` and `model_ms` feed the operator's model timings.
+    await meta.addJobMessage({
+      id: newId("jm"),
+      job_id: jobId,
+      author_kind: "agent",
+      author_id: DERIVE_AGENT_ID,
+      body_md: res.reply,
+      meta_json: JSON.stringify({
+        outcome: res.outcome,
+        model: res.model,
+        model_ms: res.modelMs,
+        via: "slack",
+      }),
+    })
+    await settleJob(res.outcome === "failed" ? "failed" : "succeeded", res.costMicroUsd)
 
     // AN ANSWER IS PROSE, not a label, so it goes through mrkdwnBody rather than escapeMrkdwn:
     // the model writes markdown, and escaping alone left `**bold**` as asterisks and every
@@ -536,6 +593,7 @@ export const handleSlackMention = async (
     // Through settle, so a crash REPLACES "thinking…" rather than leaving it there for ever —
     // a placeholder that never resolves reads as a hung bot, which is worse than an error.
     await settle("Something went wrong on my side, so I have not answered that. Try me again.")
+    await settleJob("failed", null)
     return quiet("turn failed")
   }
   return { status: "answered" }

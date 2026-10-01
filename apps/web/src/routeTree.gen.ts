@@ -12,11 +12,9 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as UnlistedRouteImport } from './routes/unlisted'
 import { Route as SkillsRouteImport } from './routes/skills'
-import { Route as ShowcaseRouteImport } from './routes/showcase'
 import { Route as SharedRouteImport } from './routes/shared'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SearchRouteImport } from './routes/search'
-import { Route as RoadmapRouteImport } from './routes/roadmap'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as PeopleRouteImport } from './routes/people'
 import { Route as NewRouteImport } from './routes/new'
@@ -65,11 +63,6 @@ const SkillsRoute = SkillsRouteImport.update({
   path: '/skills',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ShowcaseRoute = ShowcaseRouteImport.update({
-  id: '/showcase',
-  path: '/showcase',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const SharedRoute = SharedRouteImport.update({
   id: '/shared',
   path: '/shared',
@@ -83,11 +76,6 @@ const SettingsRoute = SettingsRouteImport.update({
 const SearchRoute = SearchRouteImport.update({
   id: '/search',
   path: '/search',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const RoadmapRoute = RoadmapRouteImport.update({
-  id: '/roadmap',
-  path: '/roadmap',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ResetPasswordRoute = ResetPasswordRouteImport.update({
@@ -264,11 +252,9 @@ export interface FileRoutesByFullPath {
   '/new': typeof NewRoute
   '/people': typeof PeopleRoute
   '/reset-password': typeof ResetPasswordRoute
-  '/roadmap': typeof RoadmapRoute
   '/search': typeof SearchRoute
   '/settings': typeof SettingsRouteWithChildren
   '/shared': typeof SharedRoute
-  '/showcase': typeof ShowcaseRoute
   '/skills': typeof SkillsRoute
   '/unlisted': typeof UnlistedRoute
   '/welcome': typeof WelcomeRoute
@@ -306,10 +292,8 @@ export interface FileRoutesByTo {
   '/new': typeof NewRoute
   '/people': typeof PeopleRoute
   '/reset-password': typeof ResetPasswordRoute
-  '/roadmap': typeof RoadmapRoute
   '/search': typeof SearchRoute
   '/shared': typeof SharedRoute
-  '/showcase': typeof ShowcaseRoute
   '/skills': typeof SkillsRoute
   '/unlisted': typeof UnlistedRoute
   '/welcome': typeof WelcomeRoute
@@ -348,11 +332,9 @@ export interface FileRoutesById {
   '/new': typeof NewRoute
   '/people': typeof PeopleRoute
   '/reset-password': typeof ResetPasswordRoute
-  '/roadmap': typeof RoadmapRoute
   '/search': typeof SearchRoute
   '/settings': typeof SettingsRouteWithChildren
   '/shared': typeof SharedRoute
-  '/showcase': typeof ShowcaseRoute
   '/skills': typeof SkillsRoute
   '/unlisted': typeof UnlistedRoute
   '/welcome': typeof WelcomeRoute
@@ -392,11 +374,9 @@ export interface FileRouteTypes {
     | '/new'
     | '/people'
     | '/reset-password'
-    | '/roadmap'
     | '/search'
     | '/settings'
     | '/shared'
-    | '/showcase'
     | '/skills'
     | '/unlisted'
     | '/welcome'
@@ -434,10 +414,8 @@ export interface FileRouteTypes {
     | '/new'
     | '/people'
     | '/reset-password'
-    | '/roadmap'
     | '/search'
     | '/shared'
-    | '/showcase'
     | '/skills'
     | '/unlisted'
     | '/welcome'
@@ -475,11 +453,9 @@ export interface FileRouteTypes {
     | '/new'
     | '/people'
     | '/reset-password'
-    | '/roadmap'
     | '/search'
     | '/settings'
     | '/shared'
-    | '/showcase'
     | '/skills'
     | '/unlisted'
     | '/welcome'
@@ -518,11 +494,9 @@ export interface RootRouteChildren {
   NewRoute: typeof NewRoute
   PeopleRoute: typeof PeopleRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
-  RoadmapRoute: typeof RoadmapRoute
   SearchRoute: typeof SearchRoute
   SettingsRoute: typeof SettingsRouteWithChildren
   SharedRoute: typeof SharedRoute
-  ShowcaseRoute: typeof ShowcaseRoute
   SkillsRoute: typeof SkillsRoute
   UnlistedRoute: typeof UnlistedRoute
   WelcomeRoute: typeof WelcomeRoute
@@ -569,13 +543,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SkillsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/showcase': {
-      id: '/showcase'
-      path: '/showcase'
-      fullPath: '/showcase'
-      preLoaderRoute: typeof ShowcaseRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/shared': {
       id: '/shared'
       path: '/shared'
@@ -595,13 +562,6 @@ declare module '@tanstack/react-router' {
       path: '/search'
       fullPath: '/search'
       preLoaderRoute: typeof SearchRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/roadmap': {
-      id: '/roadmap'
-      path: '/roadmap'
-      fullPath: '/roadmap'
-      preLoaderRoute: typeof RoadmapRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/reset-password': {
@@ -858,11 +818,9 @@ const rootRouteChildren: RootRouteChildren = {
   NewRoute: NewRoute,
   PeopleRoute: PeopleRoute,
   ResetPasswordRoute: ResetPasswordRoute,
-  RoadmapRoute: RoadmapRoute,
   SearchRoute: SearchRoute,
   SettingsRoute: SettingsRouteWithChildren,
   SharedRoute: SharedRoute,
-  ShowcaseRoute: ShowcaseRoute,
   SkillsRoute: SkillsRoute,
   UnlistedRoute: UnlistedRoute,
   WelcomeRoute: WelcomeRoute,

@@ -289,7 +289,7 @@ export function CommandPalette() {
                   data-testid="palette-connect-agent"
                   onSelect={() => go(() => nav({ to: "/welcome" }))}
                 >
-                  <Icon name="context" size={16} /> Connect your coding agent
+                  <Icon name="agent" size={16} /> Connect your coding agent
                 </CommandItem>
               )}
             </CommandGroup>

@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useNavigate, useRouterState } from "@tanstack/react-router"
+import { useRouterState } from "@tanstack/react-router"
 import { lazy, type ReactNode, Suspense, useEffect, useState } from "react"
 import { api } from "@/api"
 import { BlockedBanner } from "@/components/billing/blocked-banner"
@@ -66,7 +66,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   // Immersive (the artifact's focus mode): the rail + mobile top bar unmount and
   // the inset mat drops (see ShellValue.immersive). Ephemeral — never persisted.
   const [immersive, setImmersive] = useState(false)
-  const navigate = useNavigate()
   const qc = useQueryClient()
   // Workspaces power the switcher's no-op check below; the rail + command palette
   // read their own copies of the nav queries (deduped by key). enabled on a

@@ -16,7 +16,7 @@ const SCOPE_LABELS: Record<string, string> = {
   "derive:read": "Read your artifacts and comments",
   "derive:comment": "Comment on your artifacts",
   "derive:publish": "Publish new versions directly",
-  "derive:manage": "Manage agents and contexts (only as far as your workspace role allows)",
+  "derive:manage": "Manage agents (only as far as your workspace role allows)",
 }
 
 // Scopes that let the agent change something get a distinct accent tick; read-only

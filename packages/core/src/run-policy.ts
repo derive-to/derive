@@ -3,9 +3,9 @@
  *
  * The run CONTRACT (what output to ask for, how to read it) already lives in run-contract.ts.
  * This is the other half: what to do when the reply is wrong, what is worth paying to retry, and
- * how spend adds up. The container executor and the in-Worker agent loop were each deciding these
- * separately, which is how two substrates quietly stop being comparable — the same automation
- * would retry a different number of times, or report a different cost, depending on where it ran.
+ * how spend adds up. Deciding these separately per executor is how two substrates quietly stop
+ * being comparable: the same job would retry a different number of times, or report a different
+ * cost, depending on where it ran.
  *
  * The CLI cannot import this at runtime (dependency-free published package), so it hand-copies
  * the constants and packages/cli/test/run-policy-parity.test.js holds it to them — the same
@@ -41,7 +41,7 @@ export const addCostUsd = (acc: number | null, next: number | null | undefined):
  *
  * Integer micros because money in a float sums badly and the budget SUMs this across a month.
  * Rounded UP: a sub-micro run is real spend, and flooring it to zero would let a high-volume
- * cheap automation run free against the cap forever. Null in, null out — "never found out" is
+ * cheap job run free against the cap forever. Null in, null out — "never found out" is
  * not "cost nothing", and only the second belongs in a sum.
  */
 export const toMicroUsd = (usd: number | null | undefined): number | null =>

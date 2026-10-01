@@ -13,7 +13,7 @@ import { parseRef, refFor } from "@/pages/artifact/parse-ref"
 // publishes (the server emits `artifact.pushed` on your user channel, only ever
 // to the granting owner), a newly created artifact opens right here; a revision
 // you're already viewing live-reloads via the artifact channel, and anything
-// else offers a toast. A `service` push (a context-bound agent — often answering
+// else offers a toast. A `service` push (an agent answering
 // someone ELSE's ask on your grant) never navigates, only toasts. Renders
 // nothing; mounted once in the root.
 //
@@ -33,7 +33,7 @@ interface PushedEvent {
   version: number
   kind: "created" | "revised"
   agent: string
-  /** The agent is bound to a context (an askable service) — its publishes are
+  /** The agent serves other people's asks — its publishes are
    *  routinely OTHER people's asks riding this owner's grant, so they must
    *  never commandeer the browser. Downgraded to a toast. */
   service?: boolean
@@ -88,7 +88,7 @@ export function AgentPushListener() {
       kind: "created" | "revised",
       agent: string,
       version?: number,
-      // Whether this push may navigate at all. False for a service (context-bound)
+      // Whether this push may navigate at all. False for a service
       // agent — its publishes are often someone ELSE's ask — and for the refocus
       // catch-up below, whose notification rows can't prove the push was yours.
       mayNavigate = true,

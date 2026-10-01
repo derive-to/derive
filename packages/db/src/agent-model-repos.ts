@@ -10,10 +10,11 @@ import type {
   JobQuery,
   JobRecord,
   JobStatus,
+  SkillUsageBucket,
   TriggerPatch,
   TriggerRecord,
 } from "@derive/core"
-import { WORKSPACE_ACCOUNT_OWNER } from "@derive/core"
+import { DERIVE_AGENT_ID, WORKSPACE_ACCOUNT_OWNER } from "@derive/core"
 import { type SQL, sql } from "drizzle-orm"
 
 // The agent model's store, written ONCE as parameterised SQL that runs unchanged on SQLite, D1
@@ -95,6 +96,32 @@ const ACCOUNT_FIELDS = [
   "ortam_connection_json",
 ] as const satisfies readonly (keyof AccountPatch)[]
 
+/** A Skill's runs: jobs of every agent whose instructions page is the Skill, bucketed by the
+ *  Skill version that was current when each job opened. One query, same on every dialect. */
+export const skillJobUsage = async (
+  execute: Exec,
+  skillArtifactId: string,
+  orgId: string,
+): Promise<SkillUsageBucket[]> => {
+  const found = (await execute(sql`
+    SELECT t.sv AS skill_version, count(*) AS n, max(t.created_at) AS last_used_at
+    FROM (
+      SELECT j.created_at,
+        (SELECT max(v.n) FROM version v
+          WHERE v.artifact_id = ${skillArtifactId} AND v.created_at <= j.created_at) AS sv
+      FROM job j JOIN agent a ON a.id = j.agent_id AND a.org_id = j.org_id
+      WHERE j.org_id = ${orgId} AND a.instructions_artifact_id = ${skillArtifactId}
+    ) t
+    WHERE t.sv IS NOT NULL
+    GROUP BY t.sv
+    ORDER BY t.sv DESC`)) as { skill_version: unknown; n: unknown; last_used_at: string }[]
+  return found.map((r) => ({
+    skill_version: num(r.skill_version),
+    count: num(r.n),
+    last_used_at: r.last_used_at,
+  }))
+}
+
 export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
   const rows = async <T>(statement: SQL): Promise<T[]> => (await execute(statement)) as T[]
   const first = async <T>(statement: SQL): Promise<T | null> =>
@@ -149,6 +176,8 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
             : sql`asked_by = ${askedBy}`,
         )
       }
+      if (q.viewer !== undefined)
+        where.push(sql`(agent_id <> ${DERIVE_AGENT_ID} OR asked_by = ${q.viewer})`)
       if (q.since) where.push(sql`created_at >= ${q.since}`)
       if (q.before) where.push(sql`created_at < ${q.before}`)
       const limit = Math.max(1, Math.min(500, q.limit ?? 50))
@@ -327,6 +356,12 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
     listJobMessages(jobId) {
       return rows<JobMessageRecord>(sql`
         SELECT * FROM job_message WHERE job_id = ${jobId} ORDER BY created_at, id`)
+    },
+    listRecentAgentJobMessages(limit) {
+      return rows<Pick<JobMessageRecord, "job_id" | "created_at" | "meta_json">>(sql`
+        SELECT job_id, created_at, meta_json FROM job_message
+        WHERE author_id = ${DERIVE_AGENT_ID} AND author_kind = 'agent'
+        ORDER BY created_at DESC LIMIT ${Math.max(1, Math.min(1000, limit))}`)
     },
 
     // ---- Triggers ---------------------------------------------------------------------

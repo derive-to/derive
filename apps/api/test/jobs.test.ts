@@ -454,8 +454,8 @@ describe("jobs: the agents list the home screen reads", () => {
     expect(theirs.status).toBe(404)
   })
 
-  it("names each agent's instructions page, and edits say whether the agent is lent", async () => {
-    const { app, meta } = await setup("jobs-list-instructions")
+  it("names each agent's instructions page, on the list, an edit, and a key rotation", async () => {
+    const { app } = await setup("jobs-list-instructions")
     const page = (await (
       await publishAs(app, "<h1>Brief</h1>", { title: "Brief" }, as(owner.email))
     ).json()) as { short_id: string }
@@ -467,20 +467,17 @@ describe("jobs: the agents list the home screen reads", () => {
     const byId = new Map(list.agents.map((a) => [a.id, a]))
     expect(byId.get(briefed.id)?.instructions_short_id).toBe(page.short_id)
     expect(byId.get(bare.id)?.instructions_short_id).toBeNull()
-    // Lent to its owner's plan: an edit and a key rotation both say so.
-    const settings = await meta.getOrgSettings("default")
-    await meta.setOrgSettings("default", { ...settings, ownerLendAgents: [briefed.id] })
     const edited = (await (
       await app.request(`/v1/agents/${briefed.id}`, {
         ...jsonAs(as(owner.email), { description: "Reads the brief" }),
         method: "PATCH",
       })
-    ).json()) as { owner_lend: boolean; instructions_short_id: string | null }
-    expect(edited).toMatchObject({ owner_lend: true, instructions_short_id: page.short_id })
+    ).json()) as { instructions_short_id: string | null }
+    expect(edited).toMatchObject({ instructions_short_id: page.short_id })
     const rotated = (await (
       await app.request(`/v1/agents/${briefed.id}/rotate`, jsonAs(as(owner.email), {}))
-    ).json()) as { owner_lend: boolean; instructions_short_id: string | null }
-    expect(rotated).toMatchObject({ owner_lend: true, instructions_short_id: page.short_id })
+    ).json()) as { instructions_short_id: string | null }
+    expect(rotated).toMatchObject({ instructions_short_id: page.short_id })
   })
 })
 

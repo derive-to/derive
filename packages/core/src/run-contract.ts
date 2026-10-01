@@ -1,17 +1,8 @@
 import type { DocEdit } from "./doc-text"
 /**
- * The RUN CONTRACT: what an automation run must return, and how that reply is read.
- *
- * There are two executors — the CLI runner (a coding agent in a container) and, next, an
- * in-Worker agent loop — and the plan's open question was whether the second forks this or
- * shares it. It shares it, because a fork stops the two substrates being comparable: if
- * "runs in a container" and "runs in a Worker" accept different replies or parse them
- * differently, they quietly become different products and routing between them on cost stops
- * being a routing decision and becomes a behaviour change.
- *
- * The CLI cannot import this module at runtime (it is a dependency-free published package), so
- * it keeps a hand-copy. packages/cli/test/contract-parity.test.js holds that copy to this one.
- * This module is the definition; that test is the enforcement.
+ * The REVISION CONTRACT: the <revision> block an in-process @Derive turn may return to propose
+ * a change to a document, and how that reply is read (lib/turn-core.ts). Agent jobs report over
+ * HTTP instead and do not use it.
  */
 
 /** A parsed, validated revision: the complete new source of an artifact plus its metadata. */
@@ -202,8 +193,8 @@ export const REVISION_NUDGE = `Your previous reply was NOT accepted — it did n
 export const NO_REVISION_BLOCK = "no <revision> block in result"
 
 /** The metadata half of a revision, normalized. Shared by every reader of the block so an
- *  attended turn, an automation run and an ask agree on what a mangled filename or a string
- *  confidence MEANS — the drift that a per-lane copy invites and nothing would notice. */
+ *  every lane agrees on what a mangled filename or a string confidence MEANS, the drift that a
+ *  per-lane copy invites and nothing would notice. */
 const normalizeRevision = (r: Record<string, unknown>, content: string): Revision => ({
   content,
   // A filename without an extension sets no content type, so fall back rather than publish an
@@ -242,9 +233,8 @@ export const parseRevision = (text: string): RevisionParse => {
 // An ask is not a different contract. It is the SAME <revision> block on a turn where somebody
 // is waiting, so two things change and nothing else does:
 //
-//   1. The block is OPTIONAL. "They asked a question" is a complete, correct turn — the attended
-//      chat path has always treated a reply with no block as an ANSWER (NO_REVISION_BLOCK above),
-//      and an unattended ask deserves exactly the same reading.
+//   1. The block is OPTIONAL. "They asked a question" is a complete, correct turn: a reply with
+//      no block is an ANSWER (NO_REVISION_BLOCK above).
 //   2. It carries the fields only a waiting person can use: escalate, and caveats.
 //
 // A parallel <answer> contract would fork the one thing that must not fork. The CLI runner has
@@ -252,8 +242,7 @@ export const parseRevision = (text: string): RevisionParse => {
 // FIELDS below are the part shared with it, and packages/cli/test/ask-parity.test.js holds the
 // two readers to the same reading of them.
 
-/** The fields a SESSION turn carries that an automation run has no use for: nobody is waiting on
- *  an automation, so there is nobody to escalate to and nobody to warn. */
+/** The fields only a turn with somebody waiting can use: escalate, and caveats. */
 export interface AskFields {
   /** This needs a person. The answer still stands — it is a draft to escalate, not a refusal. */
   escalate: boolean

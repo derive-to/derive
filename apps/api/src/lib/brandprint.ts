@@ -8,13 +8,9 @@ import {
 /**
  * Resolve the effective Brandprint for an actor in a workspace: the workspace's
  * conventions merged with the actor's personal layer (profile wins). One home for
- * the org-context read + merge the MCP connection, the context runner, and the
- * rework endpoint all need, each keyed on a different user id. `userId` null ⇒
- * workspace layer only (orgContext skips the personal read entirely).
- *
- * A context's runs key on the context's CREATOR, not whoever triggers a given run:
- * the creator's personal toggle governs every session that context spawns,
- * regardless of who reads or fires it.
+ * the org-context read + merge the MCP connection and the rework endpoint both need,
+ * each keyed on a different user id. `userId` null ⇒ workspace layer only
+ * (orgContext skips the personal read entirely).
  */
 export const resolveActorBrandprint = async (
   meta: MetaStore,

@@ -503,8 +503,7 @@ function SkillWorkbench({
     (sum, item) => sum + item.count,
     0,
   )
-  const contextRuns = (usage.data?.contexts ?? []).reduce((sum, item) => sum + item.count, 0)
-  const workflowRuns = (usage.data?.workflows ?? []).reduce((sum, item) => sum + item.count, 0)
+  const runs = (usage.data?.runs ?? []).reduce((sum, item) => sum + item.count, 0)
   const localUses = (usage.data?.local ?? []).reduce((sum, item) => sum + item.count, 0)
   const fileUrl = (path: string) => `${API_BASE}/raw/${shortId}/v/${version}/${path}`
   const installCommand = `derive skill add ${shortId}`
@@ -629,15 +628,14 @@ function SkillWorkbench({
             )}
           </TabsContent>
           <TabsContent value="usage" className="px-4 py-3">
-            <div className="grid gap-2 sm:grid-cols-4">
+            <div className="grid gap-2 sm:grid-cols-3">
               <Metric value={usage.data ? activeInstalls : null} label="active installs" />
               <Metric value={usage.data ? localUses : null} label="local uses" />
-              <Metric value={usage.data ? contextRuns : null} label="Context runs" />
-              <Metric value={usage.data ? workflowRuns : null} label="Workflow runs" />
+              <Metric value={usage.data ? runs : null} label="Runs" />
             </div>
             <p className="mt-2 text-xs text-muted-foreground">
               Local activity comes from explicit receipts and private on-device log scans. Installs
-              and hosted runs stay separate.
+              and agent runs stay separate.
             </p>
             {usage.data?.coverage.length ? (
               <div className="mt-3 flex flex-col gap-2" data-testid="skill-scan-coverage">

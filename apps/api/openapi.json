@@ -1692,10 +1692,6 @@
             ],
             "description": "Permission level; commenter comments only, editor can write, owner never allowed. Defaults to editor, capped at the creator's seat."
           },
-          "hosted": {
-            "type": "boolean",
-            "description": "A stored flag from before Derive machines. Nothing reads it; `machine` says where the agent runs."
-          },
           "managed": {
             "type": "boolean",
             "description": "Made automatically for one imported paper, not named by a person. Never listed over MCP, asked, or used as a workflow step."
@@ -1704,10 +1700,6 @@
             "type": "string",
             "nullable": true,
             "description": "The user who registered the agent — who it publishes and bills on behalf of."
-          },
-          "owner_lend": {
-            "type": "boolean",
-            "description": "A stored per-agent setting from before model accounts. Job billing does not read it: the agent's assigned account, then its creator's or asker's, then the shared one, pays."
           },
           "created_at": {
             "type": "string"
@@ -1795,10 +1787,8 @@
           "id",
           "name",
           "role",
-          "hosted",
           "managed",
           "created_by",
-          "owner_lend",
           "created_at",
           "description",
           "instructions_short_id",
@@ -2760,18 +2750,7 @@
               "unknown",
               null
             ],
-            "description": "Whether the instance App has every current permission and event; null when no live App exists"
-          },
-          "app_webhook_state": {
-            "type": "string",
-            "nullable": true,
-            "enum": [
-              "ready",
-              "update_required",
-              "unknown",
-              null
-            ],
-            "description": "Whether signed GitHub workflow completion events can reach this instance"
+            "description": "Whether the instance App has every current permission; null when no live App exists"
           },
           "app_settings_url": {
             "type": "string",
@@ -2835,7 +2814,6 @@
           "app_slug",
           "app_owner_login",
           "app_permissions_state",
-          "app_webhook_state",
           "app_settings_url",
           "can_manage_app",
           "accounts"

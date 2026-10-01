@@ -1,4 +1,4 @@
-import type { SessionMessageRecord } from "@derive/core"
+import type { JobMessageRecord } from "@derive/core"
 
 /**
  * HOW LONG THE MODEL TOOK, measured where a turn already happens and recorded where a turn is
@@ -10,10 +10,11 @@ import type { SessionMessageRecord } from "@derive/core"
  * worth having — it is the only thing that can answer for a model NOBODY has used yet, which is
  * every model the moment it is added — so the two are complements and neither replaces the other.
  *
- * NO NEW WRITE PATH, WHICH IS THE ENTIRE REASON THIS IS CHEAP. The agent's answer already
- * persists `model` and `cost_micro_usd` in `session_message.meta`; this adds two more numbers to
- * the same object on the same insert. Nothing is written per model call, no counter is
- * incremented, and no row exists that would not have existed anyway.
+ * NO NEW WRITE PATH, WHICH IS THE ENTIRE REASON THIS IS CHEAP. An in-process answer (the Slack
+ * lane, slack-mention.ts) already persists `model` in its `job_message.meta_json`; `model_ms`
+ * (and `ttft_ms`, when a lane streams) ride the same object on the same insert. Nothing is
+ * written per model call, no counter is incremented, and no row exists that would not have
+ * existed anyway.
  *
  * MODEL TIME, NOT TURN TIME. A turn runs the model several times with tool calls in between, and
  * a tool that spends four seconds calling somebody's API is not the model being slow. Only the
@@ -50,11 +51,11 @@ export interface ModelTimings {
  * is for as long as the sample window reaches back.
  */
 export const foldTimings = (
-  messages: Pick<SessionMessageRecord, "meta" | "created_at">[],
+  messages: Pick<JobMessageRecord, "meta_json" | "created_at">[],
 ): ModelTimings[] => {
   const by = new Map<string, { ttft: number[]; total: number[]; lastAt: string | null }>()
   for (const m of messages) {
-    const meta = parseMeta(m.meta)
+    const meta = parseMeta(m.meta_json)
     if (!meta) continue
     const modelId = typeof meta.model?.id === "string" ? meta.model.id : null
     if (!modelId) continue

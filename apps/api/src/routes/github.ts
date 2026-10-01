@@ -7,17 +7,14 @@ import type { AppContext } from "../context"
 import {
   installationPickerHTML,
   MANIFEST_PERMISSIONS,
-  REQUIRED_EVENTS,
   REQUIRED_PERMISSIONS,
 } from "../github-app-setup"
 import { decryptSecret, safeEqual, signState, verifyState } from "../lib/crypto"
 import {
-  configureAppWebhook,
   exchangeGithubUserCode,
   GitHubError,
   getAppInfo,
   getAppInstallation,
-  getAppWebhookConfig,
   getUserInstallation,
   githubWebhookSecret,
   githubWebhookSignature,
@@ -80,15 +77,6 @@ export const githubRoutes = (ctx: AppContext) => {
     if (!found) return null
     return { app: found, pem: decryptSecret(found.private_key, deps.encryptionKey) }
   }
-
-  const webhookUrl = new URL("/v1/github/webhook", deps.baseUrl).toString()
-  const configureWebhook = async (loaded: { app: GitHubAppRecord; pem: string }) =>
-    configureAppWebhook({
-      appId: loaded.app.app_id,
-      privateKeyPem: loaded.pem,
-      url: webhookUrl,
-      secret: githubWebhookSecret(loaded.app.app_id, deps.encryptionKey ?? ""),
-    })
 
   const settingsRedirect = (
     result: "connected" | "canceled" | "expired" | "config" | "save",
@@ -168,12 +156,8 @@ export const githubRoutes = (ctx: AppContext) => {
         .enum(["ready", "update_required", "unknown"])
         .nullable()
         .describe(
-          "Whether the instance App has every current permission and event; null when no live App exists",
+          "Whether the instance App has every current permission; null when no live App exists",
         ),
-      app_webhook_state: z
-        .enum(["ready", "update_required", "unknown"])
-        .nullable()
-        .describe("Whether signed GitHub workflow completion events can reach this instance"),
       app_settings_url: z.string().nullable(),
       can_manage_app: z
         .boolean()
@@ -216,9 +200,6 @@ export const githubRoutes = (ctx: AppContext) => {
       let appPermissionsState: "ready" | "update_required" | "unknown" | null = loaded
         ? "unknown"
         : null
-      let appWebhookState: "ready" | "update_required" | "unknown" | null = loaded
-        ? "unknown"
-        : null
       const rank: Record<string, number> = { read: 1, write: 2, admin: 3 }
       if (loaded) {
         try {
@@ -237,29 +218,12 @@ export const githubRoutes = (ctx: AppContext) => {
               !!live.permissions[permission] &&
               (rank[live.permissions[permission] ?? ""] ?? 0) >= (rank[level] ?? 0),
           )
-          const eventsReady = REQUIRED_EVENTS.every((event) => live.events.includes(event))
-          appPermissionsState = permissionsReady && eventsReady ? "ready" : "update_required"
-          if (eventsReady) {
-            try {
-              const hook = await getAppWebhookConfig(loaded.app.app_id, loaded.pem)
-              appWebhookState =
-                hook.url === webhookUrl &&
-                hook.contentType === "json" &&
-                (hook.insecureSsl === "0" || hook.insecureSsl === "false")
-                  ? "ready"
-                  : "update_required"
-            } catch {
-              appWebhookState = "unknown"
-            }
-          } else {
-            appWebhookState = "update_required"
-          }
+          appPermissionsState = permissionsReady ? "ready" : "update_required"
         } catch (err) {
           // Deleted/revoked is definitive. A network/5xx failure must not hide a working App.
           if (err instanceof GitHubError && (err.status === 401 || err.status === 404)) {
             available = false
             appPermissionsState = null
-            appWebhookState = null
           }
         }
       }
@@ -336,7 +300,6 @@ export const githubRoutes = (ctx: AppContext) => {
         app_slug: slug,
         app_owner_login: appOwnerLogin,
         app_permissions_state: appPermissionsState,
-        app_webhook_state: appWebhookState,
         app_settings_url: slug
           ? appOwnerType === "Organization" && appOwnerLogin
             ? `https://github.com/organizations/${encodeURIComponent(appOwnerLogin)}/settings/apps/${encodeURIComponent(slug)}/permissions`
@@ -347,23 +310,6 @@ export const githubRoutes = (ctx: AppContext) => {
       })
     },
   )
-
-  app.post("/v1/github/webhook/configure", async (c) => {
-    const me = await requireUser(c)
-    if (me instanceof Response) return me
-    if (!(await isSuperAdmin(c))) return fail(c, 403, "instance operator required")
-    const loaded = await loadApp()
-    if (!loaded || !deps.encryptionKey) return fail(c, 404, "GitHub is not configured")
-    try {
-      await configureWebhook(loaded)
-      return c.json({ state: "ready" as const })
-    } catch (err) {
-      log.warn("github webhook configuration failed", {
-        error: err instanceof Error ? err.message : String(err),
-      })
-      return fail(c, 502, "GitHub could not update the App webhook")
-    }
-  })
 
   // authz-exempt: GitHub signs the exact raw body with the server-derived App webhook secret.
   const handleWebhook: Handler<BlankEnv> = async (c) => {
@@ -389,7 +335,8 @@ export const githubRoutes = (ctx: AppContext) => {
       return fail(c, 400, "body must be JSON")
     }
     // Signed and well-formed: acknowledged. No event drives work here since GitHub Actions
-    // workflow runs stopped being a Derive execution lane.
+    // workflow runs stopped being a Derive execution lane; new Apps subscribe to none, and the
+    // receiver stays so Apps created earlier, which still deliver here, get a clean answer.
     return c.body(null, 202)
   }
   app.post("/v1/github/webhook", handleWebhook)
@@ -489,14 +436,6 @@ export const githubRoutes = (ctx: AppContext) => {
     if (!loaded) return c.redirect(settingsRedirect("config"))
     try {
       await getAppInstallation(loaded.app.app_id, loaded.pem, installationId)
-      // An installation update is the natural repair point for an older App. Keep the install
-      // usable if GitHub's hook API has a transient failure; Settings shows the remaining step.
-      await configureWebhook(loaded).catch((err) =>
-        log.warn("github webhook repair after installation update failed", {
-          installation_id: installationId,
-          error: err instanceof Error ? err.message : String(err),
-        }),
-      )
     } catch (err) {
       // This lookup is also proof the id belongs to THIS App. Never persist an unverified id
       // from a hand-edited callback; it would create a source that can never mint a token.

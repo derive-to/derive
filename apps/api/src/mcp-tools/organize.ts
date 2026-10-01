@@ -185,8 +185,13 @@ async function organizeCore(tc: ToolContext, input: LibraryInput) {
         // Read once for the batch: a context whose manifest is deleted is deleted with
         // it (the FK cascade), so the caller learns what else goes rather than finding
         // out when a runner stops answering.
-        const contexts = await ctx.meta.listContexts(t.org).catch(() => [])
-        const cascaded: { short_id: string; context: string }[] = []
+        // Imported papers keep a record keyed on their page; a hard delete takes it too.
+        const papers = (await ctx.meta.listContexts(t.org).catch(() => [])).filter(
+          (cx) => cx.import_source === "arxiv",
+        )
+        const agents = await ctx.meta.listAgents(t.org).catch(() => [])
+        const cascaded: { short_id: string; paper: string }[] = []
+        const orphaned: { short_id: string; agent: string }[] = []
         for (const shortId of [...new Set(short_ids)]) {
           const reached = await reach(shortId, workspace, { allowRemoved: true })
           if (!reached || "error" in reached) {
@@ -198,9 +203,12 @@ async function organizeCore(tc: ToolContext, input: LibraryInput) {
             skipped++
             continue
           }
-          for (const cx of contexts)
+          for (const cx of papers)
             if (cx.manifest_artifact_id === reached.a.id)
-              cascaded.push({ short_id: shortId, context: cx.name })
+              cascaded.push({ short_id: shortId, paper: cx.name })
+          for (const ag of agents)
+            if (ag.instructions_artifact_id === reached.a.id)
+              orphaned.push({ short_id: shortId, agent: ag.name })
           // The one helper, so a hard delete can't clean the lexical index and forget
           // the dense vector (or vice versa) — see lib/search.ts.
           await deleteArtifactAndUnindex(ctx.meta, ctx.deps.search, reached.a.id, t.org)
@@ -215,9 +223,16 @@ async function organizeCore(tc: ToolContext, input: LibraryInput) {
             : "Nothing was deleted.",
           ...(cascaded.length
             ? {
-                cascaded_contexts: cascaded,
-                cascaded_contexts_note:
-                  "These contexts ran from the deleted manifests and are gone with them. A context cannot outlive its definition.",
+                cascaded_papers: cascaded,
+                cascaded_papers_note:
+                  "These pages were imported papers; their paper records are gone with them.",
+              }
+            : {}),
+          ...(orphaned.length
+            ? {
+                agents_without_instructions: orphaned,
+                agents_without_instructions_note:
+                  "These agents read the deleted pages as their instructions. They keep their jobs and schedules but now have no instructions; point each at another page with agents({ action: 'update' }).",
               }
             : {}),
           ...(notAllowed.length
@@ -235,11 +250,11 @@ async function organizeCore(tc: ToolContext, input: LibraryInput) {
       const archivedOk: string[] = []
       const done: string[] = []
       const moderated: string[] = []
-      const wiredTo: { short_id: string; context: string }[] = []
+      const wiredTo: { short_id: string; agent: string }[] = []
       let skipped = 0
-      // Removing a context manifest leaves the context configured but unreadable. Load
-      // contexts once so the response can identify every affected context.
-      const contexts = state === "removed" ? await ctx.meta.listContexts(t.org).catch(() => []) : []
+      // Retiring an agent's instructions page leaves the agent configured but unable to read
+      // them. Load agents once so the response can name every affected one.
+      const agents = state === "removed" ? await ctx.meta.listAgents(t.org).catch(() => []) : []
       for (const shortId of [...new Set(short_ids)]) {
         // Restoration must resolve tombstones while retaining workspace and role checks.
         const reached = await reach(shortId, workspace, { allowRemoved: true })
@@ -268,9 +283,9 @@ async function organizeCore(tc: ToolContext, input: LibraryInput) {
         }
         ok.push(reached.a.id)
         done.push(shortId)
-        for (const cx of contexts)
-          if (cx.manifest_artifact_id === reached.a.id)
-            wiredTo.push({ short_id: shortId, context: cx.name })
+        for (const ag of agents)
+          if (ag.instructions_artifact_id === reached.a.id)
+            wiredTo.push({ short_id: shortId, agent: ag.name })
       }
       // Apply each state transition with one batch update.
       if (ok.length) await ctx.meta.setArtifactsRemoved(ok, removedAt)
@@ -293,9 +308,9 @@ async function organizeCore(tc: ToolContext, input: LibraryInput) {
             : undefined,
         ...(wiredTo.length
           ? {
-              in_use_by_contexts: wiredTo,
-              in_use_by_contexts_note:
-                "These are the manifests live contexts run from. The context stays askable, and its runner will fail reading the manifest rather than at the moment you retired it. Retire the context too, or put the manifest back.",
+              in_use_by_agents: wiredTo,
+              in_use_by_agents_note:
+                "These pages are agents' instructions. The agents stay askable, and their next job will fail reading the instructions rather than at the moment you retired them. Point the agents at another page, or put this one back.",
             }
           : {}),
         ...(moderated.length

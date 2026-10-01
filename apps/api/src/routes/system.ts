@@ -86,12 +86,10 @@ export const systemRoutes = (ctx: AppContext) => {
     })
   }
 
-  /** Every lane and what serves it — the shape both the library view and a pin's response
-   *  return. One read of the instance row for both lanes, and one definition, so a third lane
-   *  cannot appear in one response and be forgotten in the other. */
+  /** Every lane and what serves it: the shape both the library view and a pin's response
+   *  return, defined once so a lane cannot appear in one response and be missing in the other. */
   const slotsJson = (slots: InstanceSlots) => ({
     chat: slots.chat ?? null,
-    automation: slots.automation ?? null,
   })
 
   const pinSlot = async (
@@ -193,7 +191,7 @@ export const systemRoutes = (ctx: AppContext) => {
       readLibraryStrict(meta),
       // A bounded sample of recent answers, folded into per-model timings in memory. Bounded
       // rather than windowed: a quiet deploy still gets numbers, and a busy one pays a constant.
-      meta.listRecentAgentMessages(TIMING_SAMPLE).catch(() => []),
+      meta.listRecentAgentJobMessages(TIMING_SAMPLE).catch(() => []),
     ])
     const catalog = effectiveCatalog(ctx.models, ctx.modelGateway, lib)
     const timings = new Map(foldTimings(sample).map((t) => [t.modelId, t]))
@@ -361,7 +359,6 @@ export const systemRoutes = (ctx: AppContext) => {
           models: lib.models.filter((m) => m.id !== id),
           slots: {
             chat: lib.slots.chat === id ? undefined : lib.slots.chat,
-            automation: lib.slots.automation === id ? undefined : lib.slots.automation,
           },
         }
       })
@@ -414,7 +411,7 @@ export const systemRoutes = (ctx: AppContext) => {
     const denied = await operatorOnly(c)
     if (denied) return denied
     const lane = c.req.param("lane")
-    if (lane !== "chat" && lane !== "automation") return fail(c, 404, `unknown lane "${lane}"`)
+    if (lane !== "chat") return fail(c, 404, `unknown lane "${lane}"`)
     const b = await readJson(c, z.object({ model: z.string().nullable() }))
     if (b instanceof Response) return b
     try {
