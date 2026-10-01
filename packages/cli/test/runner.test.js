@@ -1,4 +1,4 @@
-import { execSync, spawnSync } from "node:child_process"
+import { execSync, spawn, spawnSync } from "node:child_process"
 import {
   chmodSync,
   existsSync,
@@ -8,6 +8,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs"
+import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
 import { describe, expect, it } from "vitest"
@@ -401,6 +402,53 @@ describe("the runner command", () => {
       expect(out.status, args.join(" ")).toBe(1)
       expect(out.stderr.trim().split("\n"), args.join(" ")).toHaveLength(1)
       expect(out.stderr).toContain("derive runner serve --agent <id>")
+    }
+  })
+
+  it("--no-local-login is a switch: last on the line, or before another flag", async () => {
+    // A server with one job and no stored model account: an opted-out runner must fail the
+    // job plainly instead of spending this machine's own model login.
+    const reports = []
+    const server = createServer((req, res) => {
+      let body = ""
+      req.on("data", (c) => {
+        body += c
+      })
+      req.on("end", () => {
+        res.setHeader("content-type", "application/json")
+        if (req.url.endsWith("/pull"))
+          return res.end(
+            JSON.stringify({
+              jobs: [{ id: "job_1", started_at: "2026-01-01T00:00:00.000Z", messages: [] }],
+            }),
+          )
+        if (req.url.includes("/account")) return res.end(JSON.stringify({ credential: null }))
+        if (req.url.endsWith("/report")) reports.push(JSON.parse(body))
+        res.end("{}")
+      })
+    })
+    await new Promise((r) => server.listen(0, "127.0.0.1", r))
+    const url = `http://127.0.0.1:${server.address().port}`
+    const once = (...extra) =>
+      new Promise((resolve) => {
+        const p = spawn(
+          process.execPath,
+          [bin, "runner", "once", "--agent", "ag_1", "--token", "dk_agt_x", "--server", url]
+            .concat(["--claude-bin", "/nonexistent/claude"])
+            .concat(extra),
+          { env: { ...process.env, DERIVE_TOKEN: "", RUNNER_LOCAL_LOGIN: "" } },
+        )
+        p.on("exit", resolve)
+      })
+    try {
+      for (const extra of [["--no-local-login"], ["--no-local-login", "--cwd", tmpdir()]]) {
+        reports.length = 0
+        await once(...extra)
+        expect(reports.at(-1), extra.join(" ")).toMatchObject({ status: "failed" })
+        expect(reports.at(-1).body_md, extra.join(" ")).toMatch(/no claude-code account/)
+      }
+    } finally {
+      server.close()
     }
   })
 

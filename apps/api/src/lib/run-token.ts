@@ -17,14 +17,18 @@
 import { signCapabilityToken, verifyCapabilityToken } from "./capability-token"
 import { RUN_TOKEN_TTL_MS } from "./run-lifecycle"
 
-/** What a capability token authorizes work on. */
-export type WorkKind = "job"
+/** What a capability token authorizes work on. `job` is a runner's: it acts as the agent on
+ *  its one job's routes. `jobtool` is the model's, handed to it so it can call the job's source
+ *  tools: it reaches `POST /v1/jobs/<job>/tool` and nothing else (agentFor enforces that). */
+export type WorkKind = "job" | "jobtool"
 
 const DOMAIN: Record<WorkKind, string> = {
   job: "derive-job-token:",
+  jobtool: "derive-job-tool-token:",
 }
 const PREFIX: Record<WorkKind, string> = {
   job: "dkjob_",
+  jobtool: "dkjtool_",
 }
 
 // The TTL belongs to the run lifecycle clock (run-lifecycle.ts), not to this file: it must
@@ -36,7 +40,7 @@ export { RUN_TOKEN_TTL_MS }
 /** Which kind of work token this bearer is, or null when it is none (a registered agent
  *  token, an OAuth access token, the static operator bearer). */
 export const workTokenKind = (bearer: string): WorkKind | null =>
-  bearer.startsWith(PREFIX.job) ? "job" : null
+  bearer.startsWith(PREFIX.job) ? "job" : bearer.startsWith(PREFIX.jobtool) ? "jobtool" : null
 
 /** Sign a capability token for one (work item, agent, workspace). */
 export const signWorkToken = async (

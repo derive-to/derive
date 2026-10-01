@@ -36,6 +36,8 @@ import {
   reportJob,
   retryJob,
 } from "../lib/jobs"
+import { MAX_RUN_CEILING_MS } from "../lib/run-lifecycle"
+import { signWorkToken } from "../lib/run-token"
 import { runtimeFailureReason } from "../lib/runtime-diagnostics"
 import { log } from "../log"
 
@@ -555,9 +557,26 @@ export const jobRoutes = (ctx: AppContext) => {
         ref: t.ref,
       }))
     }
+    // The model's credential for this claim's source tools. The runner keeps its own key out of
+    // the model's environment, so the model calls a source with this instead: it reaches only
+    // `POST /v1/jobs/<this job>/tool`, and dies when the job settles or is reclaimed. That
+    // liveness check is what ends it, so the expiry is only a ceiling, set past the longest
+    // run a lease allows (progress ticks renew the lease, never this token).
+    const toolToken = async (j: JobRecord) =>
+      deps.encryptionKey && j.started_at
+        ? signWorkToken(
+            "jobtool",
+            deps.encryptionKey,
+            `${j.id}~${Date.parse(j.started_at)}`,
+            agent.id,
+            agent.org_id,
+            Date.parse(j.started_at) + MAX_RUN_CEILING_MS,
+          )
+        : null
     return Promise.all(
       jobs.map(async (j) => ({
         ...(await showOne(j)),
+        tool_token: await toolToken(j),
         // The transcript the model reads: what people and the agent said. Notes the server
         // wrote about the job itself (held for budget) are for the people watching it.
         messages: (await meta.listJobMessages(j.id))
