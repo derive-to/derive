@@ -46,8 +46,8 @@ app's HTML shell, whose content loads client-side.
 ## Key API endpoints
 
 All requests use `Authorization: Bearer $DERIVE_TOKEN`: an agent's key, from the `agents` tool
-when the agent is created, or from the agent's page in Derive (a workspace owner can replace
-it on the Settings tab).
+when the agent is created, or from the agent's page in Derive (its creator or a workspace owner
+can replace it on the Settings tab).
 
 ```
 POST   /v1/artifacts                           publish new artifact (multipart: file, title, visibility)

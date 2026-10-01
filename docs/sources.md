@@ -1,8 +1,8 @@
 # Sources: connecting an MCP server
 
 A **source** is a Model Context Protocol server your agents can read from during a job. Connect
-one by URL, bind it to an agent's sources on its Settings tab, and that agent's jobs can call the
-server's tools.
+one by URL and bind it to an agent's sources on its Settings tab: an agent's jobs can call the
+tools of the sources bound to it.
 
 Anything that speaks MCP over streamable HTTP works. There is no vendor list and no per-vendor
 integration to write.
@@ -80,8 +80,8 @@ tools with. That re-pin is the one part of this flow no library does for us.
 Bind the source to an agent's sources on its Settings tab (**Add a source**), or pass its
 connection id in `sources` when the agent is made or updated over MCP. Only active sources are
 offered. An agent may use your own connections, or the workspace's if you manage them; a
-teammate's personal connection is refused. A job sees the tools bound to *its agent* and
-nothing else, and the credential is resolved server-side at call time, so the model never
+teammate's personal connection is refused. An agent's jobs can call the tools of the sources
+bound to it, and the credential is resolved server-side at call time, so the model never
 holds it.
 
 ### A job that reads from a source publishes like any other

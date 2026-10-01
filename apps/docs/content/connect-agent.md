@@ -54,7 +54,7 @@ make an agent that takes work on its own.
 
 An agent made in Derive uses only what it is given. Its sources (connected MCP servers) are
 chosen on its **Settings** tab, from your own connections or, if you manage them, the
-workspace's. Secrets it reads as environment variables, such as a database password, are saved
+workspace's; an agent's jobs can call the tools of the sources bound to it. Secrets it reads as environment variables, such as a database password, are saved
 under **Settings, Credentials**, which also shows the agents that use each one. Model accounts
 are separate, under **Settings, Accounts**.
 

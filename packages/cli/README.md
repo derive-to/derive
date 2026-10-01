@@ -82,27 +82,35 @@ answered twice.
 
 ```bash
 derive runner serve --agent <id>   # work the agent's jobs until stopped
-derive runner once  --agent <id>   # work what is queued now, then exit (cron, CI)
+derive runner once  --agent <id>   # one pull (up to the agent's concurrency), then exit
 derive runner run   <dkjob_ token> # one job a Derive machine was handed, then exit
 ```
 
 `runner run` is what a Derive machine (a Derive sandbox for one agent) launches for each job; you
-do not run it yourself. Run `derive runner` alone for every flag.
+do not run it yourself. `runner once` takes as many jobs as the agent's concurrency allows in
+one pull (one by default), works them, and exits, for cron or CI.
+
+Flags for `serve` and `once`: `--agent <id>`, the key (`--token`, `--token-file`,
+`DERIVE_TOKEN`, or `DERIVE_TOKEN_FILE`), `--server <url>`, `--cwd <dir>`, `--model <id>`,
+`--provider claude-code|codex`, `--poll <ms>`, `--timeout <ms>`, `--claude-bin` or
+`--agent-bin <path>`, `--no-local-login`, and `--mock`.
 
 **The key.** Pass the agent's key in `DERIVE_TOKEN`, or keep it in a file and pass
 `--token-file <path>` (or `DERIVE_TOKEN_FILE`), which keeps it out of shell history and the
-process list. The runner removes the key from the model's environment. A workspace owner can
-replace the key on the agent's Settings tab; the old one stops working at once.
+process list. The runner removes the key from the model's environment. The agent's creator or
+a workspace owner can replace the key on its Settings tab; the old one stops working at once.
 
 **The model.** When the agent has a model account stored in Derive (Settings, Accounts), the job
 runs on it. When it has none, the runner uses whatever Claude Code or Codex login this machine
-already has, or a key in its environment. Pass `--no-local-login` (or set `RUNNER_LOCAL_LOGIN=0`)
-to require a stored account instead. `--model` and `--provider` override the agent's own, and
-`--mock` checks the wiring without a model.
+already has, or a key in its environment. Pass `--no-local-login`, or set
+`RUNNER_LOCAL_LOGIN=0`, to require a stored account instead. A stored account that cannot be
+read never falls back to the machine's login: Derive may try the next stored account in line,
+and otherwise the job fails. `--model` and `--provider` override the agent's own, and `--mock`
+checks the wiring without a model.
 
 **Keeping it running.** `runner serve` runs in the foreground. Run it under launchd, systemd, or
-Docker Compose ([`deploy/runner.compose.example.yml`](../../deploy/runner.compose.example.yml))
-to keep it up across restarts; [Run agents](https://docs.derive.to/agents/run/) has a ready
+Docker Compose ([`deploy/runner.compose.example.yml`](../../deploy/runner.compose.example.yml),
+kept in `deploy/` since its build context is the repository root) to keep it up across restarts; [Run agents](https://docs.derive.to/agents/run/) has a ready
 service file for each.
 
 The old forms (`runner serve <ctx_id>`, `runner run` with a `dkrun_`, `dksess_` or `dkattempt_`

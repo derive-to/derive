@@ -17,7 +17,7 @@ prompt tells your coding agent to:
 1. Read `derive://skills/agents`.
 2. Publish the agent's instructions as a Derive page.
 3. Call the `agents` tool with `action: "create"`, passing that page's short id.
-4. Hand you back the runner command and any steps that need a browser.
+4. Hand you back the runner command, and any link you need to open in a browser.
 
 You can also ask for it in your own words. A create call looks like this:
 
@@ -29,9 +29,9 @@ agents({ action: "create", name: "Weekly churn digest", instructions: "<short_id
 ```
 
 The reply carries the agent's key once. For an agent on your own machine it also carries
-`runner_command`, the one line that starts it. Some steps need a person in a browser, such as
-signing in a model account or authorizing a source; the reply lists those under `needs_browser`
-with a link.
+`runner_command`, the one line that starts it. When a step needs a person in a browser, the
+reply lists it under `needs_browser` with a link. Today that is one case: an agent on a Derive
+machine with no model account yet, which needs one connected under Settings, Accounts.
 
 Making an agent needs a seat that can publish. The agent's role defaults to `editor`, so its
 jobs can publish their reports; pass `role: "commenter"` for one that should only comment. Its
@@ -56,8 +56,8 @@ in the queue until a runner picks them up. This is the default, and it works in 
 workspace.
 
 **Derive machine.** Derive starts a sandbox for the agent the first time a job needs it and
-stops it between jobs, so its files persist. There is nothing to start yourself. A sandbox
-takes 15 to 30 seconds to boot, so it suits scheduled and unattended work. Derive machines are
+stops it between jobs, so its files persist. There is nothing to start yourself, which suits
+scheduled and unattended work. Derive machines are
 only available in workspaces where they are turned on; elsewhere, creating one is refused with
 a message saying so. A Derive machine has no login of its own, so the agent needs a model
 account stored in Derive.
@@ -77,16 +77,31 @@ long job's claim alive while it works, so a job is never answered twice.
 | Command | What it does |
 |---|---|
 | `derive runner serve --agent <id>` | Work the agent's jobs until you stop it |
-| `derive runner once --agent <id>` | Work what is queued now, then exit (for cron or CI) |
+| `derive runner once --agent <id>` | Take one pull of the agent's jobs (as many as its concurrency allows, one by default), work them, then exit (for cron or CI) |
 | `derive runner run <dkjob_ token>` | Run the one job a Derive machine was handed, then exit. Derive machines use this; you do not need it. |
 
-The key is read from `DERIVE_TOKEN`, or from a file with `--token-file <path>` (or
+The key is read from `--token`, `DERIVE_TOKEN`, or a file with `--token-file <path>` (or
 `DERIVE_TOKEN_FILE`). A file keeps the key out of your shell history and the process list. The
-runner never passes the key on to the model. `--mock` checks the wiring without calling a model.
-`derive runner` with no subcommand prints every form and flag.
+runner never passes the key on to the model.
 
-The key belongs to the agent. A workspace owner can replace it on the agent's Settings tab; the
-old key stops working at once, and you get a new runner command to start it again.
+`serve` and `once` take these flags:
+
+| Flag | What it sets |
+|---|---|
+| `--agent <id>` | The agent to work (or `DERIVE_AGENT`) |
+| `--token <key>`, `--token-file <path>` | The agent's key (or `DERIVE_TOKEN`, `DERIVE_TOKEN_FILE`) |
+| `--server <url>` | The Derive instance (or `DERIVE_SERVER`; default `https://derive.to`) |
+| `--cwd <dir>` | Where jobs run (or `RUNNER_CWD`; default the current directory) |
+| `--model <id>`, `--provider claude-code\|codex` | Override the agent's own model and provider |
+| `--poll <ms>` | How often to ask for work (default 5000) |
+| `--timeout <ms>` | The most one job may take (default 600000) |
+| `--claude-bin <path>`, `--agent-bin <path>` | The coding agent binary to run |
+| `--no-local-login` | Never use this machine's own login (or `RUNNER_LOCAL_LOGIN=0`) |
+| `--mock` | Check the wiring without calling a model |
+
+The key belongs to the agent. Its creator or a workspace owner can replace it on the agent's
+Settings tab; the old key stops working at once, and you get a new runner command to start it
+again.
 
 ### Model accounts and your own login
 
@@ -97,9 +112,12 @@ uses its creator's own account, then the workspace's shared one.
 
 When no account is stored at all, a runner on an owner machine uses whatever Claude Code or
 Codex login that computer already has, or a key in its environment. So a runner on your own
-laptop works with the login you already use. Pass `--no-local-login` (or set
-`RUNNER_LOCAL_LOGIN=0`) to require a stored account instead. A stored account that cannot be
-read is always an error, never a silent fallback.
+laptop works with the login you already use. Pass `--no-local-login`, or set
+`RUNNER_LOCAL_LOGIN=0`, to require a stored account instead.
+
+A stored account that cannot be read never falls back to the machine's own login. Derive may
+try the next stored account in line (the creator's or asker's own, then the shared one), and
+if none can be read, the job fails with an error.
 
 ### Keep a runner running
 
@@ -113,7 +131,9 @@ printf '%s\n' 'dk_agt_...' > ~/.config/derive/weekly-digest.key
 
 **macOS (launchd).** Save this as `~/Library/LaunchAgents/to.derive.runner.weekly-digest.plist`,
 with your own paths, agent id, and working directory. A LaunchAgent runs as you, so it can use
-your Claude Code or Codex login. Set `PATH` so the runner can find `npx` and your coding agent.
+your Claude Code or Codex login. Set `PATH` so the runner can find `npx` and your coding agent
+(Claude Code's installer puts it in `~/.local/bin`). Use the `npx` path that `command -v npx`
+prints.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -135,7 +155,7 @@ your Claude Code or Codex login. Set `PATH` so the runner can find `npx` and you
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>PATH</key><string>/Users/you/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
@@ -149,14 +169,18 @@ your Claude Code or Codex login. Set `PATH` so the runner can find `npx` and you
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/to.derive.runner.weekly-digest.plist
 ```
 
-**Linux (systemd).** Save this as `~/.config/systemd/user/derive-weekly-digest.service`:
+**Linux (systemd).** Save this as `~/.config/systemd/user/derive-weekly-digest.service`. Put
+the path `command -v npx` prints in `ExecStart`. A user service does not read your shell
+profile, so set `PATH` to include `~/.local/bin` (where Claude Code installs) and the directory
+holding `npx`. With nvm, that is the version's own `bin` directory, such as
+`~/.nvm/versions/node/v22.11.0/bin`; it changes when you switch Node versions.
 
 ```ini
 [Unit]
 Description=Derive runner for weekly-digest
-After=network-online.target
 
 [Service]
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/bin/npx -y @derive-to/cli runner serve --agent ag_... --server https://derive.to --token-file %h/.config/derive/weekly-digest.key --cwd %h/agents/weekly-digest
 Restart=always
 RestartSec=10
@@ -173,13 +197,15 @@ loginctl enable-linger "$USER"   # keep it running while you are logged out
 
 **Docker Compose.** [`deploy/runner.compose.example.yml`](../../../deploy/runner.compose.example.yml)
 runs one runner service per agent, built from `deploy/runner.Dockerfile`, with a volume for the
-agent's working directory. Copy it, rename the service, and set `DERIVE_AGENT`. Its env file
+agent's working directory. Its build context is the repository root (`..`), so keep your copy in
+`deploy/` and run it from there. Copy it, rename the service, and set `DERIVE_AGENT`. Its env file
 holds the agent's key (`DERIVE_TOKEN`) and the model credential (`ANTHROPIC_API_KEY`, or
 `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`), plus `GH_TOKEN` when the agent needs
 private repositories. A container has no login of its own, so give it one of those or assign
 the agent a stored account.
 
 ```bash
+cd deploy
 docker compose -f runner.compose.example.yml up -d analytics
 ```
 
@@ -256,9 +282,10 @@ it, or its schedule firing, opens one graph job that Derive walks on the server:
 - Each step asks the agent it names, as a child job on that agent's own machine.
 - A human step stops the graph at `needs_you` with the options it was written with, and waits in
   the Inbox.
-- A step with a choice of next step picks one by ending its reply with a line
-  `ROUTE: <step>`. A missing or unknown route takes the fallback.
-- Loops stop at their `max_attempts`.
+- A step with a choice of next step picks one with a line `ROUTE: <step>` anywhere in its
+  reply. A missing or unknown route takes the fallback route, or the first route when there is
+  no fallback.
+- A loop that reaches its `max_attempts` fails the graph.
 
 `derive init --template workflow` starts a page with the definition, and
 `derive://skills/workflows` covers writing and running one.
@@ -267,5 +294,5 @@ it, or its schedule firing, opens one graph job that Derive walks on the server:
 
 Each workspace has one switch for agent work, **Agents can write**, which a workspace owner
 finds under Settings, Machines. Turn it off and agents stop writing: no job is claimed,
-dispatched, or started by a schedule, and their jobs wait until it is back on. Pausing a single agent on its Settings tab does the
-same for that agent.
+dispatched, or started by a schedule, and their jobs wait until it is back on. Pausing a
+single agent on its Settings tab does the same for that agent.

@@ -577,10 +577,16 @@ An agent on an **owner** machine needs nothing from the server: its runner is
 `derive runner serve --agent <id>` on whatever computer its owner chooses, pointed at this
 instance with `--server`. See [Run agents](/agents/run/).
 
-**Derive machines** (one sandbox per agent) need an Ortam account. Set
-`DERIVE_ORTAM_RUNNER_PATH` (the pinned CLI each sandbox installs), `DERIVE_ORTAM_API_URL`,
-`DERIVE_ORTAM_INTEGRATION_KEY`, and `DERIVE_MANAGED_RUNS_ALLOWLIST`, the workspace ids whose
-agents may use them. Unset, there are no Derive machines on the deployment and creating one is
+**Derive machines** (one sandbox per agent) need an Ortam account. Set:
+
+- `DERIVE_ORTAM_INTEGRATION_KEY`, the deployment's Ortam service key.
+- `DERIVE_ORTAM_RUNNER_PATH`, the pinned CLI each sandbox installs. The path must name the CLI
+  version the sandbox installs, 0.8 or later; otherwise Derive machines stay off, with no
+  error.
+- `DERIVE_MANAGED_RUNS_ALLOWLIST`, the workspace ids whose agents may use them.
+- `DERIVE_ORTAM_API_URL`, optional; it defaults to `https://api.ortam.dev/v1`.
+
+Without these, there are no Derive machines on the deployment and creating an agent on one is
 refused.
 
 ### Pausing agents

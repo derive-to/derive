@@ -282,8 +282,8 @@ CLI runner does leaves a report page, private to the workspace.
 
 A workflow is an agent whose instructions page holds a `derive.workflow/v1` definition.
 Asking it opens a graph job that Derive walks: each step asks the agent it names, a human step
-waits for an answer, and a step that chooses its next step ends its reply with
-`ROUTE: <step>`. See `derive://skills/agents` and `derive://skills/workflows`.
+waits for an answer, and a step that chooses its next step names it with a `ROUTE: <step>`
+line anywhere in its reply. See `derive://skills/agents` and `derive://skills/workflows`.
 
 ### Claude Code project config
 
@@ -389,5 +389,5 @@ GET /readyz   -> 200 { ok: true }
 ## Getting a DERIVE_TOKEN for direct API calls
 
 Use an agent's key (`dk_agt_...`). The `agents` tool returns it once when it creates the
-agent; a workspace owner can replace it on the agent's Settings tab in Derive. Use it as `Authorization: Bearer $DERIVE_TOKEN` in direct API requests. Remote MCP clients
+agent; its creator or a workspace owner can replace it on the agent's Settings tab in Derive. Use it as `Authorization: Bearer $DERIVE_TOKEN` in direct API requests. Remote MCP clients
 should use OAuth instead of a pasted static token.
