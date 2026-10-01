@@ -12,7 +12,8 @@ import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
 import { describe, expect, it } from "vitest"
 import { loadJobRunnerConfig } from "../src/job-runner.js"
-import { OUTPUT_CONTRACT, parseAnswer, resolveArtifactHtml, runClaude } from "../src/runner.js"
+import { claudeCode } from "../src/providers/claude-code.js"
+import { OUTPUT_CONTRACT, parseAnswer, resolveArtifactHtml, runAgent } from "../src/runner.js"
 import { materializeSkills, skillDigest, skillSlug, writeSkill } from "../src/skills.js"
 
 describe("parseAnswer", () => {
@@ -123,7 +124,7 @@ describe("artifact file channel", () => {
   })
 })
 
-describe("runClaude transient-failure retry", () => {
+describe("runAgent transient-failure retry (Claude Code)", () => {
   /** A stub `claude` that records each invocation's argv and replays canned
    *  stream-json. `script` is sh run per invocation with $n = attempt number. */
   const fakeClaude = (body) => {
@@ -173,7 +174,7 @@ if [ "$n" = 1 ]; then
 fi
 echo '{"type":"result","result":"<answer>{\\"body_md\\":\\"32%\\"}</answer>"}'
 `)
-    const out = await runClaude(opts(fake.bin))
+    const out = await runAgent(claudeCode, opts(fake.bin))
     expect(out.ok).toBe(true)
     expect(out.answer.body_md).toBe("32%")
     expect(fake.attempts()).toBe(2)
@@ -187,21 +188,21 @@ echo '{"type":"result","result":"<answer>{\\"body_md\\":\\"32%\\"}</answer>"}'
     const fake = fakeClaude(
       apiError(404, "There is an issue with the selected model (bogus-model-xyz)."),
     )
-    const out = await runClaude(opts(fake.bin))
+    const out = await runAgent(claudeCode, opts(fake.bin))
     expect(out.ok).toBe(false)
     expect(out.error).toMatch(/selected model/)
     expect(fake.attempts()).toBe(1) // no sleep, no second spawn
   }, 30_000)
 
   it("does NOT retry a spawn failure — a missing binary is not a busy service", async () => {
-    const out = await runClaude(opts("/nonexistent/claude"))
+    const out = await runAgent(claudeCode, opts("/nonexistent/claude"))
     expect(out.ok).toBe(false)
     expect(out.error).toMatch(/ENOENT/)
   }, 30_000)
 
   it("an error run is never salvaged — the asker must not get 'API Error: 529' as an answer", async () => {
     const fake = fakeClaude(apiError(529, "API Error: 529 Overloaded"))
-    const out = await runClaude(opts(fake.bin))
+    const out = await runAgent(claudeCode, opts(fake.bin))
     expect(out.ok).toBe(false)
     expect(out.error).toContain("529")
     expect(fake.attempts()).toBe(2) // bounded at one retry
@@ -212,7 +213,7 @@ echo '{"type":"result","result":"<answer>{\\"body_md\\":\\"32%\\"}</answer>"}'
 echo '{"type":"result","result":"<answer>{\\"body_md\\":\\"the work got done\\"}</answer>"}'
 exit 1
 `)
-    const out = await runClaude(opts(fake.bin))
+    const out = await runAgent(claudeCode, opts(fake.bin))
     expect(out.ok).toBe(true)
     expect(out.answer.body_md).toBe("the work got done")
   }, 30_000)
@@ -222,7 +223,7 @@ exit 1
     // it the signal killed `sh` and the orphaned `sleep` kept stdout open, so the run only
     // ended when sleep did — ten seconds for a test about a half-second timeout.
     const fake = fakeClaude(`exec sleep 10`)
-    const out = await runClaude({ ...opts(fake.bin), timeoutMs: 500 })
+    const out = await runAgent(claudeCode, { ...opts(fake.bin), timeoutMs: 500 })
     expect(out.ok).toBe(false)
     expect(out.error).toBe("timed out")
     expect(fake.attempts()).toBe(1)
@@ -239,7 +240,7 @@ if [ "$n" = 1 ]; then
 fi
 echo '{"type":"result","result":"<answer>{\\"body_md\\":\\"ok\\"}</answer>"}'
 `)
-    await runClaude(opts(fake.bin))
+    await runAgent(claudeCode, opts(fake.bin))
     expect(fake.args(2)).toContain("--resume")
     expect(fake.args(2)).toContain("--append-system-prompt")
     expect(fake.args(2)).toContain("you are a runner") // the manifest
@@ -251,7 +252,7 @@ echo '{"type":"result","result":"<answer>{\\"body_md\\":\\"ok\\"}</answer>"}'
 echo '{"type":"system","session_id":"sess-x"}'
 echo '{"type":"result","result":"prose, no block"}'
 `)
-    await runClaude(opts(fake.bin))
+    await runAgent(claudeCode, opts(fake.bin))
     expect(fake.args(2)).toContain("--resume")
     expect(fake.args(2)).toContain("--append-system-prompt")
   }, 30_000)
@@ -261,7 +262,7 @@ echo '{"type":"result","result":"prose, no block"}'
 if [ "$n" = 1 ]; then exit 1; fi
 echo '{"type":"result","result":"<answer>{\\"body_md\\":\\"ok\\"}</answer>"}'
 `)
-    const out = await runClaude(opts(fake.bin))
+    const out = await runAgent(claudeCode, opts(fake.bin))
     expect(out.ok).toBe(true)
     expect(fake.args(2)).not.toContain("--resume")
     expect(fake.args(2)).toContain("how many orgs?")
@@ -272,7 +273,7 @@ echo '{"type":"result","result":"<answer>{\\"body_md\\":\\"ok\\"}</answer>"}'
 echo '{"type":"system","session_id":"sess-x"}'
 echo '{"type":"result","result":"here is prose but no block"}'
 `)
-    const out = await runClaude(opts(fake.bin))
+    const out = await runAgent(claudeCode, opts(fake.bin))
     expect(out.ok).toBe(true) // salvaged
     expect(out.answer.body_md).toBe("here is prose but no block")
     expect(fake.attempts()).toBe(2) // the original run + the nudge, not a retry

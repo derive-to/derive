@@ -44,7 +44,6 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 | `/welcome` | How to connect an agent over MCP, and how to publish from the CLI. Reachable any time. |
 | `/artifacts/{short_id}` | One document: read it, comment, share, see versions. |
 | `/users/{handle}` | Someone's public profile and their public work. |
-| `/roadmap` | What is shipped and what is coming. |
 | `/settings` | Everything below. |
 
 ## Settings
@@ -54,19 +53,18 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 | `/settings/profile` | Their name, handle, avatar. |
 | `/settings/security` | Password and sessions. |
 | `/settings/notifications` | Slack DMs, account linking, and what opens automatically for you. |
-| `/settings/accounts` | Claude and Codex accounts agents call a model with: yours, and the workspace's shared ones. Paste a key to connect one; disconnect it here. Only an Admin adds a shared one. |
+| `/settings/accounts` | Model accounts: the Claude and Codex accounts agents call a model with: yours, and the workspace's shared ones. Paste a key to connect one; disconnect it here. Only an Admin adds a shared one. |
 | `/settings/appearance` | Theme. |
-| `/settings/general` | Workspace name and its defaults. |
-| `/settings/machines` | Where agents run: each person's machine running a runner, when it last checked in, and the command that starts a runner. |
+| `/settings/general` | Workspace name, its sharing defaults, and the "Agents can write" switch (Admin only): off, agents stop writing and their jobs wait. |
 | `/settings/members` | Invite people, change roles, remove them. Admin only. |
 | `/people` | The workspace people directory. |
 | `/settings/billing` | Plan, seats, invoices. Admin only. |
+| `/settings/machines` | Where agents run: each person's machine running a runner, when it last checked in, and the command that starts a runner. |
+| `/settings/sources` | What agents can reach. Connected tools: add an MCP server so an agent can read from it. Secrets: named personal or workspace values (database passwords, API keys) an agent reads as environment variables; add, replace or revoke them. Values are write-only. |
 | `/settings/integrations` | Connect Slack and GitHub; manage workspace email notifications. |
-| `/settings/credentials` | Named personal or workspace secrets (database passwords, API keys) an agent reads as environment variables. Add, replace or revoke values. Values are write-only. |
-| `/settings/sources` | Connect an MCP server so an agent can read from it. |
-| `/settings/brandprint` | The workspace's brand: what published pages look like. |
 | `/settings/webhooks` | Send Derive events to a URL. |
 | `/settings/domains` | Serve published pages on a custom domain. |
+| `/settings/brandprint` | The workspace's brand: what published pages look like. |
 | `/settings/reports` | Content reports, when there are open ones. Admin only. |
 
 ## Who can do what

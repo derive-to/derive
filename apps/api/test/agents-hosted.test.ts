@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
-// Hosted agents, first slice: the `hosted` flag on agent records, the
-// Admin-only toggle, and the workspace agent settings (the master switch,
-// the agent-write switch, default agent). Hosting changes where an agent
-// runs — these tests pin that it changes nothing about identity or caps.
-describe("hostable agents + workspace agent settings", () => {
+// Who may edit an agent, and the workspace agent settings (the agent-write switch, default
+// agent): none of them change an agent's identity or caps.
+describe("agent management + workspace agent settings", () => {
   const owner: TestUser = { id: "u_ha_own", email: "haown@derive.test", name: "Owner" }
   const member: TestUser = { id: "u_ha_mem", email: "hamem@derive.test", name: "Member" }
   const { app, meta } = makeAuthedApp("agents-hosted", [owner, member], "commenter")
@@ -13,21 +11,21 @@ describe("hostable agents + workspace agent settings", () => {
   const createAgent = async (name: string, role?: string) => {
     const res = await app.request("/v1/agents", jsonAs(as(owner.email), { name, role }))
     expect(res.status).toBe(201)
-    return (await res.json()) as { id: string; hosted: boolean; role: string; token: string }
+    return (await res.json()) as { id: string; role: string; token: string }
   }
 
-  it("the toggle is for the agent's manager and workspace-scoped", async () => {
+  it("editing is for the agent's manager and workspace-scoped", async () => {
     const created = await createAgent("Scoped")
     // A member who neither made the agent nor owns the workspace can't manage it, and gets
     // the same answer as for an agent that isn't there.
     const denied = await app.request(`/v1/agents/${created.id}`, {
-      ...jsonAs(as(member.email), { hosted: true }),
+      ...jsonAs(as(member.email), { description: "mine now" }),
       method: "PATCH",
     })
     expect(denied.status).toBe(404)
     // An unknown id in this workspace is a 404, not a cross-tenant write.
     const missing = await app.request("/v1/agents/ag_not_here", {
-      ...jsonAs(as(owner.email), { hosted: true }),
+      ...jsonAs(as(owner.email), { description: "nobody" }),
       method: "PATCH",
     })
     expect(missing.status).toBe(404)

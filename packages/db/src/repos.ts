@@ -172,7 +172,7 @@ import {
   sql,
 } from "drizzle-orm"
 import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core"
-import { agentModelRepos } from "./agent-model-repos"
+import { agentModelRepos, skillJobUsage } from "./agent-model-repos"
 import {
   DYNAMIC_STATE_PREFIX,
   dynamicRecord,
@@ -1219,21 +1219,6 @@ export function makeRepos(db: SqliteDb) {
           eq(version.artifact_id, artifactId),
           eq(version.n, expected.n),
           eq(version.blob_key, expected.blobKey),
-          notExists(
-            db
-              .select({ id: workflowArtifactActivity.id })
-              .from(workflowArtifactActivity)
-              .where(
-                and(
-                  eq(
-                    workflowArtifactActivity.artifact_short_id,
-                    sql`(select short_id from artifact where id = ${artifactId})`,
-                  ),
-                  eq(workflowArtifactActivity.artifact_version, expected.n),
-                  eq(workflowArtifactActivity.source, "observed"),
-                ),
-              ),
-          ),
         ),
       )
       .returning()
@@ -4155,47 +4140,6 @@ export function makeRepos(db: SqliteDb) {
     (await db.insert(contextSession).values(s).returning().get()) as SessionRecord
   const getSession = async (id: string): Promise<SessionRecord | null> =>
     (await db.select().from(contextSession).where(eq(contextSession.id, id)).get()) ?? null
-  const listChatSessions = async (
-    orgId: string,
-    askerId: string,
-    limit?: number,
-  ): Promise<SessionRecord[]> =>
-    db
-      .select()
-      .from(contextSession)
-      .where(
-        and(
-          eq(contextSession.org_id, orgId),
-          eq(contextSession.asker_id, askerId),
-          isNull(contextSession.context_id),
-        ),
-      )
-      .orderBy(desc(contextSession.created_at))
-      .limit(limit ?? 50)
-      .all()
-  // Append an asker follow-up and reopen the session in ONE atomic compare-and-set: a
-  // `working` session STAYS working (don't vacate the active claim), while a settled or open
-  // one goes to `open` (reclaimable), dropping the dedupe key on the settled path so it can't
-  // collide with a newer same-key session. The CASE reads the row's live state inside the
-  // update, so a settle racing the reopen can't strand the session `working` with no runner.
-  const appendFollowupReopen = async (m: NewSessionMessage): Promise<SessionMessageRecord> => {
-    const row = (await db
-      .insert(sessionMessage)
-      .values(m)
-      .returning()
-      .get()) as SessionMessageRecord
-    const now = new Date().toISOString()
-    await db
-      .update(contextSession)
-      .set({
-        state: sql`CASE WHEN ${contextSession.state} = 'working' THEN 'working' ELSE 'open' END`,
-        dedupe_key: sql`CASE WHEN ${contextSession.state} IN ('answered', 'escalated', 'failed') THEN NULL ELSE ${contextSession.dedupe_key} END`,
-        updated_at: now,
-      })
-      .where(eq(contextSession.id, m.session_id))
-      .run()
-    return row
-  }
   // Two writes, no transaction (the createReviewRound pattern; D1 has no txn in
   // this driver). A crash between them leaves state stale: an unsettled agent
   // turn is caught by the runner's last-turn guard; a lost asker `open` waits
@@ -4222,26 +4166,6 @@ export function makeRepos(db: SqliteDb) {
       .from(sessionMessage)
       .where(eq(sessionMessage.session_id, sessionId))
       .orderBy(asc(sessionMessage.created_at))
-      .all()
-  /**
-   * The most recent AGENT answers across every session, newest first. Unscoped by design (see
-   * the port): it answers a question about the DEPLOY, and the route that calls it is
-   * operator-only. `desc(created_at)` rides the `session_message_recent` index.
-   */
-  const listRecentAgentMessages = async (
-    limit: number,
-  ): Promise<Pick<SessionMessageRecord, "session_id" | "author_kind" | "created_at" | "meta">[]> =>
-    db
-      .select({
-        session_id: sessionMessage.session_id,
-        author_kind: sessionMessage.author_kind,
-        created_at: sessionMessage.created_at,
-        meta: sessionMessage.meta,
-      })
-      .from(sessionMessage)
-      .where(eq(sessionMessage.author_kind, "agent"))
-      .orderBy(desc(sessionMessage.created_at))
-      .limit(limit)
       .all()
 
   // ---- Notifications -----------------------------------------------------
@@ -4295,18 +4219,6 @@ export function makeRepos(db: SqliteDb) {
       .get()) as AgentRecord | undefined) ?? null
   const listAgents = async (orgId: string): Promise<AgentRecord[]> =>
     db.select().from(agent).where(eq(agent.org_id, orgId)).all()
-  const setAgentHosted = async (
-    id: string,
-    orgId: string,
-    hosted: 0 | 1,
-  ): Promise<AgentRecord | null> =>
-    (await db
-      .update(agent)
-      .set({ hosted })
-      .where(and(eq(agent.id, id), eq(agent.org_id, orgId)))
-      .returning()
-      .get()) ?? null
-
   const recordArtifactScanEvent = async (
     event: NewArtifactScanEvent,
   ): Promise<ArtifactScanEventRecord> => {
@@ -4609,58 +4521,9 @@ export function makeRepos(db: SqliteDb) {
   const skillUsage = async (
     skillArtifactId: string,
     orgId: string,
-  ): Promise<{ contexts: SkillUsageBucket[]; workflows: SkillUsageBucket[] }> => {
-    const contextRows = await db
-      .select({
-        skill_version: contextSession.context_version,
-        count: count(),
-        last_used_at: max(contextSession.created_at),
-      })
-      .from(contextSession)
-      .innerJoin(context, eq(context.id, contextSession.context_id))
-      .where(and(eq(context.org_id, orgId), eq(context.manifest_artifact_id, skillArtifactId)))
-      .groupBy(contextSession.context_version)
-      .orderBy(desc(contextSession.context_version))
-      .all()
-    const workflowRows = await db
-      .select({
-        skill_version: artifactSkillLink.skill_version,
-        count: count(),
-        last_used_at: max(workflowRun.created_at),
-      })
-      .from(workflowRun)
-      .innerJoin(
-        artifactSkillLink,
-        and(
-          eq(artifactSkillLink.artifact_id, workflowRun.workflow_artifact_id),
-          eq(artifactSkillLink.artifact_version, workflowRun.workflow_version),
-        ),
-      )
-      .where(
-        and(
-          eq(workflowRun.org_id, orgId),
-          eq(artifactSkillLink.org_id, orgId),
-          eq(artifactSkillLink.skill_artifact_id, skillArtifactId),
-          eq(artifactSkillLink.role, "workflow-definition"),
-        ),
-      )
-      .groupBy(artifactSkillLink.skill_version)
-      .orderBy(desc(artifactSkillLink.skill_version))
-      .all()
-    const buckets = (rows: typeof contextRows): SkillUsageBucket[] =>
-      rows.flatMap((row) =>
-        row.last_used_at && row.skill_version !== null
-          ? [
-              {
-                skill_version: row.skill_version,
-                count: Number(row.count),
-                last_used_at: row.last_used_at,
-              },
-            ]
-          : [],
-      )
-    return { contexts: buckets(contextRows), workflows: buckets(workflowRows) }
-  }
+  ): Promise<{ runs: SkillUsageBucket[] }> => ({
+    runs: await skillJobUsage(async (statement) => await db.all(statement), skillArtifactId, orgId),
+  })
   const createPlan = async (p: NewPlan): Promise<PlanRecord> =>
     (await db.insert(plan).values(p).returning().get()) as PlanRecord
   const getPlan = async (id: string): Promise<PlanRecord | null> =>
@@ -5748,11 +5611,8 @@ export function makeRepos(db: SqliteDb) {
     getContextAsker,
     createSessionWithMessage,
     getSession,
-    listChatSessions,
-    appendFollowupReopen,
     addSessionMessage,
     listSessionMessages,
-    listRecentAgentMessages,
     createNotification,
     createNotifications,
     listNotifications,
@@ -5761,7 +5621,6 @@ export function makeRepos(db: SqliteDb) {
     createAgent,
     rotateAgentToken,
     listAgents,
-    setAgentHosted,
     getAgent,
     recordArtifactScanEvent,
     listArtifactScanEvents,

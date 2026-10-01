@@ -36,7 +36,7 @@ export const OrgSettings = z
     agentWrites: z
       .boolean()
       .describe(
-        "The one agent-write switch, on by default. Off: hosted runs and asks are not materialized, dispatched, or claimed, chat's publish tool refuses (the draft surfaces in the reply), and any agent-credentialed publish is refused at the API.",
+        "The one agent-write switch, on by default. Off: agent jobs are not dispatched or claimed, @Derive's publish tool refuses (the draft surfaces in the reply), and any agent-credentialed publish is refused at the API.",
       ),
     defaultAgentId: z
       .string()

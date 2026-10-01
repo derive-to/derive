@@ -266,7 +266,7 @@ export function registerReadTool(tc: ToolContext): void {
     "read",
     {
       description:
-        "Read an artifact. Small docs return whole; large docs return an outline. `focus` returns matching parts in one call. `map` then `node` addresses one part. format:'html' gives exact source for publish edits. Also reads contexts and derive:// URIs. Chains: `derive_code`. See derive://skills/finding.",
+        "Read an artifact. Small docs return whole; large docs return an outline. `focus` returns matching parts in one call. `map` then `node` addresses one part. format:'html' gives exact source for publish edits. Also reads imported papers and derive:// URIs. Chains: `derive_code`. See derive://skills/finding.",
       // readOnlyHint stays true despite two incidental write paths below (the lazy
       // derived-fact backfill and the render self-heal re-queue): both are deterministic
       // recomputations/cache-fills of already-published bytes — the class of side effect
@@ -394,7 +394,7 @@ export function registerReadTool(tc: ToolContext): void {
             return json({
               uri: short_id,
               sources: [],
-              note: "No connected sources are available to chat here. An admin declares them in workspace settings; connecting a server does not by itself expose it to a conversation.",
+              note: "No connected sources are available to @Derive here. An admin declares them in workspace settings; connecting a server does not by itself expose it to a conversation.",
             })
           return json({
             uri: short_id,
@@ -416,7 +416,7 @@ export function registerReadTool(tc: ToolContext): void {
         )
         if (tools.length === 0)
           return err(
-            `No source "${id}" is available to chat here. Read derive://sources for the ones that are.`,
+            `No source "${id}" is available to @Derive here. Read derive://sources for the ones that are.`,
           )
         return json({
           uri: short_id,

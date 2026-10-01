@@ -2107,7 +2107,7 @@ describe("Skills product surface", () => {
         role: "created",
       }),
     )
-    expect(usage).toMatchObject({ contexts: [], workflows: [] })
+    expect(usage).toMatchObject({ runs: [] })
   })
 
   it("counts one local Skill use and updates its usefulness without double counting", async () => {

@@ -16,3 +16,9 @@ export const SECTION_ALIASES: Record<string, string> = {
   // connection surface instead of exposing a retired standalone page.
   github: "integrations",
 }
+
+/** Aliases that land on one group of a section, not its top: the target section plus the
+ *  group's anchor. Credentials became the Secrets group of Sources. */
+export const SECTION_ANCHORS: Record<string, { section: string; hash: string }> = {
+  credentials: { section: "sources", hash: "secrets" },
+}

@@ -6,7 +6,6 @@ import {
   queryOptions,
 } from "@tanstack/react-query"
 import { API_BASE, type Artifact, api } from "@/api"
-import { isTransient } from "./query-client"
 
 // The signed-in user (or null for an anon visitor). One key read by the thin
 // AuthProvider (useQuery) AND the route guards (ensureQueryData) — they dedupe
@@ -181,12 +180,6 @@ export const skillUsageQuery = (shortId: string) =>
     refetchOnWindowFocus: "always",
   })
 
-export const artifactSkillsQuery = (shortId: string) =>
-  queryOptions({
-    queryKey: ["artifacts", shortId, "skills"] as const,
-    queryFn: () => api.artifactSkills(shortId),
-  })
-
 // The caller's personal connections, shown in Sources settings.
 export const connectionsQuery = () =>
   queryOptions({
@@ -194,12 +187,12 @@ export const connectionsQuery = () =>
     queryFn: () => api.connections(),
   })
 
-/** Every connection an owner may bind to an automation, including workspace GitHub Apps.
+/** Every connection an owner may give an agent, including workspace GitHub Apps.
  *  Keep this under the `connections` key so integration changes invalidate both views. */
-export const automationConnectionsQuery = () =>
+export const agentConnectionsQuery = () =>
   queryOptions({
-    queryKey: ["connections", "automation"] as const,
-    queryFn: () => api.automationConnections(),
+    queryKey: ["connections", "agent"] as const,
+    queryFn: () => api.agentConnections(),
   })
 
 // A small, flat slice of the Following feed — recent work from the people you follow —
@@ -273,16 +266,6 @@ export const peopleQuery = (query: string) =>
     // through a spread collapses the data type into a union with the placeholder fn.
     queryFn: ({ signal }: { signal: AbortSignal }) =>
       api.people(query || undefined, { signal }).then((r) => r.users),
-    placeholderData: keepPreviousData,
-  })
-
-// Doc search for the automation-target picker: title search over the workspace's
-// artifacts, small page, previous results held while typing so the list never
-// flashes empty mid-keystroke.
-export const targetPickerQuery = (q: string) =>
-  queryOptions({
-    queryKey: ["artifacts", "target-picker", q] as const,
-    queryFn: ({ signal }) => api.listArtifacts({ q: q.trim() || undefined, limit: 8 }, { signal }),
     placeholderData: keepPreviousData,
   })
 
@@ -483,17 +466,6 @@ export const modelLibraryQuery = () =>
     retry: false,
   })
 
-/** Whether the signed-in person is an INSTANCE operator (super-admin), by asking for something
- *  only an operator may read. Errors for everyone else, which is the signal; `retry: false` so a
- *  normal member's 403 costs one request and not four. */
-export const operatorQuery = () =>
-  queryOptions({
-    queryKey: ["system-capabilities"] as const,
-    queryFn: () => api.systemCapabilities(),
-    retry: false,
-    staleTime: 5 * 60_000,
-  })
-
 export const workspaceSettingsQuery = () =>
   queryOptions({
     queryKey: ["workspace-settings"] as const,
@@ -690,7 +662,7 @@ export const contextAnalysisQuery = (id: string) =>
     queryFn: () => api.getContextAnalysis(id),
   })
 
-// Named secrets, write-only: what Settings › Credentials lists, and where each is used.
+// Named secrets, write-only: what Settings › Sources › Secrets lists, and where each is used.
 export const credentialsQuery = () =>
   queryOptions({
     queryKey: ["credentials"] as const,
@@ -745,8 +717,6 @@ export const artifactAgentsQuery = (shortId: string) =>
         .users(undefined, shortId)
         .then((r) => r.users.filter((u) => u.kind === "agent" && u.name)),
   })
-
-// ---- Contexts + sessions ------------------------------------------------------
 
 // Open abuse reports for the active workspace — drives the owner-only Moderation
 // nav item's visibility + the Reports section. Invalidated after a takedown / dismiss.

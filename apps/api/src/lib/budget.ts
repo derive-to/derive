@@ -11,7 +11,7 @@ const monthStartIso = (): string => {
  * monthly limit AND this org's job spend this month has reached it. A missing plan or a plan
  * with no limit is NOT over budget here — a missing meter is the loud failure at execution
  * time (when a model key is actually needed), not at enqueue. `ownerUserId` is the person the
- * run bills to: the verb/automation owner (null → the workspace pool).
+ * work bills to: the job's payer_id (null → the workspace pool).
  *
  * Jobs record `cost_micro_usd` when the selected provider exposes dollar cost. Some
  * subscription-backed CLIs (including Codex) expose token usage but no dollar amount, so their

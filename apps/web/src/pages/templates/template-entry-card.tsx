@@ -23,7 +23,7 @@ export function TemplateEntryCard({
       <CardHeader>
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
           <Badge variant="outline" shape="pill">
-            {entry.kind === "context" ? "Context" : entry.category}
+            {entry.kind === "context" ? "Agent" : entry.category}
           </Badge>
           <Badge variant="outline" shape="pill">
             Source v{entry.source_version}

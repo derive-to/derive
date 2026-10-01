@@ -8,7 +8,7 @@ describe("oauth consent screen", () => {
       scopes: ["openid", "derive:manage"],
       query: "",
     })
-    expect(managed).toContain("Manage agents and contexts")
+    expect(managed).toContain("Manage agents (only as far as your workspace role allows)")
     expect(managed).toContain("only as far as your workspace role allows")
   })
 

@@ -152,7 +152,7 @@ export const mcpOauthRoutes = (ctx: AppContext) => {
     // WHO MAY START ONE, which is not the same question as who may read the list.
     //
     // Workspace: admin-managed, the same rule revoke applies even to whoever added it. Finishing
-    // this flow installs a grant into a source EVERY automation in the org can spend, so "read"
+    // this flow installs a grant into a source EVERY agent in the org can spend, so "read"
     // was the wrong gate — it let any member attach their own access to shared infrastructure.
     //
     // Personal: its OWNER only, and deliberately stricter than revoke, which a manager may do for

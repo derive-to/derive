@@ -12,6 +12,25 @@ import { type Auth, oauthIssuerFor } from "../auth-config"
 import { clientName } from "./client-names"
 import { sha256 } from "./crypto"
 
+/** The synthetic agent an OAuth client (or a token minted from its grant) acts as: one shape,
+ *  built in one place, for every bearer that resolves through a grant. `role` must already be
+ *  capped by the granting user's membership in `orgId`. */
+export const oauthClientAgent = (p: {
+  clientId: string
+  orgId: string
+  name: string
+  role: Role
+  userId: string
+}): AgentRecord =>
+  syntheticAgent({
+    id: `oauth:${p.clientId}`,
+    org_id: p.orgId,
+    name: p.name,
+    role: p.role,
+    created_by: p.userId,
+    created_at: new Date().toISOString(),
+  })
+
 /** What a valid OAuth access token resolves to: the synthetic agent record (a workspace
  *  principal) plus the id of the user who granted the consent. `rec.role` is already
  *  capped by the owner's membership role in `rec.org_id`; `scopeRole` keeps the uncapped
@@ -154,16 +173,15 @@ export function makeOauthAgent({
         boundWorkspaces: ws.bound,
         orgContext: joined?.orgContext,
         workspaces: ws.mine,
-        rec: syntheticAgent({
-          id: `oauth:${grant.clientId}`,
-          org_id: ws.org,
+        rec: oauthClientAgent({
+          clientId: grant.clientId,
+          orgId: ws.org,
           name: grant.clientName,
           // Scopes suggest the role; the owner's membership in the resolved
           // workspace is the ceiling (a publish scope is not an editorship in a
           // workspace where the granting user is only a viewer).
           role: capRole(scopeRole, ws.memberRole),
-          created_by: grant.userId,
-          created_at: new Date().toISOString(),
+          userId: grant.userId,
         }),
       }
     }
@@ -217,13 +235,12 @@ export function makeOauthAgent({
       clientId,
       boundWorkspaces: ws.bound,
       workspaces: ws.mine,
-      rec: syntheticAgent({
-        id: `oauth:${clientId}`,
-        org_id: ws.org,
+      rec: oauthClientAgent({
+        clientId,
+        orgId: ws.org,
         name: (await clientName(meta, clientId)) || clientId || "An agent",
         role: capRole(scopeRole, ws.memberRole),
-        created_by: userId,
-        created_at: new Date().toISOString(),
+        userId,
       }),
     }
   }

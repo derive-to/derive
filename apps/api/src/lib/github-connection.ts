@@ -26,7 +26,7 @@ const inputFor = (input: {
 
 /**
  * One stable workspace connection per GitHub installation. Existing random-id rows from the
- * old manual connection path are reactivated in place so contexts keep their bindings.
+ * old manual connection path are reactivated in place so agents keep their bindings.
  * Fresh rows use a deterministic id; simultaneous callback replays race on that primary key,
  * then the loser reads the winner instead of creating a duplicate.
  */

@@ -79,8 +79,8 @@ export function registerCallTool(tc: ToolContext): void {
       if (allowed.length === 0) {
         return err(
           bound.length === 0
-            ? "No connected sources are available to chat in this workspace. An admin declares them in settings; connecting a server does not by itself expose it here."
-            : `Source "${a.source}" is not available to chat here. Available: ${bound.map((b) => `${b.toolkit} (${b.id})`).join(", ")}.`,
+            ? "No connected sources are available to @Derive in this workspace. An admin declares them in settings; connecting a server does not by itself expose it here."
+            : `Source "${a.source}" is not available to @Derive here. Available: ${bound.map((b) => `${b.toolkit} (${b.id})`).join(", ")}.`,
         )
       }
 

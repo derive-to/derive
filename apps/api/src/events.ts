@@ -37,15 +37,12 @@ const DOMAIN_EVENTS = [
   // wake signal only (the handler re-reads the inbox); not webhook-eligible.
   "request.created",
   // THE AGENT MODEL's wake signals (lib/jobs.ts). `job.queued` lands on the AGENT's `u:<id>`
-  // channel so a runner long-polling `pull` wakes at once; the other three land on the
-  // ASKER's channel so an `ask({wait})` or an open page follows the job. Wakes only, except
-  // `job.delta`, which carries a slice of a reply being streamed (lib/session-stream.ts
-  // coalesces them; a reader replaces on a new `attempt`). Deltas are never the record: the
-  // transcript written when the job settles is. None of these are webhook-eligible.
+  // channel so a runner long-polling `pull` wakes at once; the other two land on the
+  // ASKER's channel so an `ask({wait})` or an open page follows the job. Wakes only, and none
+  // of them is webhook-eligible.
   "job.queued",
   "job.progress",
   "job.settled",
-  "job.delta",
   // A machine took a queued job (queued to running), on the ASKER's channel, so a page that
   // follows it stops saying it waits. A wake only; ask({wait}) does not return on it.
   "job.started",

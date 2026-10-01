@@ -94,7 +94,6 @@ const REG = {
   // The same folder, open: a folder chip whose card is showing.
   "collection-open": FolderOpen,
   repo: FolderGit2,
-  context: Bot,
   workflow: GitFork,
   skill: WandSparkles,
   templates: LayoutTemplate,

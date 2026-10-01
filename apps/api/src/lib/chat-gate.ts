@@ -6,17 +6,12 @@ import type { ModelSource } from "./model-library"
 /**
  * EVERY RUNG A CHAT ARRIVAL WALKS, once.
  *
- * Four surfaces now open a chat turn — the workspace page, the document rail, an @derive
- * mention in a comment, an @Derive mention in Slack — and each has to answer the same five
- * questions before spending anybody's model key: has the workspace opted in, does this deploy
- * let it, is the asker a MEMBER (not merely someone holding a link), are they within their rate,
- * and is the workspace within its budget. Plus the two lookups every lane then needs anyway:
- * the seat, and the model.
- *
- * They were written three times. That is worse than verbose: the comment on the first copy
- * claimed collecting them was what stopped the next arrival inheriting four of the five, and
- * then two more arrivals hand-rolled their own. A rung added here now reaches every lane; a rung
- * added to one copy reaches one.
+ * Two surfaces open an @Derive turn (a mention in a comment, a mention in Slack), and each has
+ * to answer the same five questions before spending anybody's model key: has the workspace
+ * opted in, does this deploy let it, is the asker a MEMBER (not merely someone holding a link),
+ * are they within their rate, and is the workspace within its budget. Plus the two lookups every
+ * lane then needs anyway: the seat, and the model. A rung added here reaches every lane; a rung
+ * added to one copy would reach one.
  *
  * WHAT STAYS PER-LANE is only how a refusal is DELIVERED, because that genuinely differs: an
  * HTTP lane returns a status, a comment mention goes quiet (nobody is waiting on a response),

@@ -4,6 +4,7 @@ import { api, type Connection } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
+import { SectionTitle } from "@/components/shared/section-title"
 import { SettingsEmpty } from "@/components/shared/settings-empty"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { StatusBadge } from "@/components/shared/status-badge"
@@ -14,10 +15,12 @@ import { Input } from "@/components/ui/input"
 import { connectionsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useOneShotParams } from "@/lib/use-one-shot-params"
+import { SecretsGroup } from "./secrets-group"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
-// Sources: connect an MCP server, and an agent working for you can read from it.
+// Sources: what agents can reach. Connected tools (an MCP server an agent working for you can
+// read from) and Secrets (values an agent reads as environment variables).
 //
 // This screen existed once and was REMOVED, because the only broker behind it was a stub whose
 // `execute` returned the caller's own arguments — so it said "Connected" about something that
@@ -53,41 +56,50 @@ export function SourcesSection() {
   return (
     <SettingsSection
       title="Sources"
-      // The second sentence is not decoration: a server that changes its tool list
-      // goes quiet, and the row still reads "Connected" while runs read nothing
-      // from it. This page is the only place that fact is stated.
-      description="Connect an MCP server and your agents can read from it during a run. Its tools are recorded when you connect; if that list changes later, the source goes quiet until you reconnect."
+      description="What your agents can reach: connected tools, and secrets they read as environment variables."
     >
       {justConnected ? (
         <StatusPanel
           tone="success"
           title="Source connected"
-          description="You signed in, and its tools were recorded. Bind it to an automation to let a run read from it."
+          description="You signed in, and its tools were recorded. Give it to an agent to let its jobs read from it."
         />
       ) : null}
 
-      <AddSource onAdded={reload} />
+      <section className="flex flex-col gap-2" data-testid="sources-tools">
+        <SectionTitle>Connected tools</SectionTitle>
+        {/* Not decoration: a server that changes its tool list goes quiet, and the row still
+            reads "Connected" while jobs read nothing from it. This is the only place that
+            fact is stated. */}
+        <p className="text-sm text-pretty text-muted-foreground">
+          Connect an MCP server and your agents can read from it. Its tools are recorded when you
+          connect; if that list changes later, the source goes quiet until you reconnect.
+        </p>
+        <AddSource onAdded={reload} />
 
-      {isPending ? (
-        <SettingsListSkeleton />
-      ) : isError ? (
-        <LoadError
-          title="Couldn’t load your sources"
-          description="This is usually temporary. Your connected sources are unaffected."
-          testId="sources-retry"
-          onRetry={() => refetch()}
-        />
-      ) : sources.length === 0 ? (
-        <SettingsEmpty>
-          No sources connected. Agents can only use information already in Derive.
-        </SettingsEmpty>
-      ) : (
-        <SettingsGroup>
-          {sources.map((c) => (
-            <SourceRow key={c.id} conn={c} onRevoked={reload} />
-          ))}
-        </SettingsGroup>
-      )}
+        {isPending ? (
+          <SettingsListSkeleton />
+        ) : isError ? (
+          <LoadError
+            title="Couldn’t load your sources"
+            description="This is usually temporary. Your connected sources are unaffected."
+            testId="sources-retry"
+            onRetry={() => refetch()}
+          />
+        ) : sources.length === 0 ? (
+          <SettingsEmpty>
+            No sources connected. Agents can only use information already in Derive.
+          </SettingsEmpty>
+        ) : (
+          <SettingsGroup>
+            {sources.map((c) => (
+              <SourceRow key={c.id} conn={c} onRevoked={reload} />
+            ))}
+          </SettingsGroup>
+        )}
+      </section>
+
+      <SecretsGroup />
     </SettingsSection>
   )
 }
@@ -307,7 +319,7 @@ function SourceRow({ conn, onRevoked }: { conn: Connection; onRevoked: () => voi
           open={confirming}
           onOpenChange={setConfirming}
           title={`Disconnect ${conn.toolkit}?`}
-          description="Runs bound to this source stop being able to read from it. Nothing already written changes."
+          description="Agents given this source stop being able to read from it. Nothing already written changes."
           confirmLabel="Disconnect"
           onConfirm={() => {
             revoke.mutate()

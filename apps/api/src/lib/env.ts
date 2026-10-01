@@ -21,6 +21,27 @@ export const workspaceIdsFromEnv = (raw: string | undefined): ReadonlySet<string
       .filter(Boolean),
   )
 
+/** The Derive-machine (Ortam) runtime config, or undefined when no runner path is set. One
+ *  builder for the Node entry and both Worker uses (the app and the scheduled tick). */
+export const ortamRuntimeFromEnv = (env: {
+  DERIVE_ORTAM_RUNNER_PATH?: string
+  DERIVE_ORTAM_API_URL?: string
+  DERIVE_ORTAM_INTEGRATION_KEY?: string
+  DERIVE_MANAGED_RUNS_ALLOWLIST?: string
+}) =>
+  env.DERIVE_ORTAM_RUNNER_PATH
+    ? {
+        runnerPath: env.DERIVE_ORTAM_RUNNER_PATH,
+        apiUrl: env.DERIVE_ORTAM_API_URL ?? "https://api.ortam.dev/v1",
+        managed: env.DERIVE_ORTAM_INTEGRATION_KEY
+          ? {
+              apiKey: env.DERIVE_ORTAM_INTEGRATION_KEY,
+              workspaceIds: workspaceIdsFromEnv(env.DERIVE_MANAGED_RUNS_ALLOWLIST),
+            }
+          : undefined,
+      }
+    : undefined
+
 /** The Slack App credentials — only when all three are set (else Slack stays off). */
 export const slackFromEnv = (env: {
   SLACK_CLIENT_ID?: string

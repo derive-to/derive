@@ -1,80 +1,99 @@
 import { useQuery } from "@tanstack/react-query"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { api, type Credential } from "@/api"
 import { CredentialForm, credentialInvalidations } from "@/components/credentials/credential-form"
+import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
+import { SettingsEmpty } from "@/components/shared/settings-empty"
+import { SettingsGroup } from "@/components/shared/settings-group"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { credentialsQuery, credentialUsageQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
-import { SettingsSection } from "./settings-section"
+import { SettingsListSkeleton } from "./settings-list-skeleton"
 
-export function CredentialsSection() {
+/** Settings › Sources › Secrets: database passwords, API keys and other values agents read as
+ *  environment variables. Values are write-only: add, replace, or revoke, and see where each is
+ *  used. `/settings/credentials` lands here (#secrets). */
+export function SecretsGroup() {
   const credentials = useQuery(credentialsQuery())
   const [creating, setCreating] = useState(false)
   // Keep the version the user chose; a background refresh must not silently approve a newer value.
   const [selected, setSelected] = useState<Credential | null>(null)
+  const ref = useRef<HTMLDivElement>(null)
+  const loaded = !!credentials.data
+  // An old /settings/credentials link arrives as #secrets: bring the group into view once it
+  // has its rows, so the page does not jump after they load.
+  useEffect(() => {
+    if (loaded && window.location.hash === "#secrets") ref.current?.scrollIntoView()
+  }, [loaded])
   return (
-    <SettingsSection
-      title="Credentials"
-      description="Save database passwords, API keys and other secrets your agents read as environment variables. Model accounts live in Accounts."
-    >
-      <div className="flex flex-col gap-4">
+    <div id="secrets" ref={ref}>
+      <SettingsGroup
+        title="Secrets"
+        description="Values your agents read as environment variables. Write-only: once saved, a value is never shown again."
+        action={
+          credentials.data ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              data-testid="credentials-add"
+              onClick={() => setCreating(true)}
+            >
+              Add secret
+            </Button>
+          ) : undefined
+        }
+      >
         {credentials.isError ? (
           <LoadError
-            title="Couldn’t load credentials"
+            title="Couldn’t load secrets"
             testId="credentials-retry"
             onRetry={() => void credentials.refetch()}
           />
         ) : !credentials.data ? (
-          <p className="text-sm text-muted-foreground">Loading credentials…</p>
+          <SettingsListSkeleton />
+        ) : credentials.data.items.length === 0 ? (
+          <SettingsEmpty>No secrets saved.</SettingsEmpty>
         ) : (
-          <>
-            <Button
-              data-testid="credentials-add"
-              className="self-start"
-              onClick={() => setCreating(true)}
-            >
-              Add credential
-            </Button>
-            {credentials.data.items.length === 0 && (
-              <p className="text-sm text-muted-foreground">No credentials yet.</p>
-            )}
-            {credentials.data.items.map((credential) => (
-              <div
-                key={credential.id}
-                className="flex items-center justify-between gap-3 rounded-lg border p-4"
-              >
-                <div className="min-w-0">
-                  <p className="break-words text-sm font-medium">{credential.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {credential.scope === "personal" ? "Personal · you" : "Workspace"} ·{" "}
-                    {credential.status === "active"
-                      ? "Not checked"
-                      : credential.status === "revoked"
-                        ? "Revoked"
-                        : "Pending"}
-                  </p>
-                </div>
-                {credential.can_manage && (
+          credentials.data.items.map((credential) => (
+            <ListRow
+              key={credential.id}
+              data-testid={`credential-row-${credential.id}`}
+              title={credential.name}
+              meta={
+                // Silence for the default: an active secret says only whose it is.
+                [
+                  credential.scope === "personal" ? "Personal" : "Workspace",
+                  credential.status === "revoked"
+                    ? "Revoked"
+                    : credential.status === "pending"
+                      ? "Pending"
+                      : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
+              }
+              actions={
+                credential.can_manage ? (
                   <Button
-                    variant="outline"
+                    variant="ghost"
                     size="sm"
                     data-testid={`credential-manage-${credential.id}`}
                     onClick={() => setSelected(credential)}
                   >
                     Manage
                   </Button>
-                )}
-              </div>
-            ))}
-          </>
+                ) : undefined
+              }
+            />
+          ))
         )}
-      </div>
+      </SettingsGroup>
       <Dialog open={creating} onOpenChange={setCreating}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add credential</DialogTitle>
+            <DialogTitle>Add secret</DialogTitle>
           </DialogHeader>
           {creating && (
             <CredentialForm
@@ -104,7 +123,7 @@ export function CredentialsSection() {
           )}
         </DialogContent>
       </Dialog>
-    </SettingsSection>
+    </div>
   )
 }
 
@@ -121,12 +140,12 @@ function CredentialDetails({
     mutationFn: () => api.revokeConnection(credential.id),
     invalidate: credentialInvalidations,
     onSuccess: onClose,
-    success: "Credential revoked",
+    success: "Secret revoked",
   })
   return (
     <div className="flex flex-col gap-4">
       <p className="text-sm text-muted-foreground">
-        {credential.scope === "personal" ? "Personal credential" : "Workspace credential"} · Added{" "}
+        {credential.scope === "personal" ? "Personal secret" : "Workspace secret"} · Added{" "}
         {new Date(credential.created_at).toLocaleDateString()}
       </p>
       {usage.isError ? (
@@ -158,9 +177,8 @@ function CredentialDetails({
           {credential.status === "active" && (
             <>
               <p className="text-sm text-muted-foreground">
-                Replacing keeps these assignments. Revoking blocks future retrieval. Queued
-                persistent runs need to be started again after either change. Already running
-                processes may still hold the old value.
+                Replacing keeps these assignments. Revoking blocks future retrieval. A job that is
+                already running may still hold the old value.
               </p>
               {replacing ? (
                 <CredentialForm
@@ -183,7 +201,7 @@ function CredentialDetails({
                     disabled={revoke.isPending}
                     onClick={() => revoke.mutate()}
                   >
-                    {revoke.isPending ? "Revoking…" : "Revoke credential"}
+                    {revoke.isPending ? "Revoking…" : "Revoke secret"}
                   </Button>
                 </div>
               )}
@@ -191,7 +209,7 @@ function CredentialDetails({
           )}
           {credential.status === "revoked" && (
             <p className="text-sm text-muted-foreground">
-              This credential is revoked. Add a new credential and assign it to restore access.
+              This secret is revoked. Add a new one and assign it to restore access.
             </p>
           )}
         </>

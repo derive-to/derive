@@ -162,17 +162,15 @@ describe("adding a model without a deploy", () => {
 describe("pinning a lane", () => {
   it("refuses a pin naming a model that does not exist", async () => {
     const { app } = setup("lib-pin-bad")
-    for (const lane of ["chat", "automation"]) {
-      const res = await app.request(`/v1/system/models/slots/${lane}`, {
-        method: "PUT",
-        headers: as("op@x.com"),
-        body: JSON.stringify({ model: "acme/ghost" }),
-      })
-      expect([lane, res.status]).toEqual([lane, 400])
-    }
+    const res = await app.request("/v1/system/models/slots/chat", {
+      method: "PUT",
+      headers: as("op@x.com"),
+      body: JSON.stringify({ model: "acme/ghost" }),
+    })
+    expect(res.status).toBe(400)
   })
 
-  it("pins each lane independently and clears with null", async () => {
+  it("pins the chat lane and clears it with null", async () => {
     const { app } = setup("lib-pin-ok")
     const put = (lane: string, model: string | null) =>
       app.request(`/v1/system/models/slots/${lane}`, {
@@ -180,16 +178,14 @@ describe("pinning a lane", () => {
         headers: as("op@x.com"),
         body: JSON.stringify({ model }),
       })
-    expect((await put("chat", "configured")).status).toBe(200)
-    const both = (await (await put("automation", "configured")).json()) as {
-      slots: { chat: string | null; automation: string | null }
+    const pinned = (await (await put("chat", "configured")).json()) as {
+      slots: { chat: string | null }
     }
-    expect(both.slots).toEqual({ chat: "configured", automation: "configured" })
-    // Clearing ONE lane leaves the other pinned — they are separate levers.
+    expect(pinned.slots).toEqual({ chat: "configured" })
     const cleared = (await (await put("chat", null)).json()) as {
-      slots: { chat: string | null; automation: string | null }
+      slots: { chat: string | null }
     }
-    expect(cleared.slots).toEqual({ chat: null, automation: "configured" })
+    expect(cleared.slots).toEqual({ chat: null })
   })
 
   it("unpins a lane when the model it named is removed", async () => {
@@ -199,7 +195,7 @@ describe("pinning a lane", () => {
     await meta.setOrgSettings(INSTANCE_SETTINGS_ID, {
       ...(await meta.getOrgSettings(INSTANCE_SETTINGS_ID)),
       models: [{ id: "acme/added" }],
-      slots: { chat: "acme/added", automation: "acme/added" },
+      slots: { chat: "acme/added" },
     })
     const res = await app.request("/v1/system/models/acme%2Fadded", {
       method: "DELETE",
@@ -209,7 +205,6 @@ describe("pinning a lane", () => {
     const after = await meta.getOrgSettings(INSTANCE_SETTINGS_ID)
     expect(after.models ?? []).toEqual([])
     expect(after.slots?.chat).toBeUndefined()
-    expect(after.slots?.automation).toBeUndefined()
   })
 
   it("keeps a CONFIGURED model non-removable even after it has been probed", async () => {

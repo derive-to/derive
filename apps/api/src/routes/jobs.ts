@@ -36,6 +36,7 @@ import {
   reportJob,
   retryJob,
 } from "../lib/jobs"
+import { DERIVE_AUTHOR_ID } from "../lib/principal-kind"
 import { runtimeFailureReason } from "../lib/runtime-diagnostics"
 import { log } from "../log"
 
@@ -187,12 +188,16 @@ export const jobRoutes = (ctx: AppContext) => {
 
   /** The person behind a request and whether they may see this job's workspace. Jobs are
    *  visible to every member of the agent's workspace: the work an agent does for one person
-   *  is work the team can see, like the pages it publishes. */
+   *  is work the team can see, like the pages it publishes. The exception is the built-in
+   *  Derive's jobs (an @Derive thread in Slack): that answer was read with the asker's own
+   *  permissions, so only the asker sees it. */
   const personFor = async (c: Context) => {
     const who = await actingHuman(c)
     if (!who) return fail(c, 401, "unauthenticated")
     return who
   }
+  const privateTo = (j: JobRecord, whoId: string) =>
+    j.agent_id !== DERIVE_AUTHOR_ID || j.asked_by === whoId
   const visibleJob = async (c: Context, id: string): Promise<JobRecord | Response> => {
     const who = await personFor(c)
     if (who instanceof Response) return who
@@ -200,7 +205,12 @@ export const jobRoutes = (ctx: AppContext) => {
     const org = await ctx.requireWorkspace(c, "read")
     if (org instanceof Response) return org
     const job = await meta.getJob(id)
-    if (!job || job.org_id !== org || !(await meta.getMembership(org, who.id)))
+    if (
+      !job ||
+      job.org_id !== org ||
+      !privateTo(job, who.id) ||
+      !(await meta.getMembership(org, who.id))
+    )
       return fail(c, 404, "not found")
     return job
   }
@@ -273,7 +283,8 @@ export const jobRoutes = (ctx: AppContext) => {
         before: q.before || undefined,
         limit: Math.min(200, Number(q.limit) || 50),
       })
-      return c.json({ jobs: await shown(jobs) })
+      const viewer = (await actingHuman(c))?.id ?? ""
+      return c.json({ jobs: await shown(jobs.filter((j) => privateTo(j, viewer))) })
     },
   )
 

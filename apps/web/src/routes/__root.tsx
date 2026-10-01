@@ -209,7 +209,7 @@ function AppFrame() {
   const [hydrated, setHydrated] = useState(false)
   useEffect(() => setHydrated(true), [])
 
-  // /login, /reset-password, /welcome (onboarding), /showcase, /invite/* render
+  // /login, /reset-password, /welcome (onboarding), /invite/* render
   // chrome-less — no rail. The one list, shared with the boot script (lib/chrome-routes).
   // During navigation `location` advances before the matched route (and its Outlet)
   // finishes resolving. Follow the resolved location so an outgoing app route never

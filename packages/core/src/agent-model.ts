@@ -374,6 +374,12 @@ export interface AgentModelStore<Agent = unknown> {
   listOpenGraphJobs(limit: number): Promise<JobRecord[]>
   addJobMessage(m: NewJobMessage): Promise<JobMessageRecord>
   listJobMessages(jobId: string): Promise<JobMessageRecord[]>
+  /** The newest AGENT messages across every job, newest first: the sample the operator's
+   *  model timings fold. Deliberately unscoped (a question about the deploy, not a
+   *  workspace), so operator-only at the route; `body_md` is left out of the projection. */
+  listRecentAgentJobMessages(
+    limit: number,
+  ): Promise<Pick<JobMessageRecord, "job_id" | "created_at" | "meta_json">[]>
 
   // ---- Triggers -----------------------------------------------------------------------
   createTrigger(t: NewTrigger): Promise<TriggerRecord>

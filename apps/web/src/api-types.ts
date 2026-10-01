@@ -7217,7 +7217,7 @@ export interface components {
             whiteLabel: boolean;
             /** @description Connection ids the workspace's CHAT may reach through the call tool. Empty means none — connecting a server does not by itself let a conversation use it. Unattended runs are unaffected: they declare their own connections per run. */
             chatSources: string[];
-            /** @description The one agent-write switch, on by default. Off: hosted runs and asks are not materialized, dispatched, or claimed, chat's publish tool refuses (the draft surfaces in the reply), and any agent-credentialed publish is refused at the API. */
+            /** @description The one agent-write switch, on by default. Off: agent jobs are not dispatched or claimed, @Derive's publish tool refuses (the draft surfaces in the reply), and any agent-credentialed publish is refused at the API. */
             agentWrites: boolean;
             /** @description The workspace's default agent: the fallback actor for users with no connected agent. Absent = none. */
             defaultAgentId?: string;
@@ -7320,14 +7320,10 @@ export interface components {
              * @enum {string}
              */
             role: "viewer" | "commenter" | "editor" | "owner";
-            /** @description Served by Derive's managed executor. Hosting changes where the agent runs, never its principal or cap. */
-            hosted: boolean;
             /** @description Auto-minted for one context at creation — the context's Derive access, not a user-named persona. Hidden from the roster UI. */
             managed: boolean;
             /** @description The user who registered the agent — who it publishes and bills on behalf of. */
             created_by: string | null;
-            /** @description When true, this agent may bill its OWNER's own model plan as a fallback (initiator -> owner -> pool). Only the owner toggles it; default off. */
-            owner_lend: boolean;
             created_at: string;
             /** @description One line: what this agent does. */
             description: string | null;
@@ -7637,15 +7633,10 @@ export interface components {
             app_slug: string | null;
             app_owner_login: string | null;
             /**
-             * @description Whether the instance App has every current permission and event; null when no live App exists
+             * @description Whether the instance App has every current permission; null when no live App exists
              * @enum {string|null}
              */
             app_permissions_state: "ready" | "update_required" | "unknown" | null;
-            /**
-             * @description Whether signed GitHub workflow completion events can reach this instance
-             * @enum {string|null}
-             */
-            app_webhook_state: "ready" | "update_required" | "unknown" | null;
             app_settings_url: string | null;
             /** @description Whether the caller is an instance operator who can configure the shared App */
             can_manage_app: boolean;

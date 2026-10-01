@@ -32,12 +32,9 @@ export const MANIFEST_PERMISSIONS: Record<string, string> = {
   // Workflow grants narrow each Git credential to one repository and read/write choice.
   contents: "write",
 }
-// Workflow completion events. The receiver accepts only signed payloads and acknowledges each
-// event without acting on it; the subscription stays so an App's webhook keeps its shape.
-export const REQUIRED_EVENTS = ["workflow_run"]
-
 /** The GitHub App manifest: what permissions/events/URLs the new App is born with.
- *  Consumes REQUIRED_PERMISSIONS/REQUIRED_EVENTS so a fresh App is always current.
+ *  Consumes MANIFEST_PERMISSIONS so a fresh App is always current. It subscribes to no events:
+ *  nothing in Derive acts on one since GitHub Actions stopped being an execution lane.
  *  Exported so a test can lock the exact shape GitHub accepts (we regressed on
  *  default_events, public, and setup_url during the live rollout). */
 export const buildManifest = (baseUrl: string, host: string) => ({
@@ -63,7 +60,7 @@ export const buildManifest = (baseUrl: string, host: string) => ({
   // signed-state callback, so a stray direct install is inert.
   public: true,
   default_permissions: MANIFEST_PERMISSIONS,
-  default_events: REQUIRED_EVENTS,
+  default_events: [] as string[],
 })
 
 export function installationPickerHTML(props: {
@@ -119,7 +116,7 @@ export function manifestFormHTML(props: { baseUrl: string; state: string }): str
         <button class="btn ghost" type="submit" formnovalidate data-personal>Use personal account</button>
       </div>
     </form>
-    <p class="foot">Derive asks for <strong>Metadata: read</strong>, <strong>Pull requests: write</strong>, and <strong>Actions: write</strong>. Server-side policies limit these to PR reads, one top-level PR comment, workflow status, dispatch of workflows named <strong>derive-*.yml</strong>, and signed workflow completion events.</p>
+    <p class="foot">Derive asks for <strong>Metadata: read</strong>, <strong>Pull requests: write</strong>, and <strong>Actions: write</strong>. Server-side policies limit these to PR reads, one top-level PR comment, workflow status, and dispatch of workflows named <strong>derive-*.yml</strong>.</p>
     <script>
       (function(){
         var form=document.getElementById("f"),owner=document.getElementById("owner"),personal=${JSON.stringify(personalAction)};

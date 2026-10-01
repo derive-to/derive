@@ -526,15 +526,15 @@ export const capabilityReport = (env: Env): CapabilityState[] =>
     missing: cap.requires.filter((k) => !isSet(env, k)),
   }))
 
+/** Settings the agents cutover retired. Setting one does nothing now, which is worth saying
+ *  out loud: an operator who set it expects it to switch something on. */
+const RETIRED_VARS = ["DERIVE_HOSTED_RUNS", "DERIVE_LOOP_RUNS"]
+
 /**
  * Boot-time warnings for half-configured features: a nonempty-but-incomplete required set
  * means the feature is silently OFF — almost always a mistake. The caller logs these; this
  * never throws, so a stray env var can't take down a running instance.
  */
-/** Settings the agents cutover retired. Setting one does nothing now, which is worth saying
- *  out loud: an operator who set it expects hosted automation runs that no longer exist. */
-const RETIRED_VARS = ["DERIVE_HOSTED_RUNS", "DERIVE_LOOP_RUNS"]
-
 export const configWarnings = (env: Env): string[] => [
   ...CAPABILITIES.filter((cap) => statusOf(cap, env) === "partial").map((cap) => {
     const have = cap.requires.filter((k) => isSet(env, k))
@@ -543,7 +543,7 @@ export const configWarnings = (env: Env): string[] => [
   }),
   ...RETIRED_VARS.filter((k) => isSet(env, k)).map(
     (k) =>
-      `${k} is set but does nothing: hosted automation runs were replaced by agents. Agents run on their owner's runner or on a Derive machine; see the upgrade notes.`,
+      `${k} is retired and does nothing; unset it. Agents run on their owner's machine or on a Derive machine.`,
   ),
 ]
 

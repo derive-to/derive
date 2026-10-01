@@ -184,7 +184,7 @@ import {
 } from "drizzle-orm"
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
 import { Pool } from "pg"
-import { agentModelRepos } from "./agent-model-repos"
+import { agentModelRepos, skillJobUsage } from "./agent-model-repos"
 import {
   DYNAMIC_STATE_PREFIX,
   dynamicRecord,
@@ -717,6 +717,7 @@ export class PgMetaStore implements MetaStore {
   listOpenGraphJobs = this.agentModel.listOpenGraphJobs
   addJobMessage = this.agentModel.addJobMessage
   listJobMessages = this.agentModel.listJobMessages
+  listRecentAgentJobMessages = this.agentModel.listRecentAgentJobMessages
   createTrigger = this.agentModel.createTrigger
   getTrigger = this.agentModel.getTrigger
   listTriggers = this.agentModel.listTriggers
@@ -1228,7 +1229,7 @@ export class PgMetaStore implements MetaStore {
     const now = new Date().toISOString()
     const res = await this.db.execute(sql`
       with cur as (
-        select id, short_id from artifact
+        select id from artifact
          where id = ${artifactId} and current_version = ${expected.n} for update
       ), upd as (
         update version set blob_key = ${v.blob_key}, content_type = ${v.content_type},
@@ -1244,10 +1245,6 @@ export class PgMetaStore implements MetaStore {
         from cur
         where version.artifact_id = cur.id and version.n = ${expected.n}
           and version.blob_key = ${expected.blobKey}
-          and not exists (
-            select 1 from workflow_artifact_activity w
-             where w.artifact_short_id = cur.short_id and w.artifact_version = ${expected.n}
-               and w.source = 'observed')
         returning version.*
       ), facts as (
         delete from version_data
@@ -5252,38 +5249,6 @@ export class PgMetaStore implements MetaStore {
       .limit(1)
     return rows[0] ?? null
   }
-  listChatSessions(orgId: string, askerId: string, limit?: number): Promise<SessionRecord[]> {
-    return this.db
-      .select()
-      .from(contextSession)
-      .where(
-        and(
-          eq(contextSession.org_id, orgId),
-          eq(contextSession.asker_id, askerId),
-          isNull(contextSession.context_id),
-        ),
-      )
-      .orderBy(desc(contextSession.created_at))
-      .limit(limit ?? 50)
-  }
-  // Append an asker follow-up and reopen the session in ONE atomic compare-and-set: a
-  // `working` session STAYS working (don't vacate the active claim), while a settled or open
-  // one goes to `open` (reclaimable), dropping the dedupe key on the settled path so it can't
-  // collide with a newer same-key session. The CASE reads the row's live state inside the
-  // update, so a settle racing the reopen can't strand the session `working` with no runner.
-  async appendFollowupReopen(m: NewSessionMessage): Promise<SessionMessageRecord> {
-    const rows = await this.db.insert(sessionMessage).values(m).returning()
-    const now = new Date().toISOString()
-    await this.db
-      .update(contextSession)
-      .set({
-        state: sql`CASE WHEN ${contextSession.state} = 'working' THEN 'working' ELSE 'open' END`,
-        dedupe_key: sql`CASE WHEN ${contextSession.state} IN ('answered', 'escalated', 'failed') THEN NULL ELSE ${contextSession.dedupe_key} END`,
-        updated_at: now,
-      })
-      .where(eq(contextSession.id, m.session_id))
-    return one(rows)
-  }
   // Two writes, no transaction (the createReviewRound pattern, kept identical to
   // the sqlite/d1 layer). A crash between them leaves state stale: an unsettled
   // agent turn is caught by the runner's last-turn guard; a lost asker `open`
@@ -5305,26 +5270,6 @@ export class PgMetaStore implements MetaStore {
       .from(sessionMessage)
       .where(eq(sessionMessage.session_id, sessionId))
       .orderBy(asc(sessionMessage.created_at))
-  }
-  /**
-   * The most recent AGENT answers across every session, newest first. Unscoped by design (see
-   * the port): it answers a question about the DEPLOY, and the route that calls it is
-   * operator-only. `desc(created_at)` rides the `session_message_recent` index.
-   */
-  async listRecentAgentMessages(
-    limit: number,
-  ): Promise<Pick<SessionMessageRecord, "session_id" | "author_kind" | "created_at" | "meta">[]> {
-    return this.db
-      .select({
-        session_id: sessionMessage.session_id,
-        author_kind: sessionMessage.author_kind,
-        created_at: sessionMessage.created_at,
-        meta: sessionMessage.meta,
-      })
-      .from(sessionMessage)
-      .where(eq(sessionMessage.author_kind, "agent"))
-      .orderBy(desc(sessionMessage.created_at))
-      .limit(limit)
   }
 
   // ---- User directory (Better Auth's "user" table; raw, may be absent) ---
@@ -5615,15 +5560,6 @@ export class PgMetaStore implements MetaStore {
   listAgents(orgId: string): Promise<AgentRecord[]> {
     return this.db.select().from(agent).where(eq(agent.org_id, orgId))
   }
-  async setAgentHosted(id: string, orgId: string, hosted: 0 | 1): Promise<AgentRecord | null> {
-    const rows = await this.db
-      .update(agent)
-      .set({ hosted })
-      .where(and(eq(agent.id, id), eq(agent.org_id, orgId)))
-      .returning()
-    return rows[0] ?? null
-  }
-
   async recordArtifactScanEvent(event: NewArtifactScanEvent): Promise<ArtifactScanEventRecord> {
     const rows = await this.db
       .insert(artifactScanEvent)
@@ -5916,64 +5852,14 @@ export class PgMetaStore implements MetaStore {
       .orderBy(desc(artifactSkillLink.created_at), desc(artifactSkillLink.id))
       .limit(Math.max(1, Math.min(limit, 100)))
   }
-  async skillUsage(
-    skillArtifactId: string,
-    orgId: string,
-  ): Promise<{ contexts: SkillUsageBucket[]; workflows: SkillUsageBucket[] }> {
-    const contextRows = await this.db
-      .select({
-        skill_version: contextSession.context_version,
-        count: count(),
-        last_used_at: max(contextSession.created_at),
-      })
-      .from(contextSession)
-      .innerJoin(context, eq(context.id, contextSession.context_id))
-      .where(and(eq(context.org_id, orgId), eq(context.manifest_artifact_id, skillArtifactId)))
-      .groupBy(contextSession.context_version)
-      .orderBy(desc(contextSession.context_version))
-    const workflowRows = await this.db
-      .select({
-        skill_version: artifactSkillLink.skill_version,
-        count: count(),
-        last_used_at: max(workflowRun.created_at),
-      })
-      .from(workflowRun)
-      .innerJoin(
-        artifactSkillLink,
-        and(
-          eq(artifactSkillLink.artifact_id, workflowRun.workflow_artifact_id),
-          eq(artifactSkillLink.artifact_version, workflowRun.workflow_version),
-        ),
-      )
-      .where(
-        and(
-          eq(workflowRun.org_id, orgId),
-          eq(artifactSkillLink.org_id, orgId),
-          eq(artifactSkillLink.skill_artifact_id, skillArtifactId),
-          eq(artifactSkillLink.role, "workflow-definition"),
-        ),
-      )
-      .groupBy(artifactSkillLink.skill_version)
-      .orderBy(desc(artifactSkillLink.skill_version))
-    const buckets = (
-      rows: Array<{
-        skill_version: number | null
-        count: number | bigint
-        last_used_at: string | null
-      }>,
-    ): SkillUsageBucket[] =>
-      rows.flatMap((row) =>
-        row.last_used_at && row.skill_version !== null
-          ? [
-              {
-                skill_version: row.skill_version,
-                count: Number(row.count),
-                last_used_at: row.last_used_at,
-              },
-            ]
-          : [],
-      )
-    return { contexts: buckets(contextRows), workflows: buckets(workflowRows) }
+  async skillUsage(skillArtifactId: string, orgId: string): Promise<{ runs: SkillUsageBucket[] }> {
+    return {
+      runs: await skillJobUsage(
+        async (statement) => (await this.db.execute(statement)).rows,
+        skillArtifactId,
+        orgId,
+      ),
+    }
   }
   async createPlan(p: NewPlan): Promise<PlanRecord> {
     const rows = await this.db.insert(plan).values(p).returning()

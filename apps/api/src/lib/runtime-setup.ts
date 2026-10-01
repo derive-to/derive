@@ -3,7 +3,6 @@
 
 export const RUNNER_VERSION = "0.8.0"
 const RUNNER_DIRECTORY = `/home/ortam/derive-runtime/${RUNNER_VERSION}`
-export const SETUP_RUNNER_PATH = `${RUNNER_DIRECTORY}/node_modules/@derive-to/cli/bin/derive.js`
 
 /** Install once per saved environment, then atomically expose a complete runner. */
 export const INSTALL_RUNTIME_RUNNER = [

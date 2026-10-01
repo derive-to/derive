@@ -34,9 +34,9 @@ it to the person to run where the work should happen. The key rides `DERIVE_TOKE
 never echo it anywhere else. `role` defaults to `editor`, so its jobs can publish their reports;
 pass `commenter` for one that should only comment. It is capped at your own seat. An agent may use
 only connections its creator could attach: their
-own, or the workspace's if they manage it. When a step needs a person in a browser
-(signing in a model account, authorizing a source), the reply lists it under `needs_browser` with a
-link. Pass those links on; do not try to do them yourself.
+own, or the workspace's if they manage it. A `derive` agent created while the workspace has no
+model account yet comes back with `needs_browser`: a link where a person signs one in. Pass that
+link on; do not try to do it yourself.
 
 Everything else (pause, schedule, account, sources, who may ask, delete) can be changed later with
 `agents({ action: "update" })`, or by a person on the agent's Settings tab in Derive.

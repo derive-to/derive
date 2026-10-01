@@ -11,8 +11,8 @@ import { bail, fail, readJson } from "../lib/http"
 // instructions name the tool in plain language. Two scopes: "personal" (act-as-me — bound to
 // the caller, only they may attach it, dies with their membership) and "workspace" (org
 // infrastructure — admin-managed, survives the adder leaving; user_id is provenance only).
-// A hosted run sees the tools of its bound connections only. The BYO path never touches
-// these. broker_ref is the broker-side connected-account id.
+// An agent job sees the tools of its agent's bound connections only. broker_ref is the
+// broker-side connected-account id.
 
 // An allowlist, not a spread: secret_enc must never ride a response, at any role, including
 // over a minted dkapi_ bearer. A pasted credential is write-only once it is stored.

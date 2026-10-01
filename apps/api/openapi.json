@@ -1341,7 +1341,7 @@
           },
           "agentWrites": {
             "type": "boolean",
-            "description": "The one agent-write switch, on by default. Off: hosted runs and asks are not materialized, dispatched, or claimed, chat's publish tool refuses (the draft surfaces in the reply), and any agent-credentialed publish is refused at the API."
+            "description": "The one agent-write switch, on by default. Off: agent jobs are not dispatched or claimed, @Derive's publish tool refuses (the draft surfaces in the reply), and any agent-credentialed publish is refused at the API."
           },
           "defaultAgentId": {
             "type": "string",
@@ -1691,10 +1691,6 @@
             ],
             "description": "Permission level; commenter comments only, editor can write, owner never allowed. Defaults to editor, capped at the creator's seat."
           },
-          "hosted": {
-            "type": "boolean",
-            "description": "Served by Derive's managed executor. Hosting changes where the agent runs, never its principal or cap."
-          },
           "managed": {
             "type": "boolean",
             "description": "Auto-minted for one context at creation — the context's Derive access, not a user-named persona. Hidden from the roster UI."
@@ -1703,10 +1699,6 @@
             "type": "string",
             "nullable": true,
             "description": "The user who registered the agent — who it publishes and bills on behalf of."
-          },
-          "owner_lend": {
-            "type": "boolean",
-            "description": "When true, this agent may bill its OWNER's own model plan as a fallback (initiator -> owner -> pool). Only the owner toggles it; default off."
           },
           "created_at": {
             "type": "string"
@@ -1794,10 +1786,8 @@
           "id",
           "name",
           "role",
-          "hosted",
           "managed",
           "created_by",
-          "owner_lend",
           "created_at",
           "description",
           "instructions_short_id",
@@ -2759,18 +2749,7 @@
               "unknown",
               null
             ],
-            "description": "Whether the instance App has every current permission and event; null when no live App exists"
-          },
-          "app_webhook_state": {
-            "type": "string",
-            "nullable": true,
-            "enum": [
-              "ready",
-              "update_required",
-              "unknown",
-              null
-            ],
-            "description": "Whether signed GitHub workflow completion events can reach this instance"
+            "description": "Whether the instance App has every current permission; null when no live App exists"
           },
           "app_settings_url": {
             "type": "string",
@@ -2834,7 +2813,6 @@
           "app_slug",
           "app_owner_login",
           "app_permissions_state",
-          "app_webhook_state",
           "app_settings_url",
           "can_manage_app",
           "accounts"

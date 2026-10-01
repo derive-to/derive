@@ -1,13 +1,14 @@
-import { REVISION_CONTRACT } from "@derive/core"
+import { parseRevision, proseOf, REVISION_CONTRACT, REVISION_NUDGE } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import {
   type AgentLoopInput,
   DEFAULT_MAX_TURNS,
   type ModelTurn,
+  type ReplyContract,
   runAgentLoop,
   TOOL_OUTPUT_BUDGET_CHARS,
 } from "../src/lib/agent-loop"
-import { answerContract, revisionContract } from "../src/lib/turn-core"
+import { answerContract } from "../src/lib/turn-core"
 
 // The in-Worker agent loop — Basic execution without a container.
 //
@@ -39,6 +40,17 @@ const scripted = (turns: ModelTurn[]) => {
     return t as ModelTurn
   }
   return { callModel, seen, calls: () => i }
+}
+
+/** A contract that REQUIRES the block: a reply without one is a miss, so the nudge path runs. */
+const revisionContract: ReplyContract = {
+  text: REVISION_CONTRACT,
+  read: (text) => {
+    const p = parseRevision(text)
+    return p.revision
+      ? { product: { revision: p.revision, prose: proseOf(text), ask: null } }
+      : { miss: { detail: p.error, nudge: REVISION_NUDGE } }
+  },
 }
 
 const base = (over: Partial<AgentLoopInput>): AgentLoopInput => ({
@@ -73,10 +85,9 @@ describe("agent loop: the happy path", () => {
 })
 
 describe("agent loop: the contract is injected, not assumed", () => {
-  // The loop runs three lanes that legitimately ask for different things: an automation wants a
-  // revision or nothing happened, an ask wants a revision OR a prose answer. Forking the loop to
-  // get that is how the two substrates would stop being comparable, so the contract is a
-  // parameter and the control flow around it is one implementation.
+  // Lanes legitimately ask for different things: one needs a revision or nothing happened,
+  // another takes a revision OR a prose answer. The contract is a parameter and the control flow
+  // around it is one implementation.
   it("an ANSWERABLE contract treats a reply with no block as a product, not a miss", async () => {
     const model = scripted([turn({ text: "It is about three paragraphs long." })])
     const out = await runAgentLoop(base({ callModel: model.callModel, contract: answerContract() }))
@@ -88,7 +99,7 @@ describe("agent loop: the contract is injected, not assumed", () => {
     expect(model.calls()).toBe(1)
   })
 
-  it("the SAME reply is a miss under the automation contract, and IS nudged", async () => {
+  it("the SAME reply is a miss under a block-required contract, and IS nudged", async () => {
     const model = scripted([turn({ text: "I updated it, trust me." })])
     const out = await runAgentLoop(base({ callModel: model.callModel }))
     expect(out.ok).toBe(false)

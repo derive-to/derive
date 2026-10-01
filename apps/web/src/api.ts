@@ -1,6 +1,4 @@
 import type {
-  AutomationRecord,
-  ContextRuntimeRecord,
   DynamicKind,
   DynamicPatch,
   DynamicValue,
@@ -8,19 +6,12 @@ import type {
   LinkRole,
   Listed,
   Role,
-  RunAttemptRecord,
-  RunRecord,
-  RuntimeSetupRecord,
   SharedStateActivity,
   SharedStateMutation,
   SharedStateResult,
   SortMode,
   SourceOp,
   SyncWire,
-  WorkflowDraftRecord,
-  WorkflowFilesRecord,
-  WorkflowReadiness,
-  WorkflowRepository,
   WorkspaceAccess,
 } from "@derive/core"
 import type { components, paths } from "./api-types"
@@ -31,7 +22,7 @@ import { guestQuery } from "./lib/guest-id"
  *  canonical in @derive/core (roles.ts); imported here as type-only (clients never
  *  import core at runtime — see .dependency-cruiser.mjs) and re-exported so this
  *  stays the one place other web modules name them from. */
-export type { LinkRole, Listed, Role, WorkflowRepository, WorkspaceAccess }
+export type { LinkRole, Listed, Role, WorkspaceAccess }
 
 /** One dynamic table or figure slot as the API returns it (routes/dynamic-data.ts). */
 export interface DynamicSlot {
@@ -357,8 +348,8 @@ export interface ModelLibraryEntry {
 }
 
 export interface ModelSlots {
+  /** The model @Derive replies with, in comments and in Slack. */
   chat: string | null
-  automation: string | null
 }
 
 export interface ModelLibraryView {
@@ -493,91 +484,7 @@ export type NewModelAccount = {
   shared: boolean
 }
 
-/** How an automation fires. Manual = a Run button; schedule = a cron in a timezone;
- *  event = a subscription. Hand-typed: the automation routes are the agent-facing plain
- *  surface, not the OpenAPI web spec. */
-export interface AutomationTrigger {
-  kind: "manual" | "schedule" | "event"
-  cron?: string
-  tz?: string
-  on?: string
-  action?: {
-    kind: "github_workflow"
-    owner: string
-    repo: string
-    workflow: string
-    ref: string
-    inputs?: Record<string, string | number | boolean>
-  }
-}
-/** A connected model-plan credential, as the settings UI sees it — never the secret. */
-export interface ModelCredentialHint {
-  provider: "claude-code" | "codex"
-  kind: "oauth" | "api_key" | "login"
-  hint: string
-  updated_at: string
-}
-/** A ref is a selector — one generic way to point at a set of artifacts: a specific
- *  doc (revise it), a collection (file new work into it), or a tag (stamped on every
- *  write the run makes). The API accepts a bare short-id string as artifact shorthand
- *  and always RETURNS the canonical object form. */
-export type AutomationRef =
-  | { kind: "artifact"; id: string }
-  | { kind: "collection"; id: string }
-  | { kind: "tag"; tag: string }
-/** A standing agent job: an agent + a trigger + a free-form instruction (+ optional refs).
- *  Every firing is a Run. */
-export interface Automation {
-  id: string
-  agent_id: string
-  /** The coding-agent runtime this automation sends to hosted execution. */
-  provider: "claude-code" | "codex"
-  /** Optional packaged methodology (manifest, repos, and skills) for complex runs. */
-  context_id: string | null
-  trigger: AutomationTrigger
-  instruction: string
-  refs: AutomationRef[]
-  /** Sources this automation may read from during a run. Ids of connections; the credential
-   *  itself is never here and is resolved server-side at call time. */
-  connection_ids: string[]
-  enabled: boolean
-  created_at: string
-  /** When this automation's agent last polled the run claim endpoint (list responses
-   *  only). Null = no executor has ever polled — the automation is inert. */
-  executor_seen_at?: string | null
-  /** Deployment or workspace restriction, checked again before enqueue. */
-  run_blocked_reason?: string | null
-}
-/** One execution — the queue (queued/running) and the ledger (succeeded/failed) in one row. */
-export interface Run {
-  runtime_id?: string | null
-  workflow_name?: string
-  context_id?: string | null
-  id: string
-  automation_id: string | null
-  agent_id: string
-  reason: string
-  status: "queued" | "running" | "succeeded" | "failed"
-  cost_micro_usd: number | null
-  meta: string | null
-  created_at: string
-  finished_at: string | null
-  /** Derived server-side (never stored): where this run is and why. Lets the activity view
-   *  answer "nothing is happening — is it broken?" without anyone opening server logs. */
-  timeline?: {
-    phase: Run["status"]
-    /** Set when a queued run isn't due yet: a schedule, or a retry backoff. */
-    waiting_until: string | null
-    queued_ms: number | null
-    ran_ms: number | null
-    /** Attempts already spent (0 = first try); each one costs the initiator's model plan. */
-    retries: number
-    last_error: string | null
-    outcome: string | null
-    writes: unknown[]
-  }
-}
-/** An askable agent setup: a registered agent wired to a manifest artifact.
+/** An imported paper, stored as a read-only Context (the papers routes read /v1/contexts).
  *  Generated from the OpenAPI spec. */
 export type ContextInfo = components["schemas"]["ContextInfo"]
 /** GET /v1/contexts/:id's full response — ContextInfo plus, for a human asker, the
@@ -781,8 +688,8 @@ export interface SkillGraph {
   edges: SkillRelation[]
 }
 export interface SkillUsage {
-  contexts: Array<{ skill_version: number; count: number; last_used_at: string }>
-  workflows: Array<{ skill_version: number; count: number; last_used_at: string }>
+  /** Agent jobs whose agent's instructions page is this skill, by skill version. */
+  runs: Array<{ skill_version: number; count: number; last_used_at: string }>
   local: Array<{
     skill_version: number
     client: "claude" | "codex" | "other"
@@ -823,19 +730,6 @@ export interface SkillSource {
   source: string
   version: number
 }
-export interface ArtifactSkills {
-  links: Array<{
-    id: string
-    artifact_id: string
-    artifact_version: number
-    skill_artifact_id: string
-    skill_version: number
-    role: "created" | "revised" | "validated" | "example" | "anti-example" | "workflow-definition"
-    created_at: string
-    skill: { short_id: string; title: string | null; current_version: number } | null
-  }>
-}
-
 // A per-user connected external account (WO3) — a Source. Always the caller's own.
 export interface Connection {
   id: string
@@ -1121,8 +1015,6 @@ export const api = {
     f(`/v1/artifacts/${encodeURIComponent(shortId)}/bib`, { ...opts(input), method: "PUT" }).then(
       j,
     ),
-  artifactSkills: (shortId: string): Promise<ArtifactSkills> =>
-    f(`/v1/artifacts/${encodeURIComponent(shortId)}/skills`, opts()).then(j),
   // The batched boot read: exactly the four bodies below (tags summary, collections,
   // workspace settings, notifications), one authenticated request. The client seeds
   // the four individual query caches from it — see lib/bootstrap.ts. Typed against the
@@ -1534,7 +1426,7 @@ export const api = {
   deleteContext: (id: string): Promise<void> =>
     f(`/v1/contexts/${id}`, { ...opts(), method: "DELETE" }).then(() => undefined),
 
-  // Named secrets (Settings › Credentials): personal or workspace `secret` connections an
+  // Named secrets (Settings › Sources › Secrets): personal or workspace `secret` connections an
   // agent job reads through its environment. Values are write-only.
   credentials: (): Promise<{ items: Credential[]; can_create_workspace: boolean }> =>
     f("/v1/credentials", opts()).then(j),
@@ -1576,21 +1468,13 @@ export const api = {
     f("/v1/seen", { ...opts(body), method: "PUT" }).then(j),
   workspaceActivity: (): Promise<WorkspaceActivity> => f("/v1/workspace/activity", opts()).then(j),
 
-  // Standard GitHub integration: install-backed and available directly to contexts
-  // and automations.
+  // Standard GitHub integration: install-backed and available directly to agents.
   getGithub: (): Promise<GithubStatus> => f("/v1/github", opts()).then(j),
   disconnectGithub: (connectionId: string): Promise<void> =>
     f(`/v1/github/connections/${connectionId}`, {
       method: "DELETE",
       credentials: "include",
     }).then(() => undefined),
-  configureGithubWebhook: (): Promise<{ state: "ready" }> =>
-    f("/v1/github/webhook/configure", { ...opts({}), method: "POST" }).then(j),
-
-  // OPERATOR-ONLY, and used as the operator SIGNAL itself: it 403s for everyone who is not a
-  // super-admin, so a component can gate on whether this resolves rather than on a role the
-  // client would otherwise have to be told separately.
-  systemCapabilities: (): Promise<unknown> => f("/v1/system/capabilities", opts()).then(j),
 
   // THE MODEL LIBRARY — operator-only. One GET for the whole page: what is pinned, what this
   // deploy can answer with, what the last probe found, and how each model is actually
@@ -1611,10 +1495,7 @@ export const api = {
     f(`/v1/system/models/${encodeURIComponent(id)}`, { ...opts(), method: "DELETE" }).then(j),
   probeModel: (id: string): Promise<{ id: string; probe: ModelProbeView }> =>
     f(`/v1/system/models/${encodeURIComponent(id)}/probe`, { ...opts(), method: "POST" }).then(j),
-  setModelSlot: (
-    lane: "chat" | "automation",
-    model: string | null,
-  ): Promise<{ slots: ModelSlots }> =>
+  setModelSlot: (lane: "chat", model: string | null): Promise<{ slots: ModelSlots }> =>
     f(`/v1/system/models/slots/${lane}`, { ...opts({ model }), method: "PUT" }).then(j),
 
   // Integration switches (enable/disable each channel) — Admin to change.
@@ -2079,9 +1960,9 @@ export const api = {
       .then(j)
       .then((r) => r.connections as Connection[])
   },
-  /** Connections the current workspace can bind to an automation. The server still enforces
-   *  personal ownership and workspace-manage access when the automation is saved. */
-  async automationConnections(): Promise<Connection[]> {
+  /** Connections the current workspace can give an agent. The server still enforces personal
+   *  ownership and workspace-manage access when the agent is saved. */
+  async agentConnections(): Promise<Connection[]> {
     const [personal, workspace] = await Promise.all([
       f("/v1/connections?mine=1", opts()).then(j),
       f("/v1/connections?scope=workspace", opts()).then(j),
@@ -2110,24 +1991,6 @@ export const api = {
     const r = await f(`/v1/connections/${id}`, { credentials: "include", method: "DELETE" })
     if (!r.ok) throw new ApiError("Couldn't revoke the connection.", r.status)
   },
-}
-
-export interface CloudModelConnection {
-  unavailable_reason: string | null
-  id: string
-  name: string
-  provider: "codex" | "claude-code"
-  revision: number
-  revoked_at: string | null
-}
-
-export interface RuntimeModelSignIn {
-  id: string
-  state: "pending" | "complete" | "failed" | "expired" | "cancelled"
-  user_code: string | null
-  verification_url: string | null
-  authorize_url: string | null
-  expires_at: string
 }
 
 export interface Credential {

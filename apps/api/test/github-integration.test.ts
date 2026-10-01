@@ -39,42 +39,11 @@ describe("standard GitHub integration", () => {
     name: "Member",
   }
 
-  it("configures and verifies the signed App webhook without a browser-held secret", async () => {
+  it("acknowledges only correctly signed App webhook deliveries", async () => {
     const { app, meta } = makeAuthedApp("gh-webhook", [owner], "editor", {
       deps: { encryptionKey: KEY },
-      operatorIds: [owner.id],
     })
     await seedApp(meta)
-    let configured: Record<string, unknown> | null = null
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string | URL, init?: RequestInit) => {
-        if (new URL(String(url)).pathname !== "/app/hook/config")
-          return new Response("not found", { status: 404 })
-        configured = JSON.parse(String(init?.body)) as Record<string, unknown>
-        return new Response(
-          JSON.stringify({
-            url: configured.url,
-            content_type: configured.content_type,
-            insecure_ssl: configured.insecure_ssl,
-            secret: "********",
-          }),
-          { status: 200 },
-        )
-      }),
-    )
-
-    const repair = await app.request("/v1/github/webhook/configure", {
-      method: "POST",
-      headers: as(owner.email),
-    })
-    expect(repair.status).toBe(200)
-    expect(configured).toEqual({
-      url: "http://derive.test/v1/github/webhook",
-      content_type: "json",
-      insecure_ssl: "0",
-      secret: githubWebhookSecret("1", KEY),
-    })
 
     const body = JSON.stringify({
       action: "completed",
@@ -149,7 +118,6 @@ describe("standard GitHub integration", () => {
     )
     let pullPermission = "write"
     let actionsPermission: string | undefined = "write"
-    let workflowRunEvent = true
     let installationActionsPermission: string | undefined = "write"
     let installationPullPermission: string | undefined = "write"
     let appStatus = 200
@@ -197,16 +165,6 @@ describe("standard GitHub integration", () => {
             }),
             { status: 200 },
           )
-        if (path === "/app/hook/config")
-          return new Response(
-            JSON.stringify({
-              url: "http://derive.test/v1/github/webhook",
-              content_type: "json",
-              insecure_ssl: "0",
-              secret: "********",
-            }),
-            { status: 200 },
-          )
         if (path === "/app")
           return new Response(
             JSON.stringify({
@@ -218,7 +176,7 @@ describe("standard GitHub integration", () => {
                 pull_requests: pullPermission,
                 contents: "write",
               },
-              events: workflowRunEvent ? ["workflow_run"] : [],
+              events: [],
             }),
             { status: appStatus },
           )
@@ -321,11 +279,6 @@ describe("standard GitHub integration", () => {
       await (await app.request("/v1/github", { headers: as(owner.email) })).json(),
     ).toMatchObject({ app_permissions_state: "update_required", connected: true })
     actionsPermission = "write"
-    workflowRunEvent = false
-    expect(
-      await (await app.request("/v1/github", { headers: as(owner.email) })).json(),
-    ).toMatchObject({ app_permissions_state: "update_required", connected: true })
-    workflowRunEvent = true
     installationActionsPermission = undefined
     expect(
       await (await app.request("/v1/github", { headers: as(owner.email) })).json(),

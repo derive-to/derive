@@ -43,7 +43,7 @@ export function AddEntryDialog({
       api.createTemplateLibraryEntry(libraryId, {
         source_short_id: source.trim(),
         kind,
-        category: kind === "context" ? "Context" : category.trim() || "Doc",
+        category: kind === "context" ? "Agent" : category.trim() || "Doc",
         title: title.trim(),
         description: description.trim(),
         outcome: "",
@@ -170,7 +170,7 @@ export function AddEntryDialog({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="artifact">Artifact</SelectItem>
-                    <SelectItem value="context">Context</SelectItem>
+                    <SelectItem value="context">Agent</SelectItem>
                   </SelectContent>
                 </Select>
               </FormField>

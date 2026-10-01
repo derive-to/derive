@@ -35,18 +35,12 @@ export const agentRoutes = (ctx: AppContext) => {
       return []
     }
   }
-  const agentJson = (
-    a: AgentRecord,
-    ownerLend = false,
-    extra: { instructions_short_id?: string | null } = {},
-  ) => ({
+  const agentJson = (a: AgentRecord, extra: { instructions_short_id?: string | null } = {}) => ({
     id: a.id,
     name: a.name,
     role: a.role,
-    hosted: a.hosted === 1,
     managed: a.managed === 1,
     created_by: a.created_by,
-    owner_lend: ownerLend,
     created_at: a.created_at,
     description: a.description,
     instructions_short_id: extra.instructions_short_id ?? null,
@@ -56,7 +50,7 @@ export const agentRoutes = (ctx: AppContext) => {
     ask_policy: a.ask_policy,
     write_policy: a.write_policy,
     paused: a.paused_at !== null,
-    seen_at: a.seen_at ?? a.runs_seen_at,
+    seen_at: a.seen_at,
     max_run_ms: a.max_run_ms,
     max_concurrency: a.max_concurrency,
     connection_ids: parseIds(a.connection_ids_json),
@@ -85,10 +79,6 @@ export const agentRoutes = (ctx: AppContext) => {
         null)
       : null
 
-  /** Whether this agent may bill its owner's own plan (the workspace's owner-lend list). */
-  const lentOut = async (a: AgentRecord): Promise<boolean> =>
-    ((await meta.getOrgSettings(a.org_id).catch(() => null))?.ownerLendAgents ?? []).includes(a.id)
-
   // A workspace-registered agent, without its token hash.
   const Agent = z
     .object({
@@ -99,11 +89,6 @@ export const agentRoutes = (ctx: AppContext) => {
         .describe(
           "Permission level; commenter comments only, editor can write, owner never allowed. Defaults to editor, capped at the creator's seat.",
         ),
-      hosted: z
-        .boolean()
-        .describe(
-          "Served by Derive's managed executor. Hosting changes where the agent runs, never its principal or cap.",
-        ),
       managed: z
         .boolean()
         .describe(
@@ -113,11 +98,6 @@ export const agentRoutes = (ctx: AppContext) => {
         .string()
         .nullable()
         .describe("The user who registered the agent — who it publishes and bills on behalf of."),
-      owner_lend: z
-        .boolean()
-        .describe(
-          "When true, this agent may bill its OWNER's own model plan as a fallback (initiator -> owner -> pool). Only the owner toggles it; default off.",
-        ),
       created_at: z.string(),
       description: z.string().nullable().describe("One line: what this agent does."),
       instructions_short_id: z
@@ -212,7 +192,6 @@ export const agentRoutes = (ctx: AppContext) => {
       const org = await requireWorkspace(c, "read")
       if (org instanceof Response) return bail(org)
       const agents = await meta.listAgents(org)
-      const lent = new Set((await meta.getOrgSettings(org)).ownerLendAgents ?? [])
       // What the Agents screen groups by, in two queries rather than one per agent: each
       // agent's schedules, and when it last had work.
       const triggers = await meta.listTriggers(org)
@@ -227,7 +206,7 @@ export const agentRoutes = (ctx: AppContext) => {
       const shortOf = new Map(pages.map((p) => [p.id, p.short_id]))
       return c.json({
         agents: agents.map((a) => ({
-          ...agentJson(a, lent.has(a.id), {
+          ...agentJson(a, {
             instructions_short_id: a.instructions_artifact_id
               ? (shortOf.get(a.instructions_artifact_id) ?? null)
               : null,
@@ -445,7 +424,7 @@ export const agentRoutes = (ctx: AppContext) => {
       // The only place the raw key is ever exposed.
       return c.json(
         {
-          ...agentJson(agent, false, { instructions_short_id: b.instructions_short_id ?? null }),
+          ...agentJson(agent, { instructions_short_id: b.instructions_short_id ?? null }),
           token,
           runner_command,
           trigger: trigger ? triggerJson(trigger) : null,
@@ -486,7 +465,7 @@ export const agentRoutes = (ctx: AppContext) => {
       if (!agent || agent.org_id !== org || !(await meta.getMembership(org, who.id)))
         return bail(fail(c, 404, "agent not found"))
       return c.json({
-        ...agentJson(agent, await lentOut(agent), {
+        ...agentJson(agent, {
           instructions_short_id: await instructionsShortId(agent),
         }),
         triggers: (await meta.listTriggers(agent.org_id, agent.id)).map(triggerJson),
@@ -496,7 +475,7 @@ export const agentRoutes = (ctx: AppContext) => {
     },
   )
 
-  // Edit an agent: its creator or a workspace owner. `hosted` stays for the legacy executor.
+  // Edit an agent: its creator or a workspace owner.
   app.openapi(
     createRoute({
       method: "patch",
@@ -519,7 +498,6 @@ export const agentRoutes = (ctx: AppContext) => {
       const b = await readJson(
         c,
         AgentFields.partial().extend({
-          hosted: z.boolean().optional(),
           paused: z.boolean().optional(),
           account_id: z.string().min(1).max(64).nullable().optional(),
         }),
@@ -551,7 +529,6 @@ export const agentRoutes = (ctx: AppContext) => {
         )
           return bail(fail(c, 400, "account must be yours or a shared workspace account"))
       }
-      if (b.hosted !== undefined) await meta.setAgentHosted(agent.id, org, b.hosted ? 1 : 0)
       let updated: AgentRecord | null
       try {
         updated = await meta.updateAgent(agent.id, org, {
@@ -581,7 +558,7 @@ export const agentRoutes = (ctx: AppContext) => {
       }
       if (!updated) return bail(fail(c, 404, "agent not found"))
       return c.json(
-        agentJson(updated, await lentOut(updated), {
+        agentJson(updated, {
           instructions_short_id: await instructionsShortId(updated),
         }),
       )
@@ -711,7 +688,7 @@ export const agentRoutes = (ctx: AppContext) => {
       const rotated = await meta.rotateAgentToken(c.req.param("id"), org, sha256(token))
       if (!rotated) return bail(fail(c, 404, "agent not found"))
       return c.json({
-        ...agentJson(rotated, await lentOut(rotated), {
+        ...agentJson(rotated, {
           instructions_short_id: await instructionsShortId(rotated),
         }),
         token,

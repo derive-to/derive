@@ -1913,6 +1913,9 @@ export interface ContextStore {
   getImportLease(kind: ImportKind, scope: string): Promise<ImportLeaseRecord | null>
   /** Is this user on the context's asker roster? (Membership is checked separately.) */
   getContextAsker(contextId: string, userId: string): Promise<ContextAskerRecord | null>
+  // The session methods below are retired tables (context_session, session_message): nothing
+  // in the app reads or writes them since the agents cutover. They stay only so the store
+  // tests can seed legacy rows for the delete cascades, and go with the table drop.
   /**
    * Open a session AND write its first message AND set the resulting state, in one call.
    * Chat's enqueue did these as three sequential statements — on the edge tier that is
@@ -1927,41 +1930,12 @@ export interface ContextStore {
     state: SessionState,
   ): Promise<{ session: SessionRecord; message: SessionMessageRecord }>
   getSession(id: string): Promise<SessionRecord | null>
-  /** One person's CONTEXTLESS sessions in a workspace, newest first — the chat history
-   *  picker. Contextless IS the filter: a session with no context is one nobody packaged,
-   *  which is exactly what the chat surfaces open. `listSessions` cannot answer this (it
-   *  keys on a context id, which these do not have). Scoped to the asker: a chat session
-   *  is private to the person who opened it, including from the workspace's owners. */
-  listChatSessions(orgId: string, askerId: string, limit?: number): Promise<SessionRecord[]>
-  /** Append an asker follow-up and reopen the session ATOMICALLY (compare-and-set): a
-   *  `working` session stays working (don't vacate the active claim); a settled/open one
-   *  goes to `open` (reclaimable), and a settled one drops its dedupe key so it can't collide
-   *  with a newer same-key session. The CAS closes the settle-vs-reopen race a read-then-write
-   *  would strand `working` with no runner. */
-  appendFollowupReopen(m: NewSessionMessage): Promise<SessionMessageRecord>
   /** Append a message and set the session's state in the same call (the turn flip:
    *  an asker message re-opens; an agent message settles to answered/escalated).
    *  The caller decides the state — the store just applies both writes. */
   addSessionMessage(m: NewSessionMessage, state: SessionState): Promise<SessionMessageRecord>
   /** A session's transcript, oldest first. */
   listSessionMessages(sessionId: string): Promise<SessionMessageRecord[]>
-  /**
-   * The most recent AGENT answers across every session, newest first — the sample the
-   * operator's model timings are computed from.
-   *
-   * DELIBERATELY UNSCOPED, and the only unscoped read of a transcript in this interface. It
-   * answers a question about the DEPLOY ("how is each model performing"), not about a
-   * workspace, and there is no workspace whose answer would be the right one. That makes it
-   * operator-only at the route. The projection deliberately excludes `body_md`: timing a model
-   * must not transfer 500 full answers only to discard them in memory.
-   *
-   * Bounded by `limit` rather than by time. A quiet deploy still has a sample, a busy one does
-   * not pay for a window it will never read past, and either way the cost of the query is a
-   * constant the caller picked.
-   */
-  listRecentAgentMessages(
-    limit: number,
-  ): Promise<Pick<SessionMessageRecord, "session_id" | "author_kind" | "created_at" | "meta">[]>
 }
 
 /**
@@ -2238,9 +2212,6 @@ export interface AgentStore {
    *  identity, role, hosting, and attribution are untouched. Null = not found. */
   rotateAgentToken(id: string, orgId: string, tokenHash: string): Promise<AgentRecord | null>
   listAgents(orgId: string): Promise<AgentRecord[]>
-  /** Flip whether Derive's managed executor serves this agent. Workspace-scoped by
-   *  (id, org) like deleteAgent; null when the agent isn't in this workspace. */
-  setAgentHosted(id: string, orgId: string, hosted: 0 | 1): Promise<AgentRecord | null>
   /** One agent by id — resolves a job capability token to its agent principal. */
   getAgent(id: string): Promise<AgentRecord | null>
   // ---- Plans (bring-your-own broker key + monthly limit) -----------------
@@ -2600,11 +2571,9 @@ export interface SkillStore {
     orgId: string,
     limit?: number,
   ): Promise<ArtifactSkillLinkRecord[]>
-  /** Separate exact-version buckets; callers must not collapse them into a synthetic total. */
-  skillUsage(
-    skillArtifactId: string,
-    orgId: string,
-  ): Promise<{ contexts: SkillUsageBucket[]; workflows: SkillUsageBucket[] }>
+  /** A Skill's runs: jobs of agents whose instructions page is the Skill, one bucket per
+   *  Skill version (the one current when each job opened). */
+  skillUsage(skillArtifactId: string, orgId: string): Promise<{ runs: SkillUsageBucket[] }>
 }
 
 export type ArtifactScanClient = "claude" | "codex"
@@ -4389,10 +4358,10 @@ export interface OrgSettings {
   /** THE one agent-write switch, read fresh per turn/claim/publish. On (the default),
    *  agent writes publish live like a person's — versioned, with the publish fan-out,
    *  and a review round when one was asked for. Off, agents stop writing everywhere an
-   *  agent credential can write: hosted runs and asks are neither materialized,
-   *  dispatched, nor claimed (no model spend), chat's publish tool refuses and steers
-   *  the drafted change into the reply, and an agent-credentialed publish — MCP or
-   *  HTTP — is refused at the API. Every reader fails CLOSED on a settings error. */
+   *  agent credential can write: agent jobs are neither dispatched nor claimed (no model
+   *  spend), @Derive's publish tool refuses and steers the drafted change into the reply,
+   *  and an agent-credentialed publish (MCP or HTTP) is refused at the API. Every reader
+   *  fails CLOSED on a settings error. */
   agentWrites: boolean
   /** The workspace's default agent (a registered agent id): the fallback actor for
    *  users with no connected agent (the concierge, workspace-owned living docs).
@@ -4402,11 +4371,9 @@ export interface OrgSettings {
    *  the generated brand profile. Absent until set. Mirrored on a profile (user layer);
    *  resolved profile-over-workspace. */
   brandprint?: Brandprint
-  /** Per-agent owner-lend allow-list: agent ids whose OWNER (created_by) has opted that
-   *  agent in to bill the owner's OWN connected model plan when a run's initiator has no
-   *  plan of their own. Default absent = off. Only the agent's owner toggles membership;
-   *  the credential resolver falls to the owner's plan for a listed agent, then the
-   *  workspace pool, then fail-closed. */
+  /** Per-agent owner-lend allow-list (agent ids), from the old payer chain. Nothing reads it
+   *  since the agents cutover (a job's payer is lib/job-accounts.ts jobPayer); kept so stored
+   *  settings round-trip, and pruned when an agent is deleted. */
   ownerLendAgents?: string[]
   /**
    * THE MODEL LIBRARY. Deploy-scoped, and read on the reserved `__instance__` settings row
@@ -4425,11 +4392,10 @@ export interface OrgSettings {
   /**
    * WHICH MODEL SERVES WHICH LANE. Instance row only, same as {@link models}.
    *
-   * Lanes rather than one default, because they answer different questions on different
-   * budgets: `chat` is attended and somebody is waiting on the first token, while `automation`
-   * runs unattended where depth is worth more than turnaround. Both used to be pinned in the
-   * environment (`DERIVE_MODEL_NAME`, `DERIVE_LOOP_MODEL`), which put a redeploy between an
-   * operator and an outage.
+   * Lanes rather than one default, so a lane with different budgets can be added without a
+   * new field. Today there is one, `chat` (@Derive replies in comments and Slack), where
+   * somebody is waiting on the first token. It used to be pinned only in the environment
+   * (`DERIVE_MODEL_NAME`), which put a redeploy between an operator and an outage.
    *
    * An id naming nothing in the catalog is IGNORED, not fatal — a slot that has gone stale
    * costs the override, never every turn on the deploy.
@@ -4472,15 +4438,8 @@ export interface ModelProbe {
 /** The lanes a model can be pinned to. A lane with no entry falls to the deploy's configured
  *  default for that lane, which is what every deploy predating the library has. */
 export interface InstanceSlots {
-  /** Attended chat, and an @Derive mention. Falls back to `DERIVE_MODEL_NAME`. */
+  /** @Derive replies in comments and Slack. Falls back to `DERIVE_MODEL_NAME`. */
   chat?: string
-  /** Unattended automation runs on the in-process loop. Falls back to `DERIVE_LOOP_MODEL`,
-   *  then to model-anthropic's DEFAULT_ANTHROPIC_MODEL.
-   *
-   *  🚨 THIS NAMES THE MODEL, NOT WHO PAYS. The automation lane resolves a credential per run
-   *  through the payer chain unless the operator configured a gateway, so pinning a model here
-   *  moves no turn onto the operator's key. */
-  automation?: string
 }
 
 /** How a workspace/profile likes its stuff built: a pointer to a "conventions"

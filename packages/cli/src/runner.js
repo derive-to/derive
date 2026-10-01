@@ -4,7 +4,6 @@
 
 import { readFileSync, realpathSync, statSync } from "node:fs"
 import { resolve, sep } from "node:path"
-import { claudeCode } from "./providers/claude-code.js"
 
 export class DeriveClient {
   constructor(server, token) {
@@ -67,8 +66,8 @@ export class DeriveClient {
 
 // ---- Claude subprocess ---------------------------------------------------------
 
-// The model's output contract. Appended after the manifest so a context author
-// can't accidentally break the parse contract by editing their manifest.
+// The model's output contract. Appended after the agent's instructions so an author
+// can't accidentally break the parse contract by editing them.
 export const OUTPUT_CONTRACT = `
 
 ## Output format — REQUIRED, no matter what you did
@@ -107,7 +106,7 @@ you built, never some other file you happen to have read. It is
 published for you and linked under your answer; keep body_md as the prose
 summary. Otherwise leave artifact null.`
 
-/** The prompt for one run: the session transcript, then the standing question.
+/** The prompt for one run: the job's transcript, then the standing question.
  *  "Latest message" is the latest ASKER message — on a stale re-serve the
  *  transcript ends with the runner's own superseded answer, and the follow-up
  *  to address sits above it. */
@@ -138,7 +137,7 @@ const MAX_ARTIFACT_CHARS = 2_000_000
  *      and a directory/device isn't read at all
  *    - sized BEFORE reading, so a mis-pointed 600MB dump can't OOM the daemon
  *  Returns {html} or {error}; the caller demotes an error to a caveat, never a
- *  failed session. */
+ *  failed job. */
 export function resolveArtifactHtml(artifact, cwd) {
   if (typeof artifact.html === "string") {
     // parseAnswer already enforces both, but this function is the guard layer
@@ -241,95 +240,22 @@ const RESUME_PROMPT = `Your previous turn was cut short by a transient service e
 // a short wait would just re-enter the overload window it already gave up on.
 export const RETRY_DELAY_MS = 30_000
 
-// ---- automation lane: runs (a scheduled/triggered artifact update) ------------
-// A run is an automation firing, not an ask. The model maintains an artifact on a trigger: it
-// pulls from the run's source tools (via the shim in serveRun) and returns the FULL new artifact
-// source in a <revision> block. The runner then publishes it — every agent write lands live, a
-// kept and restorable version with the publish fan-out. The workspace's agent-write switch is
-// enforced server-side: at the claim, and again at the write, so a switch flipped mid-run
-// refuses the publish (a retryable failure — the run requeues for when writes are back on).
-
-/** The run output contract — a full artifact revision, not an answer. Appended after the manifest
- *  like OUTPUT_CONTRACT so a manifest edit can't break the parse. */
-export const REVISION_CONTRACT = `
-
-## Output format — REQUIRED
-
-You are running an AUTOMATION: you maintain a Derive artifact on a trigger, you are not answering a
-person. Do what the instruction asks — if source tools are listed, pull from them — then end your
-FINAL message with a single <revision> block of JSON and NOTHING after it. A reply without the
-block is discarded and nothing is written.
-
-<revision>
-{
-  "content": "the COMPLETE new source of the artifact",
-  "filename": "index.html or notes.md — sets the content type",
-  "confidence": 0.0,
-  "message": "a one-line version note"
-}
-</revision>
-
-Return the WHOLE artifact source, not a diff. Your revision publishes as a new version of the
-artifact — every version is kept and restorable, and the people who watch it are notified. State
-your honest confidence; it is shown to people, never used to decide anything.`
-
-const REVISION_NUDGE = `Your previous reply was NOT accepted — it did not end with the required <revision> block, so nothing was written. Reply now with ONLY that block and nothing else: <revision>{"content":"<the full new artifact source>","filename":"index.html","confidence":…,"message":"…"}</revision>.`
-
-/** Extract + validate the <revision> block from the model's final text. Mirrors parseAnswer:
- *  tolerant of ```json fences, clamps confidence to [0,1], caps content at the artifact limit. */
-export function parseRevision(text) {
-  const m = text.match(/<revision>([\s\S]*?)<\/revision>/i)
-  if (!m?.[1]) return { error: "no <revision> block in result" }
-  const cleaned = m[1]
-    .trim()
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/```\s*$/i, "")
-    .trim()
-  let raw
-  try {
-    raw = JSON.parse(cleaned)
-  } catch (e) {
-    return { error: `revision JSON parse: ${e.message}` }
-  }
-  if (!raw || typeof raw !== "object") return { error: "revision is not an object" }
-  if (typeof raw.content !== "string" || !raw.content.trim())
-    return { error: "content must be a non-empty string" }
-  if (raw.content.length > MAX_ARTIFACT_CHARS) return { error: "content is over the 2MB cap" }
-  const filename =
-    typeof raw.filename === "string" && /\.[a-z0-9]+$/i.test(raw.filename.trim())
-      ? raw.filename.trim().slice(0, 120)
-      : "index.html"
-  return {
-    revision: {
-      content: raw.content,
-      filename,
-      confidence:
-        typeof raw.confidence === "number" ? Math.max(0, Math.min(1, raw.confidence)) : null,
-      message:
-        typeof raw.message === "string" && raw.message.trim()
-          ? raw.message.trim().slice(0, 200)
-          : undefined,
-    },
-  }
-}
-
 /** Produce a validated STRUCTURED result from one agent run, robustly and provider-agnostically —
- *  the retry/resume/nudge machine both lanes share. Generic over the output CONTRACT (appended to
- *  the system prompt), its PARSE (returns {value} or {error}), the NUDGE prompt, and an optional
- *  SALVAGE (raw text -> value; the answer lane salvages an unstructured reply, the run lane does
- *  not). The numbered cases:
+ *  the retry/resume/nudge machine. Generic over the output CONTRACT (appended to the system
+ *  prompt), its PARSE (returns {value} or {error}), the NUDGE prompt, and an optional SALVAGE
+ *  (raw text -> value). The numbered cases:
  *   1. a parseable block counts EVEN IF the process exited nonzero after emitting it;
  *   2. a transient failure (provider.retryable) retries ONCE, resuming the session when there is one;
  *   3. an ERROR run with no block fails (its text is the API's error, not a result);
  *   4. a clean exit with no block nudges once on the SAME session (a reformat, not new work);
- *   5. real output but still no block SALVAGES it, when the lane allows.
- *  Returns {ok, value} or {ok:false, error}. */
+ *   5. real output but still no block SALVAGES it, when a salvage is given.
+ *  Returns {ok, value} or {ok:false, error}. (Doc for runStructured below.) */
 /**
  * USD (float, as the CLIs report it) → micro-USD (integer, as the column stores it).
  *
  * Integer micros because money in a float sums badly, and the budget SUMs this column across a
  * month of runs. Rounded UP: a sub-micro run is real spend, and flooring it to 0 would let a
- * high-volume cheap automation run free against the cap forever.
+ * high-volume cheap agent run free against the cap forever.
  *
  * null in, null out — "we never found out what this cost" is not "this cost nothing", and only
  * the second belongs in a sum. The column is nullable precisely so the difference survives.
@@ -425,7 +351,7 @@ async function runStructured(provider, opts) {
   return { ok: false, error: parsed.error, retryable: false }
 }
 
-/** The answer lane: a session's reply. Appends the <answer> contract; salvages an unstructured
+/** One job's reply. Appends the <answer> contract; salvages an unstructured
  *  reply so a run that did the work isn't lost to a missing block. */
 export async function runAgent(provider, opts) {
   const r = await runStructured(provider, {
@@ -451,29 +377,6 @@ export async function runAgent(provider, opts) {
   return r.ok ? { ok: true, answer: r.value } : r
 }
 
-/** The automation lane: one run's revision. Same machine, the <revision> contract, no salvage
- *  (a run with no revision block did nothing — fail it). */
-export async function runRevisionAgent(provider, opts) {
-  const r = await runStructured(provider, {
-    ...opts,
-    contract: REVISION_CONTRACT,
-    parse: (t) => {
-      const p = parseRevision(t)
-      return p.revision ? { value: p.revision } : { error: p.error }
-    },
-    nudgePrompt: REVISION_NUDGE,
-    salvage: null,
-  })
-  return r.ok ? { ok: true, revision: r.value } : r
-}
-
-/** Back-compat convenience for the default provider; the runClaude tests exercise
- *  the full orchestration through it. New call sites pass a provider to runAgent. */
-export const runClaude = (opts) => runAgent(claudeCode, opts)
-
-/** Boot the host state serve/once share: context info, repo corpus, skills,
- *  conventions. Everything here is per-boot truth on purpose (see the comments
- *  inline) — `once` inherits the same freshness contract as a serve restart. */
 // The model-auth env the runner OWNS: every token var the provider CLIs read, CODEX_HOME
 // (which points Codex at a login's auth.json), and the base-URL vars (a host value could
 // silently redirect the injected token to a proxy). Only the resolved per-user credential may

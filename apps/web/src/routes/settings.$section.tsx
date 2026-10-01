@@ -1,6 +1,6 @@
 import { createFileRoute, redirect } from "@tanstack/react-router"
 import { Settings } from "../pages/settings"
-import { SECTION_ALIASES } from "../pages/settings/section-aliases"
+import { SECTION_ALIASES, SECTION_ANCHORS } from "../pages/settings/section-aliases"
 
 // A settings section as a path segment: /settings/$section (profile, members,
 // integrations…). Transient integration callback signals ride as query params — they're a
@@ -15,6 +15,14 @@ export const Route = createFileRoute("/settings/$section")({
   beforeLoad: ({ params }) => {
     if (params.section === "people") throw redirect({ to: "/people", replace: true })
     if (params.section === "automations") throw redirect({ to: "/agents", replace: true })
+    const anchored = SECTION_ANCHORS[params.section]
+    if (anchored)
+      throw redirect({
+        to: "/settings/$section",
+        params: { section: anchored.section },
+        hash: anchored.hash,
+        replace: true,
+      })
     const alias = SECTION_ALIASES[params.section]
     if (alias) {
       throw redirect({ to: "/settings/$section", params: { section: alias }, replace: true })

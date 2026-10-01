@@ -13,12 +13,10 @@ import { type AskFields, addCostUsd, NUDGE_LIMIT, type Revision } from "@derive/
  * That is what lets it run in a Worker at all (a heavy agent framework is exactly the thing that
  * blows a Worker bundle), and it keeps the loop small enough to read in one sitting.
  *
- * The CONTRACT is injected rather than hardcoded, because the three lanes that run a model turn
- * ask for genuinely different things and must not fork the loop to get them: an automation run
- * wants a revision or nothing happened; an attended edit of a large document wants search and
- * replace; an ask wants a revision OR a prose answer, plus the fields a waiting person can use.
- * Every one of those contracts lives in @derive/core, so the container executor and this loop
- * ask for the same output in the same words.
+ * The CONTRACT is injected rather than hardcoded, because the lanes that run a model turn ask
+ * for different things and must not fork the loop to get them: an edit of a large document wants
+ * search and replace; a question about a document wants a revision OR a prose answer; a Slack
+ * reply wants prose and nothing else. The block contracts live in @derive/core.
  *
  * The loop does NOT land the write. It returns what the model produced; the caller's landing
  * port writes it, exactly as the container path does.
@@ -56,8 +54,7 @@ export interface TurnProduct {
   /** What the model wants written, or null when it deliberately wrote nothing. Only a contract
    *  that ALLOWS an answer (the ask) ever yields null. */
   revision: Revision | null
-  /** The prose outside the block — what a waiting person reads. Empty on the automation lane,
-   *  where nobody is reading. */
+  /** The prose outside the block: what the waiting person reads. */
   prose: string
   /** Session-only fields, when the contract carries them. */
   ask: AskFields | null
@@ -90,7 +87,7 @@ export interface ReplyContract {
 export interface AgentLoopInput {
   /** The FULLY COMPOSED system prompt, contract text included. */
   system: string
-  /** The conversation so far: one instruction for an automation, a transcript for an ask. */
+  /** The conversation so far, oldest first. */
   messages: ModelMessage[]
   tools: LoopTool[]
   contract: ReplyContract
@@ -103,8 +100,8 @@ export interface AgentLoopInput {
      *  waiting for the whole thing.
      *
      *  OPTIONAL AND ADDITIVE ON PURPOSE. Streaming could have been a second return type, but
-     *  `callModel` is implemented by two adapters and consumed by the loop, turn-core,
-     *  session-turn and the substrate loop — plus every test that injects a fake. A callback on
+     *  `callModel` is implemented by two adapters and consumed by the loop and turn-core, plus
+     *  every test that injects a fake. A callback on
      *  the INPUT leaves all of them untouched: an adapter that ignores it behaves exactly as
      *  before, and `ModelTurn` stays the single source of truth for the final text, tool calls,
      *  truncation and cost. Nothing downstream reads deltas to make a decision.

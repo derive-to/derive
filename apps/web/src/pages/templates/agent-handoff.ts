@@ -1,3 +1,4 @@
+/** `kind: "context"` is the template API's name for an agent starter (its instructions page). */
 export type AgentTemplateTarget = {
   uri: string
   title: string

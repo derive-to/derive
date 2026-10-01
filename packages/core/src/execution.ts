@@ -1,4 +1,4 @@
-/** The coding-agent runtimes Derive can execute for unattended work. */
+/** The coding-agent runtimes an agent's jobs run with. */
 export const EXECUTION_PROVIDERS = ["claude-code", "codex"] as const
 
 export type ExecutionProvider = (typeof EXECUTION_PROVIDERS)[number]
@@ -6,8 +6,8 @@ export type ExecutionProvider = (typeof EXECUTION_PROVIDERS)[number]
 /**
  * The immutable execution choice captured when a run enters the queue.
  *
- * It lives in run.meta rather than being read from the automation at execution time, so editing
- * a routine cannot silently move already-accepted work to another provider or location.
+ * It is captured with the work rather than read from the agent at execution time, so editing an
+ * agent cannot silently move already-accepted work to another provider or location.
  * `model: null` deliberately means "the provider's verified default"; a future explicit model
  * picker can pin a concrete id without changing this contract.
  */

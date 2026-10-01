@@ -15,10 +15,9 @@ import { OpenAPIHono } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
 import { z } from "zod"
 import type { AppContext } from "../context"
-import { afterPublish, indexSkillVersion } from "../lib/after-publish"
+import { afterPublish } from "../lib/after-publish"
 import { manifestOf, mergeBundleZip, pageTextResolver } from "../lib/bundle"
 import { fail, readJson } from "../lib/http"
-import { log } from "../log"
 
 const installationBody = z.object({
   skill_version: z.number().int().positive(),
@@ -349,8 +348,7 @@ export const skillRoutes = (ctx: AppContext) => {
       })
     }
     return c.json({
-      contexts: usage.contexts,
-      workflows: usage.workflows,
+      runs: usage.runs,
       local,
       installations: [...installSummary.values()],
       coverage: [...coverage.values()],
@@ -531,54 +529,6 @@ export const skillRoutes = (ctx: AppContext) => {
       linked_by: actor?.id ?? "system",
     })
     return c.json({ link }, 201)
-  })
-
-  app.post("/v1/skill-migrations", async (c) => {
-    const orgId = await requireWorkspace(c, "manage")
-    if (orgId instanceof Response) return orgId
-    const body = await readJson(c, z.object({ apply: z.boolean().default(false) }))
-    if (body instanceof Response) return body
-    const human = await actingHuman(c)
-    if (!human) return fail(c, 403, "a signed-in workspace manager must run migrations")
-    // Contexts and workflow launchers no longer migrate into Skills (the agents cutover
-    // retired both); what remains is the Skill relation backfill.
-    const report: never[] = []
-
-    // Rebuild current Skill relation indexes so this migration also backfills references
-    // inferred from Skills published before inference existed. This is idempotent and does not
-    // create a new artifact version: the index remains a cache over immutable version bytes.
-    if (body.apply) {
-      let cursor: { key: string; id: string } | undefined
-      for (;;) {
-        const skills = await meta.listArtifacts({
-          orgId,
-          contentType: SKILL_CONTENT_TYPE,
-          archived: "include",
-          limit: 100,
-          cursor,
-        })
-        for (const skill of skills) {
-          const version = await meta.getVersion(skill.id, skill.current_version)
-          if (!version) continue
-          try {
-            await indexSkillVersion(meta, blobs, skill, version)
-          } catch (error) {
-            // One damaged historical bundle must not prevent every healthy Skill from being
-            // backfilled. The same best-effort boundary is used by the live publish indexer.
-            log.warn("skill relation backfill failed", {
-              artifact: skill.id,
-              n: version.n,
-              error: String(error),
-            })
-          }
-        }
-        const last = skills.at(-1)
-        if (skills.length < 100 || !last) break
-        cursor = { key: last.created_at, id: last.id }
-      }
-    }
-
-    return c.json({ applied: body.apply, report })
   })
 
   return app

@@ -238,16 +238,21 @@ test("settings destinations and their retired paths resolve", async ({ owner }) 
   await owner.goto("/settings/model-plans")
   await expect(owner).toHaveURL(/\/settings\/accounts$/)
   await expect(owner.getByTestId("settings-tab-accounts")).toHaveAttribute("aria-current", "page")
+  await expect(owner.getByTestId("settings-tab-accounts")).toHaveText("Model accounts")
   await expect(owner.getByTestId("account-connect")).toBeVisible()
-  // The retired agent-connection section lands on Machines; Credentials keeps its own section.
+  // The retired agent-connection section lands on Machines; Credentials became the Secrets
+  // group of Sources, and its old path lands there.
   await owner.goto("/settings/agents")
   await expect(owner).toHaveURL(/\/settings\/machines$/)
   await owner.goto("/settings/credentials")
-  await expect(owner.getByTestId("settings-tab-credentials")).toHaveAttribute(
-    "aria-current",
-    "page",
-  )
+  await expect(owner).toHaveURL(/\/settings\/sources#secrets$/)
+  await expect(owner.getByTestId("settings-tab-sources")).toHaveAttribute("aria-current", "page")
+  await expect(owner.getByTestId("settings-tab-credentials")).toHaveCount(0)
+  await expect(owner.getByTestId("sources-tools")).toBeVisible()
   await expect(owner.getByTestId("credentials-add")).toBeVisible()
+  // Automations is gone; its old path lands on Agents.
+  await owner.goto("/settings/automations")
+  await expect(owner).toHaveURL(/\/agents$/)
 
   // People is a standalone directory page; its retired settings path redirects out.
   await owner.goto("/people")
@@ -761,7 +766,10 @@ test("Settings lists the machines agents run on and the accounts they use", asyn
   await expect(owner.getByTestId("machines")).toContainText("Night shift")
   await expect(owner.getByTestId("machines")).toContainText("seen")
   await expect(owner.getByTestId("machines-runner-command")).toContainText("runner serve")
-  // The workspace's agent brake lives here, for its owner.
+  await owner.screenshot({ path: testInfo.outputPath("settings-machines.png"), fullPage: true })
+  // The workspace's agent brake lives in General, for its owner.
+  await expect(owner.getByTestId("toggle-agent-writes")).toHaveCount(0)
+  await owner.goto("/settings/general")
   const writes = owner.getByTestId("toggle-agent-writes")
   await expect(writes).toBeChecked()
   await writes.click()
@@ -770,7 +778,6 @@ test("Settings lists the machines agents run on and the accounts they use", asyn
   expect(settingsNow.agentWrites).toBe(false)
   await writes.click()
   await expect(writes).toBeChecked()
-  await owner.screenshot({ path: testInfo.outputPath("settings-machines.png"), fullPage: true })
 
   await owner.goto("/settings/accounts")
   await owner.getByTestId("account-connect").click()

@@ -353,66 +353,6 @@ export interface ManifestConversion {
   pem: string
 }
 
-export interface AppWebhookConfig {
-  url: string
-  contentType: string
-  insecureSsl: string
-}
-
-/** Read the App webhook target. GitHub never returns the secret, only a masked placeholder. */
-export async function getAppWebhookConfig(
-  appId: string,
-  privateKeyPem: string,
-): Promise<AppWebhookConfig> {
-  const res = await fetch(`${API}/app/hook/config`, {
-    headers: ghHeaders(`Bearer ${appJwt(appId, privateKeyPem)}`),
-  })
-  if (!res.ok) return raise(res, "reading the GitHub App webhook")
-  const data = (await res.json()) as {
-    url?: unknown
-    content_type?: unknown
-    insecure_ssl?: unknown
-  }
-  return {
-    url: typeof data.url === "string" ? data.url : "",
-    contentType: typeof data.content_type === "string" ? data.content_type : "",
-    insecureSsl: String(data.insecure_ssl ?? ""),
-  }
-}
-
-/** Set the shared App webhook without exposing its secret to a browser or installation. */
-export async function configureAppWebhook(input: {
-  appId: string
-  privateKeyPem: string
-  url: string
-  secret: string
-}): Promise<AppWebhookConfig> {
-  const res = await fetch(`${API}/app/hook/config`, {
-    method: "PATCH",
-    headers: {
-      ...ghHeaders(`Bearer ${appJwt(input.appId, input.privateKeyPem)}`),
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      url: input.url,
-      content_type: "json",
-      insecure_ssl: "0",
-      secret: input.secret,
-    }),
-  })
-  if (!res.ok) return raise(res, "updating the GitHub App webhook")
-  const data = (await res.json()) as {
-    url?: unknown
-    content_type?: unknown
-    insecure_ssl?: unknown
-  }
-  return {
-    url: typeof data.url === "string" ? data.url : "",
-    contentType: typeof data.content_type === "string" ? data.content_type : "",
-    insecureSsl: String(data.insecure_ssl ?? ""),
-  }
-}
-
 /**
  * Trade the temporary code GitHub returns from the App-manifest flow for the new
  * App's permanent credentials. One-time and short-lived, so it's called once at

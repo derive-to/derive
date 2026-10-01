@@ -96,7 +96,7 @@ export function LibraryShelf({
         <EmptyState
           icon={<Icon name="templates" />}
           title="Template libraries are landing with this release"
-          description="Built-in artifact and Context templates are ready now. Shared libraries turn on automatically when the release finishes."
+          description="Built-in artifact and agent templates are ready now. Shared libraries turn on automatically when the release finishes."
         />
       ) : libraries.isError ? (
         <LoadError

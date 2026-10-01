@@ -36,7 +36,7 @@ export function warningFor(
   // Only a Derive machine needs a stored account; a runner on someone's own machine falls back
   // to the login on that machine.
   if (noAccount && agent.machine === "derive")
-    return "No model account to run on. Its jobs fail until one is connected in Settings › Accounts."
+    return "No model account to run on. Its jobs fail until one is connected in Settings › Model accounts."
   if (agent.machine === "derive") return null
   if (!agent.seen_at) return "Its runner has never checked in. Jobs wait until it does."
   const mark = machineOf(agent, names)

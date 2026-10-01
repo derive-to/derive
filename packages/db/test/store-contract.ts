@@ -2669,42 +2669,6 @@ export function runStoreContract(
       expect(missing.settings).toEqual(DEFAULT_ORG_SETTINGS)
     })
 
-    it("createSessionWithMessage writes session + first message + state as one unit", async () => {
-      const org = `org_${uuid()}`
-      await store.setWorkspace(org, "Chat WS")
-      const asker = `u_${uuid()}`
-      const sessionId = `ses_${uuid()}`
-      const messageId = `sm_${uuid()}`
-      const { session, message } = await store.createSessionWithMessage(
-        {
-          id: sessionId,
-          context_id: null,
-          context_version: null,
-          org_id: org,
-          asker_id: asker,
-          subject_ref: JSON.stringify({ kind: "artifact", id: "abc12345" }),
-        },
-        { id: messageId, author_kind: "asker", author_id: asker, body_md: "First question." },
-        "open",
-      )
-      // The returned session reflects the state that was SET, not the pre-update row —
-      // the route hands this straight back to the client.
-      expect(session.id).toBe(sessionId)
-      expect(session.state).toBe("open")
-      expect(session.context_id).toBeNull()
-      expect(session.org_id).toBe(org)
-      expect(message.id).toBe(messageId)
-      expect(message.session_id).toBe(sessionId)
-      expect(message.body_md).toBe("First question.")
-      // Both rows are actually persisted, and readable exactly as the separate calls left them.
-      const stored = await store.getSession(sessionId)
-      expect(stored).toEqual(session)
-      expect(await store.listSessionMessages(sessionId)).toEqual([message])
-      // A session is never left without its first message — the whole point of doing it as
-      // one statement rather than three.
-      expect((await store.listSessionMessages(sessionId)).length).toBe(1)
-    })
-
     it("unfurlInfo counts versions + comments in the database and returns the current version", async () => {
       const a = await store.createArtifact(newArtifact())
       const other = await store.createArtifact(newArtifact())
@@ -3777,40 +3741,6 @@ export function runStoreContract(
       ).rejects.toThrow()
     })
 
-    it("lists a person's contextless chat sessions, newest first, and nobody else's", async () => {
-      const ctx = await newContext()
-      // A session WITH a context must never appear here: the chat history is the sessions
-      // nobody packaged, and a context's sessions have their own console.
-      await openSession({
-        id: uuid(),
-        context_id: ctx.id,
-        org_id: ORG,
-        asker_id: "daniel",
-        context_version: 1,
-      })
-      const chat = (asker: string, org = ORG) =>
-        openSession({
-          id: uuid(),
-          context_id: null,
-          org_id: org,
-          asker_id: asker,
-          context_version: null,
-        })
-      const older = await chat("daniel")
-      // created_at is millisecond-precision, so two adjacent inserts can tie and make the
-      // ordering assertion below a coin flip. A 2ms gap is the whole fix.
-      await new Promise((r) => setTimeout(r, 2))
-      const newer = await chat("daniel")
-      await chat("sarah")
-      await chat("daniel", "org_other")
-
-      const mine = await store.listChatSessions(ORG, "daniel")
-      expect(mine.map((s) => s.id)).toEqual([newer.id, older.id])
-      expect(await store.listChatSessions(ORG, "daniel", 1)).toHaveLength(1)
-      expect(await store.listChatSessions(ORG, "sarah")).toHaveLength(1)
-      expect(await store.listChatSessions("org_none", "daniel")).toEqual([])
-    })
-
     it("deleteArtifact on a manifest cascades its context, sessions, and messages", async () => {
       const ctx = await newContext()
       const s = await openSession({
@@ -4343,25 +4273,40 @@ export function runStoreContract(
       ])
     })
 
-    it("derives exact Context and Workflow usage and keeps Artifact provenance deterministic", async () => {
+    it("counts a Skill's runs by version and keeps Artifact provenance deterministic", async () => {
       const skill = await store.createArtifact(newArtifact({ kind: "bundle" }))
       await store.addVersion(skill.id, newVersion({ content_type: "derive/skill" }))
-      const context = await store.createContext({
+      const agent = await store.createAgent({
         id: uuid(),
         org_id: ORG,
-        name: `skill-context-${uuid()}`,
-        agent_id: uuid(),
-        manifest_artifact_id: skill.id,
-        created_by: "u1",
+        name: `skill-agent-${uuid()}`,
+        token: `tok_${uuid()}`,
+        role: "editor",
       })
+      await store.updateAgent(agent.id, ORG, { instructions_artifact_id: skill.id })
       for (const id of [uuid(), uuid()])
-        await openSession({
+        await store.createJob({
           id,
-          context_id: context.id,
-          context_version: 1,
           org_id: ORG,
-          asker_id: "u1",
+          agent_id: agent.id,
+          kind: "ask",
+          instruction: "use the skill",
         })
+      // A job of an agent on other instructions is not this Skill's run.
+      const other = await store.createAgent({
+        id: uuid(),
+        org_id: ORG,
+        name: `other-agent-${uuid()}`,
+        token: `tok_${uuid()}`,
+        role: "editor",
+      })
+      await store.createJob({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: other.id,
+        kind: "ask",
+        instruction: "something else",
+      })
 
       const workflow = await store.createArtifact(newArtifact())
       const workflowVersion = await store.addVersion(workflow.id, newVersion())
@@ -4382,14 +4327,9 @@ export function runStoreContract(
       )
       expect(await store.listArtifactSkillLinkHistory(workflow.id, ORG)).toHaveLength(1)
       expect(await store.listSkillArtifactLinks(skill.id, ORG)).toHaveLength(1)
-      // Workflow runs no longer have a writer (graphs run as jobs), so their usage reads empty.
       const usage = await store.skillUsage(skill.id, ORG)
-      expect(usage.contexts).toMatchObject([{ skill_version: 1, count: 2 }])
-      expect(usage.workflows).toEqual([])
-      expect(await store.skillUsage(skill.id, `org_${uuid()}`)).toEqual({
-        contexts: [],
-        workflows: [],
-      })
+      expect(usage.runs).toMatchObject([{ skill_version: 1, count: 2 }])
+      expect(await store.skillUsage(skill.id, `org_${uuid()}`)).toEqual({ runs: [] })
     })
   })
 

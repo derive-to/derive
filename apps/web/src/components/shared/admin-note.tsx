@@ -10,7 +10,7 @@ export function AdminNote({
   className,
   testId,
 }: {
-  /** The verb phrase: "create automations", "change billing", "invite people". */
+  /** The verb phrase: "create agents", "change billing", "invite people". */
   can: string
   role?: string
   className?: string

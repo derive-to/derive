@@ -1,7 +1,7 @@
 import { DEFAULT_ORG_SETTINGS } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import { boundSources } from "../src/lib/chat-sources"
-import { buildChatTools, CHAT_TOOLS, chatPolicy, RAIL_CHAT_TOOLS } from "../src/lib/chat-tools"
+import { buildChatTools, CHAT_TOOLS, chatPolicy } from "../src/lib/chat-tools"
 import { as, makeAuthedApp, publishAs } from "./helpers"
 
 // THE CHAT PRINCIPAL. These are the tests that matter most in this feature: the chat turn runs
@@ -156,11 +156,6 @@ describe("which surfaces hold call", () => {
   it("the workspace chat holds it", () => {
     expect(CHAT_TOOLS.has("call")).toBe(true)
   })
-
-  it("the document rail does NOT — it is a read-only lane about one document", () => {
-    expect(RAIL_CHAT_TOOLS.has("call")).toBe(false)
-    expect([...RAIL_CHAT_TOOLS].sort()).toEqual(["find", "read"])
-  })
 })
 
 describe("chat source binding", () => {
@@ -248,22 +243,6 @@ describe("writing from chat", () => {
       expect(chatPolicy("publish", { title: "New", request_review: true })).toMatchObject({
         request_review: true,
       })
-    })
-  })
-
-  describe("which tools each chat surface holds", () => {
-    it("the rail's surface really is narrower — the write tool has no handler there", async () => {
-      const { ctx } = makeAuthedApp("rail-subset", [{ id: "u1", email: "u1@x.com", name: "U" }])
-      const rail = buildChatTools(
-        ctx,
-        { org: "default", user: { id: "u1", name: "U" }, seatRole: "owner" },
-        RAIL_CHAT_TOOLS,
-      )
-      expect(rail.tools.map((t) => t.name).sort()).toEqual(["find", "read"])
-      const out = (await rail.execute("publish", { title: "x", content: "y" })) as {
-        error?: string
-      }
-      expect(out.error).toMatch(/unknown tool/i)
     })
   })
 
