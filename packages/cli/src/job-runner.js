@@ -54,6 +54,9 @@ export function loadJobRunnerConfig(env = process.env, flags = {}) {
     timeoutMs: positiveMs(flags.timeout ?? env.RUNNER_TIMEOUT_MS, 600_000, 10_000),
     pollMs: positiveMs(flags.poll ?? env.RUNNER_POLL_MS, 5_000, 500),
     mock: flags.mock === "true" || env.RUNNER_MOCK === "1",
+    // Fall back to this machine's own model login when the agent has no stored account.
+    // `--no-local-login` (or RUNNER_LOCAL_LOGIN=0) requires a stored account instead.
+    localLogin: flags["no-local-login"] !== "true" && env.RUNNER_LOCAL_LOGIN !== "0",
   }
 }
 
@@ -140,9 +143,10 @@ export class JobClient {
 /** The environment the model inherits: no model tokens from this shell (the job's own account
  *  is layered on), and never the agent's key or server, which would let a prompt pull other
  *  jobs or fetch their credentials. */
-const runnerFreeEnv = (env) => {
-  const out = stripModelTokens(env)
-  for (const k of ["DERIVE_TOKEN", "DERIVE_AGENT", "DERIVE_SERVER"]) delete out[k]
+const runnerFreeEnv = (env, { keepModelLogin = false } = {}) => {
+  const out = keepModelLogin ? { ...env } : stripModelTokens(env)
+  for (const k of ["DERIVE_TOKEN", "DERIVE_TOKEN_FILE", "DERIVE_AGENT", "DERIVE_SERVER"])
+    delete out[k]
   return out
 }
 
@@ -187,8 +191,20 @@ export function jobSystemPrompt(job) {
 
 /** The model credential for this job as a per-spawn env overlay, plus its cleanup. Throws with
  *  a sentence a person can act on when nothing is connected. */
-async function modelEnvFor(client, job, provider, providerName, server) {
+async function modelEnvFor(
+  client,
+  job,
+  provider,
+  providerName,
+  server,
+  { localLogin = false } = {},
+) {
   const res = await client.account(job, providerName)
+  // On a person's own machine, a job with no stored account runs on whatever login the model's
+  // CLI already has there (claude or codex signed in, or a key in this shell). A stored account
+  // that cannot be read is still an error: someone meant that account to pay.
+  if (!res?.credential && localLogin && res?.reason !== "unreadable")
+    return { env: {}, cleanup: () => {}, local: true }
   if (!res?.credential)
     throw Object.assign(
       new Error(
@@ -244,9 +260,15 @@ export async function serveJob(client, job, cfg, deps = {}) {
     if (!cfg.mock) {
       // One after the other, so a credential file written for this job is always cleaned up.
       const { environment = {} } = (await client.environment(job)) ?? {}
-      const cred = await modelEnvFor(client, job, provider, providerName, cfg.server)
+      const cred = await modelEnvFor(client, job, provider, providerName, cfg.server, {
+        localLogin: cfg.localLogin,
+      })
       cleanup = cred.cleanup
-      env = { ...runnerFreeEnv(process.env), ...environment, ...cred.env }
+      env = {
+        ...runnerFreeEnv(process.env, { keepModelLogin: cred.local }),
+        ...environment,
+        ...cred.env,
+      }
     }
     const result = cfg.mock
       ? { ok: true, answer: { body_md: `Mock run of job ${job.id}.`, escalate: false } }
@@ -353,6 +375,8 @@ export function loadOneJobConfig(env = process.env, flags = {}) {
     throw new Error("runner run needs a job token (DERIVE_TOKEN=dkjob_...) and DERIVE_JOB_ID")
   return {
     ...loadJobRunnerConfig(env, { ...flags, token, agent: "from-job" }),
+    // A Derive machine has no login of its own; its jobs always run on a stored account.
+    localLogin: false,
     jobId,
   }
 }

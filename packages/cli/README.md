@@ -78,7 +78,9 @@ DERIVE_TOKEN=dk_agt_... npx -y @derive-to/cli runner serve --agent ag_... --serv
 The runner polls for the agent's jobs, does each one in `--cwd` (default: the current directory)
 with the agent's instructions and model account, and reports the result. `runner once --agent`
 drains the queue once and exits, for a scheduler. `--mock` checks the wiring without a model.
-The key rides the environment rather than a flag, so it stays out of the process list, and the
+When the agent has no model account stored in Derive, the runner uses whatever Claude Code
+or Codex login this machine already has; pass `--no-local-login` to require a stored account
+instead. The key rides the environment rather than a flag, so it stays out of the process list, and the
 runner never passes it on to the model.
 
 ## Run a graph or bounded loop

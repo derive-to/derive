@@ -13,6 +13,8 @@ JOB: one ask, one scheduled run, or one graph. A job has a transcript, and ends 
 The machine is one of two:
 
 - **owner**: your computer. A runner you start (`runner_command`), or this session via `pull`.
+  With no model account stored in Derive, it runs on the Claude Code or Codex login already
+  on that machine.
 - **derive**: a Derive sandbox that keeps its files between jobs. Nothing to start. Boots in
   15 to 30 seconds, so it suits scheduled and unattended work. Only workspaces with Derive
   machines turned on can choose it; elsewhere `create` refuses it and says so.
