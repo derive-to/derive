@@ -184,6 +184,8 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "--all") flags.all = "true"
   else if (a === "--clear") flags.clear = "true"
   else if (a === "--mock") flags.mock = "true"
+  // The runner's opt-out of this machine's own model login.
+  else if (a === "--no-local-login") flags["no-local-login"] = "true"
   else if (a === "--manage") flags.manage = "true"
   else if (a === "--suggest") flags.suggest = "true"
   else if (a === "--update") flags.update = "true"
@@ -883,6 +885,7 @@ if (cmd === "runner") {
   if (!(oneJob || sub === "serve" || sub === "once")) {
     console.error(`usage:
   derive runner serve --agent <id> [--server url] (key in DERIVE_TOKEN or --token-file f) [--cwd dir] [--model m] [--mock]
+                      [--no-local-login]  (require the agent's stored model account)
                       work an agent's jobs on this machine (the command an agent's page shows)
   derive runner once  --agent <id> [same flags]   work what is queued once and exit (cron, Actions)
   derive runner run   <dkjob_ token> [--server url] [--cwd dir] [--model m] [--mock]

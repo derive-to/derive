@@ -20,6 +20,9 @@ export interface PulledJob {
   started_at: string
   lease_until: string | null
   messages: { author_kind: "asker" | "agent"; body_md: string }[]
+  /** The source tools the agent may call, and the model's token (tool route only) to call them. */
+  tools?: { def: { name: string; description?: string; params?: unknown }; ref: string }[]
+  tool_token?: string | null
   [k: string]: unknown
 }
 

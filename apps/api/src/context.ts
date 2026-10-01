@@ -749,6 +749,18 @@ export function buildContext(deps: AppDeps) {
       // would, with the job pinned as this request's scope. Fail-closed at every step: bad
       // signature/expiry, a foreign or settled job, or a mismatched agent resolve to anonymous.
       const claim = await verifyWorkToken(workKind, deps.encryptionKey, b, Date.now())
+      // A model's tool token is someone only on its own job's tool route. Everywhere else it
+      // is nobody: it must not read the job's account or environment, report, or publish.
+      const toolRoute = /^\/v1\/jobs\/([^/]+)\/tool$/.exec(c.req.path)
+      if (
+        claim &&
+        workKind === "jobtool" &&
+        !(c.req.method === "POST" && toolRoute?.[1] === claim.id.split("~")[0])
+      ) {
+        agentCache.set(c, null)
+        onBehalfOfCache.set(c, null)
+        return null
+      }
       if (claim) {
         // Still live? A settled job must not keep authorizing writes after the fact, even
         // inside the token's remaining TTL. A job token lives exactly as long as the claim it

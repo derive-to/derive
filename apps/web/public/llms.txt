@@ -45,7 +45,9 @@ app's HTML shell, whose content loads client-side.
 
 ## Key API endpoints
 
-All requests use `Authorization: Bearer $DERIVE_TOKEN` (static agent token from Settings > Agents).
+All requests use `Authorization: Bearer $DERIVE_TOKEN`: an agent's key, from the `agents` tool
+when the agent is created, or from the agent's page in Derive (its creator or a workspace owner
+can replace it on the Settings tab).
 
 ```
 POST   /v1/artifacts                           publish new artifact (multipart: file, title, visibility)
@@ -82,25 +84,50 @@ a review correction into a workspace skill (read the thread, dedup against the c
 publish live, link back); POST delivers the same instruction to a registered agent's
 inbox.
 
-Remote tools (ten): find, read, catch_up, comment, stage, publish, organize,
-checkpoint, use, list_workspaces.
+Remote tools (seventeen): list_workspaces, find, read, catch_up, clear_queue, comment,
+stage, publish, checkpoint, browse_library, organize, shelve, agents, ask, jobs, pull,
+derive_code. `derive_code` is present only where the instance runs a code sandbox;
+`list_workspaces` reports the live list.
 
-- find: browse or search artifacts and discover askable workspace contexts
+- list_workspaces: inspect and route across granted workspaces, and list the tools served now
+- find: browse or search artifacts
 - read: read an artifact's content by short id; bundles take a section (page path), any read takes a version for history
 - catch_up: an artifact's review/change state, or the registered agent's queued work when called without a short id
+- clear_queue: clear handled items off the work queue that catch_up returned
 - comment: leave feedback, reply (reply_to), anchor to a quote, resolve/reopen (set_state)
 - stage: upload large documents or bundles out of band; for an image/font, mint an asset upload URL, POST raw bytes, then use the returned permanent url or bundle ref in publish
 - publish: create or revise with edits/content/files; addresses resolves threads; request_review opens a review round
-- organize: manage tags and collections
 - checkpoint: save compact, resumable working state
-- use: ask a workspace context or resume its session
-- list_workspaces: inspect and route across granted workspaces
+- browse_library, organize, shelve: browse tags and collections, tag and collect, retire or delete
+- agents: list, create, update, or delete agents (create returns the agent's key and, for an owner machine, its runner command)
+- ask: give an agent work, or follow up on one of its jobs; waits a bounded time for it to settle
+- jobs: list or inspect jobs; cancel, retry, or answer one that needs you
+- pull: run an owner-machine agent from this session: claim its jobs, then report each one
+- derive_code: chain several read-only calls (searches, reads) in one sandboxed script
 
 The stdio compatibility server exposes eight tools: list_workspaces, list_artifacts,
 search, read, catch_up, comment, organize, publish.
 
-Resources: derive://skills/publishing, /assets, /loop, /contexts, /checkpoint, /organize.
-The stdio server also exposes derive://guide.
+Resources: derive://skills lists the core skills: loop, finding, publishing, decks,
+dynamic-data, latex, assets, bundles, workflows, agents, papers, checkpoint, organize,
+sources, helping. Read one as derive://skills/<name>. The stdio server exposes
+derive://guide instead.
+
+## Agents
+
+An agent is a named worker in a workspace: an instructions page, the sources it may use, a
+model account, and a machine. Each piece of work it does is a job (one ask, one scheduled run,
+or one graph), with a transcript; a job the CLI runner does also leaves a report page, private
+to the workspace. A job that needs a person stops at `needs_you` and shows in their Inbox.
+
+- Machine `owner`: a person's computer running `derive runner serve --agent <id>`. With no model
+  account stored in Derive, it uses the Claude Code or Codex login already on that machine.
+- Machine `derive`: a Derive sandbox per agent that keeps its files between jobs. Only in
+  workspaces with Derive machines turned on; it needs a stored model account.
+
+Create agents over MCP with `agents` (read derive://skills/agents first). A workflow is an
+agent whose instructions page holds a `derive.workflow/v1` definition; Derive walks it
+step by step (derive://skills/workflows).
 
 ## Updating existing work
 
@@ -129,8 +156,9 @@ Key env vars: BASE_URL, DERIVE_AUTH_SECRET (openssl rand -hex 32), DERIVE_TOKEN
 
 ## Scope and drift
 
-- Derive hosts documents, pages, and versioned artifacts. It does not run compute. Do not use it for
-  server-side code execution, general-purpose data storage, secrets, or app backends.
+- Derive hosts documents, pages, and versioned artifacts, and runs agent jobs: on the agent
+  owner's own machine, or on a Derive machine where a workspace has them. Do not use it for
+  general server-side code execution, general-purpose data storage, secrets, or app backends.
 - If this file and the live API disagree, trust the live API: fetched copies go stale.
   Re-read /skill.md or /docs before answering capability questions.
 

@@ -1,8 +1,8 @@
 # `@derive-to/mcp`
 
 The local stdio compatibility server for [Derive](https://derive.to). It gives an
-MCP-compatible agent the same find, publish, comment, and revision tools exposed by
-a Derive instance's remote `/mcp` endpoint.
+MCP-compatible agent the core search, read, publish, comment, and revision tools of a
+Derive instance's remote `/mcp` endpoint.
 
 ## Prefer the remote server
 
@@ -54,20 +54,24 @@ interactive clients. Treat static tokens as credentials and never commit them.
 
 ## Tools
 
-- `find`: search and browse artifacts.
+The stdio bridge has eight tools:
+
+- `list_workspaces`: list the workspaces this machine is signed in to.
+- `list_artifacts`: browse artifacts.
+- `search`: search artifacts.
 - `read`: read artifact content or a specific version.
 - `catch_up`: retrieve changed work, open feedback, history, or the current work queue.
 - `comment`: leave feedback, reply, resolve, or reopen a thread.
+- `organize`: manage tags and collections.
 - `publish`: create an artifact or save a revision; publishes live.
-- `stage`: upload images, fonts, and other bundle assets out of band.
-- `checkpoint`: save resumable working state as a one-page artifact.
 
-The remote server also has the agent tools (`agents`, `ask`, `jobs`, `pull`) for making agents,
-handing them work, and running them; the stdio bridge does not.
+The remote server has seventeen. Beyond these it adds staging uploads (`stage`), checkpoints
+(`checkpoint`), library shelving, and the agent tools (`agents`, `ask`, `jobs`, `pull`) for
+making agents, giving them work, and running them. Prefer it when you need any of those.
 
-The server also exposes workflow resources under `derive://skills/*`. Agents should
-read the relevant workflow before performing a multi-step operation. The canonical
-[Derive skill](SKILL.md) contains the complete operating instructions.
+The bridge exposes its guide as MCP resources: `derive://guide`, `derive://guide/connect`, and
+`derive://guide/compatibility`. Agents should read the guide before the first write. The
+canonical [Derive skill](SKILL.md) contains the complete operating instructions.
 
 ## Permission model
 

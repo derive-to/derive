@@ -461,15 +461,16 @@ catch-all that otherwise hijacks `/assets/*`); see `apps/api/scripts/prep-edge-a
 ### Upgrading an existing D1 database
 
 New D1 databases get the current shape from `deploy/d1-schema.sql` and need nothing extra.
-An **existing** one predating document chat still has `context_id NOT NULL` on
-`context_session`. Chat sessions have no context, so they fail to insert
-until you run the one-shot relaxation:
+An **existing** one created before contextless sessions still has `context_id NOT NULL` on
+`context_session`. The step is still needed after the agents release: an @Derive reply in
+Slack opens a session with no context, and on an unrelaxed table that insert fails. Run the
+one-shot relaxation:
 
 ```
 wrangler d1 execute <db> --remote --file=deploy/relax-context-session-d1.sql
 ```
 
-Run it ONCE. It rebuilds the table (SQLite has no `ALTER COLUMN`), holding foreign keys
+Run it once. It rebuilds the table (SQLite has no `ALTER COLUMN`), holding foreign keys
 until COMMIT so a session whose context was deleted cannot abort the migration. Postgres
 and self-host SQLite need no manual step: the former rides `deploy:pg-schema`, the latter
 runs the same rebuild guarded at boot. Check whether you need it with:
@@ -501,10 +502,12 @@ guarded at boot. Check with:
 wrangler d1 execute <db> --remote --command "SELECT sql FROM sqlite_master WHERE name='slack_thread_link'"
 ```
 
-### Chat
+### The model gateway for @Derive replies
 
-Chat needs a model. Set all three as Worker secrets, or chat answers honestly that none
-is configured:
+Mention @Derive in a comment, or in Slack where the workspace has connected it, and Derive
+answers with a model it calls itself. That model comes from a gateway the operator configures.
+Set all three as Worker secrets. Without them there is no model to answer with: a comment
+mention gets no reply, and a Slack mention is told no model is configured.
 
 ```
 wrangler secret put DERIVE_MODEL_BASE_URL   # e.g. https://api.fireworks.ai/inference/v1
@@ -512,21 +515,18 @@ wrangler secret put DERIVE_MODEL_API_KEY
 wrangler secret put DERIVE_MODEL_NAME       # the provider's own model id
 ```
 
-This key pays for every attended turn on the deployment, so it is an operator decision
-rather than a per-user one.
+This key pays for every @Derive reply on the deployment, so it is an operator decision rather
+than a per-user one. On a shared host, `DERIVE_CHAT_ALLOWLIST` limits which workspaces may
+spend it.
 
 An `openrouter.ai` base URL also gives the model a bounded, read-only public tool belt:
 web search (at most two searches and ten results per model call), URL fetch (at most two),
 and current date/time. OpenRouter runs these server-side alongside Derive's own function tools.
 Other OpenAI-compatible gateways receive only the standard function tools they already support.
 
-**Streaming: the gateway should speak SSE, but need not.** When a browser is watching an
-attended reply, the request carries `stream: true` and `stream_options: {include_usage: true}`
-(the latter makes a streamed turn report its cost; a stream otherwise omits usage),
-and the answer is rendered as it arrives. A gateway that rejects those fields, or answers with
-ordinary JSON anyway, is **retried once without them** and the turn completes normally; the
-person just sees the reply appear all at once. So streaming is an enhancement, never a
-deployment requirement. Unattended runs and automations never ask for a stream at all. To check
+**Streaming is optional.** A request may carry `stream: true` and
+`stream_options: {include_usage: true}`. A gateway that rejects those fields, or answers with
+ordinary JSON anyway, is retried once without them and the reply completes normally. To check
 whether yours streams:
 
 ```
@@ -538,7 +538,9 @@ curl -sN "$DERIVE_MODEL_BASE_URL/chat/completions" \
 
 > `DERIVE_MODEL_NAME` is your **gateway's** model id and belongs only with the two vars
 > above. Agent jobs do not use this gateway: each job runs on the model account its agent
-> resolves (the agent's own, its asker's or creator's, or the workspace's shared one).
+> resolves (the agent's own, its asker's or creator's, or the workspace's shared one), or on
+> an owner machine's own Claude Code or Codex login. See
+> [Run agents](/agents/run/#model-accounts-and-your-own-login).
 
 #### The model library (Settings → Instance → Models)
 
@@ -550,7 +552,7 @@ Models, with no redeploy and no restart:
 | --- | --- | --- |
 | Add a model id on the gateway you already configured | the library | no |
 | Rename a model for the picker | the library | no |
-| Pin chat to a model | the library | no |
+| Pin @Derive replies to a model | the library | no |
 | Probe a model: does it answer, and how fast | the library | no |
 | A new gateway, or a second provider's key | `DERIVE_MODEL_*` | **yes** |
 
@@ -560,20 +562,39 @@ that only the environment can hold. The environment's ids are also the floor in 
 an operator can add to them, relabel them, and pin to them, but cannot delete one. This prevents
 a settings change from removing the last reachable model from a running deployment.
 
-Pins take effect on the **next turn**, including in conversations that are already open. A pin
+Pins take effect on the **next reply**, including in threads that are already open. A pin
 names the model and never who pays.
 
 Each model shows two timings, which answer different questions. **Observed** is the median and
-p95 of real turns, calculated from the answers Derive already stores. It is the more useful
-number and is absent for a model nobody has used yet. **Probe** is one synthetic call through the path a turn
+p95 of real replies, calculated from the answers Derive already stores. It is the more useful
+number and is absent for a model nobody has used yet. **Probe** is one synthetic call through the path a reply
 takes, so it is comparable across models and available immediately. Adding a model probes it
 first and refuses an id the provider will not answer for.
 
+### Agents and their machines
+
+An agent on an **owner** machine needs nothing from the server: its runner is
+`derive runner serve --agent <id>` on whatever computer its owner chooses, pointed at this
+instance with `--server`. See [Run agents](/agents/run/).
+
+**Derive machines** (one sandbox per agent) need an Ortam account. Set:
+
+- `DERIVE_ORTAM_INTEGRATION_KEY`, the deployment's Ortam service key.
+- `DERIVE_ORTAM_RUNNER_PATH`, the pinned CLI each sandbox installs. The path must name the CLI
+  version the sandbox installs, 0.8 or later; otherwise Derive machines stay off, with no
+  error.
+- `DERIVE_MANAGED_RUNS_ALLOWLIST`, the workspace ids whose agents may use them.
+- `DERIVE_ORTAM_API_URL`, optional; it defaults to `https://api.ortam.dev/v1`.
+
+Without these, there are no Derive machines on the deployment and creating an agent on one is
+refused.
+
 ### Pausing agents
 
-Every workspace has one switch for agent work, `agentWrites`, on by default. Turn it off with
-`PATCH /v1/workspace/settings {"agentWrites": false}` and nothing an agent does is
-materialized, dispatched, claimed, or published in that workspace until it is back on.
+Every workspace has one switch for agent work, `agentWrites`, on by default (Settings,
+Machines, **Agents can write**). Turn it off, or send
+`PATCH /v1/workspace/settings {"agentWrites": false}`, and no job in that workspace is
+claimed, dispatched, or started by a schedule, and no agent publishes, until it is back on.
 
 ### Semantic search (optional)
 

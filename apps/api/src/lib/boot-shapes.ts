@@ -31,12 +31,12 @@ export const OrgSettings = z
     chatSources: z
       .array(z.string())
       .describe(
-        "Connection ids the workspace's CHAT may reach through the call tool. Empty means none — connecting a server does not by itself let a conversation use it. Unattended runs are unaffected: they declare their own connections per run.",
+        "Connection ids that @Derive replies (in comments and Slack) may reach through the call tool. Empty means none: connecting a server does not by itself let a reply use it. Agents are unaffected: each declares its own sources.",
       ),
     agentWrites: z
       .boolean()
       .describe(
-        "The one agent-write switch, on by default. Off: agent jobs are not dispatched or claimed, @Derive's publish tool refuses (the draft surfaces in the reply), and any agent-credentialed publish is refused at the API.",
+        "The one agent-write switch, on by default. Off: no agent job is claimed, dispatched, or opened by a schedule, an @Derive reply cannot publish, and any agent-credentialed publish is refused at the API.",
       ),
     defaultAgentId: z
       .string()

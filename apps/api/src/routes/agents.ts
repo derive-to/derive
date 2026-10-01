@@ -92,7 +92,7 @@ export const agentRoutes = (ctx: AppContext) => {
       managed: z
         .boolean()
         .describe(
-          "Auto-minted for one context at creation — the context's Derive access, not a user-named persona. Hidden from the roster UI.",
+          "Made automatically for one imported paper, not named by a person. Never listed over MCP, asked, or used as a workflow step.",
         ),
       created_by: z
         .string()

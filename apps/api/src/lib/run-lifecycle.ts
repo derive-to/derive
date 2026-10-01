@@ -38,12 +38,19 @@ if (!(RUN_TIMEOUT_MS < RUN_TOKEN_TTL_MS && RUN_TOKEN_TTL_MS < RUN_LEASE_MS))
 /** How many times a job may be reclaimed before it is given up as `lost`. */
 export const RUN_MAX_ATTEMPTS = 3
 
+// OWNER MACHINES run on a separate clock: their lease follows the agent's own run budget
+// rather than the Derive-machine timings above, up to MAX_RUN_CEILING_MS.
+
+/** The longest a single owner-machine job may be leased for, whatever the agent's own cap
+ *  says. */
+export const MAX_RUN_CEILING_MS = 6 * 60 * 60_000
+
 /** An owner-machine claim's lease: the agent's run budget (default 10 minutes, clamped to
- *  30 seconds .. 6 hours) plus a minute of margin. The lease must OUTLIVE the budget it is
- *  derived from: a job that never ticks and finishes right at its budget would otherwise land
- *  on an expired lease and be re-served, a double run. The margin covers the final write and
- *  clock skew between the runner and the API. */
+ *  30 seconds .. MAX_RUN_CEILING_MS) plus a minute of margin. The lease must OUTLIVE the budget
+ *  it is derived from: a job that never ticks and finishes right at its budget would otherwise
+ *  land on an expired lease and be re-served, a double run. The margin covers the final write
+ *  and clock skew between the runner and the API. */
 export const leaseUntilFor = (maxRunMs: number | null, now = Date.now()): string => {
-  const ms = Math.min(Math.max(maxRunMs ?? 600_000, 30_000), 6 * 60 * 60_000)
+  const ms = Math.min(Math.max(maxRunMs ?? 600_000, 30_000), MAX_RUN_CEILING_MS)
   return new Date(now + ms + 60_000).toISOString()
 }

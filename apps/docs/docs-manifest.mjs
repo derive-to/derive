@@ -41,6 +41,14 @@ export const docsSections = [
     label: "Use Derive",
     pages: [
       {
+        source: "apps/docs/content/run-agents.md",
+        slug: "agents/run",
+        title: "Run agents",
+        description:
+          "Make an agent, run it on your machine or a Derive machine, give it work, and follow its jobs.",
+        stripHeading: false,
+      },
+      {
         source: "packages/cli/README.md",
         slug: "agents/cli",
         title: "Derive CLI",
