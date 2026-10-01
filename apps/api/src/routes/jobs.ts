@@ -1,5 +1,11 @@
 import { refRouter } from "@derive/broker"
-import { type AgentRecord, type JobRecord, normalizeSelectors, type Selector } from "@derive/core"
+import {
+  type AgentRecord,
+  DERIVE_AGENT_ID,
+  type JobRecord,
+  normalizeSelectors,
+  type Selector,
+} from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
@@ -36,7 +42,6 @@ import {
   reportJob,
   retryJob,
 } from "../lib/jobs"
-import { DERIVE_AUTHOR_ID } from "../lib/principal-kind"
 import { runtimeFailureReason } from "../lib/runtime-diagnostics"
 import { log } from "../log"
 
@@ -197,7 +202,7 @@ export const jobRoutes = (ctx: AppContext) => {
     return who
   }
   const privateTo = (j: JobRecord, whoId: string) =>
-    j.agent_id !== DERIVE_AUTHOR_ID || j.asked_by === whoId
+    j.agent_id !== DERIVE_AGENT_ID || j.asked_by === whoId
   const visibleJob = async (c: Context, id: string): Promise<JobRecord | Response> => {
     const who = await personFor(c)
     if (who instanceof Response) return who
@@ -280,11 +285,11 @@ export const jobRoutes = (ctx: AppContext) => {
         parentId: q.parent || undefined,
         reportArtifactId,
         askedByOrAgent,
+        viewer: (await actingHuman(c))?.id ?? "",
         before: q.before || undefined,
         limit: Math.min(200, Number(q.limit) || 50),
       })
-      const viewer = (await actingHuman(c))?.id ?? ""
-      return c.json({ jobs: await shown(jobs.filter((j) => privateTo(j, viewer))) })
+      return c.json({ jobs: await shown(jobs) })
     },
   )
 

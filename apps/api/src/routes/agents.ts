@@ -195,7 +195,9 @@ export const agentRoutes = (ctx: AppContext) => {
       // What the Agents screen groups by, in two queries rather than one per agent: each
       // agent's schedules, and when it last had work.
       const triggers = await meta.listTriggers(org)
-      const recent = await meta.listJobs({ orgId: org, limit: 200 })
+      // viewer "" leaves out the built-in Derive's jobs (no agent row to date), so a busy
+      // Slack thread cannot crowd real agents out of the window.
+      const recent = await meta.listJobs({ orgId: org, viewer: "", limit: 200 })
       const lastJob = new Map<string, string>()
       for (const j of recent) if (!lastJob.has(j.agent_id)) lastJob.set(j.agent_id, j.created_at)
       // Every agent's instructions page, in one lookup rather than one per agent.

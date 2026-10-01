@@ -14,7 +14,7 @@ import type {
   TriggerPatch,
   TriggerRecord,
 } from "@derive/core"
-import { WORKSPACE_ACCOUNT_OWNER } from "@derive/core"
+import { DERIVE_AGENT_ID, WORKSPACE_ACCOUNT_OWNER } from "@derive/core"
 import { type SQL, sql } from "drizzle-orm"
 
 // The agent model's store, written ONCE as parameterised SQL that runs unchanged on SQLite, D1
@@ -176,6 +176,8 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
             : sql`asked_by = ${askedBy}`,
         )
       }
+      if (q.viewer !== undefined)
+        where.push(sql`(agent_id <> ${DERIVE_AGENT_ID} OR asked_by = ${q.viewer})`)
       if (q.since) where.push(sql`created_at >= ${q.since}`)
       if (q.before) where.push(sql`created_at < ${q.before}`)
       const limit = Math.max(1, Math.min(500, q.limit ?? 50))
@@ -357,7 +359,8 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
     },
     listRecentAgentJobMessages(limit) {
       return rows<Pick<JobMessageRecord, "job_id" | "created_at" | "meta_json">>(sql`
-        SELECT job_id, created_at, meta_json FROM job_message WHERE author_kind = 'agent'
+        SELECT job_id, created_at, meta_json FROM job_message
+        WHERE author_id = ${DERIVE_AGENT_ID} AND author_kind = 'agent'
         ORDER BY created_at DESC LIMIT ${Math.max(1, Math.min(1000, limit))}`)
     },
 

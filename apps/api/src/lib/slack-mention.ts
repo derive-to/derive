@@ -12,6 +12,7 @@
 import {
   type ArtifactRecord,
   artifactUrl,
+  DERIVE_AGENT_ID,
   type JobRecord,
   type MetaStore,
   newId,
@@ -23,7 +24,6 @@ import { buildChatTools } from "./chat-tools"
 import { runChatTurn } from "./chat-turn"
 import { isServerNote } from "./jobs"
 import type { ModelSource } from "./model-library"
-import { DERIVE_AUTHOR_ID } from "./principal-kind"
 import { slackUserEmail, updateSlackMessage } from "./slack"
 import { mrkdwnBody } from "./slack-cards"
 import { postWithRecovery, resolveBotToken } from "./slack-delivery"
@@ -371,17 +371,44 @@ export const handleSlackMention = async (
   const lease = () => new Date(Date.now() + SLACK_TURN_LEASE_MS).toISOString()
   // This person's own recent Derive jobs in this workspace, newest first and capped, so the
   // scan is bounded by the page size and needs no by-key store method on three dialects.
-  const existing = (
+  let existing = (
     await meta
       .listJobs({
         orgId: install.org_id,
-        agentId: DERIVE_AUTHOR_ID,
+        agentId: DERIVE_AGENT_ID,
         askedBy: asker.id,
         kind: ["ask"],
         limit: 50,
       })
       .catch(() => [])
   ).find((j) => slackThreadOf(j.meta_json) === thread)
+
+  let created: JobRecord | null = null
+  if (!existing) {
+    try {
+      created = await meta.createJob({
+        id: newId("job"),
+        org_id: install.org_id,
+        agent_id: DERIVE_AGENT_ID,
+        kind: "ask",
+        instruction: question,
+        asked_by: asker.id,
+        // The asker's: a personal budget counts only their jobs, the pool's counts every job.
+        payer_id: asker.id,
+        attended: 1,
+        // A Derive link in the message is named in the question below; otherwise the
+        // workspace is the ground.
+        subject_json: null,
+        meta_json: JSON.stringify({ via: "slack", slack_thread: thread }),
+        // Two first deliveries racing would otherwise open two jobs for one thread: the
+        // open-job dedupe index lets one win, and the loser continues the winner's job.
+        dedupe_key: thread,
+      })
+    } catch (error) {
+      existing = (await meta.findOpenJobByDedupe(DERIVE_AGENT_ID, asker.id, thread)) ?? undefined
+      if (!existing) throw error
+    }
+  }
 
   let job: JobRecord | null
   if (existing) {
@@ -398,40 +425,20 @@ export const handleSlackMention = async (
       (m) => parseSlackTs(m.meta_json) === p.ts,
     )
     if (already) return quiet("duplicate slack delivery")
-    await meta.addJobMessage({
-      id: newId("jm"),
-      job_id: existing.id,
-      author_kind: "asker",
-      author_id: asker.id,
-      body_md: question,
-      meta_json: JSON.stringify({ slack: { ts: p.ts } }),
-    })
     job = existing
+  } else if (created) {
+    job = created
   } else {
-    job = await meta.createJob({
-      id: newId("job"),
-      org_id: install.org_id,
-      agent_id: DERIVE_AUTHOR_ID,
-      kind: "ask",
-      instruction: question,
-      asked_by: asker.id,
-      // The asker's: a personal budget counts only their jobs, the pool's counts every job.
-      payer_id: asker.id,
-      attended: 1,
-      // A Derive link in the message is named in the question below; otherwise the workspace
-      // is the ground.
-      subject_json: null,
-      meta_json: JSON.stringify({ via: "slack", slack_thread: thread }),
-    })
-    await meta.addJobMessage({
-      id: newId("jm"),
-      job_id: job.id,
-      author_kind: "asker",
-      author_id: asker.id,
-      body_md: question,
-      meta_json: JSON.stringify({ slack: { ts: p.ts } }),
-    })
+    return quiet("job not opened")
   }
+  await meta.addJobMessage({
+    id: newId("jm"),
+    job_id: job.id,
+    author_kind: "asker",
+    author_id: asker.id,
+    body_md: question,
+    meta_json: JSON.stringify({ slack: { ts: p.ts } }),
+  })
   // Running under a lease while this request serves it: a crash mid-turn leaves the job to
   // lapse to `lost` (the reaper's rule for attended jobs) rather than read as running for ever.
   const startedAt = new Date().toISOString()
@@ -544,7 +551,7 @@ export const handleSlackMention = async (
       id: newId("jm"),
       job_id: jobId,
       author_kind: "agent",
-      author_id: DERIVE_AUTHOR_ID,
+      author_id: DERIVE_AGENT_ID,
       body_md: res.reply,
       meta_json: JSON.stringify({
         outcome: res.outcome,

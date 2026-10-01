@@ -7,11 +7,11 @@ import { buildManifest } from "../src/github-app-setup"
 describe("GitHub App manifest", () => {
   const m = buildManifest("https://derive.example.com", "derive.example.com")
 
-  it("subscribes to no events, keeping the signed webhook target", () => {
+  it("subscribes to no events and leaves the webhook inactive", () => {
     expect(m.default_events).toEqual([])
     expect(m.hook_attributes).toEqual({
       url: "https://derive.example.com/v1/github/webhook",
-      active: true,
+      active: false,
     })
   })
 

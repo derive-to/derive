@@ -8,6 +8,10 @@
 // jobs; an Account is the credential a machine uses to call a model.
 
 export type AgentMachine = "owner" | "derive"
+
+/** The agent id the built-in Derive's jobs carry (an @Derive thread in Slack). No agent row has
+ *  it; its jobs are private to their asker. */
+export const DERIVE_AGENT_ID = "derive"
 export type AgentAskPolicy = "workspace" | "invited"
 export type AgentWritePolicy = "publish" | "review"
 
@@ -259,6 +263,9 @@ export interface JobQuery {
   reportArtifactId?: string
   /** Only jobs this person asked, or on one of these agents (the inbox's "mine"). */
   askedByOrAgent?: { askedBy: string; agentIds: readonly string[] }
+  /** The person listing. When set (even to ""), the built-in Derive's jobs are kept only
+   *  when they asked them: those answers were read with the asker's own permissions. */
+  viewer?: string
   /** Only jobs created at or after this ISO time. */
   since?: string
   /** Keyset cursor: only jobs created strictly before this ISO time. */
@@ -374,9 +381,11 @@ export interface AgentModelStore<Agent = unknown> {
   listOpenGraphJobs(limit: number): Promise<JobRecord[]>
   addJobMessage(m: NewJobMessage): Promise<JobMessageRecord>
   listJobMessages(jobId: string): Promise<JobMessageRecord[]>
-  /** The newest AGENT messages across every job, newest first: the sample the operator's
-   *  model timings fold. Deliberately unscoped (a question about the deploy, not a
-   *  workspace), so operator-only at the route; `body_md` is left out of the projection. */
+  /** The newest in-process @Derive answers (author `derive`) across every job, newest first:
+   *  the sample the operator's model timings fold. Runner reports and server notes are not
+   *  model calls this deploy made, so they are left out rather than crowding the sample.
+   *  Deliberately unscoped (a question about the deploy, not a workspace), so operator-only
+   *  at the route; `body_md` is left out of the projection. */
   listRecentAgentJobMessages(
     limit: number,
   ): Promise<Pick<JobMessageRecord, "job_id" | "created_at" | "meta_json">[]>

@@ -458,9 +458,27 @@ describe("@Derive in a Slack thread is one attended job", () => {
     expect(own.status).toBe(200)
     const other = await app.request(`/v1/jobs/${job?.id}`, { headers: as(teammate.email) })
     expect(other.status).toBe(404)
+    // In the query, not after it: a teammate's one-row page is their own job, not an empty page
+    // left after the asker's newer Slack job was dropped.
+    const theirs = await meta.createJob({
+      id: newId("job"),
+      org_id: "default",
+      agent_id: "ag_elsewhere",
+      kind: "ask",
+      instruction: "older work",
+      asked_by: teammate.id,
+    })
+    // A new thread: a newer Derive job of the asker's.
+    await handleSlackMention(deps, {
+      teamId: "T1",
+      channel: "C1",
+      ts: "300.1",
+      userId: "U1",
+      text: "<@UBOT> new topic",
+    })
     const listed = (await (
-      await app.request("/v1/jobs", { headers: as(teammate.email) })
+      await app.request("/v1/jobs?limit=1", { headers: as(teammate.email) })
     ).json()) as { jobs: { id: string }[] }
-    expect(listed.jobs.map((j) => j.id)).not.toContain(job?.id)
+    expect(listed.jobs.map((j) => j.id)).toEqual([theirs.id])
   })
 })

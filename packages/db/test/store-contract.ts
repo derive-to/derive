@@ -3131,6 +3131,46 @@ export function runStoreContract(
       })
     const at = (msFromNow: number) => new Date(Date.now() + msFromNow).toISOString()
 
+    it("keeps the built-in Derive's jobs to their asker inside the query, so a page stays full", async () => {
+      const org = `org_${uuid()}`
+      const agent = await mkAgent({ org_id: org })
+      const derive = (askedBy: string) =>
+        mkJob("derive", { org_id: org, asked_by: askedBy, attended: 1 })
+      const own = await derive("amy")
+      const mine = await mkJob(agent.id, { org_id: org, asked_by: "amy" })
+      // Newer than both, and not Bob's: a filter applied after the limit would return them and
+      // then drop them, leaving Bob a short page.
+      for (let i = 0; i < 3; i++) await derive("amy")
+      const bob = await store.listJobs({ orgId: org, viewer: "bob", limit: 1 })
+      expect(bob.map((j) => j.id)).toEqual([mine.id])
+      const amy = await store.listJobs({ orgId: org, viewer: "amy", limit: 10 })
+      expect(amy.map((j) => j.id)).toContain(own.id)
+      expect(amy).toHaveLength(5)
+      // No viewer named: nobody's Derive jobs.
+      expect((await store.listJobs({ orgId: org, viewer: "" })).map((j) => j.id)).toEqual([mine.id])
+    })
+
+    it("samples only @Derive's own answers for model timings, whatever runners report", async () => {
+      const agent = await mkAgent()
+      const runnerJob = await mkJob(agent.id)
+      const slackJob = await mkJob("derive", { asked_by: "amy", attended: 1 })
+      const say = (jobId: string, authorId: string, meta: object | null) =>
+        store.addJobMessage({
+          id: uuid(),
+          job_id: jobId,
+          author_kind: "agent",
+          author_id: authorId,
+          body_md: "x",
+          meta_json: meta ? JSON.stringify(meta) : null,
+        })
+      await say(slackJob.id, "derive", { model: { id: "m" }, model_ms: 900 })
+      for (let i = 0; i < 5; i++) await say(runnerJob.id, agent.id, { progress: true })
+      await say(slackJob.id, "derive", { model: { id: "m" }, model_ms: 700 })
+      await say(runnerJob.id, agent.id, null)
+      const sample = await store.listRecentAgentJobMessages(2)
+      expect(sample.map((m) => m.job_id)).toEqual([slackJob.id, slackJob.id])
+    })
+
     it("the boot read counts the jobs waiting on a person by the inbox's rule", async () => {
       const org = `org_${uuid()}`
       await store.setWorkspace(org, "Inbox count")

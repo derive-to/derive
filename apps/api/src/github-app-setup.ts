@@ -50,9 +50,11 @@ export const buildManifest = (baseUrl: string, host: string) => ({
   setup_on_update: true,
   callback_urls: [new URL("/v1/github/authorize", baseUrl).toString()],
   request_oauth_on_install: false,
+  // Inactive: no event drives work, and nothing configures the signing secret for a new App
+  // any more, so an active hook would only deliver payloads that fail the signature check.
   hook_attributes: {
     url: new URL("/v1/github/webhook", baseUrl).toString(),
-    active: true,
+    active: false,
   },
   // Public so it can be installed on organizations too, not just the owner's
   // personal account (GitHub restricts a private App to its owner account). It is
