@@ -27,6 +27,32 @@ const sameTops = (a: Record<string, number>, b: Record<string, number>): boolean
   return true
 }
 
+let askSeq = 0
+/** Ask a frame's window something and wait for its `reply` echoing the same nonce (a slow
+ *  page can answer a question that timed out after a newer one was asked): null after `ms`. */
+export const askFrame = <T = Record<string, unknown>>(
+  win: Window | null | undefined,
+  msg: Record<string, unknown>,
+  reply: string,
+  ms: number,
+): Promise<T | null> =>
+  new Promise((resolve) => {
+    const nonce = ++askSeq
+    const done = (d: T | null) => {
+      window.removeEventListener("message", onMsg)
+      window.clearTimeout(timer)
+      resolve(d)
+    }
+    const onMsg = (e: MessageEvent) => {
+      const d = e.data
+      if (e.source === win && d?.source === "derive" && d.type === reply && d.nonce === nonce)
+        done(d)
+    }
+    const timer = window.setTimeout(() => done(null), ms)
+    window.addEventListener("message", onMsg)
+    win?.postMessage({ source: "derive-host", ...msg, nonce }, "*")
+  })
+
 /**
  * The entire conversation with the sandboxed artifact iframe, kept out of the
  * page. The frame is a separate opaque origin, so everything crosses via
@@ -85,6 +111,9 @@ export function useArtifactFrame(p: {
    *  prompt so every mini-app gets the same flow without embedding auth UI. */
   authenticated: boolean
   onSharedStateAuthRequired: () => void
+  /** Where the reader is in the document (see the client's `positionNow`), as they
+   *  scroll: the page keeps it in its URL. */
+  onPosition?: (at: string) => void
 }) {
   const {
     comments,
@@ -100,6 +129,8 @@ export function useArtifactFrame(p: {
   const frame = useRef<HTMLIFrameElement>(null)
   const onVisualPinRef = useRef(p.onVisualPin)
   onVisualPinRef.current = p.onVisualPin
+  const onPositionRef = useRef(p.onPosition)
+  onPositionRef.current = p.onPosition
   const presentWrap = useRef<HTMLDivElement>(null)
   const [frameReady, setFrameReady] = useState(0)
   const [runtimeReady, setRuntimeReady] = useState(false)
@@ -404,6 +435,8 @@ export function useArtifactFrame(p: {
         setAnchorTops((prev) => (sameTops(prev, tops) ? prev : tops))
       } else if (d.type === "scroll") {
         updateGeom(d)
+      } else if (d.type === "position" && typeof d.at === "string") {
+        onPositionRef.current?.(d.at.slice(0, 300))
       } else if (d.type === "anchor-hover") setHoverThread(d.id ?? null)
       else if (d.type === "review-mode-ended") onVisualPinRef.current?.(null)
       else if (d.type === "anchor-click") {
@@ -457,9 +490,17 @@ export function useArtifactFrame(p: {
 
   // Drive the deck from the host bar; fullscreen wraps the iframe + bar so the
   // controls stay reachable while presenting.
+  // While a newer version is swapping in, the page on screen takes no input (render-
+  // stage): a move made then waits for the new page, and lands after it is in place.
+  const held = useRef<Record<string, unknown>[]>([])
+  const drive = useCallback((msg: Record<string, unknown>) => {
+    const f = frame.current
+    if (f?.inert) held.current.push(msg)
+    else f?.contentWindow?.postMessage(msg, "*")
+  }, [])
   const deckCmd = useCallback(
     (action: "next" | "prev" | "goto", n?: number) =>
-      frame.current?.contentWindow?.postMessage(
+      drive(
         // A protocol deck moves itself; a sniffed one is moved by the injected
         // client (which synthesizes the key the page already listens for, so the
         // page's own idea of where it is stays true).
@@ -469,9 +510,8 @@ export function useArtifactFrame(p: {
           action,
           n,
         },
-        "*",
       ),
-    [],
+    [drive],
   )
   const videoCmd = useCallback(
     (
@@ -479,18 +519,15 @@ export function useArtifactFrame(p: {
       n?: number,
       id?: string,
     ) => {
-      frame.current?.contentWindow?.postMessage(
-        {
-          source: "derive-host",
-          type: videoRef.current?.sniffed ? "video-drive" : "video",
-          action,
-          n,
-          id,
-        },
-        "*",
-      )
+      drive({
+        source: "derive-host",
+        type: videoRef.current?.sniffed ? "video-drive" : "video",
+        action,
+        n,
+        id,
+      })
     },
-    [],
+    [drive],
   )
   // Present mode owns the fullscreen element, the presenting state and the keyboard
   // that drives a deck while it's up (see use-present-mode). It lives here because
@@ -608,6 +645,7 @@ export function useArtifactFrame(p: {
       // The head-injected shared-state SDK queues requests until this handshake,
       // so a very fast iframe cannot post before the host listener exists.
       post({ type: "shared-ready" })
+      for (const msg of held.current.splice(0)) frame.current?.contentWindow?.postMessage(msg, "*")
     },
     post,
     scrollBy,
@@ -623,8 +661,6 @@ export function useArtifactFrame(p: {
     anchorConf,
     anchorTops,
     subscribeGeom,
-    /** Where the document is scrolled to now (the last position the frame reported). */
-    frameScrollY: () => geomRef.current.scrollY,
     runtimeError,
     runtimeReady,
   }

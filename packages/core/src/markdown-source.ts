@@ -29,9 +29,11 @@ import {
   renderSpecialFence,
   stampSanitizer,
 } from "./md"
+import { lastOf } from "./memo"
 import { MERMAID_HEAD } from "./mermaid"
 import {
   hashSource,
+  hostMarker,
   parseSourceOps,
   SourceConflictError,
   type SourceOp,
@@ -631,24 +633,30 @@ const renderStamped = (
 }
 
 /** The model with its editable flags settled (they depend on the rendered text). */
-const modelOf = (source: string, opts: RenderMarkdownOptions = {}) => {
+const modelWith = (source: string, opts: RenderMarkdownOptions) => {
   const tokens = new Marked({ gfm: true }).lexer(source)
   const model = buildModel(source, tokens)
   return { ...model, ...renderStamped(model, tokens, opts) }
 }
+/** A save, its sync and the next save's source map all model the same document: once.
+ *  Shared, so read-only. */
+const plainModel = lastOf(3, 16_384, (source: string) => modelWith(source, {}))
+const modelOf = (source: string, opts?: RenderMarkdownOptions) =>
+  opts && Object.keys(opts).length ? modelWith(source, opts) : plainModel(source)
 
-const hashOf = (source: string, n: MdNode | undefined) =>
-  n ? hashSource(source.slice(n.start, n.end)) : Promise.resolve("")
+const hashOf = async (source: string, n: MdNode | undefined): Promise<string> =>
+  n ? hashSource(source.slice(n.start, n.end)) : ""
 
 /**
  * The editor's view of a stored Markdown document: the reader's page, with
  * `data-derive-src` on every modeled element, `data-derive-readonly` on what can't be
- * edited in place, and the base identity (`data-derive-src-version`/`-sha`) on the root.
+ * edited in place, and the base identity (`data-derive-src-version`/`-sha`) and the
+ * origins that may drive the editor (`data-derive-host`) on the root.
  */
 export const renderMarkdownForEditor = async (
   source: string,
   title: string | null,
-  base: { version: number },
+  base: { version: number; host?: string },
   opts: RenderMarkdownOptions = {},
 ): Promise<string> => {
   const { body, mermaid } = modelOf(source, opts)
@@ -656,7 +664,7 @@ export const renderMarkdownForEditor = async (
   return renderDocShell(body, title, mermaid ? MERMAID_HEAD : "")
     .replace(
       '<html lang="en">',
-      `<html lang="en" data-derive-src-version="${base.version}" data-derive-src-sha="${escapeHtml(sha)}">`,
+      `<html lang="en" data-derive-src-version="${base.version}" data-derive-src-sha="${escapeHtml(sha)}"${hostMarker(base.host)}>`,
     )
     .replace("<main data-derive-ready>", '<main data-derive-ready data-derive-src="0">')
 }

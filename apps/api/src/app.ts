@@ -11,6 +11,7 @@ import { cacheControlFor, corsFor, fail, TOMBSTONE } from "./lib/http"
 import { isMissingTable } from "./lib/missing-table"
 import { observability, redactPath } from "./lib/observability"
 import { inMemoryRateLimiters, ipRateLimit } from "./lib/rate-limit"
+import { requestTrace, traced } from "./lib/request-trace"
 import { serveContent } from "./lib/serve-content"
 import { isTemplateLibrarySchemaUnavailable } from "./lib/template-library-schema"
 import { mutableCacheFor, versionCacheControl } from "./lib/version-cache"
@@ -85,7 +86,13 @@ export function createApp(deps: AppDeps): Hono {
   // entry supplies native per-colo limiters; Node / self-host / tests fall back to the
   // in-process set (authoritative on one container).
   const rateLimiters = deps.rateLimiters ?? inMemoryRateLimiters(deps)
-  const ctx = buildContext({ ...deps, rateLimiters })
+  // Store and blob calls show up in a traced request's Server-Timing (see request-trace).
+  const ctx = buildContext({
+    ...deps,
+    meta: traced("db", deps.meta),
+    blobs: traced("blob", deps.blobs),
+    rateLimiters,
+  })
   // OpenAPIHono is a drop-in extension of Hono: every existing route/middleware works
   // unchanged, and routers that adopt createRoute() (contract-first) contribute their
   // schemas to the generated spec below. Untouched routers mount exactly as before.
@@ -96,6 +103,8 @@ export function createApp(deps: AppDeps): Hono {
   // Outermost: a per-request id + one structured access-log line (method, path,
   // status, duration, actor, org), so a 500 is correlatable to who/what.
   app.use("*", observability())
+  // `X-Derive-Timing: 1` answers with where the request's time went.
+  app.use("*", requestTrace())
 
   // App-origin security headers. Set after the handler so responses that declare
   // their own policy keep it: artifact bytes carry the sandbox CSP (serveContent),

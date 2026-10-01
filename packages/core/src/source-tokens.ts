@@ -39,17 +39,24 @@ export const HREF_ATTR = "data-derive-href"
  *  line (nothing before it, or a break right before it); beside words it is redundant. */
 export const HOLD_ATTR = "data-derive-hold"
 /** Editor chrome that lives in the page but never in the source. */
-const CHROME = ".derive-edit-ui,.derive-el-hl"
+export const CHROME = ".derive-edit-ui,.derive-el-hl"
 /** Editor wraps around source text (mention chips): transparent. */
 const WRAP = ".derive-mention"
-const BLOCKISH =
-  /^(?:address|article|aside|blockquote|dd|div|dl|dt|figcaption|figure|footer|h[1-6]|header|li|main|nav|ol|p|pre|section|ul)$/
+/** Elements that sit on a line of their own. */
+export const BLOCK_TAGS =
+  "address|article|aside|blockquote|dd|div|dl|dt|figcaption|figure|footer|h[1-6]|header|li|main|nav|ol|p|pre|section|ul"
+const BLOCKISH = new RegExp(`^(?:${BLOCK_TAGS})$`)
 
 /** An element's source id, or null when the browser or a script made it. */
 export const srcOf = (el: Element): number | null => {
   const v = el.getAttribute(SRC_ATTR)
   return v !== null && /^\d+$/.test(v) ? Number(v) : null
 }
+/** An element and its stamped descendants, in document order. */
+export const stampedIn = (el: Element): Element[] => [
+  ...(srcOf(el) !== null ? [el] : []),
+  ...Array.from(el.querySelectorAll(`[${SRC_ATTR}]`)).filter((e) => srcOf(e) !== null),
+]
 
 type Kind = "chrome" | "wrap" | "src" | "gen" | "fmt" | "new"
 const kindOf = (el: Element): Kind =>
@@ -65,13 +72,15 @@ const kindOf = (el: Element): Kind =>
             ? "fmt"
             : "new"
 
-/** An element's children as one comparable string: text (merged across node
- *  splits), stamped children by id, and anything new by tag. */
-const sigOf = (el: Element): string => {
-  let out = ""
+/** An element's children as parts: text runs (merged across node splits), stamped
+ *  children by reference, and anything new by tag and contents. A reference renders as
+ *  its id at compare time, so a baseline kept as parts survives the ids being renumbered. */
+export type SigParts = (string | Element)[]
+export function sigParts(el: Element): SigParts {
+  const out: SigParts = []
   let text = ""
   const flush = () => {
-    if (text) out += `\u0001${text}`
+    if (text) out.push(`\u0001${text}`)
     text = ""
   }
   const walk = (parent: Element) => {
@@ -83,10 +92,14 @@ const sigOf = (el: Element): string => {
       if (k === "wrap") walk(c)
       else if (k === "src") {
         flush()
-        out += `\u0002${srcOf(c)}`
+        out.push(c)
       } else if (k === "fmt" || k === "new") {
+        // With its words: a baseline that holds one (a blank line kept after a save)
+        // still sees what is typed into it.
         flush()
-        out += `\u0003${c.localName}${c.getAttribute(FMT_ATTR) ?? ""}`
+        out.push(
+          `\u0003${c.localName}${c.getAttribute(FMT_ATTR) ?? ""}\u0004${renderParts(sigParts(c))}\u0005`,
+        )
       }
     }
   }
@@ -94,9 +107,17 @@ const sigOf = (el: Element): string => {
   flush()
   return out
 }
+export const renderParts = (parts: SigParts): string =>
+  parts.map((p) => (typeof p === "string" ? p : `\u0002${srcOf(p)}`)).join("")
+/** An element's children as one comparable string. */
+const sigOf = (el: Element): string => renderParts(sigParts(el))
+/** Two part lists say the same thing (references compared by identity, not id). */
+export const sameParts = (a: SigParts, b: SigParts): boolean =>
+  a.length === b.length && a.every((p, i) => p === b[i])
 
 export interface SrcSnapshot {
-  sigs: Map<number, string>
+  /** An id's children as the baseline records them (-1: an unstamped root). */
+  sigs: { get(n: number): string | undefined }
   /** The stamped elements themselves: a copy made later shares its original's id
    *  (and so its record) but is not one of these. */
   els: WeakSet<Element>
@@ -105,28 +126,54 @@ export interface SrcSnapshot {
   dupes: Set<number>
 }
 
-/** Record every stamped element's children and mark script-made elements. Call once
- *  at the start of an edit session, after the page settled. */
-export function snapshotSource(root: Element): SrcSnapshot {
-  const sigs = new Map<number, string>()
+/** What the server holds, as the page names it: every stamped element's children as
+ *  parts (an unstamped root too, so a change directly under it is caught). Kept by
+ *  element, so it survives a sync renumbering the ids. */
+export type Baseline = Map<Element, SigParts>
+export const baselineOf = (root: Element): Baseline =>
+  new Map([root, ...stampedIn(root)].map((el) => [el, sigParts(el)]))
+/** Mark what page scripts made before the session: not in the source. */
+export function markGenerated(root: Element): void {
+  for (const el of Array.from(root.querySelectorAll("*")))
+    if (kindOf(el) === "new" && !el.closest(CHROME)) el.setAttribute(GEN_ATTR, "")
+}
+/** The id-keyed record collectSourceOps compares against, from a baseline. */
+export function snapshotOf(
+  base: Baseline,
+  root: Element,
+  /** The baseline's ids, when the caller has read them already. */
+  ids?: ReadonlyMap<Element, number>,
+): SrcSnapshot {
+  const byId = new Map<number, SigParts>()
   const dupes = new Set<number>()
   const els = new WeakSet<Element>()
-  for (const el of Array.from(root.querySelectorAll("*"))) {
-    const k = kindOf(el)
-    if (k === "new" && !el.closest(CHROME)) el.setAttribute(GEN_ATTR, "")
-    if (k !== "src") continue
-    const n = srcOf(el) as number
-    els.add(el)
-    if (sigs.has(n)) dupes.add(n)
-    sigs.set(n, sigOf(el))
+  for (const [el, parts] of base) {
+    const n = (ids ? ids.get(el) : srcOf(el)) ?? (el === root ? -1 : null)
+    if (n === null) continue
+    if (n >= 0) {
+      els.add(el)
+      if (byId.has(n)) dupes.add(n)
+    }
+    byId.set(n, parts)
   }
-  // An unstamped root (a body the server left bare) is recorded too, so a change
-  // directly under it is caught instead of silently dropped.
-  if (srcOf(root) === null) sigs.set(-1, sigOf(root))
+  // Rendered when asked: a save compares only the elements the person touched, and a long
+  // page has tens of thousands of others.
+  const rendered = new Map<number, string>()
+  const sigs = {
+    get: (n: number): string | undefined => {
+      const hit = rendered.get(n)
+      if (hit !== undefined) return hit
+      const parts = byId.get(n)
+      if (!parts) return undefined
+      const sig = renderParts(parts)
+      rendered.set(n, sig)
+      return sig
+    },
+  }
   return { sigs, dupes, els }
 }
 
-/** Undo what snapshotSource marked on the page. */
+/** Undo what markGenerated marked on the page. */
 export function releaseSource(root: Element): void {
   for (const el of Array.from(root.querySelectorAll(`[${GEN_ATTR}]`))) el.removeAttribute(GEN_ATTR)
 }
@@ -142,7 +189,7 @@ export function collectSourceOps(
   root: Element,
   snap: SrcSnapshot,
   touched?: ReadonlySet<Element>,
-): { ops: SourceOp[]; ok: boolean } {
+): { ops: SourceOp[]; ok: boolean; emit: Map<Element, (Element | null)[]> } {
   // A copy made inside something the person touched (Duplicate, a pasted copy, the
   // second half of an Enter) is theirs too, typed in or not: it shares its original's
   // id, so it is compared with the original's record and any difference is saved.
@@ -155,11 +202,17 @@ export function collectSourceOps(
   const changed = new Set<Element>()
   const dirty = new Set<Element>()
   for (const el of Array.from(root.querySelectorAll(`[${SRC_ATTR}]`))) {
+    // Whose it is first: that asks no attribute of the many elements nobody touched.
+    if (!mine(el)) continue
     const n = srcOf(el)
-    if (n === null || !mine(el) || sigOf(el) === snap.sigs.get(n)) continue
+    if (n === null || sigOf(el) === snap.sigs.get(n)) continue
     changed.add(el)
     for (let a: Element | null = el; a && !dirty.has(a); a = a.parentElement) dirty.add(a)
   }
+  // The elements each content op's output will hold, in source order, by the DOM
+  // element that made each one (null: a line break the save adds). A sync names the
+  // saved elements' new ids in that same order (see source-sync).
+  let sink: (Element | null)[] = []
   const tokensOf = (el: Element): SourceToken[] => {
     const out: SourceToken[] = []
     const text = (s: string) => {
@@ -169,7 +222,10 @@ export function collectSourceOps(
     }
     const lineBreak = () => {
       const last = out[out.length - 1]
-      if (last && !("tag" in last && last.tag === "br")) out.push({ tag: "br" })
+      if (last && !("tag" in last && last.tag === "br")) {
+        out.push({ tag: "br" })
+        sink.push(null)
+      }
     }
     const walk = (parent: Element) => {
       for (let n = parent.firstChild; n; n = n.nextSibling) {
@@ -179,7 +235,10 @@ export function collectSourceOps(
         const c = n as Element
         if (c.hasAttribute(HOLD_ATTR)) {
           const last = [...out].reverse().find((t) => !("text" in t) || t.text.trim())
-          if (!last || ("tag" in last && last.tag === "br")) out.push({ tag: "br" })
+          if (!last || ("tag" in last && last.tag === "br")) {
+            out.push({ tag: "br" })
+            sink.push(c)
+          }
           continue
         }
         const k = kindOf(c)
@@ -188,9 +247,12 @@ export function collectSourceOps(
         else if (k === "src") {
           const id = srcOf(c) as number
           if (snap.dupes.has(id)) ok = false
-          out.push(
-            dirty.has(c) ? { keep: id, hash: "", children: tokensOf(c) } : { keep: id, hash: "" },
-          )
+          sink.push(c)
+          if (dirty.has(c)) out.push({ keep: id, hash: "", children: tokensOf(c) })
+          else {
+            sink.push(...Array.from(c.querySelectorAll(`[${SRC_ATTR}]`)))
+            out.push({ keep: id, hash: "" })
+          }
         } else if (k === "gen") {
           // Not in the source, so not ours to write — unless it now holds source.
           if (c.querySelector(`[${SRC_ATTR}]`)) ok = false
@@ -198,14 +260,21 @@ export function collectSourceOps(
           const f = c.getAttribute(FMT_ATTR)
           // A line break span holds its <br>, and whatever was typed right after it.
           if (f === "br") walk(c)
-          else if (f === "b" || f === "i") out.push({ tag: f, children: tokensOf(c) })
-          else if (f === "a")
+          else if (f === "b" || f === "i") {
+            sink.push(c)
+            out.push({ tag: f, children: tokensOf(c) })
+          } else if (f === "a") {
+            sink.push(c)
             out.push({ tag: "a", href: c.getAttribute(HREF_ATTR) ?? "", children: tokensOf(c) })
-          else walk(c)
-        } else if (c.localName === "br") out.push({ tag: "br" })
-        else if (/^(?:b|strong|i|em)$/.test(c.localName))
+          } else walk(c)
+        } else if (c.localName === "br") {
+          sink.push(c)
+          out.push({ tag: "br" })
+        } else if (/^(?:b|strong|i|em)$/.test(c.localName)) {
+          sink.push(c)
           out.push({ tag: c.localName as SourceInlineTag, children: tokensOf(c) })
-        else if (/^(?:script|style|template|noscript|title|meta|link)$/.test(c.localName)) continue
+        } else if (/^(?:script|style|template|noscript|title|meta|link)$/.test(c.localName))
+          continue
         else {
           // Invented by the browser: its words stay, its markup doesn't. A block it
           // opened (Enter, a paste) sits on its own line.
@@ -220,15 +289,18 @@ export function collectSourceOps(
     return out
   }
   const ops: SourceOp[] = []
+  const emit = new Map<Element, (Element | null)[]>()
   const visit = (el: Element) => {
     if (changed.has(el)) {
       const src = srcOf(el) as number
       if (snap.dupes.has(src)) ok = false
+      sink = [el]
       ops.push({ op: "content", src, hash: "", children: tokensOf(el) })
+      emit.set(el, sink)
       return
     }
     for (let c = el.firstElementChild; c; c = c.nextElementSibling) if (dirty.has(c)) visit(c)
   }
   visit(root)
-  return { ops, ok }
+  return { ops, ok, emit }
 }

@@ -241,6 +241,24 @@ function pokeImporter(env: Env): Promise<unknown> {
   return stub.fetch(`https://previews${IMPORTS_POKE_PATH}`, { method: "POST" }).catch(() => {})
 }
 
+/** Idle inline edit sessions are finalized through the app's route (see node.ts). Needs the
+ *  operator token and the deployment origin; editors' own traffic also sweeps. */
+const sweepEditSessions = async (env: Env, ctx: ExecutionContext): Promise<void> => {
+  if (!env.DERIVE_TOKEN || !env.BASE_URL) return
+  const req = new Request(`${env.BASE_URL}/v1/edit-sessions/sweep`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${env.DERIVE_TOKEN}` },
+  })
+  const run = () => handle(req, env, ctx)
+  try {
+    await (env.HYPERDRIVE ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), run) : run())
+  } catch (err) {
+    log.warn("edit session sweep failed", {
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+}
+
 let app: ReturnType<typeof createApp> | null = null
 // The SPA shell, fetched from ASSETS once per isolate and reused (it's immutable for
 // a deployment). Injected with per-artifact unfurl meta on each /artifacts/:ref request.
@@ -562,6 +580,7 @@ export default {
     ctx.waitUntil(pokeOutbox(env))
     ctx.waitUntil(pokePreviewRenderer(env))
     ctx.waitUntil(pokeImporter(env))
+    ctx.waitUntil(sweepEditSessions(env, ctx))
     // The job tick: due schedules become jobs, lapsed leases are reclaimed, graph jobs
     // advance, and queued jobs for Derive machines are dispatched.
     ctx.waitUntil(jobTickEdge(env))

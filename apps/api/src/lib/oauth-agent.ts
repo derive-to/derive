@@ -9,6 +9,7 @@ import {
 } from "@derive/core"
 import { createLocalJWKSet, type JWTPayload, jwtVerify } from "jose"
 import { type Auth, oauthIssuerFor } from "../auth-config"
+import { clientName } from "./client-names"
 import { sha256 } from "./crypto"
 
 /** What a valid OAuth access token resolves to: the synthetic agent record (a workspace
@@ -219,7 +220,7 @@ export function makeOauthAgent({
       rec: syntheticAgent({
         id: `oauth:${clientId}`,
         org_id: ws.org,
-        name: (await meta.getOAuthClientName(clientId)) || clientId || "An agent",
+        name: (await clientName(meta, clientId)) || clientId || "An agent",
         role: capRole(scopeRole, ws.memberRole),
         created_by: userId,
         created_at: new Date().toISOString(),

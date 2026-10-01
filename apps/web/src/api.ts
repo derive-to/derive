@@ -16,6 +16,7 @@ import type {
   SharedStateResult,
   SortMode,
   SourceOp,
+  SyncWire,
   WorkflowDraftRecord,
   WorkflowFilesRecord,
   WorkflowReadiness,
@@ -865,12 +866,17 @@ const publishChange = (
   payload: unknown,
   baseVersion: number,
   message: string,
+  session?: string,
+  baseSha?: string,
 ): Promise<Artifact> => {
   const fd = new FormData()
   fd.append(field, JSON.stringify(payload))
+  if (baseSha) fd.append("base_sha", baseSha)
   fd.append("base_version", String(baseVersion))
   fd.append("coalesce", "true")
   if (message) fd.append("message", message)
+  // An open edit session: every save it makes folds into one working version.
+  if (session) fd.append("session", session)
   return f(`/v1/artifacts/${id}/versions`, {
     method: "POST",
     body: fd,
@@ -2000,13 +2006,39 @@ export const api = {
     edits: (InlineEditInput | StrEditInput)[],
     baseVersion: number,
     message: string,
+    session?: string,
   ): Promise<Artifact> {
-    return publishChange(id, "edits", edits, baseVersion, message)
+    return publishChange(id, "edits", edits, baseVersion, message, session)
   },
   // Exact-source edits (the inline editor on HTML and decks): each op names an element
   // by its source id and hash (see the source map), so nothing is searched for.
-  publishOps(id: string, ops: SourceOp[], baseVersion: number, message: string): Promise<Artifact> {
-    return publishChange(id, "ops", ops, baseVersion, message)
+  // `baseSha` names the source the page shows: the answer then carries the page's sync.
+  publishOps(
+    id: string,
+    ops: SourceOp[],
+    baseVersion: number,
+    message: string,
+    session?: string,
+    baseSha?: string,
+  ): Promise<Artifact & { sync?: SyncWire }> {
+    return publishChange(id, "ops", ops, baseVersion, message, session, baseSha)
+  },
+  /** Catch an editing page up: `sha` is the source it was stamped from (a session save
+   *  rewrites a version in place, so the number alone can't name it). */
+  syncArtifact(id: string, sha: string): Promise<SyncWire> {
+    return f(`/v1/artifacts/${id}/sync`, opts({ sha })).then(j)
+  },
+  /** An edit session ended (Done): its saves are one version, announced once. */
+  finishEditSession(id: string, session: string): Promise<void> {
+    return f(`/v1/artifacts/${id}/sessions/${encodeURIComponent(session)}/done`, {
+      method: "POST",
+      credentials: "include",
+      keepalive: true,
+    }).then(() => undefined)
+  },
+  /** The same, from a page that is going away (it can't wait for an answer). */
+  finishEditSessionBeacon(id: string, session: string): void {
+    navigator.sendBeacon?.(u(`/v1/artifacts/${id}/sessions/${encodeURIComponent(session)}/done`))
   },
   /** The element hashes of a stamped HTML version, indexed by source id. */
   sourceMap(id: string, version: number): Promise<SourceMap> {

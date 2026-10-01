@@ -1,6 +1,6 @@
 import { countSlideElements, DECK_TEMPLATE } from "@derive/core"
 import type { Page } from "@playwright/test"
-import { expect, openArtifact, publishArtifact, test } from "./fixtures"
+import { expect, openArtifact, publishArtifact, saveEdits, test } from "./fixtures"
 
 /**
  * Decks: the host half of the derive-deck protocol, end to end.
@@ -18,15 +18,6 @@ import { expect, openArtifact, publishArtifact, test } from "./fixtures"
  * so it doubles as the guard that what we hand people is a working deck.
  */
 
-/** Save, and wait for the server to take it. */
-async function saveEdits(page: Page) {
-  const response = page.waitForResponse(
-    (r) => r.url().includes("/versions") && r.request().method() === "POST",
-  )
-  await page.getByTestId("inline-edit-save").click()
-  expect((await response).ok()).toBe(true)
-}
-
 /** Publish the canonical deck and open it with the workbench interactive. */
 async function seedDeck(page: Page) {
   const shortId = await publishArtifact(page, "deck.html", DECK_TEMPLATE, "text/html")
@@ -36,6 +27,21 @@ async function seedDeck(page: Page) {
   await expect(page.getByTestId("deck-position")).toBeVisible()
   return shortId
 }
+
+/** The version `n` is the one on screen, and the one it replaced is gone. */
+async function versionOnScreen(page: Page, n: number) {
+  await expect(page.locator("iframe[title]")).toHaveCount(1)
+  await expect(page.locator("iframe[title]:not([aria-hidden])")).toHaveAttribute(
+    "src",
+    new RegExp(`/v/${n}/`),
+  )
+}
+/** The identity of the slide on screen (what an arrangement keeps, whatever its place). */
+const slideOnScreen = (page: Page) =>
+  page
+    .frameLocator("iframe[title]:not([aria-hidden])")
+    .locator(".slide.on")
+    .getAttribute("data-derive-slide")
 
 test.describe("deck", () => {
   test("the host bar reflects the deck's state and drives it both ways", async ({
@@ -65,6 +71,35 @@ test.describe("deck", () => {
 
     await prev.click()
     await expect(position).toHaveText("2 / 3")
+  })
+
+  test("a copied link opens on the slide being worked on, in the app and on its own", async ({
+    owner: page,
+  }) => {
+    await seedDeck(page)
+    await page.getByTestId("deck-next").click()
+    await page.getByTestId("deck-next").click()
+    await expect(page.getByTestId("deck-position")).toHaveText("3 / 3")
+    await expect.poll(() => new URL(page.url()).hash).toBe("#slide=3")
+
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
+    await page.getByTestId("share-trigger").click()
+    await page.getByTestId("share-url-copy").click()
+    const link = await page.evaluate(() => navigator.clipboard.readText())
+    expect(link).toMatch(/#slide=3$/)
+
+    const other = await page.context().newPage()
+    // Locally the API and the app are separate origins; the link's path and place are
+    // what matter.
+    const { pathname, hash } = new URL(link)
+    await other.goto(new URL(`${pathname}${hash}`, page.url()).href)
+    await expect(other.getByTestId("deck-position")).toHaveText("3 / 3")
+
+    // The page itself, opened without the app (as a workspace domain serves it).
+    const raw = await page.locator("iframe[title]:not([aria-hidden])").getAttribute("src")
+    await other.goto(`${new URL(raw ?? "", page.url()).href.split("#")[0]}#slide=3`)
+    await expect(other.locator(".slide").nth(2)).toHaveClass(/\bon\b/)
+    await other.close()
   })
 
   test("Present mode is offered for a deck", async ({ owner: page }) => {
@@ -178,7 +213,11 @@ test.describe("deck", () => {
     await page.getByTestId("deck-slide-card-2").hover()
     await page.getByTestId("deck-slide-up-2").click()
     await page.getByTestId("deck-arrange-save").click()
+    // The saved deck swaps in on the slide the reader was on (the one they moved),
+    // wherever it moved to: first.
+    await versionOnScreen(page, 2)
     await expect(page.getByTestId("deck-position")).toContainText("1 / 3")
+    expect(await slideOnScreen(page)).toBe("1")
 
     // Move away, then jump to the anchored comment. Ordinal-only resolution would land
     // on slide 2 (the old position); stable identity takes us back to the moved slide 1.
@@ -188,6 +227,58 @@ test.describe("deck", () => {
     if (!(await nextComment.isVisible())) await page.getByTestId("artifact-show-comments").click()
     await nextComment.click()
     await expect(page.getByTestId("deck-position")).toContainText("1 / 3")
+  })
+
+  test("a saved arrangement never moves the reader: moves made while it loads win, and the slide stays theirs", async ({
+    owner: page,
+  }) => {
+    const classOnly = DECK_TEMPLATE.replace(/ data-derive-slide="\d+"/g, "")
+    const shortId = await publishArtifact(page, "swap-deck.html", classOnly, "text/html")
+    await openArtifact(page, shortId)
+    const position = page.getByTestId("deck-position")
+
+    // The new version is slow to arrive, and the reader moves on meanwhile: that move
+    // is where they stay once it swaps in.
+    let release = () => {}
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let asked = false
+    await page.route(new RegExp(`/raw/${shortId}/v/2/`), async (route) => {
+      asked = true
+      await held
+      await route.continue()
+    })
+    await page.getByTestId("deck-arrange").click()
+    await page.getByTestId("deck-slide-card-2").hover()
+    await page.getByTestId("deck-slide-up-2").click()
+    await page.getByTestId("deck-arrange-save").click()
+    await expect.poll(() => asked).toBe(true)
+    await expect(position).toContainText("2 / 3")
+    await page.getByTestId("deck-next").click()
+    await expect(position).toContainText("3 / 3")
+    release()
+    await versionOnScreen(page, 2)
+    expect(await slideOnScreen(page)).toBe("2")
+    await expect(position).toContainText("3 / 3")
+
+    // Its slide moved without the reader moving: the new version keeps them on it,
+    // at its new place.
+    await page.getByTestId("deck-prev").click()
+    await page.getByTestId("deck-prev").click()
+    await expect(position).toContainText("1 / 3")
+    expect(await slideOnScreen(page)).toBe("1")
+    await page.getByTestId("deck-arrange").click()
+    await page.getByTestId("deck-slide-card-1").hover()
+    await page.getByTestId("deck-slide-down-1").click()
+    await page.getByTestId("deck-arrange-save").click()
+    await versionOnScreen(page, 3)
+    await expect(position).toContainText("2 / 3")
+    expect(await slideOnScreen(page)).toBe("1")
+    // …and nothing moves them after it.
+    await page.waitForTimeout(1500)
+    await expect(position).toContainText("2 / 3")
+    expect(await slideOnScreen(page)).toBe("1")
   })
 
   test("a comment on a later slide flips the deck to that slide", async ({ owner: page }) => {
@@ -356,7 +447,7 @@ test.describe("deck", () => {
     report()
   </script></body></html>`
 
-  const doc = (page: Page) => page.frameLocator("iframe[title]")
+  const doc = (page: Page) => page.frameLocator("iframe[title]:not([aria-hidden])")
 
   async function seedSilentDeck(page: Page) {
     const shortId = await publishArtifact(page, "deck.html", DECK, "text/html")
@@ -469,16 +560,29 @@ test.describe("deck", () => {
     await frame.locator("#beta").click({ position: { x: 4, y: 6 } })
     await pill.getByRole("button", { name: "Move earlier" }).click()
 
+    await frame.locator("html").evaluate(() => {
+      ;(window as unknown as { __kept?: boolean }).__kept = true
+    })
     const sha = await frame.locator("html").getAttribute("data-derive-src-sha")
     await saveEdits(owner)
-    // The page reloads on the saved source, and the session picks back up there:
-    // same slide, the same card selected.
+    // The save lands without reloading: the page takes the new ids in place, on the
+    // same slide, with the same card selected, and editing carries on.
     await expect.poll(() => frame.locator("html").getAttribute("data-derive-src-sha")).not.toBe(sha)
+    expect(
+      await frame
+        .locator("html")
+        .evaluate(() => (window as unknown as { __kept?: boolean }).__kept),
+    ).toBe(true)
     await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
     await expect(owner.getByTestId("deck-position")).toHaveText("2 / 3")
     await expect(pill.getByRole("button", { name: "Drag to move" })).toHaveText("⠿Card 1")
-    await owner.keyboard.press("Alt+ArrowRight")
+    await pill.getByRole("button", { name: "Move later" }).click()
     await expect(frame.locator("#cards > [data-derive-node]").nth(1)).toHaveAttribute("id", "beta")
+    await saveEdits(owner)
+    await expect(async () => {
+      const src = await (await owner.request.get(`/v1/artifacts/${shortId}/content`)).text()
+      expect(src.indexOf('id="alpha"')).toBeLessThan(src.indexOf('id="beta"'))
+    }).toPass({ timeout: 10_000 })
   })
 
   test("a save writes what the person changed, never what the deck's own script did", async ({
@@ -649,9 +753,9 @@ test.describe("deck", () => {
     // default never was.
     await expect(doc(owner).locator("#p")).toContainText("typed words")
 
-    // Leaving the mode hands the page its input back.
+    // Leaving the mode (it saves what was typed on the way out) hands the page its
+    // input back.
     await owner.keyboard.press("Escape")
-    await owner.getByTestId("inline-edit-exit-confirm").click()
     await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
     await doc(owner).locator("#p").click()
     await owner.keyboard.press("ArrowRight")

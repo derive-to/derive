@@ -206,7 +206,7 @@ describe("read map / node", () => {
   })
 
   it("falls back to authored source when a stored map is corrupt", async () => {
-    const { app, blobs, token, short_id, meta } = await setup("map-corrupt-fallback")
+    const { app, token, short_id, meta } = await setup("map-corrupt-fallback")
     const art = await meta.getByShortId(short_id)
     const good = deriveFacts(DECK, DECK_CONTENT_TYPE).find((fact) => fact.slot === "$map")
     expect(art).toBeTruthy()
@@ -220,15 +220,12 @@ describe("read map / node", () => {
         gen: (good as { gen: number }).gen,
       },
     ])
-    const get = vi.spyOn(blobs, "get")
-    get.mockClear()
-
     const map = await readJson(app, token, { short_id, map: true })
 
+    // The nodes come from the authored source (which this process kept when it stored it),
+    // not from the corrupt stored map.
     expect(map.kind).toBe("deck")
     expect(map.nodes.map((node: { ref: string }) => node.ref)).toContain("slide:2")
-    expect(get).toHaveBeenCalled()
-    get.mockRestore()
   })
 })
 

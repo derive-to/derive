@@ -26,7 +26,7 @@ import {
   toBody,
 } from "../lib/http"
 import { verifyPreviewToken } from "../lib/preview-token"
-import { serveContent } from "../lib/serve-content"
+import { editorHost, serveContent } from "../lib/serve-content"
 import { mutableCacheFor, versionCacheControl } from "../lib/version-cache"
 import { log } from "../log"
 import { safeJson } from "../mcp-util"
@@ -355,7 +355,7 @@ export const rawRoutes = (ctx: AppContext) => {
       // window (or after its last slot was deleted) is never cached as immutable bytes.
       mutableCacheFor(artifact),
       await sourceHiddenFrom(c, artifact),
-      editor ? { version: n } : undefined,
+      editor ? { version: n, host: editorHost(deps) } : undefined,
     )
   }
 

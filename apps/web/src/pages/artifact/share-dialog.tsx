@@ -171,7 +171,12 @@ export function ShareButton({
     linkRole: lRole,
     locked: hasLock || lockDraft,
   })
-  const shareUrl = branded.url
+  // The reader's place rides along (use-url-place keeps it in the page's hash), so the
+  // link opens on the slide or passage being worked on.
+  const here = typeof window === "undefined" ? "" : window.location.hash
+  const place = /^#(?:slide=\d+|at=.+)$/.test(here) ? here : ""
+  const shareUrl = branded.url + place
+  const placeNote = /^#slide=(\d+)$/.exec(place)?.[1]
   // A moment link is a viewer feature (scene + time are read by the app), so it
   // always points at the app.
   const momentUrl = videoMoment
@@ -314,11 +319,12 @@ export function ShareButton({
       collectionShared: grants.length > 0,
       locked: hasLock,
     })
+    const what = placeNote ? `Link to slide ${placeNote} copied` : "Link copied"
     const success = reach
-      ? `Link copied — ${reach.toLowerCase()}`
+      ? `${what} — ${reach.toLowerCase()}`
       : branded.host
-        ? `Link copied — ${branded.host}`
-        : "Link copied"
+        ? `${what} — ${branded.host}`
+        : what
     if (await copyLinkToClipboard(shareUrl, { success })) {
       // The getting-started checklist's "share a link" step completes here — the
       // one gesture that means "I sent this to someone" (see chrome/getting-started).

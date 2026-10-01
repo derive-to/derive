@@ -3,7 +3,7 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { sourceElements } from "@derive/core"
 import type { Page } from "@playwright/test"
-import { expect, openArtifact, publishArtifact, test } from "../fixtures"
+import { expect, openArtifact, publishArtifact, saveEdits, test } from "../fixtures"
 
 // Browser half of the editing corpus for structural regions and frame focus. The core
 // lane pins the source contract; these pin what the live frame offers on real markup.
@@ -17,7 +17,7 @@ const REAL_DECK = readFileSync(
   "utf8",
 )
 
-const frame = (page: Page) => page.frameLocator("iframe[title]")
+const frame = (page: Page) => page.frameLocator("iframe[title]:not([aria-hidden])")
 
 const contentOf = async (page: Page, shortId: string): Promise<string> => {
   const response = await page.request.get(`/v1/artifacts/${shortId}/content`)
@@ -37,15 +37,18 @@ const showSlide = (page: Page, position: number) =>
 /** The stored bytes of each slide section, in order. */
 const slidesOf = (html: string) => html.match(/<section class="slide[\s\S]*?<\/section>/g) ?? []
 
-/** Save, and return what the browser sent: an exact-source save carries `ops`. */
-const saveOps = async (page: Page) => {
-  const request = page.waitForRequest((r) => r.method() === "POST" && r.url().includes("/versions"))
-  const response = page.waitForResponse(
-    (r) => r.url().includes("/versions") && r.request().method() === "POST",
+/** Edits save themselves. To see a whole set of edits go as one save (the save a
+ *  pause would send), hold this page's saves back while they are made… */
+const holdSaves = (page: Page) =>
+  page.route("**/v1/artifacts/*/versions", (route) =>
+    route.request().method() === "POST" ? route.abort() : route.continue(),
   )
-  await page.getByTestId("inline-edit-save").click()
+/** …then let them go, and return what the browser sent: an exact-source save carries `ops`. */
+const saveOps = async (page: Page) => {
+  await page.unroute("**/v1/artifacts/*/versions")
+  const request = page.waitForRequest((r) => r.method() === "POST" && r.url().includes("/versions"))
+  await saveEdits(page)
   const body = (await request).postData() ?? ""
-  expect((await response).ok()).toBe(true)
   const ops = body.match(/name="ops"\r\n\r\n([\s\S]*?)\r\n--/)?.[1]
   expect(ops, "the save was sent as exact-source ops").toBeTruthy()
   return JSON.parse(ops as string) as { op: string; src: number }[]
@@ -90,6 +93,7 @@ test("[BROWSER-DECK-STRUCT-001] a real deck arranges every slide; what sits arou
   owner,
 }) => {
   const shortId = await openDeckEditor(owner)
+  await holdSaves(owner)
   const doc = frame(owner)
 
   // Slide 1 ends with a footer, a number, and notes: its nodes swap places and the
@@ -132,7 +136,7 @@ const LAYOUT_DOC = `<style>
   <article id="bravo" data-derive-node="bravo"><p id="words">Bravo words.</p></article>
 </section>`
 
-test("[BROWSER-DECK-LAYOUT-001] a resize and a text edit save as one version: both, or neither", async ({
+test("[BROWSER-DECK-LAYOUT-001] a resize and a text edit under someone else's change: nothing half-saved", async ({
   owner,
 }) => {
   const shortId = await publishArtifact(owner, "layout.html", LAYOUT_DOC, "text/html")
@@ -155,38 +159,29 @@ test("[BROWSER-DECK-LAYOUT-001] a resize and a text edit save as one version: bo
     await owner.getByTestId("artifact-inspect-block-width").press("Enter")
     await expect(doc.locator("#alpha")).toHaveAttribute("data-derive-width", "60")
   }
-  const versions: string[] = []
-  owner.on("request", (r) => {
-    if (r.method() === "POST" && r.url().includes("/versions")) versions.push(r.url())
-  })
-
-  // Someone changes Alpha while this page is open: the save refuses as a whole, so
-  // the untouched paragraph's edit is not saved either.
+  // Someone changes Alpha while this page holds its new width unsent: their Alpha comes
+  // in and the page asks whose Alpha wins. Taking theirs and sizing it again sends both
+  // edits over their version; nothing is half-saved on the way.
+  await holdSaves(owner)
   await edit()
   const form = new FormData()
   form.append("edits", JSON.stringify([{ old_str: ">Alpha<", new_str: ">Alpha!<" }]))
   expect(
     (await owner.request.post(`/v1/artifacts/${shortId}/versions`, { multipart: form })).ok(),
   ).toBe(true)
-  const head = await contentOf(owner, shortId)
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(owner.getByText("The artifact changed while you were editing.")).toBeVisible()
-  expect(await contentOf(owner, shortId)).toBe(head)
-  expect(versions).toHaveLength(1)
-
-  // From the current version, the same two edits land in one request and one version.
-  await owner.getByTestId("inline-edit-discard").click()
-  await owner.getByTestId("inline-edit-done").click()
-  await owner.reload()
-  versions.length = 0
-  await edit()
-  const response = owner.waitForResponse(
-    (r) => r.url().includes("/versions") && r.request().method() === "POST",
-  )
-  await owner.getByTestId("inline-edit-save").click()
-  expect((await response).ok()).toBe(true)
+  await expect(owner.getByTestId("inline-edit-status")).toHaveAttribute("data-status", "conflict", {
+    timeout: 15_000,
+  })
+  await expect(doc.locator("#alpha")).toHaveText("Alpha!")
+  expect(await contentOf(owner, shortId)).not.toContain("Bravo words. More.")
+  await owner.unroute("**/v1/artifacts/*/versions")
+  await owner.getByTestId("inline-edit-use-theirs").click()
+  await doc.locator("#alpha").click({ position: { x: 4, y: 6 } })
+  await doc.getByRole("button", { name: "More options" }).click()
+  await owner.getByTestId("artifact-inspect-block-width").fill("60")
+  await owner.getByTestId("artifact-inspect-block-width").press("Enter")
+  await saveEdits(owner)
   const stored = await contentOf(owner, shortId)
-  expect(versions).toHaveLength(1)
   expect(stored).toContain('<p id="words">Bravo words. More.</p>')
   const alpha = stored.match(/<article id="alpha"[^>]*>Alpha!<\/article>/)?.[0] ?? ""
   expect(alpha).toContain('data-derive-width="60"')
@@ -230,7 +225,7 @@ test("[BROWSER-FRAME-001] a click through an overlay moves typing to the clicked
   await expect(doc.locator("#item")).toHaveText("Automations and workflows. A")
   await expect(doc.locator("#title")).toContainText("B")
 
-  await owner.getByTestId("inline-edit-save").click()
+  await saveEdits(owner)
   await expect(async () => {
     const stored = await contentOf(owner, shortId)
     expect(stored).toContain('<p id="item">Automations and workflows. A</p>')
@@ -242,6 +237,7 @@ test("[BROWSER-DECK-MOVE-001] move, duplicate, cut to another slide and delete s
   owner,
 }) => {
   const shortId = await openDeckEditor(owner)
+  await holdSaves(owner)
   const doc = frame(owner)
 
   // Within a slide: the body moves above the brand row, then a copy follows it.
@@ -283,6 +279,7 @@ test("[BROWSER-DECK-BULK-001] ten edits on three slides and a move save once, ex
   owner,
 }) => {
   const shortId = await openDeckEditor(owner)
+  await holdSaves(owner)
   const doc = frame(owner)
   const edits: [number, string][] = [
     [1, "Juliet Kilo Lima Mike"],
@@ -312,7 +309,7 @@ test("[BROWSER-DECK-BULK-001] ten edits on three slides and a move save once, ex
   // A node nobody typed into (an armed block takes keys as typing).
   await selectNode(owner, "s40-brand")
   await owner.keyboard.press("Alt+ArrowDown")
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("11 unsaved changes")
+  await expect(owner.getByTestId("inline-edit-status")).toContainText("· 11")
 
   const ops = await saveOps(owner)
   expect(ops.length).toBeGreaterThan(0)

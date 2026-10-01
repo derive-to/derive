@@ -488,6 +488,8 @@ const runtimeConfig = process.env.DERIVE_ORTAM_RUNNER_PATH
     }
   : undefined
 const app = createApp({
+  // An attended editor save answers once its version is stored; indexing and realtime follow.
+  detachAfterResponse: true,
   runtime: runtimeConfig,
   meta,
   // Self-host: whatever the image was built from. Docker builds can pass it; a source run
@@ -616,6 +618,23 @@ const draftSweepTimer = cfg.backgroundWorkers
   : undefined
 draftSweepTimer?.unref?.()
 
+// Inline edit sessions whose page never said Done: finalized once idle, through the app's
+// route (it holds the fan-out). Needs the operator token; editors' traffic also sweeps.
+const editSessionSweepTimer =
+  cfg.backgroundWorkers && cfg.token
+    ? setInterval(
+        () =>
+          void Promise.resolve(
+            app.request("/v1/edit-sessions/sweep", {
+              method: "POST",
+              headers: { authorization: `Bearer ${cfg.token}` },
+            }),
+          ).catch(() => undefined),
+        60_000,
+      )
+    : undefined
+editSessionSweepTimer?.unref?.()
+
 // The job tick: turn due schedule windows into jobs and reclaim lapsed leases. Cheap, and
 // needed wherever background workers run, so it is not behind an opt-in.
 let jobTimer: ReturnType<typeof setInterval> | undefined
@@ -709,6 +728,7 @@ const shutdown = makeShutdown({
   clearTimers: () => {
     if (pruneTimer) clearInterval(pruneTimer)
     if (draftSweepTimer) clearInterval(draftSweepTimer)
+    if (editSessionSweepTimer) clearInterval(editSessionSweepTimer)
     if (jobTimer) clearInterval(jobTimer)
   },
   closeStores,

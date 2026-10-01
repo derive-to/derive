@@ -60,7 +60,11 @@ compatible client. Messages are tagged with a `source` field.
 | `anchor-click` | `{ id }` | user clicked a painted highlight |
 | `open-external` | `{ href }` | a link that must not navigate the frame (anything but an in-page `#` or a same-origin `/raw/…` bundle page); the host validates the scheme, routes its own `/artifacts/…` in-app, and opens the rest in a new tab |
 | `esc` | None | Escape pressed while focus was inside the frame; the host applies its own dismissals (e.g. exiting focus mode) |
-| `edit-state` | `{ dirty }` | inline edit mode: how many blocks currently differ from the pre-edit snapshot (formatting counts, even when no character changed) |
+| `edit-state` | `{ dirty, changes, conflicts, … }` | inline edit mode: this session's changes (each block that differs from how the session found it; formatting counts, even when no character changed), and blocks someone else changed under unsaved words |
+| `edit-touch` | `{ rev, flush }` | the person changed something (`rev` counts every change); the host saves after a pause, or at once when `flush` (a move, a delete, a resize, leaving a block) |
+| `edit-deleted` | `{ label }` | a block was deleted; the host offers Undo for a few seconds (and holds that save meanwhile) |
+| `edit-synced` | `{ ok, reload?, lost?, nonce }` | reply to `edit-sync`: the page took the new version in place, or needs a fresh load (the host swaps one in behind it, at the same place) |
+| `position` | `{ at }` | where the reader is (an element with an id, or a source stamp, and the offset past its top); the host keeps it in its URL as `#at=…` (a deck keeps `#slide=N`) |
 | `edit-edits` | `{ edits: [{ quote: { exact, prefix, suffix }, new_text? , new_html? }], dirty, uncaptured, nonce }` | reply to `edit-collect`: each changed run as a quote-scoped edit, built from the PRE-edit document text. A formatted block comes back as ONE `new_html` edit for the whole block instead of per-run text edits. `dirty` is the changed-block count at collect time and `uncaptured` is the number that produced no edit. The host refuses a partial save rather than publishing only some work and dropping the rest on reload. `nonce` echoes the request, so a late reply cannot resolve a newer collect |
 | `edit-save` | None | ⌘S / ⌘Enter pressed inside the frame (the host's own window listener cannot see keys typed in the iframe); the host saves if there are pending edits |
 | `edit-request` | None | a double-click on text, asking the host to open edit mode; the client has already captured which text node it was, and the host answers with `edit-mode {on:true, fromPointer:true}` |
@@ -71,14 +75,20 @@ compatible client. Messages are tagged with a `source` field.
 
 ### Host → artifact frame (`source: "derive-host"`)
 
+The client acts only on messages from the window that frames it. Editing messages (`edit-*`) must also come from the app's own origin: an editor's page carries the allowed origins on its root as `data-derive-host`, because any site can frame a document.
+
 | `type` | payload | meaning |
 |---|---|---|
 | `anchors` | `{ anchors: [{ id, exact, prefix, suffix }] }` | paint these anchors as highlights; reply with `anchors-resolved` |
 | `focus-anchor` | `{ id }` | scroll to + flash that anchor |
-| `edit-mode` | `{ on, keep?, fromPointer?, fromSelection? }` | enter or leave inline edit mode. On entry, the client snapshots the document text used to build quotes. A click then lands a caret in the nearest text block (`contenteditable`, plain text only; paste is flattened; on an HTML page, deck or Markdown document Enter splits the paragraph or list item into two of the same element and Shift+Enter inserts a line break). The block under the pointer is highlighted, and the page's own keyboard and click handlers are suppressed while a caret is active. `fromPointer` lands the caret on the text that was double-clicked; `fromSelection` uses the live selection. `keep:true` leaves the typed text in place and removes only the editing controls after a publish. Leaving restores unsaved work unless `keep` is set |
+| `edit-mode` | `{ on, fromPointer?, fromSelection? }` | enter or leave inline edit mode. On entry, the client snapshots the document text used to build quotes. A click then lands a caret in the nearest text block (`contenteditable`, plain text only; paste is flattened; on an HTML page, deck or Markdown document Enter splits the paragraph or list item into two of the same element and Shift+Enter inserts a line break). The block under the pointer is highlighted, and the page's own keyboard and click handlers are suppressed while a caret is active. `fromPointer` lands the caret on the text that was double-clicked; `fromSelection` uses the live selection. Every edit saves itself, so leaving keeps the text as it is |
 | `edit-armed` | `{ on }` | whether this viewer may edit; arms the document's own entry gesture (a double-click asks for the mode) so a reader who could never save never fires one |
 | `edit-collect` | `{ nonce }` | reply with `edit-edits` echoing `nonce`: the changed runs diffed against the snapshot, word-snapped, as quote-scoped edits |
-| `edit-restore` | None | revert every edited block to its snapshot (the Discard verb); dirty drops to 0 |
+| `edit-sync` | `{ version, sha, hashes, remap, patches, head, own, by, nonce }` | a newer version (after this page's own save, `own`, or someone else's, by `by`): the page takes it in place (new ids for what it already shows, the changed blocks swapped in, never under the caret while typing; a block with unsaved words becomes a choice) and replies `edit-synced` |
+| `edit-resolve` | `{ id, mine }` | settle a conflict: keep your words (sent over theirs by the next save) or theirs |
+| `edit-undo-delete` | None | put back the block just deleted, where it was |
+| `restore-position` | `{ slide?, slideId?, at? }` | go to a place the host kept (a refresh, or a new version swapped in); the scroll holds while late images and fonts arrive, until the reader moves. Replies `position-restored` |
+| `position-now` | `{ nonce }` | where the reader is right now, after every message sent before it; the host asks the page on screen just before a newer version replaces it. Replies `position-now` with `{ nonce, slide, slideId, at }` |
 
 ### Formatting
 

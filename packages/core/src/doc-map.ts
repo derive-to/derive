@@ -94,7 +94,7 @@ const slideTitle = (source: string): string | undefined => {
  *  style block is what turns "make the whole deck warmer" into one replace instead of forty
  *  scattered edits. */
 const assetBlocks = (
-  all: HtmlTag[],
+  all: readonly HtmlTag[],
   inside: (start: number) => boolean,
 ): { type: DocNodeType; start: number; end: number }[] => {
   const out: { type: DocNodeType; start: number; end: number }[] = []

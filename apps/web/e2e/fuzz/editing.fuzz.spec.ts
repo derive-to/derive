@@ -23,6 +23,7 @@ import { fuzzSeeds, runSession } from "./session"
  *   FUZZ_SEED=137 pnpm --filter @derive/web test:fuzz         # replay one seed
  *   FUZZ_SEED=137 FUZZ_MAX_ACTIONS=3 …                        # replay a prefix (shrinking)
  *   FUZZ_ARRANGE=off|on …                                     # force the Rearrange pass
+ *   FUZZ_ACTIONS=10-20 …                                      # round one's edit count
  *   FUZZ_MODE=classic …   # 5–10 changes over 1–3 slides, one save (default: one-slide,
  *                         # 8–15 changes on one slide, save, 5–8 more, save again)
  *   FUZZ_MODE=html-doc …  # the same round trip on a plain HTML article (docs/article.html):

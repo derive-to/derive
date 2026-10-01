@@ -94,6 +94,9 @@ export interface PublishInput {
    * short burst of attended web edits. The store rejects a stale blob key.
    */
   replaceCurrent?: { n: number; blobKey: string }
+  /** The inline editor's open edit session writing this version (republish only): its
+   *  later saves coalesce here and its notifications wait until the session ends. */
+  editSession?: string
   /**
    * Append only while the artifact is still at this version.
    *
@@ -598,6 +601,7 @@ export async function publish(
       source: input.source ?? null,
       message: input.message ?? null,
       name: input.name ?? null,
+      edit_session: input.editSession ?? null,
     }
     // A revision of the version the caller read appends conditionally: a publish that
     // slipped in while this one was prepared is refused instead of landing on top of it.
@@ -617,6 +621,7 @@ export async function publish(
     // Rename on republish only when a title is explicitly supplied (the in-browser
     // editor sends it; a CLI republish without --title leaves the name untouched).
     const newTitle = input.title?.trim()
+    let renamed = false
     // Re-derive the URL name with the title. The slug was computed once at create and
     // never again, so a renamed doc kept advertising its former title in every link it
     // handed out — and nothing could fix it, because renaming is the only lever there is.
@@ -629,10 +634,27 @@ export async function publish(
       // their url did not, and republishing under the current title is a no-op because the
       // title already matches — so the one lever that could fix it never fires. This
       // self-heals that drift the next time a title is supplied.
-      if (newTitle !== artifact.title || nextSlug !== artifact.slug)
+      if (newTitle !== artifact.title || nextSlug !== artifact.slug) {
         await meta.setArtifactTitle(artifact.id, newTitle, nextSlug)
+        renamed = true
+      }
     }
-    return { artifact: (await meta.getByShortId(shortId)) as ArtifactRecord, version, timings }
+    // The row as the write just left it: what a version changes is known, so no read back
+    // (a round trip on the edge) unless a rename changed more.
+    const written: ArtifactRecord = renamed
+      ? ((await meta.getByShortId(shortId)) as ArtifactRecord)
+      : {
+          ...artifact,
+          current_version: version.n,
+          current_content_type: version.content_type,
+          updated_at: version.created_at,
+          author_name: version.author,
+          author_login: version.author_login,
+          author_avatar: version.author_avatar,
+          author_gh_id: version.author_gh_id,
+          author_id: version.author_id,
+        }
+    return { artifact: written, version, timings }
   }
 
   const title =

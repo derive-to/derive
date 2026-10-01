@@ -497,6 +497,23 @@ describe("inline edit version coalescing", () => {
     ).toContain("<h1>Two</h1>")
   })
 
+  it("answers X-Derive-Timing with every store call the save made", async () => {
+    const created = await (
+      await publishAs(inlineApp, "<h1>Timed</h1>", { title: "Traced page" }, as(owner.email))
+    ).json()
+    const plain = await edit(created.short_id, 1, "Timed", "Plain", as(owner.email))
+    expect(plain.headers.get("server-timing")).not.toContain("db.")
+    const traced = await edit(created.short_id, 1, "Plain", "Traced", {
+      ...as(owner.email),
+      "x-derive-timing": "1",
+    })
+    expect(traced.status).toBe(201)
+    const timing = traced.headers.get("server-timing") ?? ""
+    expect(timing).toMatch(/store\/blob calls/)
+    expect(timing).toMatch(/-db\.(?:getByShortId|editPreflight);desc="at \d+ms";dur=/)
+    expect(timing).toMatch(/-blob\.put;/)
+  })
+
   it("starts a new version when another person edits", async () => {
     const created = await (
       await publishAs(inlineApp, "<h1>A</h1>", { title: "Shared page" }, as(owner.email))
@@ -673,7 +690,11 @@ describe("inline edit version coalescing", () => {
 describe("exact-source inline saves (ops)", () => {
   const owner: TestUser = { id: "ops-owner", email: "ops-owner@test.dev", name: "Owner" }
   const colleague: TestUser = { id: "ops-colleague", email: "ops-colleague@test.dev", name: "C" }
-  const { app: opsApp } = makeAuthedApp("inline-source-ops", [owner, colleague], "editor")
+  const { app: opsApp, meta: opsMeta } = makeAuthedApp(
+    "inline-source-ops",
+    [owner, colleague],
+    "editor",
+  )
   const page = `<!doctype html><html><head><title>Ops</title></head><body><section class="slide" data-derive-slide="0"><h1>Launch plan</h1><p>First <b>bold</b> point</p></section><section class="slide" data-derive-slide="1"><h2>Risks</h2><p>Second point</p></section></body></html>`
 
   const detail = async (shortId: string, headers: Record<string, string> = {}) =>
@@ -691,11 +712,20 @@ describe("exact-source inline saves (ops)", () => {
   /** The source id the editor's page carries for the nth `<tag>`. */
   const idOf = (stamped: string, tag: string, nth = 0) =>
     Number([...stamped.matchAll(new RegExp(`<${tag} data-derive-src="(\\d+)"`, "g"))][nth]?.[1])
-  const saveOps = (shortId: string, ops: unknown, baseVersion: number, who = owner) => {
+  const saveOps = (
+    shortId: string,
+    ops: unknown,
+    baseVersion: number,
+    who = owner,
+    session?: string,
+    baseSha?: string,
+  ) => {
     const form = new FormData()
     form.append("ops", JSON.stringify(ops))
     form.append("base_version", String(baseVersion))
-    form.append("coalesce", "true")
+    if (baseSha) form.append("base_sha", baseSha)
+    if (session) form.append("session", session)
+    else form.append("coalesce", "true")
     form.append("message", "Inline edit")
     return opsApp.request(`/v1/artifacts/${shortId}/versions`, {
       method: "POST",
@@ -717,6 +747,8 @@ describe("exact-source inline saves (ops)", () => {
     const map = await sourceMapOf(short_id)
     expect(stamped).toContain(`data-derive-src-version="1" data-derive-src-sha="${map.sha}"`)
     expect(stamped).toContain(`<h1 data-derive-src="${idOf(stamped, "h1")}">Launch plan</h1>`)
+    // The app origin that may drive its editor: the frame takes editing only from there.
+    expect(stamped).toContain('data-derive-host="http://derive.test"')
     expect(editorPage.headers.get("cache-control")).toMatch(/^private,/)
 
     // A reader's capability is a different URL, and its bytes carry no editor ids.
@@ -724,7 +756,9 @@ describe("exact-source inline saves (ops)", () => {
       (await detail(short_id, as(owner.email))).raw_token,
     )
     const readerPage = await framePage(short_id, 1, {})
-    expect(await readerPage.text()).not.toContain("data-derive-src")
+    const readerBytes = await readerPage.text()
+    expect(readerBytes).not.toContain("data-derive-src")
+    expect(readerBytes).not.toContain("data-derive-host")
     expect(readerPage.headers.get("cache-control")).not.toMatch(/private/)
     // The cookie route has no capability to say who asked, so it never stamps.
     const cookiePage = await opsApp.request(`/raw/${short_id}/v/1/index.html`, {
@@ -902,7 +936,9 @@ describe("exact-source inline saves (ops)", () => {
     const editorPage = await framePage(short_id, 1, as(owner.email))
     const stamped = await editorPage.text()
     const { sha, hashes } = await sourceMapOf(short_id)
-    expect(stamped).toContain(`data-derive-src-version="1" data-derive-src-sha="${sha}"`)
+    expect(stamped).toContain(
+      `data-derive-src-version="1" data-derive-src-sha="${sha}" data-derive-host="http://derive.test"`,
+    )
     expect(editorPage.headers.get("cache-control")).toMatch(/^private,/)
     expect(await (await framePage(short_id, 1, {})).text()).not.toContain("data-derive-src")
 
@@ -990,6 +1026,240 @@ describe("exact-source inline saves (ops)", () => {
     )
     expect(layout.status).toBe(400)
   })
+
+  const sync = (shortId: string, body: unknown, who = owner) =>
+    opsApp.request(`/v1/artifacts/${shortId}/sync`, {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { ...as(who.email), "content-type": "application/json" },
+    })
+  const editOther = (shortId: string, oldStr: string, newStr: string) => {
+    const form = new FormData()
+    form.append("edits", JSON.stringify([{ old_str: oldStr, new_str: newStr }]))
+    return opsApp.request(`/v1/artifacts/${shortId}/versions`, {
+      method: "POST",
+      body: form,
+      headers: as(colleague.email),
+    })
+  }
+
+  type Wire = {
+    version: number
+    sha: string
+    head: boolean
+    patches: { old: number; html: string }[]
+    from: number
+    runs: [number, number, number][]
+    count: number
+    changed: [number, string][]
+    hashes?: string[]
+  }
+  /** A sync off the wire, as the editor reads it against the source map it holds. */
+  const read = (w: Wire, held: string[]) => {
+    const remap = new Array<number>(w.from).fill(-1)
+    const hashes = w.hashes ?? new Array<string>(w.count).fill("")
+    for (const [o, n, len] of w.runs)
+      for (let k = 0; k < len; k++) {
+        remap[o + k] = n + k
+        if (!w.hashes && n + k < w.count) hashes[n + k] = held[o + k] ?? ""
+      }
+    for (const [n, h] of w.changed) hashes[n] = h
+    return { ...w, remap, hashes }
+  }
+
+  it("syncs the editor's page in place: its own save, then someone else's version", async () => {
+    const { short_id } = await publish()
+    const stamped = await (await framePage(short_id, 1, as(owner.email))).text()
+    const served = await sourceMapOf(short_id)
+    const [h1, secondP] = [idOf(stamped, "h1"), idOf(stamped, "p", 1)]
+    const ids = [...stamped.matchAll(/data-derive-src="(\d+)"/g)].map((m) => Number(m[1]))
+    const type = async (text: string, base: string) => {
+      const { hashes } = await sourceMapOf(short_id)
+      const saved = await saveOps(
+        short_id,
+        [{ op: "content", src: h1, hash: hashes[h1], children: [{ text }] }],
+        1,
+        owner,
+        "session-sync-1",
+        base,
+      )
+      expect(saved.status).toBe(201)
+      return (await saved.json()).sync as Wire
+    }
+
+    // The save answers with the page's sync: only the heading it edited, stamped as a
+    // reload would stamp it, and the new source map carried from the page's own.
+    const folded = await type("Rollout", served.sha)
+    const own = await sync(short_id, { sha: served.sha })
+    expect(own.status).toBe(200)
+    expect(own.headers.get("cache-control")).toBe("private, no-store")
+    const asked = (await own.json()) as Wire
+    expect(folded).toEqual(asked)
+    const first = read(folded, served.hashes)
+    const now = await sourceMapOf(short_id)
+    expect(first).toMatchObject({ version: now.version, sha: now.sha, hashes: now.hashes })
+    expect(folded.hashes).toBeUndefined()
+    expect(folded.changed.length).toBeLessThan(now.hashes.length)
+    expect(first.head).toBe(false)
+    expect(first.patches).toEqual([{ old: h1, html: `<h1 data-derive-src="${h1}">Rollout</h1>` }])
+    for (const id of ids) expect(first.remap[id]).toBe(id === h1 ? -1 : id)
+    const reloaded = await (await framePage(short_id, now.version, as(owner.email))).text()
+    expect(reloaded).toContain(first.patches[0]?.html)
+
+    // The session's next save replaces that version's bytes in place: the page names what
+    // it shows by sha. Bytes nothing holds mean a whole-page swap.
+    const second = read(await type("Rollout, again", first.sha), first.hashes)
+    expect(second).toMatchObject({ version: now.version, head: false })
+    expect(second.patches).toEqual([
+      { old: h1, html: `<h1 data-derive-src="${h1}">Rollout, again</h1>` },
+    ])
+    expect(second.hashes).toEqual((await sourceMapOf(short_id)).hashes)
+    expect(await (await sync(short_id, { sha: "0".repeat(64) })).json()).toMatchObject({
+      head: true,
+      patches: [],
+    })
+
+    // Someone else's version lands: the page gets their paragraph.
+    expect((await editOther(short_id, "Second point", "Second, revised")).status).toBe(201)
+    const theirs = read(await (await sync(short_id, { sha: second.sha })).json(), second.hashes)
+    expect(theirs).toMatchObject({ version: now.version + 1, head: false })
+    expect(theirs.patches).toEqual([
+      { old: secondP, html: `<p data-derive-src="${secondP}">Second, revised</p>` },
+    ])
+    expect(theirs.hashes).toEqual((await sourceMapOf(short_id)).hashes)
+    // A stylesheet change can't be patched into a live page.
+    await editOther(
+      short_id,
+      "<title>Ops</title>",
+      "<title>Ops</title><style>h1{color:red}</style>",
+    )
+    expect(await (await sync(short_id, { sha: theirs.sha })).json()).toMatchObject({
+      head: true,
+      patches: [],
+    })
+
+    // Publishers only, and a body that doesn't name a page's source is a 400.
+    expect(
+      (await opsApp.request(`/v1/artifacts/${short_id}/sync`, { method: "POST" })).status,
+    ).toBe(403)
+    expect((await sync(short_id, { sha: "short" })).status).toBe(400)
+    expect((await sync(short_id, {})).status).toBe(400)
+  })
+
+  it("syncs a Markdown editor's page in place", async () => {
+    const form = new FormData()
+    form.append("file", new Blob(["# Plan\n\nFirst step.\n\nSecond step.\n"]), "plan.md")
+    const { short_id } = await (
+      await opsApp.request("/v1/artifacts", {
+        method: "POST",
+        body: form,
+        headers: as(owner.email),
+      })
+    ).json()
+    const stamped = await (await framePage(short_id, 1, as(owner.email))).text()
+    const served = await sourceMapOf(short_id)
+    expect((await editOther(short_id, "Second step.", "Second step, **now**.")).status).toBe(201)
+    const result = await (await sync(short_id, { sha: served.sha })).json()
+    const p = idOf(stamped, "p", 1)
+    expect(result).toMatchObject({ version: 2, head: false })
+    expect(result.patches).toEqual([
+      {
+        old: p,
+        html: `<p data-derive-src="${p}">Second step, <strong data-derive-src="${p + 1}">now</strong>.</p>`,
+      },
+    ])
+  })
+
+  it("coalesces an edit session into one version and tells subscribers once, when it ends", async () => {
+    const { short_id } = await publish()
+    const artifact = await opsMeta.getByShortId(short_id)
+    if (!artifact) throw new Error("no artifact")
+    await opsMeta.createWebhook({
+      id: `wh_${short_id}`,
+      org_id: artifact.org_id,
+      url: "http://example.com/hook",
+      secret: "s",
+      kind: "generic",
+      events: "version.published",
+    })
+    const delivered = async () =>
+      // Past the idle sweep's fake clock below, which stamps its delivery's due time.
+      (
+        await opsMeta.claimDueDeliveries(
+          new Date(Date.now() + 2 * INLINE_EDIT_COALESCE_MS).toISOString(),
+          100,
+          new Date(Date.now() + 3 * INLINE_EDIT_COALESCE_MS).toISOString(),
+        )
+      )
+        .filter((d) => JSON.parse(d.payload).artifact.short_id === short_id)
+        .map((d) => JSON.parse(d.payload).data.version)
+    await delivered()
+    const stamped = await (await framePage(short_id, 1, as(owner.email))).text()
+    const h1 = idOf(stamped, "h1")
+    const typed = async (text: string, session: string, who = owner) => {
+      const { hashes } = await sourceMapOf(short_id)
+      const r = await saveOps(
+        short_id,
+        [{ op: "content", src: h1, hash: hashes[h1], children: [{ text }] }],
+        1,
+        who,
+        session,
+      )
+      expect(r.status).toBe(201)
+      return (await r.json()).current_version as number
+    }
+    const done = (session: string, who = owner) =>
+      opsApp.request(`/v1/artifacts/${short_id}/sessions/${session}/done`, {
+        method: "POST",
+        headers: as(who.email),
+      })
+
+    // A session opens its own version and every later save of it lands there, silently.
+    expect(await typed("One", "session-a-1")).toBe(2)
+    expect(await typed("Two", "session-a-1")).toBe(2)
+    expect(await typed("Three", "session-a-1")).toBe(2)
+    expect(await delivered()).toEqual([])
+    // Another session never coalesces into it.
+    expect(await typed("Four", "session-b-2")).toBe(3)
+    expect((await detail(short_id, as(owner.email))).versions).toHaveLength(3)
+
+    // Done fires the session's deferred notification once; a repeat closes nothing, and
+    // nobody but its author can close it.
+    expect(await (await done("session-a-1")).json()).toEqual({ closed: [2] })
+    expect(await delivered()).toEqual([2])
+    expect(await (await done("session-a-1")).json()).toEqual({ closed: [] })
+    expect(await (await done("session-b-2", colleague)).json()).toEqual({ closed: [] })
+    expect((await done("bad id!")).status).toBe(400)
+    expect(await (await done("session-b-2")).json()).toEqual({ closed: [3] })
+    expect(await delivered()).toEqual([3])
+
+    // A session left open is finalized by the idle sweep once past the window.
+    expect(await typed("Five", "session-c-3")).toBe(4)
+    const sweep = () =>
+      opsApp.request("/v1/edit-sessions/sweep", {
+        method: "POST",
+        headers: { authorization: "Bearer tok" },
+      })
+    expect(await (await sweep()).json()).toEqual({ finalized: 0 })
+    expect(await delivered()).toEqual([])
+    vi.useFakeTimers({ toFake: ["Date"] })
+    try {
+      vi.setSystemTime(Date.now() + INLINE_EDIT_COALESCE_MS + 1_000)
+      expect(
+        (
+          await opsApp.request("/v1/edit-sessions/sweep", {
+            method: "POST",
+            headers: as(owner.email),
+          })
+        ).status,
+      ).toBe(403)
+      expect((await (await sweep()).json()).finalized).toBeGreaterThanOrEqual(1)
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(await delivered()).toEqual([4])
+    expect(await (await done("session-c-3")).json()).toEqual({ closed: [] })
+  })
 })
 
 describe("prepared single-file publishes", () => {
@@ -1021,10 +1291,11 @@ describe("prepared single-file publishes", () => {
     })
 
     expect(edited.status).toBe(201)
-    // materializeEdits must read the immutable previous source once. The canonical
-    // post-publish pipeline then reuses the trusted new source for search, facts,
-    // anchor sweeping, and mention detection instead of reading the new blob back.
-    expect(getBlob).toHaveBeenCalledTimes(1)
+    // materializeEdits reads the immutable previous source, which this process stored a
+    // moment ago and kept, so not even that is read back. The canonical post-publish
+    // pipeline reuses the trusted new source for search, facts, anchor sweeping, and
+    // mention detection instead of reading the new blob back.
+    expect(getBlob).toHaveBeenCalledTimes(0)
   })
 })
 

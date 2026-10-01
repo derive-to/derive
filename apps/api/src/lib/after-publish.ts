@@ -31,6 +31,7 @@ import {
   newId,
   parseDynamicBindings,
   parseFacts,
+  Recent,
   type SearchIndex,
   SKILL_CONTENT_TYPE,
   SKILL_SIDECAR_PATH,
@@ -82,6 +83,9 @@ export const emitVersionBump = async (
   preparedSource?: string,
   previousSearchSource?: { source: string; contentType: string | null; title: string | null },
   dynamicSeedFrom?: number,
+  /** Asked once the version is announced, before the rest (previews, anchors, indexing,
+   *  facts): false when a later save already replaced these bytes, which then does it. */
+  stillCurrent?: () => Promise<boolean>,
 ): Promise<NewVersionData[]> => {
   const { meta, blobs, bus, notifyRender } = deps
   // Give this version its dynamic tables and figures their START POINT first: each binding
@@ -98,6 +102,7 @@ export const emitVersionBump = async (
     log.error("dynamic slot seeding failed", { artifact: artifact.id, err: String(err) })
   }
   bus.publish(artifact.id, { type: "version.published", n: version.n, message: version.message })
+  if (stillCurrent && !(await stillCurrent())) return []
   await notifyRender?.(artifact, version.n)
   await publishSweepEvents(meta, blobs, bus, artifact.id, version, preparedSource)
   // Keep the workspace search index current for the new live version. Best-effort:
@@ -165,6 +170,26 @@ export const emitVersionBump = async (
     await (deps.background ? deps.background(work) : work)
   }
   return storedRows
+}
+
+/** The latest save of each (artifact, version) this process wrote. */
+const latestWrite = new Recent<string, number>(500)
+let writes = 0
+/**
+ * `stillCurrent` for an edit save: an editing session saves the same version on every
+ * pause, and only the last save's previews, anchors, indexing and facts are worth the work
+ * (each re-reads the whole document, in the process that has to answer the next save).
+ * Where the work outlives the response (`wait`), it first gives a later save two seconds
+ * to take its place.
+ */
+export const laterSaveWins = (artifactId: string, n: number, wait: boolean) => {
+  const key = `${artifactId}:${n}`
+  const mine = ++writes
+  latestWrite.set(key, mine)
+  return async (): Promise<boolean> => {
+    if (wait) await new Promise((r) => setTimeout(r, 2_000))
+    return latestWrite.peek(key) === mine
+  }
 }
 
 export const indexSkillVersion = async (
@@ -644,6 +669,11 @@ export interface AfterPublishOpts {
    *  publish): the previous version. A restore passes the restored version's number, so
    *  the new version starts from the numbers that version ended with. */
   dynamicSeedFrom?: number
+  /** A save inside an open inline edit session: live at once, but webhooks, channels and
+   *  mentions wait for the session to end ({@link finalizeEditSession}). */
+  deferNotifications?: boolean
+  /** See emitVersionBump: a coalescing save's work gives way to the save that replaces it. */
+  stillCurrent?: () => Promise<boolean>
 }
 
 /**
@@ -659,13 +689,8 @@ export const afterPublish = async (
   version: VersionRecord,
   opts: AfterPublishOpts,
 ): Promise<{ resolved: string[]; storedRows: NewVersionData[] }> => {
-  const { meta, bus, notify, background } = deps
-  await notify(artifact, "version.published", {
-    version: version.n,
-    message: version.message,
-    author: version.author,
-    actor_id: opts.actorId ?? null,
-  })
+  const { meta, bus, background } = deps
+  if (!opts.deferNotifications) await announceVersion(deps, artifact, version, opts.actorId)
   // Fan out to the publisher's followers: "someone you follow published X". Gated to a
   // known HUMAN behind the publish (an agent publish fans out to the followers of the
   // person it acts for), a publicly-listed artifact (a follow never surfaces a private
@@ -700,17 +725,44 @@ export const afterPublish = async (
     opts.preparedSource,
     opts.previousSearchSource,
     opts.dynamicSeedFrom,
+    opts.stillCurrent,
   )
-  // Source mentions are derived from the just-published bytes, never trusted from a client
-  // payload. Run after the canonical version bump and isolate every delivery branch inside the
-  // fan-out, so an outage cannot fail, roll back, or delay a live document edit.
-  await background(
+  if (!opts.deferNotifications)
+    await mentionFanOut(deps, artifact, version, opts.actorId, opts.preparedSource)
+  return { resolved, storedRows }
+}
+
+/** Tell subscribers a version is published: webhooks and the connected channels. */
+const announceVersion = (
+  deps: AfterPublishDeps,
+  artifact: ArtifactRecord,
+  version: VersionRecord,
+  actorId: string | null | undefined,
+): Promise<void> =>
+  deps.notify(artifact, "version.published", {
+    version: version.n,
+    message: version.message,
+    author: version.author,
+    actor_id: actorId ?? null,
+  })
+
+/** Source mentions are derived from the published bytes, never trusted from a client
+ *  payload. Run after the canonical version bump and isolate every delivery branch inside
+ *  the fan-out, so an outage cannot fail, roll back, or delay a live document edit. */
+const mentionFanOut = (
+  deps: AfterPublishDeps,
+  artifact: ArtifactRecord,
+  version: VersionRecord,
+  actorId: string | null | undefined,
+  preparedSource?: string,
+): Promise<void> =>
+  deps.background(
     fanOutNewContentMentions(
-      { meta, blobs: deps.blobs, bus, baseUrl: deps.baseUrl },
+      { meta: deps.meta, blobs: deps.blobs, bus: deps.bus, baseUrl: deps.baseUrl },
       artifact,
       version,
-      opts.actorId ?? null,
-      opts.preparedSource,
+      actorId ?? null,
+      preparedSource,
     ).catch((err) =>
       log.warn("content mention fan-out failed", {
         artifact: artifact.id,
@@ -720,7 +772,39 @@ export const afterPublish = async (
       }),
     ),
   )
-  return { resolved, storedRows }
+
+/** The end of an inline edit session (Done, the page closing, or idle): the notifications
+ *  its saves deferred fire now, once per version it wrote (normally one), describing the
+ *  version as it ended. The caller claimed `versions` with `closeEditSession`. */
+export const finalizeEditSession = async (
+  deps: AfterPublishDeps,
+  artifact: ArtifactRecord,
+  versions: VersionRecord[],
+  actorId: string | null,
+): Promise<void> => {
+  for (const version of versions) {
+    await announceVersion(deps, artifact, version, actorId ?? version.author_id)
+    await mentionFanOut(deps, artifact, version, actorId ?? version.author_id)
+  }
+}
+
+/** Finalize edit sessions whose last save is older than `idleMs` (the page's beacon never
+ *  got out), a bounded batch per pass. Returns the versions finalized. */
+export const sweepIdleEditSessions = async (
+  deps: AfterPublishDeps,
+  idleMs: number,
+  now = Date.now(),
+): Promise<number> => {
+  const idle = await deps.meta.listIdleEditSessions(new Date(now - idleMs).toISOString(), 50)
+  let finalized = 0
+  for (const { artifact_id, edit_session } of idle) {
+    const versions = await deps.meta.closeEditSession(artifact_id, edit_session)
+    const artifact = versions.length ? await deps.meta.getArtifactById(artifact_id) : null
+    if (!artifact || artifact.removed_at) continue
+    await finalizeEditSession(deps, artifact, versions, null)
+    finalized += versions.length
+  }
+  return finalized
 }
 
 const fanOutToFollowers = async (

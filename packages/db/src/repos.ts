@@ -972,6 +972,38 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
       .get()) ?? null
 
+  const closeEditSession = async (
+    artifactId: string,
+    session: string,
+    authorId?: string,
+  ): Promise<VersionRecord[]> => {
+    const rows = await db
+      .update(version)
+      .set({ edit_session: null })
+      .where(
+        and(
+          eq(version.artifact_id, artifactId),
+          eq(version.edit_session, session),
+          authorId === undefined ? undefined : eq(version.author_id, authorId),
+        ),
+      )
+      .returning()
+      .all()
+    return (rows as VersionRecord[]).sort((a, b) => a.n - b.n)
+  }
+
+  const listIdleEditSessions = async (
+    before: string,
+    limit: number,
+  ): Promise<{ artifact_id: string; edit_session: string }[]> =>
+    (await db
+      .selectDistinct({ artifact_id: version.artifact_id, edit_session: version.edit_session })
+      .from(version)
+      .where(and(isNotNull(version.edit_session), lt(version.created_at, before)))
+      .orderBy(version.artifact_id)
+      .limit(limit)
+      .all()) as { artifact_id: string; edit_session: string }[]
+
   // The artifact + its workspace's settings. One join here too — the embedded dialects can
   // express it just as well, and it keeps the two drivers' shapes identical.
   const artifactWithSettings = async (
@@ -1179,6 +1211,7 @@ export function makeRepos(db: SqliteDb) {
         preview_marked_error: null,
         summary: null,
         summary_src_hash: null,
+        edit_session: v.edit_session ?? null,
         created_at: now,
       })
       .where(
@@ -5443,6 +5476,8 @@ export function makeRepos(db: SqliteDb) {
     addVersion,
     addVersionIfCurrent,
     replaceCurrentVersion,
+    closeEditSession,
+    listIdleEditSessions,
     listVersions,
     getVersion,
     currentVersions,

@@ -277,6 +277,10 @@ export const version = sqliteTable(
     // instead of paying for an identical one.
     summary: text("summary"),
     summary_src_hash: text("summary_src_hash"),
+    // The inline editor's open edit session that wrote this version (a client uuid), while
+    // its saves still coalesce here and its notifications wait. Cleared, exactly once, when
+    // the session is done or idle: that is when the version's fan-out fires.
+    edit_session: text("edit_session"),
     created_at: text("created_at").notNull().default(now),
   },
   (t) => [uniqueIndex("artifact_version").on(t.artifact_id, t.n)],

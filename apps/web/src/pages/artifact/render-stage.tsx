@@ -9,6 +9,7 @@ import {
   type ArtifactRuntimeErrorCode,
   isBlockingRuntimeError,
 } from "./types"
+import { askFrame } from "./use-artifact-frame"
 
 // How long we wait for the sandboxed render to report meaningful content before
 // calling it a failed boot. A cache-warm artifact paints in well under a second; this only
@@ -148,15 +149,16 @@ export function RenderStage({
   overlays,
   overlay = false,
   presenting = false,
-  reloadKey = 0,
+  positionFor,
   className,
 }: {
   /** null = the source isn't known yet (the record is still a list-row seed) — the
    *  boot state shows without an iframe, and the frame mounts when the src lands. */
   rawSrc: string | null
-  /** Bumped by the page to reload the SAME source (a dynamic slot was deleted, or a
-   *  reconnect found the frame behind): the iframe remounts and boots again. */
-  reloadKey?: number
+  /** Where the reader is now (slide, scroll anchor). When given, a new `rawSrc` loads
+   *  behind the document on screen, is brought to this place, and only then swaps in —
+   *  a new version never blinks the page. */
+  positionFor?: () => Record<string, unknown>
   title: string
   /** WHOSE render this is (the artifact's short id). The Updated cue is keyed on it —
    *  the stage stays mounted across sibling navigation, and a version number alone
@@ -169,8 +171,9 @@ export function RenderStage({
   frameRef: RefObject<HTMLIFrameElement | null>
   /** The fullscreen/present target — the render surface itself. */
   wrapRef: RefObject<HTMLDivElement | null>
-  /** Called on the iframe's own `load` (the page's bridge handshakes off it). */
-  onFrameLoad?: () => void
+  /** Called on the iframe's own `load` (the page's bridge handshakes off it), and when a
+   *  newer document swaps in (`swapped`: it is already at the reader's place). */
+  onFrameLoad?: (swapped?: boolean) => void
   /** A source-free runtime failure relayed by the first-injected sandbox runtime. */
   runtimeError?: ArtifactRuntimeError | null
   /** The injected runtime found meaningful content after the iframe loaded. */
@@ -189,13 +192,65 @@ export function RenderStage({
   presenting?: boolean
   className?: string
 }) {
-  // Boot/failure state is per-source: a new rawSrc (version swap, retry) resets it.
+  // Boot/failure state is per-document: a hard load (the first, a retry) resets it.
   const [phase, setPhase] = useState<"booting" | "ready" | "failed">("booting")
   const [attempt, setAttempt] = useState(0)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: rawSrc (or a reload) identifies a new iframe document and intentionally resets its startup state.
+  // The documents: the one on screen, and briefly the next one, loading behind it. The
+  // list only ever grows at the end and shrinks at the front: moving an iframe in the
+  // DOM reloads it, so nothing is ever reordered.
+  const [docs, setDocs] = useState<{ src: string; key: number }[]>([])
+  const [frontKey, setFrontKey] = useState(0)
+  const docSeq = useRef(0)
+  const phaseRef = useRef(phase)
+  phaseRef.current = phase
+  const positionRef = useRef(positionFor)
+  positionRef.current = positionFor
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new source (or a retry) is what decides between a swap and a hard load; the rest is read at that moment.
   useLayoutEffect(() => {
+    if (rawSrc == null) return
+    const front = docs.find((d) => d.key === frontKey)
+    if (front?.src === rawSrc && !attempt) return
+    const key = ++docSeq.current
+    if (front && phaseRef.current === "ready" && positionRef.current && !viewportWidth) {
+      // Swap: load behind the page on screen (see loadedBehind).
+      setDocs((list) => [...list.filter((d) => d.key === frontKey), { src: rawSrc, key }])
+      return
+    }
+    setDocs([{ src: rawSrc, key }])
+    setFrontKey(key)
     setPhase("booting")
-  }, [rawSrc, reloadKey])
+  }, [rawSrc, attempt])
+  /** The next document loaded behind the one on screen. That page stops taking input
+   *  and says where the reader is now, after anything already sent to it (so whatever
+   *  they did last wins); the new one goes there, then crossfades in. Host commands sent
+   *  meanwhile wait for the new page (see use-artifact-frame). */
+  const loadedBehind = async (el: HTMLIFrameElement, key: number) => {
+    const out = frameRef.current !== el ? frameRef.current : null
+    if (out) out.inert = true
+    const now =
+      out && (await askFrame(out.contentWindow, { type: "position-now" }, "position-now", 300))
+    const place = now
+      ? { slide: now.slide ?? undefined, slideId: now.slideId, at: now.at }
+      : (positionRef.current?.() ?? {})
+    await askFrame(
+      el.contentWindow,
+      { type: "restore-position", ...place },
+      "position-restored",
+      1500,
+    )
+    if (!el.isConnected) {
+      if (out) out.inert = false
+      return
+    }
+    ;(frameRef as { current: HTMLIFrameElement | null }).current = el
+    setFrontKey(key)
+    onFrameLoad?.(true)
+    // Heard now: it goes to that place again (a deck reports its slide) and repeats what
+    // the host dropped while it loaded unheard.
+    el.contentWindow?.postMessage({ source: "derive-host", type: "hello", ...place }, "*")
+    window.setTimeout(() => setDocs((list) => list.filter((d) => d.key >= key)), 160)
+  }
 
   useEffect(() => {
     if (runtimeReady) setPhase("ready")
@@ -216,7 +271,8 @@ export function RenderStage({
     return () => clearTimeout(t)
   }, [phase, rawSrc, runtimeError])
 
-  const handleLoad = () => {
+  const handleLoad = (key: number) => {
+    if (key !== frontKey) return
     // A successfully loaded document is the optimistic display boundary. The
     // injected runtime can still classify authored failures after this point, but
     // it must not keep otherwise usable markup behind host chrome just because a
@@ -295,13 +351,20 @@ export function RenderStage({
           presenting && "bg-black pb-14",
         )}
       >
-        {rawSrc != null && (
+        {docs.map(({ src, key }) => (
           <iframe
-            key={`${attempt}:${reloadKey}`}
-            ref={frameRef}
-            onLoad={handleLoad}
+            key={key}
+            ref={(el) => {
+              if (el && key === frontKey)
+                (frameRef as { current: HTMLIFrameElement | null }).current = el
+            }}
+            onLoad={(e) =>
+              key > frontKey ? void loadedBehind(e.currentTarget, key) : handleLoad(key)
+            }
             title={title}
-            src={rawSrc}
+            src={src}
+            aria-hidden={key !== frontKey || undefined}
+            tabIndex={key !== frontKey ? -1 : undefined}
             allow="fullscreen"
             // touch-action: pan-y lets the outer page scroll instead of the iframe
             // trapping the gesture on a phone (research's scroll-trap fix); the frame
@@ -315,10 +378,15 @@ export function RenderStage({
             className={cn(
               "min-h-0 touch-pan-y border-0 bg-white opacity-0 transition-[width,opacity] duration-state",
               viewportWidth ? "mx-auto h-full flex-none shadow-[var(--shadow-lg)]" : "flex-1",
-              phase === "ready" && "opacity-100",
+              ((key === frontKey && phase === "ready") || key > frontKey) && "opacity-100",
+              // The next document loads underneath the one on screen; the one leaving
+              // fades out on top of its replacement.
+              key !== frontKey && "pointer-events-none absolute inset-0 h-full w-full",
+              key > frontKey && "-z-10",
+              key < frontKey && "z-10 opacity-0 duration-state",
             )}
           />
-        )}
+        ))}
 
         {/* Boot — a calm centered spinner only until the iframe document's own
             `load` fires. Descendant readiness is deliberately not a host-level gate:

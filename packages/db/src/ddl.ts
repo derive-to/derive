@@ -168,6 +168,8 @@ export const PERF_INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS view_artifact_time ON view (artifact_id, created_at)`,
   `CREATE INDEX IF NOT EXISTS delivery_due ON webhook_delivery (status, next_attempt_at)`,
   `CREATE INDEX IF NOT EXISTS render_job_due ON render_job (status, next_attempt_at)`,
+  // The idle sweep's scan: versions an inline edit session still holds open.
+  `CREATE INDEX IF NOT EXISTS version_open_session ON version (created_at) WHERE edit_session IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS export_job_due ON export_job (renderer_scope, status, next_attempt_at)`,
   `CREATE INDEX IF NOT EXISTS export_job_artifact ON export_job (artifact_id, created_at)`,
   // The import worker's claim (one deployment's due jobs, oldest first) and the

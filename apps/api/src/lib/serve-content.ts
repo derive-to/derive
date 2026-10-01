@@ -14,10 +14,12 @@ import {
   isCodePath,
   isLatexLike,
   isSourceEditable,
+  lastOf,
   looksLikeHtmlDocument,
   MARKS_SCRIPT,
   mimeFor,
   parseFrontmatter,
+  Recent,
   reflowHtml,
   renderLatex,
   renderMarkdown,
@@ -27,6 +29,7 @@ import {
   sourceSha,
   stampSourceIds,
   validateDynamicValue,
+  withHostMarker,
 } from "@derive/core"
 import type { Context } from "hono"
 import { IMMUTABLE_CACHE, RAW_HEADERS, rewriteAbsoluteUrls, toBody } from "./http"
@@ -46,6 +49,93 @@ export const slotValuesOf = (rows: DynamicSlotRecord[]): Map<string, DynamicValu
     } catch {}
   }
   return slots
+}
+
+/** Legacy decks already have a source-level slide boundary. Optimistically expose their
+ *  safe direct children as movable nodes in the app render; the identical pure transform
+ *  is persisted by materializeEdits on the first save. A malformed or ambiguous deck
+ *  remains viewable and simply receives no structural handles. */
+const withDeckStructure = (doc: string, contentType: string): string => {
+  if (contentType !== "text/x-derive-deck") return doc
+  try {
+    // Runtime-only names keep a legacy page's authored data-derive selectors and
+    // scripts inert. Save materialization stamps the canonical contract only
+    // after an accepted structural action.
+    return backfillLegacyDeckStructure(doc, { runtime: true }).html
+  } catch {
+    return doc
+  }
+}
+
+/** An HTML page as served, before runtime scripts: deck identities, then dynamic data. */
+const servedHtml = (doc: string, contentType: string, slots: Map<string, DynamicValue>) =>
+  applyDynamicBindings(withDeckStructure(doc, contentType), slots)
+
+/** What an editor's page is stamped with: the version it shows, and the app origins
+ *  (space-separated) whose pages may drive its editor. */
+export interface EditorStamp {
+  version: number
+  host?: string
+}
+/** This deployment's app origins: where the workbench that frames an editor runs. */
+export const editorHost = (deps: { baseUrl: string; webOrigins?: string[] }): string =>
+  [
+    ...new Set(
+      [deps.baseUrl, ...(deps.webOrigins ?? [])].flatMap((u) => {
+        try {
+          return [new URL(u).origin]
+        } catch {
+          return []
+        }
+      }),
+    ),
+  ].join(" ")
+
+/**
+ * The page an editor's frame loads for stored source (an HTML page, deck or Markdown
+ * document), before runtime scripts: source ids stamped, then the same serve-time
+ * transforms a reader gets. null for anything not edited in place (a Markdown label on
+ * HTML bytes is served as HTML, unstamped). What `/sync` diffs, so a patch is exactly
+ * what a fresh load would show.
+ */
+export const editorPage = (
+  text: string,
+  contentType: string,
+  title: string | null,
+  editor: EditorStamp,
+  slots: Map<string, DynamicValue>,
+): Promise<string | null> => {
+  // The frame's load, each save's sync and the next save's sync render the same page:
+  // once. Keyed by the source, then by everything else the page depends on.
+  const pages = editorPagesOf(text)
+  const key = JSON.stringify([contentType, title, editor.version, editor.host ?? "", [...slots]])
+  const hit = pages.get(key)
+  if (hit) return hit
+  const page = renderEditorPage(text, contentType, title, editor, slots)
+  pages.set(key, page)
+  page.catch(() => pages.delete(key))
+  return page
+}
+const editorPagesOf = lastOf(3, 32_768, () => new Recent<string, Promise<string | null>>(4))
+
+const renderEditorPage = async (
+  text: string,
+  contentType: string,
+  title: string | null,
+  editor: EditorStamp,
+  slots: Map<string, DynamicValue>,
+): Promise<string | null> => {
+  if (contentType === "text/markdown")
+    return looksLikeHtmlDocument(text)
+      ? null
+      : renderMarkdownForEditor(text, title, editor, { dynamic: slots })
+  if (!isSourceEditable(contentType)) return null
+  const stamped = stampSourceIds(text, {
+    version: editor.version,
+    sha: await sourceSha(text),
+    host: editor.host,
+  })
+  return servedHtml(stamped, contentType, slots)
 }
 
 /**
@@ -112,7 +202,7 @@ export const serveContent = async (
    *  with source ids stamped for the inline editor (@derive/core source-edit,
    *  markdown-source). Never for a reader, and never cached where a reader could be
    *  handed it. */
-  editor?: { version: number },
+  editor?: EditorStamp,
 ) => {
   const slots = slotValuesOf(dynamic)
   // Bound by declaration: the rendered document carries a binding attribute on a real
@@ -129,6 +219,8 @@ export const serveContent = async (
     }
   }
   const headers = hdrs(false)
+  // An editor's page of any kind names the app origins that may drive its editor.
+  const forEditor = (html: string) => withHostMarker(html, editor?.host)
   const runtimeScripts = (isBound: boolean) =>
     SHARED_STATE_SCRIPT + (isBound ? DYNAMIC_DATA_SCRIPT : "")
   const rf = (doc: string) => (reflow ? reflowHtml(doc) : doc)
@@ -157,21 +249,6 @@ export const serveContent = async (
   // route-specific chrome remain appended because they are optional DOM enhancements.
   const htmlBody = (doc: string, isBound?: boolean): string =>
     withRuntime(rf(doc), isBound) + marks + append
-  // Legacy decks already have a source-level slide boundary. Optimistically expose
-  // their safe direct children as movable nodes in the app render; the identical
-  // pure transform is persisted by materializeEdits on the first save. A malformed
-  // or ambiguous deck remains viewable and simply receives no structural handles.
-  const withDeckStructure = (doc: string): string => {
-    if (content.content_type !== "text/x-derive-deck") return doc
-    try {
-      // Runtime-only names keep a legacy page's authored data-derive selectors and
-      // scripts inert. Save materialization stamps the canonical contract only
-      // after an accepted structural action.
-      return backfillLegacyDeckStructure(doc, { runtime: true }).html
-    } catch {
-      return doc
-    }
-  }
   let path = rawPath
   if (isBundleContentType(content.content_type)) {
     const manifestBytes = await blobs.get(content.blob_key)
@@ -227,7 +304,7 @@ export const serveContent = async (
       // Bundle pages get the anchor client too — comments stick everywhere.
       // Bundle pages are never seeded, so only a substituted row makes one bound.
       const out = entry.type.startsWith("text/html")
-        ? withRuntime(rf(rewritten), slots.size > 0) + marks + append
+        ? withRuntime(rf(forEditor(rewritten)), slots.size > 0) + marks + append
         : rewritten
       return c.body(out, 200, { ...headers, "Content-Type": entry.type })
     }
@@ -244,7 +321,8 @@ export const serveContent = async (
       // would otherwise render it as a stray `<hr>` + heading. The parsed fields surface
       // as skill chrome around this iframe, not in the document body.
       const body = parseFrontmatter(new TextDecoder().decode(data)).body
-      const html = withSharedState(await renderMarkdown(body, title), slots.size > 0) + append
+      const html =
+        withSharedState(forEditor(await renderMarkdown(body, title)), slots.size > 0) + append
       return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
     }
     // A paper's .tex pages render through the LaTeX path with the bundle's own files in
@@ -266,7 +344,7 @@ export const serveContent = async (
           return f?.type.startsWith("image/") ? `${prefix}${clean}` : null
         },
       })
-      const html = withSharedState(rendered.html) + append
+      const html = withSharedState(forEditor(rendered.html)) + append
       return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
     }
     // The fall-through serves a bundle's other files verbatim (a figure, a stylesheet).
@@ -297,14 +375,14 @@ export const serveContent = async (
       onMismatch?.()
       const doc = applyDynamicBindings(text, slots)
       const isBound = bound(doc)
-      return c.body(htmlBody(doc, isBound), 200, {
+      return c.body(htmlBody(forEditor(doc), isBound), 200, {
         ...hdrs(isBound),
         "Content-Type": "text/html; charset=utf-8",
       })
     }
     // An editor gets the same page with source ids (markdown-source.ts), for exact saves.
     const rendered = editor
-      ? await renderMarkdownForEditor(text, title, editor, { dynamic: slots })
+      ? ((await editorPage(text, content.content_type, title, editor, slots)) as string)
       : await renderMarkdown(text, title, { dynamic: slots })
     const isBound = bound(rendered)
     const html = withSharedState(rendered, isBound) + append
@@ -326,21 +404,25 @@ export const serveContent = async (
     // as for markdown.
     const text = new TextDecoder().decode(data)
     const rendered = renderLatex(text, title, { dynamic: slots })
-    const html = withSharedState(rendered.html) + append
+    const html = withSharedState(forEditor(rendered.html)) + append
     return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
   }
 
   // html file artifact — any path serves the document (+ selection capture)
   const ct = mimeFor(path || "index.html")
   if (ct.startsWith("text/html")) {
-    let text = new TextDecoder().decode(data)
+    const text = new TextDecoder().decode(data)
     // Stamp the STORED source before any serve-time transform, so every id and hash
     // names bytes a save can find again.
     const stamp = !!editor && isSourceEditable(content.content_type)
-    if (stamp) text = stampSourceIds(text, { version: editor.version, sha: await sourceSha(text) })
-    const doc = applyDynamicBindings(withDeckStructure(text), slots)
+    const doc = stamp
+      ? ((await editorPage(text, content.content_type, title, editor, slots)) as string)
+      : servedHtml(text, content.content_type, slots)
     const isBound = bound(doc)
-    return c.body(htmlBody(doc, isBound), 200, { ...hdrs(isBound, stamp), "Content-Type": ct })
+    return c.body(htmlBody(forEditor(doc), isBound), 200, {
+      ...hdrs(isBound, stamp),
+      "Content-Type": ct,
+    })
   }
   return c.body(toBody(data), 200, { ...headers, "Content-Type": ct })
 }

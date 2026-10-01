@@ -10,17 +10,9 @@ import {
 } from "@derive/core"
 import type { Page } from "@playwright/test"
 import { buildSync } from "esbuild"
-import { expect, openArtifact, publishArtifact, test } from "../fixtures"
+import { expect, openArtifact, publishArtifact, saveEdits, test } from "../fixtures"
 
-/** Save, and wait for the server to take it. */
-const saveEdits = async (page: Page) => {
-  const response = page.waitForResponse(
-    (r) => r.url().includes("/versions") && r.request().method() === "POST",
-  )
-  await page.getByTestId("inline-edit-save").click()
-  expect((await response).ok()).toBe(true)
-}
-const frame = (page: Page) => page.frameLocator("iframe[title]")
+const frame = (page: Page) => page.frameLocator("iframe[title]:not([aria-hidden])")
 
 const contentOf = async (page: Page, shortId: string): Promise<string> => {
   const response = await page.request.get(`/v1/artifacts/${shortId}/content`)
@@ -64,7 +56,7 @@ test("[BROWSER-MD-001] Markdown multi-run selection stores valid source", async 
     selection?.addRange(range)
   })
   await owner.keyboard.type("person")
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+  await expect(owner.getByTestId("inline-edit-status")).toContainText("· 1")
   await saveEdits(owner)
 
   const stored = await contentOf(owner, shortId)
@@ -144,7 +136,7 @@ test("[BROWSER-HTML-001] formatting, resize, undo/redo, and authored bytes survi
   const sizeForm = frame(owner).getByRole("form", { name: "Element size" })
   await sizeForm.getByLabel("Width in pixels").fill("200")
   await sizeForm.getByRole("button", { name: "Apply" }).click()
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("2 unsaved changes")
+  await expect(owner.getByTestId("inline-edit-status")).toContainText("· 2")
 
   await saveEdits(owner)
   const stored = await contentOf(owner, shortId)
@@ -174,7 +166,7 @@ test("[BROWSER-DECK-001] a slide edit preserves deck position behavior and ident
   await title.dblclick({ force: true })
   await owner.keyboard.press("End")
   await owner.keyboard.type(" Updated.")
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+  await expect(owner.getByTestId("inline-edit-status")).toContainText("· 1")
   await expect(owner.getByTestId("deck-position")).toHaveText("2 / 3")
   await saveEdits(owner)
 
@@ -256,7 +248,9 @@ test("[BROWSER-VIDEO-001] moving a scene keeps that stable scene active", async 
   ).toEqual(["B", "A", "C"])
 })
 
-test("[BROWSER-VIDEO-002] undo and discard restore a deleted active scene", async ({ owner }) => {
+test("[BROWSER-VIDEO-002] undo restores a deleted active scene before it saves", async ({
+  owner,
+}) => {
   const source =
     '<main data-derive-video><section data-derive-scene="a" data-duration-ms="5000"><h2>A</h2></section>' +
     '<section data-derive-scene="b" data-duration-ms="5000"><h2>B</h2></section>' +
@@ -271,11 +265,8 @@ test("[BROWSER-VIDEO-002] undo and discard restore a deleted active scene", asyn
   await expect(frame(owner).locator("[data-derive-video-active]")).toHaveText("C")
   await owner.getByTestId("inline-edit-undo").click()
   await expect(frame(owner).locator("[data-derive-video-active]")).toHaveText("B")
-
-  await owner.getByTestId("artifact-inspect-scene-delete").click()
-  await expect(frame(owner).locator("[data-derive-video-active]")).toHaveText("C")
-  await owner.getByTestId("inline-edit-discard").click()
-  await expect(frame(owner).locator("[data-derive-video-active]")).toHaveText("B")
+  // Deleted and put back: there is nothing to save.
+  await saveEdits(owner)
   expect(await contentOf(owner, shortId)).toBe(source)
 })
 
@@ -299,13 +290,14 @@ const saveAcross = async (page: Page, shortId: string, publish: () => Promise<vo
     }
     await route.continue()
   })
-  await page.getByTestId("inline-edit-save").click()
+  await page.getByTestId("inline-edit-bar").click({ position: { x: 2, y: 2 } })
+  await page.keyboard.press("ControlOrMeta+s")
   await saveCaptured
   await publish()
   release()
 }
 
-test("[BROWSER-CONCURRENCY-001] a concurrent publish elsewhere merges; one to the same element conflicts", async ({
+test("[BROWSER-CONCURRENCY-001] a concurrent publish elsewhere merges; one to the same element asks", async ({
   owner,
 }) => {
   const v1 = '<h1>Concurrent</h1><p id="mine">My paragraph.</p><p>Original external line.</p>'
@@ -324,11 +316,9 @@ test("[BROWSER-CONCURRENCY-001] a concurrent publish elsewhere merges; one to th
   await frame(owner).locator("#mine").click()
   await owner.keyboard.press("End")
   await owner.keyboard.type(" Pending edit.")
-  const sha = () => frame(owner).locator("html").getAttribute("data-derive-src-sha")
-  const served = await sha()
 
   // Another line changed under the save: the paragraph it names is byte-identical at
-  // head, so the save lands there and keeps both.
+  // head, so the save lands there and keeps both, and the page takes theirs in place.
   await saveAcross(
     owner,
     shortId,
@@ -340,28 +330,27 @@ test("[BROWSER-CONCURRENCY-001] a concurrent publish elsewhere merges; one to th
     expect(stored).toContain("Changed externally.")
   }).toPass({ timeout: 10_000 })
   await owner.unroute(`**/v1/artifacts/${shortId}/versions`)
-
-  // The same paragraph changed under the save: nothing is saved, the typing stays on
-  // the page, and saving again says which element conflicts.
+  await expect(frame(owner).getByText("Changed externally.")).toBeVisible({ timeout: 10_000 })
   await expect(frame(owner).locator("#mine")).toHaveText("My paragraph. Pending edit.")
+
+  // The same paragraph changed under the save: nothing of it is lost — theirs goes on
+  // the page, yours is kept, and the page asks whose words win.
+  await saveEdits(owner)
   const head = await contentOf(owner, shortId)
-  // The session picks back up on the saved page.
-  await expect.poll(() => sha().catch(() => served)).not.toBe(served)
-  await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
   await frame(owner).locator("#mine").click()
   await owner.keyboard.press("End")
   await owner.keyboard.type(" Mine again.")
   await saveAcross(owner, shortId, publish(head.replace("My paragraph.", "Their paragraph.")))
-  const conflict = owner.getByText("The artifact changed while you were editing.", { exact: true })
-  await expect(conflict).toBeVisible()
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
-  await expect(frame(owner).locator("#mine")).toContainText("Mine again.")
-  await owner.getByTestId("inline-edit-save").click()
-  await expect(
-    owner.locator("[data-sonner-toast]").filter({ hasText: /element \d+/ }),
-  ).toBeVisible()
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+  await expect(owner.getByTestId("inline-edit-status")).toHaveAttribute("data-status", "conflict", {
+    timeout: 15_000,
+  })
+  await owner.unroute(`**/v1/artifacts/${shortId}/versions`)
+  await expect(frame(owner).locator("#mine")).toHaveText("Their paragraph. Pending edit.")
   expect(await contentOf(owner, shortId)).toContain("Their paragraph.")
+  await expect(owner.getByTestId("inline-edit-conflict")).toContainText("Mine again.")
+  await owner.getByTestId("inline-edit-keep-mine").click()
+  await saveEdits(owner)
+  expect(await contentOf(owner, shortId)).toContain("My paragraph. Pending edit. Mine again.")
 })
 
 /* The exact-source serializer (packages/core/src/source-tokens.ts), against what a real
@@ -397,9 +386,15 @@ test.describe("exact-source serializer", () => {
       ([sel, m]) => {
         const w = window as unknown as {
           __snap: unknown
-          __src: { snapshotSource: (r: Element) => unknown }
+          __src: {
+            markGenerated: (r: Element) => void
+            baselineOf: (r: Element) => unknown
+            snapshotOf: (b: unknown, r: Element) => unknown
+          }
         }
-        w.__snap = w.__src.snapshotSource(document.body)
+        // As edit mode opens: mark what the page's script made, then record the rest.
+        w.__src.markGenerated(document.body)
+        w.__snap = w.__src.snapshotOf(w.__src.baselineOf(document.body), document.body)
         for (const el of document.querySelectorAll(sel as string))
           el.setAttribute("contenteditable", m as string)
       },

@@ -1,5 +1,12 @@
 import { randomUUID as uuid } from "node:crypto"
-import type { MetaStore, NewArtifact, NewVersion, SortMode, SubscriptionRecord } from "@derive/core"
+import type {
+  ArtifactRecord,
+  MetaStore,
+  NewArtifact,
+  NewVersion,
+  SortMode,
+  SubscriptionRecord,
+} from "@derive/core"
 import {
   DEFAULT_ORG_SETTINGS,
   DYNAMIC_REVISION_LIMIT,
@@ -277,6 +284,38 @@ export function runStoreContract(
         ),
       ).resolves.toBeNull()
       expect((await store.getVersion(a.id, 1))?.blob_key).toBe("working-2")
+    })
+
+    it("closes an inline edit session exactly once, and lists the idle ones", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const v1 = await store.addVersion(
+        a.id,
+        newVersion({ author_id: "u1", edit_session: "s-1", blob_key: "w-1" }),
+      )
+      // A save in the same session keeps the version open.
+      await store.replaceCurrentVersion(
+        a.id,
+        { n: 1, blobKey: v1.blob_key },
+        newVersion({ author_id: "u1", edit_session: "s-1", blob_key: "w-2" }),
+      )
+      const later = new Date(Date.now() + 60_000).toISOString()
+      expect(await store.listIdleEditSessions(later, 10)).toContainEqual({
+        artifact_id: a.id,
+        edit_session: "s-1",
+      })
+      expect(
+        (await store.listIdleEditSessions("2000-01-01T00:00:00.000Z", 10)).filter(
+          (s) => s.artifact_id === a.id,
+        ),
+      ).toEqual([])
+      // Someone else can't close it; its author closes it once.
+      expect(await store.closeEditSession(a.id, "s-1", "u2")).toEqual([])
+      const closed = await store.closeEditSession(a.id, "s-1", "u1")
+      expect(closed.map((v) => [v.n, v.blob_key, v.edit_session])).toEqual([[1, "w-2", null]])
+      expect(await store.closeEditSession(a.id, "s-1")).toEqual([])
+      expect(
+        (await store.listIdleEditSessions(later, 10)).filter((s) => s.artifact_id === a.id),
+      ).toEqual([])
     })
 
     it("stores and reads a version's facts by name and all-at-once", async () => {
@@ -5501,6 +5540,81 @@ export function runStoreContract(
           const many = await store.artifactsWithGrants([art.short_id, `sid_missing_${uuid()}`], u)
           expect(many, `artifactsWithGrants disagrees for ${u}`).toEqual(one ? [one] : [])
         }
+      }
+
+      // An edit save's preflight answers every read it replaces, in one statement.
+      if (store.editPreflight) {
+        await store.addVersion(art.id, {
+          id: uuid(),
+          blob_key: "k1",
+          content_type: "text/html",
+          author: "o",
+          message: null,
+        })
+        await store.setArtifactMember({
+          id: uuid(),
+          artifact_id: art.id,
+          user_id: `ag_${art.id}`,
+          role: "editor",
+        })
+        const fresh = (await store.getByShortId(art.short_id)) as ArtifactRecord
+        // The current version's dynamic data (in key order), and not another version's.
+        for (const [n, name] of [
+          [fresh.current_version, "zeta"],
+          [fresh.current_version, "alpha"],
+          [fresh.current_version + 1, "later"],
+        ] as const)
+          await store.insertDynamicSlot({
+            id: uuid(),
+            artifact_id: art.id,
+            n,
+            name,
+            json: `{"kind":"table","columns":[],"rows":[]}`,
+            revision: 0,
+            updated_by_id: owner,
+            updated_by_name: "O",
+            updated_at: new Date().toISOString(),
+          })
+        for (const u of [owner, member, sharee, collab, stranger]) {
+          const pre = await store.editPreflight(art.short_id, u, `ag_${art.id}`)
+          if (!pre) throw new Error("editPreflight found no artifact")
+          expect(pre.artifact).toEqual(fresh)
+          expect(pre.version).toEqual(await store.getVersion(art.id, fresh.current_version))
+          expect(
+            pre.grants && {
+              orgRole: pre.grants.orgRole,
+              artifactRole: maxRole(null, ...pre.grants.artifactRoles),
+              portableArtifactRole: maxRole(null, ...pre.grants.portableArtifactRoles),
+            },
+            `editPreflight grants disagree for ${u}`,
+          ).toEqual(await slow(org, u))
+          expect(pre.membership).toEqual(await store.getMembership(org, u))
+          expect(pre.agentRole).toBe("editor")
+          expect(pre.subscription).toEqual(await store.getSubscription(org))
+          expect(pre.billableSeats).toBe(
+            (await store.listMemberships(org)).filter((m) => ["editor", "owner"].includes(m.role))
+              .length,
+          )
+          expect(pre.settings).toEqual(await store.getOrgSettings(org))
+          expect(pre.feedback).toEqual({ comments: false, reviews: false })
+          expect(pre.workspaces).toEqual(await store.listWorkspaces(u))
+          expect(pre.slots.map((x) => x.name)).toEqual(["alpha", "zeta"])
+          expect(pre.slots).toEqual(await store.listDynamicSlots(art.id, fresh.current_version))
+        }
+        await store.createComment({
+          id: uuid(),
+          artifact_id: art.id,
+          thread_id: uuid(),
+          base_version: fresh.current_version,
+          body_md: "note",
+          author: "o",
+          author_id: owner,
+        })
+        expect((await store.editPreflight(art.short_id, owner, null))?.feedback).toEqual({
+          comments: true,
+          reviews: false,
+        })
+        expect(await store.editPreflight(`sid_missing_${uuid()}`, owner, null)).toBeNull()
       }
 
       // The org arm must key on the org PASSED IN, not on the artifact's own workspace.

@@ -1,3 +1,6 @@
+import { type BlobStore, type BundleManifest, isBundleContentType } from "@derive/core"
+import { edgeWaitUntil } from "../realtime-do"
+
 export type WeightedLruCacheOptions = {
   maxBytes?: number
   maxEntries?: number
@@ -87,6 +90,11 @@ export class SourceTextCache {
     this.cache = new WeightedLruCache({ ...options, maxEntryBytes: this.maxEntryBytes })
   }
 
+  /** A source this process just wrote (its blob key names these very bytes). */
+  put(key: string, text: string): void {
+    this.cache.set(key, text, text.length * 2)
+  }
+
   async get(key: string, load: () => Promise<SourceText | null>): Promise<string | null> {
     const cached = this.cache.get(key)
     if (cached !== undefined) return cached
@@ -105,4 +113,64 @@ export class SourceTextCache {
       this.inflight.delete(key)
     }
   }
+}
+
+/** The Workers edge cache (the colo's, shared by every isolate there), or null on Node. */
+const edgeCache = (): Cache | null =>
+  (globalThis as { caches?: { default?: Cache } }).caches?.default ?? null
+/** Keyed by the blob key, which is the bytes' own hash, on a host nothing outside this
+ *  worker can ask for. */
+const edgeUrl = (blobKey: string) => `https://sources.derive.internal/${blobKey}`
+const keepAtEdge = (blobKey: string, text: string) => {
+  const edge = edgeCache()
+  if (edge)
+    edgeWaitUntil(
+      edge
+        .put(
+          edgeUrl(blobKey),
+          new Response(text, { headers: { "cache-control": "public, max-age=604800" } }),
+        )
+        .catch(() => {}),
+    )
+}
+
+/**
+ * Stored sources as text: from this process's cache, else (a single file, on Workers) the
+ * colo's edge cache, else object storage. A save that lands on a cold isolate reads the
+ * version it edits from the edge cache, and `remember` keeps what a publish just stored, so
+ * the session's next save reads nothing back. A bundle reads its entry file.
+ */
+export const sourceTexts = (blobs: BlobStore, cache = new SourceTextCache()) => {
+  const sourceText = (content: { blob_key: string; content_type: string }) =>
+    cache.get(`${content.content_type}:${content.blob_key}`, async () => {
+      if (isBundleContentType(content.content_type)) {
+        const manifestBytes = await blobs.get(content.blob_key)
+        if (!manifestBytes) return null
+        const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
+        const entryFile = manifest.files[manifest.entry]
+        const data = entryFile ? await blobs.get(entryFile.key) : null
+        if (!data) return null
+        const text = new TextDecoder().decode(data)
+        return { text, bytes: Math.max(data.byteLength, text.length * 2) }
+      }
+      const kept = await edgeCache()
+        ?.match(edgeUrl(content.blob_key))
+        .catch(() => undefined)
+      if (kept) {
+        const text = await kept.text()
+        return { text, bytes: text.length * 2 }
+      }
+      const data = await blobs.get(content.blob_key)
+      if (!data) return null
+      const text = new TextDecoder().decode(data)
+      keepAtEdge(content.blob_key, text)
+      return { text, bytes: Math.max(data.byteLength, text.length * 2) }
+    })
+  /** Keep a single file's source this process just stored. */
+  const rememberSource = (content: { blob_key: string; content_type: string }, text: string) => {
+    if (isBundleContentType(content.content_type)) return
+    cache.put(`${content.content_type}:${content.blob_key}`, text)
+    keepAtEdge(content.blob_key, text)
+  }
+  return { sourceText, rememberSource }
 }

@@ -427,7 +427,7 @@ interface MarkdownCodeToken {
   items?: MarkdownCodeToken[]
 }
 
-const closeTagIndex = (all: HtmlTag[], i: number): number => {
+const closeTagIndex = (all: readonly HtmlTag[], i: number): number => {
   const end = elementEnd(all, i)
   if (end === -1) return -1
   for (let k = i + 1; k < all.length; k++) {
@@ -438,7 +438,7 @@ const closeTagIndex = (all: HtmlTag[], i: number): number => {
 }
 
 const innerRange = (
-  all: HtmlTag[],
+  all: readonly HtmlTag[],
   i: number,
 ): { start: number; end: number; close: number } | null => {
   const open = all[i] as HtmlTag
@@ -449,7 +449,7 @@ const innerRange = (
 
 const htmlTableSeed = (
   html: string,
-  all: HtmlTag[],
+  all: readonly HtmlTag[],
   i: number,
   close: number,
 ): DynamicTable | null => {
@@ -489,7 +489,12 @@ const htmlTableSeed = (
   }
 }
 
-const htmlFigureSeed = (html: string, all: HtmlTag[], i: number, close: number): DynamicFigure => {
+const htmlFigureSeed = (
+  html: string,
+  all: readonly HtmlTag[],
+  i: number,
+  close: number,
+): DynamicFigure => {
   const figure: DynamicFigure = { url: null }
   for (let k = i + 1; k < close; k++) {
     const tag = all[k] as HtmlTag

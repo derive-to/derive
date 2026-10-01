@@ -13,6 +13,8 @@
  * values are honored, so a `>` inside `title="a > b"` does not end the tag early.
  */
 
+import { lastOf } from "./memo"
+
 export interface HtmlTag {
   /** Lowercased tag name. */
   name: string
@@ -228,8 +230,10 @@ const rawTextCloseStart = (lower: string, name: string, from: number): number =>
   }
 }
 
-/** Every tag in `html`, in document order. */
-export const tags = (html: string): HtmlTag[] => {
+/** Every tag in `html`, in document order (shared: read-only). */
+export const tags = lastOf(3, 32_768, (html: string): readonly HtmlTag[] => tagsOf(html))
+
+const tagsOf = (html: string): HtmlTag[] => {
   const out: HtmlTag[] = []
   const lower = html.toLowerCase()
   let i = 0
@@ -357,7 +361,7 @@ export const hasAttr = (attrs: string, name: string): boolean => {
 
 /** The offset just past the element opened by `tags[i]`, tracking same-name nesting, or
  *  -1 when it never closes. A self-closing tag ends at its own `>`. */
-export const elementEnd = (all: HtmlTag[], i: number): number => {
+export const elementEnd = (all: readonly HtmlTag[], i: number): number => {
   const open = all[i] as HtmlTag
   if (open.selfClosing) return open.end
   let depth = 1

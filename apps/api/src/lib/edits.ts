@@ -27,17 +27,23 @@ import {
   isStructuralUserEdit,
   LATEX_BUNDLE_CONTENT_TYPE,
   LATEX_CONTENT_TYPE,
+  markdownSourceMap,
   type QuoteEdit,
   type SceneEdit,
   type SlideOp,
   type SourceOp,
   type StructuralUserEdit,
+  type SyncWire,
+  sourceMap,
+  syncStamped,
+  syncWire,
   toMarkdown,
   type VersionRecord,
 } from "@derive/core"
 import { log } from "../log"
 import { cleanPath } from "./bundle"
 import { bundleTextResolver } from "./latex-bundle"
+import { span } from "./request-trace"
 
 /** A conflict with the artifact's actual state (wrong kind, or it moved past the
  *  version you read) — distinct from a malformed edit itself (bad JSON, 0/multi-match)
@@ -451,4 +457,66 @@ export function parseBaseVersion(raw: string | undefined): number | undefined {
   if (!Number.isSafeInteger(n))
     throw new EditError(`base_version "${raw}" is not a valid version number.`)
   return n
+}
+
+// ── Sync: an editor's page follows the current version in place ─────────────────────
+
+export interface SyncRequest {
+  /** The sha of the source the page was stamped from (its root's data-derive-src-sha, or
+   *  the last sync's `sha`): a session save replaces a version's bytes in place, so the
+   *  number alone can't name it. Every version's bytes stay addressable by it. */
+  sha: string
+}
+
+export interface SyncDeps {
+  getVersion: (artifactId: string, n: number) => Promise<VersionRecord | null>
+  sourceText: (v: Pick<VersionRecord, "blob_key" | "content_type">) => Promise<string | null>
+  /** The editor's page for a source of this content type (serve-content `editorPage`),
+   *  or null when it isn't stamped. */
+  page: (text: string, contentType: string, version: number) => Promise<string | null>
+}
+
+/**
+ * What an editor's page needs to show the current version without reloading: the new
+ * source map, the old ids' new ids, and the changed subtrees as stamped HTML (@derive/core
+ * `syncStamped`), encoded against the source map the page holds (`syncWire`). The page's
+ * source is found by `sha`. A page that can't be matched, or a change that can't be
+ * patched in place, answers `head: true`: swap the whole page. A save passes the version
+ * it just wrote as `current`, so its answer needs no read.
+ */
+export async function syncEditorPage(
+  deps: SyncDeps,
+  artifact: Pick<ArtifactRecord, "id" | "kind" | "current_version">,
+  req: SyncRequest,
+  current?: { version: Pick<VersionRecord, "n" | "content_type" | "blob_key">; text: string },
+): Promise<SyncWire> {
+  const cur = current?.version ?? (await deps.getVersion(artifact.id, artifact.current_version))
+  if (!cur) throw new EditConflictError("This artifact has no current version.")
+  const type = cur.content_type
+  const swap = (sha = "", hashes: string[] = []): SyncWire =>
+    syncWire({ version: cur.n, sha, hashes, remap: [], patches: [], head: true }, null)
+  if (artifact.kind !== "file" || !isSourceEditable(type)) return swap()
+  const src = current?.text ?? (await deps.sourceText(cur))
+  if (src === null) throw new EditError("Couldn't load the current source.")
+  const mapOf = (text: string) => (isMarkdownLike(type) ? markdownSourceMap(text) : sourceMap(text))
+  const map = await span("sync-map", () => mapOf(src))
+  const base =
+    req.sha === map.sha ? src : await deps.sourceText({ blob_key: req.sha, content_type: type })
+  if (base === null) return swap(map.sha, map.hashes)
+  const [held, before, after] = await span("sync-pages", () =>
+    Promise.all([mapOf(base), deps.page(base, type, cur.n), deps.page(src, type, cur.n)]),
+  )
+  if (held.sha !== req.sha || before === null || after === null) return swap(map.sha, map.hashes)
+  const sync = await span("sync-diff", () => syncStamped(before, after))
+  return syncWire(
+    {
+      version: cur.n,
+      sha: map.sha,
+      hashes: map.hashes,
+      remap: sync.remap,
+      patches: sync.patches,
+      head: sync.head,
+    },
+    held.hashes,
+  )
 }

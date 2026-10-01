@@ -12,6 +12,7 @@ import {
   can,
   capRole,
   DEFAULT_VERSION_WINDOW_MS,
+  type EditPreflight,
   effectiveRole,
   FREE_SEAT_LIMIT,
   isAuthenticated,
@@ -41,6 +42,7 @@ import { type Backplane, createInProcessBackplane } from "./bus"
 import type { AgentLoopInput } from "./lib/agent-loop"
 import { isApiToken, verifyApiToken } from "./lib/api-token"
 import type { BillingDriver } from "./lib/billing"
+import { clientName } from "./lib/client-names"
 import type { CustomDomainProvider } from "./lib/cloudflare-saas"
 import type { Sandbox } from "./lib/code-sandbox"
 import { answerDeriveMention } from "./lib/comment-turn"
@@ -67,7 +69,8 @@ import {
 import { verifyWorkToken, workTokenKind } from "./lib/run-token"
 import { billableSeatCount, isBillableRole, syncSeats } from "./lib/seats"
 import { enqueueSlackChannelEvent } from "./lib/slack-comments"
-import { SourceTextCache } from "./lib/source-text-cache"
+import { sourceTexts } from "./lib/source-text-cache"
+import { storageUsage } from "./lib/storage-usage"
 import { log } from "./log"
 import { enqueueRender } from "./previews"
 import { edgeCtx } from "./realtime-do"
@@ -158,6 +161,10 @@ export interface AppDeps {
    * Unset on Node, where `background()` awaits inline and nothing reclaims the turn.
    */
   attendedTurnBudgetMs?: number
+  /** Let work handed to `afterResponse()` outlive the response on Node, as it does on
+   *  Workers (waitUntil). The Node server sets it; tests leave it off so that work finishes
+   *  before they assert. */
+  detachAfterResponse?: boolean
   /** Optional dense/semantic search index. Unset ⇒ workspace search stays lexical-only. Both the
    *  edge and a Postgres self-host inject a pgvector adapter (embeddings from Workers AI or, on
    *  self-host, a local ONNX model); it's absent on SQLite / when no embedder is configured. */
@@ -406,7 +413,7 @@ export type AppContext = ReturnType<typeof buildContext>
 
 export function buildContext(deps: AppDeps) {
   const { meta, blobs } = deps
-  const sourceTextCache = new SourceTextCache()
+  const { sourceText, rememberSource } = sourceTexts(blobs)
   // Realtime relay + presence. In-process by default (self-host stays zero-config);
   // the edge entry injects a Durable Object backplane. `bus`/`presence` are facades
   // over it, so the publish + heartbeat call sites are unchanged.
@@ -517,6 +524,31 @@ export function buildContext(deps: AppDeps) {
     const ec = edgeCtx.getStore()
     if (ec) ec.waitUntil(guarded)
     else await guarded
+  }
+
+  // The consequences of a write its caller doesn't wait for (an attended editor save's
+  // indexing, anchors, facts, realtime): after the response on Workers (waitUntil) and on
+  // the Node server; inline where nothing may outlive the request (tests).
+  // `work` is started here, not by the caller: on Node it must not take the one thread
+  // before the response is written, so it waits for the response to finish.
+  /** Whether work handed to afterResponse outlives the response (Workers, the Node server)
+   *  rather than running inline (tests). */
+  const detachesAfterResponse = (): boolean => !!edgeCtx.getStore() || !!deps.detachAfterResponse
+  const afterResponse = async (c: Context, work: () => Promise<unknown>): Promise<void> => {
+    const run = () =>
+      work().catch((err) =>
+        log.error("after-response task failed", {
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      )
+    const ec = edgeCtx.getStore()
+    if (ec) ec.waitUntil(run())
+    else if (deps.detachAfterResponse) {
+      // @hono/node-server hands the handler the Node response as `env.outgoing`.
+      const out = (c.env as { outgoing?: { once?: (e: string, f: () => void) => void } })?.outgoing
+      if (out?.once) out.once("close", () => void run())
+      else setTimeout(() => void run(), 0)
+    } else await run()
   }
 
   const bearer = (c: Context): string => {
@@ -684,7 +716,7 @@ export function buildContext(deps: AppDeps) {
           a = syntheticAgent({
             id: `oauth:${claim.clientId}`,
             org_id: claim.orgId,
-            name: (await meta.getOAuthClientName(claim.clientId)) || claim.clientId || "An agent",
+            name: (await clientName(meta, claim.clientId)) || claim.clientId || "An agent",
             role,
             created_by: claim.userId,
             created_at: new Date().toISOString(),
@@ -965,6 +997,7 @@ export function buildContext(deps: AppDeps) {
   // The cap itself is now plan-aware (billingState.storageCapBytes) rather than a flat
   // deps.maxBytes comparison: an active subscription's tier cap replaces the operator's
   // fallback, so a Team workspace isn't stuck on the self-host default.
+  const usage = storageUsage(meta)
   const overStorage = async (
     orgId: string,
     incoming: number,
@@ -972,12 +1005,11 @@ export function buildContext(deps: AppDeps) {
   ): Promise<boolean> => {
     const cap = (pre ?? (await billingState(orgId))).storageCapBytes
     if (!cap) return false
-    const [stored, assets] = await Promise.all([
-      meta.storageBytes(orgId),
-      meta.assetStorageBytes(orgId),
-    ])
-    return stored + assets + incoming > cap
+    return (await usage.count(orgId)) + incoming > cap
   }
+  /** An edit save's cap check, by the last count (see storage-usage). */
+  const overKnownUsage = (orgId: string, incoming: number, state: BillingState): boolean =>
+    usage.overLastCount(orgId, incoming, state.storageCapBytes)
 
   // MEMOIZED PER REQUEST + (org, user), same technique as `actorCache` below and for the
   // same reason: `activeWorkspace`'s cookie-validation branch and `ensureMembership` (called
@@ -1269,6 +1301,8 @@ export function buildContext(deps: AppDeps) {
     orgRole: Role | null
     artifactRoles: Role[]
     portableArtifactRoles: Role[]
+    /** For an agent acting for `userId`: its own member row's role (null: none). */
+    agentRole?: Role | null
   }
 
   const actorFor = (c: Context, a: ArtifactRecord, pre?: PreGrants): Promise<Actor> => {
@@ -1351,14 +1385,30 @@ export function buildContext(deps: AppDeps) {
       // and the workspace binding keeps tokens scoped per ADR-0001. Rows written
       // to an agent id before this model (or by hand) still count, uncapped —
       // they were explicit grants.
-      const own = await meta.getArtifactMember(a.id, ag.id)
-      let derived: Role | null = null
+      // The owner's share and collection roles are the grants of theirs a preflight read
+      // (every arm artifactGrants has but the workspace seat, which an agent never borrows).
       const ownerId = p.onBehalfOf
-      if (ownerId && ag.org_id === a.org_id) {
-        const m = await meta.getArtifactMember(a.id, ownerId)
-        const cRoles = await meta.collectionRolesForArtifact(a.id, ownerId)
-        derived = capRole(maxRole(m?.role ?? null, ...cRoles), ag.role)
-      }
+      const borrows = !!ownerId && ag.org_id === a.org_id
+      const read =
+        pre && pre.userId === ownerId && pre.agentRole !== undefined
+          ? {
+              own: pre.agentRole === null ? null : { role: pre.agentRole },
+              owned: pre.artifactRoles,
+            }
+          : null
+      // Otherwise three independent reads, together.
+      const [own, owned] = read
+        ? [read.own, read.owned]
+        : await Promise.all([
+            meta.getArtifactMember(a.id, ag.id),
+            borrows && ownerId
+              ? Promise.all([
+                  meta.getArtifactMember(a.id, ownerId),
+                  meta.collectionRolesForArtifact(a.id, ownerId),
+                ]).then(([m, cRoles]) => [...(m ? [m.role] : []), ...cRoles])
+              : [],
+          ])
+      const derived: Role | null = borrows ? capRole(maxRole(null, ...owned), ag.role) : null
       const orgRole = ag.org_id === a.org_id ? ag.role : null
       // Historical rows written directly to an agent id remain explicit grants, but
       // ownership is workspace-bound even for that legacy shape. Lower collaborator
@@ -1377,6 +1427,10 @@ export function buildContext(deps: AppDeps) {
     // every owner-level artifact/collection grant. Deliberate lower collaborator
     // shares remain portable, as does the separately-evaluated world link.
     const me = p.user
+    // The active workspace and the grants are independent reads: together.
+    const grants =
+      pre && pre.userId === me.id ? null : (meta.artifactGrants?.(a.id, a.org_id, me.id) ?? null)
+    grants?.catch(() => {})
     const workspaceActive = (await activeWorkspace(c)) === a.org_id
     // ONE ROUND TRIP WHERE THE STORE CAN, four where it cannot. The reads below are the
     // membership, the per-artifact share and the collection shares — and the last is itself two
@@ -1400,8 +1454,8 @@ export function buildContext(deps: AppDeps) {
         locked,
         unlocked,
       })
-    if (meta.artifactGrants) {
-      const g = await meta.artifactGrants(a.id, a.org_id, me.id)
+    if (grants) {
+      const g = await grants
       return withInheritedCollectionLink(c, a, {
         kind: "user",
         userId: me.id,
@@ -1440,9 +1494,58 @@ export function buildContext(deps: AppDeps) {
    *  grants: an explicit share, the workspace seat (when workspace_access=member),
    *  and the world link (link_role, clamped to view for anonymous holders and gated
    *  by unlock when the link is password-locked). See effectiveRole. */
-  const authorize = async (c: Context, action: Action, a: ArtifactRecord): Promise<boolean> => {
-    const actor = await actorFor(c, a)
+  const authorize = async (
+    c: Context,
+    action: Action,
+    a: ArtifactRecord,
+    /** The caller's grants when a combined read already fetched them. */
+    pre?: PreGrants,
+  ): Promise<boolean> => {
+    const actor = await actorFor(c, a, pre)
     return can(actor, action, a.workspace_access, a.link_role)
+  }
+  /** An edit's reads in one statement where the store has it (MetaStore.editPreflight):
+   *  the artifact by short id, the caller's standing (seeded into authorization, so
+   *  `authorize` reads nothing more), and what a save or a sync goes on to need. Undefined
+   *  where the store has no such read or it failed (take the read-by-read path); null for
+   *  an unknown short id. */
+  const editPreflight = async (
+    c: Context,
+    shortId: string,
+  ): Promise<EditPreflight | null | undefined> => {
+    if (!meta.editPreflight) return undefined
+    const [owner, agent] = await Promise.all([privateOwnerId(c), agentFor(c)])
+    const pre = await meta.editPreflight(shortId, owner, agent?.id ?? null).catch((err) => {
+      log.warn("edit preflight failed", { error: String(err) })
+      return undefined
+    })
+    if (pre?.grants && owner) {
+      if (!agent) primeWorkspaces(c, owner, pre.artifact.org_id, pre.membership, pre.workspaces)
+      void actorFor(c, pre.artifact, {
+        userId: owner,
+        ...pre.grants,
+        ...(agent ? { agentRole: pre.agentRole } : {}),
+      }).catch(() => {})
+    }
+    return pre
+  }
+  /** What an edit save's one-statement preflight (MetaStore.editPreflight) already
+   *  answered: the caller's seat and workspaces for workspace resolution, so neither is
+   *  read again this request. */
+  const primeWorkspaces = (
+    c: Context,
+    userId: string,
+    orgId: string,
+    seat: MembershipRecord | null,
+    workspaces: (WorkspaceRecord & { role: Role })[],
+  ) => {
+    const seats = membershipCache.get(c) ?? new Map<string, Promise<MembershipRecord | null>>()
+    membershipCache.set(c, seats)
+    if (!seats.has(`${orgId}:${userId}`)) seats.set(`${orgId}:${userId}`, Promise.resolve(seat))
+    const lists =
+      workspacesCache.get(c) ?? new Map<string, Promise<(WorkspaceRecord & { role: Role })[]>>()
+    workspacesCache.set(c, lists)
+    if (!lists.has(userId)) lists.set(userId, Promise.resolve(workspaces))
   }
 
   /** Authorize using STANDING only — an explicit share or the workspace seat, NOT
@@ -1513,27 +1616,6 @@ export function buildContext(deps: AppDeps) {
   // fail-soft, so a store hiccup costs the data, never the search.
   const dynamicSlots = (v: { artifact_id: string; n: number }) =>
     meta.listDynamicSlots(v.artifact_id, v.n).catch(() => [])
-  const sourceText = async (content: {
-    blob_key: string
-    content_type: string
-  }): Promise<string | null> =>
-    sourceTextCache.get(`${content.content_type}:${content.blob_key}`, async () => {
-      let data: Uint8Array | null
-      if (isBundleContentType(content.content_type)) {
-        const manifestBytes = await blobs.get(content.blob_key)
-        if (!manifestBytes) return null
-        const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
-        const entryFile = manifest.files[manifest.entry]
-        if (!entryFile) return null
-        data = await blobs.get(entryFile.key)
-      } else {
-        data = await blobs.get(content.blob_key)
-      }
-      if (!data) return null
-      const text = new TextDecoder().decode(data)
-      return { text, bytes: Math.max(data.byteLength, text.length * 2) }
-    })
-
   // A caller's role on a collection: the static token is owner; otherwise the
   // creator, else their explicit collection-member role, else — when the
   // collection's own workspace_access is `member` — their workspace SEAT role,
@@ -1786,6 +1868,11 @@ export function buildContext(deps: AppDeps) {
     notify,
     notifyRender,
     background,
+    afterResponse,
+    detachesAfterResponse,
+    overKnownUsage,
+    recountUsage: usage.recount,
+    rememberSource,
     attendedTurnBudgetMs: deps.attendedTurnBudgetMs,
     /**
      * Answer an @derive mention in a comment thread — the comment lane's arrival, built once
@@ -1844,6 +1931,8 @@ export function buildContext(deps: AppDeps) {
     actorFor,
     authorize,
     authorizeStanding,
+    primeWorkspaces,
+    editPreflight,
     authorizeUserStanding,
     anonLocked,
     isPrincipal,
