@@ -3014,6 +3014,11 @@
             "type": "string",
             "description": "Short text preview shown in the notification bell"
           },
+          "org_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "The workspace the row is about, when opening it means switching there first (a job row); null otherwise"
+          },
           "read": {
             "anyOf": [
               {

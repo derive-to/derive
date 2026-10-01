@@ -15,7 +15,8 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAuth } from "@/ctx"
 import { useBootGate } from "@/lib/bootstrap"
-import { notificationsQuery } from "@/lib/queries"
+import { reloadAfterWorkspaceChange } from "@/lib/persist"
+import { notificationsQuery, workspacesQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { usePageVisible } from "@/lib/use-page-visible"
 import { useUserEvent } from "@/lib/use-user-events"
@@ -32,6 +33,7 @@ export function NotificationBell() {
   // Icon rail: the unread signal collapses to the ink dot on the bell (never a solid
   // count block). The hook lives here so it runs before the early return below.
   const iconMode = useIconRail()
+  const { data: workspaces } = useQuery({ ...workspacesQuery(), enabled: !!me })
   const [open, setOpen] = useState(false)
   const visible = usePageVisible()
   const qc = useQueryClient()
@@ -100,10 +102,26 @@ export function NotificationBell() {
       return
     }
     // An agent's job: its report page when it has one, else the agent (its id rides
-    // thread_id on a job row).
-    if (n.kind === "job" && !n.artifact_short_id) {
-      nav({ to: "/agents/$id", params: { id: n.thread_id }, search: {} })
-      return
+    // thread_id on a job row). A job in another workspace switches there first: its agent
+    // and its report only resolve in their own workspace.
+    if (n.kind === "job") {
+      const ref = n.artifact_short_id
+        ? refFor({ short_id: n.artifact_short_id, title: n.artifact_title })
+        : null
+      const target = ref
+        ? `/artifacts/${encodeURIComponent(ref)}`
+        : `/agents/${encodeURIComponent(n.thread_id)}`
+      if (n.org_id && workspaces && n.org_id !== workspaces.active) {
+        void api
+          .switchWorkspace(n.org_id)
+          .then(() => reloadAfterWorkspaceChange(target))
+          .catch(() => {})
+        return
+      }
+      if (!ref) {
+        nav({ to: "/agents/$id", params: { id: n.thread_id }, search: {} })
+        return
+      }
     }
     nav({
       to: "/artifacts/$ref",

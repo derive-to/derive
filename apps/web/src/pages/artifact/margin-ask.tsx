@@ -171,6 +171,9 @@ function AskFollow({
   useJobEvents()
   const q = useQuery({
     ...jobQuery(id),
+    // A reload restores the persisted copy, which may be from before it settled: the
+    // events only say what changes from here on, so read it fresh once on mount.
+    refetchOnMount: "always",
     refetchInterval: (query) => {
       const status = query.state.data?.status
       return !status || OPEN_STATUSES.includes(status) ? 60_000 : false

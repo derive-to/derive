@@ -17,6 +17,7 @@ import {
   FREE_SEAT_LIMIT,
   isAuthenticated,
   isBundleContentType,
+  type JobRecord,
   type LinkRole,
   type MembershipRecord,
   type MetaStore,
@@ -526,6 +527,18 @@ export function buildContext(deps: AppDeps) {
     if (ec) ec.waitUntil(guarded)
     else await guarded
   }
+
+  // A job's fan-out (bell, email, Slack, webhooks) rides background(): after the response
+  // where the platform keeps work alive (waitUntil on Workers), inline on Node, so a runner's
+  // report answers without waiting on the outbox writes.
+  const announceNow = jobAnnouncer({
+    meta,
+    bus,
+    baseUrl: deps.baseUrl,
+    pokeWebhooks: deps.pokeWebhooks,
+  })
+  const announceJob = (job: JobRecord, actorId?: string | null): Promise<void> =>
+    background(announceNow(job, actorId))
 
   // The consequences of a write its caller doesn't wait for (an attended editor save's
   // indexing, anchors, facts, realtime): after the response on Workers (waitUntil) and on
@@ -1879,12 +1892,7 @@ export function buildContext(deps: AppDeps) {
     /** Tell the people an agent's job concerns that it needs them or finished: the bell, the
      *  live channel, email, Slack DM, and webhooks (lib/notify-job.ts). Every JobDeps a route
      *  builds carries it. */
-    announceJob: jobAnnouncer({
-      meta,
-      bus,
-      baseUrl: deps.baseUrl,
-      pokeWebhooks: deps.pokeWebhooks,
-    }),
+    announceJob,
     notifyRender,
     background,
     afterResponse,

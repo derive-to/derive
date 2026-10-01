@@ -7724,6 +7724,8 @@ export interface components {
             comment_id: string;
             /** @description Short text preview shown in the notification bell */
             preview: string;
+            /** @description The workspace the row is about, when opening it means switching there first (a job row); null otherwise */
+            org_id?: string | null;
             /** @description Whether the user has read it: 0 unread, 1 read */
             read: 0 | 1;
             created_at: string;

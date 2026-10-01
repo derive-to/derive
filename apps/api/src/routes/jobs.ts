@@ -616,6 +616,12 @@ export const jobRoutes = (ctx: AppContext) => {
       const first = art ? await meta.getVersion(art.id, 1).catch(() => null) : null
       if (!art || art.org_id !== agent.org_id || first?.agent_id !== agent.id)
         return fail(c, 400, "a report must be a page this agent made")
+      // A report is the job's record, private to the workspace (members open it, no link,
+      // listed nowhere) when it is first attached, whatever the runner published it as: an
+      // older runner made its report pages with the workspace's sharing defaults. Sharing it
+      // further afterwards is a person's choice, so a later attach of the same page keeps it.
+      if (held.report_artifact_id !== art.id && held.status === "running")
+        await meta.setAccess(art.id, "member", "none", "none", null)
       report.report_artifact_id = art.id
     }
     const out = await reportJob(jobDeps, agent, c.req.param("id"), report)

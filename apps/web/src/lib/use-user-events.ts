@@ -25,7 +25,9 @@ const attach = (type: string) => {
 
 const total = () => [...listeners.values()].reduce((n, s) => n + s.size, 0)
 
-const subscribe = (type: string, h: Handler): (() => void) => {
+/** Subscribe outside React (a module-level holder that refcounts its own callers, like
+ *  lib/use-job-events). Returns the unsubscribe. Prefer useUserEvent in a component. */
+export const subscribeUserEvent = (type: string, h: Handler): (() => void) => {
   let set = listeners.get(type)
   if (!set) {
     set = new Set()
@@ -57,6 +59,6 @@ export function useUserEvent(type: string, handler: Handler, enabled: boolean): 
   latest.current = handler
   useEffect(() => {
     if (!enabled) return
-    return subscribe(type, (e) => latest.current(e))
+    return subscribeUserEvent(type, (e) => latest.current(e))
   }, [type, enabled])
 }

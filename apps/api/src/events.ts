@@ -46,6 +46,9 @@ const DOMAIN_EVENTS = [
   "job.progress",
   "job.settled",
   "job.delta",
+  // A machine took a queued job (queued to running), on the ASKER's channel, so a page that
+  // follows it stops saying it waits. A wake only; ask({wait}) does not return on it.
+  "job.started",
   // A job reached a person: it waits on someone (`job.needs_you`) or it is over
   // (`job.finished`: succeeded, failed, lost, or cancelled; a retryable failure that goes
   // back in the queue is neither). Emitted once per transition by lib/notify-job.ts on each

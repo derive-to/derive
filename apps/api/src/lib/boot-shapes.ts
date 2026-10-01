@@ -73,6 +73,13 @@ export const Notification = z
     thread_id: z.string().describe("The comment thread anchor; empty when not comment-related"),
     comment_id: z.string().describe("The specific comment anchor; empty when not comment-related"),
     preview: z.string().describe("Short text preview shown in the notification bell"),
+    org_id: z
+      .string()
+      .nullable()
+      .optional()
+      .describe(
+        "The workspace the row is about, when opening it means switching there first (a job row); null otherwise",
+      ),
     read: z
       .union([z.literal(0), z.literal(1)])
       .describe("Whether the user has read it: 0 unread, 1 read"),

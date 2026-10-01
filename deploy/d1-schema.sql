@@ -243,6 +243,7 @@ CREATE TABLE IF NOT EXISTS notification (
   thread_id TEXT NOT NULL,
   comment_id TEXT NOT NULL,
   preview TEXT NOT NULL,
+  org_id TEXT,
   read INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );

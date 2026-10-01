@@ -192,7 +192,8 @@ export const composeBootstrap = async (
           orgId,
           status: ["needs_you"],
           askedByOrAgent: seat.role === "owner" ? undefined : { askedBy: userId, agentIds: own },
-          limit: 1000,
+          // The Inbox lists at most 100; the count it pairs with stops there too.
+          limit: 100,
         })
       ).length
     : 0

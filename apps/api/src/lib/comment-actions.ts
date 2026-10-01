@@ -51,21 +51,25 @@ export interface CommentActionDeps {
 }
 
 /** The job this report page belongs to, reopened with a person's comment as a follow-up.
- *  Returns the job's id when it was written to, else null. */
+ *  Returns the job's id when it was written to, else null. Only a new thread: a reply rides
+ *  its thread (a thread the agent started already wakes it through notifyThreadReplyAgents),
+ *  and a comment that @mentions the agent already reached it through its inbox, so either
+ *  would set the same agent to the same work twice. */
 export const followUpFromReport = async (
   deps: Pick<CommentActionDeps, "meta" | "bus">,
   artifact: ArtifactRecord,
   comment: CommentRecord,
   actorId: string | null,
+  mentionIds: ReadonlySet<string> = new Set(),
 ): Promise<string | null> => {
   const { meta } = deps
-  if (!actorId) return null
+  if (!actorId || comment.thread_id !== comment.id) return null
   const [job] = await meta.listJobs({
     orgId: artifact.org_id,
     reportArtifactId: artifact.id,
     limit: 1,
   })
-  if (!job || job.status === "cancelled") return null
+  if (!job || job.status === "cancelled" || mentionIds.has(job.agent_id)) return null
   // A person, not an agent or a synthetic principal.
   const [person] = await meta.getUsers([actorId])
   if (!person) return null
@@ -220,7 +224,9 @@ export const commentCreatedAction = async (
   // with the comment as the next message, as if they had written to it (POST
   // /v1/jobs/{id}/messages, with the same steering and budget rules). Agents' comments, and
   // people who may not steer the job, leave it where it is.
-  await fanOut("job:report-follow-up", () => followUpFromReport(deps, artifact, comment, actorId))
+  await fanOut("job:report-follow-up", () =>
+    followUpFromReport(deps, artifact, comment, actorId, mentionIds),
+  )
 
   // @derive — LAST, and deliberately here rather than in each route.
   //

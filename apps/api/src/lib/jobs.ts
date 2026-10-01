@@ -51,7 +51,7 @@ const iso = (ms = Date.now()) => new Date(ms).toISOString()
 const wake = (
   deps: JobDeps,
   channel: string | null,
-  type: "job.queued" | "job.progress" | "job.settled",
+  type: "job.queued" | "job.started" | "job.progress" | "job.settled",
   job: JobRecord,
 ) => {
   if (!channel || !deps.bus) return
@@ -440,14 +440,21 @@ export const pullJobs = async (
   const running = await meta.countRunningJobs(agent.id, stamp)
   const room = Math.max(0, agent.max_concurrency - running)
   if (room === 0) return []
-  return meta.claimJobs(
+  const claimed = await meta.claimJobs(
     agent.id,
     Math.min(room, opts.limit ?? 10),
     leaseUntilFor(agent.max_run_ms, now.getTime()),
     stamp,
     held,
   )
+  for (const j of claimed) wakeClaimed(deps, j)
+  return claimed
 }
+
+/** A job was claimed (queued to running): tell its asker's open pages, which re-read it, so a
+ *  margin Ask stops saying it waits for a machine the moment one takes it. */
+export const wakeClaimed = (deps: JobDeps, job: JobRecord): void =>
+  wake(deps, job.asked_by, "job.started", job)
 
 export interface JobReport {
   /** The claim's started_at, echoed back: proof this settle belongs to the claim it names. */

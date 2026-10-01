@@ -2221,7 +2221,8 @@ export interface BootstrapRead {
   billing: { subscription: SubscriptionRecord | null; billableSeats: number }
   /** How many of the workspace's jobs wait on this person (the rail's Inbox count): needs_you,
    *  and they asked it or manage its agent (created it, with a seat above viewer), or they own
-   *  the workspace. Zero without a seat. The same rule GET /v1/jobs?mine=1 applies. */
+   *  the workspace. Zero without a seat. The same rule GET /v1/jobs?mine=1 applies, capped at
+   *  the 100 rows the Inbox lists. */
   needsYou: number
 }
 
@@ -4180,8 +4181,8 @@ export interface UserProfile {
  *  reach a person the roster has never heard of.
  *  `job` is an agent's job that needs you or finished: its artifact_* fields name the job's
  *  report page ("" when it has none yet), `thread_id` carries the agent id (the fallback
- *  link, /agents/<id>), `comment_id` the job id, and `preview` the line after the agent's
- *  name ("needs you: …", "finished …"). */
+ *  link, /agents/<id>), `comment_id` the job id, `org_id` the job's workspace, and `preview`
+ *  the line after the agent's name ("needs you: …", "finished …"). */
 export type NotificationKind =
   | "mention"
   | "comment"
@@ -4202,6 +4203,9 @@ export interface NotificationRecord {
   thread_id: string
   comment_id: string
   preview: string
+  /** The workspace the row is about, when the bell must switch to it to open the link (a
+   *  `job` row). Null for kinds whose link resolves from the artifact itself. */
+  org_id: string | null
   read: 0 | 1
   created_at: string
 }
@@ -4216,6 +4220,7 @@ export interface NewNotification {
   thread_id: string
   comment_id: string
   preview: string
+  org_id?: string | null
 }
 
 /** The workspace itself — a display name keyed by org_id (one row). */

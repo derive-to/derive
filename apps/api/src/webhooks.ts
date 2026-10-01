@@ -312,7 +312,9 @@ export async function enqueueForEvent(
 }
 
 /** Enqueue a job event for the workspace's webhooks: every workspace-wide hook subscribed to
- *  it, plus hooks on the job's report page when it has one. Returns how many were queued. */
+ *  it, plus hooks on the job's report page when it has one. Returns how many were queued.
+ *  By name only: a `*` hook predates job events and was written for page events, so it does
+ *  not start receiving a new kind of payload it never asked for. */
 export async function enqueueJobEvent(
   meta: MetaStore,
   baseUrl: string,
@@ -323,7 +325,7 @@ export async function enqueueJobEvent(
 ): Promise<number> {
   // A hook on another page never matches the empty id; a workspace-wide one always does.
   const hooks = await meta.activeWebhooks(report?.id ?? "", orgId)
-  const subscribed = hooks.filter((h) => h.events === "*" || h.events.split(",").includes(event))
+  const subscribed = hooks.filter((h) => h.events.split(",").includes(event))
   if (subscribed.length === 0) return 0
   const payload: EventPayload = {
     event,

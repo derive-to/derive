@@ -3,7 +3,7 @@ import type { AppDeps } from "../context"
 import { log } from "../log"
 import { agentWritesOff } from "./agent-writes"
 import { sha256 } from "./crypto"
-import { type JobDeps, jobOverBudget, noteHeldForBudget, reportJob } from "./jobs"
+import { type JobDeps, jobOverBudget, noteHeldForBudget, reportJob, wakeClaimed } from "./jobs"
 import { OrtamClient } from "./ortam-client"
 import { signWorkToken } from "./run-token"
 import { runtimeFailureReason } from "./runtime-diagnostics"
@@ -279,7 +279,10 @@ async function borrow(
         deadline_at: deadline.toISOString(),
       } satisfies MachineState),
     })
-    if (held) return held
+    if (held) {
+      wakeClaimed(deps, held)
+      return held
+    }
   } catch {
     // Another job already holds this agent's machine (the unique index).
   }

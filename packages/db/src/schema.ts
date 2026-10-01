@@ -1004,6 +1004,9 @@ export const notification = sqliteTable("notification", {
   thread_id: text("thread_id").notNull(),
   comment_id: text("comment_id").notNull(),
   preview: text("preview").notNull(),
+  // The workspace a row is about, when it is not the artifact's own (a job's bell row may have
+  // no report page): the bell switches to it before opening the link. Null on older kinds.
+  org_id: text("org_id"),
   read: integer("read").$type<0 | 1>().notNull().default(0),
   created_at: text("created_at").notNull().default(now),
 })

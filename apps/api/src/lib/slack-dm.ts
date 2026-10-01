@@ -22,6 +22,7 @@ import {
 import type { ChannelSendResult } from "../webhooks"
 import { enqueueChannelDelivery, enqueueCoalescedChannelDelivery } from "../webhooks"
 import { commentDeepLink, type Mention, previewOf } from "./comments"
+import { buildJobEmail } from "./email"
 import { type ReviewSummary, reviewDeltaLabel } from "./review-summary"
 import { openSlackDm, resolveSlackUserIdByEmail } from "./slack"
 import { actionButton, actions, mrkdwnBody, mrkdwnLabel, openButton, section } from "./slack-cards"
@@ -349,14 +350,32 @@ export const enqueueSlackShareDm = async (
   } satisfies SlackDmPayload)
 }
 
-/** DM a person that an agent's job needs them or finished. One per transition: the caller
- *  (lib/notify-job.ts) runs once per status change, so a retry never DMs twice. */
-export const enqueueSlackJobDm = async (
+/** The glyph a job DM leads with, by how it ended: one that needs you, one that went well,
+ *  and the ones that did not. */
+const JOB_GLYPH: Record<string, string> = {
+  needs_you: ":raised_hand:",
+  succeeded: ":white_check_mark:",
+  failed: ":x:",
+  lost: ":warning:",
+  cancelled: ":no_entry_sign:",
+}
+
+/** One coalescing window for a job's interrupts: a minute, about one tick. */
+const JOB_WINDOW_MS = 60_000
+
+/** Email and Slack DM the people an agent's job needs, or tells it finished. Each delivery
+ *  coalesces per (agent, person, event) in a one-minute window: a burst of settles on one
+ *  agent (a pass failing its waiting queue, a reclaim losing several) is one message, the
+ *  latest, rather than one per job. The caller (lib/notify-job.ts) decides who and when. */
+export const enqueueJobInterrupts = async (
   meta: MetaStore,
   input: {
     orgId: string
-    recipientId: string
+    agentId: string
     agentName: string
+    recipients: string[]
+    event: "job.needs_you" | "job.finished"
+    status: string
     /** "needs you", "finished", "failed", and so on: a fixed vocabulary, never user text. */
     verb: string
     instruction: string
@@ -364,23 +383,38 @@ export const enqueueSlackJobDm = async (
     link: string
   },
 ): Promise<void> => {
-  const install = await meta.getSlackInstall(input.orgId)
-  if (!install) return
-  const pref = await meta.getUserNotificationPref(input.orgId, input.recipientId)
-  if (!wantsSlackDm(pref?.prefs)) return
+  const window = Math.floor(Date.now() / JOB_WINDOW_MS)
+  const key = (kind: string, uid: string) =>
+    `wd_job_${kind}_${input.agentId}_${uid}_${input.event}_${window}`
+  const [settings, install, users] = await Promise.all([
+    meta.getOrgSettings(input.orgId).catch(() => null),
+    meta.getSlackInstall(input.orgId),
+    meta.getUsers(input.recipients),
+  ])
   const what = mrkdwnLabel(input.instruction, 140)
-  const glyph = input.verb === "needs you" ? ":raised_hand:" : ":white_check_mark:"
-  const blocks = [
-    section(`${glyph} *${mrkdwnLabel(input.agentName)}* ${input.verb}: <${input.link}|${what}>`),
-    ...(input.question ? [section(`> ${mrkdwnBody(input.question, 600)}`)] : []),
-    actions([openButton(input.link)]),
-  ]
-  await enqueueChannelDelivery(meta, "slack_dm", "job", {
-    orgId: input.orgId,
-    userId: input.recipientId,
-    text: `${mrkdwnLabel(input.agentName)} ${input.verb}: ${what}`,
-    blocks,
-  } satisfies SlackDmPayload)
+  const glyph = JOB_GLYPH[input.status] ?? ":white_check_mark:"
+  for (const u of users) {
+    const pref = await meta.getUserNotificationPref(input.orgId, u.id).catch(() => null)
+    if (settings?.emailNotifications && wantsReviewEmail(pref?.prefs) && u.email)
+      await enqueueCoalescedChannelDelivery(meta, key("email", u.id), "email", input.event, {
+        to: u.email,
+        toName: u.name ?? undefined,
+        ...buildJobEmail(input),
+      })
+    if (install && wantsSlackDm(pref?.prefs))
+      await enqueueCoalescedChannelDelivery(meta, key("dm", u.id), "slack_dm", input.event, {
+        orgId: input.orgId,
+        userId: u.id,
+        text: `${mrkdwnLabel(input.agentName)} ${input.verb}: ${what}`,
+        blocks: [
+          section(
+            `${glyph} *${mrkdwnLabel(input.agentName)}* ${input.verb}: <${input.link}|${what}>`,
+          ),
+          ...(input.question ? [section(`> ${mrkdwnBody(input.question, 600)}`)] : []),
+          actions([openButton(input.link)]),
+        ],
+      } satisfies SlackDmPayload)
+  }
 }
 
 /** Enqueue an arbitrary DM to a Derive user (used by the "send test DM" button). */

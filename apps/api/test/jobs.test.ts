@@ -778,6 +778,15 @@ describe("jobs: telling people", () => {
       kind: "generic",
       events: "job.needs_you,job.finished",
     })
+    // A hook on every event predates job events: it does not start receiving them.
+    await meta.createWebhook({
+      id: "wh_jobs_star",
+      org_id: "default",
+      url: "http://example.com/all",
+      secret: "s",
+      kind: "generic",
+      events: "*",
+    })
     const a = await createAgent(app)
     const job = (await (await ask(app, ed.email, a.id, "Send the update")).json()) as {
       id: string
@@ -804,6 +813,7 @@ describe("jobs: telling people", () => {
     )
     const hooks = sent.filter((d) => d.webhook_id === "wh_jobs_tell")
     expect(hooks.map((d) => d.event_type)).toEqual(["job.needs_you"])
+    expect(sent.filter((d) => d.webhook_id === "wh_jobs_star")).toEqual([])
     expect(JSON.parse(hooks[0]?.payload ?? "{}")).toMatchObject({
       event: "job.needs_you",
       job: { id: job.id, status: "needs_you", question: "Send to 14 people?" },
@@ -867,6 +877,135 @@ describe("jobs: telling people", () => {
     ).toBe(200)
     expect(await bells(app, owner.email)).toHaveLength(1)
     expect(await bells(app, ed.email)).toHaveLength(0)
+  })
+
+  it("interrupts are for asked work, and a burst on one agent is one message", async () => {
+    const { app, meta } = await setup("jobs-tell-interrupts")
+    await meta.setOrgSettings("default", {
+      ...(await meta.getOrgSettings("default")),
+      emailNotifications: true,
+    })
+    for (const u of [owner, ed])
+      await meta.setUserNotificationPref({
+        id: `unp-jobs-int-${u.id}`,
+        org_id: "default",
+        user_id: u.id,
+        prefs: JSON.stringify({ reviewEmail: true }),
+        created_at: new Date().toISOString(),
+      })
+    const a = await createAgent(app)
+    // Three of Ed's asks fail in one pass: three bells, one email.
+    const ids: string[] = []
+    for (const n of [1, 2, 3])
+      ids.push(((await (await ask(app, ed.email, a.id, `job ${n}`)).json()) as { id: string }).id)
+    for (const id of ids) {
+      const claimed = await meta.claimJob(
+        id,
+        new Date(Date.now() + 60_000).toISOString(),
+        new Date().toISOString(),
+      )
+      await report(app, a.token, id, { started_at: claimed?.started_at ?? null, status: "failed" })
+    }
+    expect(await bells(app, ed.email)).toHaveLength(3)
+
+    // A schedule's routine result rings its creator's bell and sends nothing louder.
+    const job = await meta.createJob({
+      id: newId("job"),
+      org_id: "default",
+      agent_id: a.id,
+      kind: "scheduled",
+      instruction: "nightly",
+    })
+    const claimed = await meta.claimJob(
+      job.id,
+      new Date(Date.now() + 60_000).toISOString(),
+      new Date().toISOString(),
+    )
+    await report(app, a.token, job.id, {
+      started_at: claimed?.started_at ?? null,
+      status: "succeeded",
+    })
+    expect(await bells(app, owner.email)).toHaveLength(1)
+    // One email in all: Ed's, for the burst. None for the schedule's owner.
+    const emails = (await outbox(meta)).filter((d) => d.kind === "email")
+    expect(emails.map((d) => JSON.parse(d.payload).to)).toEqual([ed.email])
+  })
+
+  it("a graph's step that needs a person tells the graph's asker and manager", async () => {
+    const { app, meta } = await setup("jobs-tell-step")
+    const graphAgent = await createAgent(app)
+    const stepAgent = await createAgent(app)
+    const graph = await meta.createJob({
+      id: newId("job"),
+      org_id: "default",
+      agent_id: graphAgent.id,
+      kind: "graph",
+      instruction: "Ship the release",
+      asked_by: ed.id,
+    })
+    const step = await meta.createJob({
+      id: newId("job"),
+      org_id: "default",
+      agent_id: stepAgent.id,
+      kind: "node",
+      instruction: "Check the changelog",
+      asked_by: ed.id,
+      parent_id: graph.id,
+      node_id: "check",
+    })
+    const [p] = await pull(app, stepAgent)
+    expect(p?.id).toBe(step.id)
+    await report(app, stepAgent.token, step.id, {
+      started_at: p?.started_at ?? null,
+      status: "needs_you",
+      needs: { kind: "decision", question: "Include the beta notes?" },
+    })
+    for (const who of [ed, owner]) {
+      const mine = (await bells(app, who.email)).filter((b) => b.preview.startsWith("needs you"))
+      expect(mine).toHaveLength(1)
+      expect(mine[0]).toMatchObject({ thread_id: graphAgent.id, comment_id: graph.id })
+      expect(mine[0]?.preview).toContain("Include the beta notes?")
+    }
+  })
+
+  it("needs_you tells the agent's creator only while they may still manage it", async () => {
+    const { app, meta } = await setup("jobs-tell-demoted")
+    const made = await app.request("/v1/agents", jsonAs(as(ed.email), { name: "Ed's helper" }))
+    expect(made.status).toBe(201)
+    const a = (await made.json()) as { id: string; token: string }
+    const seat = await meta.getMembership("default", ed.id)
+    if (!seat) throw new Error("no seat")
+    await meta.setMembership({ id: seat.id, org_id: "default", user_id: ed.id, role: "viewer" })
+    const job = (await (await ask(app, owner.email, a.id, "Which one?")).json()) as { id: string }
+    const [p] = await pull(app, a)
+    await report(app, a.token, job.id, {
+      started_at: p?.started_at ?? null,
+      status: "needs_you",
+      needs: { kind: "decision", question: "Left or right?" },
+    })
+    expect(await bells(app, owner.email)).toHaveLength(1)
+    expect(await bells(app, ed.email)).toHaveLength(0)
+  })
+
+  it("a report page a runner attaches becomes private to the workspace", async () => {
+    const { app, meta } = await setup("jobs-tell-report-private")
+    const a = await createAgent(app)
+    const job = (await (await ask(app, ed.email, a.id, "Write it up")).json()) as { id: string }
+    const [p] = await pull(app, a)
+    // An older runner publishes with the workspace's defaults, or wider.
+    const page = (await (
+      await publishAs(app, "# Report", { link_role: "viewer" }, bearer(a.token))
+    ).json()) as { short_id: string }
+    await report(app, a.token, job.id, {
+      started_at: p?.started_at ?? null,
+      status: "succeeded",
+      report_short_id: page.short_id,
+    })
+    expect(await meta.getByShortId(page.short_id)).toMatchObject({
+      workspace_access: "member",
+      link_role: "none",
+      listed: "none",
+    })
   })
 
   it("the boot payload carries how many jobs wait on you", async () => {
@@ -1294,6 +1433,28 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
       await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
     ).json()) as { status: string; report_short_id: string }
     expect(again).toMatchObject({ status: "succeeded", report_short_id: done.report_short_id })
+
+    // A reply rides its thread, and a comment that @mentions the agent reaches it through its
+    // inbox: neither also reopens the job, which would set the agent to the same work twice.
+    const thread = ((await commented.json()) as { thread_id: string }).thread_id
+    await app.request(
+      `/v1/artifacts/${done.report_short_id}/comments`,
+      jsonAs(as(ed.email), { body_md: "Thanks.", thread_id: thread }),
+    )
+    await app.request(
+      `/v1/artifacts/${done.report_short_id}/comments`,
+      jsonAs(as(ed.email), {
+        body_md: "@agent one more pass",
+        mentions: [{ id: agent.id, name: "agent" }],
+      }),
+    )
+    expect(
+      (
+        (await (await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })).json()) as {
+          status: string
+        }
+      ).status,
+    ).toBe("succeeded")
   })
 
   it("a report must be a page the agent made, not a teammate's", async () => {

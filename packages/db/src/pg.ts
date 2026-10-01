@@ -2550,7 +2550,7 @@ export class PgMetaStore implements MetaStore {
        SELECT 'seats', to_jsonb((SELECT count(*)::int FROM membership m
                                   WHERE m.org_id = $1 AND m.role = ANY($4)))
        UNION ALL
-       SELECT 'needs_you', to_jsonb((SELECT count(*)::int FROM job j
+       SELECT 'needs_you', to_jsonb((SELECT LEAST(count(*), 100)::int FROM job j
          JOIN membership m ON m.org_id = $1 AND m.user_id = $2
         WHERE j.org_id = $1 AND j.status = 'needs_you'
           AND (m.role = 'owner' OR j.asked_by = $2
