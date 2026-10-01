@@ -58,6 +58,7 @@ import { fail, VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
 import { INSTANCE_SETTINGS_ID } from "./lib/instance-settings"
 import { catalogOf, type GatewayConfig, type ModelCatalog } from "./lib/model-catalog"
 import { type ModelLibrary, modelSource, readLibrary } from "./lib/model-library"
+import { jobAnnouncer } from "./lib/notify-job"
 import { makeOauthAgent } from "./lib/oauth-agent"
 import {
   clientIp,
@@ -1875,6 +1876,15 @@ export function buildContext(deps: AppDeps) {
     accessRequestLimiter,
     accessRequestMailLimiter,
     notify,
+    /** Tell the people an agent's job concerns that it needs them or finished: the bell, the
+     *  live channel, email, Slack DM, and webhooks (lib/notify-job.ts). Every JobDeps a route
+     *  builds carries it. */
+    announceJob: jobAnnouncer({
+      meta,
+      bus,
+      baseUrl: deps.baseUrl,
+      pokeWebhooks: deps.pokeWebhooks,
+    }),
     notifyRender,
     background,
     afterResponse,

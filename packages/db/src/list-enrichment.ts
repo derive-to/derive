@@ -154,7 +154,12 @@ export const composeBootstrap = async (
     Parameters<typeof composeNotificationsPage>[0] &
     Pick<
       MetaStore,
-      "collectionRolesForUser" | "getOrgSettings" | "getSubscription" | "listMemberships"
+      | "collectionRolesForUser"
+      | "getOrgSettings"
+      | "getSubscription"
+      | "listMemberships"
+      | "listAgents"
+      | "listJobs"
     >,
   orgId: string,
   userId: string,
@@ -173,9 +178,24 @@ export const composeBootstrap = async (
   // The publishing-blocked verdict's two inputs. The pg driver answers both as arms of
   // the one bootstrap statement; here they are two more free local reads.
   const subscription = await store.getSubscription(orgId)
-  const billableSeats = (await store.listMemberships(orgId)).filter((m) =>
-    isBillableRole(m.role),
-  ).length
+  const members = await store.listMemberships(orgId)
+  const billableSeats = members.filter((m) => isBillableRole(m.role)).length
+  // The Inbox count, by the rule the pg arm and GET /v1/jobs?mine=1 apply.
+  const seat = members.find((m) => m.user_id === userId)
+  const own =
+    seat && seat.role !== "owner" && seat.role !== "viewer"
+      ? (await store.listAgents(orgId)).filter((a) => a.created_by === userId).map((a) => a.id)
+      : []
+  const needsYou = seat
+    ? (
+        await store.listJobs({
+          orgId,
+          status: ["needs_you"],
+          askedByOrAgent: seat.role === "owner" ? undefined : { askedBy: userId, agentIds: own },
+          limit: 1000,
+        })
+      ).length
+    : 0
   return {
     summary,
     collections,
@@ -187,6 +207,7 @@ export const composeBootstrap = async (
     settings,
     notifications,
     billing: { subscription, billableSeats },
+    needsYou,
   }
 }
 

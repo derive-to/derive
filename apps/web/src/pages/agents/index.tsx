@@ -9,6 +9,7 @@ import { PageShell } from "@/components/shared/page-shell"
 import { Button } from "@/components/ui/button"
 import { agentsQuery, openJobsQuery, recentJobsQuery } from "@/lib/queries"
 import { useDocumentTitle } from "@/lib/use-document-title"
+import { useJobEvents } from "@/lib/use-job-events"
 import {
   cronLabel,
   firstLine,
@@ -28,7 +29,10 @@ import { useMemberNames } from "./use-member-names"
 export function AgentsHome() {
   useDocumentTitle("Agents")
   const agents = useQuery(agentsQuery())
-  const open = useQuery({ ...openJobsQuery(), refetchInterval: 15_000 })
+  // Job events keep this live for the jobs you asked or are told about; the slow poll catches
+  // teammates' jobs, which send you nothing.
+  useJobEvents()
+  const open = useQuery({ ...openJobsQuery(), refetchInterval: 60_000 })
   const recent = useQuery(recentJobsQuery())
   const names = useMemberNames()
   const roster = useMemo(() => rosterOf(agents.data ?? []), [agents.data])

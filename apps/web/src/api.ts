@@ -388,6 +388,8 @@ export interface BootstrapPayload {
   settings: OrgSettings
   notifications: Notification[]
   unread: number
+  /** How many jobs wait on you (the rail's Inbox count): GET /v1/jobs?mine=1&status=needs_you. */
+  needs_you: number
   /** The publishing-blocked verdict — the same value GET /v1/billing reports as
    *  `blocked`, which is all the app shell's banner ever read it for. */
   blocked: BillingInfo["blocked"]

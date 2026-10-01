@@ -4455,6 +4455,8 @@ export interface paths {
                             settings: components["schemas"]["OrgSettings"];
                             notifications: components["schemas"]["Notification"][];
                             unread: number;
+                            /** @description How many jobs wait on you: needs_you, and you asked them or manage their agent. The count GET /v1/jobs?mine=1&status=needs_you lists. */
+                            needs_you: number;
                             /** @description The publishing-blocked verdict, or null when the workspace is free to publish. Same value GET /v1/billing reports as `blocked`. */
                             blocked: {
                                 code: string;
@@ -6230,7 +6232,7 @@ export interface paths {
                     content: {
                         "application/json": {
                             webhooks: components["schemas"]["Webhook"][];
-                            event_options: ("comment.created" | "comment.mention" | "comment.resolved" | "version.published" | "review.requested" | "review.sent_back")[];
+                            event_options: ("comment.created" | "comment.mention" | "comment.resolved" | "version.published" | "review.requested" | "review.sent_back" | "job.needs_you" | "job.finished")[];
                         };
                     };
                 };
@@ -7707,10 +7709,10 @@ export interface components {
             /** @description Who triggered it — a person's display name (their handle when they have none) */
             actor: string;
             /**
-             * @description What happened: mention, comment, share, follow, publish, review, or access_request (someone who cannot open the artifact is asking you to grant it)
+             * @description What happened: mention, comment, share, follow, publish, review, access_request (someone who cannot open the artifact is asking you to grant it), or job (an agent's job needs you or finished; thread_id is the agent id, comment_id the job id, and the artifact fields name its report page when it has one)
              * @enum {string}
              */
-            kind: "mention" | "comment" | "share" | "follow" | "publish" | "review" | "access_request";
+            kind: "mention" | "comment" | "share" | "follow" | "publish" | "review" | "access_request" | "job";
             artifact_id: string;
             /** @description The artifact's public short id for links; empty for follows (no anchor) */
             artifact_short_id: string;

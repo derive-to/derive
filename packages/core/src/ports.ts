@@ -2219,6 +2219,10 @@ export interface BootstrapRead {
    *  the workspace preamble) and it was the single most expensive request on the boot
    *  waterfall — 676ms measured — to render a strip that is normally invisible. */
   billing: { subscription: SubscriptionRecord | null; billableSeats: number }
+  /** How many of the workspace's jobs wait on this person (the rail's Inbox count): needs_you,
+   *  and they asked it or manage its agent (created it, with a seat above viewer), or they own
+   *  the workspace. Zero without a seat. The same rule GET /v1/jobs?mine=1 applies. */
+  needsYou: number
 }
 
 export interface NotificationsPage {
@@ -4173,7 +4177,11 @@ export interface UserProfile {
  *  `access_request` is the inverse of `share`: someone who CANNOT open the artifact is
  *  asking you to grant it, so it reaches only recipients who hold `share` on it. Its
  *  preview carries the asker's address and note — the approver has no other way to
- *  reach a person the roster has never heard of. */
+ *  reach a person the roster has never heard of.
+ *  `job` is an agent's job that needs you or finished: its artifact_* fields name the job's
+ *  report page ("" when it has none yet), `thread_id` carries the agent id (the fallback
+ *  link, /agents/<id>), `comment_id` the job id, and `preview` the line after the agent's
+ *  name ("needs you: …", "finished …"). */
 export type NotificationKind =
   | "mention"
   | "comment"
@@ -4182,6 +4190,7 @@ export type NotificationKind =
   | "publish"
   | "review"
   | "access_request"
+  | "job"
 export interface NotificationRecord {
   id: string
   user_id: string

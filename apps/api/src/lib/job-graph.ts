@@ -14,6 +14,7 @@ import {
 import { log } from "../log"
 import { agentWritesOff } from "./agent-writes"
 import {
+  announceJob,
   askAgent,
   canAskAgent,
   cancelJob,
@@ -242,6 +243,7 @@ async function walk(deps: GraphDeps, given: JobRecord): Promise<void> {
     })
     // Only once the graph is settled under this pass: a pass that lost never cancels anything.
     if (g) for (const c of await openChildren(g.since)) await cancelJob(deps, c)
+    await announceJob(deps, job as JobRecord)
   }
 
   // Reopened after it settled (a follow-up or a retry) and not waiting on a person: run again
@@ -465,7 +467,7 @@ async function walk(deps: GraphDeps, given: JobRecord): Promise<void> {
   if (heldForBudget) await noteHeldForBudget(meta, job)
   if (waiting) {
     const node = nodeOf(d, waiting)
-    await write(
+    const waits = await write(
       {
         status: "needs_you",
         lease_until: null,
@@ -473,6 +475,7 @@ async function walk(deps: GraphDeps, given: JobRecord): Promise<void> {
       },
       "running",
     )
+    await announceJob(deps, waits)
     return
   }
   // Finished only when every step of this run is closed AND recorded: a step that settled while

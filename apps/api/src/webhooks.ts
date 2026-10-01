@@ -57,12 +57,25 @@ export const edgeGuard: AddressGuard = {
   },
 }
 
-/** Normalized payload stored in the outbox (canonical, re-deliverable). */
+/** Normalized payload stored in the outbox (canonical, re-deliverable). A job event names
+ *  its report page as `artifact` when it has one (else null) and carries the job itself. */
 export interface EventPayload {
   event: WebhookEvent
   at: string
-  artifact: { short_id: string; title: string | null; url: string }
+  artifact: { short_id: string; title: string | null; url: string } | null
+  job?: JobEventSummary
   data: Record<string, unknown>
+}
+
+/** What a job webhook says about the job: enough to act on without a second read. */
+export interface JobEventSummary {
+  id: string
+  agent_id: string
+  agent_name: string
+  status: string
+  instruction: string
+  question: string | null
+  url: string
 }
 
 export function buildPayload(
@@ -95,6 +108,7 @@ export function buildPayload(
  *  from one of ours. The artifact URL is the one thing built by us, so it is interpolated raw;
  *  escaping it would rewrite `&` and corrupt the query string. */
 export function slackMessage(p: EventPayload): unknown {
+  if (p.job || !p.artifact) return jobSlackMessage(p)
   const title = mrkdwnLabel(p.artifact.title ?? p.artifact.short_id)
   const link = `<${p.artifact.url}|${title}>`
   const author = mrkdwnLabel(String(p.data.author ?? "someone"))
@@ -120,6 +134,28 @@ export function slackMessage(p: EventPayload): unknown {
     if (p.data.author) lines.push(`by ${author}`)
   }
   const body = [head, ...lines.filter((l): l is string => l !== null)].join("\n")
+  return {
+    text: head,
+    blocks: [
+      { type: "section", text: { type: "mrkdwn", text: body } },
+      { type: "context", elements: [{ type: "mrkdwn", text: `Derive · ${p.event}` }] },
+    ],
+  }
+}
+
+/** A job event as a Slack incoming-webhook message: who, what happened, and the link. */
+function jobSlackMessage(p: EventPayload): unknown {
+  const job = p.job
+  const agent = mrkdwnLabel(job?.agent_name ?? "An agent")
+  const what = mrkdwnLabel(job?.instruction ?? "a job", 140)
+  const link = job ? `<${job.url}|${what}>` : what
+  const head =
+    p.event === "job.needs_you"
+      ? `:raised_hand: *${agent}* needs you on ${link}`
+      : `:white_check_mark: *${agent}* ${escapeMrkdwn(job?.status ?? "finished")}: ${link}`
+  const body = [head, job?.question ? mrkdwnBody(job.question, 280) : null]
+    .filter((l): l is string => !!l)
+    .join("\n")
   return {
     text: head,
     blocks: [
@@ -270,6 +306,44 @@ export async function enqueueForEvent(
       kind: h.kind,
       event_type: event,
       payload,
+    })),
+  )
+  return subscribed.length
+}
+
+/** Enqueue a job event for the workspace's webhooks: every workspace-wide hook subscribed to
+ *  it, plus hooks on the job's report page when it has one. Returns how many were queued. */
+export async function enqueueJobEvent(
+  meta: MetaStore,
+  baseUrl: string,
+  orgId: string,
+  report: ArtifactRecord | null,
+  event: Extract<WebhookEvent, "job.needs_you" | "job.finished">,
+  job: JobEventSummary,
+): Promise<number> {
+  // A hook on another page never matches the empty id; a workspace-wide one always does.
+  const hooks = await meta.activeWebhooks(report?.id ?? "", orgId)
+  const subscribed = hooks.filter((h) => h.events === "*" || h.events.split(",").includes(event))
+  if (subscribed.length === 0) return 0
+  const payload: EventPayload = {
+    event,
+    at: new Date().toISOString(),
+    artifact: report
+      ? { short_id: report.short_id, title: report.title, url: artifactUrl(baseUrl, report) }
+      : null,
+    job,
+    data: { status: job.status },
+  }
+  const body = JSON.stringify(payload)
+  await meta.enqueueDeliveries(
+    subscribed.map((h) => ({
+      id: `wd_${randomUUID().slice(0, 12)}`,
+      webhook_id: h.id,
+      url: h.url,
+      secret: h.secret,
+      kind: h.kind,
+      event_type: event,
+      payload: body,
     })),
   )
   return subscribed.length

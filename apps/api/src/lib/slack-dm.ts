@@ -349,6 +349,40 @@ export const enqueueSlackShareDm = async (
   } satisfies SlackDmPayload)
 }
 
+/** DM a person that an agent's job needs them or finished. One per transition: the caller
+ *  (lib/notify-job.ts) runs once per status change, so a retry never DMs twice. */
+export const enqueueSlackJobDm = async (
+  meta: MetaStore,
+  input: {
+    orgId: string
+    recipientId: string
+    agentName: string
+    /** "needs you", "finished", "failed", and so on: a fixed vocabulary, never user text. */
+    verb: string
+    instruction: string
+    question: string | null
+    link: string
+  },
+): Promise<void> => {
+  const install = await meta.getSlackInstall(input.orgId)
+  if (!install) return
+  const pref = await meta.getUserNotificationPref(input.orgId, input.recipientId)
+  if (!wantsSlackDm(pref?.prefs)) return
+  const what = mrkdwnLabel(input.instruction, 140)
+  const glyph = input.verb === "needs you" ? ":raised_hand:" : ":white_check_mark:"
+  const blocks = [
+    section(`${glyph} *${mrkdwnLabel(input.agentName)}* ${input.verb}: <${input.link}|${what}>`),
+    ...(input.question ? [section(`> ${mrkdwnBody(input.question, 600)}`)] : []),
+    actions([openButton(input.link)]),
+  ]
+  await enqueueChannelDelivery(meta, "slack_dm", "job", {
+    orgId: input.orgId,
+    userId: input.recipientId,
+    text: `${mrkdwnLabel(input.agentName)} ${input.verb}: ${what}`,
+    blocks,
+  } satisfies SlackDmPayload)
+}
+
 /** Enqueue an arbitrary DM to a Derive user (used by the "send test DM" button). */
 export const enqueueSlackDm = async (
   meta: MetaStore,

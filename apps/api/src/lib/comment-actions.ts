@@ -21,6 +21,7 @@ import {
   parseMeta,
   quoteOf,
 } from "./comments"
+import { canSteerJob, followUpJob, jobOverBudget } from "./jobs"
 import { notifyMentions, notifyThreadReplyAgents } from "./mentions"
 import { notifyCommentBells } from "./notify-comment"
 import { enqueueCommentEmails } from "./notify-email"
@@ -47,6 +48,36 @@ export interface CommentActionDeps {
     comment: CommentRecord,
     asker: { id: string; name: string } | null,
   ) => Promise<void>
+}
+
+/** The job this report page belongs to, reopened with a person's comment as a follow-up.
+ *  Returns the job's id when it was written to, else null. */
+export const followUpFromReport = async (
+  deps: Pick<CommentActionDeps, "meta" | "bus">,
+  artifact: ArtifactRecord,
+  comment: CommentRecord,
+  actorId: string | null,
+): Promise<string | null> => {
+  const { meta } = deps
+  if (!actorId) return null
+  const [job] = await meta.listJobs({
+    orgId: artifact.org_id,
+    reportArtifactId: artifact.id,
+    limit: 1,
+  })
+  if (!job || job.status === "cancelled") return null
+  // A person, not an agent or a synthetic principal.
+  const [person] = await meta.getUsers([actorId])
+  if (!person) return null
+  const agent = await meta.getAgent(job.agent_id)
+  if (!agent || !(await canSteerJob(meta, agent, job, person.id))) return null
+  // Reopening settled work is new work: it meets the budget a follow-up meets.
+  if (job.status !== "running" && job.status !== "queued" && job.kind !== "graph")
+    if (await jobOverBudget(meta, job)) return null
+  const quote = quoteOf(comment.anchor)
+  const body = quote ? `On "${quote}":\n\n${comment.body_md}` : comment.body_md
+  await followUpJob({ meta, bus: deps.bus }, job, person.id, body)
+  return job.id
 }
 
 /**
@@ -184,6 +215,12 @@ export const commentCreatedAction = async (
       enqueueSlackComment({ meta, baseUrl }, artifact, comment),
     )
   await fanOut("outbox-poke", () => Promise.resolve(deps.pokeWebhooks?.()))
+
+  // A person's comment on a job's report page is a follow-up to that job: it reopens the job
+  // with the comment as the next message, as if they had written to it (POST
+  // /v1/jobs/{id}/messages, with the same steering and budget rules). Agents' comments, and
+  // people who may not steer the job, leave it where it is.
+  await fanOut("job:report-follow-up", () => followUpFromReport(deps, artifact, comment, actorId))
 
   // @derive — LAST, and deliberately here rather than in each route.
   //

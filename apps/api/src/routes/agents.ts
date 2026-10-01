@@ -740,6 +740,7 @@ export const agentRoutes = (ctx: AppContext) => {
       // Its open work and its schedules have nobody left to serve them.
       for (let open = await openJobs(org, id); open.length; open = await openJobs(org, id)) {
         let moved = 0
+        // No announce: the agent row is gone, so there is nobody to say it on behalf of.
         for (const j of open) if (await cancelJob({ meta, bus: ctx.backplane }, j)) moved++
         if (moved === 0) break
       }

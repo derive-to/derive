@@ -210,8 +210,8 @@ export function NotificationsSection() {
         ) : (
           <SettingRow
             htmlFor="toggle-review-email"
-            label="Email me review requests"
-            description="Off by default. Turn this on when you also want review requests in your inbox. A workspace admin must keep email delivery enabled."
+            label="Email me review requests and agent jobs"
+            description="Off by default. Turn this on when you also want review requests, and agent jobs that need you or finished, in your inbox. A workspace admin must keep email delivery enabled."
           >
             <Switch
               id="toggle-review-email"

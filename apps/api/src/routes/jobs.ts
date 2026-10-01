@@ -27,6 +27,7 @@ import {
   canManageAgent,
   canSteerJob,
   followUpJob,
+  inboxScope,
   isServerNote,
   jobJson,
   jobOverBudget,
@@ -147,7 +148,12 @@ const KINDS = ["ask", "scheduled", "graph", "node"] as const
 export const jobRoutes = (ctx: AppContext) => {
   const { meta, deps, agentFor, actingHuman } = ctx
   const app = new OpenAPIHono<BlankEnv>()
-  const jobDeps = graphAware({ meta, bus: ctx.backplane, blobs: ctx.blobs })
+  const jobDeps = graphAware({
+    meta,
+    bus: ctx.backplane,
+    blobs: ctx.blobs,
+    announce: ctx.announceJob,
+  })
 
   const messageJson = (m: {
     id: string
@@ -252,15 +258,9 @@ export const jobRoutes = (ctx: AppContext) => {
       if (q.mine === "1") {
         const who = await actingHuman(c)
         if (!who) return bail(fail(c, 401, "unauthenticated"))
-        const seat = await meta.getMembership(org, who.id).catch(() => null)
-        if (!seat) return c.json({ jobs: [] })
-        if (seat.role !== "owner") {
-          const own =
-            seat.role === "viewer"
-              ? []
-              : (await meta.listAgents(org)).filter((a) => a.created_by === who.id)
-          askedByOrAgent = { askedBy: who.id, agentIds: own.map((a) => a.id) }
-        }
+        const scope = await inboxScope(meta, org, who.id)
+        if (!scope) return c.json({ jobs: [] })
+        if (scope !== "all") askedByOrAgent = scope
       }
       const jobs = await meta.listJobs({
         orgId: org,
@@ -446,8 +446,8 @@ export const jobRoutes = (ctx: AppContext) => {
         return c.json(await showOne(out))
       },
     )
-  personAction("/v1/jobs/{id}/cancel", "Cancel an open job (and its children).", (job) =>
-    cancelJob(jobDeps, job),
+  personAction("/v1/jobs/{id}/cancel", "Cancel an open job (and its children).", (job, _c, whoId) =>
+    cancelJob(jobDeps, job, whoId),
   )
   personAction(
     "/v1/jobs/{id}/retry",

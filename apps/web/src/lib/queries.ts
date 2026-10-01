@@ -644,6 +644,16 @@ export const inboxJobsQuery = () =>
     meta: { persist: false },
   })
 
+// How many jobs wait on you: the rail's Inbox count. Seeded by the boot batch, then kept
+// current by job events (lib/use-job-events), which invalidate everything under ["jobs"].
+export const needsYouCountQuery = () =>
+  queryOptions({
+    queryKey: ["jobs", "inbox", "count"] as const,
+    queryFn: () =>
+      api.listJobs({ mine: true, status: ["needs_you"], limit: 100 }).then((r) => r.jobs.length),
+    meta: { persist: false },
+  })
+
 // The job a report page belongs to, or null for an ordinary page.
 export const reportJobQuery = (shortId: string) =>
   queryOptions({

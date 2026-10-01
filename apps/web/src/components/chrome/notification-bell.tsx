@@ -99,11 +99,17 @@ export function NotificationBell() {
       nav({ to: "/users/$handle", params: { handle } })
       return
     }
+    // An agent's job: its report page when it has one, else the agent (its id rides
+    // thread_id on a job row).
+    if (n.kind === "job" && !n.artifact_short_id) {
+      nav({ to: "/agents/$id", params: { id: n.thread_id }, search: {} })
+      return
+    }
     nav({
       to: "/artifacts/$ref",
       params: { ref: refFor({ short_id: n.artifact_short_id, title: n.artifact_title }) },
-      // A share/publish notification has no thread; open the artifact itself.
-      search: n.thread_id ? { comment: n.thread_id } : {},
+      // A share/publish/job notification has no thread; open the artifact itself.
+      search: n.thread_id && n.kind !== "job" ? { comment: n.thread_id } : {},
     })
   }
 
@@ -182,6 +188,18 @@ export function NotificationBell() {
                     is reserved. */}
                   {n.kind === "mention" ? (
                     <Icon name="at" className="mt-0.5 text-primary" />
+                  ) : n.kind === "job" ? (
+                    // A job that waits on you is addressed to you; one that finished is news.
+                    <Icon
+                      name="agent"
+                      size={16}
+                      className={cn(
+                        "mt-0.5",
+                        n.preview.startsWith("needs you")
+                          ? "text-primary"
+                          : "text-muted-foreground",
+                      )}
+                    />
                   ) : (
                     <Icon
                       name={
@@ -212,6 +230,9 @@ export function NotificationBell() {
                       <strong>{n.actor}</strong>{" "}
                       {n.kind === "follow" ? (
                         "started following you"
+                      ) : n.kind === "job" ? (
+                        // The preview is the whole line: "needs you: …", "finished: …".
+                        n.preview
                       ) : n.kind === "review" ? (
                         <>
                           requested your review of{" "}

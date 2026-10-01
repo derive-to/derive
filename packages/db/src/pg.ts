@@ -2548,7 +2548,14 @@ export class PgMetaStore implements MetaStore {
        SELECT 'subscription', (SELECT to_jsonb(s) FROM subscription s WHERE s.org_id = $1)
        UNION ALL
        SELECT 'seats', to_jsonb((SELECT count(*)::int FROM membership m
-                                  WHERE m.org_id = $1 AND m.role = ANY($4)))`
+                                  WHERE m.org_id = $1 AND m.role = ANY($4)))
+       UNION ALL
+       SELECT 'needs_you', to_jsonb((SELECT count(*)::int FROM job j
+         JOIN membership m ON m.org_id = $1 AND m.user_id = $2
+        WHERE j.org_id = $1 AND j.status = 'needs_you'
+          AND (m.role = 'owner' OR j.asked_by = $2
+               OR (m.role <> 'viewer' AND j.agent_id IN
+                   (SELECT a.id FROM agent a WHERE a.org_id = $1 AND a.created_by = $2)))))`
     const bootParams = [
       orgId,
       userId,
@@ -2589,6 +2596,7 @@ export class PgMetaStore implements MetaStore {
         subscription: (arm.subscription as SubscriptionRecord | null) ?? null,
         billableSeats: (arm.seats as number | null) ?? 0,
       },
+      needsYou: (arm.needs_you as number | null) ?? 0,
       // to_jsonb of the text column yields a JSON string (or null when no row) — exactly
       // the raw value getOrgSettings hands to the same parser.
       settings: parseOrgSettings(typeof arm.settings === "string" ? arm.settings : null),

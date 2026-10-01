@@ -830,6 +830,14 @@ test("Inbox answers what needs you in place and lists what agents published toda
   await expect(owner.getByTestId("nav-inbox")).not.toContainText("1")
   const job = await (await owner.request.get(`/v1/jobs/${jobId}`)).json()
   expect(job.status).toBe("queued")
+
+  // The bell said so too, and its row opens the agent (the job has no report page yet).
+  await owner.getByTestId("notif-bell").click()
+  const bell = owner.locator('[data-testid^="notif-item-"]', { hasText: "needs you" })
+  await expect(bell).toContainText("Scribe")
+  await expect(bell).toContainText("Ship it to the changelog?")
+  await bell.click()
+  await expect(owner).toHaveURL(new RegExp(`/agents/${agent.id}$`))
 })
 
 test("a job's report page says which job it is, and the job links to it", async ({
@@ -874,6 +882,8 @@ test("asking an agent from a page's margin opens a job about that page and shows
   await owner.getByTestId("margin-ask-send").click()
   const follow = owner.getByTestId("margin-ask-job")
   await expect(follow).toHaveAttribute("data-status", "queued")
+  // Its runner has never checked in, and the box says why the job waits.
+  await expect(owner.getByTestId("margin-ask-warning")).toContainText("never checked in")
 
   // The job is about this page; its runner picks it up and answers.
   const [held] = await pullAs(owner, agent)
@@ -885,10 +895,15 @@ test("asking an agent from a page's margin opens a job about that page and shows
       status: "succeeded",
       body_md: "It has no owner for the rollout.",
     })
-  // A queued job is re-read every 20s, so allow one full interval.
-  await expect(follow).toHaveAttribute("data-status", "succeeded", { timeout: 30_000 })
+  // The settle reaches the asker's open tab as an event; no poll interval to wait out.
+  await expect(follow).toHaveAttribute("data-status", "succeeded", { timeout: 10_000 })
   await expect(follow).toContainText("It has no owner for the rollout.")
   await owner.screenshot({ path: testInfo.outputPath("margin-ask.png") })
+  // A reload keeps the reply instead of an empty box.
+  await owner.reload()
+  await expect(owner.getByTestId("margin-ask-job")).toContainText(
+    "It has no owner for the rollout.",
+  )
 })
 
 test("a paper from arXiv is imported from Templates, on its own page", async ({ owner }) => {

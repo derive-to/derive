@@ -60,6 +60,11 @@ export const bootstrapRoutes = (ctx: AppContext) => {
                 settings: OrgSettings,
                 notifications: z.array(Notification),
                 unread: z.number(),
+                needs_you: z
+                  .number()
+                  .describe(
+                    "How many jobs wait on you: needs_you, and you asked them or manage their agent. The count GET /v1/jobs?mine=1&status=needs_you lists.",
+                  ),
                 blocked: z
                   .object({ code: z.string(), message: z.string() })
                   .nullable()
@@ -122,6 +127,8 @@ export const bootstrapRoutes = (ctx: AppContext) => {
         settings: b.settings,
         notifications: b.notifications.notifications,
         unread: b.notifications.unread,
+        // The rail's Inbox count, an arm of the same batch, so the shell needs no poll for it.
+        needs_you: b.needsYou,
         blocked,
       })
     },

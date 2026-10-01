@@ -1,13 +1,14 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { type FormEvent, useState } from "react"
-import { type AgentDetail, api, type Job } from "@/api"
+import { type Agent, type AgentDetail, api, type Job } from "@/api"
 import { LoadError } from "@/components/shared/load-error"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { accountsQuery, agentJobsQuery, agentQuery, jobQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { useJobEvents } from "@/lib/use-job-events"
 import { cn } from "@/lib/utils"
 import {
   cronLabel,
@@ -27,7 +28,7 @@ const first = (name: string | undefined) => name?.trim().split(/\s+/)[0] || unde
 /** The one line that says why this agent's jobs will not start, or null when they will.
  *  `noAccount` is true only when the viewer can see that no model account would resolve. */
 export function warningFor(
-  agent: AgentDetail,
+  agent: Pick<Agent, "paused" | "machine" | "seen_at" | "created_by">,
   names: Map<string, string>,
   noAccount = false,
 ): string | null {
@@ -52,7 +53,9 @@ export function AgentJobs({
   names: Map<string, string>
   meId: string
 }) {
-  const jobs = useInfiniteQuery({ ...agentJobsQuery(agent.id), refetchInterval: 15_000 })
+  // Job events keep this live; the slow poll catches teammates' asks, which send you nothing.
+  useJobEvents()
+  const jobs = useInfiniteQuery({ ...agentJobsQuery(agent.id), refetchInterval: 60_000 })
   const warning = warningFor(agent, names, useNoAccount(agent, meId))
   const schedules = schedulesOf(agent.triggers)
   const rows = jobs.data?.pages.flatMap((p) => p.jobs) ?? []

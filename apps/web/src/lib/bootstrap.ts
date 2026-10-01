@@ -4,6 +4,7 @@ import { useAuth } from "@/ctx"
 import {
   blockedQuery,
   collectionsQuery,
+  needsYouCountQuery,
   notificationsQuery,
   summaryQuery,
   workspaceSettingsQuery,
@@ -40,6 +41,7 @@ export const seedFromBootstrap = (client: QueryClient, b: BootstrapPayload) => {
     unread: b.unread,
   })
   client.setQueryData(blockedQuery().queryKey, b.blocked)
+  client.setQueryData(needsYouCountQuery().queryKey, b.needs_you)
 }
 
 export const bootstrapQuery = (client: QueryClient) =>

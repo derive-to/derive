@@ -19,7 +19,10 @@ const ONLINE_MS = 120_000
 export type MachineMark = { label: string; on: boolean }
 
 /** Where an agent's jobs run, in words, and whether that machine is answering. */
-export function machineOf(agent: Agent, names: Map<string, string>): MachineMark {
+export function machineOf(
+  agent: Pick<Agent, "machine" | "seen_at" | "created_by">,
+  names: Map<string, string>,
+): MachineMark {
   if (agent.machine === "derive") return { label: "Derive", on: true }
   if (!agent.seen_at) return { label: "No machine", on: false }
   const owner = firstName(agent.created_by ? names.get(agent.created_by) : null)

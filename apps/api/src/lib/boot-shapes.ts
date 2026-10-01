@@ -58,9 +58,9 @@ export const Notification = z
       .string()
       .describe("Who triggered it — a person's display name (their handle when they have none)"),
     kind: z
-      .enum(["mention", "comment", "share", "follow", "publish", "review", "access_request"])
+      .enum(["mention", "comment", "share", "follow", "publish", "review", "access_request", "job"])
       .describe(
-        "What happened: mention, comment, share, follow, publish, review, or access_request (someone who cannot open the artifact is asking you to grant it)",
+        "What happened: mention, comment, share, follow, publish, review, access_request (someone who cannot open the artifact is asking you to grant it), or job (an agent's job needs you or finished; thread_id is the agent id, comment_id the job id, and the artifact fields name its report page when it has one)",
       ),
     artifact_id: z.string(),
     artifact_short_id: z

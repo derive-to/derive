@@ -641,6 +641,7 @@ export const machineDepsFrom = (
     config?: AppDeps["runtime"]
     fetcher?: typeof fetch
     bus?: JobDeps["bus"]
+    announce?: JobDeps["announce"]
   },
 ): MachineDeps | null =>
   opts.secret && opts.server && opts.config?.managed?.apiKey
@@ -651,5 +652,6 @@ export const machineDepsFrom = (
         config: opts.config,
         fetcher: opts.fetcher,
         bus: opts.bus,
+        announce: opts.announce,
       }
     : null
