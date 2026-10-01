@@ -158,7 +158,9 @@ export const paperImportRoutes = (ctx: AppContext) => {
     .object({
       id: z.string(),
       name: z.string(),
-      agent_id: z.string().describe("The registered agent this context routes asks to."),
+      agent_id: z
+        .string()
+        .describe("The hidden agent made for this imported paper. It is never listed or asked."),
       manifest_short_id: z
         .string()
         .nullable()
@@ -833,11 +835,11 @@ export const paperImportRoutes = (ctx: AppContext) => {
       path: "/v1/contexts/{id}",
       tags: ["Contexts"],
       summary:
-        "One context; a human asker also gets the manifest package, the agent the source to run.",
+        "One imported paper: its import status, its document, and its BibTeX. An id that was not imported returns 404.",
       request: { params: z.object({ id: z.string() }) },
       responses: {
         200: {
-          description: "The context — for a human asker, the manifest rendered as a package.",
+          description: "The imported paper.",
           content: {
             "application/json": {
               schema: ContextInfo.extend({
@@ -1064,7 +1066,7 @@ export const paperImportRoutes = (ctx: AppContext) => {
       tags: ["Contexts"],
       summary: "Delete an imported paper (its creator or a workspace manager).",
       request: { params: z.object({ id: z.string() }) },
-      responses: { 204: { description: "The context was deleted." } },
+      responses: { 204: { description: "The imported paper was deleted." } },
     }),
     async (c) => {
       // The same guard as the other paper routes: a management principal (never a runner's

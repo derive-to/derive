@@ -102,12 +102,12 @@ export const agentRoutes = (ctx: AppContext) => {
       hosted: z
         .boolean()
         .describe(
-          "Served by Derive's managed executor. Hosting changes where the agent runs, never its principal or cap.",
+          "A stored flag from before Derive machines. Nothing reads it; `machine` says where the agent runs.",
         ),
       managed: z
         .boolean()
         .describe(
-          "Auto-minted for one context at creation — the context's Derive access, not a user-named persona. Hidden from the roster UI.",
+          "Made automatically for one imported paper, not named by a person. Never listed over MCP, asked, or used as a workflow step.",
         ),
       created_by: z
         .string()
@@ -116,7 +116,7 @@ export const agentRoutes = (ctx: AppContext) => {
       owner_lend: z
         .boolean()
         .describe(
-          "When true, this agent may bill its OWNER's own model plan as a fallback (initiator -> owner -> pool). Only the owner toggles it; default off.",
+          "A stored per-agent setting from before model accounts. Job billing does not read it: the agent's assigned account, then its creator's or asker's, then the shared one, pays.",
         ),
       created_at: z.string(),
       description: z.string().nullable().describe("One line: what this agent does."),

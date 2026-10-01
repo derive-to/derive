@@ -1,7 +1,8 @@
 # Sources: connecting an MCP server
 
-A **source** is a Model Context Protocol server your agents can read from during a run. Connect
-one by URL, bind it to an automation, and that automation's runs can call the server's tools.
+A **source** is a Model Context Protocol server your agents can read from during a job. Connect
+one by URL, bind it to an agent's sources on its Settings tab, and that agent's jobs can call the
+server's tools.
 
 Anything that speaks MCP over streamable HTTP works. There is no vendor list and no per-vendor
 integration to write.
@@ -30,8 +31,8 @@ connection itself. A 201 means the server answered. It is not a row stored hopef
 
 That hash is the **pin**, and it is the whole defense against tool poisoning. Tool names and
 descriptions from an MCP server land verbatim in the model's prompt, so a hostile or compromised
-server can rewrite them between runs to say whatever it likes. If the tool list changes, the pin
-stops matching and the connection goes **quiet**: runs get no tools from it until a human
+server can rewrite them between jobs to say whatever it likes. If the tool list changes, the pin
+stops matching and the connection goes **quiet**: jobs get no tools from it until a human
 reconnects and sees the new list. Fail-closed, on purpose.
 
 A connection with no pin is refused outright, which is why a connection waiting on sign-in cannot
@@ -68,7 +69,7 @@ Discovery, registration, PKCE, the code exchange, and refresh all come from
   so a flow that is never completed leaves nothing behind.
 - **Only the person who started it can finish it.** State proves who began the flow and travels in
   a URL, so it cannot also prove who finished it. A live session has to, and must match.
-- **Tokens refresh themselves** shortly before expiry, with a compare-and-swap write so two runs
+- **Tokens refresh themselves** shortly before expiry, with a compare-and-swap write so two jobs
   refreshing at once cannot leave the older token installed.
 
 The connection is pinned *after* consent returns, because until then there is no credential to list
@@ -76,24 +77,26 @@ tools with. That re-pin is the one part of this flow no library does for us.
 
 ## Using one
 
-Bind the source to a single-agent workflow under **Workflows**, using the Sources field. Only active
-sources are offered. A run sees the tools bound to *that workflow* and nothing else, and
-the credential is resolved server-side at call time, so the model never holds it.
+Bind the source to an agent's sources on its Settings tab (**Add a source**), or pass its
+connection id in `sources` when the agent is made or updated over MCP. Only active sources are
+offered. An agent may use your own connections, or the workspace's if you manage them; a
+teammate's personal connection is refused. A job sees the tools bound to *its agent* and
+nothing else, and the credential is resolved server-side at call time, so the model never
+holds it.
 
-Sources can be bound when you create a single-agent workflow and changed afterwards.
-
-### A run that reads from a source publishes like any other
+### A job that reads from a source publishes like any other
 
 This is the part worth knowing before you design around it.
 
-A source-bound run's write publishes as a new version of its target — live, exactly like every
+A source-bound job's write publishes as a new version of its target: live, exactly like every
 other agent write. A dashboard backed by a source refreshes unattended; the safety net is the
 loop itself, not an up-front block: every version is kept, the publish fan-out tells the people
-watching, and restore is one click.
+watching, and restore is one click. An agent set to **Ask for review first** opens a review
+round for its person on each new version it writes to an existing page.
 
 That is a deliberate trade, recorded in `docs/decisions/0001-one-review-loop.md`: outside data
-can carry planted instructions, and the loop — not an up-front block — is what answers that
-risk. The workspace's `agentWrites` switch is the brake: off, runs are not claimed at all.
+can carry planted instructions, and the loop, not an up-front block, is what answers that
+risk. The workspace's `agentWrites` switch is the brake: off, jobs are not claimed at all.
 
 ## Verifying it
 

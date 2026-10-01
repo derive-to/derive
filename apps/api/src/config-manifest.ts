@@ -354,7 +354,7 @@ const CONFIG_VARS: ConfigVar[] = [
   {
     name: "DERIVE_MODEL_BASE_URL",
     group: "advanced",
-    doc: "Root of an OPENAI-COMPATIBLE model endpoint (Fireworks, OpenRouter, Together, a\nself-hosted gateway); `/chat/completions` is appended. Setting it points every in-process\nrun AND attended chat on this deploy at that endpoint instead of the Anthropic Messages API.\n\nAn `openrouter.ai` endpoint also receives Derive's bounded public read tool belt: web search,\nURL fetch, and current date/time. OpenRouter executes those server tools inside the model\nrequest; other compatible gateways receive only Derive's ordinary function tools.\n\nIt BYPASSES THE PAYER CHAIN on purpose: this deployment holds the key and spends it for\nevery workspace on it, so there is no chain to walk and no plan for anyone to connect.\nThat is the HOSTED posture — derive.to sets all three — and the workspace is metered\nagainst its tier allowance rather than billed to a credential it never supplied. It is\nequally right for a single-tenant box, where the operator is the only user.\n\n(This entry used to say derive.to does not set it. That was wrong, and it was read as\nintent: the schedule materializer kept walking a payer chain that cannot resolve on a\nhosted deploy, so scheduled automations silently never fired.)\n\nRequires DERIVE_MODEL_API_KEY and DERIVE_MODEL_NAME; all three or none.",
+    doc: "Root of an OPENAI-COMPATIBLE model endpoint (Fireworks, OpenRouter, Together, a\nself-hosted gateway); `/chat/completions` is appended. It is the model Derive calls itself:\nthe one that writes @Derive replies in comments and Slack. Agent jobs never use it; each job\nruns on its agent's model account, or on an owner machine's own Claude Code or Codex login.\n\nAn `openrouter.ai` endpoint also receives Derive's bounded public read tool belt: web search,\nURL fetch, and current date/time. OpenRouter executes those server tools inside the model\nrequest; other compatible gateways receive only Derive's ordinary function tools.\n\nThis deployment holds the key and spends it for every workspace on it, metered against each\nworkspace's allowance. That is the hosted posture (derive.to sets all three), and it is\nequally right for a single-tenant box, where the operator is the only user. On a shared host,\nDERIVE_CHAT_ALLOWLIST limits which workspaces may spend it.\n\nRequires DERIVE_MODEL_API_KEY and DERIVE_MODEL_NAME; all three or none.",
     example: "https://api.fireworks.ai/inference/v1",
   },
   {
@@ -366,7 +366,7 @@ const CONFIG_VARS: ConfigVar[] = [
   {
     name: "DERIVE_CHAT_ALLOWLIST",
     group: "advanced",
-    doc: "Comma-separated workspace ids allowed to turn chat on, when DERIVE_MODEL_BASE_URL is set.\n\nWhy it exists: chat is on in every workspace, so on a MULTI-TENANT host any workspace\ncould spend the operator's model key. On a single-tenant box that is fine (the operator IS\nthe user), which is why an unset allowlist means no restriction. Set it on a shared host and\nonly those workspaces can use chat.",
+    doc: "Comma-separated workspace ids whose @Derive replies may use DERIVE_MODEL_BASE_URL.\n\nWhy it exists: @Derive answers in every workspace, so on a MULTI-TENANT host any workspace\ncould spend the operator's model key. On a single-tenant box that is fine (the operator IS\nthe user), which is why an unset allowlist means no restriction. Set it on a shared host and\nonly those workspaces get @Derive replies.",
     example: "ws_abc123,ws_def456",
   },
   {
@@ -378,7 +378,7 @@ const CONFIG_VARS: ConfigVar[] = [
   {
     name: "DERIVE_MODEL_NAMES",
     group: "advanced",
-    doc: 'Comma-separated ADDITIONAL model ids the same DERIVE_MODEL_BASE_URL serves, offered to\nchat as a choice alongside DERIVE_MODEL_NAME (which stays the default and is always\navailable whether or not it is repeated here).\n\nOne gateway serving many models is how every host this reaches works (Fireworks,\nOpenRouter, Together, vLLM), so a second model needs no second key and no second secret\nto rotate. Unset = one model, exactly as before, and the chat picker does not render.\n\nIds are the provider\'s own, stored on each answer, so a person can see which model wrote\nwhat. Removing an id here does not rewrite history: a conversation that used it is told\nthe model is gone rather than silently answered by a different one.\n\nTHIS IS THE FLOOR, NOT THE WHOLE LIST. An instance operator adds models, renames them,\npins chat or automations to one, and probes any of them from Settings -> Instance ->\nModels, with no redeploy — same gateway, same key, so a model there is data. Set here\nonly what every deployment of this configuration should start with. A genuinely\ndifferent provider needs a key, which only the environment can hold, so that stays a\ndeploy. See apps/docs/content/self-hosting/configuration.md, "The model library".',
+    doc: 'Comma-separated ADDITIONAL model ids the same DERIVE_MODEL_BASE_URL serves, offered as a\nchoice alongside DERIVE_MODEL_NAME (which stays the default and is always\navailable whether or not it is repeated here).\n\nOne gateway serving many models is how every host this reaches works (Fireworks,\nOpenRouter, Together, vLLM), so a second model needs no second key and no second secret\nto rotate. Unset = one model, exactly as before.\n\nIds are the provider\'s own, stored on each answer, so a person can see which model wrote\nwhat. Removing an id here does not rewrite history: a thread that used it is told\nthe model is gone rather than silently answered by a different one.\n\nTHIS IS THE FLOOR, NOT THE WHOLE LIST. An instance operator adds models, renames them,\npins @Derive replies to one, and probes any of them from Settings -> Instance ->\nModels, with no redeploy — same gateway, same key, so a model there is data. Set here\nonly what every deployment of this configuration should start with. A genuinely\ndifferent provider needs a key, which only the environment can hold, so that stays a\ndeploy. See apps/docs/content/self-hosting/configuration.md, "The model library".',
     example: "accounts/fireworks/models/qwen3-235b,accounts/fireworks/models/kimi-k2",
   },
   {
@@ -414,7 +414,7 @@ const CONFIG_VARS: ConfigVar[] = [
   {
     name: "DERIVE_ORTAM_INTEGRATION_KEY",
     group: "advanced",
-    doc: "Managed cloud jobs: service integration key owned by the deployment, never a user\nconnection. Requires Ortam's explicit integration profile. Rotate under the same\nOrtam owner and organization to retain job connection identities. Keep the key\navailable for shutdown/cleanup even after withdrawing the rollout allowlist.",
+    doc: "Derive machines: the Ortam service integration key owned by the deployment, never a user\nconnection. Requires Ortam's explicit integration profile. Rotate under the same\nOrtam owner and organization to retain job connection identities. Keep the key\navailable for shutdown/cleanup even after withdrawing the rollout allowlist.",
     active: true,
   },
   {

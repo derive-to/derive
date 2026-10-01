@@ -232,29 +232,58 @@ compatibility server is `npx -y @derive-to/mcp` and shares the machine's `derive
 
 ### Tools
 
-The remote `/mcp` server has the complete ten-tool surface.
+The remote `/mcp` server has seventeen tools. `derive_code` is present only where the
+instance runs a code sandbox, and `list_workspaces` reports the live list.
 
 | Tool | Description |
 |---|---|
-| `find` | Browse or search artifacts and discover askable workspace contexts |
+| `list_workspaces` | Inspect and route across granted workspaces; reports the tools served now |
+| `find` | Browse or search artifacts |
 | `read` | Read an artifact's content by short id; bundles take a `section` (page path), any read takes a `version` for history |
 | `catch_up` | Read an artifact's review/change state, or the registered agent's queued work when called without a short id |
+| `clear_queue` | Clear handled items off the work queue that `catch_up` returned |
 | `comment` | Leave feedback, reply (`reply_to` a thread id), anchor to a `quote`, and/or resolve/reopen (`set_state`) |
 | `stage` | Upload large documents or bundles out of band; for an image/font, mint an asset upload URL, POST raw bytes, then use the returned permanent URL or bundle ref in `publish` |
 | `publish` | Create or revise with `edits`, `content`, or `files`; `addresses` resolves threads and `request_review` opens a round |
-| `organize` | Manage tags and collections |
 | `checkpoint` | Save compact, resumable working state |
-| `use` | Ask a workspace context or resume its session |
-| `list_workspaces` | Inspect and route across granted workspaces |
+| `browse_library` | Read the workspace's tags and collections, or an artifact's |
+| `organize` | Manage tags and collections |
+| `shelve` | Archive, restore, or permanently delete artifacts |
+| `agents` | List, create, update, or delete agents; `create` returns the agent's key and, for an owner machine, its runner command |
+| `ask` | Give an agent work, or follow up on a job (`job_id`); waits up to `wait` seconds for it to settle |
+| `jobs` | List or inspect jobs; `cancel`, `retry`, or `answer` one |
+| `pull` | Run an owner-machine agent from this session: claim its jobs, then `report` each one |
+| `derive_code` | Chain several read-only calls (searches, reads) in one sandboxed script |
 
 The stdio compatibility server exposes `list_workspaces`, `list_artifacts`, `search`,
 `read`, `catch_up`, `comment`, `organize`, and `publish`. It does not stage uploads,
-query contexts, or checkpoint state.
+run agents, or checkpoint state.
 
-### Resource
+### Resources
 
-Remote: `derive://skills/publishing`, `/assets`, `/loop`, `/contexts`, `/checkpoint`, and `/organize`.
+Remote: `derive://skills` lists the core skills (`loop`, `finding`, `publishing`, `decks`,
+`dynamic-data`, `latex`, `assets`, `bundles`, `workflows`, `agents`, `papers`, `checkpoint`,
+`organize`, `sources`, `helping`); read one as `derive://skills/<name>`.
 Stdio: `derive://guide`, `/guide/connect`, and `/guide/compatibility`.
+
+### Agents, jobs, and machines
+
+An agent is a named worker in a workspace: an instructions page, the sources it may use, a
+model account, and a machine. Each piece of work is a job (one ask, one scheduled run, or one
+graph). A job ends `succeeded`, `failed`, `cancelled`, or `lost`, or stops at `needs_you` when
+it needs a person. Those show in the person's Inbox and ring the bell; email and a Slack DM
+follow for asked work and for jobs that need someone, where those channels are on. A job the
+CLI runner does leaves a report page, private to the workspace.
+
+| Machine | Where it runs | Model |
+|---|---|---|
+| `owner` | A person's computer running `derive runner serve --agent <id>` (or a session using `pull`) | A stored model account, else the Claude Code or Codex login on that machine (`--no-local-login` opts out) |
+| `derive` | A Derive sandbox per agent that keeps its files between jobs; only in workspaces with Derive machines turned on | A stored model account, always |
+
+A workflow is an agent whose instructions page holds a `derive.workflow/v1` definition.
+Asking it opens a graph job that Derive walks: each step asks the agent it names, a human step
+waits for an answer, and a step that chooses its next step ends its reply with
+`ROUTE: <step>`. See `derive://skills/agents` and `derive://skills/workflows`.
 
 ### Claude Code project config
 
@@ -359,6 +388,6 @@ GET /readyz   -> 200 { ok: true }
 
 ## Getting a DERIVE_TOKEN for direct API calls
 
-Settings > Agents > New Agent. Name it, copy the `dk_agt_...` token (shown once).
-Use as `Authorization: Bearer $DERIVE_TOKEN` in direct API requests. Remote MCP clients
+Use an agent's key (`dk_agt_...`). The `agents` tool returns it once when it creates the
+agent; a workspace owner can replace it on the agent's Settings tab in Derive. Use it as `Authorization: Bearer $DERIVE_TOKEN` in direct API requests. Remote MCP clients
 should use OAuth instead of a pasted static token.

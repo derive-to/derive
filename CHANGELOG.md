@@ -14,6 +14,78 @@ for the recommended install and verification flow.
 
 ## [Unreleased]
 
+The agents release replaces Contexts, automations, chat and hosted runs with one model:
+agents that take jobs. See [Run agents](apps/docs/content/run-agents.md) and the upgrade
+note in the [self-hosting quickstart](apps/docs/content/self-hosting/quickstart.md).
+
+### Added
+- **Agents.** A named worker in a workspace: an instructions page, the sources it may use, a
+  model account, a machine, who may ask it, and whether its writes publish directly or ask
+  for review first. Made over MCP (`agents`, action `create`), which returns the agent's key
+  once and, for an owner machine, its runner command. The web has Agents home, a New agent
+  page that builds the prompt to paste into Claude Code or Codex, and an agent page with Jobs
+  and Settings tabs. `/v1/agents`.
+- **Jobs.** Every piece of agent work is a job: one ask, one scheduled run, or one graph. A
+  job has a transcript and ends `succeeded`, `failed`, `cancelled` or `lost`, or stops at
+  `needs_you` with a question and options. One lease and one attempt counter per job; a
+  report from a superseded claim is refused, so a job is never answered twice. Follow-ups
+  reopen the same job. `/v1/jobs`.
+- **Schedules.** A cron expression, a time zone and an instruction on an agent. Each window
+  opens one job; while the runner is offline a schedule keeps one job queued.
+- **Model accounts.** Claude or Codex accounts under Settings, Accounts (an API key, an
+  OAuth token, or a pasted login file), personal or shared with the workspace. A job runs on
+  the agent's assigned account, else its creator's (owner machine) or asker's (Derive
+  machine), then the shared one. `/v1/accounts`.
+- **Owner machines and the local login.** `derive runner serve --agent <id>` works an
+  agent's jobs on any computer, and `runner once --agent <id>` drains the queue once for
+  cron or CI. The key comes from `DERIVE_TOKEN` or `--token-file`. With no stored account,
+  the runner uses the machine's own Claude Code or Codex login; `--no-local-login` requires a
+  stored account.
+- **Derive machines.** An agent with machine `derive` runs in its own Ortam sandbox, created
+  when a job first needs it and stopped between jobs so its files persist. The sandbox runs
+  `derive runner run` with a `dkjob_` token pinned to one job. Only in workspaces on the
+  managed allowlist (`DERIVE_MANAGED_RUNS_ALLOWLIST`), and always on a stored account.
+- **Graph agents.** An agent whose instructions page holds a `derive.workflow/v1`
+  definition is a workflow. Asking it opens a graph job the server walks: each step is a
+  child job for the agent it names, a human step waits at `needs_you`, and a step that
+  chooses its next step ends its reply with `ROUTE: <step>`.
+- **Reports.** A job the CLI runner does publishes a report page (asked, did, flagged, made,
+  evidence), private to the workspace. A comment on it reopens the job.
+- **Inbox.** `/inbox` lists the jobs waiting on you, answered in place, then the pages agents
+  published today. The rail shows its count. Any page's activity panel has an Ask box.
+- **Job notifications.** `job.needs_you` and `job.finished` reach the asker (or a scheduled
+  job's creator) and, on needs-you, the agent's manager: a bell row, email behind the
+  personal opt-in, a Slack DM where the workspace has Slack, and webhooks subscribed by name.
+- **MCP agent tools.** `agents`, `ask`, `jobs` and `pull`, and the `derive://skills/agents`
+  skill. `pull` lets a coding session do an owner agent's queued jobs itself.
+- **CLI runner forms.** `runner serve --agent`, `runner once --agent` and
+  `runner run <dkjob_ token>` (CLI 0.8.x).
+
+### Removed
+- **Contexts**, except imported arXiv papers, which keep their `ctx_` ids and move to
+  `/papers/<id>`. Old Context links redirect. The Contexts, Workflows and Chat pages are gone.
+- **Automations** and their runs, and **hosted runs** (`DERIVE_HOSTED_RUNS`,
+  `DERIVE_HOSTED_RUNS_ALLOWLIST`, `DERIVE_LOOP_RUNS`, `DERIVE_LOOP_MODEL`,
+  `DERIVE_RUNNER_BIN`). The server warns at startup while `DERIVE_HOSTED_RUNS` or
+  `DERIVE_LOOP_RUNS` is set.
+- **Chat**: the workspace and document chat pages and their routes. @Derive replies in
+  comments and Slack remain.
+- **MCP tools** `use`, `automate`, `list_automations` and the workflow controls. `find` no
+  longer lists Contexts.
+- **CLI commands** `derive context`, `derive workflow`, `runner serve <ctx_id>`, `runner run`
+  with an old token, `runner install` and `runner doctor`. Each now prints one line pointing
+  at `runner serve --agent`.
+- **Old work tokens.** `dkrun_`, `dksess_`, `dkwfr_` and `dkattempt_` bearers resolve to
+  nobody; `dkjob_` is the only work token.
+- **The chat, automations and hosted-agent workspace opt-ins.** `agentWrites` is the one
+  switch for agent work.
+
+### Changed
+- **Making an agent needs a publish seat, not workspace admin.** Members can list agents; the
+  creator or a workspace owner manages one.
+- **Agents default to the editor role**, capped at the creator's seat, so their jobs can
+  publish reports. Pass `role: "commenter"` for one that should only comment.
+
 ### Changed
 - **"Copy link" hands out the workspace's own domain.** When a workspace has claimed a
   subdomain (or attached a custom domain) and the artifact has a plain view link with no
