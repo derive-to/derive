@@ -50,7 +50,6 @@
     "idb-keyval": "^6.3.0",
     "input-otp": "^1.4.2",
     "lucide-react": "^1.18.0",
-    "marked": "^18.0.5",
     "next-themes": "^0.4.6",
     "qrcode.react": "^4.2.0",
     "radix-ui": "^1.6.1",
@@ -58,8 +57,7 @@
     "react-dom": "^19.2.7",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.6.0",
-    "web-vitals": "^6.1.1",
-    "xss": "^1.0.15"
+    "web-vitals": "^6.1.1"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",

@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // derive — scaffold, publish, and continue work against a Derive server.
-//   derive init [dir] [--template md|html|workflow|slides|site|skill|context] [--title t]
+//   derive init [dir] [--template md|html|workflow|slides|site|skill] [--title t]
 //   derive onboard [dir] [--update]       add/update artifact-first instructions + agent setup
 //   derive agent setup [dir] [--update]   install/update Codex/Claude skills + MCP config
 //   derive login [--local] [--server url] [--workspace w] [--pick] [--add] [--sync] [--manage]
 //                                          OAuth sign-in; discovers every workspace
 //                                          you belong to. Already signed in? Shows
 //                                          a manage menu (or acts on --add/--sync).
-//                                          --manage adds the agent/context admin grant.
+//                                          --manage adds the agent admin grant.
 //   derive accounts [--json]              every signed-in account + its workspaces
 //   derive workspaces [--account a]        the resolved account's workspaces
 //   derive workspace use <ref> [--account a]      set the default workspace
@@ -29,16 +29,14 @@
 //   derive status [--id] [--json]          the review round state + open threads
 //   derive send-back [--id] [--note m]     open the page to send your answers back (a browser gesture)
 //   derive doctor [--server url] [--token t]  report which optional features are configured
-//   derive runner serve|once|doctor|install   serve queued Context sessions, or drain once (npx-able anywhere)
-//   derive context push|dev                ship a Context dir as its manifest / tune it live
-//   derive workflow sync|preview [file] [--json] sync the visible graph, then explain + validate
-//   derive workflow run [run_id]          one authorized GitHub Actions graph harness
+//   derive runner serve|once --agent <id>  work an agent's jobs on this machine (npx-able anywhere)
+//   derive runner run <dkjob_ token>       run one job a Derive machine was handed, then exit
 //   derive skill scan [setup|status]      scan local agent logs for installed Skill use
 //   derive scan [setup|status]            scan local logs for artifact and Skill activity
 import { spawn } from "node:child_process"
 import { createHash, randomBytes } from "node:crypto"
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import { homedir, tmpdir } from "node:os"
+import { existsSync, rmSync, writeFileSync } from "node:fs"
+import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 import { createInterface } from "node:readline"
 import { fileURLToPath } from "node:url"
@@ -77,14 +75,12 @@ import {
   setWorkspaces,
   skillSyncPlan,
   TEMPLATES,
-  writeContextConfig,
   writeId,
   writeSkillPin,
 } from "../src/config.js"
-import { createAgent, createContext, saveAgentToken } from "../src/context.js"
 import { setupDeriveScan } from "../src/derive-scan-setup.js"
 import { readTarget, uploadArtifact } from "../src/publish.js"
-import { DeriveClient, parseManifest } from "../src/runner.js"
+import { DeriveClient } from "../src/runner.js"
 import { lockScan } from "../src/scan-lock.js"
 import {
   addToSkillScanSpool,
@@ -99,13 +95,7 @@ import {
   skillScanStatus,
 } from "../src/skill-scan.js"
 import { setupSkillScan } from "../src/skill-scan-setup.js"
-import { materializeNotes, materializeSkills, pinManifestSkills, skillSlug } from "../src/skills.js"
-import {
-  formatWorkflowPreview,
-  previewWorkflowSource,
-  syncWorkflowSource,
-} from "../src/workflow.js"
-import { runGithubWorkflowHarness } from "../src/workflow-run.js"
+import { materializeNotes, materializeSkills, skillSlug } from "../src/skills.js"
 
 const SKILL_USAGE_BATCH_SIZE = 20
 
@@ -275,12 +265,7 @@ if (cmd === "init") {
     created.find((f) => f.endsWith("/main.tex")) ??
     created.find((f) => !meta.includes(f) && !f.startsWith(".")) ??
     "the entry"
-  const next =
-    template === "context" || template === "agent"
-      ? "derive context push"
-      : template === "workflow"
-        ? "derive workflow sync workflow.html"
-        : "derive publish"
+  const next = "derive publish"
   console.log(
     created.length
       ? `\nReady (${template}). Edit ${entry}, then run \`${next}\`.`
@@ -863,254 +848,67 @@ if (cmd === "doctor") {
   process.exit(partial ? 1 : 0)
 }
 
-// ---- derive runner (serve / doctor / install) -------------------------------
-// Runner commands serve queued Context sessions on any machine with Node. Config:
-// flags win over env (DERIVE_SERVER/TOKEN/CONTEXT, RUNNER_*);
-// --token-file keeps the secret out of service-unit command lines; --env-file
-// loads the Context's own secrets (KEY=VALUE) before anything reads them.
-if (cmd === "runner") {
-  const sub = positional.shift()
-  if (!["serve", "once", "run", "doctor", "install"].includes(sub ?? "")) {
-    console.error(`usage:
-  derive runner serve  [ctx_id] [--server url] [--token t | --token-file f] [--env-file f]
-                       [--cwd dir] [--claude-bin path] [--model m] [--poll ms] [--timeout ms] [--mock]
-  derive runner once   [same flags]        drain the queue once and exit — for schedulers (cron, Actions)
-  derive runner run    [token] [--server url] [--cwd dir] [--model m] [--timeout ms] [--mock]
-                       [--model-auth derive|ortam]   use Derive credentials (default) or Ortam login
-                                           execute ONE dispatched automation run (per-run capability
-                                           token; the hosted substrate entrypoint) and exit
-  derive runner doctor [same flags]        preflight: server, token+context, manifest, cwd, claude, gh, python3
-  derive runner install [same flags]       print a launchd/systemd unit for this config`)
-    process.exit(1)
-  }
-  const { doctor, loadRunnerConfig, once, renderServiceUnit, runOnce, serve } = await import(
-    "../src/runner.js"
-  )
-  if (sub === "run") {
-    // The hosted one-shot: no context, no poll loop. The bearer is a per-run capability token
-    // (dkrun_…) minted at dispatch; partial config because there is no context id to require.
-    if (positional[0]) flags.token = positional[0]
-    let rcfg
-    try {
-      rcfg = loadRunnerConfig(process.env, flags, { partial: true, oneShot: true })
-    } catch (e) {
-      console.error(`error: ${e.message}`)
-      process.exit(1)
-    }
-    if (!rcfg.token || !rcfg.server) {
-      console.error(
-        "error: runner run needs a capability token (positional/--token/DERIVE_TOKEN) and a server (--server/DERIVE_SERVER)",
-      )
-      process.exit(1)
-    }
-    // A fresh scratch cwd per run unless the substrate mounts one: hosted runs must never
-    // share a working directory across runs.
-    if (!flags.cwd) rcfg = { ...rcfg, cwd: mkdtempSync(join(tmpdir(), "derive-run-")) }
-    try {
-      const counts = await runOnce(rcfg)
-      process.exit(counts.failed > 0 ? 1 : 0)
-    } catch (e) {
-      console.error(`error: ${e.message}`)
-      process.exit(1)
-    }
-  }
-  if (positional[0]) flags.context = positional[0]
-  let rcfg
-  try {
-    // doctor runs on half-configured machines by design — a missing token or
-    // context id is a finding it reports, not a reason it can't start.
-    rcfg = loadRunnerConfig(process.env, flags, { partial: sub === "doctor" })
-  } catch (e) {
-    console.error(`error: ${e.message}`)
-    process.exit(1)
-  }
-  if (sub === "doctor") process.exit((await doctor(rcfg)) === 0 ? 0 : 1)
-  if (sub === "install") {
-    const binPath = fileURLToPath(import.meta.url)
-    // A unit must reference the token, never embed it — and must point at a
-    // script that outlives the render. The npx cache does not (`npm cache
-    // clean` deletes it and launchd crash-loops on the dead path).
-    if (!rcfg.tokenFile) {
-      console.error(
-        "error: runner install requires --token-file (units reference the token file, they never embed the secret)",
-      )
-      process.exit(1)
-    }
-    if (binPath.includes("_npx")) {
-      console.error(
-        "error: running from the npx cache — install the CLI first (npm i -g @derive-to/cli) so the unit points at a stable path",
-      )
-      process.exit(1)
-    }
-    const u = renderServiceUnit(rcfg, binPath)
-    console.log(`# Save as ${u.path}, then:\n#   ${u.load}\n\n${u.unit}`)
-    process.exit(0)
-  }
-  try {
-    if (sub === "once") {
-      // Per-session failures are recorded server-side (fail()) and are not a
-      // reason to retry the drain — the same input fails the same way until the
-      // asker follows up. Only boot/queue errors reach the catch and exit 1,
-      // which is the scheduler's signal to retry with backoff.
-      await once(rcfg)
-      process.exit(0)
-    }
-    await serve(rcfg) // runs until killed
-  } catch (e) {
-    // Startup failures (bad token, missing manifest) get the house one-liner,
-    // not a stack trace; `runner doctor` is the diagnostic.
-    console.error(`error: ${e.message}`)
-    process.exit(1)
-  }
+// ---- derive runner (the agent model's runner) -------------------------------
+// `serve --agent` / `once --agent` work one agent's jobs on this machine through pull and
+// report; `run <dkjob_ token>` is a Derive machine's one job. The older Context and automation
+// forms (`runner serve <ctx_id>`, `runner run <dkrun_ token>`, doctor, install) retired with
+// the lanes they served.
+// Contexts became agents. Old forms get one line pointing at the new one instead of a usage
+// dump, since the person typing them already knows what they meant to run.
+const AGENTS_NOW =
+  "Contexts are now agents: run `derive runner serve --agent <id>` with the key from the agent's Settings tab in Derive (DERIVE_TOKEN or --token-file)."
+if (
+  cmd === "context" ||
+  cmd === "workflow" ||
+  (cmd === "agent" && (positional[0] === "push" || positional[0] === "dev")) ||
+  (cmd === "runner" &&
+    (positional[0] === "doctor" ||
+      positional[0] === "install" ||
+      flags.context ||
+      positional.slice(1).some((p) => p.startsWith("ctx_")) ||
+      (positional[0] === "run" &&
+        /^dk(run|sess|wfr|attempt)_/.test(
+          positional[1] ?? flags.token ?? process.env.DERIVE_TOKEN ?? "",
+        ))))
+) {
+  console.error(AGENTS_NOW)
+  process.exit(1)
 }
 
-// ---- derive context (push / dev) --------------------------------------------
-// Context projects keep instructions, references, tool configuration, and local secrets in
-// one directory. `push` publishes everything except `.env*`; the first push also creates
-// the server-side Context and execution connection. `dev` serves sessions from local files.
-if (cmd === "agent" || cmd === "context") {
+if (cmd === "runner") {
   const sub = positional.shift()
-  if (!["push", "dev"].includes(sub ?? "")) {
+  const oneJob =
+    sub === "run" &&
+    (positional[0] ?? flags.token ?? process.env.DERIVE_TOKEN ?? "").startsWith("dkjob_")
+  if (!(oneJob || sub === "serve" || sub === "once")) {
     console.error(`usage:
-  derive context push [dir]    publish the Context dir (minus .env*); first push wires its connection
-  derive context dev  [dir]    run the answer loop on the working-tree manifest [--mock] [--context ctx_id]
-
-  Compatibility alias: derive agent push|dev`)
+  derive runner serve --agent <id> [--server url] (key in DERIVE_TOKEN or --token-file f) [--cwd dir] [--model m] [--mock]
+                      work an agent's jobs on this machine (the command an agent's page shows)
+  derive runner once  --agent <id> [same flags]   work what is queued once and exit (cron, Actions)
+  derive runner run   <dkjob_ token> [--server url] [--cwd dir] [--model m] [--mock]
+                      run one job a Derive machine was handed, then exit`)
     process.exit(1)
   }
-  const dir = positional[0] ?? "."
-  let cfg = null
-  try {
-    cfg = loadConfig(dir)
-  } catch (e) {
-    console.error(`error: ${e.message}`)
-    process.exit(1)
-  }
-  if (!cfg?.context) {
-    console.error(
-      `error: ${join(dir, CONFIG_FILE)} has no "context" block — scaffold one with \`derive init --template context\``,
-    )
-    process.exit(1)
-  }
-  const p = resolvePublish(flags, cfg)
-  p.token = flags.token ?? process.env.DERIVE_TOKEN ?? (await freshToken(p.server, p.accountId))
-  const target = join(dir, cfg.entry ?? "context")
-  const name = cfg.context.name ?? cfg.title ?? "My Context"
-  const tokenFile = join(dir, ".derive", "agent-token")
-
-  if (sub === "push") {
-    if (!p.token) {
-      console.error("error: not signed in — run `derive login` first")
-      process.exit(1)
-    }
-    // Lockfile step: pin any unpinned `skills:` entry to its current version before the
-    // manifest ships, so the pushed config is deterministic and an upgrade is a visible,
-    // deliberate manifest edit (never a silent drift under a permission-skipping runner).
-    const manifestPath = join(target, "MANIFEST.md")
-    if (existsSync(manifestPath)) {
-      const text = readFileSync(manifestPath, "utf8")
-      const unpinned = parseManifest(text).skills.filter((s) => s.version == null)
-      if (unpinned.length) {
-        const versions = new Map()
-        for (const s of unpinned) {
-          try {
-            const detail = await (
-              await fetch(`${p.server}/v1/artifacts/${s.id}`, {
-                headers: { authorization: `Bearer ${p.token}` },
-              })
-            ).json()
-            if (Number.isFinite(detail?.current_version)) versions.set(s.id, detail.current_version)
-          } catch {
-            /* leave unpinned — the runner fetches current and logs it unpinned */
-          }
-        }
-        const { text: pinnedText, pinned } = pinManifestSkills(text, versions)
-        if (pinned.length) {
-          writeFileSync(manifestPath, pinnedText)
-          for (const pn of pinned) console.log(`  · pinned skill ${pn.id} → v${pn.version}`)
-        }
-      }
-    }
-
-    let up
+  if (oneJob) {
+    if (positional[0]) flags.token = positional[0]
+    const { loadOneJobConfig, runOneJob } = await import("../src/job-runner.js")
     try {
-      // repos/ is the runner's clone workspace — pointer state, never source.
-      up = readTarget(target, ["repos"])
+      const out = await runOneJob(loadOneJobConfig(process.env, flags))
+      process.exit(out === "failed" ? 1 : 0)
     } catch (e) {
       console.error(`error: ${e.message}`)
       process.exit(1)
     }
-    const { res, json } = await uploadArtifact(p, up.bytes, up.filename)
-    if (!res.ok) {
-      console.error(`error (${res.status}): ${json.error ?? res.statusText}`)
-      process.exit(1)
-    }
-    if (!p.id && json.short_id) writeId(dir, json.short_id)
-    const shortId = p.id ?? json.short_id
-    console.log(`✓ manifest ${shortId} v${json.current_version}`)
-    for (const s of up.skipped) console.log(`  · ${s} stayed local (secrets never ship)`)
-
-    try {
-      let agentId = cfg.context.agent_id
-      if (!agentId) {
-        const agent = await createAgent(p.server, p.token, name)
-        agentId = agent.id
-        const tokPath = saveAgentToken(dir, agent.token)
-        writeContextConfig(dir, { agent_id: agentId })
-        console.log(
-          `✓ execution connection "${name}" (${agentId}) — token saved to ${tokPath} (shown nowhere else)`,
-        )
-      }
-      let ctxId = cfg.context.id
-      if (!ctxId) {
-        const created = await createContext(p.server, p.token, {
-          name,
-          agent_id: agentId,
-          manifest_short_id: shortId,
-        })
-        ctxId = created.id
-        writeContextConfig(dir, { id: ctxId })
-        console.log(`✓ Context "${name}" (${ctxId})`)
-      }
-      // The manifest's roster is the ask roster — an invite-only manifest (no
-      // workspace access) means only its owner can open a session.
-      if (json.workspace_access === "none")
-        console.log(
-          `  invite-only — share the manifest (Share dialog, or --visibility org) so teammates can ask`,
-        )
-      console.log(
-        `\nRun it:\n  derive runner serve ${ctxId} --token-file ${tokenFile} --cwd ${target}\nTune it:\n  derive context dev`,
-      )
-    } catch (e) {
-      console.error(`error: ${e.message}`)
-      process.exit(1)
-    }
-    process.exit(0)
   }
-
-  // dev: the runner, pointed at this working tree.
-  const ctxId = flags.context ?? cfg.context.id
-  if (!ctxId) {
-    console.error(
-      "error: no Context id — `derive context push` once (it pins context.id), or pass --context",
-    )
-    process.exit(1)
-  }
-  const devFlags = {
-    ...flags,
-    context: ctxId,
-    server: p.server,
-    cwd: flags.cwd ?? target,
-    "manifest-file": flags["manifest-file"] ?? join(target, "MANIFEST.md"),
-  }
-  if (!flags.token && !flags["token-file"] && existsSync(tokenFile))
-    devFlags["token-file"] = tokenFile
-  const envFile = join(target, ".env")
-  if (!flags["env-file"] && existsSync(envFile)) devFlags["env-file"] = envFile
-  const { loadRunnerConfig, serve } = await import("../src/runner.js")
+  const { jobDrainPass, loadJobRunnerConfig, serveJobs } = await import("../src/job-runner.js")
   try {
-    const rcfg = loadRunnerConfig(process.env, devFlags)
-    await serve(rcfg) // runs until killed
+    const jcfg = loadJobRunnerConfig(process.env, flags)
+    if (sub === "once") {
+      const counts = await jobDrainPass(jcfg)
+      console.log(`[runner] ${counts.served} done, ${counts.failed} failed`)
+      process.exit(0)
+    }
+    await serveJobs(jcfg)
   } catch (e) {
     console.error(`error: ${e.message}`)
     process.exit(1)
@@ -2159,99 +1957,15 @@ if (cmd === "brandprint") {
   process.exit(0)
 }
 
-if (cmd === "workflow") {
-  const action = positional[0]
-  if (action === "run") {
-    const runId = positional[1] ?? process.env.DERIVE_WORKFLOW_RUN_ID
-    const nonce = process.env.DERIVE_EXCHANGE_NONCE
-    try {
-      const code = await runGithubWorkflowHarness({
-        runId,
-        nonce,
-        server: flags.server ?? process.env.DERIVE_SERVER ?? "https://derive.to",
-        requestUrl: process.env.ACTIONS_ID_TOKEN_REQUEST_URL,
-        requestToken: process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN,
-        cwd: flags.cwd ?? process.cwd(),
-        env: process.env,
-        bin: flags["agent-bin"] ?? process.env.CODEX_BIN ?? process.env.AGENT_BIN ?? "codex",
-        model: flags.model ?? process.env.DERIVE_CODEX_MODEL ?? null,
-        timeoutMs: flags.timeout ?? process.env.DERIVE_WORKFLOW_TIMEOUT_MS,
-      })
-      if (code === 0)
-        console.log(
-          "The execution harness finished and Derive recorded the terminal graph receipt.",
-        )
-      else if (code === 124) console.error("error: the one-shot execution harness timed out")
-      else console.error(`error: the one-shot execution harness exited with status ${code}`)
-      process.exit(code)
-    } catch (e) {
-      console.error(`error: ${e.message}`)
-      process.exit(1)
-    }
-  }
-  if (action !== "preview" && action !== "sync") {
-    console.error("usage: derive workflow sync|preview [file] [--json] | run [run_id]")
-    process.exit(1)
-  }
-  let config = null
-  try {
-    config = loadConfig(".")
-  } catch (e) {
-    console.error(`error: ${e.message}`)
-    process.exit(1)
-  }
-  const target = positional[1] ?? config?.entry ?? (existsSync("index.html") ? "index.html" : null)
-  if (!target) {
-    console.error(
-      `error: no workflow file. Pass one, set "entry" in ${CONFIG_FILE}, or add index.html.`,
-    )
-    process.exit(1)
-  }
-  let source
-  try {
-    source = readFileSync(target, "utf8")
-  } catch (e) {
-    console.error(`error: couldn't read ${target}: ${e.message}`)
-    process.exit(1)
-  }
-  let synced = null
-  if (action === "sync") {
-    try {
-      synced = syncWorkflowSource(source)
-      source = synced.source
-    } catch (e) {
-      console.error(`error: couldn't sync ${target}: ${e.message}`)
-      process.exit(1)
-    }
-  }
-  const preview = previewWorkflowSource(source)
-  if (synced && preview.status === "ready") {
-    try {
-      if (synced.changed) writeFileSync(target, synced.source)
-    } catch (e) {
-      console.error(`error: couldn't write ${target}: ${e.message}`)
-      process.exit(1)
-    }
-    if (!flags.json)
-      console.log(
-        synced.changed ? "✓ Visible graph synced" : "✓ Topology unchanged; workflow policy checked",
-      )
-  } else if (synced?.changed && !flags.json) {
-    console.error("Visible graph not written because Preview needs changes.")
-  }
-  console.log(flags.json ? JSON.stringify(preview) : formatWorkflowPreview(preview))
-  process.exit(preview.status === "ready" ? 0 : 1)
-}
-
 if (cmd !== "publish") {
   console.error(`usage:
-  derive init [dir] [--template md|html|workflow|slides|site|skill|context] [--title t]
+  derive init [dir] [--template md|html|workflow|slides|site|skill] [--title t]
   derive onboard [dir] [--update]         prefer Derive in AGENTS.md + CLAUDE.md; install skills + MCP config
   derive agent setup [dir] [--update]     compatibility alias for derive onboard
   derive login [--local] [--server url] [--workspace w] [--pick] [--add] [--sync] [--manage]
                                             OAuth sign-in (defaults to https://derive.to);
                                             discovers every workspace you belong to;
-                                            --manage adds the agent/context admin grant
+                                            --manage adds the agent admin grant
   derive accounts [--json]                 every signed-in account + its workspaces
   derive workspaces [--account a] [--json] the resolved account's workspaces
   derive workspace use|forget <ref> [--account a]   set/drop the default workspace
@@ -2272,12 +1986,8 @@ if (cmd !== "publish") {
   derive resolve|reopen <comment_id>       set a thread's state
   derive status [--id X] [--json]          review-round state + open threads (the loop's poll target)
   derive send-back [--id X] [--note m]     open the page to send your answers back (a browser gesture)
-  derive runner serve|doctor|install       serve queued Context sessions (\`derive runner\` for flags)
-  derive context push|dev                  ship a Context dir as its manifest / tune it on the working tree
-  derive agent push|dev                    compatibility alias for derive context push|dev
-  derive workflow sync [file] [--json]     project definition topology into the visible graph, then Preview
-  derive workflow preview [file] [--json]  explain + validate a graph/loop before it runs
-  derive workflow run [run_id]             execute one assigned graph from GitHub Actions OIDC
+  derive runner serve|once --agent <id>    work an agent's jobs on this machine (\`derive runner\` for flags)
+  derive runner run <dkjob_ token>         run one job a Derive machine was handed, then exit
   derive scan [--since 30d]                scan local logs for artifact and Skill activity
   derive scan --dry-run                    preview matches without changing local or server state
   derive scan setup [--schedule]           add session-end hooks; optionally scan every 30 minutes

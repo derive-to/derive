@@ -1,5 +1,4 @@
 import type { SessionMessageRecord } from "@derive/core"
-import type { AgentLoopInput } from "./agent-loop"
 
 /**
  * HOW LONG THE MODEL TOOK, measured where a turn already happens and recorded where a turn is
@@ -20,66 +19,6 @@ import type { AgentLoopInput } from "./agent-loop"
  * a tool that spends four seconds calling somebody's API is not the model being slow. Only the
  * time inside `callModel` is counted, so the number compares models rather than workloads.
  */
-
-/** What one turn spent on the model. */
-export interface TurnTiming {
-  /** Each call's own duration, in order. Not just the sum: three calls of 1.5s and one of 4.5s
-   *  are the same total and completely different problems — the first is per-call latency to
-   *  fix, the second is one pathological step to find. */
-  each: number[]
-  /** Time to the FIRST token of the FIRST model call, ms — what the person actually waited
-   *  through before anything appeared. Null when nothing streamed. */
-  ttftMs: number | null
-  /** Summed wall time inside `callModel` across the turn, ms. Excludes tool execution. */
-  modelMs: number
-  /** How many model calls the turn made. Without it a big `modelMs` is unreadable: a slow model
-   *  and a model that was asked eight times look identical. */
-  calls: number
-}
-
-/** Wrap a turn's `callModel` so it reports what it spent. The returned `call` is a drop-in for
- *  the one passed in — an adapter that never streams simply leaves `ttftMs` null, exactly as the
- *  callModel contract allows. */
-export const meterModel = (
-  callModel: AgentLoopInput["callModel"],
-  now: () => number = () => Date.now(),
-): { call: AgentLoopInput["callModel"]; timing: () => TurnTiming } => {
-  let ttftMs: number | null = null
-  let modelMs = 0
-  let calls = 0
-  const each: number[] = []
-  const call: AgentLoopInput["callModel"] = async (input) => {
-    const started = now()
-    calls += 1
-    try {
-      return await callModel({
-        ...input,
-        onDelta: (text) => {
-          // FIRST call only: a later turn's first token arrives after tools have run, so
-          // recording it would report tool latency as the model's.
-          if (ttftMs === null && calls === 1) ttftMs = now() - started
-          input.onDelta?.(text)
-        },
-      })
-    } finally {
-      // In `finally`, so a turn that threw still reports what it burned. A failing provider that
-      // takes 30s to fail is the single most useful measurement on this page, and it is exactly
-      // the one a success-only meter would drop.
-      const took = now() - started
-      modelMs += took
-      each.push(took)
-    }
-  }
-  return { call, timing: () => ({ ttftMs, modelMs, calls, each: [...each] }) }
-}
-
-/** The timing fields as they are stored on an answer's meta — snake_case, alongside `model` and
- *  `cost_micro_usd`, because that is the register everything else in that blob is written in. */
-export const timingMeta = (t: TurnTiming): Record<string, number | null> => ({
-  ttft_ms: t.ttftMs,
-  model_ms: t.modelMs,
-  model_calls: t.calls,
-})
 
 /** One model's observed performance over the sample. */
 export interface ModelTimings {

@@ -1,4 +1,5 @@
 export * from "./advisories"
+export * from "./agent-model"
 export * from "./agent-routing"
 export * from "./anchor"
 export * from "./artifact-access"

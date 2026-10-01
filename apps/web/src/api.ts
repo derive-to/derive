@@ -176,8 +176,6 @@ export interface Bibliography {
 }
 /** One change to the .bib: a complete entry over `key` (or appended), or a removal. */
 export type BibOp = { op: "set"; key?: string; raw: string } | { op: "delete"; key: string }
-export type WorkflowRunSummary =
-  paths["/v1/artifacts/{shortId}/workflow-runs"]["get"]["responses"][200]["content"]["application/json"]["runs"][number]
 export interface LocalArtifactActivity {
   activity: Array<{
     id: string
@@ -317,7 +315,6 @@ export interface DraftClaimPreview {
 export type ShareResult = components["schemas"]["ShareResult"]
 /** Per-workspace integration switches. Generated from the OpenAPI spec. */
 export type OrgSettings = components["schemas"]["OrgSettings"]
-export type ChatModelOption = components["schemas"]["ChatModel"]
 
 /**
  * THE MODEL LIBRARY, as the operator's settings page reads it.
@@ -453,8 +450,46 @@ export type Notification = components["schemas"]["Notification"]
 export type Webhook = components["schemas"]["Webhook"]
 /** A workspace-registered agent. Generated from the OpenAPI spec. */
 export type Agent = components["schemas"]["Agent"]
-export type WorkflowDirectoryItem =
-  paths["/v1/workflows"]["get"]["responses"][200]["content"]["application/json"]["workflows"][number]
+/** An agent as the workspace list returns it: with its schedules and when it last had work. */
+export type ListedAgent =
+  paths["/v1/agents"]["get"]["responses"]["200"]["content"]["application/json"]["agents"][number]
+/** One schedule on an agent (routes/agents.ts Trigger). */
+export type AgentTrigger = NonNullable<components["schemas"]["AgentTrigger"]>
+/** One agent with its schedules and what the caller may do with it. The spec marks the shared
+ *  Trigger schema nullable (it is also the create response's optional `trigger`), but a list
+ *  of an agent's schedules never holds a null. */
+export type AgentDetail = Omit<
+  paths["/v1/agents/{id}"]["get"]["responses"][200]["content"]["application/json"],
+  "triggers"
+> & { triggers: AgentTrigger[] }
+/** Fields an agent's manager may change (PATCH /v1/agents/{id}). */
+export type AgentPatch = Partial<
+  Pick<
+    Agent,
+    | "name"
+    | "description"
+    | "instructions_short_id"
+    | "ask_policy"
+    | "write_policy"
+    | "connection_ids"
+    | "account_id"
+    | "paused"
+    | "machine"
+  >
+>
+export type ScheduleInput = { cron: string; tz: string; instruction: string }
+/** One unit of agent work (routes/jobs.ts). */
+export type Job = components["schemas"]["Job"]
+export type JobStatus = Job["status"]
+export type JobDetail = components["schemas"]["JobDetail"]
+/** A model account: the credential a machine calls a model with. Never the secret. */
+export type ModelAccount = components["schemas"]["ModelAccount"]
+export type NewModelAccount = {
+  provider: ModelAccount["provider"]
+  kind: "oauth" | "api_key" | "login"
+  secret: string
+  shared: boolean
+}
 
 /** How an automation fires. Manual = a Run button; schedule = a cron in a timezone;
  *  event = a subscription. Hand-typed: the automation routes are the agent-facing plain
@@ -540,7 +575,6 @@ export interface Run {
     writes: unknown[]
   }
 }
-export type ContextEnvironment = components["schemas"]["ContextEnvironment"]
 /** An askable agent setup: a registered agent wired to a manifest artifact.
  *  Generated from the OpenAPI spec. */
 export type ContextInfo = components["schemas"]["ContextInfo"]
@@ -553,17 +587,6 @@ export type ContextDetail =
  *  stands, and the prompts that start or update it. Generated from the OpenAPI spec. */
 export type ContextAnalysis = components["schemas"]["ContextAnalysisInfo"]
 export type ManifestSkillInfo = components["schemas"]["ManifestSkillInfo"]
-/** One artifact a context produced, grouped across every run that bound it. Generated
- *  from the OpenAPI spec. */
-export type ContextOutput =
-  paths["/v1/contexts/{id}/outputs"]["get"]["responses"][200]["content"]["application/json"]["outputs"][number]
-/** The runner's structured payload on an agent message. Generated from the spec. */
-export type SessionMeta = components["schemas"]["SessionMeta"]
-export type BuilderCard = NonNullable<NonNullable<SessionMeta>["card"]>
-export type SessionMessage = components["schemas"]["SessionMessage"]
-/** An ask-conversation with a context's agent. Generated from the OpenAPI spec. */
-export type Session = components["schemas"]["Session"]
-export type SessionState = Session["state"]
 /** A shareable catalog of immutable starters. Generated from the Templates API contract. */
 export type TemplateLibrary = components["schemas"]["TemplateLibrary"]
 export type TemplateLibraryEntry = components["schemas"]["TemplateLibraryEntry"]
@@ -1398,6 +1421,25 @@ export const api = {
   report: (id: string, reason: string, detail?: string): Promise<{ ok: boolean }> =>
     f(`/v1/artifacts/${id}/report`, opts({ reason, detail })).then(j),
   listReports: (): Promise<{ reports: Report[]; open: number }> => f("/v1/reports", opts()).then(j),
+
+  // Ask a registered agent to rework the artifact to match the Brandprint. The canned
+  // instruction lives server-side; omit agentId when exactly one agent is registered.
+  reworkArtifact: (shortId: string, agentId?: string): Promise<{ requestId: string }> =>
+    f(`/v1/artifacts/${shortId}/rework`, opts(agentId ? { agentId } : {})).then(j),
+  // The fill-with-your-work pair, for a derived copy: GET returns the copyable
+  // prompt, POST delivers the same instruction to an agent's inbox.
+  fillPrompt: (
+    shortId: string,
+    note?: string,
+  ): Promise<{ prompt: string; source: { short_id: string; title: string | null } }> =>
+    f(
+      `/v1/artifacts/${shortId}/fill${note ? `?note=${encodeURIComponent(note)}` : ""}`,
+      opts(),
+    ).then(j),
+  fillArtifact: (
+    shortId: string,
+    body: { agentId?: string; note?: string },
+  ): Promise<{ requestId: string }> => f(`/v1/artifacts/${shortId}/fill`, opts(body)).then(j),
   takedown: (id: string, note?: string): Promise<{ removed: boolean }> =>
     f(`/v1/artifacts/${id}/takedown`, opts({ note })).then(j),
   reinstate: (id: string): Promise<{ removed: boolean }> =>
@@ -1405,283 +1447,93 @@ export const api = {
   dismissReport: (id: string): Promise<{ ok: boolean }> =>
     f(`/v1/reports/${id}/dismiss`, opts({})).then(j),
 
-  listAgents: (): Promise<{ agents: Agent[] }> => f("/v1/agents", opts()).then(j),
-  createAgent: (name: string, role?: Role): Promise<Agent & { token: string }> =>
-    f("/v1/agents", opts({ name, role })).then(j),
+  listAgents: (): Promise<{ agents: ListedAgent[] }> => f("/v1/agents", opts()).then(j),
   // Rotation is a credential event, never an identity event: the old bearer dies at
   // once; id, role, hosting, and attribution are untouched. Token shown only here.
   rotateAgent: (id: string): Promise<Agent & { token: string }> =>
     f(`/v1/agents/${id}/rotate`, opts({})).then(j),
   deleteAgent: (id: string): Promise<void> =>
     f(`/v1/agents/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
+  getAgent: (id: string): Promise<AgentDetail> => f(`/v1/agents/${id}`, opts()).then(j),
+  updateAgent: (id: string, patch: AgentPatch): Promise<Agent> =>
+    f(`/v1/agents/${id}`, { ...opts(patch), method: "PATCH" }).then(j),
+  addTrigger: (agentId: string, body: ScheduleInput): Promise<AgentTrigger> =>
+    f(`/v1/agents/${agentId}/triggers`, opts(body)).then(j),
+  updateTrigger: (
+    id: string,
+    patch: Partial<ScheduleInput> & { enabled?: boolean },
+  ): Promise<AgentTrigger> => f(`/v1/triggers/${id}`, { ...opts(patch), method: "PATCH" }).then(j),
+  deleteTrigger: (id: string): Promise<void> =>
+    f(`/v1/triggers/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
 
-  listWorkflows: (): Promise<{ workflows: WorkflowDirectoryItem[] }> =>
-    f("/v1/workflows", opts()).then(j),
-
-  // Automations + runs (the standing-agent-work surface; see routes/automations.ts).
-  listAutomations: (): Promise<{ automations: Automation[] }> =>
-    f("/v1/automations", opts()).then(j),
-  // agentId omitted → the server auto-mints a MANAGED agent for this automation and
-  // returns its bearer as agent_token, exactly once on this response.
-  createAutomation: (input: {
-    agentId?: string
-    provider?: Automation["provider"]
-    contextId?: string
-    trigger: AutomationTrigger
-    instruction: string
-    /** Create the first run in the same request; a failure unwinds the automation. */
-    runNow?: boolean
-    /** Bare strings are artifact shorthand; the server stores canonical selectors. */
-    refs?: (string | AutomationRef)[]
-    /** Sources the run may read from. Each must be this workspace's and attachable by you. */
-    connectionIds?: string[]
-  }): Promise<Automation & { agent_token?: string; run_id?: string; run_status?: string }> =>
-    f("/v1/automations", opts(input)).then(j),
-  updateAutomation: (
-    id: string,
-    input: {
-      agentId?: string
-      provider?: Automation["provider"]
-      contextId?: string | null
-      trigger?: AutomationTrigger
-      instruction?: string
-      refs?: (string | AutomationRef)[] | null
-      /** null or [] unbinds every source. */
-      connectionIds?: string[] | null
-      enabled?: boolean
-    },
-  ): Promise<Automation> => f(`/v1/automations/${id}`, { ...opts(input), method: "PATCH" }).then(j),
-  deleteAutomation: (id: string): Promise<void> =>
-    f(`/v1/automations/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
-  runAutomation: (id: string): Promise<{ id: string; status: string }> =>
-    f(`/v1/automations/${id}/run`, opts({})).then(j),
-  listRuns: (): Promise<{ runs: Run[] }> => f("/v1/workspace/runs", opts()).then(j),
-  // The home's activity: versions, comments and review rounds across the workspace over a
-  // window, on the artifacts the caller can see (routes/activity.ts).
-  /** Where the signed-in user last left an activity stream (`ws:<org>` | `artifact:<short_id>`). */
-  activitySeen: (scope: string): Promise<{ seen_at: string | null }> =>
-    f(`/v1/seen?scope=${encodeURIComponent(scope)}`, opts()).then(j),
-  /** Move that position: forward-only unless `manual` (a "mark new from here" rewind). */
-  setActivitySeen: (body: {
-    scope: string
-    at: string
-    manual?: boolean
-  }): Promise<{ seen_at: string | null }> =>
-    f("/v1/seen", { ...opts(body), method: "PUT" }).then(j),
-  workspaceActivity: (): Promise<WorkspaceActivity> => f("/v1/workspace/activity", opts()).then(j),
-
-  // Per-user model-plan credentials (the caller's own; see routes/model-credentials.ts).
-  listModelCredentials: (): Promise<{ credentials: ModelCredentialHint[] }> =>
-    f("/v1/me/model-credentials", opts()).then(j),
-  connectModelCredential: (input: {
-    provider: "claude-code" | "codex"
-    kind: "oauth" | "api_key" | "login"
-    token: string
-  }): Promise<{ ok: true; provider: string; hint: string }> =>
-    f("/v1/me/model-credentials", opts(input)).then(j),
-  disconnectModelCredential: (provider: string): Promise<void> =>
-    f(`/v1/me/model-credentials/${provider}`, { method: "DELETE", credentials: "include" }).then(
-      () => undefined,
-    ),
-
-  // The workspace's SHARED model-plan pool (admin only) — the fallback billed when a run's
-  // initiator has no plan and the agent isn't owner-lent. Same hints-only discipline.
-  listPoolCredentials: (): Promise<{ credentials: ModelCredentialHint[] }> =>
-    f("/v1/workspace/model-credentials", opts()).then(j),
-  connectPoolCredential: (input: {
-    provider: "claude-code" | "codex"
-    kind: "oauth" | "api_key" | "login"
-    token: string
-  }): Promise<{ ok: true; provider: string; hint: string }> =>
-    f("/v1/workspace/model-credentials", opts(input)).then(j),
-  disconnectPoolCredential: (provider: string): Promise<void> =>
-    f(`/v1/workspace/model-credentials/${provider}`, {
-      method: "DELETE",
-      credentials: "include",
-    }).then(() => undefined),
-  // Toggle whether an agent may fall back to its OWNER's plan (only the owner may set it).
-  setAgentOwnerLend: (agentId: string, enabled: boolean): Promise<{ ok: true }> =>
-    f(`/v1/workspace/owner-lend/${agentId}`, { ...opts({ enabled }), method: "PUT" }).then(j),
-
-  workflowRuntimes: (): Promise<{
-    available: boolean
-    can_create: boolean
-    items: {
-      id: string
-      name: string
-      created_at: string
-      disabled: boolean
-      preparing: boolean
-      ready: boolean
-      readiness: WorkflowReadiness
-      can_open: boolean
-      schedule: { enabled: boolean; trigger: { kind: string; cron?: string; tz?: string } } | null
-    }[]
-  }> => f("/v1/workflow-runtimes", opts()).then(j),
-  createWorkflowRuntime: (body: {
-    name: string
-    model_connection_id?: string
-    request_id?: string
-  }): Promise<{ id: string }> => f("/v1/workflow-runtimes", opts(body)).then(j),
-  workflowConfiguration: (
-    id: string,
-  ): Promise<{
-    repositories: WorkflowRepository[]
-    repository_revision: number
-    can_manage_repositories: boolean
-    draft: WorkflowDraftRecord | null
-    files: (WorkflowFilesRecord & { title?: string; short_id?: string }) | null
-    test: { id: string; status: string } | null
-    readiness: WorkflowReadiness
-  }> => f(`/v1/workflow-runtimes/${id}`, opts()).then(j),
-  workflowRepositories: (
-    id: string,
-    connectionId: string,
-    page: number,
-  ): Promise<{ repositories: { id: number; repository: string }[]; next_page: number | null }> =>
-    f(
-      `/v1/workflow-runtimes/${id}/repositories?connection_id=${encodeURIComponent(connectionId)}&page=${page}`,
-      opts(),
-    ).then(j),
-  saveWorkflowRepositories: (
-    id: string,
-    body: {
-      repositories: Pick<WorkflowRepository, "connection_id" | "repository" | "access">[]
-      revision: number
-    },
-  ): Promise<{ repositories: WorkflowRepository[]; repository_revision: number }> =>
-    f(`/v1/workflow-runtimes/${id}/repositories`, { ...opts(body), method: "PUT" }).then(j),
-  saveWorkflowFiles: (
-    id: string,
-    body: { short_id: string | null; version: number | null; revision: number | null },
-  ): Promise<unknown> =>
-    f(`/v1/workflow-runtimes/${id}/files`, { ...opts(body), method: "PUT" }).then(j),
-  saveWorkflowDraft: (
-    id: string,
-    body: { instruction: string; provider: "codex" | "claude-code"; revision: number | null },
-  ): Promise<{ draft: WorkflowDraftRecord }> =>
-    f(`/v1/workflow-runtimes/${id}`, { ...opts(body), method: "PUT" }).then(j),
-  testWorkflow: (id: string, revision: string, request_id: string): Promise<unknown> =>
-    f(`/v1/workflow-runtimes/${id}/tests`, opts({ revision, request_id })).then(j),
-  // Contexts + sessions (the ask loop; see routes/contexts.ts server-side).
-  listContexts: (): Promise<{ contexts: ContextInfo[] }> => f("/v1/contexts", opts()).then(j),
-  getContextRuntime: (
-    id: string,
-  ): Promise<{
-    enabled: boolean
-    managed?: boolean
-    model_connection?:
-      | (Pick<CloudModelConnection, "id" | "name" | "provider"> & { revoked: boolean })
-      | null
-    can_edit?: boolean
-    setup?:
-      | (Pick<RuntimeSetupRecord, "phase" | "cancelled_at" | "deadline_at"> &
-          Partial<RuntimeSetupRecord>)
-      | null
-    runtime:
-      | (Pick<ContextRuntimeRecord, "id" | "disabled_at"> & Partial<ContextRuntimeRecord>)
-      | null
-    schedule: AutomationRecord | null
-    next_run_at: string | null
-    runs: (RunRecord & { attempt: RunAttemptRecord | null })[]
-  }> => f(`/v1/contexts/${id}/runtime`, opts()).then(j),
-  setupContextRuntime: (id: string, connection_id?: string): Promise<unknown> =>
-    f(`/v1/contexts/${id}/runtime/setup`, opts({ connection_id })).then(j),
-  runtimeModelConnections: (): Promise<{
-    items: CloudModelConnection[]
-    can_create: boolean
-    unavailable_reason: string | null
-  }> => f("/v1/runtime-model-connections?include_revoked=true", opts()).then(j),
-  runtimeModelUsage: (
-    id: string,
-  ): Promise<{
-    workflows: { id: string; name: string }[]
-    other_workflow_count: number
-  }> => f(`/v1/runtime-model-connections/${id}/usage`, opts()).then(j),
-  createRuntimeModelConnection: (
-    name: string,
-    provider: "codex" | "claude-code",
-    request_id: string,
-  ): Promise<CloudModelConnection> =>
-    f("/v1/runtime-model-connections", opts({ name, provider, request_id })).then(j),
-  runtimeModelStatus: (
-    id: string,
-  ): Promise<{
-    account: { status: string; identity: { email?: string } | null } | null
-    revoked: boolean
-  }> => f(`/v1/runtime-model-connections/${id}/status`, opts()).then(j),
-  runtimeModelBinding: (
-    id: string,
-  ): Promise<{
-    revision: number | null
-    connection:
-      | (Pick<CloudModelConnection, "id" | "name" | "provider"> & {
-          revoked: boolean
-          can_manage: boolean
-        })
-      | null
-  }> => f(`/v1/contexts/${id}/runtime/model-connection`, opts()).then(j),
-  setRuntimeModelBinding: (
-    id: string,
-    connection_id: string | null,
-    revision: number | null,
-  ): Promise<{ revision: number; connection_id: string | null }> =>
-    f(`/v1/contexts/${id}/runtime/model-connection`, {
-      ...opts({ connection_id, revision }),
-      method: "PUT",
-    }).then(j),
-  startRuntimeModelSignIn: (id: string): Promise<RuntimeModelSignIn> =>
-    f(`/v1/runtime-model-connections/${id}/sign-in`, opts({})).then(j),
-  runtimeModelSignIn: (id: string, attempt: string): Promise<RuntimeModelSignIn> =>
-    f(`/v1/runtime-model-connections/${id}/sign-in/${attempt}`, opts()).then(j),
-  completeRuntimeModelSignIn: (
-    id: string,
-    attempt: string,
-    code: string,
-  ): Promise<RuntimeModelSignIn> =>
-    f(`/v1/runtime-model-connections/${id}/sign-in/${attempt}/complete`, opts({ code })).then(j),
-  cancelRuntimeModelSignIn: (id: string, attempt: string): Promise<RuntimeModelSignIn> =>
-    f(`/v1/runtime-model-connections/${id}/sign-in/${attempt}/cancel`, opts({})).then(j),
-  disconnectRuntimeModel: (id: string): Promise<unknown> =>
-    f(`/v1/runtime-model-connections/${id}`, { ...opts(), method: "DELETE" }).then(j),
-  runSavedRuntimeJob: (id: string): Promise<unknown> =>
-    f(`/v1/contexts/${id}/runtime/runs`, opts({})).then(j),
-  cancelContextRuntimeSetup: (id: string): Promise<unknown> =>
-    f(`/v1/contexts/${id}/runtime/setup/cancel`, opts({})).then(j),
-  bindContextRuntime: (id: string, connection_id: string, sandbox_id: string): Promise<unknown> =>
-    f(`/v1/contexts/${id}/runtime`, opts({ connection_id, sandbox_id })).then(j),
-  runContextRuntime: (
-    id: string,
+  // Jobs: every piece of work an agent does (routes/jobs.ts).
+  listJobs: (
+    q: {
+      agent?: string
+      status?: JobStatus[]
+      before?: string
+      limit?: number
+      /** Only jobs you asked, or on agents you manage. */
+      mine?: boolean
+      /** The job whose report page has this short id. */
+      report?: string
+    } = {},
+  ): Promise<{ jobs: Job[] }> => {
+    const qs = new URLSearchParams()
+    if (q.agent) qs.set("agent", q.agent)
+    if (q.mine) qs.set("mine", "1")
+    if (q.report) qs.set("report", q.report)
+    if (q.status?.length) qs.set("status", q.status.join(","))
+    if (q.before) qs.set("before", q.before)
+    if (q.limit) qs.set("limit", String(q.limit))
+    const s = qs.toString()
+    return f(`/v1/jobs${s ? `?${s}` : ""}`, opts()).then(j)
+  },
+  getJob: (id: string): Promise<JobDetail> => f(`/v1/jobs/${id}`, opts()).then(j),
+  askAgent: (
+    agentId: string,
     instruction: string,
-    provider: "codex" | "claude-code",
-  ): Promise<unknown> =>
-    f(`/v1/contexts/${id}/runtime/runs`, opts({ instruction, provider })).then(j),
-  saveContextRuntimeSchedule: (
-    id: string,
-    body: {
-      instruction: string
-      provider: "codex" | "claude-code"
-      cron: string | null
-      timezone: string
-      enabled: boolean
-      revision: number | null
-    },
-  ): Promise<{ schedule: AutomationRecord; next_run_at: string | null }> =>
-    f(`/v1/contexts/${id}/runtime/schedule`, { ...opts(body), method: "PUT" }).then(j),
-  disableContextRuntime: (id: string): Promise<unknown> =>
-    f(`/v1/contexts/${id}/runtime/disable`, opts({})).then(j),
-  getContextEnvironment: (id: string): Promise<ContextEnvironment> =>
-    f(`/v1/contexts/${id}/environment`, opts()).then(j),
-  setContextEnvironment: (
-    id: string,
-    bindings: Record<string, string>,
-  ): Promise<ContextEnvironment> =>
-    f(`/v1/contexts/${id}/environment`, { ...opts({ bindings }), method: "PUT" }).then(j),
-  setContextConnections: (
-    id: string,
-    connection_ids: string[],
-  ): Promise<{ connection_ids: string[] }> =>
-    f(`/v1/contexts/${id}/connections`, opts({ connection_ids })).then(j),
+    subject?: { kind: "artifact"; id: string },
+  ): Promise<JobDetail> =>
+    f("/v1/jobs", opts({ agent_id: agentId, instruction, ...(subject ? { subject } : {}) })).then(
+      j,
+    ),
+  cancelJob: (id: string): Promise<Job> => f(`/v1/jobs/${id}/cancel`, opts({})).then(j),
+  retryJob: (id: string): Promise<Job> => f(`/v1/jobs/${id}/retry`, opts({})).then(j),
+  answerJob: (id: string, answer: { text?: string; option?: string }): Promise<Job> =>
+    f(`/v1/jobs/${id}/answer`, opts(answer)).then(j),
+
+  // Model accounts (routes/accounts.ts): yours, and the workspace's shared ones.
+  listAccounts: (): Promise<{ accounts: ModelAccount[] }> => f("/v1/accounts", opts()).then(j),
+  addAccount: (body: NewModelAccount): Promise<ModelAccount> =>
+    f("/v1/accounts", opts(body)).then(j),
+  deleteAccount: (id: string): Promise<void> =>
+    f(`/v1/accounts/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
+
+  // Imported papers (/papers): an arXiv paper imported as a locked artifact. The server still
+  // stores each one as a read-only Context, so these read the context routes.
+  // The workspace's imported papers, each with the short id of its paper artifact.
+  listPapers: (): Promise<{ contexts: ContextInfo[] }> => f("/v1/contexts", opts()).then(j),
+  getContext: (id: string): Promise<ContextDetail> => f(`/v1/contexts/${id}`, opts()).then(j),
+  // An imported paper's implementation analysis, written by an agent, with the prompts a person
+  // copies into theirs to start or update it.
+  getContextAnalysis: (id: string): Promise<ContextAnalysis> =>
+    f(`/v1/contexts/${id}/analysis`, opts()).then(j),
+  // Created at once, fetched in the background. 201 with a new import, or 200 with the one this
+  // workspace already has. `code_url` optionally attaches the repository implementing the
+  // paper; its files land inside the paper's artifact for agents, never in the UI.
+  importArxivContext: (url: string, code_url?: string): Promise<ContextInfo> =>
+    f("/v1/contexts/import/arxiv", opts(code_url ? { url, code_url } : { url })).then(j),
+  // Attach, replace (a url) or remove (null) an imported paper's implementation.
+  setContextCode: (id: string, url: string | null): Promise<ContextInfo> =>
+    f(`/v1/contexts/${id}/import/code`, opts({ url })).then(j),
+  retryContextImport: (id: string): Promise<ContextInfo> =>
+    f(`/v1/contexts/${id}/import/retry`, { ...opts(), method: "POST" }).then(j),
+  deleteContext: (id: string): Promise<void> =>
+    f(`/v1/contexts/${id}`, { ...opts(), method: "DELETE" }).then(() => undefined),
+
+  // Named secrets (Settings › Credentials): personal or workspace `secret` connections an
+  // agent job reads through its environment. Values are write-only.
   credentials: (): Promise<{ items: Credential[]; can_create_workspace: boolean }> =>
     f("/v1/credentials", opts()).then(j),
   credentialUsage: (id: string): Promise<CredentialUsage> =>
@@ -1707,99 +1559,20 @@ export const api = {
     id: string,
     input: { name: string; secret: string; revision: string },
   ): Promise<Credential> => f(`/v1/credentials/${id}`, { ...opts(input), method: "PUT" }).then(j),
-  getContext: (id: string): Promise<ContextDetail> => f(`/v1/contexts/${id}`, opts()).then(j),
-  // An imported paper's implementation analysis, written by an agent, with the prompts a person
-  // copies into theirs to start or update it.
-  getContextAnalysis: (id: string): Promise<ContextAnalysis> =>
-    f(`/v1/contexts/${id}/analysis`, opts()).then(j),
-  // agent_id omitted → the server auto-mints a MANAGED agent for this context and
-  // returns its bearer as agent_token, exactly once on this response.
-  createContext: (input: {
-    name: string
-    agent_id?: string
-    manifest_short_id: string
-  }): Promise<ContextInfo & { agent_token?: string }> => f("/v1/contexts", opts(input)).then(j),
-  // A paper from arXiv as a read-only Context: created at once, fetched in the background.
-  // 201 with a new Context, or 200 with the one this workspace already imported.
-  // `code_url` optionally attaches the repository implementing the paper; its files land
-  // inside the paper's artifact for agents, never in the UI.
-  importArxivContext: (url: string, code_url?: string): Promise<ContextInfo> =>
-    f("/v1/contexts/import/arxiv", opts(code_url ? { url, code_url } : { url })).then(j),
-  // Attach, replace (a url) or remove (null) an imported paper's implementation.
-  setContextCode: (id: string, url: string | null): Promise<ContextInfo> =>
-    f(`/v1/contexts/${id}/import/code`, opts({ url })).then(j),
-  retryContextImport: (id: string): Promise<ContextInfo> =>
-    f(`/v1/contexts/${id}/import/retry`, { ...opts(), method: "POST" }).then(j),
-  deleteContext: (id: string): Promise<void> =>
-    f(`/v1/contexts/${id}`, { ...opts(), method: "DELETE" }).then(() => undefined),
-  createChatSession: (input: {
-    workspace: string
-    body_md: string
-    model?: string
-    purpose?: "context_builder"
-  }): Promise<{ session: Session; messages: SessionMessage[] }> =>
-    f("/v1/chat-session", opts(input)).then(j),
-  askContext: (
-    id: string,
-    body_md: string,
-  ): Promise<{ session: Session; messages: SessionMessage[] }> =>
-    f(`/v1/contexts/${id}/sessions`, opts({ body_md })).then(j),
-  // Files a run that already happened on the owner's own machine — no dispatch, answered
-  // on arrival. Creator or workspace manager only (see routes/contexts.ts).
-  recordSession: (
-    id: string,
-    input: {
-      instruction: string
-      answer: string
-      outcome?: "answered" | "failed" | "escalated"
-      result_artifact_id?: string
-    },
-  ): Promise<{ session: Session; messages: SessionMessage[] }> =>
-    f(`/v1/contexts/${id}/sessions/record`, opts(input)).then(j),
-  // Who may ask — workspace-scoped, never the manifest's artifact sharing.
-  setContextAskPolicy: (id: string, ask_policy: "workspace" | "invited"): Promise<void> =>
-    f(`/v1/contexts/${id}/access`, opts({ ask_policy })).then(() => undefined),
-  listContextAskers: (
-    id: string,
-  ): Promise<{ askers: { user_id: string; username: string | null; added_at: string }[] }> =>
-    f(`/v1/contexts/${id}/askers`, opts()).then(j),
-  addContextAsker: (
-    id: string,
-    email: string,
-  ): Promise<{ user_id: string; username: string | null; added_at: string }> =>
-    f(`/v1/contexts/${id}/askers`, opts({ email })).then(j),
-  removeContextAsker: (id: string, userId: string): Promise<void> =>
-    f(`/v1/contexts/${id}/askers/${userId}`, { ...opts(), method: "DELETE" }).then(() => undefined),
-  // `cursor` comes from the previous page's `next_cursor` (a `created_at|id` keyset);
-  // null there means the list is exhausted.
-  listContextSessions: (
-    id: string,
-    cursor?: string,
-  ): Promise<{ sessions: Session[]; next_cursor: string | null }> =>
-    f(
-      `/v1/contexts/${id}/sessions${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
-      opts(),
-    ).then(j),
-  // What the context has PRODUCED — result bindings grouped by artifact, so a report
-  // republished nightly is one row carrying a run count. `title`/`version` are null when
-  // the viewer can't read that artifact (the run isn't a secret; the document is).
-  listContextOutputs: (id: string): Promise<{ outputs: ContextOutput[] }> =>
-    f(`/v1/contexts/${id}/outputs`, opts()).then(j),
-  getSession: (
-    id: string,
-  ): Promise<{
-    session: Session
-    context: { id: string; name: string }
-    messages: SessionMessage[]
-  }> => f(`/v1/sessions/${id}`, opts()).then(j),
-  postSessionMessage: (
-    id: string,
-    body_md: string,
-    model?: string,
-  ): Promise<{ message: SessionMessage }> =>
-    f(`/v1/sessions/${id}/messages`, opts({ body_md, ...(model ? { model } : {}) })).then(j),
-  closeSession: (id: string): Promise<{ session: Session }> =>
-    f(`/v1/sessions/${id}`, { ...opts({ state: "closed" }), method: "PATCH" }).then(j),
+
+  // The home's activity: versions, comments and review rounds across the workspace over a
+  // window, on the artifacts the caller can see (routes/activity.ts).
+  /** Where the signed-in user last left an activity stream (`ws:<org>` | `artifact:<short_id>`). */
+  activitySeen: (scope: string): Promise<{ seen_at: string | null }> =>
+    f(`/v1/seen?scope=${encodeURIComponent(scope)}`, opts()).then(j),
+  /** Move that position: forward-only unless `manual` (a "mark new from here" rewind). */
+  setActivitySeen: (body: {
+    scope: string
+    at: string
+    manual?: boolean
+  }): Promise<{ seen_at: string | null }> =>
+    f("/v1/seen", { ...opts(body), method: "PUT" }).then(j),
+  workspaceActivity: (): Promise<WorkspaceActivity> => f("/v1/workspace/activity", opts()).then(j),
 
   // Standard GitHub integration: install-backed and available directly to contexts
   // and automations.
@@ -1816,15 +1589,6 @@ export const api = {
   // super-admin, so a component can gate on whether this resolves rather than on a role the
   // client would otherwise have to be told separately.
   systemCapabilities: (): Promise<unknown> => f("/v1/system/capabilities", opts()).then(j),
-
-  // THE DEPLOY-WIDE model, operator-only. Both 403 for everyone else, which is also how the UI
-  // knows whether to offer the switch at all.
-  getInstanceChatModel: (): Promise<{
-    model: string | null
-    options: ChatModelOption[]
-  }> => f("/v1/system/chat-model", opts()).then(j),
-  setInstanceChatModel: (model: string | null): Promise<{ model: string | null }> =>
-    f("/v1/system/chat-model", { ...opts({ model }), method: "PUT" }).then(j),
 
   // THE MODEL LIBRARY — operator-only. One GET for the whole page: what is pinned, what this
   // deploy can answer with, what the last probe found, and how each model is actually
@@ -1850,11 +1614,6 @@ export const api = {
     model: string | null,
   ): Promise<{ slots: ModelSlots }> =>
     f(`/v1/system/models/slots/${lane}`, { ...opts({ model }), method: "PUT" }).then(j),
-
-  // Which models this deploy can answer a chat turn with, default first. Readable by any
-  // signed-in user (it is the deploy's capability list, not a workspace's data); CHANGING which
-  // one answers is `updateWorkspaceSettings({ chatModel })`, which needs Admin.
-  chatModels: (): Promise<{ models: ChatModelOption[] }> => f("/v1/chat/models", opts()).then(j),
 
   // Integration switches (enable/disable each channel) — Admin to change.
   getWorkspaceSettings: (): Promise<OrgSettings> => f("/v1/workspace/settings", opts()).then(j),
@@ -2187,62 +1946,6 @@ export const api = {
       headers: { accept: "application/json" },
     }).then(j),
 
-  // Ask a registered agent to rework the artifact to match the Brandprint. The canned
-  // instruction lives server-side; omit agentId when exactly one agent is registered.
-  reworkArtifact: (shortId: string, agentId?: string): Promise<{ requestId: string }> =>
-    f(`/v1/artifacts/${shortId}/rework`, opts(agentId ? { agentId } : {})).then(j),
-  // The fill-with-your-work pair, for a derived copy: GET returns the copyable
-  // prompt, POST delivers the same instruction to an agent's inbox.
-  fillPrompt: (
-    shortId: string,
-    note?: string,
-  ): Promise<{ prompt: string; source: { short_id: string; title: string | null } }> =>
-    f(
-      `/v1/artifacts/${shortId}/fill${note ? `?note=${encodeURIComponent(note)}` : ""}`,
-      opts(),
-    ).then(j),
-  fillArtifact: (
-    shortId: string,
-    body: { agentId?: string; note?: string },
-  ): Promise<{ requestId: string }> => f(`/v1/artifacts/${shortId}/fill`, opts(body)).then(j),
-  workflowRunPrompt: (
-    shortId: string,
-    diagramId: string,
-  ): Promise<{ prompt: string; diagram: { id: string; title: string } }> =>
-    f(
-      `/v1/artifacts/${shortId}/workflow-run?diagram=${encodeURIComponent(diagramId)}`,
-      opts(),
-    ).then(j),
-  runWorkflow: (
-    shortId: string,
-    body:
-      | { agentId?: string; diagramId: string; delivery?: "agent" | "copy" }
-      | {
-          diagramId: string
-          delivery: "github"
-          github: {
-            connectionId: string
-            owner: string
-            repo: string
-            workflow: string
-            ref: string
-          }
-        },
-  ): Promise<{
-    runId: string
-    prompt: string
-    requestId?: string
-    github?: { runId: string; url: string }
-  }> => f(`/v1/artifacts/${shortId}/workflow-run`, opts(body)).then(j),
-  workflowRuns: (
-    shortId: string,
-    diagramId: string,
-    limit = 3,
-  ): Promise<{ runs: WorkflowRunSummary[] }> =>
-    f(
-      `/v1/artifacts/${shortId}/workflow-runs?diagram=${encodeURIComponent(diagramId)}&limit=${limit}`,
-      opts(),
-    ).then(j),
   localArtifactActivity: (shortId: string): Promise<LocalArtifactActivity> =>
     f(`/v1/artifacts/${shortId}/local-activity`, opts()).then(j),
   // Ask a registered agent to build the workspace's brand profile (shortId must be the
@@ -2438,6 +2141,6 @@ export interface Credential {
   can_use: boolean
 }
 export interface CredentialUsage {
-  items: { id: string; name: string; kind: "context" | "workflow" | "automation" }[]
+  items: { id: string; name: string; kind: "agent" }[]
   hidden_count: number
 }

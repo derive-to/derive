@@ -7,7 +7,6 @@ import { useAuth } from "@/ctx"
 import { modelLibraryQuery, reportsQuery } from "@/lib/queries"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { AccountsSection } from "./accounts-section"
-import { AgentsSection } from "./agents-section"
 import { AppearanceSection } from "./appearance-section"
 import { BillingSection } from "./billing-section"
 import { BrandprintSettings } from "./brandprint-settings"
@@ -15,6 +14,7 @@ import { CredentialsSection } from "./credentials-section"
 import { CustomDomainsSection } from "./custom-domains-section"
 import { GeneralSection } from "./general-section"
 import { IntegrationsSection } from "./integrations-section"
+import { MachinesSection } from "./machines-section"
 import { MembersSection } from "./members-section"
 import { ModelsSection } from "./models-section"
 import { NotificationsSection } from "./notifications-section"
@@ -48,6 +48,7 @@ const SECTIONS: { id: string; label: string; group: (typeof GROUP_ORDER)[number]
   { id: "accounts", label: "Accounts", group: "You" },
   { id: "appearance", label: "Appearance", group: "You" },
   { id: "general", label: "General", group: "Workspace" },
+  { id: "machines", label: "Machines", group: "Workspace" },
   { id: "members", label: "Members", group: "Workspace" },
   { id: "billing", label: "Billing", group: "Workspace" },
   { id: "integrations", label: "Integrations", group: "Workspace" },
@@ -55,7 +56,6 @@ const SECTIONS: { id: string; label: string; group: (typeof GROUP_ORDER)[number]
   { id: "sources", label: "Sources", group: "Workspace" },
   { id: "brandprint", label: "Brandprint", group: "Workspace" },
   { id: "webhooks", label: "Webhooks", group: "Workspace" },
-  { id: "agents", label: "Agent connections", group: "Workspace" },
   { id: "domains", label: "Domains", group: "Workspace" },
   { id: "models", label: "Models", group: "Operator" },
   { id: "reports", label: "Reports", group: "Operator" },
@@ -146,6 +146,7 @@ export function Settings() {
             {active === "accounts" && <AccountsSection />}
             {active === "appearance" && <AppearanceSection />}
             {active === "general" && <GeneralSection />}
+            {active === "machines" && <MachinesSection />}
             {active === "members" && <MembersSection meId={me.id} />}
             {active === "billing" && <BillingSection />}
             {active === "integrations" && <IntegrationsSection />}
@@ -153,7 +154,6 @@ export function Settings() {
             {active === "sources" && <SourcesSection />}
             {active === "brandprint" && <BrandprintSettings />}
             {active === "webhooks" && <WebhooksSection />}
-            {active === "agents" && <AgentsSection meId={me.id} />}
             {active === "domains" && <CustomDomainsSection />}
             {active === "models" && <ModelsSection />}
             {active === "reports" && (

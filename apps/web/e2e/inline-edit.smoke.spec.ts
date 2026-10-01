@@ -1723,28 +1723,19 @@ test("formats a selection that starts inside a link and crosses an annotation", 
 })
 
 test("Inspect appears only inside an editor's HTML edit session", async ({ owner, secondUser }) => {
-  // Make the shared chat tab explicit for this isolated workspace. The resting artifact
-  // is conversation-only; Inspect appears only after the existing Edit entry point.
-  const settings = await owner.request.patch("/v1/workspace/settings", {
-    data: { chatBeta: true },
-  })
-  expect(settings.ok(), `settings patch failed: ${settings.status()}`).toBeTruthy()
+  // The resting artifact is the activity stream alone, with no tab strip; Inspect appears
+  // only after the existing Edit entry point.
 
   const shortId = await publishArtifact(owner, "rail.html", RESIZE_DOC, "text/html")
   await openArtifact(owner, shortId)
 
   const tabs = owner.getByTestId("rail-tabs").getByRole("button")
-  await expect(tabs).toHaveCount(2)
-  await expect(tabs).toHaveText(["Activity", "Chat"])
-  await expect(owner.getByTestId("rail-tab-comments")).toHaveAttribute("aria-pressed", "true")
+  await expect(owner.getByTestId("rail-tabs")).toHaveCount(0)
   await expect(owner.getByTestId("rail-tab-inspect")).toHaveCount(0)
-
-  await owner.getByTestId("rail-tab-chat").click()
-  await expect(owner.getByTestId("artifact-chat")).toBeVisible()
 
   await owner.getByTestId("artifact-inline-edit").click()
   await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
-  await expect(tabs).toHaveText(["Activity", "Chat", "Inspect"])
+  await expect(tabs).toHaveText(["Activity", "Inspect"])
   await expect(owner.getByTestId("rail-tab-inspect")).toHaveAttribute("aria-pressed", "true")
   await expect(owner.getByTestId("artifact-inspect-choose")).toContainText(
     "Choose content in the document",
@@ -1760,11 +1751,11 @@ test("Inspect appears only inside an editor's HTML edit session", async ({ owner
   await openArtifact(secondUser.page, shortId)
   await expect(secondUser.page.getByTestId("rail-tab-inspect")).toHaveCount(0)
 
-  // Markdown is the lightweight, direct-text path. It keeps Comments and Chat but never
+  // Markdown is the lightweight, direct-text path. It keeps the activity stream but never
   // promises an element operation that cannot be represented in Markdown source.
   const markdownId = await publishArtifact(owner, "rail.md", "# A markdown doc", "text/markdown")
   await openArtifact(owner, markdownId)
-  await expect(owner.getByTestId("rail-tabs").getByRole("button")).toHaveText(["Activity", "Chat"])
+  await expect(owner.getByTestId("rail-tabs")).toHaveCount(0)
   await expect(owner.getByTestId("rail-tab-inspect")).toHaveCount(0)
 })
 

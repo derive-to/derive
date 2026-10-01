@@ -780,7 +780,6 @@ export const artifactRoutes = (ctx: AppContext) => {
         editSave,
         feedback,
         slots,
-        pinned: pre?.pinned,
       }
     }
     let early: ReturnType<typeof warm> | null = null
@@ -834,7 +833,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     // tokened create, the workspace the token was minted for).
     const org = existing ? existing.org_id : tokenAuth ? tokenAuth.org : await activeWorkspace(c)
     const body = await bodyP
-    const { billing, identity, agentWrites, editSave, feedback, slots, pinned } =
+    const { billing, identity, agentWrites, editSave, feedback, slots } =
       early ?? warm(null, org, body)
     // One billing read serves the gate here and the storage cap below.
     const [blockedBy, rl] = await Promise.all([
@@ -1253,7 +1252,6 @@ export const artifactRoutes = (ctx: AppContext) => {
           // and a plain session publish is the web app.
           source: tokenAuth ? (draft ? "api" : "mcp") : agentPrincipal ? "api" : "web",
           replaceCurrent,
-          ...(replaceCurrent && pinned !== undefined ? { replaceCurrentPinned: pinned } : {}),
           editSession,
           name: str(body["name"]),
           orgId: org,

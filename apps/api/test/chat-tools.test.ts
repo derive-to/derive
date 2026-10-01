@@ -1,13 +1,7 @@
 import { DEFAULT_ORG_SETTINGS } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import { boundSources } from "../src/lib/chat-sources"
-import {
-  buildChatTools,
-  CHAT_TOOLS,
-  CHAT_USE_WAIT_S,
-  chatPolicy,
-  RAIL_CHAT_TOOLS,
-} from "../src/lib/chat-tools"
+import { buildChatTools, CHAT_TOOLS, chatPolicy, RAIL_CHAT_TOOLS } from "../src/lib/chat-tools"
 import { as, makeAuthedApp, publishAs } from "./helpers"
 
 // THE CHAT PRINCIPAL. These are the tests that matter most in this feature: the chat turn runs
@@ -181,11 +175,6 @@ describe("chat source binding", () => {
     // must not thereby hand every chat turn in the workspace a payments API.
     expect(DEFAULT_ORG_SETTINGS.chatSources).toEqual([])
   })
-
-  it("is separate from chatBeta — being able to chat is not being able to reach a source", () => {
-    expect(DEFAULT_ORG_SETTINGS.chatBeta).toBe(true)
-    expect(DEFAULT_ORG_SETTINGS.chatSources).toHaveLength(0)
-  })
 })
 
 describe("which declared sources a person reaches", () => {
@@ -259,20 +248,6 @@ describe("writing from chat", () => {
       expect(chatPolicy("publish", { title: "New", request_review: true })).toMatchObject({
         request_review: true,
       })
-    })
-
-    it("caps how long a chat turn waits on a packaged agent", () => {
-      // A Maker context can work for minutes and the person is sitting there, so the turn relays
-      // a pointer rather than holding the conversation open.
-      expect(chatPolicy("use", { context: "c", instruction: "go", wait: 300 })).toMatchObject({
-        wait: CHAT_USE_WAIT_S,
-      })
-      // A shorter ask is honored — the cap is a ceiling, not a floor.
-      expect(chatPolicy("use", { context: "c", wait: 2 })).toMatchObject({ wait: 2 })
-      // Absent ⇒ the cap, so a turn never blocks indefinitely by omission.
-      expect(chatPolicy("use", { context: "c" })).toMatchObject({ wait: CHAT_USE_WAIT_S })
-      // A negative is the model's mistake; clamping beats spending a turn on a tool error.
-      expect(chatPolicy("use", { context: "c", wait: -5 })).toMatchObject({ wait: 0 })
     })
   })
 

@@ -24,23 +24,21 @@ import { makeBillingDriver } from "./lib/billing"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { nodeSandbox } from "./lib/code-sandbox-node"
 import { answerDeriveMention } from "./lib/comment-turn"
-import { dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { sweepExpiredDrafts } from "./lib/drafts"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
 import { workspaceIdsFromEnv } from "./lib/env"
 import { sharpShrinker } from "./lib/image-shrink-node"
+import { graphAware, graphPass } from "./lib/job-graph"
+import { machineDepsFrom, machinePass } from "./lib/job-machine"
+import { jobTick } from "./lib/jobs"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
-import { getInstanceSlot, modelSource, readLibrary } from "./lib/model-library"
+import { modelSource, readLibrary } from "./lib/model-library"
 import { NODE_REPO_CAPS } from "./lib/repo-fetch"
-import { runtimeDispatchPass } from "./lib/runtime-dispatch"
 import { mountWeb } from "./lib/serve-web"
 import { signupPolicy } from "./lib/signup-policy"
 import { originProxy } from "./lib/site"
 import { makeSlackIngestSender, makeSlackSender } from "./lib/slack-comments"
 import { makeSlackDmSender } from "./lib/slack-dm"
-import { loopSubstrate } from "./lib/substrate-loop"
-import { nodeSubstrate } from "./lib/substrate-node"
-import { providerSubstrate } from "./lib/substrate-provider"
 import { makeShutdown } from "./lifecycle"
 import { log } from "./log"
 import { playwrightRenderer } from "./preview-node"
@@ -475,64 +473,12 @@ const importWorker = cfg.backgroundWorkers
     })
   : undefined
 
-// EXPERIMENTAL hosted runs (DERIVE_HOSTED_RUNS, default off): this API process becomes the
-// executor host — it materializes due schedules, reclaims runs whose executor died, and starts
-// each due run as a `derive runner run` child process on this box, so an automation updates its
-// artifact with no separate machine and no polling runner. Off by default because it spawns
-// processes and spends the run initiator's model plan; a deployment opts in deliberately. When
-
-// off, runs stay queued for a polling `derive runner` exactly as before.
-const hostedDispatch = cfg.hostedRuns
-  ? {
-      meta,
-      // WHICH SUBSTRATE. `DERIVE_LOOP_RUNS=1` executes runs in this process — a model and fetch,
-      // no child process and no container, which is all "read something, write an artifact"
-      // actually needs. Anything wanting a shell, a filesystem or git still belongs on the child
-      // process, so the CLI runner stays the default and the flag is the opt-in.
-      //
-      // The loop substrate is the SAME file the Worker entry would use: it is an HTTP client of
-      // this API, so there is no platform branch and nothing to keep in step between the two.
-      //
-      // ONE substrate for both lanes. Sessions used to be pinned to the child process because
-      // the loop served runs only; it now branches on the work token and claims an ask through
-      // `/v1/agent/sessions/claim`, so the split is gone.
-      substrate:
-        process.env.DERIVE_LOOP_RUNS === "1"
-          ? providerSubstrate({
-              fallback: loopSubstrate({
-                // DERIVE_LOOP_MODEL, not DERIVE_MODEL_NAME: this field is the ANTHROPIC model id
-                // used on the per-run resolved-credential path, while DERIVE_MODEL_NAME names the
-                // model on the GATEWAY below. Passing the gateway's id here pointed a Fireworks
-                // path at api.anthropic.com and 404'd every run that resolved a real plan.
-                model: process.env.DERIVE_LOOP_MODEL,
-                gateway: modelGateway() ?? undefined,
-                // The operator's live pin for this lane, read per run. `meta` is module-scope and
-                // always valid on this tier, so there is nothing to capture at dispatch time.
-                gatewayModel: async () => (await getInstanceSlot(meta, "automation")) ?? undefined,
-              }),
-              providers: { codex: nodeSubstrate({ bin: cfg.runnerBin }) },
-            })
-          : nodeSubstrate({ bin: cfg.runnerBin }),
-      server: cfg.baseUrl,
-      secret: authSecret,
-      // A generic gateway pays only when the selected unattended substrate can actually use it.
-      // The CLI child cannot, and must resolve its own Claude/Codex plan through the payer chain.
-      operatorPays: process.env.DERIVE_LOOP_RUNS === "1" && modelGateway() !== null,
-      // Self-host stays unrestricted when unset. Setting the variable (including explicitly
-      // blank) gives an operator the same precise rollout/kill boundary as the shared host.
-      ...(process.env.DERIVE_HOSTED_RUNS_ALLOWLIST === undefined
-        ? {}
-        : { hostedOrgIds: workspaceIdsFromEnv(process.env.DERIVE_HOSTED_RUNS_ALLOWLIST) }),
-    }
-  : null
-
 const gateway = modelGateway()
 
 const runtimeConfig = process.env.DERIVE_ORTAM_RUNNER_PATH
   ? {
       runnerPath: process.env.DERIVE_ORTAM_RUNNER_PATH,
       apiUrl: process.env.DERIVE_ORTAM_API_URL ?? "https://api.ortam.dev/v1",
-      pilotWorkspaceIds: workspaceIdsFromEnv(process.env.DERIVE_HOSTED_RUNS_ALLOWLIST),
       managed: process.env.DERIVE_ORTAM_INTEGRATION_KEY
         ? {
             apiKey: process.env.DERIVE_ORTAM_INTEGRATION_KEY,
@@ -541,15 +487,10 @@ const runtimeConfig = process.env.DERIVE_ORTAM_RUNNER_PATH
         : undefined,
     }
   : undefined
-let pokeRuntime: (() => void) | undefined
 const app = createApp({
   // An attended editor save answers once its version is stored; indexing and realtime follow.
   detachAfterResponse: true,
-  hostedAutomation: hostedDispatch
-    ? { providers: ["claude-code", "codex"], workspaceIds: hostedDispatch.hostedOrgIds }
-    : undefined,
   runtime: runtimeConfig,
-  pokeRuntime: () => pokeRuntime?.(),
   meta,
   // Self-host: whatever the image was built from. Docker builds can pass it; a source run
   // reports "dev". Same contract as the edge — /healthz answers "what is running".
@@ -560,8 +501,6 @@ const app = createApp({
   // Both come from ONE construction: `callModel` is the catalog's default entry, so "the model"
   // means the same thing to a lane that picks one and a lane that does not.
   callModel: gatewayModels?.resolve(null)?.callModel,
-  automationOperatorPays:
-    cfg.hostedRuns && process.env.DERIVE_LOOP_RUNS === "1" && gateway !== null,
   models: gatewayModels ?? undefined,
   // The gateway that catalog was built from, so the operator's model library can reach an id
   // the environment never named — same endpoint, same key, no new secret. Without it the
@@ -632,11 +571,6 @@ const app = createApp({
   // Paper imports need a worker; without one the route refuses instead of queueing.
   imports: !!importWorker,
   pokeImports: importWorker ? () => void importWorker.poke() : undefined,
-  // Start a just-created run immediately instead of at the next tick, so "Run now" and a fire
-  // URL feel instant. Unset when hosted runs are off — the run then waits for a polling runner.
-  pokeRun: hostedDispatch
-    ? (runId: string) => void dispatchRunNow(hostedDispatch, runId).catch(() => undefined)
-    : undefined,
 })
 
 // Serve the bundled SPA from this process (single-container self-host). The API
@@ -701,54 +635,32 @@ const editSessionSweepTimer =
     : undefined
 editSessionSweepTimer?.unref?.()
 
-// Opt-in Ortam execution: reconcile durable attempts without holding a process open per VM.
-let runtimeTimer: ReturnType<typeof setInterval> | undefined
-if (runtimeConfig && cfg.backgroundWorkers) {
-  // Backpressure for this timer, not an ownership lock: database reservations still
-  // fence concurrent processes and restarts.
+// The job tick: turn due schedule windows into jobs and reclaim lapsed leases. Cheap, and
+// needed wherever background workers run, so it is not behind an opt-in.
+let jobTimer: ReturnType<typeof setInterval> | undefined
+if (cfg.backgroundWorkers) {
   let ticking = false
   const tick = () => {
     if (ticking) return
     ticking = true
-    void runtimeDispatchPass({
-      meta,
-      blobs,
-      config: runtimeConfig,
+    const machines = machineDepsFrom(meta, {
       secret: authSecret,
       server: cfg.baseUrl,
+      config: runtimeConfig,
     })
-      .catch(() => log.warn("runtime dispatch pass failed"))
+    const graphs = graphAware({ meta, blobs })
+    void jobTick(graphs, new Date())
+      .then(() => graphPass(graphs))
+      .then(() => (machines ? machinePass(machines) : undefined))
+      .catch(() => log.warn("job tick failed"))
       .finally(() => {
         ticking = false
       })
   }
-  pokeRuntime = tick
   tick()
-  runtimeTimer = setInterval(tick, 10_000)
-  runtimeTimer.unref()
+  jobTimer = setInterval(tick, 30_000)
+  jobTimer.unref()
 }
-// EXPERIMENTAL hosted runs (DERIVE_HOSTED_RUNS=true, default off): this API process becomes
-// the executor host. A minutely tick materializes due schedules, reclaims runs whose executor
-// died, and starts each due run as a `derive runner run` child process on this box — so an
-// automation updates its artifact with no separate machine and no polling runner. Off by
-// default because it spawns processes and spends the owner's model plan; a deployment opts in
-// deliberately. When off, runs stay queued for a polling `derive runner` (unchanged behavior).
-let hostedRunsTimer: ReturnType<typeof setInterval> | undefined
-if (hostedDispatch) {
-  const hostedTick = () => void dispatchPass(hostedDispatch).catch(() => undefined)
-  hostedTick() // catch up on boot, like every other worker here
-  hostedRunsTimer = setInterval(hostedTick, 60_000)
-  hostedRunsTimer.unref?.()
-  // Report the substrate ACTUALLY in use, not a hardcoded guess. This said "node-child" even
-  // when DERIVE_LOOP_RUNS had swapped in the in-process loop, so the one line an operator reads
-  // to answer "what is executing my runs" was wrong — and wrong in the direction that sends you
-  // looking for a child process that was never spawned.
-  log.info("hosted runs ENABLED (experimental)", {
-    substrate: hostedDispatch.substrate.name,
-    ...(hostedDispatch.substrate.name === "node-child" ? { bin: cfg.runnerBin } : {}),
-  })
-}
-
 // One-time cleanup of pre-existing owner self-views (the route no longer records
 // them). Pre-multi-workspace rows were rekeyed from "local" onto defaultOrg above,
 // so the legacy owners live under defaultOrg now (not the "local" sentinel). Match
@@ -817,7 +729,7 @@ const shutdown = makeShutdown({
     if (pruneTimer) clearInterval(pruneTimer)
     if (draftSweepTimer) clearInterval(draftSweepTimer)
     if (editSessionSweepTimer) clearInterval(editSessionSweepTimer)
-    if (runtimeTimer) clearInterval(runtimeTimer)
+    if (jobTimer) clearInterval(jobTimer)
   },
   closeStores,
   log,

@@ -359,7 +359,6 @@ export const connectionRoutes = (ctx: AppContext) => {
       }
     }
     await meta.setConnectionStatus(cn.id, org, "revoked")
-    if (cn.kind === "secret") deps.pokeRuntime?.()
     return c.body(null, 204)
   })
 

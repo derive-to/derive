@@ -32,8 +32,8 @@ keystroke, or Edit on a selection, away.
 
 ## Importing a paper from arXiv
 
-A paper somebody else wrote can join a workspace as a read-only Context. On the
-new-context page, "Import a paper from arXiv" takes the abstract page, a PDF link, the
+A paper somebody else wrote can join a workspace as a read-only Context. On the import
+page, "Import a paper from arXiv" takes the abstract page, a PDF link, the
 DOI, an `arXiv:` reference or a bare id; the form says what it will fetch as you type
 and refuses anything that is not an arXiv reference. The Context appears in the list
 at once, marked "fetching from arXiv", and a worker fetches the paper in the background:
@@ -56,9 +56,8 @@ no source download, no bibliography editor and no diff, and its raw source is no
 a person. Agents keep full access, because reading the source is how a model understands a
 paper: `read` on the Context returns a summary (authors, abstract, BibTeX) computed from
 the paper, `documents` names the one artifact, and reading that short id gives the source
-section by section plus the `citation` to cite it with. `use` refuses it, since nothing runs
-it. People open it from the Contexts list, where the arXiv chip marks it, and from the
-Templates page's Academic section.
+section by section plus the `citation` to cite it with. Nothing runs it. People open it from
+its paper page, where the arXiv chip marks it, and from the Templates page's Academic section.
 
 ### The paper's implementation
 

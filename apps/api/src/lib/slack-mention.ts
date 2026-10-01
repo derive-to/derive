@@ -9,7 +9,7 @@
 // asking (a Slack user id is not a principal), WHICH workspace this channel belongs to (one
 // Slack team can back several), and WHERE the answer goes (a thread, not a channel).
 
-import { type ArtifactRecord, type MetaStore, newId } from "@derive/core"
+import { type ArtifactRecord, artifactUrl, type MetaStore, newId } from "@derive/core"
 import type { Backplane } from "../bus"
 import { log } from "../log"
 import { liveChatArrival, refusalMessage } from "./chat-gate"
@@ -520,9 +520,13 @@ export const handleSlackMention = async (
       /\]\((\/[A-Za-z0-9][\w\-./?=&#%]*)\)/g,
       (_m, path: string) => `](${deps.baseUrl}${path})`,
     )
-    await settle(
-      `${mrkdwnBody(withLinks)}\n\n<${deps.baseUrl}/chat?session=${sessionId}|Continue in Derive>`,
-    )
+    // The page the question was about, when the message named one, is where to carry on; a
+    // question about the whole workspace has no page to send anyone to.
+    const onward =
+      named && named.org_id === install.org_id
+        ? `\n\n<${artifactUrl(deps.baseUrl.replace(/\/$/, ""), named)}|Open in Derive>`
+        : ""
+    await settle(`${mrkdwnBody(withLinks)}${onward}`)
   } catch (e) {
     log.error("slack mention turn failed", {
       team: p.teamId,

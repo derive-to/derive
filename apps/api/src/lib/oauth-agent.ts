@@ -4,6 +4,7 @@ import {
   type MetaStore,
   type OAuthGrantWorkspaceRead,
   type Role,
+  syntheticAgent,
   type WorkspaceRecord,
 } from "@derive/core"
 import { createLocalJWKSet, type JWTPayload, jwtVerify } from "jose"
@@ -153,23 +154,17 @@ export function makeOauthAgent({
         boundWorkspaces: ws.bound,
         orgContext: joined?.orgContext,
         workspaces: ws.mine,
-        rec: {
+        rec: syntheticAgent({
           id: `oauth:${grant.clientId}`,
           org_id: ws.org,
           name: grant.clientName,
-          token: "",
           // Scopes suggest the role; the owner's membership in the resolved
           // workspace is the ceiling (a publish scope is not an editorship in a
           // workspace where the granting user is only a viewer).
           role: capRole(scopeRole, ws.memberRole),
           created_by: grant.userId,
-          // An OAuth grant is never hosted directly: hosting means a registered
-          // agent record (a grant has no server-storable credential to run with).
-          hosted: 0,
-          managed: 0,
-          runs_seen_at: null,
           created_at: new Date().toISOString(),
-        },
+        }),
       }
     }
     // 2. JWT access token: the oauth-provider issues a signed JWT (not stored in our
@@ -222,19 +217,14 @@ export function makeOauthAgent({
       clientId,
       boundWorkspaces: ws.bound,
       workspaces: ws.mine,
-      rec: {
+      rec: syntheticAgent({
         id: `oauth:${clientId}`,
         org_id: ws.org,
         name: (await clientName(meta, clientId)) || clientId || "An agent",
-        token: "",
         role: capRole(scopeRole, ws.memberRole),
         created_by: userId,
-        // Never hosted directly, same as the opaque-token branch above.
-        hosted: 0,
-        managed: 0,
-        runs_seen_at: null,
         created_at: new Date().toISOString(),
-      },
+      }),
     }
   }
 

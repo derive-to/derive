@@ -28,7 +28,6 @@ import { purgeUserDataAndSyncSeats, workspacesBlockingDeletion } from "./lib/acc
 import { makeBillingDriver } from "./lib/billing"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { cloudflareSandbox } from "./lib/code-sandbox-cloudflare"
-import { type DispatchDeps, dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { buildAuthEmail } from "./lib/email"
 import {
   slackFromEnv,
@@ -36,19 +35,17 @@ import {
   superAdminsFromEnv,
   workspaceIdsFromEnv,
 } from "./lib/env"
+import { graphAware, graphPass } from "./lib/job-graph"
+import { machineDepsFrom, machinePass } from "./lib/job-machine"
+import { jobTick } from "./lib/jobs"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
-import { getInstanceSlot } from "./lib/model-library"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
 import { runtimeFailureReason } from "./lib/runtime-diagnostics"
-import { runtimeDispatchPass } from "./lib/runtime-dispatch"
 import { isApiPath } from "./lib/serve-web"
 import { parseSignupMode, signupPolicy } from "./lib/signup-policy"
 import { isServerRenderedPath, isSpaPath, isStaticRootPath } from "./lib/spa-paths"
 import { STATIC_NAMESPACE_PREFIXES } from "./lib/static-namespaces"
-import { containerSubstrateFromEnv } from "./lib/substrate-container"
-import { loopSubstrate } from "./lib/substrate-loop"
-import { providerSubstrate } from "./lib/substrate-provider"
 import { log } from "./log"
 import { IMPORTS_POKE_PATH } from "./preview-do"
 import { createDoBackplane, edgeCtx, edgeWaitUntil } from "./realtime-do"
@@ -60,9 +57,6 @@ export { PreviewRenderer } from "./preview-do"
 // The bound Durable Object classes are re-exported so the Workers runtime can
 // instantiate them (see wrangler.toml `durable_objects.bindings`).
 export { ArtifactRoom } from "./realtime-do"
-// EXPERIMENTAL hosted runs: one automation run per container instance, then it exits.
-// Declared in wrangler.toml [[containers]] + its DO binding; unbound = hosted runs off.
-export { RunContainer } from "./run-container"
 export { WebhookOutbox } from "./webhook-do"
 
 // The webhook outbox DO is a singleton: every isolate pokes the same instance by a
@@ -132,14 +126,6 @@ export interface Env {
   PREVIEW_RENDERER?: DurableObjectNamespace
   // Cloudflare Browser Rendering binding. Unbound ⇒ preview rendering is disabled.
   BROWSER?: BrowserWorker
-  // EXPERIMENTAL hosted runs: the Containers binding that executes ONE automation run per
-  // instance (scale to zero between runs). Declared in wrangler.toml `[[containers]]`.
-  // Unbound (the default) ⇒ hosted execution is off and runs wait for a polling runner.
-  RUN_CONTAINER?: unknown
-  // The run-dispatch QUEUE: the latency nudge, never the source of truth. Postgres is the
-  // queue of record, so a dropped message costs seconds (the cron sweep re-dispatches),
-  // not work. Unbound ⇒ "Run now" simply waits for the next cron tick, as before.
-  RUN_QUEUE?: { send: (body: unknown) => Promise<void> }
   // Native per-colo rate-limit bindings (limit + window declared in wrangler.toml
   // [[ratelimits]]). The edge counts against these instead of an in-process Map so a cap
   // holds across isolates within a location. RL_STRICT is shared by the tight 3/60
@@ -181,16 +167,6 @@ export interface Env {
   DERIVE_MODEL_GATEWAYS?: string
   /** Workspace ids allowed to enable chat while the gateway above pays. */
   DERIVE_CHAT_ALLOWLIST?: string
-  /** Workspace ids allowed to execute on Derive's hosted substrate. Empty/unset means nobody
-   *  on the multi-tenant edge; owner-operated polling runners remain available everywhere. */
-  DERIVE_HOSTED_RUNS_ALLOWLIST?: string
-  /** "1" runs automations in this isolate via the loop substrate instead of booting a container.
-   *  Off by default, so derive.to keeps its current behaviour until it is set deliberately. */
-  DERIVE_LOOP_RUNS?: string
-  /** ANTHROPIC model id for in-process runs on a resolved per-run plan. Deliberately NOT
-   *  DERIVE_MODEL_NAME, which is the GATEWAY's id and 404s against api.anthropic.com. Unset =
-   *  the loop's own Anthropic default. */
-  DERIVE_LOOP_MODEL?: string
   DERIVE_SANDBOX_URL?: string
   DERIVE_SUPERADMIN_EMAILS?: string
   DERIVE_SIGNUP_MODE?: string
@@ -344,21 +320,10 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
       })
       const models = catalogFromGateway(workerGateway(env))
       app = createApp({
-        hostedAutomation: {
-          workspaceIds: workspaceIdsFromEnv(env.DERIVE_HOSTED_RUNS_ALLOWLIST),
-          providers: !secret
-            ? []
-            : containerSubstrateFromEnv(env as unknown as Record<string, unknown>)
-              ? ["claude-code", "codex"]
-              : env.DERIVE_LOOP_RUNS === "1"
-                ? ["claude-code"]
-                : [],
-        },
         runtime: env.DERIVE_ORTAM_RUNNER_PATH
           ? {
               runnerPath: env.DERIVE_ORTAM_RUNNER_PATH,
               apiUrl: env.DERIVE_ORTAM_API_URL ?? "https://api.ortam.dev/v1",
-              pilotWorkspaceIds: workspaceIdsFromEnv(env.DERIVE_HOSTED_RUNS_ALLOWLIST),
               managed: env.DERIVE_ORTAM_INTEGRATION_KEY
                 ? {
                     apiKey: env.DERIVE_ORTAM_INTEGRATION_KEY,
@@ -381,7 +346,6 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // Both from ONE construction: `callModel` is the catalog's default entry, so a lane that
         // picks a model and a lane that does not can never disagree about what "the model" is.
         callModel: models?.resolve(null)?.callModel,
-        automationOperatorPays: env.DERIVE_LOOP_RUNS === "1" && workerGateway(env) !== undefined,
         models: models ?? undefined,
         // The gateway that catalog was built from, so the operator's model library can reach an
         // id the environment never named — same endpoint, same key, no new secret. Without it
@@ -490,16 +454,6 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // binding nothing would fetch, and an exports-only renderer never runs them.
         imports: !!env.PREVIEW_RENDERER && env.DERIVE_EXPORTS_ONLY !== "true",
         pokeImports: () => void edgeWaitUntil(pokeImporter(env)),
-        // Hosted runs: nudge the dispatch queue so an interactive run starts in seconds
-        // instead of on the next minute's cron. Best-effort by construction — the sweep is
-        // the guarantee — and a no-op when the queue isn't bound (hosted execution off).
-        pokeRuntime: () => {
-          if (env.RUN_QUEUE)
-            void edgeWaitUntil(env.RUN_QUEUE.send({ kind: "runtime" }).catch(() => {}))
-        },
-        pokeRun: (runId: string) => {
-          if (env.RUN_QUEUE) void edgeWaitUntil(env.RUN_QUEUE.send({ runId }).catch(() => {}))
-        },
         sandboxOrigin: env.DERIVE_SANDBOX_URL,
         // Read the SPA shell from static assets so /artifacts/:ref can carry unfurl meta.
         // Cached per isolate; null on any miss leaves the shell untouched.
@@ -626,49 +580,16 @@ export default {
     ctx.waitUntil(pokeOutbox(env))
     ctx.waitUntil(pokePreviewRenderer(env))
     ctx.waitUntil(pokeImporter(env))
-    // EXPERIMENTAL hosted runs: the same minute tick also drives automation execution when a
-    // container binding is configured — materialize due schedules, reclaim dead runs, and boot
-    // one scale-to-zero container per due run. Unbound (the default) = a no-op, so runs stay
-    // queued for a polling runner and an un-opted deployment behaves exactly as before.
-    ctx.waitUntil(hostedRunTick(env, ctx))
-    ctx.waitUntil(runtimeTick(env))
     ctx.waitUntil(sweepEditSessions(env, ctx))
-  },
-
-  // Queue messages nudge hosted dispatch or Ortam reconciliation. Duplicate runtime
-  // nudges share one bounded pass per batch; durable revisions fence concurrent passes.
-  // Cron remains the recovery path when a message is lost or publication fails.
-  async queue(
-    batch: { messages: { body: unknown }[] },
-    env: Env,
-    ctx?: ExecutionContext,
-  ): Promise<void> {
-    const ids = batch.messages
-      .map((m) => (m.body as { runId?: unknown })?.runId)
-      .filter((id): id is string => typeof id === "string" && id.length > 0)
-    const pending: Promise<void>[] = []
-    if (batch.messages.some((m) => (m.body as { kind?: unknown })?.kind === "runtime"))
-      pending.push(runtimeTick(env))
-    if (ids.length > 0)
-      pending.push(
-        withHostedDispatch(
-          env,
-          async (deps) => {
-            for (const runId of ids) await dispatchRunNow(deps, runId)
-          },
-          // Same reason as the cron tick: on the loop substrate the run happens here, so the consumer
-          // invocation has to be kept alive past the ack.
-          ctx,
-        ),
-      )
-    await Promise.all(pending)
+    // The job tick: due schedules become jobs, lapsed leases are reclaimed, graph jobs
+    // advance, and queued jobs for Derive machines are dispatched.
+    ctx.waitUntil(jobTickEdge(env))
   },
 }
 
 /** The operator-configured OpenAI-compatible gateway, or undefined. ALL THREE vars or none: a
  *  base URL with no key 401s every call and a key with no model id sends an empty model, so an
- *  incomplete set is treated as unset. The Node twin is node.ts's `modelGateway`; read once here
- *  so attended chat and the loop substrate can never disagree about whether one is configured. */
+ *  incomplete set is treated as unset. The Node twin is node.ts's `modelGateway`. */
 function workerGateway(env: Env): GatewayConfig | undefined {
   const {
     DERIVE_MODEL_BASE_URL: baseUrl,
@@ -686,188 +607,37 @@ function workerGateway(env: Env): GatewayConfig | undefined {
     : undefined
 }
 
-/** Run something with hosted-dispatch deps, inside a request-scoped DB context (a binding
- *  captured outside one goes stale — see lib/request-d1.ts). The single place the edge decides
- *  whether hosted execution is configured at all: no container binding or no auth secret means
- *  hosted runs are OFF, and both entry points (the cron sweep and the queue nudge) must degrade
- *  to a no-op rather than fail, leaving runs queued for a polling runner. */
-async function withHostedDispatch(
-  env: Env,
-  fn: (deps: DispatchDeps) => Promise<void>,
-  ctx?: ExecutionContext,
-): Promise<void> {
-  // Two things come from the ExecutionContext, and both are why hosted runs work at all here:
-  // `waitUntil` keeps the isolate alive past dispatch, and `handle` lets the loop reach this
-  // API without leaving the isolate (see `fetchImpl` on the substrate).
-  const waitUntil = ctx ? (p: Promise<unknown>) => ctx.waitUntil(p) : undefined
-  // WHICH SUBSTRATE, mirroring node.ts. `DERIVE_LOOP_RUNS=1` runs the work in this isolate — a
-  // model and fetch, which is all "read a document, write a revision" needs, and the only runner
-  // in scope. It is the SAME file Node uses; the platform difference is exactly the two options
-  // below — `waitUntil`, without which the isolate is torn down the moment dispatch returns and
-  // the run dies mid-model-call, and `fetchImpl`, without which the loop's calls to this API
-  // leave the isolate and time out. Anything needing a shell or git still wants the container,
-  // so that stays the default and the flag is the opt-in.
-  //
-  // BOTH LANES, one substrate. The loop used to serve runs only, so a deployment that opted into
-  // it had to keep sessions on the container or lose them; it now branches on the work token and
-  // serves an ask through the session claim, so there is nothing left to split.
-  //
-  // THE MODEL ID IS `DERIVE_LOOP_MODEL`, NOT `DERIVE_MODEL_NAME`. The latter names the model on
-  // the operator's OpenAI-compatible GATEWAY — the deployment guide tells operators to set it —
-  // and it was being handed to the loop as the ANTHROPIC model id, which 404s `model_not_found`
-  // on 100% of hosted runs for any deploy that had configured chat. Unset is the right default:
-  // the loop falls back to its own Anthropic model id.
-  //
-  // The gateway rides along when the operator configured one, exactly as node.ts does. An
-  // earlier version of this comment ended "derive.to sets none of the three, so nothing changes
-  // there" — that is FALSE and was worth a release: derive.to sets all three, because holding
-  // the key and spending it for every workspace IS the hosted posture. `operatorPays` below
-  // depends on the same fact.
-  const gateway = workerGateway(env)
-  /**
-   * The operator's live pin for the automation lane, resolved at DISPATCH and read by the loop.
-   *
-   * Two-step on this tier for a reason the Node twin does not have: the datastore is reached
-   * through request-scoped AsyncLocalStorage proxies (liveD1 / livePgPool), and the loop runs
-   * DETACHED through waitUntil, where that context is gone — a store built inside the loop would
-   * hang on a reclaimed binding rather than fail. `scoped()` below runs with a valid context, so
-   * the pin is read there and the loop only ever reads the value that was already resolved.
-   */
-  const pin: { automation?: string } = {}
-  const container = containerSubstrateFromEnv(env as unknown as Record<string, unknown>)
-  const loop =
-    env.DERIVE_LOOP_RUNS === "1"
-      ? loopSubstrate({
-          model: env.DERIVE_LOOP_MODEL,
-          gateway,
-          gatewayModel: async () => pin.automation,
-          waitUntil,
-          // Reach this API WITHOUT leaving the isolate. The loop is an HTTP client of its own
-          // deployment; on Workers a global fetch at BASE_URL exits to the edge and comes back
-          // to this same Worker, and the cron tick starting several runs at once made every one
-          // of those self-subrequests time out (522 on the claim). `handle` is the exact entry a
-          // real request takes, so the route, the bearer, the middleware and the authorization
-          // are unchanged — only the network hop is gone. Needs the ExecutionContext, which is
-          // why withHostedDispatch takes `ctx` rather than a bare waitUntil.
-          //
-          // EACH SUB-REQUEST GETS ITS OWN CONNECTION, exactly as `fetch` above gives every real
-          // request one. Calling `handle` bare inherits the DISPATCH's pg context, so every call
-          // from every concurrently-started run would share a single pg Client, and
-          // node-postgres queues concurrent queries on one Client — silently serializing work a
-          // network request would have run in parallel.
-          //
-          // Correctness, not a measured win. A run of "operation was aborted due to timeout" was
-          // first blamed on this contention; that was withdrawn when the model host turned out
-          // to have been unreachable at the time, and the failures never reproduced against a
-          // healthy one. The invariant is the reason to keep it: routing through the same entry
-          // point should leave a sub-request differing from a network request in latency and
-          // nothing else.
-          ...(ctx
-            ? {
-                fetchImpl: (req: Request): Promise<Response> =>
-                  env.HYPERDRIVE
-                    ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), async () =>
-                        handle(req, env, ctx),
-                      )
-                    : Promise.resolve(handle(req, env, ctx)),
-              }
-            : {}),
-        })
-      : null
-  // Codex is a coding-agent CLI: it needs the filesystem/shell job container even when the
-  // deployment keeps ordinary artifact refreshes on the cheaper in-Worker model loop.
-  const substrate = loop
-    ? providerSubstrate({ fallback: loop, providers: { codex: container ?? undefined } })
-    : container
-  const secret = env.DERIVE_AUTH_SECRET
-  if (!substrate || !secret) return
-  const scoped = async () => {
+/** The job tick on the edge: due schedule windows become jobs, lapsed leases are reclaimed.
+ *  Store bindings are request-scoped, so the pass runs inside the same scope the handlers use. */
+async function jobTickEdge(env: Env): Promise<void> {
+  const pass = async () => {
     const meta = env.HYPERDRIVE ? PgMetaStore.fromPool(livePgPool) : createD1Store(liveD1)
-    // Read here, inside the live datastore context, for the loop to use after this returns.
-    // Best-effort: a failed lookup leaves the configured default in place rather than stopping
-    // dispatch, because "we could not read a preference" must never mean "nothing runs".
-    pin.automation = (await getInstanceSlot(meta, "automation").catch(() => null)) ?? undefined
-    return fn({
-      meta,
-      substrate,
-      server: env.BASE_URL ?? "",
-      secret,
-      // The gateway can pay only for work that actually uses the in-Worker loop. Containerized
-      // coding agents still resolve their selected provider's plan through the payer chain.
-      operatorPays: env.DERIVE_LOOP_RUNS === "1" && !!gateway,
-      // Multi-tenant rollout is FAIL CLOSED: unlike Node self-host, the Worker always passes a
-      // set. A missing/blank binding therefore selects zero workspaces rather than every one.
-      hostedOrgIds: workspaceIdsFromEnv(env.DERIVE_HOSTED_RUNS_ALLOWLIST),
+    const graphs = graphAware({ meta, blobs: new R2BlobStore(env.BUCKET) })
+    await jobTick(graphs, new Date())
+    await graphPass(graphs)
+    const machines = machineDepsFrom(meta, {
+      secret: env.DERIVE_AUTH_SECRET,
+      server: env.BASE_URL,
+      config: env.DERIVE_ORTAM_RUNNER_PATH
+        ? {
+            runnerPath: env.DERIVE_ORTAM_RUNNER_PATH,
+            apiUrl: env.DERIVE_ORTAM_API_URL ?? "https://api.ortam.dev/v1",
+            managed: env.DERIVE_ORTAM_INTEGRATION_KEY
+              ? {
+                  apiKey: env.DERIVE_ORTAM_INTEGRATION_KEY,
+                  workspaceIds: workspaceIdsFromEnv(env.DERIVE_MANAGED_RUNS_ALLOWLIST),
+                }
+              : undefined,
+          }
+        : undefined,
     })
-  }
-  await (env.HYPERDRIVE
-    ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), scoped)
-    : requestD1.run(env.DB, scoped)
-  ).catch((error: unknown) => {
-    // Dispatch is deliberately best-effort — Postgres remains the durable queue and the next
-    // cron pass retries — but swallowing setup/context failures makes an outage invisible.
-    log.error("hosted dispatch: edge setup failed", {
-      error: error instanceof Error ? error.message : String(error),
-    })
-  })
-}
-
-/** The cron sweep: materialize due schedules, reclaim dead runs, dispatch what is due. */
-const hostedRunTick = (env: Env, ctx?: ExecutionContext): Promise<void> =>
-  withHostedDispatch(
-    env,
-    async (deps) => {
-      await dispatchPass(deps)
-    },
-    // The loop substrate runs the model call in THIS isolate, and dispatch returns as soon as the
-    // work has begun. Without handing it waitUntil, the cron invocation finishes and Cloudflare
-    // tears the isolate down mid-run: the run stays `running` until the reclaim sweep requeues it,
-    // which looks like a hang rather than the truncation it is.
-    ctx,
-  )
-
-async function runtimeTick(env: Env): Promise<void> {
-  if (!env.DERIVE_ORTAM_RUNNER_PATH || !env.DERIVE_AUTH_SECRET) {
-    log.info("runtime tick skipped", {
-      reason: !env.DERIVE_ORTAM_RUNNER_PATH ? "runner_unconfigured" : "auth_unconfigured",
-    })
-    return
-  }
-  log.info("runtime tick started", { store: env.HYPERDRIVE ? "postgres" : "d1" })
-  const config = {
-    runnerPath: env.DERIVE_ORTAM_RUNNER_PATH,
-    apiUrl: env.DERIVE_ORTAM_API_URL ?? "https://api.ortam.dev/v1",
-    pilotWorkspaceIds: workspaceIdsFromEnv(env.DERIVE_HOSTED_RUNS_ALLOWLIST),
-    managed: env.DERIVE_ORTAM_INTEGRATION_KEY
-      ? {
-          apiKey: env.DERIVE_ORTAM_INTEGRATION_KEY,
-          workspaceIds: workspaceIdsFromEnv(env.DERIVE_MANAGED_RUNS_ALLOWLIST),
-        }
-      : undefined,
-  }
-  const secret = env.DERIVE_AUTH_SECRET
-  const scoped = async () => {
-    let wake = false
-    await runtimeDispatchPass({
-      meta: env.HYPERDRIVE ? PgMetaStore.fromPool(livePgPool) : createD1Store(liveD1),
-      blobs: new R2BlobStore(env.BUCKET),
-      server: env.BASE_URL ?? "",
-      secret,
-      config,
-      pokeRuntime: () => {
-        wake = true
-      },
-    })
-    if (wake && env.RUN_QUEUE) await env.RUN_QUEUE.send({ kind: "runtime" }).catch(() => {})
+    if (machines) await machinePass(machines)
   }
   try {
     await (env.HYPERDRIVE
-      ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), scoped)
-      : requestD1.run(env.DB, scoped))
+      ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), pass)
+      : requestD1.run(env.DB, pass))
   } catch (error) {
-    log.warn("runtime tick failed", { reason: runtimeFailureReason(error) })
-    // Mark the scheduled invocation failed without exposing the driver's SQL/parameters
-    // in Cloudflare's automatic exception capture.
-    throw new Error("Runtime tick failed; inspect runtime dispatch diagnostics")
+    log.warn("job tick failed", { reason: runtimeFailureReason(error) })
   }
 }

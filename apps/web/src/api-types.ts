@@ -1208,7 +1208,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List the workspace's registered agents (Admin only). */
+        /** List the workspace's agents. Every member sees them, like the work they do. */
         get: {
             parameters: {
                 query?: never;
@@ -1225,14 +1225,18 @@ export interface paths {
                     };
                     content: {
                         "application/json": {
-                            agents: components["schemas"]["Agent"][];
+                            agents: (components["schemas"]["Agent"] & {
+                                triggers: components["schemas"]["AgentTrigger"][];
+                                /** @description When it last had work, among the workspace's recent jobs. */
+                                last_job_at: string | null;
+                            })[];
                         };
                     };
                 };
             };
         };
         put?: never;
-        /** Register an agent and mint its token (returned once). */
+        /** Create an agent and mint its key (returned once). */
         post: {
             parameters: {
                 query?: never;
@@ -1242,7 +1246,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description The created agent, plus its bearer token (shown only here). */
+                /** @description The created agent, its key (shown only here), and how to run it. */
                 201: {
                     headers: {
                         [name: string]: unknown;
@@ -1250,6 +1254,8 @@ export interface paths {
                     content: {
                         "application/json": components["schemas"]["Agent"] & {
                             token: string;
+                            runner_command: string | null;
+                            trigger: components["schemas"]["AgentTrigger"] & unknown;
                         };
                     };
                 };
@@ -1268,10 +1274,36 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** One agent, with its schedules. Any member of its workspace can read it. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The agent. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Agent"] & {
+                            triggers: components["schemas"]["AgentTrigger"][];
+                            can_ask: boolean;
+                            can_manage: boolean;
+                        };
+                    };
+                };
+            };
+        };
         put?: never;
         post?: never;
-        /** Delete an agent (Admin only). */
+        /** Delete an agent (its creator or a workspace owner). */
         delete: {
             parameters: {
                 query?: never;
@@ -1294,7 +1326,7 @@ export interface paths {
         };
         options?: never;
         head?: never;
-        /** Update an agent's hosted flag (Admin only). */
+        /** Edit an agent (its creator or a workspace owner). */
         patch: {
             parameters: {
                 query?: never;
@@ -1319,6 +1351,102 @@ export interface paths {
         };
         trace?: never;
     };
+    "/v1/agents/{id}/triggers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add a schedule to an agent. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The schedule. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentTrigger"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/triggers/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove a schedule. */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Removed. */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Change or pause a schedule. */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The schedule. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentTrigger"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
     "/v1/agents/{id}/rotate": {
         parameters: {
             query?: never;
@@ -1328,7 +1456,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Rotate an agent's token (Admin only) — the old bearer dies at once. */
+        /** Replace an agent's key (its creator or a workspace owner); the old one dies at once. */
         post: {
             parameters: {
                 query?: never;
@@ -1420,6 +1548,371 @@ export interface paths {
             requestBody?: never;
             responses: {
                 /** @description The grant was revoked (idempotent). */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List jobs in the active workspace, newest first. */
+        get: {
+            parameters: {
+                query?: {
+                    agent?: string;
+                    /** @description Comma-separated statuses. */
+                    status?: string;
+                    /** @description Comma-separated kinds. */
+                    kind?: string;
+                    parent?: string;
+                    /** @description Keyset cursor: created_at of the last row seen. */
+                    before?: string;
+                    limit?: string;
+                    /** @description 1: only jobs you asked, or on agents you manage (the inbox). */
+                    mine?: string;
+                    /** @description A report page's short id: the job that report is for. */
+                    report?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Jobs. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            jobs: components["schemas"]["Job"][];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Ask an agent to do something. Opens a job (or returns the open one for a dedupe key). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description An open job already holding this dedupe key. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["JobDetail"];
+                    };
+                };
+                /** @description The new job. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["JobDetail"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/jobs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One job with its transcript. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The job. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["JobDetail"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/jobs/{id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Write to a job. Running: appended for the next turn. Settled: the job reopens. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The job. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["JobDetail"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/jobs/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel an open job (and its children). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The job. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Job"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/jobs/{id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run a failed or lost job again. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The job. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Job"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/jobs/{id}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Answer a job that is waiting on a person. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The job. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Job"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Your model accounts, and the workspace's shared ones. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Accounts. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            accounts: components["schemas"]["ModelAccount"][];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Add a model account by pasting a key or a login. Shared accounts need an owner. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The account. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ModelAccount"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/accounts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Disconnect an account. Yours, or a shared one if you own the workspace. */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Disconnected. */
                 204: {
                     headers: {
                         [name: string]: unknown;
@@ -3604,99 +4097,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/workflow-runs/{runId}/github/exchange": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Exchange an assigned GitHub Actions OIDC identity for one run capability. */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    runId: string;
-                };
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": {
-                        nonce: string;
-                        oidcToken: string;
-                    };
-                };
-            };
-            responses: {
-                /** @description A short-lived capability and the exact pinned graph instruction. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            token: string;
-                            instruction: string;
-                            expiresAt: string;
-                            /** Format: uri */
-                            mcpUrl: string;
-                        };
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/workflow-runs/{runId}/github/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Read terminal state for one OIDC-authenticated workflow capability. */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    runId: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The current Derive ledger state for this exact workflow run. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            /** @enum {string} */
-                            status: "queued" | "dispatched" | "running" | "waiting" | "succeeded" | "failed" | "cancelled" | "timed_out";
-                            terminal: boolean;
-                        };
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/github": {
         parameters: {
             query?: never;
@@ -4502,253 +4902,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/workflows": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List visible workflow artifacts from their current versioned definitions. */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Current workflow definitions the caller may read, newest first. No execution is started. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            workflows: {
-                                shortId: string;
-                                title: string;
-                                version: number;
-                                updatedAt: string;
-                                purpose: string | null;
-                                /** @enum {string} */
-                                status: "ready" | "needs-changes";
-                                diagrams: {
-                                    id: string;
-                                    title: string;
-                                    contextSteps: number;
-                                    humanPauses: number;
-                                    branches: number;
-                                    loops: number;
-                                }[];
-                            }[];
-                        };
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/artifacts/{shortId}/workflow-run": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Preview a validated workflow handoff without starting it. */
-        get: {
-            parameters: {
-                query: {
-                    diagram: string;
-                };
-                header?: never;
-                path: {
-                    shortId: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description A summary of the pinned definition that would be used. No run record is created. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            prompt: string;
-                            diagram: {
-                                id: string;
-                                title: string;
-                            };
-                        };
-                    };
-                };
-            };
-        };
-        put?: never;
-        /** Start a version-pinned workflow run for a local harness. */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    shortId: string;
-                };
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": {
-                        agentId?: string;
-                        diagramId: string;
-                        /** @enum {string} */
-                        delivery?: "agent" | "copy" | "github";
-                        github?: {
-                            connectionId: string;
-                            owner: string;
-                            repo: string;
-                            workflow: string;
-                            ref: string;
-                        };
-                    };
-                };
-            };
-            responses: {
-                /** @description A fresh run record and pinned instruction. Agent delivery also returns the inbox request id. */
-                201: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            runId: string;
-                            prompt: string;
-                            requestId?: string;
-                            githubRunId?: string;
-                            /** Format: uri */
-                            githubRunUrl?: string;
-                        };
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/artifacts/{shortId}/workflow-runs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List recent runs and their durable step receipts for a workflow artifact. */
-        get: {
-            parameters: {
-                query?: {
-                    diagram?: string;
-                    limit?: number;
-                };
-                header?: never;
-                path: {
-                    shortId: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Recent version-pinned workflow runs, newest first. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            runs: {
-                                id: string;
-                                diagramId: string;
-                                workflowVersion: number;
-                                /** @enum {string} */
-                                status: "queued" | "dispatched" | "running" | "waiting" | "succeeded" | "failed" | "cancelled" | "timed_out";
-                                reason: string;
-                                /** @enum {string} */
-                                requestedExecution: "any" | "local" | "hosted" | "github_actions";
-                                /** @enum {string|null} */
-                                actualExecution: "local" | "hosted" | "github_actions" | null;
-                                externalExecution?: unknown;
-                                createdAt: string;
-                                startedAt: string | null;
-                                finishedAt: string | null;
-                                attempts: {
-                                    id: string;
-                                    nodeId: string;
-                                    attempt: number;
-                                    /** @enum {string} */
-                                    kind: "context" | "human" | "terminal";
-                                    /** @enum {string} */
-                                    status: "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
-                                    selectedRoutes: string[] | null;
-                                    routeSources: string[] | null;
-                                    routeBasis: string | null;
-                                    resultArtifactId: string | null;
-                                    error: string | null;
-                                    createdAt: string;
-                                    startedAt: string | null;
-                                    finishedAt: string | null;
-                                }[];
-                                activity: {
-                                    id: string;
-                                    nodeId: string;
-                                    attempt: number;
-                                    artifactShortId: string;
-                                    artifactVersion: number;
-                                    artifactTitle: string | null;
-                                    /** @enum {string} */
-                                    role: "output" | "evidence" | "input";
-                                    /** @enum {string} */
-                                    source: "observed" | "suggested";
-                                    createdAt: string;
-                                }[];
-                                suggestions: {
-                                    id: string;
-                                    nodeId: string | null;
-                                    attempt: number | null;
-                                    artifactShortId: string;
-                                    artifactVersion: number;
-                                    artifactTitle: string | null;
-                                    /** @enum {string} */
-                                    role: "output" | "evidence" | "input";
-                                    /** @enum {string} */
-                                    source: "suggested";
-                                    reason: string;
-                                    createdAt: string;
-                                }[];
-                            }[];
-                        };
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/artifacts/{shortId}/rework": {
         parameters: {
             query?: never;
@@ -5227,7 +5380,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List the workspace's contexts. */
+        /** List the workspace's imported papers. */
         get: {
             parameters: {
                 query?: never;
@@ -5237,7 +5390,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description The workspace's contexts. */
+                /** @description The workspace's imported papers, each with its fetch state. */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -5251,29 +5404,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** Create a context (wire an agent to a manifest artifact, or auto-mint one). */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The created context. When no agent_id was given, agent_token carries the auto-minted agent's bearer — shown only here. */
-                201: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ContextInfo"] & {
-                            agent_token?: string;
-                        };
-                    };
-                };
-            };
-        };
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -5468,7 +5599,7 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        /** Delete a context (its creator or a workspace manager). */
+        /** Delete an imported paper (its creator or a workspace manager). */
         delete: {
             parameters: {
                 query?: never;
@@ -5528,734 +5659,6 @@ export interface paths {
             };
         };
         put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/contexts/{id}/access": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Set who may ask a context (workspace | invited). Never leaves the workspace. */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The updated ask policy. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            /** @enum {string} */
-                            ask_policy: "workspace" | "invited";
-                        };
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/contexts/{id}/connections": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Set the connections this context may use (whole-list replace). */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: {
-                content: {
-                    "application/json": {
-                        connection_ids: string[];
-                    };
-                };
-            };
-            responses: {
-                /** @description The context's connections after the change. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            connection_ids: string[];
-                        };
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/contexts/{id}/askers": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** The invited-asker roster (manager only). */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The roster. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            askers: {
-                                user_id: string;
-                                username: string | null;
-                                added_at: string;
-                            }[];
-                        };
-                    };
-                };
-            };
-        };
-        put?: never;
-        /** Invite a WORKSPACE MEMBER to ask (by email). A non-member is rejected. */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The added asker. */
-                201: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            user_id: string;
-                            username: string | null;
-                            added_at: string;
-                        };
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/contexts/{id}/askers/{userId}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Remove someone from the asker roster (manager only). */
-        delete: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                    userId: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Removed. */
-                204: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/contexts/{id}/sessions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** A context's sessions (owner sees all; others only their own). */
-        get: {
-            parameters: {
-                query?: {
-                    limit?: string;
-                    /** @description Keyset cursor (`created_at|id`, from `next_cursor`) — return sessions strictly older than it. An offset would repeat rows as new sessions open; the id half keeps sessions that share a created_at from being skipped at the boundary. */
-                    cursor?: string;
-                };
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The sessions. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            sessions: components["schemas"]["Session"][];
-                            /** @description Pass as `cursor` for the next page; null when this page reached the end. */
-                            next_cursor: string | null;
-                        };
-                    };
-                };
-            };
-        };
-        put?: never;
-        /** Ask: open a session with the first question. */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The new session and its first message. */
-                201: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            session: components["schemas"]["Session"];
-                            messages: components["schemas"]["SessionMessage"][];
-                        };
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/contexts/{id}/sessions/record": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Record a run already done locally as an answered session (creator or manager). */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The recorded session and its two messages. */
-                201: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            session: components["schemas"]["Session"];
-                            messages: components["schemas"]["SessionMessage"][];
-                        };
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/artifacts/chat-session": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Open a chat session about an artifact (no context required). */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The new session and its first message. */
-                201: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            session: components["schemas"]["Session"];
-                            messages: components["schemas"]["SessionMessage"][];
-                        };
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/chat/models": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Models this deploy can answer an attended chat turn with. */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The models, default first. Empty when no model is configured. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            models: components["schemas"]["ChatModel"][];
-                        };
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/chat-session": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Open an attended workspace chat session. */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The new session and its first message. */
-                201: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            session: components["schemas"]["Session"];
-                            messages: components["schemas"]["SessionMessage"][];
-                        };
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/chat-sessions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Your chat conversations in a workspace, newest first. */
-        get: {
-            parameters: {
-                query: {
-                    workspace: string;
-                };
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Your sessions, each with a one-line preview. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            sessions: (components["schemas"]["Session"] & {
-                                preview: string;
-                            })[];
-                        };
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/contexts/{id}/outputs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** The artifacts a context has produced, grouped by artifact with a run count. */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The context's outputs, most recently produced first. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            outputs: {
-                                short_id: string;
-                                /** @description Null when this viewer cannot read the artifact, or it is gone. */
-                                title: string | null;
-                                version: number | null;
-                                /** @description How many of this context's sessions bound it. */
-                                runs: number;
-                                last_run_at: string;
-                            }[];
-                        };
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/sessions/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** One session with its transcript (asker or context owner). */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The session, its context, and the full transcript. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            session: components["schemas"]["Session"];
-                            /** @description The packaged agent answering, or null for a chat session. */
-                            context: {
-                                id: string;
-                                name: string;
-                            } | null;
-                            messages: components["schemas"]["SessionMessage"][];
-                        };
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /** Close a session (asker/owner) or fail it (the context's agent). */
-        patch: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The updated session. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            session: components["schemas"]["Session"];
-                        };
-                    };
-                };
-            };
-        };
-        trace?: never;
-    };
-    "/v1/sessions/{id}/messages": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Append a message to a session (asker follow-up or the agent's answer). */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The appended message. */
-                201: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            message: components["schemas"]["SessionMessage"];
-                        };
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/contexts/{id}/queue": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** The runner's queue: open sessions with transcripts (agent bearer). */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Open sessions, oldest first, each with its transcript. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            sessions: (components["schemas"]["Session"] & {
-                                messages: components["schemas"]["SessionMessage"][];
-                            })[];
-                        };
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/contexts/{id}/environment": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Read environment variable bindings (manager only; never returns secret values). */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Names and secret connection IDs. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ContextEnvironment"];
-                    };
-                };
-            };
-        };
-        /** Replace the secret connections delivered as environment variables to this Context's runner. */
-        put: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: {
-                content: {
-                    "application/json": components["schemas"]["ContextEnvironment"];
-                };
-            };
-            responses: {
-                /** @description Saved bindings; values remain write-only. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ContextEnvironment"];
-                    };
-                };
-            };
-        };
         post?: never;
         delete?: never;
         options?: never;
@@ -7810,14 +7213,8 @@ export interface components {
             defaultListed: "none" | "workspace" | "public";
             /** @description Hide the Made-with-Derive marks on public artifacts and embeds, and honor the bare ?chrome=none embed. */
             whiteLabel: boolean;
-            /** @description Master switch for Derive-hosted agent runs; off silences every hosted run. */
-            hostedAgentsEnabled: boolean;
-            /** @description The Chat tab on a document, and the workspace chat. ON by default; set it false to turn chat off for a workspace entirely (the tab hides and the chat routes refuse). */
-            chatBeta: boolean;
             /** @description Connection ids the workspace's CHAT may reach through the call tool. Empty means none — connecting a server does not by itself let a conversation use it. Unattended runs are unaffected: they declare their own connections per run. */
             chatSources: string[];
-            /** @description BETA: automations on a document. Off by default — the Automate entry point is hidden and the create/run/fire routes refuse, so a workspace opts in deliberately. */
-            automateBeta: boolean;
             /** @description The one agent-write switch, on by default. Off: hosted runs and asks are not materialized, dispatched, or claimed, chat's publish tool refuses (the draft surfaces in the reply), and any agent-credentialed publish is refused at the API. */
             agentWrites: boolean;
             /** @description The workspace's default agent: the fallback actor for users with no connected agent. Absent = none. */
@@ -7887,6 +7284,32 @@ export interface components {
             /** @description True when the caller was already a member; their role is never changed. */
             already_member: boolean;
         };
+        AgentTrigger: {
+            id: string;
+            agent_id: string;
+            /** @enum {string} */
+            kind: "schedule" | "event";
+            cron: string | null;
+            tz: string | null;
+            on_event: string | null;
+            instruction: string;
+            subject: {
+                /** @enum {string} */
+                kind: "artifact";
+                id: string;
+            } | {
+                /** @enum {string} */
+                kind: "collection";
+                id: string;
+            } | {
+                /** @enum {string} */
+                kind: "tag";
+                tag: string;
+            } | unknown;
+            enabled: boolean;
+            revision: number;
+            created_at: string;
+        };
         Agent: {
             id: string;
             name: string;
@@ -7904,6 +7327,35 @@ export interface components {
             /** @description When true, this agent may bill its OWNER's own model plan as a fallback (initiator -> owner -> pool). Only the owner toggles it; default off. */
             owner_lend: boolean;
             created_at: string;
+            /** @description One line: what this agent does. */
+            description: string | null;
+            /** @description The artifact it reads before every job. Null for a connected tool. */
+            instructions_short_id: string | null;
+            /**
+             * @description Where its jobs run: the owner's runner or MCP session, or a Derive sandbox.
+             * @enum {string}
+             */
+            machine: "owner" | "derive";
+            /**
+             * @description Which coding agent runs its jobs.
+             * @enum {string}
+             */
+            provider: "claude-code" | "codex";
+            model: string | null;
+            /** @enum {string} */
+            ask_policy: "workspace" | "invited";
+            /** @enum {string} */
+            write_policy: "publish" | "review";
+            paused: boolean;
+            /** @description When its runner last pulled work. */
+            seen_at: string | null;
+            max_run_ms: number | null;
+            max_concurrency: number;
+            /** @description Sources it can reach. */
+            connection_ids: string[];
+            /** @description Environment variable names bound to credentials. Never values. */
+            environment_names: string[];
+            account_id: string | null;
         };
         ConnectedAgent: {
             /** @description OAuth client id of the authorized agent (e.g. an MCP client like Claude) */
@@ -7912,6 +7364,102 @@ export interface components {
             /** @description The OAuth scopes this agent was granted */
             scopes: string[];
             grantedAt: string;
+        };
+        Job: {
+            id: string;
+            agent_id: string;
+            /** @enum {string} */
+            kind: "ask" | "scheduled" | "graph" | "node";
+            /** @enum {string} */
+            status: "queued" | "running" | "needs_you" | "succeeded" | "failed" | "cancelled" | "lost";
+            instruction: string;
+            asked_by: string | null;
+            attended: boolean;
+            parent_id: string | null;
+            node_id: string | null;
+            trigger_id: string | null;
+            subject: {
+                /** @enum {string} */
+                kind: "artifact";
+                id: string;
+            } | {
+                /** @enum {string} */
+                kind: "collection";
+                id: string;
+            } | {
+                /** @enum {string} */
+                kind: "tag";
+                tag: string;
+            } | unknown;
+            needs: {
+                /** @enum {string} */
+                kind: "review" | "decision" | "escalation" | "effect";
+                question: string;
+                options?: string[];
+                review_round_id?: string;
+            } | null;
+            result: {
+                effects?: {
+                    /** @enum {string} */
+                    kind: "page" | "pr" | "email" | "rows" | "other";
+                    label: string;
+                    ref?: string;
+                    version?: number;
+                    url?: string;
+                }[];
+                evidence?: {
+                    label: string;
+                    url?: string;
+                    ref?: string;
+                }[];
+                failure?: {
+                    reason: string;
+                    retryable: boolean;
+                };
+                route?: {
+                    node_id: string;
+                    attempt: number;
+                    selected?: string[];
+                    decision?: string;
+                }[];
+            };
+            scheduled_for: string | null;
+            started_at: string | null;
+            finished_at: string | null;
+            lease_until: string | null;
+            attempt: number;
+            cost_micro_usd: number | null;
+            report_artifact_id: string | null;
+            /** @description The job's report page, once it has one. */
+            report_short_id: string | null;
+            created_at: string;
+            updated_at: string;
+        };
+        JobDetail: components["schemas"]["Job"] & {
+            messages: components["schemas"]["JobMessage"][];
+        };
+        JobMessage: {
+            id: string;
+            /** @enum {string} */
+            author_kind: "asker" | "agent";
+            author_id: string;
+            body_md: string;
+            progress: boolean;
+            created_at: string;
+        };
+        ModelAccount: {
+            id: string;
+            /** @enum {string} */
+            provider: "claude" | "codex";
+            /** @enum {string} */
+            kind: "oauth" | "api_key" | "login" | "ortam_signin";
+            /** @description A workspace account every agent may fall back to. */
+            shared: boolean;
+            mine: boolean;
+            hint: string | null;
+            /** @enum {string} */
+            status: "ready" | "needs_signin" | "not_checked";
+            created_at: string;
         };
         BulkSummary: {
             /** @description Artifacts the operation applied to. */
@@ -8326,6 +7874,32 @@ export interface components {
             id: string;
             name: string;
         };
+        ContextInfo: {
+            id: string;
+            name: string;
+            /** @description The registered agent this context routes asks to. */
+            agent_id: string;
+            /** @description Short id of the linked manifest artifact; null if it can't be resolved. */
+            manifest_short_id: string | null;
+            created_by: string;
+            created_at: string;
+            /** @description When the runner last polled the queue (~minutely); null = never. Drives online/offline. */
+            runner_seen_at: string | null;
+            /**
+             * @description Who in the workspace may ask: any member, or the invited roster. Never outside the workspace.
+             * @enum {string}
+             */
+            ask_policy: "workspace" | "invited";
+            /** @description Connections this context may use — its tools, in every lane it runs in. */
+            connection_ids: string[];
+            /** @description The manifest's own first paragraph — frontmatter and a single leading heading stripped, capped. Null when the manifest has none or can't be read. */
+            description?: string | null;
+            /** @description How many skills the manifest's frontmatter pins. */
+            skills_count?: number;
+            /** @description The manifest artifact's current version; null if it can't be resolved. */
+            manifest_version?: number | null;
+            import: components["schemas"]["ContextImportInfo"];
+        };
         /** @description Set when this Context was imported (a paper from arXiv): read-only, no runner, no sessions. Null for a Context someone defined. */
         ContextImportInfo: {
             /** @enum {string} */
@@ -8362,32 +7936,6 @@ export interface components {
                 commit: string | null;
             } | null;
         } | null;
-        ContextInfo: {
-            id: string;
-            name: string;
-            /** @description The registered agent this context routes asks to. */
-            agent_id: string;
-            /** @description Short id of the linked manifest artifact; null if it can't be resolved. */
-            manifest_short_id: string | null;
-            created_by: string;
-            created_at: string;
-            /** @description When the runner last polled the queue (~minutely); null = never. Drives online/offline. */
-            runner_seen_at: string | null;
-            /**
-             * @description Who in the workspace may ask: any member, or the invited roster. Never outside the workspace.
-             * @enum {string}
-             */
-            ask_policy: "workspace" | "invited";
-            /** @description Connections this context may use — its tools, in every lane it runs in. */
-            connection_ids: string[];
-            /** @description The manifest's own first paragraph — frontmatter and a single leading heading stripped, capped. Null when the manifest has none or can't be read. */
-            description?: string | null;
-            /** @description How many skills the manifest's frontmatter pins. */
-            skills_count?: number;
-            /** @description The manifest artifact's current version; null if it can't be resolved. */
-            manifest_version?: number | null;
-            import: components["schemas"]["ContextImportInfo"];
-        };
         BrandprintConfig: {
             /** @description The workspace brand-profile artifact (an HTML page carrying theme tokens), when set; null otherwise. Not in `members` — it is the headline read, not a note. */
             profile_short_id: string | null;
@@ -8512,111 +8060,6 @@ export interface components {
             href: string | null;
             /** @description Whether `href` opens the exact commit the analysis read. A file inside a submodule, or an attachment with no recorded commit, opens a branch instead. */
             pinned: boolean;
-        };
-        Session: {
-            id: string;
-            /** @description The packaged agent answering, or null when the default agent is. */
-            context_id: string | null;
-            asker_id: string;
-            /** @description The manifest version this session opened against; null with no context. */
-            context_version: number | null;
-            /**
-             * @description open = awaiting the agent; working = a runner claimed it and is answering; answered; escalated = draft went to review; failed = run crashed; closed = ended by asker/owner.
-             * @enum {string}
-             */
-            state: "open" | "working" | "answered" | "escalated" | "failed" | "closed";
-            created_at: string;
-            /** @description Last state/message change; equals created_at when never updated. */
-            updated_at: string;
-            /** @description What this session is about, when it names one: an artifact. Null for a plain ask. */
-            subject: {
-                /** @enum {string} */
-                kind: "artifact";
-                id: string;
-            } | null;
-            /** @description The artifact this session's answer bound as its result, if any. */
-            result_artifact_id: string | null;
-            /** @description The asker's public handle. Only resolved on the owner's view of the sessions list — a picker of your own sessions already knows who you are. */
-            asker_username?: string | null;
-            /**
-             * @description 'local' when this session's MOST RECENT agent turn was recorded rather than served through the queue (see SessionMeta.lane) — a session recorded once and later genuinely followed-up through the queue reads as null again, because the turn that answer describes changed. Only resolved on the owner's view of the sessions list.
-             * @enum {string|null}
-             */
-            lane?: "local" | null;
-        };
-        SessionMessage: {
-            id: string;
-            /**
-             * @description Who wrote it: asker (the human) or agent (the context's runner).
-             * @enum {string}
-             */
-            author_kind: "asker" | "agent";
-            /** @description The asker's user id, or the agent id when author_kind is agent. */
-            author_id: string;
-            /** @description The message body as Markdown. */
-            body_md: string;
-            meta: components["schemas"]["SessionMeta"];
-            created_at: string;
-        };
-        /** @description Structured answer payload on agent messages; null on asker messages. */
-        SessionMeta: {
-            /** @description The underlying query the agent ran to produce this answer. */
-            query?: string | null;
-            /** @description The agent's confidence in the answer, 0-1 (shown as a percentage). */
-            confidence?: number | null;
-            /** @description Caveats or limitations the agent flagged on its answer. */
-            caveats?: string[];
-            /** @description Why the agent escalated to a human instead of answering. */
-            escalation_reason?: string | null;
-            /** @description Artifacts the agent cited, each linkable by short_id. */
-            artifacts?: {
-                short_id: string;
-                title: string;
-            }[];
-            /** @description Which tools the turn actually ran, in order of first use. Names only: arguments can carry the contents of a private document, and this is persisted on the message. This is what lets a surface show HOW an answer was reached rather than only asserting that it searched. */
-            tools?: string[];
-            /** @description Which model produced this answer. Recorded per message rather than per session because the choice is per turn — a conversation can be continued on a different model, and the answers it already gave must keep saying which model wrote them. */
-            model?: {
-                id: string;
-                label: string;
-            };
-            /** @description How the turn ended: answered, published, commented, or failed. */
-            outcome?: string;
-            /** @description Reported spend for the turn in millionths of a USD; null when unreported. */
-            cost_micro_usd?: number | null;
-            /**
-             * @description Stamped on a recorded answer: work that already ran on the owner's own machine, filed here rather than served through the queue. Mirrors automate record's run.meta.lane. Absent on every normally-served turn.
-             * @enum {string}
-             */
-            lane?: "local";
-            /** @description The public context draft from the last builder tool call on this turn. */
-            card?: {
-                draft: {
-                    name: string;
-                    description: string;
-                    knows: string[];
-                    answers: string;
-                    wont: string[];
-                    source_short_ids: string[];
-                };
-                created?: {
-                    context_id: string;
-                    name: string;
-                };
-            };
-        } | null;
-        ChatModel: {
-            /** @description The provider's model id — what to send back to pick it. */
-            id: string;
-            /** @description What to show a person. */
-            label: string;
-            /** @description The one a turn uses when nobody chose. */
-            is_default: boolean;
-        };
-        ContextEnvironment: {
-            bindings: {
-                [key: string]: string;
-            };
         };
         TemplateArtifact: components["schemas"]["Artifact"] & {
             /**

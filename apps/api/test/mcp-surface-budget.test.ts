@@ -197,9 +197,16 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // surfaces it for "write up the paper" the way it does for a deck; no param changed. Trimmed
 // the summary first (78 → 61 chars); measured instructions 2,874, so the raise keeps the ~2%
 // headroom rather than landing on the ceiling.
+// 2026-09-30: the agent model added `agents`, `ask`, `jobs`, and `pull`, and for one release
+// `use`, `automate`, and `list_automations` stayed registered beside them (4,262 / 10,467 /
+// 3,012 measured under a temporary raise). The cutover deleted those three: measured 3,764 /
+// 8,134 / 11,898 / 2,935, so descriptions and instructions return to their budgets from before
+// the raise, and params and the surface drop to ~2% over what is left (the three carried most of
+// the parameter prose). The `contexts` skill became `papers`, and four summaries were trimmed to
+// keep the index inside 2,950.
 const TOOL_DESCRIPTIONS_BUDGET = 3_800
-const PARAM_DESCRIPTIONS_BUDGET = 10_050
-const SURFACE_BUDGET = 13_850
+const PARAM_DESCRIPTIONS_BUDGET = 8_300
+const SURFACE_BUDGET = 12_150
 const INSTRUCTIONS_BUDGET = 2_950
 
 /** No single tool may sprawl: one sentence of routing, the one thing that silently breaks,

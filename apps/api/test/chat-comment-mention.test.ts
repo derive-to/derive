@@ -11,7 +11,7 @@ import { as, jsonAs, makeAuthedApp, publishAs } from "./helpers"
 const revision = (content: string) =>
   `<revision>${JSON.stringify({ content, filename: "doc.md", confidence: 0.95, message: "tightened" })}</revision>`
 
-const setup = async (name: string, reply: string, opts?: { chatBeta?: boolean }) => {
+const setup = async (name: string, reply: string) => {
   const users = [
     { id: "u-own", email: "own@x.com", name: "Owner" },
     { id: "u-two", email: "two@x.com", name: "Second" },
@@ -30,7 +30,6 @@ const setup = async (name: string, reply: string, opts?: { chatBeta?: boolean })
   })
   await meta.setOrgSettings("default", {
     ...(await meta.getOrgSettings("default")),
-    chatBeta: opts?.chatBeta ?? true,
   })
   const doc = (await (
     await publishAs(
@@ -94,15 +93,6 @@ describe("@derive in a comment thread", () => {
     expect(answer?.body_md ?? "").toContain("# Pricing")
   })
 
-  it("does not answer when the workspace has not enabled chat", async () => {
-    const { app, meta, doc } = await setup("cm-off", "should not appear", { chatBeta: false })
-    const { created } = await mention(app, meta, doc.short_id, "@derive hello", DERIVE)
-    const all = await meta.listComments(created.artifact_id, { threadId: created.thread_id })
-    expect(all.filter((c) => c.author_id === "derive")).toHaveLength(0)
-    // The comment itself still posted: a disabled feature must not swallow someone's comment.
-    expect(all).toHaveLength(1)
-  })
-
   it("never answers its own reply — the recursion guard", async () => {
     const { app, meta, doc } = await setup("cm-loop", "hello back")
     const { created, all } = await mention(app, meta, doc.short_id, "@derive hi", DERIVE)
@@ -115,5 +105,30 @@ describe("@derive in a comment thread", () => {
     ).filter((c) => c.author_id === "derive").length
     expect(after).toBe(first)
     expect(after).toBe(1)
+  })
+  it("stays silent once the workspace has spent its monthly model budget", async () => {
+    const { app, meta, doc } = await setup("cm-budget", "should not be sent")
+    // The workspace pool's monthly limit, and a job this month that already spent past it.
+    await meta.createPlan({
+      id: newId("plan"),
+      org_id: "default",
+      user_id: null,
+      kind: "model",
+      provider: "anthropic",
+      secret_enc: "enc",
+      limits: JSON.stringify({ monthlyMicroUsd: 1_000 }),
+    })
+    const agent = (await (
+      await app.request("/v1/agents", jsonAs(as("own@x.com"), { name: "Spender" }))
+    ).json()) as { id: string }
+    const job = (await (
+      await app.request(
+        "/v1/jobs",
+        jsonAs(as("own@x.com"), { agent_id: agent.id, instruction: "Spend" }),
+      )
+    ).json()) as { id: string }
+    await meta.addJobCost(job.id, 5_000)
+    const { all } = await mention(app, meta, doc.short_id, "@derive how are seats billed?", DERIVE)
+    expect(all.some((c) => c.author_id === "derive")).toBe(false)
   })
 })

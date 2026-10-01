@@ -11,12 +11,12 @@ import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { ActivityPanel } from "./activity-panel"
-import { type RailTab, RailTabs } from "./artifact-chat"
 import { MobileComments } from "./comment-panels"
 import { buildStream, type Lens } from "./lib/activity"
 import { CommentScopeProvider } from "./lib/comment-scope"
 import { type CommentTree, CommentTreeProvider } from "./lib/comment-tree"
 import { quoteChipClass } from "./quote-chip"
+import { type RailTab, RailTabs } from "./rail-tabs"
 import { SelectionMenu } from "./selection-menu"
 import {
   type AnchorConf,
@@ -36,19 +36,13 @@ import {
 export function ArtifactComments(p: {
   shortId: string
   isMobile: boolean
-  /** THE RAIL. Conversation remains the default: comments, then optional chat; the quieter
-   *  editor-only Inspect tab comes last. Desktop aside and mobile peek bar share one control. */
+  /** THE RAIL. Activity remains the default; the quieter editor-only Inspect tab comes last.
+   *  Desktop aside and mobile peek bar share one control. */
   rail?: RailTab
   onRail?: (r: RailTab) => void
-  /** Linked bundles add one native map inside the existing collaboration rail. */
-  mapEnabled?: boolean
-  mapPanel?: ReactNode
   visualPinAvailable?: boolean
   visualPinActive?: boolean
   onToggleVisualPin?: () => void
-  /** Beta: chat is absent rather than visible-and-refused when the workspace has it off. */
-  chatBeta?: boolean
-  chatPanel?: ReactNode
   /** Inspect exists only while an editor is actively editing an HTML artifact — it never
    *  becomes a generic alternative to commenting or a deck-specific surface. */
   inspectEnabled?: boolean
@@ -131,8 +125,7 @@ export function ArtifactComments(p: {
   anchorConf?: AnchorConf
 }) {
   const { isMobile, isAnon, canComment, panel, sel } = p
-  const hasRailTabs =
-    !!p.mapEnabled || !!p.dataEnabled || !!p.referencesEnabled || !!p.chatBeta || !!p.inspectEnabled
+  const hasRailTabs = !!p.dataEnabled || !!p.referencesEnabled || !!p.inspectEnabled
   // THE STREAM, built once for both surfaces: the versions (grouped by the server's
   // sessions), the threads, the review rounds, and — after the reader's last visit —
   // the replies. The lens is rail state like `rail` itself.
@@ -234,23 +227,17 @@ export function ArtifactComments(p: {
                 <RailTabs
                   tab={p.rail}
                   commentCount={p.openCount}
-                  mapEnabled={p.mapEnabled}
                   dataEnabled={p.dataEnabled}
                   referencesEnabled={p.referencesEnabled}
-                  chatEnabled={p.chatBeta}
                   inspectEnabled={p.inspectEnabled}
                   onTab={p.onRail}
                 />
               </div>
             )}
-            {panel !== "hidden" && p.rail === "map" && p.mapEnabled ? (
-              p.mapPanel
-            ) : panel !== "hidden" && p.rail === "data" && p.dataEnabled ? (
+            {panel !== "hidden" && p.rail === "data" && p.dataEnabled ? (
               p.dataPanel
             ) : panel !== "hidden" && p.rail === "references" && p.referencesEnabled ? (
               p.referencesPanel
-            ) : panel !== "hidden" && p.rail === "chat" && p.chatBeta ? (
-              p.chatPanel
             ) : panel !== "hidden" && p.rail === "inspect" && p.inspectEnabled ? (
               p.inspectPanel
             ) : panel !== "hidden" ? (
@@ -260,10 +247,8 @@ export function ArtifactComments(p: {
                     <RailTabs
                       tab={p.rail}
                       commentCount={p.openCount}
-                      mapEnabled={p.mapEnabled}
                       dataEnabled={p.dataEnabled}
                       referencesEnabled={p.referencesEnabled}
-                      chatEnabled={p.chatBeta}
                       inspectEnabled={p.inspectEnabled}
                       onTab={p.onRail}
                     />
@@ -300,6 +285,7 @@ export function ArtifactComments(p: {
           document to the highlight without closing the sheet. */}
         {isMobile && !isAnon && (
           <MobileComments
+            hints={p.hints}
             editing={p.editing}
             open={panel === "open"}
             openThreads={p.openThreads}
@@ -315,18 +301,14 @@ export function ArtifactComments(p: {
             onCancelNew={cancelNew}
             onHeightChange={p.onSheetHeight}
             // The peek bar IS the tab strip on a phone: always docked, so comments never
-            // lose their entry point and chat is one thumb-reach away.
+            // lose their entry point.
             rail={hasRailTabs ? p.rail : undefined}
             onRail={p.onRail}
-            chatPanel={p.chatPanel}
-            mapPanel={p.mapPanel}
-            mapEnabled={p.mapEnabled}
             dataPanel={p.dataPanel}
             dataEnabled={p.dataEnabled}
             referencesPanel={p.referencesPanel}
             referencesEnabled={p.referencesEnabled}
             inspectPanel={p.inspectPanel}
-            chatEnabled={p.chatBeta}
             inspectEnabled={p.inspectEnabled}
             openCount={p.openCount}
           />

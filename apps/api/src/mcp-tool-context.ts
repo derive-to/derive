@@ -13,7 +13,6 @@ import {
   type AgentMentionRecord,
   type AgentRecord,
   type ArtifactRecord,
-  type ContextRecord,
   capRole,
   effectiveRole,
   type Role,
@@ -30,7 +29,7 @@ export interface ToolContextBase {
   /** In-process REST dispatch using this request’s original bearer; no token mint or network hop. */
   requestApi?: (
     path: string,
-    method: "GET" | "POST" | "PUT",
+    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
     body: unknown,
     workspace: string,
   ) => Promise<Response>
@@ -49,8 +48,6 @@ export interface ToolContextBase {
   /** This connection is itself a minted dkapi_ token: the mint refuses to chain off
    *  one, so a leaked token can't renew its own short TTL forever. */
   mintedToken: boolean
-  /** One workflow run for an external dkwfr_ harness. Null for ordinary connections. */
-  workflowScope: string | null
   defaultOrg: string
   defaultRole: Role
   pendingRequests: AgentMentionRecord[]
@@ -99,10 +96,6 @@ export interface ToolContext extends ToolContextBase {
    *  an out-of-date surface. */
   staleNote: () => string | null
   workQueue: (ack?: string[], wait?: number) => Promise<ReturnType<typeof json>>
-  askableContexts: (
-    org: string,
-    userId: string,
-  ) => Promise<{ x: ContextRecord; manifest: ArtifactRecord | null }[]>
 }
 
 export function makeToolContext(base: ToolContextBase): ToolContext {
@@ -298,18 +291,6 @@ export function makeToolContext(base: ToolContextBase): ToolContext {
     })
   }
 
-  // The contexts `userId` may ask in `org`, each with its manifest (identity +
-  // the current version a new session pins). One listContexts + one batched
-  // artifact read; the per-context grant checks are membership/roster lookups.
-  const askableContexts = async (org: string, userId: string) => {
-    const rows = await ctx.meta.listContexts(org)
-    const mine: ContextRecord[] = []
-    for (const x of rows) if (await ctx.canUserAskContext(userId, x)) mine.push(x)
-    const manifests = await ctx.meta.getArtifactsByIds(mine.map((x) => x.manifest_artifact_id))
-    const byId = new Map(manifests.map((a) => [a.id, a]))
-    return mine.map((x) => ({ x, manifest: byId.get(x.manifest_artifact_id) ?? null }))
-  }
-
   // Per-REQUEST stale-schema proof. A number arriving as a string means this client
   // validated against a tool schema cached before that parameter existed; the server
   // coerces it (so the call works) and remembers, so the response can say so.
@@ -329,6 +310,5 @@ export function makeToolContext(base: ToolContextBase): ToolContext {
     notFound,
     wsArg,
     workQueue,
-    askableContexts,
   }
 }

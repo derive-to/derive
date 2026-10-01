@@ -470,17 +470,7 @@ export const defaultConfig = (title = "My artifact", entry = "index.md") => ({
   id: null,
 })
 
-export const TEMPLATES = [
-  "md",
-  "html",
-  "workflow",
-  "slides",
-  "site",
-  "skill",
-  "context",
-  "siggraph",
-  "cvpr",
-]
+export const TEMPLATES = ["md", "html", "workflow", "slides", "site", "skill", "siggraph", "cvpr"]
 
 /** Read derive.json from `dir`, or null if absent. Throws on malformed JSON. */
 export function loadConfig(dir = ".") {
@@ -591,16 +581,6 @@ export function writeId(dir, id) {
   const path = join(dir, CONFIG_FILE)
   const config = loadConfig(dir) ?? defaultConfig()
   config.id = id
-  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`)
-  return config
-}
-
-/** Merge server-assigned context wiring (id, agent_id) into derive.json's
- *  context block, preserving everything else — the context-side twin of writeId. */
-export function writeContextConfig(dir, patch) {
-  const path = join(dir, CONFIG_FILE)
-  const config = loadConfig(dir) ?? defaultConfig()
-  config.context = { ...config.context, ...patch }
   writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`)
   return config
 }
@@ -725,19 +705,6 @@ const STARTERS = {
   // license, so the comment at the top of main.tex says where to get them.
   siggraph: { entry: "paper", files: () => paperFiles("acm-siggraph") },
   cvpr: { entry: "paper", files: () => paperFiles("cvpr") },
-  // A Context project contains instructions, local references, MCP configuration, and an
-  // ignored environment file. `derive context push` excludes `.env*`.
-  context: {
-    entry: "context",
-    files: (t) => ({
-      "context/MANIFEST.md": starterManifest(t),
-      "context/references/example.md": STARTER_CONTEXT_REFERENCE,
-      "context/.mcp.json": `${JSON.stringify({ mcpServers: {} }, null, 2)}\n`,
-      "context/.env.example": STARTER_CONTEXT_ENV,
-      ".gitignore": CONTEXT_GITIGNORE,
-    }),
-    extend: (config, title) => ({ ...config, context: { id: null, agent_id: null, name: title } }),
-  },
 }
 
 const paperFiles = (id) =>
@@ -752,9 +719,7 @@ const paperFiles = (id) =>
  * locations, plus each client's project MCP config.
  */
 export function scaffoldFiles(title = "My artifact", template = "md") {
-  // Projects scaffolded during the rename may still use the old template name.
-  const canonicalTemplate = template === "agent" ? "context" : template
-  const t = STARTERS[canonicalTemplate] ?? STARTERS.md
+  const t = STARTERS[template] ?? STARTERS.md
   const config = t.extend
     ? t.extend(defaultConfig(title, t.entry), title)
     : defaultConfig(title, t.entry)
@@ -775,24 +740,10 @@ const DERIVE_SKILL_PATHS = [
   "references/compatibility.md",
 ]
 
-const WORKFLOW_SKILL_PATHS = [
-  "SKILL.md",
-  "agents/openai.yaml",
-  "references/protocol.md",
-  "references/runtime.md",
-]
-
 const deriveSkillFiles = Object.fromEntries(
   DERIVE_SKILL_PATHS.map((path) => [
     path,
     readFileSync(new URL(`../skills/derive/${path}`, import.meta.url), "utf8"),
-  ]),
-)
-
-const workflowSkillFiles = Object.fromEntries(
-  WORKFLOW_SKILL_PATHS.map((path) => [
-    path,
-    readFileSync(new URL(`../skills/derive-workflows/${path}`, import.meta.url), "utf8"),
   ]),
 )
 
@@ -802,10 +753,7 @@ const workflowSkillFiles = Object.fromEntries(
 export function agentScaffoldFiles() {
   const files = {}
   for (const harnessRoot of [".agents/skills", ".claude/skills"])
-    for (const [skill, skillFiles] of [
-      ["derive", deriveSkillFiles],
-      ["derive-workflows", workflowSkillFiles],
-    ])
+    for (const [skill, skillFiles] of [["derive", deriveSkillFiles]])
       for (const [path, contents] of Object.entries(skillFiles))
         files[`${harnessRoot}/${skill}/${path}`] = contents
   return {
@@ -886,15 +834,6 @@ export const DERIVE_SCHEMA = {
       type: "string",
       description:
         "Account (id or @handle) this project publishes as, when more than one is signed in.",
-    },
-    context: {
-      type: "object",
-      description: "Context wiring; ids are set by the first push.",
-      properties: {
-        id: { type: ["string", "null"], description: "Context id (ctx_…)." },
-        agent_id: { type: ["string", "null"], description: "Execution connection id (ag_…)." },
-        name: { type: "string", description: "Context name shown to askers." },
-      },
     },
   },
 }
@@ -1024,12 +963,7 @@ export function scaffold(dir = ".", title = "My artifact", template = "md") {
   )
 }
 
-const AGENT_SKILL_PREFIXES = [
-  ".agents/skills/derive/",
-  ".claude/skills/derive/",
-  ".agents/skills/derive-workflows/",
-  ".claude/skills/derive-workflows/",
-]
+const AGENT_SKILL_PREFIXES = [".agents/skills/derive/", ".claude/skills/derive/"]
 const isAgentSkillFile = (name) => AGENT_SKILL_PREFIXES.some((prefix) => name.startsWith(prefix))
 
 /** Install the native skill, MCP configs, and managed instruction block into an
@@ -1085,77 +1019,6 @@ const STARTER_SKILL_REFERENCE = `# Reference
 
 Extra detail the skill loads on demand — keep SKILL.md lean and push the long tail
 (edge cases, tables, examples) into reference files like this one.
-`
-
-const starterManifest = (title) => `---
-# Repo pointers: the runner clones these into repos/ at boot and tells the
-# model what's there (and at which SHA). Uncomment to declare them — they
-# travel with every push, so a fresh box needs nothing pre-installed.
-# repos:
-#   - url: https://github.com/you/data-notebooks
-#     ref: main
-#     description: what's in it, one line the model will read
----
-
-# ${title} — context manifest
-
-This file is the runner's system prompt. Editing it (and pushing) reconfigures
-the agent's judgment with no redeploy — the next answer uses the new version.
-
-## Purpose
-
-Describe when an agent should use this Context, what knowledge it provides, and
-who the work is for.
-
-## Data sources
-
-Name each source the runner's tools reach (see \`.mcp.json\` in this directory)
-and what it's authoritative for. Say what is READ-ONLY — the tools should
-enforce it, but the manifest is where the intent lives.
-
-## Judgment
-
-The decision rules a good analyst would apply: which source wins when two
-disagree, what "active" or "churned" mean here, units and timezones, the
-denominators that make a percentage honest.
-
-## References
-
-Files in \`references/\` sit next to this manifest in the runner's working
-directory — point at them by relative path ("read references/schema.md before
-writing SQL") and the model reads them on demand. Keep this file lean; push the
-long tail there.
-
-## Escalation
-
-When to answer with \`escalate: true\` instead of guessing: thresholds, topics
-that need a human (pricing, legal, anything contractual), and who the human is.
-
-## Answer style
-
-Concise summary first, then supporting detail. State caveats explicitly. Include
-the query used when a number came from one.
-`
-
-const STARTER_CONTEXT_REFERENCE = `# Reference
-
-Files here travel with \`derive context push\` (versioned alongside the manifest)
-and sit in the runner's working directory — the manifest should point at them by
-relative path. Schema notes, metric definitions, worked examples: the long tail
-that would bloat MANIFEST.md lives here.
-`
-
-const STARTER_CONTEXT_ENV = `# Secrets used by this Context's MCP servers (see .mcp.json). Copy to .env and fill
-# in — .env stays on this machine: push excludes it and .gitignore covers it.
-# EXAMPLE_API_KEY=
-`
-
-const CONTEXT_GITIGNORE = `# Secrets never leave the machine: .env holds source credentials, .derive/
-# holds the agent token minted by the first push. repos/ is the runner's clone
-# workspace — pointer state, never source.
-context/.env
-context/repos/
-.derive/
 `
 
 const starterMd = (title) => `# ${title}
@@ -1316,7 +1179,7 @@ const starterWorkflow = (title) => {
             id: "context-failure",
             kind: "failure",
             path: ["draft"],
-            outcome: "The failed Context session stays visible and the run stops",
+            outcome: "The failed step stays visible and the run stops",
           },
           {
             id: "revision",
@@ -1351,17 +1214,18 @@ const starterWorkflow = (title) => {
   <p class="sub">A graph-first Derive workflow. The visible graph and runnable definition use
   the same stable IDs for different jobs.</p>
   <div class="flow">
-    <div class="node"><b>Draft</b><br>An agent drafts with one Context.</div><div class="arrow">→</div>
-    <div class="node"><b>Quality check</b><br>An agent checks with another Context.</div><div class="arrow">→</div>
+    <div class="node"><b>Draft</b><br>One agent drafts.</div><div class="arrow">→</div>
+    <div class="node"><b>Quality check</b><br>Another agent checks it.</div><div class="arrow">→</div>
     <div class="node"><b>Publish</b><br>The ready result is published to Derive.</div>
   </div>
-  <p class="note">The revise route is bounded to two attempts. Edit the outcome and Context
-  references below, then run <code>derive workflow sync workflow.html</code>. Sync projects the
-  definition into the visible graph and runs Preview; it never starts the workflow.</p>
+  <p class="note">The revise route is bounded to two attempts. Edit the outcome and the agent
+  each step names below, keep the visible graph and the definition on the same IDs, then publish
+  this page. To run it, make it an agent's instructions and ask that agent: Derive walks the
+  graph as one job (derive://skills/workflows).</p>
 <script type="application/derive-facts" data-fact="bundle-manifest">
 ${fact(bundle)}
 </script>
-<!-- Edit workflow behavior in this fact. The workflow sync command projects its topology above. -->
+<!-- Edit workflow behavior in this fact. Keep its node and route IDs matching the graph above. -->
 <script type="application/derive-facts" data-fact="workflow-definition">
 ${fact(workflow)}
 </script>

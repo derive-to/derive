@@ -1,6 +1,14 @@
 import type {
+  AccountKind,
+  AccountProvider,
+  AccountStatus,
+  AgentAskPolicy,
+  AgentMachine,
   AgentMentionKind,
   AgentMentionState,
+  AgentSandboxPhase,
+  AgentTriggerKind,
+  AgentWritePolicy,
   ArtifactKind,
   ArtifactScanAction,
   ArtifactScanClient,
@@ -15,12 +23,17 @@ import type {
   DeliveryStatus,
   DomainKind,
   DomainStatus,
+  ExecutionProvider,
   ExportJobStatus,
   ExportKind,
   FollowKind,
   ImportCodeStatus,
   ImportJobStatus,
   ImportKind,
+  JobKind,
+  JobMachinePhase,
+  JobMessageAuthor,
+  JobStatus,
   LinkRole,
   Listed,
   NotificationKind,
@@ -313,6 +326,13 @@ export const exportJob = pgTable(
   (t) => [uniqueIndex("export_job_input").on(t.input_hash)],
 )
 
+// UNREAD AFTER THE AGENTS CUTOVER. From `automation` down to `workflow_artifact_activity`
+// (automation, run, runtime_model_connection, runtime_model_binding, workflow_files,
+// workflow_draft, workflow_test, runtime_owner, runtime_setup, context_runtime, run_attempt,
+// workflow_run, workflow_step_attempt, workflow_publish_receipt, workflow_artifact_activity)
+// nothing in the app writes these tables any more: agents, jobs, triggers and accounts
+// replaced them. They stay so an upgraded database keeps its rows until a separate, reviewed
+// change drops them (boot-DDL rules; see deploy/drop-*.sql for the pattern).
 // An automation: a standing agent job (agent + trigger + instruction + refs). The
 // definition only; every firing is a `run`. See schema.ts for the full contract.
 export const automation = pgTable("automation", {
@@ -923,12 +943,138 @@ export const agent = pgTable(
     // The runs-lane liveness mark (twin of context.runner_seen_at): stamped when the
     // agent's bearer polls the run claim endpoint. Null = no executor has ever polled.
     runs_seen_at: text("runs_seen_at"),
+    // ---- The agent model: what a Context held, plus where it runs (core agent-model.ts).
+    // All nullable or constant-defaulted, so they ALTER onto existing rows cleanly.
+    description: text("description"),
+    instructions_artifact_id: text("instructions_artifact_id"),
+    machine: text("machine").$type<AgentMachine>().notNull().default("owner"),
+    sandbox_id: text("sandbox_id"),
+    sandbox_state_json: text("sandbox_state_json"),
+    // The Derive machine's lifecycle (lib/job-machine.ts): its phase and a revision that
+    // fences every transition, so two ticks never both act on one sandbox.
+    sandbox_phase: text("sandbox_phase").$type<AgentSandboxPhase>(),
+    sandbox_rev: integer("sandbox_rev").notNull().default(0),
+    account_id: text("account_id"),
+    connection_ids_json: text("connection_ids_json"),
+    repositories_json: text("repositories_json"),
+    environment_json: text("environment_json"),
+    ask_policy: text("ask_policy").$type<AgentAskPolicy>().notNull().default("workspace"),
+    write_policy: text("write_policy").$type<AgentWritePolicy>().notNull().default("publish"),
+    paused_at: text("paused_at"),
+    seen_at: text("seen_at"),
+    max_run_ms: integer("max_run_ms"),
+    max_concurrency: integer("max_concurrency").notNull().default(1),
+    provider: text("provider").$type<ExecutionProvider>().notNull().default("claude-code"),
+    model: text("model"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   (t) => [
     uniqueIndex("agent_token").on(t.token),
     uniqueIndex("agent_org_name").on(t.org_id, t.name),
   ],
+)
+
+// ---- The agent model (core agent-model.ts) ------------------------------------------------
+// One unit of agent work. Replaces run, run_attempt, context_session, workflow_run and
+// workflow_step_attempt: one lifecycle, one lease, one attempt counter, one transcript.
+export const job = pgTable(
+  "job",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    agent_id: text("agent_id").notNull(),
+    kind: text("kind").$type<JobKind>().notNull(),
+    parent_id: text("parent_id"),
+    node_id: text("node_id"),
+    trigger_id: text("trigger_id"),
+    asked_by: text("asked_by"),
+    attended: integer("attended").notNull().default(0).$type<0 | 1>(),
+    instruction: text("instruction").notNull(),
+    subject_json: text("subject_json"),
+    status: text("status").$type<JobStatus>().notNull().default("queued"),
+    needs_json: text("needs_json"),
+    scheduled_for: text("scheduled_for"),
+    lease_until: text("lease_until"),
+    attempt: integer("attempt").notNull().default(0),
+    started_at: text("started_at"),
+    finished_at: text("finished_at"),
+    cost_micro_usd: integer("cost_micro_usd"),
+    dedupe_key: text("dedupe_key"),
+    report_artifact_id: text("report_artifact_id"),
+    result_json: text("result_json"),
+    meta_json: text("meta_json"),
+    // Where this job stands on a Derive machine (null for owner machines), fenced by
+    // machine_rev like the agent's sandbox.
+    machine_phase: text("machine_phase").$type<JobMachinePhase>(),
+    machine_json: text("machine_json"),
+    machine_rev: integer("machine_rev").notNull().default(0),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+    updated_at: text("updated_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [
+    index("job_agent_status").on(t.agent_id, t.status, t.created_at),
+    index("job_org_created").on(t.org_id, t.created_at),
+    index("job_parent").on(t.parent_id),
+    index("job_status_lease").on(t.status, t.lease_until),
+  ],
+)
+
+// A job's transcript: what the asker said and what the agent answered, in order.
+export const jobMessage = pgTable(
+  "job_message",
+  {
+    id: text("id").primaryKey(),
+    job_id: text("job_id")
+      .notNull()
+      .references(() => job.id),
+    author_kind: text("author_kind").$type<JobMessageAuthor>().notNull(),
+    author_id: text("author_id").notNull(),
+    body_md: text("body_md").notNull(),
+    meta_json: text("meta_json"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [index("job_message_job").on(t.job_id, t.created_at)],
+)
+
+// Standing configuration that creates jobs: a schedule or an event. (`trigger` is an SQL
+// keyword, hence the prefix.)
+export const agentTrigger = pgTable(
+  "agent_trigger",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    agent_id: text("agent_id").notNull(),
+    kind: text("kind").$type<AgentTriggerKind>().notNull(),
+    cron: text("cron"),
+    tz: text("tz"),
+    on_event: text("on_event"),
+    instruction: text("instruction").notNull(),
+    subject_json: text("subject_json"),
+    enabled: integer("enabled").notNull().default(1).$type<0 | 1>(),
+    revision: integer("revision").notNull().default(0),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+    updated_at: text("updated_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [index("agent_trigger_agent").on(t.agent_id), index("agent_trigger_org").on(t.org_id)],
+)
+
+// The credential a machine uses to call a model. (`account` is Better Auth's table.)
+export const modelAccount = pgTable(
+  "model_account",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    user_id: text("user_id").notNull(),
+    provider: text("provider").$type<AccountProvider>().notNull(),
+    kind: text("kind").$type<AccountKind>().notNull(),
+    secret_enc: text("secret_enc"),
+    hint: text("hint"),
+    status: text("status").$type<AccountStatus>().notNull().default("not_checked"),
+    ortam_connection_json: text("ortam_connection_json"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+    updated_at: text("updated_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [index("model_account_org_user").on(t.org_id, t.user_id)],
 )
 
 // A pending workspace invitation (see schema.ts) — invite-by-email → accept.
@@ -1227,6 +1373,9 @@ export const userNotificationPref = pgTable(
   },
   (t) => [uniqueIndex("user_notification_pref_key").on(t.org_id, t.user_id)],
 )
+// UNREAD AFTER THE AGENTS CUTOVER: model accounts (`model_account`) replaced these rows, which
+// stay until the old tables are dropped in a separate change. Only the account-deletion purges
+// still touch them.
 // Per-user model-plan credential (Claude/Codex plan token or API key), encrypted at rest
 // and scoped (org, user, provider). Used only for that user's own runs — see schema.ts.
 export const modelCredential = pgTable(
@@ -1661,6 +1810,10 @@ const TABLES = [
   artifactMember,
   notification,
   agent,
+  job,
+  jobMessage,
+  agentTrigger,
+  modelAccount,
   agentMention,
   automation,
   run,

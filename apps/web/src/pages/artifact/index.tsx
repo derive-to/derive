@@ -27,7 +27,6 @@ import {
   dynamicSlotsQuery,
   rawArtifactUrl,
   reviewQuery,
-  workspaceSettingsQuery,
   workspacesQuery,
 } from "@/lib/queries"
 import { rawTokenNeedsRefresh } from "@/lib/raw-token"
@@ -39,7 +38,6 @@ import { useKeyboardInset } from "@/lib/use-keyboard-inset"
 import { cn } from "@/lib/utils"
 import { useArtifactActions } from "./artifact-actions"
 import { ArtifactBreadcrumb } from "./artifact-breadcrumb"
-import { ArtifactChat, type RailTab } from "./artifact-chat"
 import { ArtifactComments } from "./artifact-comments"
 import { ArtifactDocument } from "./artifact-document"
 import { ArtifactInspect } from "./artifact-inspect"
@@ -58,23 +56,19 @@ import { DynamicDataPanel } from "./dynamic-data-panel"
 import { EditBar, type EditViewport } from "./edit-bar"
 import { FloatingControl } from "./floating-control"
 import { InlineMentionMenu } from "./inline-mention-menu"
+import { JobHeader } from "./job-header"
 import { buildStream, countUnread } from "./lib/activity"
 import { canCommentWithRole } from "./lib/comment-access"
 import { bucketThreads } from "./lib/layout"
 import { artifactLoginSearch } from "./lib/login-return"
-import { useArtifactChat } from "./lib/use-artifact-chat"
 import { takeUseIntent } from "./lib/use-intent"
-import { LinkedBundleEditor } from "./linked-bundle-editor"
-import { LinkedBundlePanel } from "./linked-bundle-panel"
-import {
-  emptyLinkedBundleReviewState,
-  LinkedBundleWorkspace,
-  linkedBundleAnchor,
-} from "./linked-bundle-workspace"
+import { MarginAsk } from "./margin-ask"
+import { PaperLink } from "./paper-link"
 import { parseRef, refFor } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
 import { PublicViewer } from "./public-viewer"
 import { Presence } from "./rail-deck"
+import type { RailTab } from "./rail-tabs"
 import { ReferencesPanel } from "./references-panel"
 import { runtimeDiagnosticFor } from "./render-stage"
 import type { ArtifactSearch } from "./route-config"
@@ -192,14 +186,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
     error,
     dataUpdatedAt: artifactFetchedAt,
     refetch,
-  } = useQuery({
-    ...artifactQuery(shortId, qc),
-    // A linked bundle resolves current member versions in its ordinary detail
-    // response. Refresh that existing read while the workspace is open: the first
-    // pass stays trustworthy without inventing a second realtime protocol.
-    refetchInterval: (query) => (query.state.data?.linked_bundle ? 10_000 : false),
-    refetchIntervalInBackground: false,
-  })
+  } = useQuery(artifactQuery(shortId, qc))
   const isAnon = !me
   const [sharedStateAuthOpen, setSharedStateAuthOpen] = useState(false)
   const [sharedStateReturnTo, setSharedStateReturnTo] = useState(`${selfBase}/${ref}`)
@@ -212,6 +199,14 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // List rows do not carry caller membership. Defer guest-only behavior until
   // the detail response resolves rather than briefly rendering the wrong controls.
   const isGuest = !!me && !seeded && art?.is_workspace_member === false
+  // The agent surfaces (margin Ask, a report's job line) act in the ACTIVE workspace, so they
+  // show only on that workspace's own pages: is_workspace_member is false for a page from
+  // another workspace, even one the reader has a seat in.
+  const inActiveWorkspace = !!me && art?.is_workspace_member === true
+  // A report is published by its agent, so its v1 carries that agent. When v1 is not in the
+  // payload (history hidden) the lookup runs anyway; it is one indexed read.
+  const firstVersion = art?.versions.find((v) => v.n === 1)
+  const couldBeReport = !firstVersion || !!firstVersion.agent
 
   // A restored/in-memory detail can carry a raw capability that expired long before
   // this click. Refresh it before the iframe gets a src; otherwise the first token is
@@ -300,17 +295,6 @@ export function Artifact({ template = false }: { template?: boolean }) {
   const [pendingEdit, setPendingEdit] = useState<
     { kind: "switch"; path: string } | { kind: "close" } | null
   >(null)
-  const [bundleView, setBundleView] = useState<"workspace" | "document">("workspace")
-  const [bundleEditorOpen, setBundleEditorOpen] = useState(false)
-  // Keep the reviewer's exact visual context above artifact refetches and authored
-  // bundle versions. Only navigating to another artifact resets it.
-  const [bundleReviewState, setBundleReviewState] = useState(emptyLinkedBundleReviewState)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: these controls are scoped to one artifact route.
-  useEffect(() => {
-    setBundleView("workspace")
-    setBundleEditorOpen(false)
-    setBundleReviewState(emptyLinkedBundleReviewState())
-  }, [shortId])
   // Focus/hero mode — strip the workbench chrome to just the matted render (Esc exits).
   const [focus, setFocus] = useState(false)
   // Deliberate visual-review mode: the host asks the sandboxed artifact to turn
@@ -395,17 +379,6 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // controls never compete with review in the resting document state. Declared above
   // the loading returns so the hook order never changes between renders.
   const [rail, setRail] = useState<RailTab>("comments")
-  // BETA: chat only renders where the workspace has opted in. The server refuses too —
-  // this just avoids showing a tab that would 404 (see the chat-session route).
-  const settings = useQuery({
-    ...workspaceSettingsQuery(),
-    staleTime: 60_000,
-    enabled: !!me && art?.is_workspace_member === true,
-  }).data
-  const chatBeta = settings?.chatBeta === true
-  // Automations are BETA the same way, read from the same fetch.
-  const automateBeta = settings?.automateBeta === true
-  const chat = useArtifactChat(shortId)
   const [composer, setComposer] = useState<ComposerState>(null)
   const [activeThread, setActiveThread] = useState<string | null>(null)
   const [hoverThread, setHoverThread] = useState<string | null>(null)
@@ -1273,7 +1246,6 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // same path because its stored source is HTML; there is no separate deck editor.
   const canInspect = canPublish && inlineEdit.allowElementEdits
   const inspectEnabled = canInspect && inlineEdit.active
-  const mapEnabled = !!art.linked_bundle && !inlineEdit.active
   const isDeckLike = !!deck || art.current_content_type === "text/x-derive-deck"
   // A paper (single .tex or a derive/latex bundle) offers its compilable source as a zip.
   // Literals mirrored from @derive/core (the web imports core types only).
@@ -1453,83 +1425,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
     />
   )
 
-  const openBundleComment = (anchor: Sel | null) => {
-    setVisualPin(false)
-    setRail("comments")
-    setPanel("open")
-    setActiveThread(null)
-    setSel(null)
-    setComposer({ anchor, docTop: null })
-  }
-  const pinBundleTarget = (target: { id: string; kind: string; label: string }) =>
-    openBundleComment(linkedBundleAnchor(target))
-  const commentOnBundle = () => openBundleComment(null)
-  const reviewBundleTarget = (target: string) => {
-    setRail("comments")
-    setPanel("open")
-    const root = comments.find(
-      (comment) =>
-        comment.id === comment.thread_id &&
-        comment.state === "open" &&
-        parseAnchor(comment.anchor)?.element?.id === target,
-    )
-    if (root) setActiveThread(root.thread_id)
-  }
-  const bundleWorkspaceActive =
-    !!art.linked_bundle &&
-    bundleView === "workspace" &&
-    shown === art.current_version &&
-    view === "preview" &&
-    !editing &&
-    !inlineEdit.active
-  const primaryEl = bundleWorkspaceActive ? (
-    <LinkedBundleWorkspace
-      shortId={shortId}
-      version={art.current_version}
-      bundle={art.linked_bundle as NonNullable<typeof art.linked_bundle>}
-      workflowPreview={art.workflow_preview}
-      agents={agents}
-      comments={comments}
-      canComment={canComment}
-      canEdit={effectiveCanPublish}
-      pinning={visualPin}
-      refreshing={refreshingArtifact}
-      refreshedAt={artifactFetchedAt}
-      onTogglePinning={() => {
-        setComposer(null)
-        setSel(null)
-        setVisualPin((on) => !on)
-      }}
-      onComment={commentOnBundle}
-      onPin={pinBundleTarget}
-      onReview={reviewBundleTarget}
-      onDocument={() => setBundleView("document")}
-      onEdit={() => setBundleEditorOpen(true)}
-      onSaved={load}
-      reviewState={bundleReviewState}
-      onReviewStateChange={setBundleReviewState}
-    />
-  ) : (
-    <>
-      {art.linked_bundle &&
-      shown === art.current_version &&
-      view === "preview" &&
-      !inlineEdit.active ? (
-        <div className="flex items-center gap-2 border-b border-border bg-muted/20 px-4 py-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            data-testid="bundle-workspace-view"
-            onClick={() => setBundleView("workspace")}
-          >
-            <Icon name="collection" size={14} /> Back to bundle workspace
-          </Button>
-          <span className="text-xs text-muted-foreground">Document view</span>
-        </div>
-      ) : null}
-      {documentEl}
-    </>
-  )
+  const primaryEl = documentEl
 
   // Anonymous visitor → the chrome-light public/viral viewer (the app shell has
   // dropped the rail). The render is the hero; a slim public header carries the
@@ -1572,13 +1468,6 @@ export function Artifact({ template = false }: { template?: boolean }) {
         onOpenChange={setSharedStateAuthOpen}
         returnTo={sharedStateReturnTo}
         artifactId={art.short_id}
-      />
-      <LinkedBundleEditor
-        shortId={shortId}
-        version={art.current_version}
-        open={bundleEditorOpen}
-        onOpenChange={setBundleEditorOpen}
-        onSaved={load}
       />
       {/* Leaving with unsaved inline edits — one wording, two doors. Navigation is
           intercepted by the router blocker; Escape/Done ask through the hook. */}
@@ -1735,7 +1624,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
               // to fix one. What used to make a deck unsafe to edit (its own Space
               // and arrow keys flipping slides under the caret) is handled in the
               // frame: while a caret is in a block, the page's keyboard is off.
-              showInlineEdit={canEditDoc && !inlineEdit.active && !bundleWorkspaceActive}
+              showInlineEdit={canEditDoc && !inlineEdit.active}
               inlineEditLabel="Edit"
               // A paper is written in its source, so on a LaTeX artifact the header's Edit
               // opens the source editor. The inline path (a quick fix to a sentence) stays
@@ -1750,7 +1639,6 @@ export function Artifact({ template = false }: { template?: boolean }) {
               sourceZipHref={isPaper && !importedPaper ? api.sourceZipUrl(shortId, shown) : null}
               canLock={canLock}
               canMove={canMove}
-              automateBeta={automateBeta}
               locked={isLocked}
               archived={!!art.archived}
               canArchive={canPublish}
@@ -1814,6 +1702,11 @@ export function Artifact({ template = false }: { template?: boolean }) {
             {art.current_version === 1 && canEditDoc && !editing && !inlineEdit.active && (
               <DerivedFromBanner art={art} />
             )}
+            {/* A job's report page says which job, above the report itself. */}
+            {inActiveWorkspace && couldBeReport && !editing && !inlineEdit.active && (
+              <JobHeader shortId={shortId} />
+            )}
+            {inActiveWorkspace && importedPaper && !editing && <PaperLink shortId={shortId} />}
             {/* A paper keeps its bar above the open editor: the chips switch files. */}
             {art.bundle && !importedPaper && (!editing || isPaperBundle(art)) && (
               <BundleBar
@@ -1915,14 +1808,11 @@ export function Artifact({ template = false }: { template?: boolean }) {
           {!focus && commentsAvailable && (
             <ArtifactComments
               rail={
-                (mapEnabled || rail !== "map") &&
-                (dataEnabled || rail !== "data") &&
-                (referencesEnabled || rail !== "references")
+                (dataEnabled || rail !== "data") && (referencesEnabled || rail !== "references")
                   ? rail
                   : "comments"
               }
               onRail={setRail}
-              mapEnabled={mapEnabled}
               dataEnabled={dataEnabled}
               dataPanel={
                 dataEnabled ? (
@@ -1947,44 +1837,6 @@ export function Artifact({ template = false }: { template?: boolean }) {
                     canPublish={effectiveCanPublish && shown === art.current_version}
                   />
                 ) : undefined
-              }
-              mapPanel={
-                art.linked_bundle ? (
-                  <LinkedBundlePanel
-                    bundle={art.linked_bundle}
-                    comments={comments}
-                    canComment={canComment}
-                    pinning={visualPin}
-                    onTogglePinning={() => {
-                      setComposer(null)
-                      setSel(null)
-                      setVisualPin((on) => !on)
-                    }}
-                    onFocus={(id) =>
-                      bundleWorkspaceActive
-                        ? reviewBundleTarget(id)
-                        : post({ type: "focus-review", id })
-                    }
-                  />
-                ) : undefined
-              }
-              visualPinAvailable={mapEnabled}
-              visualPinActive={visualPin}
-              onToggleVisualPin={() => {
-                setComposer(null)
-                setSel(null)
-                setVisualPin((on) => !on)
-              }}
-              chatBeta={chatBeta}
-              chatPanel={
-                <ArtifactChat
-                  messages={chat.messages}
-                  working={chat.working}
-                  streaming={chat.streaming}
-                  notice={chat.error ?? undefined}
-                  onSend={(b) => chat.send(b)}
-                  onPoll={chat.poll}
-                />
               }
               inspectEnabled={inspectEnabled}
               inspectPanel={
@@ -2019,6 +1871,8 @@ export function Artifact({ template = false }: { template?: boolean }) {
                 // Above the stream; members who can act only.
                 !isGuest && canComment ? (
                   <>
+                    {/* Ask one of the workspace's agents about this page; it opens a job. */}
+                    {inActiveWorkspace && <MarginAsk shortId={shortId} />}
                     {/* The one line that replaces the edit affordance for people who
                         cannot publish here: comments are the suggestion channel. */}
                     {!canPublish ? (

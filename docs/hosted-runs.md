@@ -1,5 +1,11 @@
 # Hosted automation runs (experimental)
 
+> **Retired.** This records the hosted automation lane (automations, `dkrun_` capabilities, the
+> Cloudflare run container and the in-process loop), which the agents cutover removed. Scheduled
+> and asked work now runs as jobs on an agent's machine: the owner's runner, or a Derive machine
+> (`apps/api/src/lib/jobs.ts`, `job-machine.ts`). Kept as a record; the routes, commands and
+> settings it names no longer exist.
+
 Run an automation with **no machine on**: Derive itself materializes due schedules, mints a
 short-lived credential, and boots a disposable executor that pulls from bound sources and writes
 the artifact. Off by default on every deployment; opt in per host.
@@ -203,7 +209,7 @@ due run. `wrangler tail` shows the boots.
    `cd apps/api && pnpm build:web && npx wrangler deploy --dry-run`
    Expect `env.RUN_CONTAINER (RunContainer)` and `env.RUN_QUEUE (derive-runs)` in the binding
    list, and the container image to build.
-4. `wrangler deploy`. Hosted execution is still gated per workspace by `hostedAgentsEnabled`
+4. `wrangler deploy`. Hosted execution is still gated per workspace by `agentWrites`
    in org settings: set it false and the next tick dispatches nothing for that workspace, no
    redeploy needed. Two caveats worth knowing before you rely on it as an emergency stop.
    **There is no UI** — it is `PATCH /v1/workspace/settings`, one workspace at a time, so it

@@ -32,8 +32,8 @@ export const MANIFEST_PERMISSIONS: Record<string, string> = {
   // Workflow grants narrow each Git credential to one repository and read/write choice.
   contents: "write",
 }
-// Completion events let Derive react when an external workflow finishes. The receiver accepts
-// only signed payloads and ignores every event except the narrow workflow-run contract.
+// Workflow completion events. The receiver accepts only signed payloads and acknowledges each
+// event without acting on it; the subscription stays so an App's webhook keeps its shape.
 export const REQUIRED_EVENTS = ["workflow_run"]
 
 /** The GitHub App manifest: what permissions/events/URLs the new App is born with.

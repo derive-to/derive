@@ -22,18 +22,6 @@ sandboxed viewer, so publish real designed pages, not just prose.
 - Republishing a bundle REPLACES it: include every page and asset, or use merge to add only the new files.
 - Verify content_sha256 in the response whenever the content passed through your context.
 
-## Workflow publish recovery
-
-When a publish belongs to a workflow, pass `workflow:{run_id,node_id,attempt,role}`.
-Derive commits the version and its workflow activity together. Completion remains unconfirmed.
-The response includes `workflow_publish.dedupe_key`, `workflow_publish.replayed`, and `version_url`.
-
-If the response is lost, retry the same request. Identical requests within one attempt recover
-the original version. You can set `workflow.dedupe_key` explicitly before the first call.
-A changed request with the same key fails. Use a new key to intentionally repeat identical content.
-Retries do not rerun publish notifications or review requests. Use `read` or `catch_up` to inspect
-the saved version and any remaining review work. Unbound publishes still create new versions.
-
 ## publish: edits vs content vs files
 
 `publish` saves a revision of an artifact.
@@ -140,17 +128,15 @@ publishes as a multi-page bundle). The URL is reusable until it expires (~15 min
 the plain publish tool for small docs and for surgical `edits`; reach for stage target:'doc'
 only when inlining would chunk.
 
-**Workflow input files.** For a folder of scripts/data with no entry document, ZIP just the
+**Folders of files.** For a folder of scripts/data with no entry document, ZIP just the
 required files and POST `-F file=@inputs.zip -F file_bundle=true` to a `stage(target:'doc')`
 upload URL. Use `workspace_access=none`, `link_role=none`, `listed=none` for a private source.
 There is no need to create a dummy README. File bundles have a readable file inventory and
 ordinary artifact versions. Limit: 2,000 regular files, 50 MB unpacked. Relative paths only;
 links, path collisions, `.env`/credential files and local dependency caches are rejected.
-Exclude them before archiving; use saved credential bindings for secrets. Bytes travel from
-your shell directly to storage, never through tool arguments. Publishing returns the source
-`short_id` and version; attach them explicitly with `automate(action:'workflow_files')`.
-Republish the entire bundle with `file_bundle=true` for a new version, then select that
-version on the workflow. Existing accepted runs keep their selected inputs.
+Exclude them before archiving; keep secrets in an agent's environment instead. Bytes travel from
+your shell directly to storage, never through tool arguments. Republish the entire bundle with
+`file_bundle=true` for a new version.
 
 **It needs a signed-in user.** A publish is attributed to a person and re-checked against
 that person's live rights, so a connection authenticated by a static agent token

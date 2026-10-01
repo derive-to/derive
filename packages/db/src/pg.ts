@@ -11,7 +11,6 @@ import type {
   ArtifactSkillLinkRecord,
   AssetRecord,
   AuditLogRecord,
-  AutomationRecord,
   BootstrapRead,
   CollectionInviteRecord,
   CollectionMemberRecord,
@@ -27,7 +26,6 @@ import type {
   ConnectionScope,
   ConnectionStatus,
   ContextAskerRecord,
-  ContextOutput,
   ContextRecord,
   DeliveryRecord,
   DeliveryStatus,
@@ -53,7 +51,6 @@ import type {
   ListPageOpts,
   MembershipRecord,
   MetaStore,
-  ModelCredentialRecord,
   NewAgent,
   NewAgentMention,
   NewArtifact,
@@ -64,14 +61,12 @@ import type {
   NewArtifactSkillLink,
   NewAsset,
   NewAuditLog,
-  NewAutomation,
   NewCollection,
   NewCollectionInvite,
   NewCollectionMember,
   NewComment,
   NewConnection,
   NewContext,
-  NewContextAsker,
   NewDelivery,
   NewDomain,
   NewExportJob,
@@ -86,7 +81,6 @@ import type {
   NewRenderJob,
   NewReport,
   NewReviewRound,
-  NewRun,
   NewSession,
   NewSessionMessage,
   NewSharedStateActivity,
@@ -102,9 +96,6 @@ import type {
   NewVersionData,
   NewView,
   NewWebhook,
-  NewWorkflowArtifactActivity,
-  NewWorkflowRun,
-  NewWorkflowStepAttempt,
   NotificationRecord,
   NotificationsPage,
   OAuthGrant,
@@ -120,8 +111,6 @@ import type {
   ReportState,
   ReviewRoundRecord,
   Role,
-  RunRecord,
-  RunStatus,
   SessionMessageRecord,
   SessionRecord,
   SessionState,
@@ -152,17 +141,6 @@ import type {
   VersionRecord,
   ViewStats,
   WebhookRecord,
-  WorkflowArtifactActivityRecord,
-  WorkflowAttemptStateGuard,
-  WorkflowPublishKey,
-  WorkflowPublishReceiptRecord,
-  WorkflowRunRecord,
-  WorkflowRunTransition,
-  WorkflowStepAttemptRecord,
-  WorkflowStepAttemptTransition,
-  WorkflowStepTransitionGuard,
-  WorkflowTransitionGuard,
-  WorkflowVersionPublish,
   WorkspaceAccess,
   WorkspaceRecord,
   WorkspaceSummary,
@@ -176,21 +154,12 @@ import {
   type DynamicWriteOptions,
   GLOBAL_FOLLOW_ORG,
   IMPORT_MAX_ATTEMPTS,
-  isValidWorkflowRunDefinitionPin,
-  isValidWorkflowStepContextPin,
   LINKS_FACT,
   maxRole,
-  mergeRunMeta,
   type NewDynamicRevision,
   type NewDynamicSlot,
-  parseRunMeta,
-  runCounter,
   SHARED_STATE_ACTIVITY_LIMIT,
   WORKSPACE_FACT_ROW_CAP,
-  WorkflowAttemptStateConflictError,
-  workflowRunCanTransition,
-  workflowStatusIsTerminal,
-  workflowStepCanTransition,
 } from "@derive/core"
 import {
   and,
@@ -210,13 +179,12 @@ import {
   max,
   ne,
   notExists,
-  notInArray,
   or,
-  type SQL,
   sql,
 } from "drizzle-orm"
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
 import { Pool } from "pg"
+import { agentModelRepos } from "./agent-model-repos"
 import {
   DYNAMIC_STATE_PREFIX,
   dynamicRecord,
@@ -228,6 +196,7 @@ import {
   activitySeen,
   agent,
   agentMention,
+  agentTrigger,
   artifact,
   artifactFavorite,
   artifactInvite,
@@ -260,7 +229,10 @@ import {
   importLease,
   instanceOperator,
   invitation,
+  job,
+  jobMessage,
   membership,
+  modelAccount,
   modelCredential,
   notification,
   oauthClientWorkspace,
@@ -313,8 +285,6 @@ import {
   parseOAuthScopes,
   parseOrgSettings,
 } from "./repos"
-import { runtimeRepos } from "./runtime-repos"
-import { checkedWorkflowPublishReceipt, workflowPublishStatements } from "./workflow-publish"
 
 const one = <T>(rows: T[]): T => {
   const r = rows[0]
@@ -325,6 +295,10 @@ const one = <T>(rows: T[]): T => {
 // Exported so the pg schema-conformance test can diff these defs against the
 // columns PG_SCHEMA_STATEMENTS actually creates in a real Postgres.
 export const schema = {
+  job,
+  jobMessage,
+  agentTrigger,
+  modelAccount,
   artifact,
   sharedState,
   sharedStateActivity,
@@ -402,6 +376,10 @@ export const schema = {
 // a pg column that drifts from its core Record → compile error here.
 const _schemaExhaustive: Exhaustive<typeof schema> = true
 const _schemaShapes: Shapes<typeof schema> = {
+  job: true,
+  jobMessage: true,
+  agentTrigger: true,
+  modelAccount: true,
   artifact: true,
   sharedState: true,
   sharedStateActivity: true,
@@ -479,20 +457,6 @@ const LAST_24H_MS = 86400_000
  * definition, dialect-correct SQL generated for us); the analytics aggregations
  * stay raw `pool.query` where GROUP BY / DISTINCT read clearer.
  */
-
-/**
- * Cost ACCUMULATES onto whatever the run already banked — it never replaces it.
- *
- * A retry reuses the SAME run row (requeueRun), so a run that burned an expensive failed attempt
- * and then settled cheaply would report only the cheap number, undercounting exactly the runs
- * that cost the most in the column the monthly budget sums. A missing value leaves the column
- * untouched rather than nulling it, so a provider that reports nothing (Codex plain-text, an
- * older CLI) cannot erase what an earlier attempt recorded.
- *
- * Shared by finishRun and requeueRun, and mirrored in the other driver — the two must agree.
- */
-const addRunCost = (micros: number | null | undefined) =>
-  micros == null ? {} : { cost_micro_usd: sql`coalesce(${run.cost_micro_usd}, 0) + ${micros}` }
 
 // ---- Boot-path SQL shared between the standalone methods and bootstrap() ----
 // Positional params are stable across every consumer: $1 = org id, $2 = user id
@@ -726,55 +690,42 @@ const mapOverviewRows = (rows: OverviewRow[]): CollectionsOverviewRead => {
 type PgWriter = Pick<NodePgDatabase<typeof schema>, "insert" | "update" | "delete">
 
 export class PgMetaStore implements MetaStore {
-  private readonly runtimes = runtimeRepos(
+  private readonly agentModel = agentModelRepos(
     async (statement) => (await this.db.execute(statement)).rows,
   )
-  getRuntimeModelBinding = this.runtimes.getRuntimeModelBinding
-  saveRuntimeModelBinding = this.runtimes.saveRuntimeModelBinding
-  applyRuntimeModelConnection = this.runtimes.applyRuntimeModelConnection
-  createRuntimeModelConnection = this.runtimes.createRuntimeModelConnection
-  getRuntimeModelConnection = this.runtimes.getRuntimeModelConnection
-  listRuntimeModelConnections = this.runtimes.listRuntimeModelConnections
-  renameRuntimeModelConnection = this.runtimes.renameRuntimeModelConnection
-  revokeRuntimeModelConnection = this.runtimes.revokeRuntimeModelConnection
-  getRuntimeSchedule = this.runtimes.getRuntimeSchedule
-  listRuntimeSchedules = this.runtimes.listRuntimeSchedules
-  projectWorkflowDraft = this.runtimes.projectWorkflowDraft
-  getWorkflowDraft = this.runtimes.getWorkflowDraft
-  saveWorkflowDraft = this.runtimes.saveWorkflowDraft
-  saveWorkflowRepositories = this.runtimes.saveWorkflowRepositories
-  getWorkflowFiles = this.runtimes.getWorkflowFiles
-  saveWorkflowFiles = this.runtimes.saveWorkflowFiles
-  createWorkflowTest = this.runtimes.createWorkflowTest
-  latestWorkflowTest = this.runtimes.latestWorkflowTest
-  getWorkflowTest = this.runtimes.getWorkflowTest
-  listPendingWorkflowTests = this.runtimes.listPendingWorkflowTests
-  settleWorkflowTest = this.runtimes.settleWorkflowTest
-  retryRuntimeSetup = this.runtimes.retryRuntimeSetup
-  saveRuntimeSchedule = this.runtimes.saveRuntimeSchedule
-  cancelQueuedRuntimeRun = this.runtimes.cancelQueuedRuntimeRun
-  getContextRuntimeForContext = this.runtimes.getContextRuntimeForContext
-  claimRunAttempt = this.runtimes.claimRunAttempt
-  listPendingRuntimeRuns = this.runtimes.listPendingRuntimeRuns
-  getLatestRunAttempt = this.runtimes.getLatestRunAttempt
-  markRuntimeRunStarted = this.runtimes.markRuntimeRunStarted
-  settleRuntimeRun = this.runtimes.settleRuntimeRun
-  publishRuntimeReport = this.runtimes.publishRuntimeReport
-  bindRuntimeSetup = this.runtimes.bindRuntimeSetup
-  createRuntimeSetup = this.runtimes.createRuntimeSetup
-  getRuntimeSetup = this.runtimes.getRuntimeSetup
-  listPendingRuntimeSetups = this.runtimes.listPendingRuntimeSetups
-  transitionRuntimeSetup = this.runtimes.transitionRuntimeSetup
-  cancelRuntimeSetup = this.runtimes.cancelRuntimeSetup
-  createContextRuntime = this.runtimes.createContextRuntime
-  getContextRuntime = this.runtimes.getContextRuntime
-  disableContextRuntime = this.runtimes.disableContextRuntime
-  reserveRunAttempt = this.runtimes.reserveRunAttempt
-  getRunAttempt = this.runtimes.getRunAttempt
-  listUnreleasedRunAttempts = this.runtimes.listUnreleasedRunAttempts
-  transitionRunAttempt = this.runtimes.transitionRunAttempt
-  acceptRunAttemptResult = this.runtimes.acceptRunAttemptResult
-  releaseRunAttempt = this.runtimes.releaseRunAttempt
+  updateAgent = this.agentModel.updateAgent
+  touchAgentSeen = this.agentModel.touchAgentSeen
+  createJob = this.agentModel.createJob
+  getJob = this.agentModel.getJob
+  listJobs = this.agentModel.listJobs
+  claimJobs = this.agentModel.claimJobs
+  claimJob = this.agentModel.claimJob
+  updateJob = this.agentModel.updateJob
+  countRunningJobs = this.agentModel.countRunningJobs
+  reclaimStaleJobs = this.agentModel.reclaimStaleJobs
+  listQueuedDeriveJobs = this.agentModel.listQueuedDeriveJobs
+  latestJobForTrigger = this.agentModel.latestJobForTrigger
+  findOpenJobByDedupe = this.agentModel.findOpenJobByDedupe
+  sumJobCostSince = this.agentModel.sumJobCostSince
+  addJobCost = this.agentModel.addJobCost
+  transitionAgentSandbox = this.agentModel.transitionAgentSandbox
+  listAgentsInSandboxPhase = this.agentModel.listAgentsInSandboxPhase
+  transitionJobMachine = this.agentModel.transitionJobMachine
+  listMachineJobs = this.agentModel.listMachineJobs
+  listOpenGraphJobs = this.agentModel.listOpenGraphJobs
+  addJobMessage = this.agentModel.addJobMessage
+  listJobMessages = this.agentModel.listJobMessages
+  createTrigger = this.agentModel.createTrigger
+  getTrigger = this.agentModel.getTrigger
+  listTriggers = this.agentModel.listTriggers
+  listEnabledScheduleTriggers = this.agentModel.listEnabledScheduleTriggers
+  updateTrigger = this.agentModel.updateTrigger
+  deleteTrigger = this.agentModel.deleteTrigger
+  createAccount = this.agentModel.createAccount
+  getAccount = this.agentModel.getAccount
+  listAccounts = this.agentModel.listAccounts
+  updateAccount = this.agentModel.updateAccount
+  deleteAccount = this.agentModel.deleteAccount
 
   /** Postgres binds an id array as ONE parameter and caps a statement at 65535, so the
    *  shared visibility gate does not need to split a candidate list the way D1 does. Well
@@ -1581,9 +1532,8 @@ export class PgMetaStore implements MetaStore {
     rounds: ReviewRoundRecord[]
     beforeData: VersionDataRecord[]
     afterData: VersionDataRecord[]
-    workflowRuns: WorkflowRunRecord[]
   }> {
-    // Six independent reads ride one statement. node-postgres serializes queries on one
+    // Five independent reads ride one statement. node-postgres serializes queries on one
     // edge connection, so Promise.all cannot remove their network latency by itself.
     const { rows } = await this.pool.query<{ kind: string; doc: unknown }>(
       `SELECT 'version' kind, row_to_json(v) doc FROM version v
@@ -1599,14 +1549,7 @@ export class PgMetaStore implements MetaStore {
         WHERE d.artifact_id = $1 AND d.n = $2
        UNION ALL
        SELECT 'after-data', row_to_json(d) FROM version_data d
-        WHERE d.artifact_id = $1 AND d.n = $3
-       UNION ALL
-       SELECT 'workflow-run', row_to_json(w) FROM (
-         SELECT * FROM workflow_run
-          WHERE workflow_artifact_id = $1
-          ORDER BY created_at DESC, id DESC
-          LIMIT 10
-       ) w`,
+        WHERE d.artifact_id = $1 AND d.n = $3`,
       [artifactId, beforeN, afterN],
     )
     const versions: VersionRecord[] = []
@@ -1614,14 +1557,12 @@ export class PgMetaStore implements MetaStore {
     const rounds: ReviewRoundRecord[] = []
     const beforeData: VersionDataRecord[] = []
     const afterData: VersionDataRecord[] = []
-    const workflowRuns: WorkflowRunRecord[] = []
     for (const row of rows) {
       if (row.kind === "version") versions.push(row.doc as VersionRecord)
       else if (row.kind === "comment") comments.push(row.doc as CommentRecord)
       else if (row.kind === "round") rounds.push(row.doc as ReviewRoundRecord)
       else if (row.kind === "before-data") beforeData.push(row.doc as VersionDataRecord)
       else if (row.kind === "after-data") afterData.push(row.doc as VersionDataRecord)
-      else if (row.kind === "workflow-run") workflowRuns.push(row.doc as WorkflowRunRecord)
     }
     versions.sort((a, b) => a.n - b.n)
     comments.sort((a, b) =>
@@ -1630,10 +1571,7 @@ export class PgMetaStore implements MetaStore {
     rounds.sort((a, b) => (a.created_at > b.created_at ? -1 : a.created_at < b.created_at ? 1 : 0))
     beforeData.sort((a, b) => a.slot.localeCompare(b.slot))
     afterData.sort((a, b) => a.slot.localeCompare(b.slot))
-    workflowRuns.sort((a, b) =>
-      a.created_at > b.created_at ? -1 : a.created_at < b.created_at ? 1 : 0,
-    )
-    return { versions, comments, rounds, beforeData, afterData, workflowRuns }
+    return { versions, comments, rounds, beforeData, afterData }
   }
   async getVersionDataSeries(
     artifactId: string,
@@ -3332,12 +3270,6 @@ export class PgMetaStore implements MetaStore {
         select 1 from comment cc where cc.artifact_id = a.id and cc.base_version = a.current_version))
         from a
       union all
-      select 'pinned', to_jsonb(exists (
-        select 1 from workflow_artifact_activity wa
-         where wa.artifact_short_id = a.short_id and wa.artifact_version = a.current_version
-           and wa.source = 'observed'))
-        from a
-      union all
       select 'reviews', to_jsonb(exists (
         select 1 from review_round rr where rr.artifact_id = a.id and rr.version = a.current_version))
         from a
@@ -3354,7 +3286,6 @@ export class PgMetaStore implements MetaStore {
       settings: parseOrgSettings(null),
       user: null,
       feedback: { comments: false, reviews: false },
-      pinned: false,
       workspaces: [],
       slots: [],
     }
@@ -3379,7 +3310,6 @@ export class PgMetaStore implements MetaStore {
       else if (r.kind === "user") out.user = doc as EditPreflight["user"]
       else if (r.kind === "comments") out.feedback.comments = doc === true
       else if (r.kind === "reviews") out.feedback.reviews = doc === true
-      else if (r.kind === "pinned") out.pinned = doc === true
     }
     // listDynamicSlots' answer for the current version, in key order.
     if (record) {
@@ -4563,49 +4493,6 @@ export class PgMetaStore implements MetaStore {
     await this.db.delete(slackSubscription).where(eq(slackSubscription.org_id, orgId))
     await this.db.delete(slackInstall).where(eq(slackInstall.org_id, orgId))
   }
-  async getModelCredential(
-    orgId: string,
-    userId: string,
-    provider: string,
-  ): Promise<ModelCredentialRecord | null> {
-    const rows = await this.db
-      .select()
-      .from(modelCredential)
-      .where(
-        and(
-          eq(modelCredential.org_id, orgId),
-          eq(modelCredential.user_id, userId),
-          eq(modelCredential.provider, provider),
-        ),
-      )
-    return rows[0] ?? null
-  }
-  async setModelCredential(c: ModelCredentialRecord): Promise<void> {
-    await this.db
-      .insert(modelCredential)
-      .values(c)
-      .onConflictDoUpdate({
-        target: [modelCredential.org_id, modelCredential.user_id, modelCredential.provider],
-        set: { secret: c.secret, kind: c.kind, hint: c.hint, updated_at: c.updated_at },
-      })
-  }
-  async deleteModelCredential(orgId: string, userId: string, provider: string): Promise<void> {
-    await this.db
-      .delete(modelCredential)
-      .where(
-        and(
-          eq(modelCredential.org_id, orgId),
-          eq(modelCredential.user_id, userId),
-          eq(modelCredential.provider, provider),
-        ),
-      )
-  }
-  async listModelCredentials(orgId: string, userId: string): Promise<ModelCredentialRecord[]> {
-    return this.db
-      .select()
-      .from(modelCredential)
-      .where(and(eq(modelCredential.org_id, orgId), eq(modelCredential.user_id, userId)))
-  }
   async getSlackThreadLink(
     threadId: string,
     channel: string,
@@ -5050,26 +4937,6 @@ export class PgMetaStore implements MetaStore {
     await this.db.delete(workflowTest).where(eq(workflowTest.context_id, id))
     await this.db.delete(context).where(eq(context.id, id))
   }
-  // A no-op on an unknown id, deliberately: the caller already 404'd before
-  // stamping, and liveness is best-effort — never worth a throw.
-  async touchContextSeen(id: string, at: string): Promise<void> {
-    await this.db.update(context).set({ runner_seen_at: at }).where(eq(context.id, id))
-  }
-  async setContextAskPolicy(id: string, policy: "workspace" | "invited"): Promise<void> {
-    await this.db.update(context).set({ ask_policy: policy }).where(eq(context.id, id))
-  }
-  async setContextManifest(id: string, manifestArtifactId: string): Promise<void> {
-    await this.db
-      .update(context)
-      .set({ manifest_artifact_id: manifestArtifactId })
-      .where(eq(context.id, id))
-  }
-  async setContextConnections(id: string, connectionIds: string | null): Promise<void> {
-    await this.db.update(context).set({ connection_ids: connectionIds }).where(eq(context.id, id))
-  }
-  async setContextEnvironment(id: string, bindings: string | null): Promise<void> {
-    await this.db.update(context).set({ environment_bindings: bindings }).where(eq(context.id, id))
-  }
   async setContextCodeUrl(id: string, codeUrl: string | null): Promise<void> {
     await this.db.update(context).set({ code_url: codeUrl }).where(eq(context.id, id))
   }
@@ -5269,13 +5136,6 @@ export class PgMetaStore implements MetaStore {
       .limit(1)
     return (rows[0] as ImportLeaseRecord | undefined) ?? null
   }
-  async listContextAskers(contextId: string): Promise<ContextAskerRecord[]> {
-    return this.db
-      .select()
-      .from(contextAsker)
-      .where(eq(contextAsker.context_id, contextId))
-      .orderBy(contextAsker.created_at) as Promise<ContextAskerRecord[]>
-  }
   async getContextAsker(contextId: string, userId: string): Promise<ContextAskerRecord | null> {
     const rows = await this.db
       .select()
@@ -5283,22 +5143,6 @@ export class PgMetaStore implements MetaStore {
       .where(and(eq(contextAsker.context_id, contextId), eq(contextAsker.user_id, userId)))
       .limit(1)
     return (rows[0] as ContextAskerRecord) ?? null
-  }
-  async addContextAsker(a: NewContextAsker): Promise<ContextAskerRecord> {
-    await this.db
-      .insert(contextAsker)
-      .values(a)
-      .onConflictDoNothing({ target: [contextAsker.context_id, contextAsker.user_id] })
-    return (await this.getContextAsker(a.context_id, a.user_id)) as ContextAskerRecord
-  }
-  async removeContextAsker(contextId: string, userId: string): Promise<void> {
-    await this.db
-      .delete(contextAsker)
-      .where(and(eq(contextAsker.context_id, contextId), eq(contextAsker.user_id, userId)))
-  }
-  async createSession(s: NewSession): Promise<SessionRecord> {
-    const rows = await this.db.insert(contextSession).values(s).returning()
-    return one(rows)
   }
   async createSessionWithMessage(
     s: NewSession,
@@ -5361,47 +5205,6 @@ export class PgMetaStore implements MetaStore {
       .limit(1)
     return rows[0] ?? null
   }
-  listSessions(
-    contextId: string,
-    opts?: { askerId?: string; limit?: number; cursor?: { key: string; id: string } },
-  ): Promise<SessionRecord[]> {
-    const clauses = [eq(contextSession.context_id, contextId)]
-    if (opts?.askerId) clauses.push(eq(contextSession.asker_id, opts.askerId))
-    // Keyset, not offset (a session opened mid-paging would shift every offset and
-    // repeat a row), and the id tiebreak is required, not belt-and-braces: several
-    // sessions really do share a created_at, and `created_at < key` alone would skip
-    // every one of them at the page boundary.
-    const cur = opts?.cursor
-    if (cur)
-      clauses.push(
-        or(
-          lt(contextSession.created_at, cur.key),
-          and(eq(contextSession.created_at, cur.key), lt(contextSession.id, cur.id)),
-        ) as SQL,
-      )
-    return this.db
-      .select()
-      .from(contextSession)
-      .where(and(...clauses))
-      .orderBy(desc(contextSession.created_at), desc(contextSession.id))
-      .limit(opts?.limit ?? 50)
-  }
-  contextOutputs(contextId: string, limit?: number): Promise<ContextOutput[]> {
-    const lastRun = sql<string>`max(coalesce(${contextSession.updated_at}, ${contextSession.created_at}))`
-    return this.db
-      .select({
-        short_id: sql<string>`${contextSession.result_artifact_id}`,
-        runs: count(),
-        last_run_at: lastRun,
-      })
-      .from(contextSession)
-      .where(
-        and(eq(contextSession.context_id, contextId), isNotNull(contextSession.result_artifact_id)),
-      )
-      .groupBy(contextSession.result_artifact_id)
-      .orderBy(desc(lastRun))
-      .limit(limit ?? 50)
-  }
   listChatSessions(orgId: string, askerId: string, limit?: number): Promise<SessionRecord[]> {
     return this.db
       .select()
@@ -5415,159 +5218,6 @@ export class PgMetaStore implements MetaStore {
       )
       .orderBy(desc(contextSession.created_at))
       .limit(limit ?? 50)
-  }
-  pendingSessions(contextId: string, limit: number): Promise<SessionRecord[]> {
-    return this.db
-      .select()
-      .from(contextSession)
-      .where(and(eq(contextSession.context_id, contextId), eq(contextSession.state, "open")))
-      .orderBy(asc(contextSession.created_at))
-      .limit(limit)
-  }
-  claimPendingSessions(
-    contextId: string,
-    limit: number,
-    leaseUntil: string,
-  ): Promise<SessionRecord[]> {
-    // FOR UPDATE SKIP LOCKED so concurrent runners each grab a disjoint set; the
-    // UPDATE then flips them to `working` + leases them (the claimDueRenderJobs
-    // pattern). Runnable = `open`, or `working` with a lapsed lease (crash recovery).
-    const now = new Date().toISOString()
-    const runnable = this.db
-      .select({ id: contextSession.id })
-      .from(contextSession)
-      .where(
-        and(
-          eq(contextSession.context_id, contextId),
-          or(
-            eq(contextSession.state, "open"),
-            // A `working` row with a lapsed OR missing lease is reclaimable (crash recovery,
-            // and a never-leased zombie self-heals) — mirrors countWorkingSessions.
-            and(
-              eq(contextSession.state, "working"),
-              or(lte(contextSession.lease_until, now), isNull(contextSession.lease_until)),
-            ),
-          ),
-        ),
-      )
-      .orderBy(asc(contextSession.created_at))
-      .limit(limit)
-      .for("update", { skipLocked: true })
-    return this.db
-      .update(contextSession)
-      .set({ state: "working", started_at: now, lease_until: leaseUntil, updated_at: now })
-      .where(inArray(contextSession.id, runnable))
-      .returning()
-  }
-  // Only LIVE working sessions (lease not lapsed) fill the concurrency cap — else a
-  // crashed run wedges the queue (the lapsed-lease reclaim is in claimPendingSessions,
-  // which only runs when there is room). Mirrors the sqlite/d1 layer.
-  async listDueOpenSessions(
-    now: string,
-    limit = 50,
-    orgIds?: readonly string[],
-  ): Promise<SessionRecord[]> {
-    if (orgIds?.length === 0) return []
-    return this.db
-      .select()
-      .from(contextSession)
-      .where(
-        and(
-          orgIds ? inArray(contextSession.org_id, [...orgIds]) : undefined,
-          or(
-            eq(contextSession.state, "open"),
-            // A `working` row whose lease lapsed (or never existed) is a dead executor's
-            // session — runnable again, exactly as claimPendingSessions treats it.
-            and(
-              eq(contextSession.state, "working"),
-              or(isNull(contextSession.lease_until), lt(contextSession.lease_until, now)),
-            ),
-          ),
-        ),
-      )
-      .orderBy(contextSession.created_at)
-      .limit(limit)
-  }
-  async claimSessionById(
-    id: string,
-    agentId: string,
-    leaseUntil: string,
-  ): Promise<SessionRecord | null> {
-    // The session belongs to a CONTEXT, and the context names the agent — so ownership is
-    // checked through it rather than on the row. A foreign agent claims nothing.
-    const sRows = await this.db.select().from(contextSession).where(eq(contextSession.id, id))
-    const s = sRows[0]
-    if (!s) return null
-    // No context ⇒ no owning agent ⇒ not agent-claimable (see the sqlite driver).
-    if (!s.context_id) return null
-    const cRows = await this.db.select().from(context).where(eq(context.id, s.context_id))
-    if (cRows[0]?.agent_id !== agentId) return null
-    const now = new Date().toISOString()
-    const rows = await this.db
-      .update(contextSession)
-      .set({ state: "working", started_at: now, lease_until: leaseUntil, updated_at: now })
-      .where(
-        and(
-          eq(contextSession.id, id),
-          or(
-            eq(contextSession.state, "open"),
-            and(
-              eq(contextSession.state, "working"),
-              or(isNull(contextSession.lease_until), lt(contextSession.lease_until, now)),
-            ),
-          ),
-        ),
-      )
-      .returning()
-    return rows[0] ?? null
-  }
-  async countWorkingSessions(contextId: string): Promise<number> {
-    const now = new Date().toISOString()
-    const rows = await this.db
-      .select({ n: count() })
-      .from(contextSession)
-      .where(
-        and(
-          eq(contextSession.context_id, contextId),
-          eq(contextSession.state, "working"),
-          gt(contextSession.lease_until, now),
-        ),
-      )
-    return rows[0]?.n ?? 0
-  }
-  async findInflightSession(
-    contextId: string,
-    askerId: string,
-    dedupeKey: string,
-  ): Promise<SessionRecord | null> {
-    const rows = await this.db
-      .select()
-      .from(contextSession)
-      .where(
-        and(
-          eq(contextSession.context_id, contextId),
-          eq(contextSession.asker_id, askerId),
-          eq(contextSession.dedupe_key, dedupeKey),
-          inArray(contextSession.state, ["open", "working"]),
-        ),
-      )
-      .orderBy(desc(contextSession.created_at))
-      .limit(1)
-    return rows[0] ?? null
-  }
-  async setResultArtifact(sessionId: string, artifactShortId: string): Promise<void> {
-    await this.db
-      .update(contextSession)
-      .set({ result_artifact_id: artifactShortId, updated_at: new Date().toISOString() })
-      .where(eq(contextSession.id, sessionId))
-  }
-  // Extend a claimed session's lease — a runner streaming progress is alive, so its
-  // lease must move forward or a slow-but-live run gets re-served and double-run.
-  async renewSessionLease(sessionId: string, leaseUntil: string): Promise<void> {
-    await this.db
-      .update(contextSession)
-      .set({ lease_until: leaseUntil, updated_at: new Date().toISOString() })
-      .where(eq(contextSession.id, sessionId))
   }
   // Append an asker follow-up and reopen the session in ONE atomic compare-and-set: a
   // `working` session STAYS working (don't vacate the active claim), while a settled or open
@@ -5586,36 +5236,6 @@ export class PgMetaStore implements MetaStore {
       })
       .where(eq(contextSession.id, m.session_id))
     return one(rows)
-  }
-  async claimAttendedSession(id: string, leaseUntil: string): Promise<SessionRecord | null> {
-    const now = new Date().toISOString()
-    // Mirror of the sqlite driver: contextless only, and the status predicate is the exclusion.
-    const rows = await this.db
-      .update(contextSession)
-      .set({ state: "working", started_at: now, lease_until: leaseUntil, updated_at: now })
-      .where(
-        and(
-          eq(contextSession.id, id),
-          isNull(contextSession.context_id),
-          or(
-            eq(contextSession.state, "open"),
-            and(
-              eq(contextSession.state, "working"),
-              or(lte(contextSession.lease_until, now), isNull(contextSession.lease_until)),
-            ),
-          ),
-        ),
-      )
-      .returning()
-    return rows[0] ?? null
-  }
-  async setSessionState(id: string, state: SessionState): Promise<SessionRecord | null> {
-    const rows = await this.db
-      .update(contextSession)
-      .set({ state, updated_at: new Date().toISOString() })
-      .where(eq(contextSession.id, id))
-      .returning()
-    return rows[0] ?? null
   }
   // Two writes, no transaction (the createReviewRound pattern, kept identical to
   // the sqlite/d1 layer). A crash between them leaves state stale: an unsettled
@@ -5658,15 +5278,6 @@ export class PgMetaStore implements MetaStore {
       .where(eq(sessionMessage.author_kind, "agent"))
       .orderBy(desc(sessionMessage.created_at))
       .limit(limit)
-  }
-
-  async listSessionMessagesFor(sessionIds: string[]): Promise<SessionMessageRecord[]> {
-    if (sessionIds.length === 0) return []
-    return this.db
-      .select()
-      .from(sessionMessage)
-      .where(inArray(sessionMessage.session_id, sessionIds))
-      .orderBy(asc(sessionMessage.created_at))
   }
 
   // ---- User directory (Better Auth's "user" table; raw, may be absent) ---
@@ -5942,9 +5553,6 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db.insert(agent).values(a).returning()
     return one(rows)
   }
-  async touchAgentRunsSeen(id: string, at: string): Promise<void> {
-    await this.db.update(agent).set({ runs_seen_at: at }).where(eq(agent.id, id))
-  }
   async rotateAgentToken(
     id: string,
     orgId: string,
@@ -5968,978 +5576,7 @@ export class PgMetaStore implements MetaStore {
       .returning()
     return rows[0] ?? null
   }
-  async createAutomation(a: NewAutomation): Promise<AutomationRecord> {
-    const rows = await this.db.insert(automation).values(a).returning()
-    return one(rows)
-  }
-  async getAutomation(id: string): Promise<AutomationRecord | null> {
-    const rows = await this.db.select().from(automation).where(eq(automation.id, id))
-    return rows[0] ?? null
-  }
-  async getAutomationsByIds(ids: string[]): Promise<AutomationRecord[]> {
-    if (ids.length === 0) return []
-    return this.db.select().from(automation).where(inArray(automation.id, ids))
-  }
-  listAutomations(orgId: string, limit = 100): Promise<AutomationRecord[]> {
-    return this.db
-      .select()
-      .from(automation)
-      .where(eq(automation.org_id, orgId))
-      .orderBy(desc(automation.created_at))
-      .limit(limit)
-  }
-  async automationsWithExecutors(
-    orgId: string,
-    limit = 100,
-  ): Promise<(AutomationRecord & { executor_seen_at: string | null })[]> {
-    // The route used to fetch the org's automations AND its whole agent roster as two
-    // round trips and join `runs_seen_at` in memory by agent_id; a LEFT JOIN answers it
-    // in one query (an automation's agent can in principle be deleted out from under it,
-    // hence LEFT not INNER).
-    const rows = await this.db
-      .select({ automation, executor_seen_at: agent.runs_seen_at })
-      .from(automation)
-      .leftJoin(agent, eq(agent.id, automation.agent_id))
-      .where(eq(automation.org_id, orgId))
-      .orderBy(desc(automation.created_at))
-      .limit(limit)
-    return rows.map((r) => ({
-      ...(r.automation as AutomationRecord),
-      executor_seen_at: r.executor_seen_at ?? null,
-    }))
-  }
-  async updateAutomation(
-    id: string,
-    orgId: string,
-    fields: {
-      agent_id?: string
-      trigger?: string
-      instruction?: string
-      provider?: import("@derive/core").ExecutionProvider
-      refs?: string | null
-      context_id?: string | null
-      /** JSON array of connection ids this automation may spend; null clears them all. */
-      connection_ids?: string | null
-      enabled?: 0 | 1
-    },
-  ): Promise<AutomationRecord | null> {
-    const set: Record<string, unknown> = {}
-    if (fields.agent_id !== undefined) set.agent_id = fields.agent_id
-    if (fields.trigger !== undefined) set.trigger = fields.trigger
-    if (fields.instruction !== undefined) set.instruction = fields.instruction
-    if (fields.provider !== undefined) set.provider = fields.provider
-    if (fields.refs !== undefined) set.refs = fields.refs
-    if (fields.context_id !== undefined) set.context_id = fields.context_id
-    if (fields.connection_ids !== undefined) set.connection_ids = fields.connection_ids
-    if (fields.enabled !== undefined) set.enabled = fields.enabled
-    if (Object.keys(set).length === 0) return this.getAutomation(id)
-    const rows = await this.db
-      .update(automation)
-      .set(set)
-      .where(
-        and(eq(automation.id, id), eq(automation.org_id, orgId), isNull(automation.runtime_id)),
-      )
-      .returning()
-    return rows[0] ?? null
-  }
-  async deleteAutomation(id: string, orgId: string): Promise<void> {
-    // Cancel pending work first, then remove the definition — both org-scoped so a stray
-    // caller can't reach across tenants. Running/finished runs stay as history.
-    await this.db
-      .delete(run)
-      .where(
-        and(
-          eq(run.automation_id, id),
-          eq(run.org_id, orgId),
-          eq(run.status, "queued"),
-          isNull(run.runtime_id),
-        ),
-      )
-    await this.db.delete(automation).where(and(eq(automation.id, id), eq(automation.org_id, orgId)))
-  }
-  async createRun(r: NewRun): Promise<RunRecord> {
-    if (r.runtime_id != null || r.input_snapshot != null)
-      return await this.runtimes.createRuntimeRun(r)
-    if (r.automation_id && (await this.getAutomation(r.automation_id))?.runtime_id)
-      throw new Error("A runtime schedule requires the runtime admission path")
-    const rows = await this.db
-      .insert(run)
-      .values({ ...r, status: r.status ?? "queued" })
-      .returning()
-    return one(rows)
-  }
-  async getRun(id: string): Promise<RunRecord | null> {
-    const rows = await this.db.select().from(run).where(eq(run.id, id)).limit(1)
-    return (rows[0] as RunRecord | undefined) ?? null
-  }
-  claimDueRuns(agentId: string, now: string, limit = 20): Promise<RunRecord[]> {
-    // The oldest queued runs due now for this agent, flipped to running under a row lock
-    // (FOR UPDATE SKIP LOCKED) so two executors never claim the same run. A null
-    // scheduled_for means "as soon as possible"; coalesce to '' so it orders FIRST
-    // identically on Postgres and sqlite (asc(scheduled_for) puts NULLs last on pg).
-    const due = this.db
-      .select({ id: run.id })
-      .from(run)
-      .where(
-        and(
-          eq(run.agent_id, agentId),
-          eq(run.status, "queued"),
-          isNull(run.runtime_id),
-          or(isNull(run.scheduled_for), lte(run.scheduled_for, now)),
-        ),
-      )
-      .orderBy(sql`coalesce(${run.scheduled_for}, '') asc`)
-      .limit(limit)
-      .for("update", { skipLocked: true })
-    return this.db
-      .update(run)
-      .set({ status: "running", started_at: now })
-      .where(inArray(run.id, due))
-      .returning()
-  }
-  async claimRunById(id: string, agentId: string, now: string): Promise<RunRecord | null> {
-    // The capability-token claim: exactly this run, queued → running. The status guard in the
-    // WHERE is the race safety — a double-booted substrate's second update matches zero rows.
-    const rows = await this.db
-      .update(run)
-      .set({ status: "running", started_at: now })
-      .where(
-        and(
-          eq(run.id, id),
-          eq(run.agent_id, agentId),
-          eq(run.status, "queued"),
-          isNull(run.runtime_id),
-        ),
-      )
-      .returning()
-    return rows[0] ?? null
-  }
-  async requeueRun(
-    id: string,
-    agentId: string,
-    fields: { scheduledFor: string; meta?: string | null; costMicroUsd?: number | null },
-    expectedStartedAt?: string | null,
-  ): Promise<RunRecord | null> {
-    // Strict running → queued, only for the claiming agent: the status guard stops a duplicate
-    // or late retry request from resurrecting a run that already settled. FENCED on
-    // started_at too, when the caller supplies it — see the sqlite twin (repos.ts) for the
-    // full reasoning: status+agent alone can't tell "my own claim" from one that superseded
-    // it, since a run-scoped token carries no notion of which claim episode minted it.
-    const rows = await this.db
-      .update(run)
-      .set({
-        status: "queued",
-        started_at: null,
-        scheduled_for: fields.scheduledFor,
-        ...addRunCost(fields.costMicroUsd),
-        ...(fields.meta === undefined ? {} : { meta: fields.meta }),
-      })
-      .where(
-        and(
-          eq(run.id, id),
-          eq(run.agent_id, agentId),
-          eq(run.status, "running"),
-          isNull(run.runtime_id),
-          expectedStartedAt === undefined
-            ? undefined
-            : expectedStartedAt === null
-              ? isNull(run.started_at)
-              : eq(run.started_at, expectedStartedAt),
-        ),
-      )
-      .returning()
-    return rows[0] ?? null
-  }
-  async reclaimStaleRuns(
-    cutoffIso: string,
-    maxAttempts = 3,
-    orgIds?: readonly string[],
-  ): Promise<{ requeued: number; failed: number }> {
-    if (orgIds?.length === 0) return { requeued: 0, failed: 0 }
-    // Substrate died mid-run: running since before the cutoff. Requeue with an attempt count
-    // in meta (JSON attribute, not a column); give up as failed/lost past maxAttempts.
-    const stale: RunRecord[] = await this.db
-      .select()
-      .from(run)
-      .where(
-        and(
-          orgIds ? inArray(run.org_id, [...orgIds]) : undefined,
-          eq(run.status, "running"),
-          isNull(run.runtime_id),
-          lte(run.started_at, cutoffIso),
-        ),
-      )
-      .limit(100)
-    let requeued = 0
-    let failed = 0
-    for (const r of stale) {
-      const attempts = runCounter(parseRunMeta(r.meta), "attempts") + 1
-      // Past the cap the run is given up as `lost`; otherwise it goes back to the queue with
-      // the count carried forward. Both merge into the existing blob so the previous attempt's
-      // outcome survives.
-      const settled = attempts >= maxAttempts
-      await this.db
-        .update(run)
-        .set(
-          settled
-            ? {
-                status: "failed",
-                finished_at: cutoffIso,
-                meta: mergeRunMeta(r.meta, { attempts, outcome: "lost" }),
-              }
-            : { status: "queued", started_at: null, meta: mergeRunMeta(r.meta, { attempts }) },
-        )
-        // FENCED on started_at — see the twin in repos.ts for the full reasoning. Guarding on
-        // status alone lets a second, concurrent sweep requeue a run that was re-claimed
-        // between this sweep's SELECT and its UPDATE, putting two live executors on one run.
-        .where(
-          and(
-            eq(run.id, r.id),
-            eq(run.status, "running"),
-            isNull(run.runtime_id),
-            r.started_at === null ? isNull(run.started_at) : eq(run.started_at, r.started_at),
-          ),
-        )
-      if (settled) failed += 1
-      else requeued += 1
-    }
-    return { requeued, failed }
-  }
-  async listEnabledAutomations(
-    limit = 500,
-    orgIds?: readonly string[],
-  ): Promise<AutomationRecord[]> {
-    if (orgIds?.length === 0) return []
-    return this.db
-      .select()
-      .from(automation)
-      .where(
-        and(
-          orgIds ? inArray(automation.org_id, [...orgIds]) : undefined,
-          eq(automation.enabled, 1),
-        ),
-      )
-      .limit(limit)
-  }
-  async listDueQueuedRuns(
-    now: string,
-    limit = 50,
-    orgIds?: readonly string[],
-  ): Promise<RunRecord[]> {
-    if (orgIds?.length === 0) return []
-    return this.db
-      .select()
-      .from(run)
-      .where(
-        and(
-          orgIds ? inArray(run.org_id, [...orgIds]) : undefined,
-          eq(run.status, "queued"),
-          isNull(run.runtime_id),
-          or(isNull(run.scheduled_for), lte(run.scheduled_for, now)),
-        ),
-      )
-      .orderBy(sql`coalesce(${run.scheduled_for}, '') asc`)
-      .limit(limit)
-  }
-  async finishRun(
-    id: string,
-    agentId: string,
-    fields: {
-      status: RunStatus
-      finishedAt: string
-      costMicroUsd?: number | null
-      meta?: string | null
-    },
-    expectedStartedAt?: string | null,
-  ): Promise<RunRecord | null> {
-    // Strict running → terminal transition: only the claiming agent, and only a run that is
-    // actually running — a duplicate/retried finish can't clobber a settled run's cost, and a
-    // finish can't terminate a never-claimed queued run. FENCED on started_at too, when
-    // supplied — see requeueRun's twin comment: without it, a stale but unexpired token from
-    // a claim a newer one has superseded can settle a run out from under the executor
-    // actually working it.
-    const rows = await this.db
-      .update(run)
-      .set({
-        status: fields.status,
-        finished_at: fields.finishedAt,
-        ...addRunCost(fields.costMicroUsd),
-        meta: fields.meta ?? null,
-      })
-      .where(
-        and(
-          eq(run.id, id),
-          eq(run.agent_id, agentId),
-          eq(run.status, "running"),
-          isNull(run.runtime_id),
-          expectedStartedAt === undefined
-            ? undefined
-            : expectedStartedAt === null
-              ? isNull(run.started_at)
-              : eq(run.started_at, expectedStartedAt),
-        ),
-      )
-      .returning()
-    return rows[0] ?? null
-  }
-  listRuns(orgId: string, limit = 50): Promise<RunRecord[]> {
-    return this.db
-      .select()
-      .from(run)
-      .where(eq(run.org_id, orgId))
-      .orderBy(desc(run.created_at))
-      .limit(limit)
-  }
-  async latestRunForAutomation(automationId: string, reason?: string): Promise<RunRecord | null> {
-    const rows = await this.db
-      .select()
-      .from(run)
-      .where(
-        reason
-          ? and(eq(run.automation_id, automationId), eq(run.reason, reason))
-          : eq(run.automation_id, automationId),
-      )
-      .orderBy(sql`coalesce(${run.scheduled_for}, '') desc`)
-      .limit(1)
-    return rows[0] ?? null
-  }
-  async findCoalescibleRun(automationId: string, cutoffIso: string): Promise<RunRecord | null> {
-    const rows = await this.db
-      .select()
-      .from(run)
-      .where(
-        and(
-          eq(run.automation_id, automationId),
-          eq(run.status, "queued"),
-          isNull(run.runtime_id),
-          lte(run.scheduled_for, cutoffIso),
-        ),
-      )
-      .orderBy(desc(run.created_at))
-      .limit(1)
-    return rows[0] ?? null
-  }
-  async appendRunPayload(
-    runId: string,
-    payload: unknown,
-    maxMetaBytes: number,
-  ): Promise<RunRecord | null> {
-    // Read the current meta, then CAS on it: the UPDATE applies only while the run is still
-    // queued AND its meta is unchanged since the read. A concurrent claim (→ running) or a
-    // racing append both fall through to null, and the caller enqueues a fresh run — so a
-    // payload is never dropped, at worst an extra run is created under contention.
-    const rows = await this.db
-      .select()
-      .from(run)
-      .where(and(eq(run.id, runId), eq(run.status, "queued"), isNull(run.runtime_id)))
-    const row = rows[0]
-    if (!row?.meta) return null
-    let parsed: Record<string, unknown>
-    try {
-      parsed = JSON.parse(row.meta) as Record<string, unknown>
-    } catch {
-      return null
-    }
-    const payloads = Array.isArray(parsed.payloads) ? parsed.payloads : []
-    const nextMeta = JSON.stringify({ ...parsed, payloads: [...payloads, payload] })
-    if (nextMeta.length > maxMetaBytes) return null
-    const updated = await this.db
-      .update(run)
-      .set({ meta: nextMeta })
-      .where(
-        and(
-          eq(run.id, runId),
-          eq(run.status, "queued"),
-          isNull(run.runtime_id),
-          eq(run.meta, row.meta),
-        ),
-      )
-      .returning()
-    return updated[0] ?? null
-  }
-  async createWorkflowRun(r: NewWorkflowRun): Promise<WorkflowRunRecord> {
-    if (!isValidWorkflowRunDefinitionPin(r))
-      throw new Error("workflow run requires a complete version pin")
-    const createdAt = r.created_at ?? new Date().toISOString()
-    const rows = await this.db
-      .insert(workflowRun)
-      .values({ ...r, created_at: createdAt, updated_at: createdAt })
-      .returning()
-    return one(rows)
-  }
-  async getWorkflowRun(id: string, orgId: string): Promise<WorkflowRunRecord | null> {
-    const rows = await this.db
-      .select()
-      .from(workflowRun)
-      .where(and(eq(workflowRun.id, id), eq(workflowRun.org_id, orgId)))
-      .limit(1)
-    return rows[0] ?? null
-  }
-  async getWorkflowRunById(id: string): Promise<WorkflowRunRecord | null> {
-    const rows = await this.db.select().from(workflowRun).where(eq(workflowRun.id, id)).limit(1)
-    return rows[0] ?? null
-  }
-  async getWorkflowRunByExternalRunId(externalRunId: string): Promise<WorkflowRunRecord | null> {
-    const rows = await this.db
-      .select()
-      .from(workflowRun)
-      .where(eq(workflowRun.external_run_id, externalRunId))
-      .limit(1)
-    return rows[0] ?? null
-  }
-  async listWorkflowRuns(
-    workflowArtifactId: string,
-    orgId: string,
-    opts: {
-      diagramId?: string
-      initiatedBy?: string
-      assignedAgentId?: string
-      limit?: number
-    } = {},
-  ): Promise<WorkflowRunRecord[]> {
-    const limit = Math.max(1, Math.min(opts.limit ?? 20, 100))
-    return this.db
-      .select()
-      .from(workflowRun)
-      .where(
-        and(
-          eq(workflowRun.workflow_artifact_id, workflowArtifactId),
-          eq(workflowRun.org_id, orgId),
-          opts.diagramId ? eq(workflowRun.diagram_id, opts.diagramId) : undefined,
-          opts.initiatedBy || opts.assignedAgentId
-            ? or(
-                opts.initiatedBy ? eq(workflowRun.initiated_by, opts.initiatedBy) : undefined,
-                opts.assignedAgentId
-                  ? eq(workflowRun.assigned_agent_id, opts.assignedAgentId)
-                  : undefined,
-              )
-            : undefined,
-        ),
-      )
-      .orderBy(desc(workflowRun.created_at), desc(workflowRun.id))
-      .limit(limit)
-  }
-  async transitionWorkflowRun(
-    id: string,
-    orgId: string,
-    expected: WorkflowTransitionGuard,
-    transition: WorkflowRunTransition,
-  ): Promise<WorkflowRunRecord | null> {
-    if (!workflowRunCanTransition(expected.status, transition.status)) return null
-    if (!Number.isInteger(expected.stateRevision) || expected.stateRevision < 0) return null
-    if (
-      expected.attemptState &&
-      (!Number.isSafeInteger(expected.attemptState.count) ||
-        expected.attemptState.count < 0 ||
-        !Number.isSafeInteger(expected.attemptState.revisionSum) ||
-        expected.attemptState.revisionSum < 0)
-    )
-      return null
-    const firstStart =
-      (expected.status === "queued" || expected.status === "dispatched") &&
-      transition.status === "running"
-    const dispatching = expected.status === "queued" && transition.status === "dispatched"
-    const lane = transition.actualExecution
-    const executorId = transition.executorId
-    if (firstStart && (!lane || !executorId)) return null
-    if (dispatching && (!transition.externalRunId || transition.externalExecution === undefined))
-      return null
-    const alreadyClaimed = expected.status === "running" || expected.status === "waiting"
-    if (!firstStart && !alreadyClaimed && (lane || executorId)) return null
-    if (alreadyClaimed && (!lane || !executorId)) return null
-    return this.db.transaction(async (tx) => {
-      // Serialize all attempt writes and finalization on their parent run.
-      const parent = await tx
-        .select({ id: workflowRun.id })
-        .from(workflowRun)
-        .where(and(eq(workflowRun.id, id), eq(workflowRun.org_id, orgId)))
-        .for("update")
-      if (parent.length === 0) return null
-      const rows = await tx
-        .update(workflowRun)
-        .set({
-          status: transition.status,
-          state_revision: sql`${workflowRun.state_revision} + 1`,
-          updated_at: transition.at,
-          ...(transition.status === "running"
-            ? { started_at: sql`coalesce(${workflowRun.started_at}, ${transition.at})` }
-            : {}),
-          ...(workflowStatusIsTerminal(transition.status) ? { finished_at: transition.at } : {}),
-          ...(firstStart ? { actual_execution: lane, executor_id: executorId } : {}),
-          ...(transition.externalExecution !== undefined
-            ? { external_execution: transition.externalExecution }
-            : {}),
-          ...(transition.externalRunId !== undefined
-            ? { external_run_id: transition.externalRunId }
-            : {}),
-        })
-        .where(
-          and(
-            eq(workflowRun.id, id),
-            eq(workflowRun.org_id, orgId),
-            eq(workflowRun.status, expected.status),
-            eq(workflowRun.state_revision, expected.stateRevision),
-            expected.attemptState
-              ? and(
-                  eq(
-                    sql`(select count(*) from ${workflowStepAttempt} where ${workflowStepAttempt.workflow_run_id} = ${id})`,
-                    expected.attemptState.count,
-                  ),
-                  eq(
-                    sql`(select coalesce(sum(${workflowStepAttempt.state_revision}), 0) from ${workflowStepAttempt} where ${workflowStepAttempt.workflow_run_id} = ${id})`,
-                    expected.attemptState.revisionSum,
-                  ),
-                )
-              : undefined,
-            dispatching ? eq(workflowRun.requested_execution, "github_actions") : undefined,
-            workflowStatusIsTerminal(transition.status)
-              ? notExists(
-                  tx
-                    .select({ id: workflowStepAttempt.id })
-                    .from(workflowStepAttempt)
-                    .where(
-                      and(
-                        eq(workflowStepAttempt.workflow_run_id, workflowRun.id),
-                        notInArray(workflowStepAttempt.status, [
-                          "succeeded",
-                          "failed",
-                          "cancelled",
-                        ]),
-                      ),
-                    ),
-                )
-              : undefined,
-            firstStart && lane && executorId
-              ? or(
-                  eq(workflowRun.requested_execution, "any"),
-                  eq(workflowRun.requested_execution, lane),
-                )
-              : lane && executorId
-                ? and(
-                    eq(workflowRun.actual_execution, lane),
-                    eq(workflowRun.executor_id, executorId),
-                  )
-                : undefined,
-          ),
-        )
-        .returning()
-      return rows[0] ?? null
-    })
-  }
-  async setWorkflowRunExternalReceipt(
-    id: string,
-    orgId: string,
-    externalRunId: string,
-    externalExecution: string,
-    at: string,
-  ): Promise<WorkflowRunRecord | null> {
-    const rows = await this.db
-      .update(workflowRun)
-      .set({ external_execution: externalExecution, updated_at: at })
-      .where(
-        and(
-          eq(workflowRun.id, id),
-          eq(workflowRun.org_id, orgId),
-          eq(workflowRun.external_run_id, externalRunId),
-        ),
-      )
-      .returning()
-    return rows[0] ?? null
-  }
-  async overrideSuccessfulWorkflowRunFromExternal(
-    id: string,
-    orgId: string,
-    externalRunId: string,
-    status: "failed" | "cancelled" | "timed_out",
-    externalExecution: string,
-    at: string,
-  ): Promise<WorkflowRunRecord | null> {
-    const rows = await this.db
-      .update(workflowRun)
-      .set({
-        status,
-        state_revision: sql`${workflowRun.state_revision} + 1`,
-        external_execution: externalExecution,
-        updated_at: at,
-        finished_at: at,
-      })
-      .where(
-        and(
-          eq(workflowRun.id, id),
-          eq(workflowRun.org_id, orgId),
-          eq(workflowRun.external_run_id, externalRunId),
-          eq(workflowRun.status, "succeeded"),
-        ),
-      )
-      .returning()
-    return rows[0] ?? null
-  }
-  async createWorkflowStepAttempt(
-    orgId: string,
-    a: NewWorkflowStepAttempt,
-    expectedState?: WorkflowAttemptStateGuard,
-  ): Promise<WorkflowStepAttemptRecord> {
-    if (!Number.isInteger(a.attempt) || a.attempt < 1)
-      throw new Error("workflow step attempt must be a positive integer")
-    if (!a.node_id.trim()) throw new Error("workflow step attempt requires a node id")
-    if (!isValidWorkflowStepContextPin(a))
-      throw new Error("workflow context attempts require a complete version pin")
-    if (
-      expectedState &&
-      (!Number.isSafeInteger(expectedState.count) ||
-        expectedState.count < 0 ||
-        !Number.isSafeInteger(expectedState.revisionSum) ||
-        expectedState.revisionSum < 0)
-    )
-      throw new Error("workflow attempt state guard must contain nonnegative integers")
-    const createdAt = a.created_at ?? new Date().toISOString()
-    const context = a.kind === "context" ? a : null
-    const rows = await this.db.transaction(async (tx) => {
-      // Acquire the parent lock before the guarded insert gets its snapshot.
-      const parent = await tx
-        .select({ id: workflowRun.id })
-        .from(workflowRun)
-        .where(and(eq(workflowRun.id, a.workflow_run_id), eq(workflowRun.org_id, orgId)))
-        .for("update")
-      if (parent.length === 0) return []
-      const rows = await tx
-        .insert(workflowStepAttempt)
-        .select(
-          tx
-            .select({
-              id: sql<string>`${a.id}`.as("id"),
-              workflow_run_id: workflowRun.id,
-              node_id: sql<string>`${a.node_id}`.as("node_id"),
-              attempt: sql<number>`${a.attempt}`.as("attempt"),
-              kind: sql<typeof a.kind>`${a.kind}`.as("kind"),
-              status: sql<"queued">`'queued'`.as("status"),
-              state_revision: sql<number>`0`.as("state_revision"),
-              context_id: sql<string | null>`${context?.context_id ?? null}`.as("context_id"),
-              context_manifest_artifact_id: sql<
-                string | null
-              >`${context?.context_manifest_artifact_id ?? null}`.as(
-                "context_manifest_artifact_id",
-              ),
-              context_version: sql<number | null>`${context?.context_version ?? null}`.as(
-                "context_version",
-              ),
-              context_blob_key: sql<string | null>`${context?.context_blob_key ?? null}`.as(
-                "context_blob_key",
-              ),
-              context_content_type: sql<string | null>`${context?.context_content_type ?? null}`.as(
-                "context_content_type",
-              ),
-              session_id: sql<string | null>`${context?.session_id ?? null}`.as("session_id"),
-              decision: sql<null>`null`.as("decision"),
-              selected_routes: sql<null>`null`.as("selected_routes"),
-              route_sources: sql<string | null>`${a.route_sources ?? null}`.as("route_sources"),
-              route_basis: sql<null>`null`.as("route_basis"),
-              result_artifact_id: sql<null>`null`.as("result_artifact_id"),
-              output: sql<null>`null`.as("output"),
-              error: sql<null>`null`.as("error"),
-              created_at: sql<string>`${createdAt}`.as("created_at"),
-              updated_at: sql<string>`${createdAt}`.as("updated_at"),
-              started_at: sql<null>`null`.as("started_at"),
-              finished_at: sql<null>`null`.as("finished_at"),
-            })
-            .from(workflowRun)
-            .where(
-              and(
-                eq(workflowRun.id, a.workflow_run_id),
-                eq(workflowRun.org_id, orgId),
-                expectedState
-                  ? and(
-                      eq(
-                        sql`(select count(*) from ${workflowStepAttempt} where ${workflowStepAttempt.workflow_run_id} = ${a.workflow_run_id})`,
-                        expectedState.count,
-                      ),
-                      eq(
-                        sql`(select coalesce(sum(${workflowStepAttempt.state_revision}), 0) from ${workflowStepAttempt} where ${workflowStepAttempt.workflow_run_id} = ${a.workflow_run_id})`,
-                        expectedState.revisionSum,
-                      ),
-                    )
-                  : undefined,
-                notInArray(workflowRun.status, ["succeeded", "failed", "cancelled", "timed_out"]),
-              ),
-            ),
-        )
-        .returning()
-      return rows
-    })
-    if (rows[0]) return rows[0]
-    const parent = await this.getWorkflowRun(a.workflow_run_id, orgId)
-    if (!parent) throw new Error("workflow run not found")
-    if (!workflowStatusIsTerminal(parent.status)) throw new WorkflowAttemptStateConflictError()
-    throw new Error("workflow run is already terminal")
-  }
-  async getWorkflowStepAttemptBySession(
-    sessionId: string,
-    orgId: string,
-  ): Promise<WorkflowStepAttemptRecord | null> {
-    const rows = await this.db
-      .select()
-      .from(workflowStepAttempt)
-      .where(
-        and(
-          eq(workflowStepAttempt.session_id, sessionId),
-          inArray(
-            workflowStepAttempt.workflow_run_id,
-            this.db
-              .select({ id: workflowRun.id })
-              .from(workflowRun)
-              .where(eq(workflowRun.org_id, orgId)),
-          ),
-        ),
-      )
-      .limit(1)
-    return rows[0] ?? null
-  }
-  listWorkflowStepAttempts(
-    workflowRunId: string | string[],
-    orgId: string,
-  ): Promise<WorkflowStepAttemptRecord[]> {
-    const runIds = Array.isArray(workflowRunId) ? workflowRunId : [workflowRunId]
-    if (runIds.length === 0) return Promise.resolve([])
-    return this.db
-      .select()
-      .from(workflowStepAttempt)
-      .where(
-        and(
-          inArray(workflowStepAttempt.workflow_run_id, runIds),
-          inArray(
-            workflowStepAttempt.workflow_run_id,
-            this.db
-              .select({ id: workflowRun.id })
-              .from(workflowRun)
-              .where(eq(workflowRun.org_id, orgId)),
-          ),
-        ),
-      )
-      .orderBy(
-        asc(workflowStepAttempt.created_at),
-        asc(workflowStepAttempt.node_id),
-        asc(workflowStepAttempt.attempt),
-        asc(workflowStepAttempt.id),
-      )
-  }
-  async transitionWorkflowStepAttempt(
-    id: string,
-    workflowRunId: string,
-    orgId: string,
-    expected: WorkflowStepTransitionGuard,
-    transition: WorkflowStepAttemptTransition,
-  ): Promise<WorkflowStepAttemptRecord | null> {
-    const recordReceipt =
-      transition.recordReceipt === true &&
-      expected.status === transition.status &&
-      (expected.status === "failed" || expected.status === "cancelled") &&
-      transition.selectedRoutes === "[]"
-    if (!recordReceipt && !workflowStepCanTransition(expected.status, transition.status))
-      return null
-    if (!Number.isInteger(expected.stateRevision) || expected.stateRevision < 0) return null
-    if (
-      expected.attemptState &&
-      (!Number.isSafeInteger(expected.attemptState.count) ||
-        expected.attemptState.count < 0 ||
-        !Number.isSafeInteger(expected.attemptState.revisionSum) ||
-        expected.attemptState.revisionSum < 0)
-    )
-      return null
-    const starts = transition.status === "running" || transition.status === "waiting"
-    return this.db.transaction(async (tx) => {
-      // Serialize all attempt writes and finalization on their parent run.
-      const parent = await tx
-        .select({ id: workflowRun.id })
-        .from(workflowRun)
-        .where(and(eq(workflowRun.id, workflowRunId), eq(workflowRun.org_id, orgId)))
-        .for("update")
-      if (parent.length === 0) return null
-      const rows = await tx
-        .update(workflowStepAttempt)
-        .set({
-          status: transition.status,
-          state_revision: sql`${workflowStepAttempt.state_revision} + 1`,
-          updated_at: transition.at,
-          ...(starts
-            ? { started_at: sql`coalesce(${workflowStepAttempt.started_at}, ${transition.at})` }
-            : {}),
-          ...(workflowStatusIsTerminal(transition.status) && !recordReceipt
-            ? { finished_at: transition.at }
-            : {}),
-          ...(transition.sessionId !== undefined ? { session_id: transition.sessionId } : {}),
-          ...(transition.decision !== undefined ? { decision: transition.decision } : {}),
-          ...(transition.selectedRoutes !== undefined
-            ? { selected_routes: transition.selectedRoutes }
-            : {}),
-          ...(transition.routeBasis !== undefined ? { route_basis: transition.routeBasis } : {}),
-          ...(transition.resultArtifactId !== undefined
-            ? { result_artifact_id: transition.resultArtifactId }
-            : {}),
-          ...(transition.output !== undefined ? { output: transition.output } : {}),
-          ...(transition.error !== undefined ? { error: transition.error } : {}),
-        })
-        .where(
-          and(
-            eq(workflowStepAttempt.id, id),
-            eq(workflowStepAttempt.workflow_run_id, workflowRunId),
-            eq(workflowStepAttempt.status, expected.status),
-            eq(workflowStepAttempt.state_revision, expected.stateRevision),
-            expected.attemptState
-              ? and(
-                  eq(
-                    sql`(select count(*) from ${workflowStepAttempt} where ${workflowStepAttempt.workflow_run_id} = ${workflowRunId})`,
-                    expected.attemptState.count,
-                  ),
-                  eq(
-                    sql`(select coalesce(sum(${workflowStepAttempt.state_revision}), 0) from ${workflowStepAttempt} where ${workflowStepAttempt.workflow_run_id} = ${workflowRunId})`,
-                    expected.attemptState.revisionSum,
-                  ),
-                )
-              : undefined,
-            ...(recordReceipt
-              ? [
-                  eq(workflowStepAttempt.kind, "context"),
-                  isNull(workflowStepAttempt.selected_routes),
-                ]
-              : []),
-            inArray(
-              workflowStepAttempt.workflow_run_id,
-              tx
-                .select({ id: workflowRun.id })
-                .from(workflowRun)
-                .where(eq(workflowRun.org_id, orgId)),
-            ),
-          ),
-        )
-        .returning()
-      return rows[0] ?? null
-    })
-  }
-  async publishWorkflowVersion(
-    input: WorkflowVersionPublish,
-  ): Promise<WorkflowPublishReceiptRecord> {
-    const statements = workflowPublishStatements(input)
-    const client = await this.pool.connect()
-    try {
-      await client.query("BEGIN")
-      // Always lock run before artifact. The insert then sees the latest head.
-      await client.query("SELECT id FROM workflow_run WHERE id = $1 AND org_id = $2 FOR UPDATE", [
-        input.receipt.workflow_run_id,
-        input.receipt.org_id,
-      ])
-      if ("artifact_id" in input.target)
-        await client.query("SELECT id FROM artifact WHERE id = $1 AND org_id = $2 FOR UPDATE", [
-          input.target.artifact_id,
-          input.receipt.org_id,
-        ])
-      for (const statement of statements) {
-        let parameter = 0
-        await client.query(
-          statement.text.replace(/\?/g, () => `$${++parameter}`),
-          statement.values,
-        )
-      }
-      await client.query("COMMIT")
-    } catch (error) {
-      await client.query("ROLLBACK")
-      throw error
-    } finally {
-      client.release()
-    }
-    return checkedWorkflowPublishReceipt(input, await this.getWorkflowPublishReceipt(input.receipt))
-  }
 
-  async workflowVersionIsPinned(artifactId: string, n: number): Promise<boolean> {
-    const rows = await this.db
-      .select({ id: workflowArtifactActivity.id })
-      .from(workflowArtifactActivity)
-      .innerJoin(artifact, eq(artifact.short_id, workflowArtifactActivity.artifact_short_id))
-      .where(
-        and(
-          eq(artifact.id, artifactId),
-          eq(workflowArtifactActivity.artifact_version, n),
-          eq(workflowArtifactActivity.source, "observed"),
-        ),
-      )
-      .limit(1)
-    return rows.length > 0
-  }
-
-  async getWorkflowPublishReceipt(
-    key: WorkflowPublishKey,
-  ): Promise<WorkflowPublishReceiptRecord | null> {
-    const rows = await this.db
-      .select()
-      .from(workflowPublishReceipt)
-      .where(
-        and(
-          eq(workflowPublishReceipt.org_id, key.org_id),
-          eq(workflowPublishReceipt.workflow_run_id, key.workflow_run_id),
-          eq(workflowPublishReceipt.node_id, key.node_id),
-          eq(workflowPublishReceipt.attempt, key.attempt),
-          eq(workflowPublishReceipt.dedupe_key, key.dedupe_key),
-        ),
-      )
-    return rows[0] ?? null
-  }
-
-  async recordWorkflowArtifactActivity(
-    a: NewWorkflowArtifactActivity,
-  ): Promise<WorkflowArtifactActivityRecord> {
-    return this.db.transaction(async (tx) => {
-      // Match bound publish's run→artifact lock order. A later in-place edit
-      // must see this activity before deciding whether the version is mutable.
-      await tx
-        .select({ id: workflowRun.id })
-        .from(workflowRun)
-        .where(and(eq(workflowRun.id, a.workflow_run_id), eq(workflowRun.org_id, a.org_id)))
-        .for("update")
-      await tx
-        .select({ id: artifact.id })
-        .from(artifact)
-        .where(and(eq(artifact.short_id, a.artifact_short_id), eq(artifact.org_id, a.org_id)))
-        .for("update")
-      const rows = await tx
-        .insert(workflowArtifactActivity)
-        .values(a)
-        .onConflictDoNothing()
-        .returning()
-      if (rows[0]) return rows[0]
-      const existing = await tx
-        .select()
-        .from(workflowArtifactActivity)
-        .where(
-          and(
-            eq(workflowArtifactActivity.workflow_run_id, a.workflow_run_id),
-            eq(workflowArtifactActivity.node_id, a.node_id),
-            eq(workflowArtifactActivity.attempt, a.attempt),
-            eq(workflowArtifactActivity.artifact_short_id, a.artifact_short_id),
-            eq(workflowArtifactActivity.artifact_version, a.artifact_version),
-            eq(workflowArtifactActivity.role, a.role),
-          ),
-        )
-        .limit(1)
-      if (!existing[0]) throw new Error("workflow artifact activity conflict could not be resolved")
-      return existing[0]
-    })
-  }
-  listWorkflowArtifactActivity(
-    workflowRunId: string | string[],
-    orgId: string,
-  ): Promise<WorkflowArtifactActivityRecord[]> {
-    const runIds = Array.isArray(workflowRunId) ? workflowRunId : [workflowRunId]
-    if (runIds.length === 0) return Promise.resolve([])
-    return this.db
-      .select()
-      .from(workflowArtifactActivity)
-      .where(
-        and(
-          inArray(workflowArtifactActivity.workflow_run_id, runIds),
-          eq(workflowArtifactActivity.org_id, orgId),
-        ),
-      )
-      .orderBy(asc(workflowArtifactActivity.created_at), asc(workflowArtifactActivity.id))
-  }
   async recordArtifactScanEvent(event: NewArtifactScanEvent): Promise<ArtifactScanEventRecord> {
     const rows = await this.db
       .insert(artifactScanEvent)
@@ -7327,13 +5964,6 @@ export class PgMetaStore implements MetaStore {
       .orderBy(desc(plan.created_at))
       .limit(1)
     return pool[0] ?? null
-  }
-  async sumRunCostSince(orgId: string, sinceIso: string): Promise<number> {
-    const rows = await this.db
-      .select({ total: sql<number>`coalesce(sum(${run.cost_micro_usd}), 0)` })
-      .from(run)
-      .where(and(eq(run.org_id, orgId), gte(run.created_at, sinceIso)))
-    return Number(rows[0]?.total ?? 0)
   }
   async createConnection(cn: NewConnection): Promise<ConnectionRecord> {
     const rows = await this.db.insert(connection).values(cn).returning()

@@ -13,7 +13,7 @@ Prefer the remote Streamable HTTP MCP. It is the authoritative Derive agent surf
 | Upload large docs or assets | `stage` | Not available |
 | Tags, collections and archiving | `organize` | `organize` |
 | Cross-workspace selection | `list_workspaces` + `workspace` | `list_workspaces` + per-tool `workspace` |
-| Live workspace contexts | `find` + `use` | Not available |
+| Workspace agents and their jobs | `agents` + `ask` + `jobs` | Not available |
 | Resumable agent state | `checkpoint` | Not available |
 | MCP workflow skills | `derive://skills/*` | `derive://guide` only |
 

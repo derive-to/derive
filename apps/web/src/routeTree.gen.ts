@@ -9,7 +9,6 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as WorkflowsRouteImport } from './routes/workflows'
 import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as UnlistedRouteImport } from './routes/unlisted'
 import { Route as SkillsRouteImport } from './routes/skills'
@@ -22,10 +21,10 @@ import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as PeopleRouteImport } from './routes/people'
 import { Route as NewRouteImport } from './routes/new'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as InboxRouteImport } from './routes/inbox'
 import { Route as FollowingRouteImport } from './routes/following'
 import { Route as FeedbackRouteImport } from './routes/feedback'
 import { Route as FavoritesRouteImport } from './routes/favorites'
-import { Route as ChatRouteImport } from './routes/chat'
 import { Route as BrandprintRouteImport } from './routes/brandprint'
 import { Route as ArchivedRouteImport } from './routes/archived'
 import { Route as ActivityRouteImport } from './routes/activity'
@@ -33,15 +32,15 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as TemplatesIndexRouteImport } from './routes/templates.index'
 import { Route as TemplateLibrariesIndexRouteImport } from './routes/template-libraries.index'
 import { Route as SettingsIndexRouteImport } from './routes/settings.index'
-import { Route as ContextsIndexRouteImport } from './routes/contexts.index'
 import { Route as AgentsIndexRouteImport } from './routes/agents.index'
 import { Route as UsersHandleRouteImport } from './routes/users.$handle'
 import { Route as TemplatesRefRouteImport } from './routes/templates.$ref'
 import { Route as TemplateLibrariesIdRouteImport } from './routes/template-libraries.$id'
 import { Route as SettingsSectionRouteImport } from './routes/settings.$section'
+import { Route as PapersNewRouteImport } from './routes/papers.new'
+import { Route as PapersIdRouteImport } from './routes/papers.$id'
 import { Route as JoinTokenRouteImport } from './routes/join.$token'
 import { Route as InviteTokenRouteImport } from './routes/invite.$token'
-import { Route as ContextsNewRouteImport } from './routes/contexts.new'
 import { Route as ContextsIdRouteImport } from './routes/contexts.$id'
 import { Route as CollectionsIdRouteImport } from './routes/collections.$id'
 import { Route as ClaimTokenRouteImport } from './routes/claim.$token'
@@ -51,11 +50,6 @@ import { Route as AgentsIdRouteImport } from './routes/agents.$id'
 import { Route as InviteCTokenRouteImport } from './routes/invite.c.$token'
 import { Route as InviteATokenRouteImport } from './routes/invite.a.$token'
 
-const WorkflowsRoute = WorkflowsRouteImport.update({
-  id: '/workflows',
-  path: '/workflows',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const WelcomeRoute = WelcomeRouteImport.update({
   id: '/welcome',
   path: '/welcome',
@@ -116,6 +110,11 @@ const LoginRoute = LoginRouteImport.update({
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const InboxRoute = InboxRouteImport.update({
+  id: '/inbox',
+  path: '/inbox',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const FollowingRoute = FollowingRouteImport.update({
   id: '/following',
   path: '/following',
@@ -129,11 +128,6 @@ const FeedbackRoute = FeedbackRouteImport.update({
 const FavoritesRoute = FavoritesRouteImport.update({
   id: '/favorites',
   path: '/favorites',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ChatRoute = ChatRouteImport.update({
-  id: '/chat',
-  path: '/chat',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BrandprintRoute = BrandprintRouteImport.update({
@@ -171,11 +165,6 @@ const SettingsIndexRoute = SettingsIndexRouteImport.update({
   path: '/',
   getParentRoute: () => SettingsRoute,
 } as any)
-const ContextsIndexRoute = ContextsIndexRouteImport.update({
-  id: '/contexts/',
-  path: '/contexts/',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AgentsIndexRoute = AgentsIndexRouteImport.update({
   id: '/agents/',
   path: '/agents/',
@@ -201,6 +190,16 @@ const SettingsSectionRoute = SettingsSectionRouteImport.update({
   path: '/$section',
   getParentRoute: () => SettingsRoute,
 } as any)
+const PapersNewRoute = PapersNewRouteImport.update({
+  id: '/papers/new',
+  path: '/papers/new',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PapersIdRoute = PapersIdRouteImport.update({
+  id: '/papers/$id',
+  path: '/papers/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const JoinTokenRoute = JoinTokenRouteImport.update({
   id: '/join/$token',
   path: '/join/$token',
@@ -209,11 +208,6 @@ const JoinTokenRoute = JoinTokenRouteImport.update({
 const InviteTokenRoute = InviteTokenRouteImport.update({
   id: '/invite/$token',
   path: '/invite/$token',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ContextsNewRoute = ContextsNewRouteImport.update({
-  id: '/contexts/new',
-  path: '/contexts/new',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ContextsIdRoute = ContextsIdRouteImport.update({
@@ -262,10 +256,10 @@ export interface FileRoutesByFullPath {
   '/activity': typeof ActivityRoute
   '/archived': typeof ArchivedRoute
   '/brandprint': typeof BrandprintRoute
-  '/chat': typeof ChatRoute
   '/favorites': typeof FavoritesRoute
   '/feedback': typeof FeedbackRoute
   '/following': typeof FollowingRoute
+  '/inbox': typeof InboxRoute
   '/login': typeof LoginRoute
   '/new': typeof NewRoute
   '/people': typeof PeopleRoute
@@ -278,22 +272,21 @@ export interface FileRoutesByFullPath {
   '/skills': typeof SkillsRoute
   '/unlisted': typeof UnlistedRoute
   '/welcome': typeof WelcomeRoute
-  '/workflows': typeof WorkflowsRoute
   '/agents/$id': typeof AgentsIdRoute
   '/agents/new': typeof AgentsNewRoute
   '/artifacts/$ref': typeof ArtifactsRefRoute
   '/claim/$token': typeof ClaimTokenRoute
   '/collections/$id': typeof CollectionsIdRoute
   '/contexts/$id': typeof ContextsIdRoute
-  '/contexts/new': typeof ContextsNewRoute
   '/invite/$token': typeof InviteTokenRoute
   '/join/$token': typeof JoinTokenRoute
+  '/papers/$id': typeof PapersIdRoute
+  '/papers/new': typeof PapersNewRoute
   '/settings/$section': typeof SettingsSectionRoute
   '/template-libraries/$id': typeof TemplateLibrariesIdRoute
   '/templates/$ref': typeof TemplatesRefRoute
   '/users/$handle': typeof UsersHandleRoute
   '/agents/': typeof AgentsIndexRoute
-  '/contexts/': typeof ContextsIndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/template-libraries/': typeof TemplateLibrariesIndexRoute
   '/templates/': typeof TemplatesIndexRoute
@@ -305,10 +298,10 @@ export interface FileRoutesByTo {
   '/activity': typeof ActivityRoute
   '/archived': typeof ArchivedRoute
   '/brandprint': typeof BrandprintRoute
-  '/chat': typeof ChatRoute
   '/favorites': typeof FavoritesRoute
   '/feedback': typeof FeedbackRoute
   '/following': typeof FollowingRoute
+  '/inbox': typeof InboxRoute
   '/login': typeof LoginRoute
   '/new': typeof NewRoute
   '/people': typeof PeopleRoute
@@ -320,22 +313,21 @@ export interface FileRoutesByTo {
   '/skills': typeof SkillsRoute
   '/unlisted': typeof UnlistedRoute
   '/welcome': typeof WelcomeRoute
-  '/workflows': typeof WorkflowsRoute
   '/agents/$id': typeof AgentsIdRoute
   '/agents/new': typeof AgentsNewRoute
   '/artifacts/$ref': typeof ArtifactsRefRoute
   '/claim/$token': typeof ClaimTokenRoute
   '/collections/$id': typeof CollectionsIdRoute
   '/contexts/$id': typeof ContextsIdRoute
-  '/contexts/new': typeof ContextsNewRoute
   '/invite/$token': typeof InviteTokenRoute
   '/join/$token': typeof JoinTokenRoute
+  '/papers/$id': typeof PapersIdRoute
+  '/papers/new': typeof PapersNewRoute
   '/settings/$section': typeof SettingsSectionRoute
   '/template-libraries/$id': typeof TemplateLibrariesIdRoute
   '/templates/$ref': typeof TemplatesRefRoute
   '/users/$handle': typeof UsersHandleRoute
   '/agents': typeof AgentsIndexRoute
-  '/contexts': typeof ContextsIndexRoute
   '/settings': typeof SettingsIndexRoute
   '/template-libraries': typeof TemplateLibrariesIndexRoute
   '/templates': typeof TemplatesIndexRoute
@@ -348,10 +340,10 @@ export interface FileRoutesById {
   '/activity': typeof ActivityRoute
   '/archived': typeof ArchivedRoute
   '/brandprint': typeof BrandprintRoute
-  '/chat': typeof ChatRoute
   '/favorites': typeof FavoritesRoute
   '/feedback': typeof FeedbackRoute
   '/following': typeof FollowingRoute
+  '/inbox': typeof InboxRoute
   '/login': typeof LoginRoute
   '/new': typeof NewRoute
   '/people': typeof PeopleRoute
@@ -364,22 +356,21 @@ export interface FileRoutesById {
   '/skills': typeof SkillsRoute
   '/unlisted': typeof UnlistedRoute
   '/welcome': typeof WelcomeRoute
-  '/workflows': typeof WorkflowsRoute
   '/agents/$id': typeof AgentsIdRoute
   '/agents/new': typeof AgentsNewRoute
   '/artifacts/$ref': typeof ArtifactsRefRoute
   '/claim/$token': typeof ClaimTokenRoute
   '/collections/$id': typeof CollectionsIdRoute
   '/contexts/$id': typeof ContextsIdRoute
-  '/contexts/new': typeof ContextsNewRoute
   '/invite/$token': typeof InviteTokenRoute
   '/join/$token': typeof JoinTokenRoute
+  '/papers/$id': typeof PapersIdRoute
+  '/papers/new': typeof PapersNewRoute
   '/settings/$section': typeof SettingsSectionRoute
   '/template-libraries/$id': typeof TemplateLibrariesIdRoute
   '/templates/$ref': typeof TemplatesRefRoute
   '/users/$handle': typeof UsersHandleRoute
   '/agents/': typeof AgentsIndexRoute
-  '/contexts/': typeof ContextsIndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/template-libraries/': typeof TemplateLibrariesIndexRoute
   '/templates/': typeof TemplatesIndexRoute
@@ -393,10 +384,10 @@ export interface FileRouteTypes {
     | '/activity'
     | '/archived'
     | '/brandprint'
-    | '/chat'
     | '/favorites'
     | '/feedback'
     | '/following'
+    | '/inbox'
     | '/login'
     | '/new'
     | '/people'
@@ -409,22 +400,21 @@ export interface FileRouteTypes {
     | '/skills'
     | '/unlisted'
     | '/welcome'
-    | '/workflows'
     | '/agents/$id'
     | '/agents/new'
     | '/artifacts/$ref'
     | '/claim/$token'
     | '/collections/$id'
     | '/contexts/$id'
-    | '/contexts/new'
     | '/invite/$token'
     | '/join/$token'
+    | '/papers/$id'
+    | '/papers/new'
     | '/settings/$section'
     | '/template-libraries/$id'
     | '/templates/$ref'
     | '/users/$handle'
     | '/agents/'
-    | '/contexts/'
     | '/settings/'
     | '/template-libraries/'
     | '/templates/'
@@ -436,10 +426,10 @@ export interface FileRouteTypes {
     | '/activity'
     | '/archived'
     | '/brandprint'
-    | '/chat'
     | '/favorites'
     | '/feedback'
     | '/following'
+    | '/inbox'
     | '/login'
     | '/new'
     | '/people'
@@ -451,22 +441,21 @@ export interface FileRouteTypes {
     | '/skills'
     | '/unlisted'
     | '/welcome'
-    | '/workflows'
     | '/agents/$id'
     | '/agents/new'
     | '/artifacts/$ref'
     | '/claim/$token'
     | '/collections/$id'
     | '/contexts/$id'
-    | '/contexts/new'
     | '/invite/$token'
     | '/join/$token'
+    | '/papers/$id'
+    | '/papers/new'
     | '/settings/$section'
     | '/template-libraries/$id'
     | '/templates/$ref'
     | '/users/$handle'
     | '/agents'
-    | '/contexts'
     | '/settings'
     | '/template-libraries'
     | '/templates'
@@ -478,10 +467,10 @@ export interface FileRouteTypes {
     | '/activity'
     | '/archived'
     | '/brandprint'
-    | '/chat'
     | '/favorites'
     | '/feedback'
     | '/following'
+    | '/inbox'
     | '/login'
     | '/new'
     | '/people'
@@ -494,22 +483,21 @@ export interface FileRouteTypes {
     | '/skills'
     | '/unlisted'
     | '/welcome'
-    | '/workflows'
     | '/agents/$id'
     | '/agents/new'
     | '/artifacts/$ref'
     | '/claim/$token'
     | '/collections/$id'
     | '/contexts/$id'
-    | '/contexts/new'
     | '/invite/$token'
     | '/join/$token'
+    | '/papers/$id'
+    | '/papers/new'
     | '/settings/$section'
     | '/template-libraries/$id'
     | '/templates/$ref'
     | '/users/$handle'
     | '/agents/'
-    | '/contexts/'
     | '/settings/'
     | '/template-libraries/'
     | '/templates/'
@@ -522,10 +510,10 @@ export interface RootRouteChildren {
   ActivityRoute: typeof ActivityRoute
   ArchivedRoute: typeof ArchivedRoute
   BrandprintRoute: typeof BrandprintRoute
-  ChatRoute: typeof ChatRoute
   FavoritesRoute: typeof FavoritesRoute
   FeedbackRoute: typeof FeedbackRoute
   FollowingRoute: typeof FollowingRoute
+  InboxRoute: typeof InboxRoute
   LoginRoute: typeof LoginRoute
   NewRoute: typeof NewRoute
   PeopleRoute: typeof PeopleRoute
@@ -538,21 +526,20 @@ export interface RootRouteChildren {
   SkillsRoute: typeof SkillsRoute
   UnlistedRoute: typeof UnlistedRoute
   WelcomeRoute: typeof WelcomeRoute
-  WorkflowsRoute: typeof WorkflowsRoute
   AgentsIdRoute: typeof AgentsIdRoute
   AgentsNewRoute: typeof AgentsNewRoute
   ArtifactsRefRoute: typeof ArtifactsRefRoute
   ClaimTokenRoute: typeof ClaimTokenRoute
   CollectionsIdRoute: typeof CollectionsIdRoute
   ContextsIdRoute: typeof ContextsIdRoute
-  ContextsNewRoute: typeof ContextsNewRoute
   InviteTokenRoute: typeof InviteTokenRoute
   JoinTokenRoute: typeof JoinTokenRoute
+  PapersIdRoute: typeof PapersIdRoute
+  PapersNewRoute: typeof PapersNewRoute
   TemplateLibrariesIdRoute: typeof TemplateLibrariesIdRoute
   TemplatesRefRoute: typeof TemplatesRefRoute
   UsersHandleRoute: typeof UsersHandleRoute
   AgentsIndexRoute: typeof AgentsIndexRoute
-  ContextsIndexRoute: typeof ContextsIndexRoute
   TemplateLibrariesIndexRoute: typeof TemplateLibrariesIndexRoute
   TemplatesIndexRoute: typeof TemplatesIndexRoute
   InviteATokenRoute: typeof InviteATokenRoute
@@ -561,13 +548,6 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/workflows': {
-      id: '/workflows'
-      path: '/workflows'
-      fullPath: '/workflows'
-      preLoaderRoute: typeof WorkflowsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/welcome': {
       id: '/welcome'
       path: '/welcome'
@@ -652,6 +632,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/inbox': {
+      id: '/inbox'
+      path: '/inbox'
+      fullPath: '/inbox'
+      preLoaderRoute: typeof InboxRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/following': {
       id: '/following'
       path: '/following'
@@ -671,13 +658,6 @@ declare module '@tanstack/react-router' {
       path: '/favorites'
       fullPath: '/favorites'
       preLoaderRoute: typeof FavoritesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/chat': {
-      id: '/chat'
-      path: '/chat'
-      fullPath: '/chat'
-      preLoaderRoute: typeof ChatRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/brandprint': {
@@ -729,13 +709,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsIndexRouteImport
       parentRoute: typeof SettingsRoute
     }
-    '/contexts/': {
-      id: '/contexts/'
-      path: '/contexts'
-      fullPath: '/contexts/'
-      preLoaderRoute: typeof ContextsIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/agents/': {
       id: '/agents/'
       path: '/agents'
@@ -771,6 +744,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsSectionRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/papers/new': {
+      id: '/papers/new'
+      path: '/papers/new'
+      fullPath: '/papers/new'
+      preLoaderRoute: typeof PapersNewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/papers/$id': {
+      id: '/papers/$id'
+      path: '/papers/$id'
+      fullPath: '/papers/$id'
+      preLoaderRoute: typeof PapersIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/join/$token': {
       id: '/join/$token'
       path: '/join/$token'
@@ -783,13 +770,6 @@ declare module '@tanstack/react-router' {
       path: '/invite/$token'
       fullPath: '/invite/$token'
       preLoaderRoute: typeof InviteTokenRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/contexts/new': {
-      id: '/contexts/new'
-      path: '/contexts/new'
-      fullPath: '/contexts/new'
-      preLoaderRoute: typeof ContextsNewRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/contexts/$id': {
@@ -870,10 +850,10 @@ const rootRouteChildren: RootRouteChildren = {
   ActivityRoute: ActivityRoute,
   ArchivedRoute: ArchivedRoute,
   BrandprintRoute: BrandprintRoute,
-  ChatRoute: ChatRoute,
   FavoritesRoute: FavoritesRoute,
   FeedbackRoute: FeedbackRoute,
   FollowingRoute: FollowingRoute,
+  InboxRoute: InboxRoute,
   LoginRoute: LoginRoute,
   NewRoute: NewRoute,
   PeopleRoute: PeopleRoute,
@@ -886,21 +866,20 @@ const rootRouteChildren: RootRouteChildren = {
   SkillsRoute: SkillsRoute,
   UnlistedRoute: UnlistedRoute,
   WelcomeRoute: WelcomeRoute,
-  WorkflowsRoute: WorkflowsRoute,
   AgentsIdRoute: AgentsIdRoute,
   AgentsNewRoute: AgentsNewRoute,
   ArtifactsRefRoute: ArtifactsRefRoute,
   ClaimTokenRoute: ClaimTokenRoute,
   CollectionsIdRoute: CollectionsIdRoute,
   ContextsIdRoute: ContextsIdRoute,
-  ContextsNewRoute: ContextsNewRoute,
   InviteTokenRoute: InviteTokenRoute,
   JoinTokenRoute: JoinTokenRoute,
+  PapersIdRoute: PapersIdRoute,
+  PapersNewRoute: PapersNewRoute,
   TemplateLibrariesIdRoute: TemplateLibrariesIdRoute,
   TemplatesRefRoute: TemplatesRefRoute,
   UsersHandleRoute: UsersHandleRoute,
   AgentsIndexRoute: AgentsIndexRoute,
-  ContextsIndexRoute: ContextsIndexRoute,
   TemplateLibrariesIndexRoute: TemplateLibrariesIndexRoute,
   TemplatesIndexRoute: TemplatesIndexRoute,
   InviteATokenRoute: InviteATokenRoute,

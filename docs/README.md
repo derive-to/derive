@@ -6,7 +6,7 @@ directory holds maintainer and design records that should not be published as pr
 ## Maintainer records
 
 - [Access model](access-model.md): authorization and anonymous-read invariants.
-- [Hosted runs](hosted-runs.md): context execution, isolation, and rollout controls.
+- [Hosted runs](hosted-runs.md): the retired hosted automation lane, kept as a record.
 - [Design system](design-system.md): product UI rules and tokens.
 - [Growth measurement](GROWTH-MEASUREMENT.md): privacy-safe acquisition measurement.
 - [Governance](../.github/GOVERNANCE.md): ownership, decisions, and review expectations.

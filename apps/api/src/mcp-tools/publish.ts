@@ -22,7 +22,6 @@ import {
   slotShapeDriftAdvisories,
   TEMPLATE_LIBRARY_CATALOG_URI,
   type VersionRecord,
-  type WorkflowPublishReceiptRecord,
 } from "@derive/core"
 import { z } from "zod"
 import { PROFILE_PLACEHOLDER_HTML } from "../brandprint-reference"
@@ -42,7 +41,6 @@ import {
   type RenderVariant,
   rendersOff,
 } from "../lib/collect-render"
-import { sha256 } from "../lib/crypto"
 import {
   type MaterializedEdits,
   materializeEdits,
@@ -62,7 +60,6 @@ import { agentPushFanout, openReviewRound } from "../lib/review-request"
 import { type ReviewSummary, summarizeTextEdits } from "../lib/review-summary"
 import { normalizeTags } from "../lib/tags"
 import { canReadTemplateLibrary } from "../lib/template-library-access"
-import { prepareWorkflowArtifactRef } from "../lib/workflow-coordination"
 import { log } from "../log"
 import type { ToolContext } from "../mcp-tool-context"
 import {
@@ -75,18 +72,6 @@ import {
   manifestOf,
   toBase64,
 } from "../mcp-util"
-
-const canonicalPublishRequest = (value: unknown): unknown => {
-  if (Array.isArray(value)) return value.map(canonicalPublishRequest)
-  if (value && typeof value === "object")
-    return Object.fromEntries(
-      Object.entries(value)
-        .filter(([, item]) => item !== undefined)
-        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-        .map(([key, item]) => [key, canonicalPublishRequest(item)]),
-    )
-  return value
-}
 
 export function registerPublishTool(tc: ToolContext): void {
   // NOTE: the surface deliberately does NOT vary by scope. Hiding publish's live-only access
@@ -461,24 +446,6 @@ export function registerPublishTool(tc: ToolContext): void {
           .number()
           .optional()
           .describe("Version read; fails if the artifact has moved."),
-        workflow: z
-          .object({
-            run_id: z.string().min(1),
-            node_id: z.string().min(1),
-            attempt: z.coerce.number().int().min(1),
-            role: z.enum(["output", "evidence", "input"]).default("output"),
-            dedupe_key: z
-              .string()
-              .trim()
-              .min(1)
-              .max(200)
-              .optional()
-              .describe(
-                "Omit for automatic deduplication per attempt. Reuse on retry; change to repeat.",
-              ),
-          })
-          .optional()
-          .describe("Atomically link this version; retries reuse it. Not proof of completion."),
       },
     },
     async ({
@@ -504,7 +471,6 @@ export function registerPublishTool(tc: ToolContext): void {
       edits,
       slide_ops,
       base_version,
-      workflow,
     }) => {
       // BEFORE anything is written. Validating this after the publish committed meant a
       // near-miss variant ("screenshot", "png") returned isError on an artifact that was
@@ -514,42 +480,6 @@ export function registerPublishTool(tc: ToolContext): void {
         const wrongRender = badChoice("render", render, RENDER_VARIANTS)
         if (wrongRender) return err(wrongRender)
       }
-      const workflowRequestHash = workflow
-        ? sha256(
-            JSON.stringify(
-              canonicalPublishRequest({
-                schema: 1,
-                target: short_id ?? null,
-                content: contentIn,
-                files,
-                title,
-                filename,
-                workspace_access,
-                link_role,
-                listed,
-                spa,
-                merge,
-                message,
-                derived_from,
-                tags,
-                addresses,
-                request_review,
-                edits,
-                slide_ops,
-                base_version,
-                workflow: {
-                  run_id: workflow.run_id,
-                  node_id: workflow.node_id,
-                  attempt: workflow.attempt,
-                  role: workflow.role,
-                },
-                author_id: actingFor?.id ?? null,
-                agent_id: agent.id,
-                agent_name: agent.name,
-              }),
-            ),
-          )
-        : null
       let content = contentIn
       const BP = "derive://brandprint/"
       // The brand profile publishes LIVE like any document, but ALWAYS opens a review
@@ -679,14 +609,6 @@ export function registerPublishTool(tc: ToolContext): void {
         return err(
           `"${short_id}" is the implementation analysis of ${analysisOf.id}: revise it by publishing the whole ${analysisFile} in \`files\`, with \`based_on\` and a \`message\`.`,
         )
-      if (workflow) {
-        const workflowError = await prepareWorkflowArtifactRef({
-          meta: ctx.meta,
-          ref: workflow,
-          orgId: targetOrg,
-        })
-        if (workflowError) return err(workflowError)
-      }
       // Billing eligibility and the storage cap come from the same subscription + seat
       // snapshot. An edit checks both, so keep one request-local result instead of paying
       // the two hosted queries twice.
@@ -704,56 +626,6 @@ export function registerPublishTool(tc: ToolContext): void {
       // below, and a failed read refuses (null settings), like every reader of the switch.
       const orgSettings = await ctx.meta.getOrgSettings(targetOrg).catch(() => null)
       if (!orgSettings?.agentWrites) return err(AGENT_WRITES_OFF)
-
-      const workflowKey =
-        workflow && workflowRequestHash
-          ? {
-              org_id: targetOrg,
-              workflow_run_id: workflow.run_id,
-              node_id: workflow.node_id,
-              attempt: workflow.attempt,
-              dedupe_key: workflow.dedupe_key ?? workflowRequestHash,
-            }
-          : null
-      const replayWorkflowPublication = async (receipt: WorkflowPublishReceiptRecord) => {
-        // A retry is a read of a committed version, but it still requires this
-        // connection's live publish standing on that exact artifact.
-        const replayReach = await reach(receipt.artifact_short_id, workspace)
-        if (!replayReach || "error" in replayReach || !roleAllows(replayReach.role, "publish"))
-          return err("The recorded workflow publication is unavailable to this connection.")
-        if (receipt.request_hash !== workflowRequestHash)
-          return err("This workflow publish retry key already belongs to a different request.")
-        const version = await ctx.meta.getVersion(receipt.artifact_id, receipt.artifact_version)
-        if (!version || version.id !== receipt.version_id)
-          return err("The recorded workflow publication is no longer available.")
-        return json({
-          published: true,
-          short_id: receipt.artifact_short_id,
-          version: receipt.artifact_version,
-          kind: replayReach.a.kind,
-          url: `${artifactUrl(ctx.deps.baseUrl, replayReach.a)}@v${receipt.artifact_version}`,
-          version_url: `${artifactUrl(ctx.deps.baseUrl, replayReach.a)}@v${receipt.artifact_version}`,
-          title: replayReach.a.title,
-          content_sha256: version.blob_key,
-          workflow_publish: { dedupe_key: receipt.dedupe_key, replayed: true },
-          workflow_activity: {
-            status: "recorded",
-            id: receipt.activity_id,
-            run_id: receipt.workflow_run_id,
-            node_id: receipt.node_id,
-            attempt: receipt.attempt,
-            role: receipt.role,
-            artifact: receipt.artifact_short_id,
-            version: receipt.artifact_version,
-            completion: "unconfirmed",
-          },
-          note: "Recovered the original saved publication. No new artifact or version was created.",
-        })
-      }
-      if (workflowKey && roleAllows(actRole, "publish")) {
-        const receipt = await ctx.meta.getWorkflowPublishReceipt(workflowKey)
-        if (receipt) return replayWorkflowPublication(receipt)
-      }
 
       // The profile's forced round holds HOWEVER the profile is addressed. The URI branch
       // above set profileAskReview for `derive://brandprint/profile`; a publish straight to
@@ -949,10 +821,6 @@ export function registerPublishTool(tc: ToolContext): void {
       // given to it (lib/paper-analysis).
       let analysis: PreparedAnalysis | null = null
       if (analysisOf || Object.keys(files ?? {}).some((p) => cleanPath(p) === analysisFile)) {
-        if (workflow)
-          return err(
-            "An implementation analysis is not a workflow output: publish it without `workflow`.",
-          )
         const prepared = await preparePaperAnalysis(
           {
             meta: ctx.meta,
@@ -1047,7 +915,7 @@ export function registerPublishTool(tc: ToolContext): void {
             : isLatexDocument((content as string | undefined) ?? "")
               ? "index.tex"
               : "index.md"
-        const { artifact, version, workflowReceipt, replayed } = await publishVersion(
+        const { artifact, version } = await publishVersion(
           ctx.meta,
           ctx.blobs,
           {
@@ -1080,23 +948,9 @@ export function registerPublishTool(tc: ToolContext): void {
             // An analysis update revises the version the agent read. If another agent
             // published while this one was preparing, refuse rather than bury its work.
             ...(analysis?.basedOn != null ? { expectedCurrentVersion: analysis.basedOn } : {}),
-            ...(workflow && workflowKey && workflowRequestHash
-              ? {
-                  workflow: {
-                    runId: workflow.run_id,
-                    nodeId: workflow.node_id,
-                    attempt: workflow.attempt,
-                    role: workflow.role,
-                    dedupeKey: workflowKey.dedupe_key,
-                    requestHash: workflowRequestHash,
-                    ownerId: actingFor?.id ?? agent.id,
-                  },
-                }
-              : {}),
           },
           short_id,
         )
-        if (workflowReceipt && replayed) return replayWorkflowPublication(workflowReceipt)
         // Before anyone hears of a new analysis: it becomes the Context's only if no other agent
         // linked one first, and otherwise it is deleted again.
         if (analysis && !short_id) {
@@ -1107,20 +961,9 @@ export function registerPublishTool(tc: ToolContext): void {
           )
           if (lost) return err(lost)
         }
-        const workflowActivity = workflowReceipt
-          ? {
-              id: workflowReceipt.activity_id,
-              workflow_run_id: workflowReceipt.workflow_run_id,
-              node_id: workflowReceipt.node_id,
-              attempt: workflowReceipt.attempt,
-              role: workflowReceipt.role,
-              artifact_short_id: workflowReceipt.artifact_short_id,
-              artifact_version: workflowReceipt.artifact_version,
-            }
-          : null
         // Ownership, same as the HTTP route: one row, the human the agent acts
         // for (the agent borrows that standing — no agent rows in the roster).
-        if (!short_id && !workflowReceipt)
+        if (!short_id)
           await ctx.meta.setArtifactMember({
             id: newId("am"),
             artifact_id: artifact.id,
@@ -1370,23 +1213,6 @@ export function registerPublishTool(tc: ToolContext): void {
           ...(slideOpsApplied ? { slide_ops_applied: slideOpsApplied } : {}),
           ...(changedReadback ? { readback: changedReadback } : {}),
           ...(resolved.length ? { resolved } : {}),
-          ...(workflowActivity && workflowReceipt
-            ? {
-                version_url: `${artifactUrl(ctx.deps.baseUrl, artifact)}@v${workflowReceipt.artifact_version}`,
-                workflow_publish: { dedupe_key: workflowReceipt.dedupe_key, replayed: false },
-                workflow_activity: {
-                  status: "recorded" as const,
-                  id: workflowActivity.id,
-                  run_id: workflowActivity.workflow_run_id,
-                  node_id: workflowActivity.node_id,
-                  attempt: workflowActivity.attempt,
-                  role: workflowActivity.role,
-                  artifact: workflowActivity.artifact_short_id,
-                  version: workflowActivity.artifact_version,
-                  completion: "unconfirmed" as const,
-                },
-              }
-            : {}),
           ...(actingFor ? { opened_in_tab: openedInTab } : {}),
           note:
             (merge
@@ -1464,15 +1290,9 @@ export function registerPublishTool(tc: ToolContext): void {
       } catch (e) {
         log.error("MCP publication failed", {
           artifact: short_id,
-          run: workflow?.run_id,
           err: String(e),
         })
-        const msg =
-          e instanceof PublishError
-            ? e.message
-            : workflowKey
-              ? "publication could not be confirmed; retry the same request and workflow retry key"
-              : "could not publish"
+        const msg = e instanceof PublishError ? e.message : "could not publish"
         return err(`Publish failed: ${msg}`)
       }
     },

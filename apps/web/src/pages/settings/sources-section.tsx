@@ -10,9 +10,8 @@ import { StatusBadge } from "@/components/shared/status-badge"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
-import { connectionsQuery, workspaceSettingsQuery } from "@/lib/queries"
+import { connectionsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useOneShotParams } from "@/lib/use-one-shot-params"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
@@ -222,19 +221,6 @@ function AddSource({ onAdded }: { onAdded: () => void }) {
 }
 
 function SourceRow({ conn, onRevoked }: { conn: Connection; onRevoked: () => void }) {
-  // CHAT EXPOSURE lives on the source it belongs to, not in a list of ids somewhere else.
-  // Connecting a server and letting a conversation spend it are two decisions, and this is
-  // where somebody already comes to make the first one.
-  const { data: settings } = useQuery(workspaceSettingsQuery())
-  const declared = settings?.chatSources ?? []
-  const inChat = declared.includes(conn.id)
-  const setChat = useApiMutation({
-    mutationFn: (on: boolean) =>
-      api.updateWorkspaceSettings({
-        chatSources: on ? [...declared, conn.id] : declared.filter((id) => id !== conn.id),
-      }),
-    invalidate: [workspaceSettingsQuery().queryKey],
-  })
   const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const revoke = useApiMutation({
@@ -292,22 +278,6 @@ function SourceRow({ conn, onRevoked }: { conn: Connection; onRevoked: () => voi
       }
       actions={
         <>
-          {/* OFF by default, and per source: a workspace connecting a server has not thereby handed
-              every conversation a live tool. A PERSONAL source stays yours even when on — chat
-              reaches it for you and for nobody else, which is what its scope already means. */}
-          {!needsSignIn ? (
-            <label className="flex shrink-0 items-center gap-2 text-xs">
-              <Checkbox
-                checked={inChat}
-                disabled={setChat.isPending}
-                onCheckedChange={(v) => setChat.mutate(v === true)}
-                data-testid={`source-chat-${conn.id}`}
-              />
-              <span className="text-muted-foreground">
-                {conn.scope === "workspace" ? "Chat (everyone)" : "Chat (just me)"}
-              </span>
-            </label>
-          ) : null}
           {needsSignIn ? (
             <Button
               variant="secondary"

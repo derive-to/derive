@@ -355,7 +355,6 @@ describe("version-pinned export requests", () => {
     }
     const { app: quotaExportApp } = makeAuthedApp("exports-render-quota", [quotaOwner], undefined, {
       deps: { renderExports: true, maxBytes: 1024 },
-      noPlan: true,
     })
     const quotaArtifact = await (
       await publishAs(quotaExportApp, "x", { workspace_access: "none" }, as(quotaOwner.email))

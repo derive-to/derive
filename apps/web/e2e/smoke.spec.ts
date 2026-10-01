@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test"
 import {
   activateThread,
   addComment,
@@ -41,371 +42,6 @@ test("publish, comment, resolve, and find it in the library", async ({ owner }) 
   // Re-fetch the library home so it picks up the freshly published artifact.
   await owner.goto("/")
   await expect(owner.getByTestId(`artifact-card-open-${shortId}`)).toBeVisible()
-})
-
-test("starting a workflow creates a visible, version-pinned run", async ({ owner }) => {
-  const manifest = {
-    schema: "derive.linked-bundle/v1",
-    purpose: "Keep internal docs aligned with code changes.",
-    members: [],
-    diagrams: [
-      {
-        id: "docs-update",
-        title: "Update internal docs",
-        type: "graph",
-        nodes: [
-          {
-            id: "update-docs",
-            label: "Update docs",
-            state: "pending",
-            note: "Inspect the code change and publish the necessary documentation update.",
-          },
-        ],
-        edges: [],
-      },
-    ],
-  }
-  const workflow = {
-    schema: "derive.workflow/v1",
-    purpose: manifest.purpose,
-    diagrams: [
-      {
-        id: "docs-update",
-        entry: "update-docs",
-        nodes: [
-          {
-            id: "update-docs",
-            kind: "context",
-            context_ref: "docs-updater",
-            instruction: "Inspect the supplied code change and update the affected internal docs.",
-            result: "A published documentation update grounded in the code change",
-            terminal: true,
-          },
-        ],
-        routes: [],
-        scenarios: [
-          {
-            id: "expected",
-            kind: "expected",
-            path: ["update-docs"],
-            outcome: "The internal docs reflect the code change",
-          },
-          {
-            id: "failure",
-            kind: "failure",
-            path: ["update-docs"],
-            outcome: "The failed attempt remains visible without changing the docs",
-          },
-        ],
-      },
-    ],
-  }
-  const html =
-    `<!doctype html><html><body><h1>Internal docs update</h1>` +
-    `<script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify(manifest)}</script>` +
-    `<script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify(workflow)}</script>` +
-    `</body></html>`
-  const shortId = await publishArtifact(owner, "workflow.html", html, "text/html")
-
-  await owner.goto("/settings/automations")
-  await expect(owner).toHaveURL(/\/workflows$/)
-  await expect(owner.getByTestId("nav-workflows")).toHaveAttribute("aria-current", "page")
-  await expect(owner.getByRole("heading", { level: 1, name: "Workflows" })).toHaveCount(1)
-  await expect(owner.getByTestId("workflows-view-schedules")).toHaveAttribute(
-    "data-state",
-    "active",
-  )
-  await owner.getByTestId("workflows-view-browse").click()
-  await expect(owner).toHaveURL(/view=definitions/)
-  await owner.reload()
-  await expect(owner.getByTestId("workflows-view-browse")).toHaveAttribute("data-state", "active")
-  const directoryRow = owner.getByTestId(`workflow-row-${shortId}`)
-  await expect(directoryRow).toContainText("Keep internal docs aligned with code changes.")
-  await expect(directoryRow).toContainText("1 step")
-  await directoryRow.click()
-  await expect(owner).toHaveURL(new RegExp(`/artifacts/.+${shortId}`))
-  await expect(owner.getByTestId("workflow-preview")).toBeVisible()
-  await expect(owner.getByText("No runs yet.", { exact: false })).toBeVisible()
-  await owner.getByTestId("workflow-run-docs-update").click()
-  await owner.getByTestId("workflow-run-copy").click()
-
-  const runs = owner.getByTestId("workflow-runs")
-  await expect(runs.getByText("Queued", { exact: true })).toBeVisible()
-  await expect(runs.getByText("Update internal docs", { exact: true })).toBeVisible()
-  await expect(runs.getByText("Definition v1", { exact: true })).toBeVisible()
-  await expect(runs.getByText("Local copy", { exact: true })).toBeVisible()
-  await expect(runs.getByText("Waiting for an Agent to claim this run.")).toBeVisible()
-})
-
-test("workflow activity links an exact artifact version without claiming completion", async ({
-  owner,
-}) => {
-  const manifest = {
-    schema: "derive.linked-bundle/v1",
-    purpose: "Publish one result.",
-    members: [],
-    diagrams: [
-      {
-        id: "publish-once",
-        title: "Publish once",
-        type: "graph",
-        nodes: [{ id: "publish", label: "Publish", state: "pending" }],
-        edges: [],
-      },
-    ],
-  }
-  const workflow = {
-    schema: "derive.workflow/v1",
-    purpose: manifest.purpose,
-    diagrams: [
-      {
-        id: "publish-once",
-        entry: "publish",
-        nodes: [{ id: "publish", kind: "terminal", result: "A result", terminal: true }],
-        routes: [],
-        scenarios: [
-          { id: "expected", kind: "expected", path: ["publish"], outcome: "Published" },
-          { id: "failure", kind: "failure", path: ["publish"], outcome: "Failed visibly" },
-        ],
-      },
-    ],
-  }
-  const html =
-    `<!doctype html><html><body><h1>Publish one result</h1>` +
-    `<script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify(manifest)}</script>` +
-    `<script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify(workflow)}</script>` +
-    `</body></html>`
-  const shortId = await publishArtifact(owner, "activity-workflow.html", html, "text/html")
-  const startedResponse = await owner.request.post(`/v1/artifacts/${shortId}/workflow-run`, {
-    data: { diagramId: "publish-once", delivery: "copy" },
-  })
-  expect(startedResponse.ok()).toBeTruthy()
-  const started = (await startedResponse.json()) as { runId: string }
-  const resultShortId = await publishArtifact(owner, "workflow-result.md", "# Result")
-  const possibleShortId = await publishArtifact(owner, "possible-result.md", "# Possible result")
-  const createdAt = new Date().toISOString()
-  await owner.route(`**/v1/artifacts/${shortId}/workflow-runs?*`, async (route) => {
-    await route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        runs: [
-          {
-            id: started.runId,
-            diagramId: "publish-once",
-            workflowVersion: 1,
-            status: "queued",
-            reason: "manual:copy",
-            requestedExecution: "local",
-            actualExecution: null,
-            externalExecution: null,
-            createdAt,
-            startedAt: null,
-            finishedAt: null,
-            attempts: [],
-            activity: [
-              {
-                id: "wfa_e2e_activity",
-                nodeId: "publish",
-                attempt: 1,
-                artifactShortId: resultShortId,
-                artifactVersion: 1,
-                artifactTitle: "Workflow result",
-                role: "output",
-                source: "observed",
-                createdAt,
-              },
-            ],
-            suggestions: [
-              {
-                id: "suggested_e2e_activity",
-                nodeId: "publish",
-                attempt: null,
-                artifactShortId: possibleShortId,
-                artifactVersion: 1,
-                artifactTitle: "Possible result",
-                role: "evidence",
-                source: "suggested",
-                reason: "A pinned graph member gained this version while the run was open.",
-                createdAt,
-              },
-            ],
-          },
-        ],
-      }),
-    })
-  })
-  await owner.goto(`/artifacts/${shortId}`)
-  const activityLink = owner.getByTestId("workflow-activity-artifact-wfa_e2e_activity")
-  await expect(activityLink).toContainText("Workflow result · v1")
-  await expect(activityLink).toHaveAttribute("href", new RegExp(`${resultShortId}%40v1$`))
-  await expect(owner.getByText("Completion is unconfirmed", { exact: true })).toBeVisible()
-  const suggestionLink = owner.getByTestId("workflow-suggestion-artifact-suggested_e2e_activity")
-  await expect(suggestionLink).toContainText("Possible result · v1")
-  await expect(suggestionLink).toHaveAttribute("href", new RegExp(`${possibleShortId}%40v1$`))
-  await expect(owner.getByText("Needs confirmation", { exact: true })).toBeVisible()
-})
-
-test("a Ready graph exposes a bounded GitHub Actions harness on mobile", async ({ owner }) => {
-  const manifest = {
-    schema: "derive.linked-bundle/v1",
-    purpose: "Settle one reviewed Context step through GitHub Actions.",
-    members: [],
-    diagrams: [
-      {
-        id: "github-proof",
-        title: "GitHub proof",
-        type: "graph",
-        nodes: [{ id: "prove", label: "Prove the run", state: "pending" }],
-        edges: [],
-      },
-    ],
-  }
-  const workflow = {
-    schema: "derive.workflow/v1",
-    purpose: manifest.purpose,
-    diagrams: [
-      {
-        id: "github-proof",
-        entry: "prove",
-        nodes: [
-          {
-            id: "prove",
-            kind: "context",
-            context_ref: "github-proof-agent",
-            instruction: "Publish one proof Artifact.",
-            result: "A reviewed proof Artifact",
-            terminal: true,
-          },
-        ],
-        routes: [],
-        scenarios: [
-          {
-            id: "expected",
-            kind: "expected",
-            path: ["prove"],
-            outcome: "The proof is published",
-          },
-          {
-            id: "failure",
-            kind: "failure",
-            path: ["prove"],
-            outcome: "The failed Context step is visible and the run stops",
-          },
-        ],
-      },
-    ],
-  }
-  const html =
-    `<!doctype html><html><body><h1>GitHub proof</h1>` +
-    `<script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify(manifest)}</script>` +
-    `<script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify(workflow)}</script>` +
-    `</body></html>`
-  const shortId = await publishArtifact(owner, "github-proof.html", html, "text/html")
-  const gate = await owner.request.patch("/v1/workspace/settings", {
-    data: { automateBeta: true },
-  })
-  expect(gate.ok(), "workspace Automate gate should opt in explicitly").toBeTruthy()
-
-  await owner.route("**/v1/connections?*", async (route) => {
-    const url = new URL(route.request().url())
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        connections:
-          url.searchParams.get("scope") === "workspace"
-            ? [
-                {
-                  id: "con_github_proof",
-                  user_id: "workspace",
-                  broker: "github_app",
-                  toolkit: "github",
-                  scope: "workspace",
-                  kind: "github_app",
-                  scopes_label: "Niftory · selected repositories",
-                  status: "active",
-                  created_at: "2026-08-31T12:00:00.000Z",
-                },
-              ]
-            : [],
-      }),
-    })
-  })
-  await owner.route("**/v1/github", (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        available: true,
-        connected: true,
-        app_slug: "derive",
-        app_owner_login: "derive-to",
-        app_permissions_state: "ready",
-        app_webhook_state: "ready",
-        app_settings_url: null,
-        can_manage_app: false,
-        accounts: [
-          {
-            installation_id: "9988",
-            account_login: "Niftory",
-            connection_id: "con_github_proof",
-            state: "active",
-            permissions_state: "ready",
-            permissions_url: null,
-          },
-        ],
-      }),
-    }),
-  )
-  let dispatchBody: Record<string, unknown> | null = null
-  await owner.route(`**/v1/artifacts/${shortId}/workflow-run`, async (route) => {
-    if (route.request().method() !== "POST") {
-      await route.continue()
-      return
-    }
-    dispatchBody = route.request().postDataJSON() as Record<string, unknown>
-    await route.fulfill({
-      status: 202,
-      contentType: "application/json",
-      body: JSON.stringify({
-        runId: "wfr_github_proof",
-        prompt: "",
-        github: {
-          runId: "778899",
-          url: "https://github.com/Niftory/sift/actions/runs/778899",
-        },
-      }),
-    })
-  })
-
-  await owner.setViewportSize({ width: 390, height: 844 })
-  await owner.goto(`/artifacts/${shortId}`)
-  await owner.getByTestId("workflow-run-github-proof").click()
-  await owner.getByTestId("workflow-harness-github").click()
-  await expect(owner.getByTestId("workflow-github-setup")).toBeVisible()
-  await expect(owner.getByText("No prompt or Derive token is sent")).toBeVisible()
-  await expect
-    .poll(() => owner.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
-    .toBe(true)
-
-  await owner.getByTestId("workflow-github-repository").fill("Niftory/sift")
-  await owner.getByTestId("workflow-github-ref").fill("main")
-  await owner.getByTestId("workflow-github-workflow").fill("derive-graph-runner.yml")
-  await owner.getByTestId("workflow-github-run").click()
-  await expect.poll(() => dispatchBody).not.toBeNull()
-  expect(dispatchBody).toEqual({
-    diagramId: "github-proof",
-    delivery: "github",
-    github: {
-      connectionId: "con_github_proof",
-      owner: "Niftory",
-      repo: "sift",
-      workflow: "derive-graph-runner.yml",
-      ref: "main",
-    },
-  })
-  expect(JSON.stringify(dispatchBody)).not.toContain("prompt")
-  expect(JSON.stringify(dispatchBody)).not.toContain("GitHub proof")
 })
 
 test("a cached screenshot still becomes a visible library thumbnail", async ({ owner }) => {
@@ -602,7 +238,16 @@ test("settings destinations and their retired paths resolve", async ({ owner }) 
   await owner.goto("/settings/model-plans")
   await expect(owner).toHaveURL(/\/settings\/accounts$/)
   await expect(owner.getByTestId("settings-tab-accounts")).toHaveAttribute("aria-current", "page")
-  await expect(owner.getByTestId("model-plan-import")).toBeVisible()
+  await expect(owner.getByTestId("account-connect")).toBeVisible()
+  // The retired agent-connection section lands on Machines; Credentials keeps its own section.
+  await owner.goto("/settings/agents")
+  await expect(owner).toHaveURL(/\/settings\/machines$/)
+  await owner.goto("/settings/credentials")
+  await expect(owner.getByTestId("settings-tab-credentials")).toHaveAttribute(
+    "aria-current",
+    "page",
+  )
+  await expect(owner.getByTestId("credentials-add")).toBeVisible()
 
   // People is a standalone directory page; its retired settings path redirects out.
   await owner.goto("/people")
@@ -812,7 +457,7 @@ test("the current page keeps its selected state under the pointer", async ({ own
   expect(await bgOf(current), "the active row changed colour on hover").toBe(currentRest)
 
   // …and the scoping didn't just disable hover everywhere: an idle row still washes.
-  const idle = owner.getByTestId("nav-contexts")
+  const idle = owner.getByTestId("nav-agents")
   const idleRest = await bgOf(idle)
   await idle.hover()
   await owner.waitForTimeout(400)
@@ -928,379 +573,331 @@ test("a join link brings a new person into the workspace as a Creator", async ({
   await expect(owner.getByTestId("join-link-meta")).toContainText("1 joined")
 })
 
-test("cloud workflows keep manual runs available after pausing and link their reports", async ({
+// ---- Agents -----------------------------------------------------------------------------
+// Seeded through the same API a coding session and a runner use: create over /v1/agents, ask
+// over /v1/jobs, and move jobs with the agent's own key through pull and report.
+
+type Seeded = { id: string; token: string }
+
+async function makeAgent(page: Page, body: Record<string, unknown>): Promise<Seeded> {
+  let out: Seeded = { id: "", token: "" }
+  // A new user's workspace is provisioned on first request; retry past that race.
+  await expect(async () => {
+    const r = await page.request.post("/v1/agents", { data: body })
+    expect(r.status(), await r.text()).toBe(201)
+    out = await r.json()
+  }).toPass({ timeout: 10_000 })
+  return out
+}
+
+async function askAgent(page: Page, agent: Seeded, instruction: string): Promise<string> {
+  const r = await page.request.post("/v1/jobs", { data: { agent_id: agent.id, instruction } })
+  expect(r.status(), await r.text()).toBe(201)
+  return (await r.json()).id
+}
+
+/** Claim the agent's queued jobs as its runner would. */
+async function pullAs(page: Page, agent: Seeded): Promise<{ id: string; started_at: string }[]> {
+  const r = await page.request.post(`/v1/agents/${agent.id}/pull`, {
+    headers: { authorization: `Bearer ${agent.token}` },
+    data: {},
+  })
+  expect(r.ok(), await r.text()).toBeTruthy()
+  return (await r.json()).jobs
+}
+
+async function reportAs(
+  page: Page,
+  agent: Seeded,
+  job: { id: string; started_at: string },
+  body: Record<string, unknown>,
+) {
+  const r = await page.request.post(`/v1/jobs/${job.id}/report`, {
+    headers: { authorization: `Bearer ${agent.token}` },
+    data: { started_at: job.started_at, ...body },
+  })
+  expect(r.ok(), await r.text()).toBeTruthy()
+}
+
+test("Agents home groups agents by what they need, and the rail leads with it", async ({
   owner,
 }, testInfo) => {
-  await owner.emulateMedia({ reducedMotion: "reduce" })
-  const configured = await owner.request.patch("/v1/workspace/settings", {
-    data: { hostedAgentsEnabled: true, agentWrites: true, automateBeta: true },
+  const scheduled = await makeAgent(owner, {
+    name: "Digest writer",
+    description: "rewrites the weekly digest page",
+    schedule: { cron: "0 9 * * 1-5", tz: "UTC", instruction: "Rewrite the digest." },
   })
-  expect(configured.ok()).toBeTruthy()
-  const id = "ctx_workflow_ui"
-  const account = {
-    id: "rmc_ui",
-    name: "Work account",
-    provider: "codex",
-    revoked_at: null,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    revision: 0,
-  }
-  const context = {
-    id,
-    name: "Daily integrity review",
-    agent_id: "agent_ui",
-    created_by: "owner",
-    created_at: new Date().toISOString(),
-    runner_seen_at: null,
-    manifest_short_id: null,
-    ask_policy: "invited",
-    connection_ids: [],
-    import: null,
-  }
-  let schedule = {
-    id: "auto_ui",
-    instruction: "Review new evidence and report findings",
-    provider: "codex",
-    trigger: JSON.stringify({ kind: "schedule", cron: "0 9 * * *", tz: "UTC" }),
-    enabled: 1,
-    revision: 0,
-  }
-  const readiness = {
-    state: "ready",
-    revision: "a".repeat(64),
-    evaluated_at: new Date().toISOString(),
-    blockers: [],
-    can_edit: true,
-    can_test: true,
-  }
-  await owner.route(`**/v1/workflow-runtimes/${id}`, (route) =>
-    route.fulfill({ json: { draft: null, readiness, test: null } }),
-  )
-  let runRequests = 0
-  let created: { name: string; model_connection_id: string } | null = null
-  await owner.route("**/v1/workflow-runtimes", (route) => {
-    if (route.request().method() === "POST") {
-      created = route.request().postDataJSON()
-      return route.fulfill({ json: { id }, status: 201 })
-    }
-    return route.fulfill({
-      json: {
-        available: true,
-        can_create: true,
-        items: [
-          {
-            ...context,
-            readiness,
-            ready: true,
-            disabled: false,
-            preparing: false,
-            can_open: true,
-            schedule: { enabled: !!schedule.enabled, trigger: JSON.parse(schedule.trigger) },
-          },
-        ],
-      },
+  const asker = await makeAgent(owner, { name: "Reviewer", description: "reviews pull requests" })
+  const busy = await makeAgent(owner, { name: "Builder", description: "builds things" })
+  const idle = await makeAgent(owner, { name: "Idle helper" })
+
+  await askAgent(owner, asker, "Should I merge the stacked PRs?")
+  const [held] = await pullAs(owner, asker)
+  expect(held).toBeTruthy()
+  if (held)
+    await reportAs(owner, asker, held, {
+      status: "needs_you",
+      needs: { kind: "decision", question: "Merge all three now?", options: ["Merge", "Wait"] },
     })
-  })
-  await owner.route("**/v1/runtime-model-connections", (route) =>
-    route.fulfill({ json: account, status: 201 }),
-  )
-  await owner.route(`**/v1/runtime-model-connections/${account.id}/status`, (route) =>
-    route.fulfill({ json: { revoked: false, account: { status: "active" } } }),
-  )
-  await owner.route(`**/v1/contexts/${id}`, (route) => route.fulfill({ json: context }))
-  await owner.route("**/v1/runtime-model-connections?include_revoked=true", (route) =>
-    route.fulfill({ json: { items: [account] } }),
-  )
-  await owner.route(`**/v1/contexts/${id}/runtime/model-connection`, (route) =>
-    route.fulfill({
-      json: { revision: 0, connection: { ...account, revoked: false, can_manage: false } },
-    }),
-  )
-  await owner.route(`**/v1/contexts/${id}/runtime`, (route) =>
-    route.fulfill({
-      json: {
-        enabled: true,
-        managed: true,
-        can_edit: true,
-        setup: null,
-        model_connection: { ...account, revoked: false },
-        runtime: { id: "runtime_ui", disabled_at: null },
-        schedule,
-        next_run_at: schedule.enabled ? "2026-10-01T09:00:00Z" : null,
-        runs: [
-          {
-            id: "run_ui",
-            created_at: "2026-09-24T09:00:00Z",
-            status: "succeeded",
-            reason: "schedule",
-            meta: JSON.stringify({
-              runtime: {
-                report_short_id: "private-report",
-                save_status: "saved",
-                released_at: "2026-09-24T09:05:00Z",
-              },
-            }),
-            attempt: { phase: "released", save_status: "saved", result_json: null },
-          },
-        ],
-      },
-    }),
-  )
-  await owner.route(`**/v1/contexts/${id}/runtime/schedule`, async (route) => {
-    const body = route.request().postDataJSON()
-    schedule = {
-      ...schedule,
-      instruction: body.instruction,
-      trigger: JSON.stringify(
-        body.cron ? { kind: "schedule", cron: body.cron, tz: body.timezone } : { kind: "manual" },
-      ),
-      enabled: body.enabled ? 1 : 0,
-      revision: schedule.revision + 1,
-    }
-    await route.fulfill({ json: { schedule, next_run_at: null } })
-  })
-  await owner.route(`**/v1/workflow-runtimes/${id}/tests`, async (route) => {
-    runRequests++
-    await route.fulfill({ json: { run: { id: "queued_ui" } } })
-  })
-  await owner.goto("/workflows")
-  await owner.getByTestId("workflows-new").click()
-  await owner.getByTestId("workflow-create-name").fill(context.name)
-  await owner.getByTestId("model-account-select").selectOption(account.id)
-  await owner.getByTestId("workflow-create-submit").click()
-  await expect
-    .poll(() => created)
-    .toMatchObject({ name: context.name, model_connection_id: account.id })
-  await expect(owner.getByTestId("workflow-detail-configuration")).toHaveAttribute(
-    "data-state",
-    "active",
-  )
-  expect(runRequests).toBe(0)
-  await owner.getByTestId("workflow-detail-runs").click()
-  await expect(owner.getByRole("heading", { level: 1, name: context.name })).toBeVisible()
-  await expect(owner.getByTestId("context-runtime-report-run_ui")).toHaveAttribute(
-    "href",
-    "/artifacts/private-report",
-  )
-  await owner.screenshot({
-    path: testInfo.outputPath("workflow-runs-desktop.png"),
-    fullPage: true,
-    animations: "disabled",
-  })
-  await owner.getByTestId("workflow-detail-configuration").click()
-  await owner.getByTestId("context-runtime-schedule-pause").click()
-  await expect(owner.getByTestId("context-managed-run")).toBeEnabled()
-  await owner.getByTestId("context-managed-run").click()
-  await expect.poll(() => runRequests).toBe(1)
-  await owner.getByTestId("context-runtime-trigger").selectOption("manual")
-  await owner.getByTestId("context-runtime-schedule-save").click()
-  await expect.poll(() => JSON.parse(schedule.trigger).kind).toBe("manual")
-  await owner.reload()
-  await expect(owner.getByTestId("workflow-detail-configuration")).toHaveAttribute(
-    "data-state",
-    "active",
-  )
-  await expect(owner.getByTestId("context-runtime-trigger")).toHaveValue("manual")
-  await owner.setViewportSize({ width: 390, height: 844 })
-  await owner.screenshot({
-    path: testInfo.outputPath("workflow-configuration-mobile.png"),
-    fullPage: true,
-    animations: "disabled",
-  })
-  await expect(owner.getByTestId("context-managed-run")).toBeEnabled()
-  await owner.getByTestId("context-runtime-trigger").scrollIntoViewIfNeeded()
-  await owner.screenshot({
-    path: testInfo.outputPath("workflow-task-mobile.png"),
-    fullPage: true,
-    animations: "disabled",
-  })
+  await askAgent(owner, busy, "Build the release notes")
+  await pullAs(owner, busy)
+
+  await owner.goto("/agents")
+  await expect(owner.getByTestId("nav-agents")).toHaveAttribute("aria-current", "page")
+  // The rail is Agents, Inbox, Artifacts, Skills; the retired rows are gone but their pages
+  // still resolve.
+  await expect(owner.getByTestId("nav-skills")).toHaveAttribute("href", "/skills")
+  for (const gone of ["nav-contexts", "nav-workflows", "nav-chat", "nav-templates"])
+    await expect(owner.getByTestId(gone)).toHaveCount(0)
+  await expect(owner.getByTestId("agents-group-needs")).toContainText("Merge all three now?")
+  await expect(owner.getByTestId("agents-group-running")).toContainText("Builder")
+  await expect(owner.getByTestId("agents-group-running")).toContainText("Build the release notes")
+  await expect(owner.getByTestId("agents-group-scheduled")).toContainText("Digest writer")
+  await expect(owner.getByTestId("agents-group-scheduled")).toContainText("Weekdays 9:00")
+  // The asked agent sits in its own group as well as in Needs you.
+  await expect(owner.getByTestId("agents-group-asked")).toContainText("Reviewer")
+  // Never-used agents are a count until asked for.
+  await expect(owner.getByTestId(`agent-row-${idle.id}`)).toHaveCount(0)
+  await owner.getByTestId("agents-show-never").click()
+  await expect(owner.getByTestId(`agent-row-${idle.id}`)).toBeVisible()
+  await owner.screenshot({ path: testInfo.outputPath("agents-home.png"), fullPage: true })
+
+  await owner.getByTestId(`agent-row-${scheduled.id}`).click()
+  await expect(owner).toHaveURL(new RegExp(`/agents/${scheduled.id}$`))
+  await expect(owner.getByTestId("agent-title")).toHaveText("Digest writer")
+
+  // An old Context bookmark that is not an imported paper lands on the Agents home.
+  await owner.goto("/contexts/ctx_legacy")
+  await expect(owner).toHaveURL(/\/agents$/)
 })
 
-test("workflow accounts connect in place and preserve imported task logins", async ({
-  owner,
-}, testInfo) => {
-  const accounts: {
-    id: string
-    name: string
-    provider: string
-    revision: number
-    revoked_at: string | null
-    unavailable_reason: null
-  }[] = []
-  let creates = 0
-  let signIns = 0
-  let workflowCreates = 0
-  let signInState = "pending"
-  await owner.route("**/v1/me/model-credentials", (route) =>
-    route.fulfill({
-      json: {
-        credentials: [
-          { provider: "codex", kind: "login", hint: "demo", updated_at: "2026-09-25T00:00:00Z" },
-        ],
-      },
-    }),
-  )
-  await owner.route("**/v1/runtime-model-connections**", async (route) => {
-    const path = new URL(route.request().url()).pathname
-    if (path.endsWith("/runtime-model-connections")) {
-      if (route.request().method() === "POST") {
-        creates++
-        const input = route.request().postDataJSON()
-        expect(input.request_id).toBeTruthy()
-        const account = {
-          id: creates === 1 ? "rmc_browser_fixture" : `rmc_browser_fixture_${creates}`,
-          name: input.name,
-          provider: input.provider,
-          revision: 0,
-          revoked_at: null,
-          unavailable_reason: null,
-        }
-        accounts.push(account)
-        await route.fulfill({ status: 201, json: account })
-      } else
-        await route.fulfill({
-          json: { items: accounts, can_create: true, unavailable_reason: null },
-        })
-    } else if (path.endsWith("/status")) {
-      await route.fulfill({ json: { account: null, revoked: false } })
-    } else if (path.endsWith("/usage")) {
-      await route.fulfill({
-        json: { workflows: [{ id: "ctx_usage", name: "Daily review" }], other_workflow_count: 1 },
-      })
-    } else if (path.includes("/sign-in")) {
-      if (path.endsWith("/sign-in")) {
-        signIns++
-        signInState = "pending"
-      }
-      if (path.endsWith("/cancel")) signInState = "cancelled"
-      await route.fulfill({
-        json: {
-          id: "signin_fixture",
-          state: signInState,
-          user_code: "DEMO-CODE",
-          verification_url: "https://example.test/device",
-          authorize_url: null,
-          expires_at: "2099-01-01T00:00:00Z",
-        },
-      })
-    } else await route.fallback()
-  })
-  await owner.goto("/settings/model-plans")
-  await expect(owner).toHaveURL(/\/settings\/accounts$/)
-  await expect(owner.getByTestId("model-plan-row-codex")).toContainText("imported")
-  await expect(owner.getByTestId("model-plan-token")).toBeHidden()
-  await owner.getByTestId("context-model-account-add").click()
-  await owner.getByTestId("context-model-account-name").fill("Review account")
-  await owner.getByTestId("context-model-account-create").click()
-  await expect(owner.getByTestId("context-managed-model-authorize")).toBeVisible()
-  await expect(owner.getByTestId("model-account-select")).toHaveValue("rmc_browser_fixture")
-  await owner.getByTestId("context-managed-model-cancel").click()
-  await expect(owner.getByText("Sign-in cancelled. Your setup is unchanged.")).toBeVisible()
-  await owner.getByTestId("context-managed-model-connect").click()
-  await expect(owner.getByTestId("context-managed-model-authorize")).toBeVisible()
-  expect(creates).toBe(1)
-  expect(signIns).toBe(2)
-  await expect(owner.getByTestId("model-account-workflow-ctx_usage")).toHaveText("Daily review")
-  await owner.getByTestId("context-managed-model-disconnect").click()
-  await expect(owner.getByRole("dialog")).toContainText("2 affected workflow(s)")
-  await expect(owner.getByRole("dialog")).toContainText("Daily review")
-  await owner.getByTestId("confirm-dialog-cancel").click()
-  await owner.getByTestId("settings-tab-profile").click()
-  await owner.getByTestId("settings-tab-accounts").click()
-  await owner.getByTestId("model-account-select").selectOption("rmc_browser_fixture")
-  await expect(owner.getByTestId("context-managed-model-authorize")).toBeVisible()
-  expect(creates).toBe(1)
-  expect(signIns).toBe(2)
-  await testInfo.attach("Accounts", {
-    body: await owner.screenshot({ fullPage: true, animations: "disabled" }),
-    contentType: "image/png",
-  })
-
-  await owner.route("**/v1/workflow-runtimes", (route) => {
-    if (route.request().method() === "POST") workflowCreates++
-    return route.fulfill({ json: { available: true, can_create: true, items: [] } })
-  })
-  await owner.getByRole("link", { name: "Workflows", exact: true }).click()
-  await owner.getByTestId("workflows-new").click()
-  await owner.getByTestId("workflow-create-name").fill("Daily integrity review")
-  await owner.getByTestId("model-account-select").selectOption("rmc_browser_fixture")
-  await owner.getByTestId("context-managed-model-cancel").click()
-  await expect(owner.getByText("Sign-in cancelled. Your setup is unchanged.")).toBeVisible()
-  await expect(owner.getByTestId("workflow-create-name")).toHaveValue("Daily integrity review")
-  await expect(owner.getByTestId("workflow-create-submit")).toBeVisible()
-  // Connecting and cancelling inside the creation form must never submit it.
-  await owner.getByTestId("context-managed-model-connect").click()
-  await expect(owner.getByTestId("context-managed-model-authorize")).toBeVisible()
-  expect(creates).toBe(1)
-  expect(signIns).toBe(3)
-  await owner.getByTestId("context-model-account-add").click()
-  await owner.getByTestId("context-model-account-name").fill("Second review account")
-  await owner.getByTestId("context-model-account-name").press("Enter")
-  await expect(owner.getByTestId("model-account-select")).toHaveValue("rmc_browser_fixture_2")
-  await expect(owner.getByTestId("context-managed-model-authorize")).toBeVisible()
-  await expect(owner.getByTestId("workflow-create-name")).toHaveValue("Daily integrity review")
-  expect(creates).toBe(2)
-  expect(workflowCreates).toBe(0)
-  await owner.getByTestId("context-model-account-add").click()
-  await testInfo.attach("Workflow setup", {
-    body: await owner.screenshot({ fullPage: true, animations: "disabled" }),
-    contentType: "image/png",
-  })
-  await owner.setViewportSize({ width: 390, height: 844 })
-  await testInfo.attach("Workflow setup narrow", {
-    body: await owner.screenshot({ fullPage: true, animations: "disabled" }),
-    contentType: "image/png",
-  })
+test("New agent is a prompt to paste into a coding session", async ({ owner }, testInfo) => {
+  await owner.goto("/agents")
+  await owner.getByTestId("agents-new").click()
+  await expect(owner).toHaveURL(/\/agents\/new$/)
+  const prompt = owner.getByTestId("new-agent-prompt")
+  await expect(prompt).toContainText("agents tool")
+  await expect(prompt).toContainText("<what it should do>")
+  const example = owner.getByTestId("new-agent-example").first()
+  const line = (await example.textContent()) ?? ""
+  await example.click()
+  await expect(prompt).toContainText(line)
+  await expect(prompt).not.toContainText("<what it should do>")
+  await owner.screenshot({ path: testInfo.outputPath("new-agent.png"), fullPage: true })
 })
 
-test("workflow drafts save without an account and preserve edits on a revision conflict", async ({
+test("an agent's page answers, retries, and changes the agent", async ({ owner }, testInfo) => {
+  const agent = await makeAgent(owner, { name: "Analyst", description: "answers data questions" })
+  // It runs one job at a time, so each is pulled and settled before the next is asked.
+  const failedId = await askAgent(owner, agent, "Count last week's signups")
+  const [failed] = await pullAs(owner, agent)
+  expect(failed?.id).toBe(failedId)
+  if (failed)
+    await reportAs(owner, agent, failed, {
+      status: "failed",
+      result: { failure: { reason: "the warehouse refused the query", retryable: false } },
+    })
+  const needsId = await askAgent(owner, agent, "Publish the chart?")
+  const [needs] = await pullAs(owner, agent)
+  expect(needs?.id).toBe(needsId)
+  if (needs)
+    await reportAs(owner, agent, needs, {
+      status: "needs_you",
+      needs: { kind: "decision", question: "Publish it to the team?", options: ["Publish"] },
+    })
+
+  await owner.goto(`/agents/${agent.id}`)
+  const failedRow = owner.getByTestId(`job-${failedId}`)
+  await expect(failedRow).toContainText("the warehouse refused the query")
+  await owner.getByTestId(`job-retry-${failedId}`).click()
+  await expect(failedRow).toHaveAttribute("data-status", "queued")
+
+  const needsRow = owner.getByTestId(`job-${needsId}`)
+  await expect(needsRow).toContainText("Publish it to the team?")
+  await owner.getByTestId(`job-option-${needsId}-0`).click()
+  await expect(needsRow).toHaveAttribute("data-status", "queued")
+
+  // Opening a row reads its transcript.
+  await owner.getByTestId(`job-row-${needsId}`).click()
+  await expect(owner.getByTestId(`job-transcript-${needsId}`)).toContainText("Publish the chart?")
+  await owner.screenshot({ path: testInfo.outputPath("agent-jobs.png"), fullPage: true })
+
+  // Ask from the page opens a job.
+  await owner.getByTestId("agent-ask").click()
+  await owner.getByTestId("agent-ask-input").fill("Summarize the funnel")
+  await owner.getByTestId("agent-ask-send").click()
+  await expect(owner.getByTestId("agent-jobs")).toContainText("Summarize the funnel")
+
+  await owner.getByTestId("agent-tab-settings").click()
+  await expect(owner).toHaveURL(/tab=settings/)
+  await owner.getByTestId("agent-pause").click()
+  await expect(owner.getByTestId("agent-state")).toContainText("Paused")
+  await owner.getByTestId("agent-schedule-add").click()
+  await owner.getByTestId("agent-schedule-cron").fill("0 8 * * 1")
+  await owner.getByTestId("agent-schedule-instruction").fill("Write the Monday numbers.")
+  await owner.getByTestId("agent-schedule-save").click()
+  await expect(owner.getByText("Mondays 8:00")).toBeVisible()
+  await owner.getByTestId("agent-write-policy-review").click()
+  await expect(owner.getByTestId("agent-write-policy-review")).toHaveAttribute("data-state", "on")
+  const saved = await (await owner.request.get(`/v1/agents/${agent.id}`)).json()
+  expect(saved).toMatchObject({ paused: true, write_policy: "review" })
+  expect(saved.triggers).toHaveLength(1)
+  await owner.screenshot({ path: testInfo.outputPath("agent-settings.png"), fullPage: true })
+
+  await owner.getByTestId("agent-delete").click()
+  await owner.getByTestId("agent-delete-confirm").click()
+  await expect(owner).toHaveURL(/\/agents$/)
+  expect((await owner.request.get(`/v1/agents/${agent.id}`)).status()).toBe(404)
+})
+
+test("Settings lists the machines agents run on and the accounts they use", async ({
   owner,
 }, testInfo) => {
-  const manifest = await publishArtifact(owner, "draft.md", "# Saved task")
-  const context = await (
-    await owner.request.post("/v1/contexts", {
-      data: { name: "Integrity report draft", manifest_short_id: manifest },
+  const agent = await makeAgent(owner, { name: "Night shift" })
+  await pullAs(owner, agent) // its runner checks in
+
+  await owner.goto("/settings/machines")
+  await expect(owner.getByTestId("settings-tab-machines")).toHaveAttribute("aria-current", "page")
+  await expect(owner.getByTestId("machines")).toContainText("Night shift")
+  await expect(owner.getByTestId("machines")).toContainText("seen")
+  await expect(owner.getByTestId("machines-runner-command")).toContainText("runner serve")
+  // The workspace's agent brake lives here, for its owner.
+  const writes = owner.getByTestId("toggle-agent-writes")
+  await expect(writes).toBeChecked()
+  await writes.click()
+  await expect(writes).not.toBeChecked()
+  const settingsNow = await (await owner.request.get("/v1/workspace/settings")).json()
+  expect(settingsNow.agentWrites).toBe(false)
+  await writes.click()
+  await expect(writes).toBeChecked()
+  await owner.screenshot({ path: testInfo.outputPath("settings-machines.png"), fullPage: true })
+
+  await owner.goto("/settings/accounts")
+  await owner.getByTestId("account-connect").click()
+  await owner.getByTestId("account-secret").fill("sk-test-e2e-key-abcd")
+  await owner.getByTestId("account-save").click()
+  const row = owner.getByTestId("accounts").locator("[data-testid^=account-acct_]")
+  await expect(row).toContainText("Your Claude")
+  await expect(row).toContainText("abcd")
+  await owner.screenshot({ path: testInfo.outputPath("settings-accounts.png"), fullPage: true })
+  await owner.getByTestId("accounts").getByRole("button", { name: "Disconnect" }).click()
+  await owner.getByTestId("account-disconnect-confirm").click()
+  await expect(owner.getByTestId("accounts")).toHaveCount(0)
+})
+
+/** Publish a page as the agent itself, the way its runner does. */
+async function publishAsAgent(page: Page, agent: Seeded, title: string): Promise<string> {
+  const r = await page.request.post("/v1/artifacts", {
+    headers: { authorization: `Bearer ${agent.token}` },
+    multipart: {
+      file: {
+        name: "page.md",
+        mimeType: "text/markdown",
+        buffer: Buffer.from(`# ${title}\n\nbody`),
+      },
+      title,
+    },
+  })
+  expect(r.ok(), await r.text()).toBeTruthy()
+  return ((await r.json()) as { short_id: string }).short_id
+}
+
+test("Inbox answers what needs you in place and lists what agents published today", async ({
+  owner,
+}, testInfo) => {
+  const agent = await makeAgent(owner, { name: "Scribe", role: "editor" })
+  const jobId = await askAgent(owner, agent, "Draft the release note")
+  const [held] = await pullAs(owner, agent)
+  if (held)
+    await reportAs(owner, agent, held, {
+      status: "needs_you",
+      needs: { kind: "decision", question: "Ship it to the changelog?", options: ["Ship", "Hold"] },
     })
-  ).json()
-  const path = `/v1/workflow-runtimes/${context.id}`
-  expect(
-    (
-      await owner.request.put(path, {
-        data: { instruction: "", provider: "codex", revision: null },
-      })
-    ).ok(),
-  ).toBeTruthy()
-  await owner.goto(`/workflows?workflow=${context.id}&tab=configuration`)
-  await expect(owner.getByTestId("workflow-draft-instruction")).toBeVisible()
-  await owner
-    .getByTestId("workflow-draft-instruction")
-    .fill("Check the integrity report and save the findings")
-  await owner.getByTestId("workflow-draft-save").click()
-  await expect(owner.getByText("Draft saved", { exact: true })).toBeVisible()
-  await owner.reload()
-  await expect(owner.getByTestId("workflow-draft-instruction")).toHaveValue(
-    "Check the integrity report and save the findings",
-  )
-  await expect(owner.getByTestId("context-managed-run")).toBeDisabled()
-  await expect(owner.getByTestId("context-managed-setup")).toHaveCount(0)
-  const saved = await (await owner.request.get(path)).json()
-  expect(saved.draft.revision).toBe(1)
-  await owner.getByTestId("workflow-draft-instruction").fill("My unsaved edits")
-  expect(
-    (
-      await owner.request.put(path, {
-        data: { instruction: "Another editor’s version", provider: "codex", revision: 1 },
-      })
-    ).ok(),
-  ).toBeTruthy()
-  await owner.getByTestId("workflow-draft-save").click()
-  await expect(owner.getByTestId("workflow-draft-instruction")).toHaveValue("My unsaved edits")
-  await expect(owner.getByTestId("workflow-draft-reload")).toBeVisible()
-  await owner.getByTestId("workflow-draft-reload").click()
-  await expect(owner.getByTestId("workflow-draft-instruction")).toHaveValue(
-    "Another editor’s version",
-  )
-  await owner.setViewportSize({ width: 390, height: 844 })
-  await owner.screenshot({ path: testInfo.outputPath("workflow-draft-mobile.png"), fullPage: true })
+  await publishAsAgent(owner, agent, "Release note draft")
+
+  await owner.goto("/")
+  await expect(owner.getByTestId("nav-inbox")).toContainText("1")
+  await owner.getByTestId("nav-inbox").click()
+  await expect(owner).toHaveURL(/\/inbox$/)
+  const row = owner.getByTestId(`inbox-job-${jobId}`)
+  await expect(row).toContainText("Ship it to the changelog?")
+  await expect(owner.getByTestId("inbox-today")).toContainText("Release note draft")
+  await expect(owner.getByTestId("inbox-today")).toContainText("Scribe")
+  await owner.screenshot({ path: testInfo.outputPath("inbox.png"), fullPage: true })
+
+  await owner.getByTestId(`job-option-${jobId}-0`).click()
+  await expect(row).toHaveCount(0)
+  await expect(owner.getByTestId("nav-inbox")).not.toContainText("1")
+  const job = await (await owner.request.get(`/v1/jobs/${jobId}`)).json()
+  expect(job.status).toBe("queued")
+})
+
+test("a job's report page says which job it is, and the job links to it", async ({
+  owner,
+}, testInfo) => {
+  const agent = await makeAgent(owner, { name: "Reporter", role: "editor" })
+  const jobId = await askAgent(owner, agent, "Summarize the week")
+  const [held] = await pullAs(owner, agent)
+  const report = await publishAsAgent(owner, agent, "Weekly summary")
+  if (held)
+    await reportAs(owner, agent, held, {
+      status: "succeeded",
+      body_md: "Wrote the summary.",
+      report_short_id: report,
+    })
+
+  await owner.goto(`/agents/${agent.id}`)
+  await owner.getByTestId(`job-report-link-${jobId}`).click()
+  await expect(owner).toHaveURL(new RegExp(`/artifacts/${report}`))
+  const header = owner.getByTestId("job-header")
+  await expect(header).toHaveAttribute("data-status", "succeeded")
+  await expect(header).toContainText("Done")
+  await expect(header).toContainText("Reporter")
+  await expect(header).toContainText("Asked by E2E")
+  await expect(owner.getByTestId("activity-stream")).toBeVisible()
+  await owner.waitForTimeout(600) // let the document finish fading in for the picture
+  await owner.screenshot({ path: testInfo.outputPath("report-header.png") })
+
+  // An ordinary page carries no job line.
+  const plain = await publishArtifact(owner, "plain.md", "# Plain\n\nbody")
+  await openArtifact(owner, plain)
+  await expect(owner.getByTestId("job-header")).toHaveCount(0)
+})
+
+test("asking an agent from a page's margin opens a job about that page and shows the reply", async ({
+  owner,
+}, testInfo) => {
+  const agent = await makeAgent(owner, { name: "Helper", role: "editor" })
+  const page = await publishArtifact(owner, "plan.md", "# The plan\n\nbody")
+  await openArtifact(owner, page)
+  await owner.getByTestId("margin-ask-input").fill("What is missing from this plan?")
+  await owner.getByTestId("margin-ask-send").click()
+  const follow = owner.getByTestId("margin-ask-job")
+  await expect(follow).toHaveAttribute("data-status", "queued")
+
+  // The job is about this page; its runner picks it up and answers.
+  const [held] = await pullAs(owner, agent)
+  expect(held).toBeTruthy()
+  const job = await (await owner.request.get(`/v1/jobs/${held?.id}`)).json()
+  expect(job.subject).toEqual({ kind: "artifact", id: page })
+  if (held)
+    await reportAs(owner, agent, held, {
+      status: "succeeded",
+      body_md: "It has no owner for the rollout.",
+    })
+  // A queued job is re-read every 20s, so allow one full interval.
+  await expect(follow).toHaveAttribute("data-status", "succeeded", { timeout: 30_000 })
+  await expect(follow).toContainText("It has no owner for the rollout.")
+  await owner.screenshot({ path: testInfo.outputPath("margin-ask.png") })
+})
+
+test("a paper from arXiv is imported from Templates, on its own page", async ({ owner }) => {
+  await owner.goto("/templates")
+  await owner.getByTestId("template-academic-arxiv-import").click()
+  await expect(owner).toHaveURL(/\/papers\/new$/)
+  await expect(owner.getByTestId("context-arxiv-form")).toBeVisible()
+  await owner.getByTestId("context-arxiv-link").fill("not a paper")
+  await expect(owner.getByTestId("context-arxiv-submit")).toBeDisabled()
+  await owner.getByTestId("context-arxiv-link").fill("2401.12345")
+  await expect(owner.getByTestId("context-arxiv-submit")).toBeEnabled()
 })

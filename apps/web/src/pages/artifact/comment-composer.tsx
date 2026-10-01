@@ -1,4 +1,3 @@
-import { useQuery } from "@tanstack/react-query"
 import { ArrowUp } from "lucide-react"
 import {
   type CSSProperties,
@@ -9,7 +8,6 @@ import {
   useState,
 } from "react"
 import { api, type DirUser, type Mention } from "@/api"
-import { workspaceSettingsQuery } from "@/lib/queries"
 
 /** The reserved mention id for the built-in agent — the same string the server answers as
  *  (lib/comment-turn.ts), so "who was mentioned" and "who replied" are one identity. */
@@ -109,8 +107,7 @@ export function MentionField({
   // surface-ignore: an ambient read that degrades to "Derive is not offered in the picker".
   // A failure here costs one optional menu row; every other mention keeps working, so a
   // page-level error state would be wildly out of proportion to what was lost.
-  const chatEnabled =
-    useQuery({ ...workspaceSettingsQuery(), staleTime: 60_000 }).data?.chatBeta === true
+  const chatEnabled = true
   const isMobile = useIsMobile()
   const [menu, setMenu] = useState<{ at: number; end: number; q: string } | null>(null)
   const [results, setResults] = useState<DirUser[]>([])
@@ -173,7 +170,7 @@ export function MentionField({
     return () => {
       cancelled = true
     }
-  }, [menu, shortId, chatEnabled])
+  }, [menu, shortId])
 
   // Is the caret sitting at the end of an "@token"? If so, open the popover.
   const detect = (el: HTMLTextAreaElement | HTMLInputElement) => {

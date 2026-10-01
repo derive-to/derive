@@ -99,32 +99,16 @@ const STORE_BACKED = storeBacked()
 // runtime assertion exists to catch — and did, on the first run after that lane was added.
 const EXCLUDE = ["node_modules/**", "dist/**", "test/worker/**"]
 
-const shared = {
-  resolve: {
-    alias: {
-      // `cloudflare:workers` only resolves inside workerd. The Workers entry statically
-      // exports its DO classes (wrangler requires it) and one extends Container from
-      // @cloudflare/containers, which imports it — so a Node-side test of worker.ts would
-      // die on an import unrelated to what it asserts. See the stub for the full note.
-      "cloudflare:workers": fileURLToPath(
-        new URL("./test/stubs/cloudflare-workers.ts", import.meta.url),
-      ),
-    },
-  },
-}
-
 // Coverage is reported, not gated: `pnpm test:coverage` prints a summary and no
 // threshold fails on it. The per-package ratchet floors that used to live here
 // made every deletion of a weak test a red build, the wrong incentive for a suite
 // that is mostly agent-written. The block sits at the root so both projects
 // report as one number.
 export default defineConfig({
-  ...shared,
   test: {
     exclude: EXCLUDE,
     projects: [
       {
-        ...shared,
         test: {
           name: "store",
           include: STORE_BACKED,
@@ -132,7 +116,6 @@ export default defineConfig({
         },
       },
       {
-        ...shared,
         test: {
           name: "pure",
           include: ["test/**/*.test.ts"],

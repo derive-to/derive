@@ -45,37 +45,21 @@ export const credentialRoutes = (ctx: AppContext) => {
         .map((connection) => credentialView(connection, auth.userId, canManage)),
     })
   })
+  // Which agents a secret reaches: bound as a source, or named in an agent's environment.
+  // Agents are workspace-visible (GET /v1/agents), so nothing here is hidden from a member.
   app.get("/v1/credentials/:id/usage", async (c) => {
     const auth = await owned(c)
     if (auth instanceof Response) return auth
-    const items: { id: string; name: string; kind: "context" | "workflow" | "automation" }[] = []
-    let hiddenCount = 0
-    for (const context of await ctx.meta.contextsWithManifests(auth.org)) {
-      const runtime = await ctx.meta.getContextRuntimeForContext(context.id, auth.org)
+    const items: { id: string; name: string; kind: "agent" }[] = []
+    for (const agent of await ctx.meta.listAgents(auth.org)) {
       const ids = [
-        ...parseConnectionIds(context.connection_ids),
-        ...Object.values(readEnvironmentBindings(context.environment_bindings)),
-        runtime?.connection_id,
+        ...parseConnectionIds(agent.connection_ids_json),
+        ...Object.values(readEnvironmentBindings(agent.environment_json)),
       ]
-      if (!ids.includes(auth.connection.id)) continue
-      if (await ctx.canUserAskContext(auth.userId, context))
-        items.push({
-          id: context.id,
-          name: context.name,
-          kind: runtime?.connection_id === null ? "workflow" : "context",
-        })
-      else hiddenCount++
+      if (ids.includes(auth.connection.id))
+        items.push({ id: agent.id, name: agent.name, kind: "agent" })
     }
-    // Same catalogue as /v1/automations: workspace-readable, no instruction text in this view.
-    for (const automation of await ctx.meta.automationsWithExecutors(auth.org)) {
-      if (
-        automation.runtime_id ||
-        !parseConnectionIds(automation.connection_ids).includes(auth.connection.id)
-      )
-        continue
-      items.push({ id: automation.id, name: `Task ${automation.id}`, kind: "automation" })
-    }
-    return c.json({ items, hidden_count: hiddenCount })
+    return c.json({ items, hidden_count: 0 })
   })
   app.put("/v1/credentials/:id", async (c) => {
     const auth = await owned(c)
@@ -111,7 +95,6 @@ export const credentialRoutes = (ctx: AppContext) => {
     )
     if (!updated)
       return fail(c, 409, "Credential changed or was revoked. Reload before replacing it.")
-    ctx.deps.pokeRuntime?.()
     return c.json(credentialView(updated, auth.userId, auth.canManage))
   })
   return app

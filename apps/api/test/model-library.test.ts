@@ -411,7 +411,6 @@ describe("what a turn costs to route", () => {
     const { meta } = setup("lib-detached-pin")
     await meta.setOrgSettings("default", {
       ...(await meta.getOrgSettings("default")),
-      chatBeta: true,
     })
     const source = modelSource(
       catalogOf([

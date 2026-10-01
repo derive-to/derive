@@ -1,16 +1,4 @@
-import type {
-  ContextRuntimeRecord,
-  NewContextRuntime,
-  NewRuntimeSetup,
-  RunAttemptRecord,
-  RunAttemptResult,
-  RunAttemptTransition,
-  RuntimeModelBindingRecord,
-  RuntimeModelConnectionRecord,
-  RuntimeSaveStatus,
-  RuntimeSetupChange,
-  RuntimeSetupRecord,
-} from "./runtime"
+import type { AgentModelStore, AgentSandboxPhase } from "./agent-model"
 /**
  * Core owns the ports; packages/db and packages/storage provide the adapters.
  * Everything here must run on Node AND Cloudflare Workers — no Node APIs.
@@ -21,14 +9,11 @@ import type { LinkRole, Listed, Role, WorkspaceAccess } from "./roles"
 import type { SharedStateAction } from "./shared-state"
 import type { SortMode } from "./sort"
 import type {
-  WorkflowAttemptStateGuard,
   WorkflowExecutionLane,
   WorkflowRequestedExecution,
   WorkflowRunStatus,
   WorkflowStepAttemptStatus,
   WorkflowStepKind,
-  WorkflowStepTransitionGuard,
-  WorkflowTransitionGuard,
 } from "./workflow-run"
 
 export interface BlobStore {
@@ -663,8 +648,6 @@ export interface EditPreflight {
   settings: OrgSettings
   user: { name: string | null; username: string | null; email: string | null } | null
   feedback: { comments: boolean; reviews: boolean }
-  /** A workflow pinned the current version's bytes (`workflowVersionIsPinned`). */
-  pinned: boolean
   /** The caller's workspaces, as `listWorkspaces` lists them. */
   workspaces: (WorkspaceRecord & { role: Role })[]
   /** The current version's dynamic data, as `listDynamicSlots` gives it. */
@@ -717,7 +700,6 @@ export interface CatchUpRead {
   rounds: ReviewRoundRecord[]
   beforeData: VersionDataRecord[]
   afterData: VersionDataRecord[]
-  workflowRuns: WorkflowRunRecord[]
 }
 
 export interface NewVersionData {
@@ -788,11 +770,6 @@ export interface ArtifactStore {
   /** Batch-load artifacts by internal id in ONE query (id ∈ ids). Order is unspecified;
    *  callers key by `id`. Empty ids ⇒ []. Use this over a per-row getArtifactById loop. */
   getArtifactsByIds(ids: string[]): Promise<ArtifactRecord[]>
-  workflowVersionIsPinned(artifactId: string, n: number): Promise<boolean>
-  getWorkflowPublishReceipt(key: WorkflowPublishKey): Promise<WorkflowPublishReceiptRecord | null>
-  /** Append a version, record exact activity, and seal a retry receipt in one transaction.
-   * A matching retry returns the original receipt. A changed request hash fails. */
-  publishWorkflowVersion(input: WorkflowVersionPublish): Promise<WorkflowPublishReceiptRecord>
   /** Appends the next version and bumps current_version. */
   addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord>
   /**
@@ -1689,18 +1666,6 @@ export interface IntegrationStore {
   /** Remove every subscription pointing at a channel (used by `/derive unsubscribe`). */
   deleteSlackSubscriptionsByChannel(orgId: string, channelId: string): Promise<void>
   // ---- Per-user model-plan credentials -----------------------------------
-  /** A user's own model credential for a provider (encrypted `secret`), or null. */
-  getModelCredential(
-    orgId: string,
-    userId: string,
-    provider: string,
-  ): Promise<ModelCredentialRecord | null>
-  /** Upsert a user's model credential (keyed org+user+provider). */
-  setModelCredential(c: ModelCredentialRecord): Promise<void>
-  /** Remove a user's model credential for a provider. */
-  deleteModelCredential(orgId: string, userId: string, provider: string): Promise<void>
-  /** A user's connected credentials (all providers) — for the settings hint list. */
-  listModelCredentials(orgId: string, userId: string): Promise<ModelCredentialRecord[]>
   /** The Slack message a Derive thread is mirrored to (for threading replies), or null. */
   /** The Slack message mirroring a Derive thread INTO one channel, or null. A thread mirrors
    *  into every channel subscribed to its artifact, so the channel is part of the key. */
@@ -1863,19 +1828,6 @@ export interface ContextStore {
   ): Promise<(ContextRecord & { manifest_short_id: string | null })[]>
   /** Remove a context and its sessions + messages, scoped to its workspace. */
   deleteContext(id: string, orgId: string): Promise<void>
-  /** Stamp `runner_seen_at` (the queue route's liveness mark). The caller decides
-   *  WHEN — the write throttle lives there, next to the poll cadence it paces. */
-  touchContextSeen(id: string, at: string): Promise<void>
-  /** Set who may ask (workspace | invited). Does not touch the roster. */
-  setContextAskPolicy(id: string, policy: "workspace" | "invited"): Promise<void>
-  /** Repoint the Context to a replacement definition artifact. Used by migrations that
-   *  cannot preserve artifact identity because the immutable artifact kind changes. */
-  setContextManifest(id: string, manifestArtifactId: string): Promise<void>
-  /** Replace the context's bound connections (a JSON array of ids, or null for none).
-   *  Whole-list semantics: the caller has already checked every id is attachable. */
-  setContextConnections(id: string, connectionIds: string | null): Promise<void>
-  /** Replace named environment bindings; values are connection IDs, never secrets. */
-  setContextEnvironment(id: string, bindings: string | null): Promise<void>
   /** Attach, replace or remove the repository implementing an imported paper. */
   setContextCodeUrl(id: string, codeUrl: string | null): Promise<void>
   /** Link or unlink an imported paper's implementation analysis, only while the Context still
@@ -1959,16 +1911,8 @@ export interface ContextStore {
     fields: Partial<Pick<ImportLeaseRecord, "holder" | "lease_until" | "next_allowed_at">>,
   ): Promise<void>
   getImportLease(kind: ImportKind, scope: string): Promise<ImportLeaseRecord | null>
-  /** The invited-asker roster for a context (only consulted when ask_policy = invited). */
-  listContextAskers(contextId: string): Promise<ContextAskerRecord[]>
   /** Is this user on the context's asker roster? (Membership is checked separately.) */
   getContextAsker(contextId: string, userId: string): Promise<ContextAskerRecord | null>
-  /** Add a user to the roster (idempotent on the unique (context, user)). The
-   *  route validates workspace membership before calling — the store does not. */
-  addContextAsker(a: NewContextAsker): Promise<ContextAskerRecord>
-  /** Remove a user from the roster; a no-op if they weren't on it. */
-  removeContextAsker(contextId: string, userId: string): Promise<void>
-  createSession(s: NewSession): Promise<SessionRecord>
   /**
    * Open a session AND write its first message AND set the resulting state, in one call.
    * Chat's enqueue did these as three sequential statements — on the edge tier that is
@@ -1983,99 +1927,24 @@ export interface ContextStore {
     state: SessionState,
   ): Promise<{ session: SessionRecord; message: SessionMessageRecord }>
   getSession(id: string): Promise<SessionRecord | null>
-  /** Sessions on a context, newest first; `askerId` narrows to one person's.
-   *  `cursor` pages further back: a `(created_at, id)` keyset, exclusive. The id
-   *  tiebreak is load-bearing, not defensive — sessions ARE created in the same
-   *  millisecond (a script recording a batch of local runs), and a cursor on the
-   *  timestamp alone would silently drop every row sharing the boundary. Encode
-   *  and decode it with `encodeCursor`/`decodeCursor`, like `listArtifacts`. */
-  listSessions(
-    contextId: string,
-    opts?: { askerId?: string; limit?: number; cursor?: { key: string; id: string } },
-  ): Promise<SessionRecord[]>
-  /** What this context has PRODUCED: its sessions' bound result artifacts, GROUPED —
-   *  one row per artifact however many runs bound it, so a report republished nightly is
-   *  one output carrying a run count, not fifty rows of the same short id. Newest run
-   *  first. Sessions that bound nothing (a plain question) are simply absent.
-   *
-   *  Returns short ids only, deliberately: the caller resolves them through
-   *  `listArtifacts({ ids })`, so the visibility gate is the same one the library uses
-   *  and this can never widen what a viewer sees. */
-  contextOutputs(contextId: string, limit?: number): Promise<ContextOutput[]>
   /** One person's CONTEXTLESS sessions in a workspace, newest first — the chat history
    *  picker. Contextless IS the filter: a session with no context is one nobody packaged,
    *  which is exactly what the chat surfaces open. `listSessions` cannot answer this (it
    *  keys on a context id, which these do not have). Scoped to the asker: a chat session
    *  is private to the person who opened it, including from the workspace's owners. */
   listChatSessions(orgId: string, askerId: string, limit?: number): Promise<SessionRecord[]>
-  /** The runner's queue: `open` sessions on a context, oldest first. A plain
-   *  polling read that does NOT claim — `claimPendingSessions` is the
-   *  concurrency-safe path (it leases rows so overlapping runners can't
-   *  double-run one). Kept for read-only queue views. */
-  pendingSessions(contextId: string, limit: number): Promise<SessionRecord[]>
-  /** Atomically claim up to `limit` runnable sessions on a context, oldest first:
-   *  a session is runnable when `open`, or `working` with a lapsed `lease_until`
-   *  (crash recovery). Flips each to `working`, stamps `started_at`, and leases it
-   *  to `leaseUntil`; returns the claimed rows. Mirrors the webhook_delivery /
-   *  render_job lease claim (single-writer UPDATE…IN(SELECT) on sqlite/d1, FOR
-   *  UPDATE SKIP LOCKED on Postgres). */
-  claimPendingSessions(
-    contextId: string,
-    limit: number,
-    leaseUntil: string,
-  ): Promise<SessionRecord[]>
-  /** How many sessions are currently `working` on a context — the per-context
-   *  concurrency cap (the route claims min(limit, max_concurrency - working)). */
-  countWorkingSessions(contextId: string): Promise<number>
-  /** Sessions awaiting an executor across the selected workspaces (all when omitted), capped
-   *  oldest first — the hosted tick's ask-lane scan, the twin of listDueQueuedRuns. Runnable
-   *  means `open`, or `working` with a lapsed lease (a dead executor's session self-heals).
-   *  Read-only: dispatch never claims, the booted executor does. */
-  listDueOpenSessions(
-    now: string,
-    limit?: number,
-    orgIds?: readonly string[],
-  ): Promise<SessionRecord[]>
-  /** Claim EXACTLY one session for one agent (the capability-token path: a dispatched substrate
-   *  serves its one session, never a batch). open|lapsed-working → `working` under the same
-   *  lease, so a double-booted substrate loses the race and exits clean. Null when it isn't
-   *  claimable (missing, foreign agent, or already live). */
-  claimSessionById(id: string, agentId: string, leaseUntil: string): Promise<SessionRecord | null>
-  /** The newest still-live session (`open` or `working`) matching a dedupe key for a
-   *  given asker on a context, or null — the ask idempotency join. Scoped to the asker so
-   *  a shared key never joins one asker onto another's private session. */
-  findInflightSession(
-    contextId: string,
-    askerId: string,
-    dedupeKey: string,
-  ): Promise<SessionRecord | null>
-  /** Record the artifact a run produced (its short_id) on a session + bump updated_at. */
-  setResultArtifact(sessionId: string, artifactShortId: string): Promise<void>
-  /** Extend a claimed session's lease (a streaming runner's heartbeat) — keeps a
-   *  slow-but-live run from being re-served/double-run at max_concurrency > 1. */
-  renewSessionLease(sessionId: string, leaseUntil: string): Promise<void>
-  /** Status-guarded claim for a CONTEXTLESS (chat) session, which has no agent to check
-   *  ownership through. Returns the row only if this caller won: `open`, or `working` with a
-   *  lapsed lease (crash recovery). Two tabs sending at once therefore run ONE turn, and a
-   *  process that dies mid-turn leaves a lease that lapses instead of a session stuck forever. */
-  claimAttendedSession(id: string, leaseUntil: string): Promise<SessionRecord | null>
   /** Append an asker follow-up and reopen the session ATOMICALLY (compare-and-set): a
    *  `working` session stays working (don't vacate the active claim); a settled/open one
    *  goes to `open` (reclaimable), and a settled one drops its dedupe key so it can't collide
    *  with a newer same-key session. The CAS closes the settle-vs-reopen race a read-then-write
    *  would strand `working` with no runner. */
   appendFollowupReopen(m: NewSessionMessage): Promise<SessionMessageRecord>
-  /** Set a session's state and bump updated_at; null if the session is unknown. */
-  setSessionState(id: string, state: SessionState): Promise<SessionRecord | null>
   /** Append a message and set the session's state in the same call (the turn flip:
    *  an asker message re-opens; an agent message settles to answered/escalated).
    *  The caller decides the state — the store just applies both writes. */
   addSessionMessage(m: NewSessionMessage, state: SessionState): Promise<SessionMessageRecord>
   /** A session's transcript, oldest first. */
   listSessionMessages(sessionId: string): Promise<SessionMessageRecord[]>
-  /** Transcripts for a set of sessions in ONE query (session_id ∈ sessionIds), oldest
-   *  first; callers group by `session_id`. Empty ⇒ []. Use over a per-session loop. */
-  listSessionMessagesFor(sessionIds: string[]): Promise<SessionMessageRecord[]>
   /**
    * The most recent AGENT answers across every session, newest first — the sample the
    * operator's model timings are computed from.
@@ -2363,144 +2232,13 @@ export interface AgentStore {
   /** Replace the agent's token hash (org-scoped). The old bearer dies at once;
    *  identity, role, hosting, and attribution are untouched. Null = not found. */
   rotateAgentToken(id: string, orgId: string, tokenHash: string): Promise<AgentRecord | null>
-  /** Stamp `runs_seen_at` (the claim route's liveness mark). Caller throttles. */
-  touchAgentRunsSeen(id: string, at: string): Promise<void>
   listAgents(orgId: string): Promise<AgentRecord[]>
   /** Flip whether Derive's managed executor serves this agent. Workspace-scoped by
    *  (id, org) like deleteAgent; null when the agent isn't in this workspace. */
   setAgentHosted(id: string, orgId: string, hosted: 0 | 1): Promise<AgentRecord | null>
-  // ---- Automations + runs (the generic agent-work primitive) -------------
-  /** Create an automation (a standing agent job). */
-  createAutomation(a: NewAutomation): Promise<AutomationRecord>
-  /** One automation by id, or null. */
-  getAutomation(id: string): Promise<AutomationRecord | null>
-  /** Batch-load automations by id in ONE query (id ∈ ids). Order is unspecified; callers
-   *  key by `id`. Empty ids ⇒ []. Use this over a per-id getAutomation loop. */
-  getAutomationsByIds(ids: string[]): Promise<AutomationRecord[]>
-  /** A workspace's automations, newest first. Default 100. */
-  listAutomations(orgId: string, limit?: number): Promise<AutomationRecord[]>
-  /** `listAutomations` with each row's agent's `runs_seen_at` folded in (the honesty badge
-   *  — null means no executor has ever polled). The list route used to fetch automations
-   *  and the workspace's whole agent roster as two separate round trips and join them in
-   *  memory; same org, same page, one query. */
-  automationsWithExecutors(
-    orgId: string,
-    limit?: number,
-  ): Promise<(AutomationRecord & { executor_seen_at: string | null })[]>
-  /** Partial update, org-scoped (id + orgId must both match). Undefined fields are
-   *  untouched; refs null clears. Returns the updated row, or null when not found. */
-  updateAutomation(
-    id: string,
-    orgId: string,
-    fields: {
-      agent_id?: string
-      trigger?: string
-      instruction?: string
-      provider?: import("./execution").ExecutionProvider
-      refs?: string | null
-      context_id?: string | null
-      /** JSON array of connection ids this automation may spend; null clears them all. */
-      connection_ids?: string | null
-      enabled?: 0 | 1
-    },
-  ): Promise<AutomationRecord | null>
-  /** Remove an automation and cancel its still-queued runs, org-scoped so a caller can't
-   *  reach across tenants. Running/finished runs stay as history. */
-  deleteAutomation(id: string, orgId: string): Promise<void>
-  /** Enqueue or record a run. status defaults to "queued" (pending work); pass a terminal
-   *  status to record an already-finished run straight into the ledger. */
-  createRun(r: NewRun): Promise<RunRecord>
-  /** One run by id, or null. Resolves a run's initiator for the model-credential endpoint, its
-   *  automation for the tool endpoint, and its liveness when a capability token is presented. */
-  getRun(id: string): Promise<RunRecord | null>
-  /** One agent by id — resolves a run capability token to its agent principal. */
+  /** One agent by id — resolves a job capability token to its agent principal. */
   getAgent(id: string): Promise<AgentRecord | null>
-  /** Atomically claim due queued runs for one agent: status "queued" with scheduled_for ≤
-   *  now, flipped to "running" (started_at = now) under a row lock so concurrent executors
-   *  never double-run one. Returns the claimed rows, oldest-scheduled first. */
-  claimDueRuns(agentId: string, now: string, limit?: number): Promise<RunRecord[]>
-  /** Claim EXACTLY one run by id for one agent (the capability-token path: a dispatched
-   *  substrate executes its one run, never a batch). Same queued→running flip under the same
-   *  race safety; null when the run isn't claimable (missing, foreign, or already claimed —
-   *  a double-booted substrate loses this race and exits clean). */
-  claimRunById(id: string, agentId: string, now: string): Promise<RunRecord | null>
-  /** Send a RUNNING run back to the queue for a later retry, scoped to the claiming agent.
-   *  The transient-failure counterpart to finishRun: instead of a terminal row the run becomes
-   *  `queued` again with `scheduled_for` in the future (the backoff) and its attempt count in
-   *  meta. Returns the updated row, or null when the run isn't this agent's or isn't running —
-   *  OR when `expectedStartedAt` is given and no longer matches. That fence is what makes this
-   *  safe against a STALE claim: a run-scoped work token authorizes (run, agent, org) for its
-   *  whole TTL with no notion of WHICH claim episode minted it, so once a run is re-claimed,
-   *  the superseded executor's still-valid token could otherwise requeue — or, via finishRun,
-   *  outright SETTLE — a run a newer claim now owns, with no signal to either side. Passing the
-   *  started_at the caller's OWN claim began with closes that: a newer claim changes it, so a
-   *  late request from an old one matches nothing and is refused rather than silently honored.
-   *  Optional for callers with no claim identity to fence on (a human retry, a migration). */
-  requeueRun(
-    id: string,
-    agentId: string,
-    /** `costMicroUsd` banks the FAILED attempt's spend before the row goes back on the queue: a
-     *  retry reuses this same run row, so a cost not recorded here is lost for good when the run
-     *  eventually settles. Accumulates onto whatever the column already holds. */
-    fields: { scheduledFor: string; meta?: string | null; costMicroUsd?: number | null },
-    expectedStartedAt?: string | null,
-  ): Promise<RunRecord | null>
-  /** The reclaim sweep: runs stuck `running` since before `cutoffIso` (their substrate died)
-   *  go back to `queued` for re-dispatch, with an attempt count kept in meta; a run past
-   *  `maxAttempts` is finished failed (outcome "lost") instead of looping forever. */
-  reclaimStaleRuns(
-    cutoffIso: string,
-    maxAttempts?: number,
-    orgIds?: readonly string[],
-  ): Promise<{ requeued: number; failed: number }>
-  /** Every enabled automation across the selected workspaces (all when omitted), capped — the
-   *  hosted tick scans these to materialize due schedule runs. Fine at self-host scale; revisit
-   *  if it ever shows up. */
-  listEnabledAutomations(limit?: number, orgIds?: readonly string[]): Promise<AutomationRecord[]>
-  /** Queued runs due now across the selected workspaces (all when omitted), capped oldest first
-   *  — the hosted tick's dispatch scan. Read-only: dispatch does NOT claim; the booted substrate
-   *  claims. */
-  listDueQueuedRuns(now: string, limit?: number, orgIds?: readonly string[]): Promise<RunRecord[]>
-  /** Terminate a run: set the terminal status, finished_at, and (optional) cost + meta.
-   *  Scoped to (id, agent) so only the claiming agent settles it. `expectedStartedAt`, when
-   *  given, fences it to THIS caller's own claim — see requeueRun's doc for why: without it, a
-   *  stale-but-unexpired token from a claim a newer one has already superseded can settle a
-   *  run out from under the executor actually working it, overwriting its eventual real
-   *  outcome (or reporting one before the real work even finished). */
-  finishRun(
-    id: string,
-    agentId: string,
-    fields: {
-      status: RunStatus
-      finishedAt: string
-      costMicroUsd?: number | null
-      meta?: string | null
-    },
-    expectedStartedAt?: string | null,
-  ): Promise<RunRecord | null>
-  /** The workspace's recent runs, newest first (the activity view / ledger). Default 50. */
-  listRuns(orgId: string, limit?: number): Promise<RunRecord[]>
-  /** The newest run for an automation by scheduled_for (any status), or null. The schedule tick
-   *  reads it to decide whether the current cron occurrence has already been materialized — so a
-   *  runner polling several times inside one cron window enqueues exactly one run.
-   *
-   *  `reason` narrows to one kind of firing, and the tick MUST pass "schedule". Without it any
-   *  other run poisons the dedupe, because they all write a scheduled_for: a Run now and a fire
-   *  stamp `now`, and a retry stamps now+backoff, which is in the FUTURE. Each therefore reads
-   *  as "this window is already materialized" and silently swallows the cron occurrence — one
-   *  click of Run now at 10:05 makes the 10:00 hourly run never exist. */
-  latestRunForAutomation(automationId: string, reason?: string): Promise<RunRecord | null>
-  /** The newest still-queued run for an automation whose scheduled_for ≤ cutoff — the
-   *  coalescing target when a burst of webhook fires arrives close together. Null when none
-   *  is open, so the caller enqueues a fresh run. */
-  findCoalescibleRun(automationId: string, cutoffIso: string): Promise<RunRecord | null>
-  /** Append a payload into a STILL-QUEUED run's `meta.payloads[]`, guarded so it applies only
-   *  while the run is queued and its meta is unchanged since the read (optimistic concurrency).
-   *  Returns the updated row, or null if the run left the queue, was appended concurrently, or
-   *  would exceed maxMetaBytes — in every null case the caller enqueues a fresh run, so a
-   *  payload is never lost (at worst an extra run is created under contention). */
-  appendRunPayload(runId: string, payload: unknown, maxMetaBytes: number): Promise<RunRecord | null>
-  // ---- Plans (bring-your-own model + broker credentials) -----------------
+  // ---- Plans (bring-your-own broker key + monthly limit) -----------------
   /** Attach a plan. */
   createPlan(p: NewPlan): Promise<PlanRecord>
   /** One plan by id, or null. */
@@ -2513,9 +2251,6 @@ export interface AgentStore {
    *  workspace-pool plan (user_id null), else null. Money falls back; the caller treats null
    *  as the loud-failure case (no meter available). */
   resolvePlan(orgId: string, userId: string | null, kind: PlanKind): Promise<PlanRecord | null>
-  /** Sum of cost_micro_usd across the org's runs at/after an ISO cutoff — backs the budget
-   *  check at enqueue (spend this month vs a plan's monthlyMicroUsd limit). */
-  sumRunCostSince(orgId: string, sinceIso: string): Promise<number>
   // ---- Connections (per-user connected external accounts) ----------------
   /** Record a connected account. */
   createConnection(cn: NewConnection): Promise<ConnectionRecord>
@@ -2667,77 +2402,6 @@ export interface AgentStore {
   listPendingAgentMentions(agentId: string, limit: number): Promise<AgentMentionRecord[]>
   /** Mark a mention handled; false if it isn't this agent's or doesn't exist. */
   ackAgentMention(agentId: string, id: string): Promise<boolean>
-}
-
-/** Durable workflow coordination. Automation runs and context sessions remain separate records. */
-export interface WorkflowRunStore {
-  createWorkflowRun(run: NewWorkflowRun): Promise<WorkflowRunRecord>
-  /** Trusted execution callbacks resolve a run before its workspace is known. Callers must
-   * authenticate and re-check the stored assignment before acting on this unscoped lookup. */
-  getWorkflowRunById(id: string): Promise<WorkflowRunRecord | null>
-  getWorkflowRunByExternalRunId(externalRunId: string): Promise<WorkflowRunRecord | null>
-  getWorkflowRun(id: string, orgId: string): Promise<WorkflowRunRecord | null>
-  listWorkflowRuns(
-    workflowArtifactId: string,
-    orgId: string,
-    opts?: {
-      diagramId?: string
-      initiatedBy?: string
-      assignedAgentId?: string
-      limit?: number
-    },
-  ): Promise<WorkflowRunRecord[]>
-  transitionWorkflowRun(
-    id: string,
-    orgId: string,
-    expected: WorkflowTransitionGuard,
-    transition: WorkflowRunTransition,
-  ): Promise<WorkflowRunRecord | null>
-  /** Attach an authenticated provider receipt without rewriting the graph's terminal outcome. */
-  setWorkflowRunExternalReceipt(
-    id: string,
-    orgId: string,
-    externalRunId: string,
-    externalExecution: string,
-    at: string,
-  ): Promise<WorkflowRunRecord | null>
-  /** A matching provider failure may supersede an internally-successful graph because the
-   * one-shot harness itself did not complete successfully. Exact external id is mandatory. */
-  overrideSuccessfulWorkflowRunFromExternal(
-    id: string,
-    orgId: string,
-    externalRunId: string,
-    status: Extract<WorkflowRunStatus, "failed" | "cancelled" | "timed_out">,
-    externalExecution: string,
-    at: string,
-  ): Promise<WorkflowRunRecord | null>
-  createWorkflowStepAttempt(
-    orgId: string,
-    attempt: NewWorkflowStepAttempt,
-    expectedState?: WorkflowAttemptStateGuard,
-  ): Promise<WorkflowStepAttemptRecord>
-  getWorkflowStepAttemptBySession(
-    sessionId: string,
-    orgId: string,
-  ): Promise<WorkflowStepAttemptRecord | null>
-  listWorkflowStepAttempts(
-    workflowRunId: string | string[],
-    orgId: string,
-  ): Promise<WorkflowStepAttemptRecord[]>
-  transitionWorkflowStepAttempt(
-    id: string,
-    workflowRunId: string,
-    orgId: string,
-    expected: WorkflowStepTransitionGuard,
-    transition: WorkflowStepAttemptTransition,
-  ): Promise<WorkflowStepAttemptRecord | null>
-  recordWorkflowArtifactActivity(
-    activity: NewWorkflowArtifactActivity,
-  ): Promise<WorkflowArtifactActivityRecord>
-  listWorkflowArtifactActivity(
-    workflowRunId: string | string[],
-    orgId: string,
-  ): Promise<WorkflowArtifactActivityRecord[]>
 }
 
 export type SkillRelationKind = "requires" | "extends" | "recommends" | "references"
@@ -3288,7 +2952,7 @@ export interface SharedStateStore {
 }
 
 export interface MetaStore
-  extends RuntimeStore,
+  extends AgentModelStore<AgentRecord>,
     ArtifactStore,
     CommentStore,
     ArtifactQueryStore,
@@ -3302,7 +2966,6 @@ export interface MetaStore
     TemplateLibraryStore,
     DirectoryStore,
     AgentStore,
-    WorkflowRunStore,
     SkillStore,
     ArtifactScanStore,
     ModerationStore,
@@ -3481,6 +3144,36 @@ export interface AgentRecord {
    *  honesty signal behind the "No executor" badge. */
   runs_seen_at: string | null
   created_at: string
+  // ---- The agent model (what a Context used to hold, plus where it runs) ----
+  /** One line: what this agent does. Shown on the Agents list. */
+  description: string | null
+  /** The artifact the agent reads before every job (a Context's manifest). Null for a
+   *  connected tool with no instructions of its own. */
+  instructions_artifact_id: string | null
+  /** Where its jobs run: the owner's runner or MCP session, or a Derive (Ortam) sandbox. */
+  machine: import("./agent-model").AgentMachine
+  sandbox_id: string | null
+  sandbox_state_json: string | null
+  /** Derive machine lifecycle: null until one is needed (lib/job-machine.ts). */
+  sandbox_phase: AgentSandboxPhase | null
+  /** Fences every sandbox transition. */
+  sandbox_rev: number
+  /** The model account the Derive machine uses. Unused on `owner`. */
+  account_id: string | null
+  connection_ids_json: string | null
+  repositories_json: string | null
+  /** Encrypted env bindings, NAME → credential id. Never values. */
+  environment_json: string | null
+  ask_policy: import("./agent-model").AgentAskPolicy
+  write_policy: import("./agent-model").AgentWritePolicy
+  paused_at: string | null
+  /** Last claim by this agent's runner (any lane). */
+  seen_at: string | null
+  max_run_ms: number | null
+  max_concurrency: number
+  /** Which coding agent runs its jobs, and optionally which model. */
+  provider: import("./execution").ExecutionProvider
+  model: string | null
 }
 export interface NewAgent {
   id: string
@@ -3491,7 +3184,53 @@ export interface NewAgent {
   created_by?: string | null
   hosted?: 0 | 1
   managed?: 0 | 1
+  description?: string | null
+  instructions_artifact_id?: string | null
+  machine?: import("./agent-model").AgentMachine
+  connection_ids_json?: string | null
+  repositories_json?: string | null
+  environment_json?: string | null
+  ask_policy?: import("./agent-model").AgentAskPolicy
+  write_policy?: import("./agent-model").AgentWritePolicy
+  max_run_ms?: number | null
+  max_concurrency?: number
+  provider?: import("./execution").ExecutionProvider
+  model?: string | null
 }
+
+/** A principal that acts like an agent but has no row: an OAuth grant, the built-in Derive
+ *  agent. One constructor so a new agent column needs a default in exactly one place. */
+export const syntheticAgent = (
+  a: Pick<AgentRecord, "id" | "org_id" | "name" | "role"> &
+    Partial<Pick<AgentRecord, "created_by" | "token" | "created_at">>,
+): AgentRecord => ({
+  token: "",
+  created_by: null,
+  hosted: 0,
+  managed: 0,
+  runs_seen_at: null,
+  created_at: new Date(0).toISOString(),
+  description: null,
+  instructions_artifact_id: null,
+  machine: "owner",
+  sandbox_id: null,
+  sandbox_state_json: null,
+  sandbox_phase: null,
+  sandbox_rev: 0,
+  account_id: null,
+  connection_ids_json: null,
+  repositories_json: null,
+  environment_json: null,
+  ask_policy: "workspace",
+  write_policy: "publish",
+  paused_at: null,
+  seen_at: null,
+  max_run_ms: null,
+  max_concurrency: 1,
+  provider: "claude-code",
+  model: null,
+  ...a,
+})
 
 // ---- Automations + runs: the generic agent-work primitive --------------
 // Two tables, industry-standard: a DEFINITION (what to run, and the rule for when) and its
@@ -4604,17 +4343,6 @@ export interface OrgSettings {
    *  footer, embed plaque) and honor the bare `?chrome=none` embed. The Team-tier
    *  affordance; free workspaces keep the badge and the bare embed is ignored. */
   whiteLabel: boolean
-  /** Master switch for Derive-hosted agent runs in this workspace. Off silences every
-   *  hosted run (the managed executor skips the workspace); owner-run agents are
-   *  unaffected. */
-  hostedAgentsEnabled: boolean
-  /** BETA: chat with a document (the right-rail Chat tab). OFF by default — unlike every
-   *  other setting here, it is now ON by default: the surface shipped, and an opt-in nobody
-   *  finds is a feature nobody has. Setting it FALSE still turns chat off completely — the tab
-   *  does not render and the chat routes refuse — so a half-enabled state cannot leave someone
-   *  typing into a panel that will never answer. On a shared host DERIVE_CHAT_ALLOWLIST still
-   *  bounds WHICH workspaces may spend the operator's model key. */
-  chatBeta: boolean
   /**
    * WHICH CONNECTIONS CHAT MAY REACH. Connection ids, declared by an admin.
    *
@@ -4644,12 +4372,6 @@ export interface OrgSettings {
    * typo here must cost the override, never every turn in the workspace.
    */
   chatModel?: string
-  /** BETA: automations (the artifact's "Automate…" surface). Same shape and same reasoning as
-   *  {@link chatBeta}, and separate from it because they are different bets: chat is attended
-   *  and answers in the request, an automation runs unattended on a trigger and can write while
-   *  nobody is watching. Off means the entry point does not render and the create/run/fire lanes
-   *  refuse, so a workspace cannot queue work that will never be executed. */
-  automateBeta: boolean
   /** THE one agent-write switch, read fresh per turn/claim/publish. On (the default),
    *  agent writes publish live like a person's — versioned, with the publish fan-out,
    *  and a review round when one was asked for. Off, agents stop writing everywhere an
@@ -4771,21 +4493,11 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   defaultLinkRole: "none",
   defaultListed: "none",
   whiteLabel: false,
-  // Hosting on by default: it does nothing until an agent is flagged hosted, and
-  // the run-time safety is the loop itself — every write is a kept version with the
-  // publish fan-out, restore is one click, and `agentWrites` is the brake.
-  hostedAgentsEnabled: true,
-  // Chat is ON by default now: it left beta, and an opt-in that everybody has to find is a
-  // feature nobody uses. Explicitly setting it FALSE still turns it off, so a workspace that
-  // does not want it keeps that. Automations stay opt-in — they run unattended and can write
-  // while nobody is watching, which is a different bet from an attended answer.
-  chatBeta: true,
   // Empty: chat reaches no connected source until an admin names one. Connecting a server
   // must never silently widen what a conversation can do.
   chatSources: [],
   // Unset: the deploy's configured default answers, exactly as it did before this existed.
   chatModel: undefined,
-  automateBeta: false,
   // ON by default: an agent product whose agents cannot write out of the box undercuts
   // the model. The switch exists for the day a workspace wants them stopped.
   agentWrites: true,
@@ -5150,203 +4862,3 @@ export const isBundleContentType = (contentType: string | null | undefined): boo
   contentType === BUNDLE_CONTENT_TYPE ||
   contentType === SKILL_CONTENT_TYPE ||
   contentType === LATEX_BUNDLE_CONTENT_TYPE
-
-/** Control-plane operations only. Runner APIs must not expose these mutations. */
-export interface RuntimeStore {
-  saveWorkflowRepositories(input: {
-    contextId: string
-    orgId: string
-    ownerId: string
-    repositories: import("./workflow-repositories").WorkflowRepository[]
-    revision: number
-  }): Promise<ContextRecord | null>
-  getWorkflowFiles(
-    contextId: string,
-    orgId: string,
-  ): Promise<import("./runtime").WorkflowFilesRecord | null>
-  saveWorkflowFiles(input: {
-    contextId: string
-    orgId: string
-    ownerId: string
-    artifactId: string | null
-    blobKey: string | null
-    version: number | null
-    revision: number | null
-    at: string
-  }): Promise<import("./runtime").WorkflowFilesRecord | null>
-  projectWorkflowDraft(contextId: string, orgId: string, ownerId: string, at: string): Promise<void>
-  getWorkflowDraft(
-    contextId: string,
-    orgId: string,
-  ): Promise<import("./workflow-draft").WorkflowDraftRecord | null>
-  saveWorkflowDraft(input: {
-    contextId: string
-    orgId: string
-    ownerId: string
-    instruction: string
-    provider: "codex" | "claude-code"
-    revision: number | null
-    at: string
-  }): Promise<import("./workflow-draft").WorkflowDraftRecord | null>
-  createWorkflowTest(
-    input: Omit<import("./workflow-draft").WorkflowTestRecord, "status" | "created_at">,
-    at: string,
-  ): Promise<import("./workflow-draft").WorkflowTestRecord | null>
-  latestWorkflowTest(
-    contextId: string,
-    orgId: string,
-    viewer: string,
-  ): Promise<import("./workflow-draft").WorkflowTestRecord | null>
-  getWorkflowTest(
-    id: string,
-    orgId: string,
-  ): Promise<import("./workflow-draft").WorkflowTestRecord | null>
-  listPendingWorkflowTests(): Promise<import("./workflow-draft").WorkflowTestRecord[]>
-  settleWorkflowTest(id: string, orgId: string, status: "submitted" | "failed"): Promise<void>
-  retryRuntimeSetup(contextId: string, orgId: string, revision: number): Promise<boolean>
-
-  getRuntimeModelBinding(
-    contextId: string,
-    orgId: string,
-  ): Promise<RuntimeModelBindingRecord | null>
-  saveRuntimeModelBinding(input: {
-    contextId: string
-    orgId: string
-    ownerId: string
-    connectionId: string | null
-    revision: number | null
-    at: string
-  }): Promise<RuntimeModelBindingRecord | null>
-  /** Record a verified attachment while the attempt still owns the machine. */
-  applyRuntimeModelConnection(
-    attemptId: string,
-    orgId: string,
-    connectionId: string,
-  ): Promise<ContextRuntimeRecord | null>
-  createRuntimeModelConnection(
-    input: Omit<
-      RuntimeModelConnectionRecord,
-      "revision" | "revoked_at" | "created_at" | "updated_at"
-    >,
-    at: string,
-  ): Promise<RuntimeModelConnectionRecord>
-  getRuntimeModelConnection(id: string, orgId: string): Promise<RuntimeModelConnectionRecord | null>
-  listRuntimeModelConnections(
-    orgId: string,
-    ownerId: string,
-    includeRevoked?: boolean,
-  ): Promise<RuntimeModelConnectionRecord[]>
-  renameRuntimeModelConnection(
-    id: string,
-    orgId: string,
-    revision: number,
-    name: string,
-    at: string,
-  ): Promise<RuntimeModelConnectionRecord | null>
-  /** Irreversible local revocation precedes remote disconnect; repeat calls retain the receipt. */
-  revokeRuntimeModelConnection(
-    id: string,
-    orgId: string,
-    at: string,
-  ): Promise<RuntimeModelConnectionRecord | null>
-
-  getRuntimeSchedule(runtimeId: string, orgId: string): Promise<AutomationRecord | null>
-  listRuntimeSchedules(orgIds?: readonly string[]): Promise<AutomationRecord[]>
-  saveRuntimeSchedule(input: {
-    id: string
-    runtimeId: string
-    orgId: string
-    ownerId: string
-    instruction: string
-    provider: import("./execution").ExecutionProvider
-    cron: string | null
-    timezone: string
-    enabled: boolean
-    revision: number | null
-    at: string
-  }): Promise<AutomationRecord | null>
-  cancelQueuedRuntimeRun(id: string, orgId: string, at: string): Promise<void>
-  claimRunAttempt(
-    id: string,
-    orgId: string,
-    at: string,
-    scheduleRevision?: number,
-  ): Promise<RunAttemptRecord | null>
-  getContextRuntimeForContext(
-    contextId: string,
-    orgId: string,
-  ): Promise<ContextRuntimeRecord | null>
-  listPendingRuntimeRuns(limit?: number): Promise<RunRecord[]>
-  getLatestRunAttempt(runId: string, orgId: string): Promise<RunAttemptRecord | null>
-  markRuntimeRunStarted(runId: string, orgId: string, at: string): Promise<void>
-  settleRuntimeRun(
-    runId: string,
-    orgId: string,
-    attemptId: string,
-    status: "succeeded" | "failed",
-    meta: string,
-    at: string,
-  ): Promise<void>
-  /** Idempotent private report projection; caller stores the accepted result's bytes first. */
-  publishRuntimeReport(
-    attemptId: string,
-    orgId: string,
-    shortId: string,
-    blobKey: string,
-    sizeBytes: number,
-    at: string,
-  ): Promise<void>
-  /** Project a committed setup handover; manual binding cannot enter this path. */
-  bindRuntimeSetup(id: string, orgId: string, at: string): Promise<ContextRuntimeRecord | null>
-  createRuntimeSetup(input: NewRuntimeSetup, at: string): Promise<RuntimeSetupRecord | null>
-  getRuntimeSetup(contextId: string, orgId: string): Promise<RuntimeSetupRecord | null>
-  listPendingRuntimeSetups(limit?: number): Promise<RuntimeSetupRecord[]>
-  transitionRuntimeSetup(
-    id: string,
-    orgId: string,
-    revision: number,
-    change: RuntimeSetupChange,
-    at: string,
-  ): Promise<RuntimeSetupRecord | null>
-  cancelRuntimeSetup(contextId: string, orgId: string, at: string): Promise<void>
-  createContextRuntime(input: NewContextRuntime, at: string): Promise<ContextRuntimeRecord | null>
-  getContextRuntime(id: string, orgId: string): Promise<ContextRuntimeRecord | null>
-  disableContextRuntime(id: string, orgId: string, at: string): Promise<void>
-  /** Single atomic reservation. Competing jobs return null, including after a deadline expires.
-   * A released attempt can retry only if it never reached process submission. */
-  reserveRunAttempt(input: {
-    id: string
-    runId: string
-    orgId: string
-    at: string
-    deadlineAt: string
-  }): Promise<RunAttemptRecord | null>
-  getRunAttempt(id: string, orgId: string): Promise<RunAttemptRecord | null>
-  /** Cleanup scans include disabled runtimes and completed/deleted source definitions. */
-  listUnreleasedRunAttempts(limit?: number): Promise<RunAttemptRecord[]>
-  transitionRunAttempt(
-    id: string,
-    orgId: string,
-    revision: number,
-    change: RunAttemptTransition,
-    at: string,
-  ): Promise<RunAttemptRecord | null>
-  /** Immutable receipt: same content replays, conflicting content fails. Does not release compute. */
-  acceptRunAttemptResult(
-    id: string,
-    orgId: string,
-    result: RunAttemptResult,
-    at: string,
-  ): Promise<RunAttemptRecord | null>
-  /** Only after Ortam confirms compute release; failed saves retain the report and previous files. */
-  releaseRunAttempt(
-    id: string,
-    orgId: string,
-    revision: number,
-    save: {
-      status: Exclude<RuntimeSaveStatus, "pending">
-      snapshotId: string | null
-    },
-    at: string,
-  ): Promise<RunAttemptRecord | null>
-}

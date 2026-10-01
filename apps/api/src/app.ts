@@ -17,6 +17,7 @@ import { isTemplateLibrarySchemaUnavailable } from "./lib/template-library-schem
 import { mutableCacheFor, versionCacheControl } from "./lib/version-cache"
 import { log } from "./log"
 import { mountMcp } from "./mcp"
+import { accountRoutes } from "./routes/accounts"
 import { activityRoutes } from "./routes/activity"
 import { agentDiscoveryRoutes } from "./routes/agent-discovery"
 import { agentRoutes } from "./routes/agents"
@@ -25,7 +26,6 @@ import { artifactScanRoutes } from "./routes/artifact-scan"
 import { artifactRoutes } from "./routes/artifacts"
 import { assetRoutes } from "./routes/assets"
 import { attributionRoutes } from "./routes/attribution"
-import { automationRoutes } from "./routes/automations"
 import { billingRoutes } from "./routes/billing"
 import { blobRoutes } from "./routes/blob"
 import { bootstrapRoutes } from "./routes/bootstrap"
@@ -33,12 +33,6 @@ import { collectionRoutes } from "./routes/collections"
 import { commentRoutes } from "./routes/comments"
 import { conciergeRoutes } from "./routes/concierge"
 import { connectionRoutes } from "./routes/connections"
-import { contextEnvironmentRoutes } from "./routes/context-environment"
-import { contextRuntimeRoutes } from "./routes/context-runtime"
-import { contextRuntimeModelBindingRoutes } from "./routes/context-runtime-model-binding"
-import { contextRuntimeScheduleRoutes } from "./routes/context-runtime-schedule"
-import { contextRuntimeSetupRoutes } from "./routes/context-runtime-setup"
-import { contextRoutes } from "./routes/contexts"
 import { credentialRoutes } from "./routes/credentials"
 import { domainRoutes } from "./routes/domains"
 import { dynamicDataRoutes } from "./routes/dynamic-data"
@@ -49,19 +43,19 @@ import { folderRoutes } from "./routes/folders"
 import { followRoutes } from "./routes/follows"
 import { githubRoutes } from "./routes/github"
 import { githubAppRoutes } from "./routes/github-app"
+import { jobRoutes } from "./routes/jobs"
 import { latexRoutes } from "./routes/latex"
 import { mcpOauthRoutes } from "./routes/mcp-oauth"
-import { modelCredentialRoutes } from "./routes/model-credentials"
 import { moderationRoutes } from "./routes/moderation"
 import { notificationRoutes } from "./routes/notifications"
 import { oauthRoutes } from "./routes/oauth"
 import { paperFileRoutes } from "./routes/paper-files"
+import { paperImportRoutes } from "./routes/paper-imports"
 import { planRoutes } from "./routes/plans"
 import { rawRoutes } from "./routes/raw"
 import { realtimeRoutes } from "./routes/realtime"
 import { reviewRoutes } from "./routes/review"
 import { reworkRoutes } from "./routes/rework"
-import { runtimeModelConnectionRoutes } from "./routes/runtime-model-connections"
 import { seenRoutes } from "./routes/seen"
 import { sessionRoutes } from "./routes/session"
 import { sharedStateRoutes } from "./routes/shared-state"
@@ -73,8 +67,6 @@ import { systemRoutes } from "./routes/system"
 import { templateLibraryRoutes } from "./routes/template-libraries"
 import { vitalsRoutes } from "./routes/vitals"
 import { webhookRoutes } from "./routes/webhooks"
-import { workflowRuntimeRoutes } from "./routes/workflow-runtimes"
-import { workflowRoutes } from "./routes/workflows"
 import { workspaceRoutes } from "./routes/workspace"
 import { workspaceDomainRoutes } from "./routes/workspace-domains"
 import { workspaceJoinRoutes } from "./routes/workspace-join"
@@ -469,21 +461,17 @@ export function createApp(deps: AppDeps): Hono {
   // OPTIONS preflights pass through to CORS. All three allowed actions are
   // ephemeral and identity-safe (the server, not the client, names the viewer).
   const ANON_WRITE_ALLOW = [
-    /^\/v1\/runtime-attempts\/[^/]+\/(?:claim|result|tool|files|git-credential)$/, // signed attempt capability checked by each route; no general agent principal
-
     /^\/v1\/artifacts\/[^/]+\/presence$/, // ephemeral "I'm viewing" heartbeat
     /^\/v1\/artifacts\/[^/]+\/cursor$/, // ephemeral live cursor (viral viewing)
     /^\/v1\/artifacts\/[^/]+\/view$/, // de-duped, anonymous-safe view counter
     /^\/v1\/artifacts\/[^/]+\/unlock$/, // password unlock — the password is the gate
     /^\/v1\/collections\/[^/]+\/unlock$/, // collection password unlock — password is the gate
     /^\/v1\/vitals$/, // anonymous Core Web Vitals beacon (telemetry, no state)
-    /^\/v1\/automations\/[^/]+\/fire$/, // automation fire URL — the per-automation secret is the gate
     /^\/v1\/slack\/events$/, // Slack Events API — signing-secret signature is the gate
     /^\/v1\/slack\/interactivity$/, // Slack Block Kit actions — signing-secret signature is the gate
     /^\/v1\/slack\/commands$/, // Slack slash command (/derive) — signing-secret signature is the gate
     /^\/v1\/billing\/webhook$/, // Stripe webhook: the Stripe-Signature check is the gate
     /^\/v1\/(?:sync\/)?github\/webhook$/, // GitHub App webhook — the HMAC signature is the gate
-    /^\/v1\/workflow-runs\/[^/]+\/github\/exchange$/, // GitHub job — exact assignment + nonce + signed OIDC are the gate
     /^\/v1\/assets\/t\/[^/]+$/, // MCP-minted upload URL — the signed expiring token is the gate
     /^\/v1\/artifacts\/t\/[^/]+$/, // MCP-minted publish URL (create) — signed token is the gate
     /^\/v1\/drafts$/, // anonymous draft mint (the claim flow) — anonymous is the point; draftPublish IP cap + publish limiter are the gate
@@ -504,6 +492,8 @@ export function createApp(deps: AppDeps): Hono {
     workspaceRoutes,
     workspaceJoinRoutes,
     agentRoutes,
+    jobRoutes,
+    accountRoutes,
     artifactRoutes,
     sharedStateRoutes,
     dynamicDataRoutes,
@@ -527,26 +517,16 @@ export function createApp(deps: AppDeps): Hono {
     reviewRoutes,
     activityRoutes,
     seenRoutes,
-    automationRoutes,
-    planRoutes,
     connectionRoutes,
     credentialRoutes,
+    planRoutes,
     mcpOauthRoutes,
-    modelCredentialRoutes,
     conciergeRoutes,
     skillRoutes,
     artifactScanRoutes,
-    workflowRoutes,
-    workflowRuntimeRoutes,
     reworkRoutes,
     commentRoutes,
-    contextRoutes,
-    contextEnvironmentRoutes,
-    contextRuntimeRoutes,
-    contextRuntimeSetupRoutes,
-    contextRuntimeModelBindingRoutes,
-    runtimeModelConnectionRoutes,
-    contextRuntimeScheduleRoutes,
+    paperImportRoutes,
     templateLibraryRoutes,
     realtimeRoutes,
     analyticsRoutes,
@@ -610,16 +590,21 @@ export function createApp(deps: AppDeps): Hono {
       {
         name: "Contexts",
         description:
-          "Askable agent setups: wire an agent to a manifest, then open Q&A sessions against it.",
-      },
-      {
-        name: "Workflows",
-        description: "Reusable workflow definitions and their execution history.",
+          "Papers imported from arXiv: each is a read-only Context whose artifact is the paper.",
       },
       {
         name: "Agents",
         description:
-          "Registered agents (bearer tokens) and the OAuth agents a user has authorized.",
+          "Agents: named workers with instructions, a machine, and what they can reach. Also the OAuth agents a user has authorized.",
+      },
+      {
+        name: "Accounts",
+        description: "Model accounts: the credential a machine uses to call a model. Write-only.",
+      },
+      {
+        name: "Jobs",
+        description:
+          "One unit of agent work: someone asked, a schedule fired, or a graph opened a node. People ask, follow, answer, cancel, and retry; runners pull and report.",
       },
       { name: "Assets", description: "Standalone binary image assets referenced from bundles." },
       { name: "Favorites", description: "The caller's favorited artifacts." },

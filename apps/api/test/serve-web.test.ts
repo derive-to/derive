@@ -65,7 +65,7 @@ describe("serve-web: SPA vs API path contract", () => {
       "/artifacts/a1b2c3d4",
       "/claim/token",
       "/collections/collection-id",
-      "/contexts/context-id",
+      "/papers/ctx_paper",
       "/invite/token",
       "/invite/a/token",
       "/invite/c/token",

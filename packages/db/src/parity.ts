@@ -100,6 +100,10 @@ export interface TypedTables {
   follow: FollowRecord
   reviewRound: ReviewRoundRecord
   agent: AgentRecord
+  job: import("@derive/core").JobRecord
+  jobMessage: import("@derive/core").JobMessageRecord
+  agentTrigger: import("@derive/core").TriggerRecord
+  modelAccount: import("@derive/core").AccountRecord
   agentMention: AgentMentionRecord
   automation: AutomationRecord
   contextRuntime: ContextRuntimeRecord

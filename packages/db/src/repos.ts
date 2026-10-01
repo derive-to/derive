@@ -9,7 +9,6 @@ import type {
   ArtifactSkillLinkRecord,
   AssetRecord,
   AuditLogRecord,
-  AutomationRecord,
   CollectionInviteRecord,
   CollectionMemberRecord,
   CollectionPreview,
@@ -22,7 +21,6 @@ import type {
   ConnectionScope,
   ConnectionStatus,
   ContextAskerRecord,
-  ContextOutput,
   ContextRecord,
   DeliveryRecord,
   DeliveryStatus,
@@ -43,7 +41,6 @@ import type {
   Listed,
   MembershipRecord,
   MetaStore,
-  ModelCredentialRecord,
   NewAgent,
   NewAgentMention,
   NewArtifact,
@@ -54,14 +51,12 @@ import type {
   NewArtifactSkillLink,
   NewAsset,
   NewAuditLog,
-  NewAutomation,
   NewCollection,
   NewCollectionInvite,
   NewCollectionMember,
   NewComment,
   NewConnection,
   NewContext,
-  NewContextAsker,
   NewDelivery,
   NewDomain,
   NewExportJob,
@@ -76,7 +71,6 @@ import type {
   NewRenderJob,
   NewReport,
   NewReviewRound,
-  NewRun,
   NewSession,
   NewSessionMessage,
   NewSharedStateActivity,
@@ -91,9 +85,6 @@ import type {
   NewVersion,
   NewVersionData,
   NewWebhook,
-  NewWorkflowArtifactActivity,
-  NewWorkflowRun,
-  NewWorkflowStepAttempt,
   NotificationRecord,
   OAuthGrant,
   OAuthGrantSummary,
@@ -107,8 +98,6 @@ import type {
   ReportState,
   ReviewRoundRecord,
   Role,
-  RunRecord,
-  RunStatus,
   SessionMessageRecord,
   SessionRecord,
   SessionState,
@@ -138,16 +127,6 @@ import type {
   VersionDataRecord,
   VersionRecord,
   WebhookRecord,
-  WorkflowArtifactActivityRecord,
-  WorkflowAttemptStateGuard,
-  WorkflowPublishKey,
-  WorkflowPublishReceiptRecord,
-  WorkflowRunRecord,
-  WorkflowRunTransition,
-  WorkflowStepAttemptRecord,
-  WorkflowStepAttemptTransition,
-  WorkflowStepTransitionGuard,
-  WorkflowTransitionGuard,
   WorkspaceAccess,
   WorkspaceRecord,
 } from "@derive/core"
@@ -160,22 +139,13 @@ import {
   type DynamicWriteOptions,
   GLOBAL_FOLLOW_ORG,
   IMPORT_MAX_ATTEMPTS,
-  isValidWorkflowRunDefinitionPin,
-  isValidWorkflowStepContextPin,
   LINKS_FACT,
   maxRole,
-  mergeRunMeta,
   type NewDynamicRevision,
   type NewDynamicSlot,
-  parseRunMeta,
-  runCounter,
   SHARED_STATE_ACTIVITY_LIMIT,
   sortFields,
   WORKSPACE_FACT_ROW_CAP,
-  WorkflowAttemptStateConflictError,
-  workflowRunCanTransition,
-  workflowStatusIsTerminal,
-  workflowStepCanTransition,
 } from "@derive/core"
 import {
   and,
@@ -197,12 +167,12 @@ import {
   max,
   ne,
   notExists,
-  notInArray,
   or,
   type SQL,
   sql,
 } from "drizzle-orm"
 import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core"
+import { agentModelRepos } from "./agent-model-repos"
 import {
   DYNAMIC_STATE_PREFIX,
   dynamicRecord,
@@ -210,11 +180,11 @@ import {
   dynamicStatePrefix,
 } from "./dynamic-storage"
 import type { Exhaustive, Shapes } from "./parity"
-import { runtimeRepos } from "./runtime-repos"
 import {
   activitySeen,
   agent,
   agentMention,
+  agentTrigger,
   artifact,
   artifactFavorite,
   artifactInvite,
@@ -247,7 +217,10 @@ import {
   importLease,
   instanceOperator,
   invitation,
+  job,
+  jobMessage,
   membership,
+  modelAccount,
   modelCredential,
   notification,
   oauthClientWorkspace,
@@ -467,6 +440,10 @@ export const schema = {
   artifactTag,
   reviewRound,
   agent,
+  job,
+  jobMessage,
+  agentTrigger,
+  modelAccount,
   agentMention,
   automation,
   run,
@@ -542,6 +519,10 @@ const _schemaShapes: Shapes<typeof schema> = {
   follow: true,
   reviewRound: true,
   agent: true,
+  job: true,
+  jobMessage: true,
+  agentTrigger: true,
+  modelAccount: true,
   agentMention: true,
   automation: true,
   run: true,
@@ -636,6 +617,11 @@ export const parseOrgSettings = (raw: string | null): OrgSettings => {
     defaultLinkAudience: _retiredC,
     agentKillswitch,
     agentAutoEnabled: _retiredE,
+    // Retired 2026-09: agent work is one switch (`agentWrites`). Chat, automations, and
+    // hosted runs no longer have their own opt-ins; stored values are ignored.
+    chatBeta: _retiredF,
+    automateBeta: _retiredG,
+    hostedAgentsEnabled: _retiredH,
     ...rest
   } = parsed as Partial<OrgSettings> & {
     defaultUnlistedRole?: unknown
@@ -643,6 +629,9 @@ export const parseOrgSettings = (raw: string | null): OrgSettings => {
     defaultLinkAudience?: unknown
     agentKillswitch?: unknown
     agentAutoEnabled?: unknown
+    chatBeta?: unknown
+    automateBeta?: unknown
+    hostedAgentsEnabled?: unknown
   }
   // An ENGAGED emergency stop survives the retirement of its key: a stored blob that
   // pinned the old killswitch on, and says nothing newer, reads as writes-off. Nothing
@@ -682,24 +671,8 @@ export const parseOrgSettings = (raw: string | null): OrgSettings => {
  * better-sqlite3 wraps them in a sync transaction and D1 runs them sequentially,
  * the sequential versions living here).
  */
-/**
- * Cost ACCUMULATES onto whatever the run already banked — it never replaces it.
- *
- * A retry reuses the SAME run row (requeueRun), so a run that burned an expensive failed attempt
- * and then settled cheaply would report only the cheap number, undercounting exactly the runs
- * that cost the most in the column the monthly budget sums. A missing value leaves the column
- * untouched rather than nulling it, so a provider that reports nothing (Codex plain-text, an
- * older CLI) cannot erase what an earlier attempt recorded.
- *
- * Shared by finishRun and requeueRun, and mirrored in pg.ts — the two drivers must agree.
- */
-const addRunCost = (micros: number | null | undefined) =>
-  micros == null ? {} : { cost_micro_usd: sql`coalesce(${run.cost_micro_usd}, 0) + ${micros}` }
-
 export function makeRepos(db: SqliteDb) {
-  const { createRuntimeRun, ...runtimes } = runtimeRepos(
-    async (statement) => await db.all(statement),
-  )
+  const agentModel = agentModelRepos(async (statement) => await db.all(statement))
   // ---- Artifacts + versions ----------------------------------------------
   const getByShortId = async (shortId: string): Promise<ArtifactRecord | null> =>
     (await db.select().from(artifact).where(eq(artifact.short_id, shortId)).get()) ?? null
@@ -3487,52 +3460,6 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(slackInstall).where(eq(slackInstall.org_id, orgId)).run()
   }
 
-  // ---- Per-user model-plan credentials ------------------------------------
-  const modelCredWhere = (orgId: string, userId: string, provider: string) =>
-    and(
-      eq(modelCredential.org_id, orgId),
-      eq(modelCredential.user_id, userId),
-      eq(modelCredential.provider, provider),
-    )
-  const getModelCredential = async (
-    orgId: string,
-    userId: string,
-    provider: string,
-  ): Promise<ModelCredentialRecord | null> =>
-    (await db
-      .select()
-      .from(modelCredential)
-      .where(modelCredWhere(orgId, userId, provider))
-      .get()) ?? null
-  const setModelCredential = async (c: ModelCredentialRecord): Promise<void> => {
-    await db
-      .insert(modelCredential)
-      .values(c)
-      .onConflictDoUpdate({
-        target: [modelCredential.org_id, modelCredential.user_id, modelCredential.provider],
-        set: { secret: c.secret, kind: c.kind, hint: c.hint, updated_at: c.updated_at },
-      })
-      .run()
-  }
-  const deleteModelCredential = async (
-    orgId: string,
-    userId: string,
-    provider: string,
-  ): Promise<void> => {
-    await db
-      .delete(modelCredential)
-      .where(modelCredWhere(orgId, userId, provider))
-      .run()
-  }
-  const listModelCredentials = async (
-    orgId: string,
-    userId: string,
-  ): Promise<ModelCredentialRecord[]> =>
-    db
-      .select()
-      .from(modelCredential)
-      .where(and(eq(modelCredential.org_id, orgId), eq(modelCredential.user_id, userId)))
-      .all()
   const getSlackThreadLink = async (
     threadId: string,
     channel: string,
@@ -3972,30 +3899,6 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(workflowTest).where(eq(workflowTest.context_id, id)).run()
     await db.delete(context).where(eq(context.id, id)).run()
   }
-  // A no-op on an unknown id, deliberately: the caller already 404'd before
-  // stamping, and liveness is best-effort — never worth a throw.
-  const touchContextSeen = async (id: string, at: string): Promise<void> => {
-    await db.update(context).set({ runner_seen_at: at }).where(eq(context.id, id)).run()
-  }
-  const setContextAskPolicy = async (
-    id: string,
-    policy: "workspace" | "invited",
-  ): Promise<void> => {
-    await db.update(context).set({ ask_policy: policy }).where(eq(context.id, id)).run()
-  }
-  const setContextManifest = async (id: string, manifestArtifactId: string): Promise<void> => {
-    await db
-      .update(context)
-      .set({ manifest_artifact_id: manifestArtifactId })
-      .where(eq(context.id, id))
-      .run()
-  }
-  const setContextConnections = async (id: string, connectionIds: string | null): Promise<void> => {
-    await db.update(context).set({ connection_ids: connectionIds }).where(eq(context.id, id)).run()
-  }
-  const setContextEnvironment = async (id: string, bindings: string | null): Promise<void> => {
-    await db.update(context).set({ environment_bindings: bindings }).where(eq(context.id, id)).run()
-  }
   const setContextCodeUrl = async (id: string, codeUrl: string | null): Promise<void> => {
     await db.update(context).set({ code_url: codeUrl }).where(eq(context.id, id)).run()
   }
@@ -4191,13 +4094,6 @@ export function makeRepos(db: SqliteDb) {
       .from(importLease)
       .where(eq(importLease.id, importLeaseId(kind, scope)))
       .get()) as ImportLeaseRecord | undefined) ?? null
-  const listContextAskers = async (contextId: string): Promise<ContextAskerRecord[]> =>
-    db
-      .select()
-      .from(contextAsker)
-      .where(eq(contextAsker.context_id, contextId))
-      .orderBy(contextAsker.created_at)
-      .all() as Promise<ContextAskerRecord[]>
   const getContextAsker = async (
     contextId: string,
     userId: string,
@@ -4207,66 +4103,11 @@ export function makeRepos(db: SqliteDb) {
       .from(contextAsker)
       .where(and(eq(contextAsker.context_id, contextId), eq(contextAsker.user_id, userId)))
       .get()) ?? null
-  const addContextAsker = async (a: NewContextAsker): Promise<ContextAskerRecord> => {
-    await db
-      .insert(contextAsker)
-      .values(a)
-      .onConflictDoNothing({ target: [contextAsker.context_id, contextAsker.user_id] })
-      .run()
-    // Read back so a re-add returns the EXISTING row (the insert was a no-op).
-    return (await getContextAsker(a.context_id, a.user_id)) as ContextAskerRecord
-  }
-  const removeContextAsker = async (contextId: string, userId: string): Promise<void> => {
-    await db
-      .delete(contextAsker)
-      .where(and(eq(contextAsker.context_id, contextId), eq(contextAsker.user_id, userId)))
-      .run()
-  }
+  // Internal: createSessionWithMessage is the one way a session is opened.
   const createSession = async (s: NewSession): Promise<SessionRecord> =>
     (await db.insert(contextSession).values(s).returning().get()) as SessionRecord
   const getSession = async (id: string): Promise<SessionRecord | null> =>
     (await db.select().from(contextSession).where(eq(contextSession.id, id)).get()) ?? null
-  const listSessions = async (
-    contextId: string,
-    opts?: { askerId?: string; limit?: number; cursor?: { key: string; id: string } },
-  ): Promise<SessionRecord[]> => {
-    const clauses = [eq(contextSession.context_id, contextId)]
-    if (opts?.askerId) clauses.push(eq(contextSession.asker_id, opts.askerId))
-    // Keyset, not offset (a session opened mid-paging would shift every offset and
-    // repeat a row), and the id tiebreak is required, not belt-and-braces: several
-    // sessions really do share a created_at, and `created_at < key` alone would skip
-    // every one of them at the page boundary.
-    const cur = opts?.cursor
-    if (cur)
-      clauses.push(
-        or(
-          lt(contextSession.created_at, cur.key),
-          and(eq(contextSession.created_at, cur.key), lt(contextSession.id, cur.id)),
-        ) as SQL,
-      )
-    return db
-      .select()
-      .from(contextSession)
-      .where(and(...clauses))
-      .orderBy(desc(contextSession.created_at), desc(contextSession.id))
-      .limit(opts?.limit ?? 50)
-      .all()
-  }
-  const contextOutputs = async (contextId: string, limit?: number): Promise<ContextOutput[]> =>
-    db
-      .select({
-        short_id: contextSession.result_artifact_id,
-        runs: count(),
-        last_run_at: sql<string>`max(coalesce(${contextSession.updated_at}, ${contextSession.created_at}))`,
-      })
-      .from(contextSession)
-      .where(
-        and(eq(contextSession.context_id, contextId), isNotNull(contextSession.result_artifact_id)),
-      )
-      .groupBy(contextSession.result_artifact_id)
-      .orderBy(desc(sql`max(coalesce(${contextSession.updated_at}, ${contextSession.created_at}))`))
-      .limit(limit ?? 50)
-      .all() as Promise<ContextOutput[]>
   const listChatSessions = async (
     orgId: string,
     askerId: string,
@@ -4285,169 +4126,6 @@ export function makeRepos(db: SqliteDb) {
       .orderBy(desc(contextSession.created_at))
       .limit(limit ?? 50)
       .all()
-  const pendingSessions = async (contextId: string, limit: number): Promise<SessionRecord[]> =>
-    db
-      .select()
-      .from(contextSession)
-      .where(and(eq(contextSession.context_id, contextId), eq(contextSession.state, "open")))
-      .orderBy(asc(contextSession.created_at))
-      .limit(limit)
-      .all()
-  const claimPendingSessions = async (
-    contextId: string,
-    limit: number,
-    leaseUntil: string,
-  ): Promise<SessionRecord[]> => {
-    // sqlite/d1 are single-writer, so the UPDATE…WHERE id IN (SELECT…) claim is
-    // atomic without row locks (the claimDueDeliveries / claimDueRenderJobs pattern).
-    // Runnable = `open`, or `working` with a lapsed lease (crash recovery); the
-    // `working` flip + lease hide the rows from overlapping claims until it lapses.
-    const now = new Date().toISOString()
-    const runnable = db
-      .select({ id: contextSession.id })
-      .from(contextSession)
-      .where(
-        and(
-          eq(contextSession.context_id, contextId),
-          or(
-            eq(contextSession.state, "open"),
-            // A `working` row with a lapsed OR missing lease is reclaimable (crash recovery,
-            // and a never-leased zombie self-heals) — mirrors countWorkingSessions, which
-            // only counts LIVE leases toward the cap.
-            and(
-              eq(contextSession.state, "working"),
-              or(lte(contextSession.lease_until, now), isNull(contextSession.lease_until)),
-            ),
-          ),
-        ),
-      )
-      .orderBy(asc(contextSession.created_at))
-      .limit(limit)
-    return (await db
-      .update(contextSession)
-      .set({ state: "working", started_at: now, lease_until: leaseUntil, updated_at: now })
-      .where(inArray(contextSession.id, runnable))
-      .returning()) as SessionRecord[]
-  }
-  // Count only LIVE working sessions (lease not lapsed): a crashed run whose lease has
-  // expired must NOT fill the concurrency cap, or the queue wedges — the lapsed-lease
-  // reclaim lives in claimPendingSessions, which only runs when there is room.
-  const listDueOpenSessions = async (
-    now: string,
-    limit = 50,
-    orgIds?: readonly string[],
-  ): Promise<SessionRecord[]> =>
-    orgIds?.length === 0
-      ? []
-      : ((await db
-          .select()
-          .from(contextSession)
-          .where(
-            and(
-              orgIds ? inArray(contextSession.org_id, [...orgIds]) : undefined,
-              or(
-                eq(contextSession.state, "open"),
-                // A `working` row whose lease lapsed (or never existed) is a dead executor's
-                // session — runnable again, exactly as claimPendingSessions treats it.
-                and(
-                  eq(contextSession.state, "working"),
-                  or(isNull(contextSession.lease_until), lt(contextSession.lease_until, now)),
-                ),
-              ),
-            ),
-          )
-          .orderBy(contextSession.created_at)
-          .limit(limit)
-          .all()) as SessionRecord[])
-  const claimSessionById = async (
-    id: string,
-    agentId: string,
-    leaseUntil: string,
-  ): Promise<SessionRecord | null> => {
-    // The session belongs to a CONTEXT, and the context names the agent — so ownership is
-    // checked through it rather than on the row. A foreign agent claims nothing.
-    const s = await db.select().from(contextSession).where(eq(contextSession.id, id)).get()
-    if (!s) return null
-    // A session with NO context has no agent that owns it, so no external agent may claim it —
-    // the default-agent path is served in-process by the API, which already authorized the asker.
-    // Fail closed here rather than letting any agent answer into someone's private chat.
-    if (!s.context_id) return null
-    const cx = await db.select().from(context).where(eq(context.id, s.context_id)).get()
-    if (!cx || cx.agent_id !== agentId) return null
-    const now = new Date().toISOString()
-    return (
-      (await db
-        .update(contextSession)
-        .set({ state: "working", started_at: now, lease_until: leaseUntil, updated_at: now })
-        .where(
-          and(
-            eq(contextSession.id, id),
-            or(
-              eq(contextSession.state, "open"),
-              and(
-                eq(contextSession.state, "working"),
-                or(isNull(contextSession.lease_until), lt(contextSession.lease_until, now)),
-              ),
-            ),
-          ),
-        )
-        .returning()
-        .get()) ?? null
-    )
-  }
-  const countWorkingSessions = async (contextId: string): Promise<number> => {
-    const now = new Date().toISOString()
-    return (
-      (
-        await db
-          .select({ n: count() })
-          .from(contextSession)
-          .where(
-            and(
-              eq(contextSession.context_id, contextId),
-              eq(contextSession.state, "working"),
-              gt(contextSession.lease_until, now),
-            ),
-          )
-          .get()
-      )?.n ?? 0
-    )
-  }
-  const findInflightSession = async (
-    contextId: string,
-    askerId: string,
-    dedupeKey: string,
-  ): Promise<SessionRecord | null> =>
-    (await db
-      .select()
-      .from(contextSession)
-      .where(
-        and(
-          eq(contextSession.context_id, contextId),
-          eq(contextSession.asker_id, askerId),
-          eq(contextSession.dedupe_key, dedupeKey),
-          inArray(contextSession.state, ["open", "working"]),
-        ),
-      )
-      .orderBy(desc(contextSession.created_at))
-      .limit(1)
-      .get()) ?? null
-  const setResultArtifact = async (sessionId: string, artifactShortId: string): Promise<void> => {
-    await db
-      .update(contextSession)
-      .set({ result_artifact_id: artifactShortId, updated_at: new Date().toISOString() })
-      .where(eq(contextSession.id, sessionId))
-      .run()
-  }
-  // Extend a claimed session's lease — a runner streaming progress is alive, so its
-  // lease must move forward or a slow-but-live run gets re-served and double-run.
-  const renewSessionLease = async (sessionId: string, leaseUntil: string): Promise<void> => {
-    await db
-      .update(contextSession)
-      .set({ lease_until: leaseUntil, updated_at: new Date().toISOString() })
-      .where(eq(contextSession.id, sessionId))
-      .run()
-  }
   // Append an asker follow-up and reopen the session in ONE atomic compare-and-set: a
   // `working` session STAYS working (don't vacate the active claim), while a settled or open
   // one goes to `open` (reclaimable), dropping the dedupe key on the settled path so it can't
@@ -4471,42 +4149,6 @@ export function makeRepos(db: SqliteDb) {
       .run()
     return row
   }
-  const claimAttendedSession = async (
-    id: string,
-    leaseUntil: string,
-  ): Promise<SessionRecord | null> => {
-    const now = new Date().toISOString()
-    // Contextless only — an agent-owned session still goes through claimSessionById, which
-    // checks ownership through the context. The status predicate IS the exclusion: a second
-    // caller finds neither `open` nor a lapsed lease and gets nothing.
-    return (
-      (await db
-        .update(contextSession)
-        .set({ state: "working", started_at: now, lease_until: leaseUntil, updated_at: now })
-        .where(
-          and(
-            eq(contextSession.id, id),
-            isNull(contextSession.context_id),
-            or(
-              eq(contextSession.state, "open"),
-              and(
-                eq(contextSession.state, "working"),
-                or(lte(contextSession.lease_until, now), isNull(contextSession.lease_until)),
-              ),
-            ),
-          ),
-        )
-        .returning()
-        .get()) ?? null
-    )
-  }
-  const setSessionState = async (id: string, state: SessionState): Promise<SessionRecord | null> =>
-    (await db
-      .update(contextSession)
-      .set({ state, updated_at: new Date().toISOString() })
-      .where(eq(contextSession.id, id))
-      .returning()
-      .get()) ?? null
   // Two writes, no transaction (the createReviewRound pattern; D1 has no txn in
   // this driver). A crash between them leaves state stale: an unsettled agent
   // turn is caught by the runner's last-turn guard; a lost asker `open` waits
@@ -4554,15 +4196,6 @@ export function makeRepos(db: SqliteDb) {
       .orderBy(desc(sessionMessage.created_at))
       .limit(limit)
       .all()
-  const listSessionMessagesFor = async (sessionIds: string[]): Promise<SessionMessageRecord[]> =>
-    sessionIds.length === 0
-      ? []
-      : db
-          .select()
-          .from(sessionMessage)
-          .where(inArray(sessionMessage.session_id, sessionIds))
-          .orderBy(asc(sessionMessage.created_at))
-          .all()
 
   // ---- Notifications -----------------------------------------------------
   const createNotification = async (n: NewNotification): Promise<void> => {
@@ -4602,9 +4235,6 @@ export function makeRepos(db: SqliteDb) {
   // ---- Agents + pull inbox -----------------------------------------------
   const createAgent = async (a: NewAgent): Promise<AgentRecord> =>
     (await db.insert(agent).values(a).returning().get()) as AgentRecord
-  const touchAgentRunsSeen = async (id: string, at: string): Promise<void> => {
-    await db.update(agent).set({ runs_seen_at: at }).where(eq(agent.id, id)).run()
-  }
   const rotateAgentToken = async (
     id: string,
     orgId: string,
@@ -4629,896 +4259,7 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(agent.id, id), eq(agent.org_id, orgId)))
       .returning()
       .get()) ?? null
-  const createAutomation = async (a: NewAutomation): Promise<AutomationRecord> =>
-    (await db.insert(automation).values(a).returning().get()) as AutomationRecord
-  const getAutomation = async (id: string): Promise<AutomationRecord | null> =>
-    (await db.select().from(automation).where(eq(automation.id, id)).get()) ?? null
-  const getAutomationsByIds = async (ids: string[]): Promise<AutomationRecord[]> =>
-    ids.length === 0 ? [] : db.select().from(automation).where(inArray(automation.id, ids)).all()
-  const listAutomations = async (orgId: string, limit = 100): Promise<AutomationRecord[]> =>
-    db
-      .select()
-      .from(automation)
-      .where(eq(automation.org_id, orgId))
-      .orderBy(desc(automation.created_at))
-      .limit(limit)
-      .all()
-  const updateAutomation = async (
-    id: string,
-    orgId: string,
-    fields: {
-      agent_id?: string
-      trigger?: string
-      instruction?: string
-      provider?: import("@derive/core").ExecutionProvider
-      refs?: string | null
-      context_id?: string | null
-      /** JSON array of connection ids this automation may spend; null clears them all. */
-      connection_ids?: string | null
-      enabled?: 0 | 1
-    },
-  ): Promise<AutomationRecord | null> => {
-    const set: Record<string, unknown> = {}
-    if (fields.agent_id !== undefined) set.agent_id = fields.agent_id
-    if (fields.trigger !== undefined) set.trigger = fields.trigger
-    if (fields.instruction !== undefined) set.instruction = fields.instruction
-    if (fields.provider !== undefined) set.provider = fields.provider
-    if (fields.refs !== undefined) set.refs = fields.refs
-    if (fields.context_id !== undefined) set.context_id = fields.context_id
-    if (fields.connection_ids !== undefined) set.connection_ids = fields.connection_ids
-    if (fields.enabled !== undefined) set.enabled = fields.enabled
-    if (Object.keys(set).length === 0) return getAutomation(id)
-    return (
-      (await db
-        .update(automation)
-        .set(set)
-        .where(
-          and(eq(automation.id, id), eq(automation.org_id, orgId), isNull(automation.runtime_id)),
-        )
-        .returning()
-        .get()) ?? null
-    )
-  }
-  const deleteAutomation = async (id: string, orgId: string): Promise<void> => {
-    // Cancel pending work first, then remove the definition — both org-scoped so a stray
-    // caller can't reach across tenants. Running/finished runs stay as history.
-    await db
-      .delete(run)
-      .where(
-        and(
-          eq(run.automation_id, id),
-          eq(run.org_id, orgId),
-          eq(run.status, "queued"),
-          isNull(run.runtime_id),
-        ),
-      )
-      .run()
-    await db
-      .delete(automation)
-      .where(and(eq(automation.id, id), eq(automation.org_id, orgId)))
-      .run()
-  }
-  const createRun = async (r: NewRun): Promise<RunRecord> => {
-    if (r.runtime_id != null || r.input_snapshot != null) return await createRuntimeRun(r)
-    if (r.automation_id && (await getAutomation(r.automation_id))?.runtime_id)
-      throw new Error("A runtime schedule requires the runtime admission path")
-    return (await db
-      .insert(run)
-      .values({ ...r, status: r.status ?? "queued" })
-      .returning()
-      .get()) as RunRecord
-  }
-  const getRun = async (id: string): Promise<RunRecord | null> =>
-    ((await db.select().from(run).where(eq(run.id, id)).get()) as RunRecord | undefined) ?? null
-  const claimDueRuns = async (agentId: string, now: string, limit = 20): Promise<RunRecord[]> => {
-    // The oldest queued runs due now for this agent, flipped to running under a row lock so
-    // two executors never claim the same run. A null scheduled_for means "as soon as possible";
-    // coalesce to '' so it orders FIRST identically on sqlite and Postgres (asc(scheduled_for)
-    // alone puts NULLs first on sqlite but last on pg — a cross-dialect divergence).
-    const due = db
-      .select({ id: run.id })
-      .from(run)
-      .where(
-        and(
-          eq(run.agent_id, agentId),
-          eq(run.status, "queued"),
-          isNull(run.runtime_id),
-          or(isNull(run.scheduled_for), lte(run.scheduled_for, now)),
-        ),
-      )
-      .orderBy(sql`coalesce(${run.scheduled_for}, '') asc`)
-      .limit(limit)
-    return (await db
-      .update(run)
-      .set({ status: "running", started_at: now })
-      .where(inArray(run.id, due))
-      .returning()) as RunRecord[]
-  }
-  const finishRun = async (
-    id: string,
-    agentId: string,
-    fields: {
-      status: RunStatus
-      finishedAt: string
-      costMicroUsd?: number | null
-      meta?: string | null
-    },
-    expectedStartedAt?: string | null,
-  ): Promise<RunRecord | null> =>
-    // Strict running → terminal transition: only the claiming agent, and only a run that is
-    // actually running. Guards a duplicate/retried finish from clobbering a settled run's
-    // status/cost, and stops a finish from terminating a never-claimed queued run. FENCED on
-    // started_at too, when supplied — see requeueRun's twin comment: without it, a stale but
-    // unexpired token from a claim a newer one has superseded can settle a run out from under
-    // the executor actually working it.
-    (await db
-      .update(run)
-      .set({
-        status: fields.status,
-        finished_at: fields.finishedAt,
-        ...addRunCost(fields.costMicroUsd),
-        meta: fields.meta ?? null,
-      })
-      .where(
-        and(
-          eq(run.id, id),
-          eq(run.agent_id, agentId),
-          eq(run.status, "running"),
-          isNull(run.runtime_id),
-          expectedStartedAt === undefined
-            ? undefined
-            : expectedStartedAt === null
-              ? isNull(run.started_at)
-              : eq(run.started_at, expectedStartedAt),
-        ),
-      )
-      .returning()
-      .get()) ?? null
-  const listRuns = async (orgId: string, limit = 50): Promise<RunRecord[]> =>
-    db
-      .select()
-      .from(run)
-      .where(eq(run.org_id, orgId))
-      .orderBy(desc(run.created_at))
-      .limit(limit)
-      .all()
-  const latestRunForAutomation = async (
-    automationId: string,
-    reason?: string,
-  ): Promise<RunRecord | null> =>
-    (await db
-      .select()
-      .from(run)
-      .where(
-        reason
-          ? and(eq(run.automation_id, automationId), eq(run.reason, reason))
-          : eq(run.automation_id, automationId),
-      )
-      .orderBy(sql`coalesce(${run.scheduled_for}, '') desc`)
-      .limit(1)
-      .get()) ?? null
-  const claimRunById = async (
-    id: string,
-    agentId: string,
-    now: string,
-  ): Promise<RunRecord | null> =>
-    // The capability-token claim: exactly this run, queued → running. The status guard in the
-    // WHERE is the race safety — a double-booted substrate's second update matches zero rows.
-    (await db
-      .update(run)
-      .set({ status: "running", started_at: now })
-      .where(
-        and(
-          eq(run.id, id),
-          eq(run.agent_id, agentId),
-          eq(run.status, "queued"),
-          isNull(run.runtime_id),
-        ),
-      )
-      .returning()
-      .get()) ?? null
-  const requeueRun = async (
-    id: string,
-    agentId: string,
-    fields: { scheduledFor: string; meta?: string | null; costMicroUsd?: number | null },
-    expectedStartedAt?: string | null,
-  ): Promise<RunRecord | null> =>
-    // Strict running → queued, only for the claiming agent: the status guard stops a duplicate
-    // or late retry request from resurrecting a run that already settled. FENCED on
-    // started_at too, when the caller supplies it — the same technique reclaimStaleRuns uses,
-    // here because status+agent alone can't tell "my own claim" from "a claim that superseded
-    // mine": a run-scoped token has no notion of which claim episode minted it, so without
-    // this a stale-but-unexpired token could requeue a run a newer claim already owns.
-    (await db
-      .update(run)
-      .set({
-        status: "queued",
-        started_at: null,
-        scheduled_for: fields.scheduledFor,
-        ...addRunCost(fields.costMicroUsd),
-        ...(fields.meta === undefined ? {} : { meta: fields.meta }),
-      })
-      .where(
-        and(
-          eq(run.id, id),
-          eq(run.agent_id, agentId),
-          eq(run.status, "running"),
-          isNull(run.runtime_id),
-          expectedStartedAt === undefined
-            ? undefined
-            : expectedStartedAt === null
-              ? isNull(run.started_at)
-              : eq(run.started_at, expectedStartedAt),
-        ),
-      )
-      .returning()
-      .get()) ?? null
-  const reclaimStaleRuns = async (
-    cutoffIso: string,
-    maxAttempts = 3,
-    orgIds?: readonly string[],
-  ): Promise<{ requeued: number; failed: number }> => {
-    if (orgIds?.length === 0) return { requeued: 0, failed: 0 }
-    // Substrate died mid-run: running since before the cutoff. Requeue with an attempt count
-    // in meta (JSON attribute, not a column); give up as failed/lost past maxAttempts.
-    const stale = (await db
-      .select()
-      .from(run)
-      .where(
-        and(
-          orgIds ? inArray(run.org_id, [...orgIds]) : undefined,
-          eq(run.status, "running"),
-          isNull(run.runtime_id),
-          lte(run.started_at, cutoffIso),
-        ),
-      )
-      .limit(100)
-      .all()) as RunRecord[]
-    let requeued = 0
-    let failed = 0
-    for (const r of stale) {
-      const attempts = runCounter(parseRunMeta(r.meta), "attempts") + 1
-      // Past the cap the run is given up as `lost`; otherwise it goes back to the queue with
-      // the count carried forward. Both merge into the existing blob so the previous attempt's
-      // outcome survives.
-      const settled = attempts >= maxAttempts
-      await db
-        .update(run)
-        .set(
-          settled
-            ? {
-                status: "failed",
-                finished_at: cutoffIso,
-                meta: mergeRunMeta(r.meta, { attempts, outcome: "lost" }),
-              }
-            : { status: "queued", started_at: null, meta: mergeRunMeta(r.meta, { attempts }) },
-        )
-        // FENCED on started_at, not just on status. This SELECT-then-UPDATE is the one
-        // non-transactional sequence here, and two sweeps run concurrently as a matter of
-        // course: the dispatch tick sweeps every 60s while EVERY polling agent claim sweeps
-        // globally. Guarding on status alone cannot tell "still the same stale execution"
-        // from "a different execution claimed it since I read it", so sweep B could requeue
-        // a run that executor E2 had just claimed — leaving E2 live with a valid token while
-        // E3 was dispatched for the same run, and both able to write the artifact. Pinning
-        // started_at to the value read means a re-claimed run no longer matches, and the
-        // late sweep updates nothing.
-        .where(
-          and(
-            eq(run.id, r.id),
-            eq(run.status, "running"),
-            isNull(run.runtime_id),
-            r.started_at === null ? isNull(run.started_at) : eq(run.started_at, r.started_at),
-          ),
-        )
-      if (settled) failed += 1
-      else requeued += 1
-    }
-    return { requeued, failed }
-  }
-  const listEnabledAutomations = async (
-    limit = 500,
-    orgIds?: readonly string[],
-  ): Promise<AutomationRecord[]> =>
-    orgIds?.length === 0
-      ? []
-      : ((await db
-          .select()
-          .from(automation)
-          .where(
-            and(
-              orgIds ? inArray(automation.org_id, [...orgIds]) : undefined,
-              eq(automation.enabled, 1),
-            ),
-          )
-          .limit(limit)
-          .all()) as AutomationRecord[])
-  const listDueQueuedRuns = async (
-    now: string,
-    limit = 50,
-    orgIds?: readonly string[],
-  ): Promise<RunRecord[]> =>
-    orgIds?.length === 0
-      ? []
-      : ((await db
-          .select()
-          .from(run)
-          .where(
-            and(
-              orgIds ? inArray(run.org_id, [...orgIds]) : undefined,
-              eq(run.status, "queued"),
-              isNull(run.runtime_id),
-              or(isNull(run.scheduled_for), lte(run.scheduled_for, now)),
-            ),
-          )
-          .orderBy(sql`coalesce(${run.scheduled_for}, '') asc`)
-          .limit(limit)
-          .all()) as RunRecord[])
-  const findCoalescibleRun = async (
-    automationId: string,
-    cutoffIso: string,
-  ): Promise<RunRecord | null> =>
-    (await db
-      .select()
-      .from(run)
-      .where(
-        and(
-          eq(run.automation_id, automationId),
-          eq(run.status, "queued"),
-          isNull(run.runtime_id),
-          lte(run.scheduled_for, cutoffIso),
-        ),
-      )
-      .orderBy(desc(run.created_at))
-      .limit(1)
-      .get()) ?? null
-  const appendRunPayload = async (
-    runId: string,
-    payload: unknown,
-    maxMetaBytes: number,
-  ): Promise<RunRecord | null> => {
-    // Read the current meta, then CAS on it: the UPDATE applies only while the run is still
-    // queued AND its meta is unchanged since the read. A concurrent claim (→ running) or a
-    // racing append both fall through to null, and the caller enqueues a fresh run — so a
-    // payload is never dropped, at worst an extra run is created under contention.
-    const row = await db
-      .select()
-      .from(run)
-      .where(and(eq(run.id, runId), eq(run.status, "queued"), isNull(run.runtime_id)))
-      .get()
-    if (!row?.meta) return null
-    let parsed: Record<string, unknown>
-    try {
-      parsed = JSON.parse(row.meta) as Record<string, unknown>
-    } catch {
-      return null
-    }
-    const payloads = Array.isArray(parsed.payloads) ? parsed.payloads : []
-    const nextMeta = JSON.stringify({ ...parsed, payloads: [...payloads, payload] })
-    if (nextMeta.length > maxMetaBytes) return null
-    return (
-      (await db
-        .update(run)
-        .set({ meta: nextMeta })
-        .where(
-          and(
-            eq(run.id, runId),
-            eq(run.status, "queued"),
-            isNull(run.runtime_id),
-            eq(run.meta, row.meta),
-          ),
-        )
-        .returning()
-        .get()) ?? null
-    )
-  }
-  const createWorkflowRun = async (r: NewWorkflowRun): Promise<WorkflowRunRecord> => {
-    if (!isValidWorkflowRunDefinitionPin(r))
-      throw new Error("workflow run requires a complete version pin")
-    const createdAt = r.created_at ?? new Date().toISOString()
-    return (await db
-      .insert(workflowRun)
-      .values({ ...r, created_at: createdAt, updated_at: createdAt })
-      .returning()
-      .get()) as WorkflowRunRecord
-  }
-  const getWorkflowRun = async (id: string, orgId: string): Promise<WorkflowRunRecord | null> =>
-    ((await db
-      .select()
-      .from(workflowRun)
-      .where(and(eq(workflowRun.id, id), eq(workflowRun.org_id, orgId)))
-      .get()) as WorkflowRunRecord | undefined) ?? null
-  const getWorkflowRunById = async (id: string): Promise<WorkflowRunRecord | null> =>
-    ((await db.select().from(workflowRun).where(eq(workflowRun.id, id)).get()) as
-      | WorkflowRunRecord
-      | undefined) ?? null
-  const getWorkflowRunByExternalRunId = async (
-    externalRunId: string,
-  ): Promise<WorkflowRunRecord | null> =>
-    ((await db
-      .select()
-      .from(workflowRun)
-      .where(eq(workflowRun.external_run_id, externalRunId))
-      .get()) as WorkflowRunRecord | undefined) ?? null
-  const listWorkflowRuns = async (
-    workflowArtifactId: string,
-    orgId: string,
-    opts: {
-      diagramId?: string
-      initiatedBy?: string
-      assignedAgentId?: string
-      limit?: number
-    } = {},
-  ): Promise<WorkflowRunRecord[]> => {
-    const limit = Math.max(1, Math.min(opts.limit ?? 20, 100))
-    return (await db
-      .select()
-      .from(workflowRun)
-      .where(
-        and(
-          eq(workflowRun.workflow_artifact_id, workflowArtifactId),
-          eq(workflowRun.org_id, orgId),
-          opts.diagramId ? eq(workflowRun.diagram_id, opts.diagramId) : undefined,
-          opts.initiatedBy || opts.assignedAgentId
-            ? or(
-                opts.initiatedBy ? eq(workflowRun.initiated_by, opts.initiatedBy) : undefined,
-                opts.assignedAgentId
-                  ? eq(workflowRun.assigned_agent_id, opts.assignedAgentId)
-                  : undefined,
-              )
-            : undefined,
-        ),
-      )
-      .orderBy(desc(workflowRun.created_at), desc(workflowRun.id))
-      .limit(limit)
-      .all()) as WorkflowRunRecord[]
-  }
-  const transitionWorkflowRun = async (
-    id: string,
-    orgId: string,
-    expected: WorkflowTransitionGuard,
-    transition: WorkflowRunTransition,
-  ): Promise<WorkflowRunRecord | null> => {
-    if (!workflowRunCanTransition(expected.status, transition.status)) return null
-    if (!Number.isInteger(expected.stateRevision) || expected.stateRevision < 0) return null
-    if (
-      expected.attemptState &&
-      (!Number.isSafeInteger(expected.attemptState.count) ||
-        expected.attemptState.count < 0 ||
-        !Number.isSafeInteger(expected.attemptState.revisionSum) ||
-        expected.attemptState.revisionSum < 0)
-    )
-      return null
-    const firstStart =
-      (expected.status === "queued" || expected.status === "dispatched") &&
-      transition.status === "running"
-    const dispatching = expected.status === "queued" && transition.status === "dispatched"
-    const lane = transition.actualExecution
-    const executorId = transition.executorId
-    if (firstStart && (!lane || !executorId)) return null
-    if (dispatching && (!transition.externalRunId || transition.externalExecution === undefined))
-      return null
-    const alreadyClaimed = expected.status === "running" || expected.status === "waiting"
-    if (!firstStart && !alreadyClaimed && (lane || executorId)) return null
-    if (alreadyClaimed && (!lane || !executorId)) return null
-    return (
-      ((await db
-        .update(workflowRun)
-        .set({
-          status: transition.status,
-          state_revision: sql`${workflowRun.state_revision} + 1`,
-          updated_at: transition.at,
-          ...(transition.status === "running"
-            ? { started_at: sql`coalesce(${workflowRun.started_at}, ${transition.at})` }
-            : {}),
-          ...(workflowStatusIsTerminal(transition.status) ? { finished_at: transition.at } : {}),
-          ...(firstStart ? { actual_execution: lane, executor_id: executorId } : {}),
-          ...(transition.externalExecution !== undefined
-            ? { external_execution: transition.externalExecution }
-            : {}),
-          ...(transition.externalRunId !== undefined
-            ? { external_run_id: transition.externalRunId }
-            : {}),
-        })
-        .where(
-          and(
-            eq(workflowRun.id, id),
-            eq(workflowRun.org_id, orgId),
-            eq(workflowRun.status, expected.status),
-            eq(workflowRun.state_revision, expected.stateRevision),
-            expected.attemptState
-              ? and(
-                  eq(
-                    sql`(select count(*) from ${workflowStepAttempt} where ${workflowStepAttempt.workflow_run_id} = ${id})`,
-                    expected.attemptState.count,
-                  ),
-                  eq(
-                    sql`(select coalesce(sum(${workflowStepAttempt.state_revision}), 0) from ${workflowStepAttempt} where ${workflowStepAttempt.workflow_run_id} = ${id})`,
-                    expected.attemptState.revisionSum,
-                  ),
-                )
-              : undefined,
-            dispatching ? eq(workflowRun.requested_execution, "github_actions") : undefined,
-            workflowStatusIsTerminal(transition.status)
-              ? notExists(
-                  db
-                    .select({ id: workflowStepAttempt.id })
-                    .from(workflowStepAttempt)
-                    .where(
-                      and(
-                        eq(workflowStepAttempt.workflow_run_id, workflowRun.id),
-                        notInArray(workflowStepAttempt.status, [
-                          "succeeded",
-                          "failed",
-                          "cancelled",
-                        ]),
-                      ),
-                    ),
-                )
-              : undefined,
-            firstStart && lane && executorId
-              ? or(
-                  eq(workflowRun.requested_execution, "any"),
-                  eq(workflowRun.requested_execution, lane),
-                )
-              : lane && executorId
-                ? and(
-                    eq(workflowRun.actual_execution, lane),
-                    eq(workflowRun.executor_id, executorId),
-                  )
-                : undefined,
-          ),
-        )
-        .returning()
-        .get()) as WorkflowRunRecord | undefined) ?? null
-    )
-  }
-  const setWorkflowRunExternalReceipt = async (
-    id: string,
-    orgId: string,
-    externalRunId: string,
-    externalExecution: string,
-    at: string,
-  ): Promise<WorkflowRunRecord | null> =>
-    ((await db
-      .update(workflowRun)
-      .set({ external_execution: externalExecution, updated_at: at })
-      .where(
-        and(
-          eq(workflowRun.id, id),
-          eq(workflowRun.org_id, orgId),
-          eq(workflowRun.external_run_id, externalRunId),
-        ),
-      )
-      .returning()
-      .get()) as WorkflowRunRecord | undefined) ?? null
-  const overrideSuccessfulWorkflowRunFromExternal = async (
-    id: string,
-    orgId: string,
-    externalRunId: string,
-    status: "failed" | "cancelled" | "timed_out",
-    externalExecution: string,
-    at: string,
-  ): Promise<WorkflowRunRecord | null> =>
-    ((await db
-      .update(workflowRun)
-      .set({
-        status,
-        state_revision: sql`${workflowRun.state_revision} + 1`,
-        external_execution: externalExecution,
-        updated_at: at,
-        finished_at: at,
-      })
-      .where(
-        and(
-          eq(workflowRun.id, id),
-          eq(workflowRun.org_id, orgId),
-          eq(workflowRun.external_run_id, externalRunId),
-          eq(workflowRun.status, "succeeded"),
-        ),
-      )
-      .returning()
-      .get()) as WorkflowRunRecord | undefined) ?? null
-  const createWorkflowStepAttempt = async (
-    orgId: string,
-    a: NewWorkflowStepAttempt,
-    expectedState?: WorkflowAttemptStateGuard,
-  ): Promise<WorkflowStepAttemptRecord> => {
-    if (!Number.isInteger(a.attempt) || a.attempt < 1)
-      throw new Error("workflow step attempt must be a positive integer")
-    if (!a.node_id.trim()) throw new Error("workflow step attempt requires a node id")
-    if (!isValidWorkflowStepContextPin(a))
-      throw new Error("workflow context attempts require a complete version pin")
-    if (
-      expectedState &&
-      (!Number.isSafeInteger(expectedState.count) ||
-        expectedState.count < 0 ||
-        !Number.isSafeInteger(expectedState.revisionSum) ||
-        expectedState.revisionSum < 0)
-    )
-      throw new Error("workflow attempt state guard must contain nonnegative integers")
-    const createdAt = a.created_at ?? new Date().toISOString()
-    const context = a.kind === "context" ? a : null
-    const created = (await db
-      .insert(workflowStepAttempt)
-      .select(
-        db
-          .select({
-            id: sql<string>`${a.id}`.as("id"),
-            workflow_run_id: workflowRun.id,
-            node_id: sql<string>`${a.node_id}`.as("node_id"),
-            attempt: sql<number>`${a.attempt}`.as("attempt"),
-            kind: sql<typeof a.kind>`${a.kind}`.as("kind"),
-            status: sql<"queued">`'queued'`.as("status"),
-            state_revision: sql<number>`0`.as("state_revision"),
-            context_id: sql<string | null>`${context?.context_id ?? null}`.as("context_id"),
-            context_manifest_artifact_id: sql<
-              string | null
-            >`${context?.context_manifest_artifact_id ?? null}`.as("context_manifest_artifact_id"),
-            context_version: sql<number | null>`${context?.context_version ?? null}`.as(
-              "context_version",
-            ),
-            context_blob_key: sql<string | null>`${context?.context_blob_key ?? null}`.as(
-              "context_blob_key",
-            ),
-            context_content_type: sql<string | null>`${context?.context_content_type ?? null}`.as(
-              "context_content_type",
-            ),
-            session_id: sql<string | null>`${context?.session_id ?? null}`.as("session_id"),
-            decision: sql<null>`null`.as("decision"),
-            selected_routes: sql<null>`null`.as("selected_routes"),
-            route_sources: sql<string | null>`${a.route_sources ?? null}`.as("route_sources"),
-            route_basis: sql<null>`null`.as("route_basis"),
-            result_artifact_id: sql<null>`null`.as("result_artifact_id"),
-            output: sql<null>`null`.as("output"),
-            error: sql<null>`null`.as("error"),
-            created_at: sql<string>`${createdAt}`.as("created_at"),
-            updated_at: sql<string>`${createdAt}`.as("updated_at"),
-            started_at: sql<null>`null`.as("started_at"),
-            finished_at: sql<null>`null`.as("finished_at"),
-          })
-          .from(workflowRun)
-          .where(
-            and(
-              eq(workflowRun.id, a.workflow_run_id),
-              eq(workflowRun.org_id, orgId),
-              expectedState
-                ? and(
-                    eq(
-                      sql`(select count(*) from ${workflowStepAttempt} where ${workflowStepAttempt.workflow_run_id} = ${a.workflow_run_id})`,
-                      expectedState.count,
-                    ),
-                    eq(
-                      sql`(select coalesce(sum(${workflowStepAttempt.state_revision}), 0) from ${workflowStepAttempt} where ${workflowStepAttempt.workflow_run_id} = ${a.workflow_run_id})`,
-                      expectedState.revisionSum,
-                    ),
-                  )
-                : undefined,
-              notInArray(workflowRun.status, ["succeeded", "failed", "cancelled", "timed_out"]),
-            ),
-          ),
-      )
-      .returning()
-      .get()) as WorkflowStepAttemptRecord | undefined
-    if (created) return created
-    const parent = await getWorkflowRun(a.workflow_run_id, orgId)
-    if (!parent) throw new Error("workflow run not found")
-    if (!workflowStatusIsTerminal(parent.status)) throw new WorkflowAttemptStateConflictError()
-    throw new Error("workflow run is already terminal")
-  }
-  const getWorkflowStepAttemptBySession = async (
-    sessionId: string,
-    orgId: string,
-  ): Promise<WorkflowStepAttemptRecord | null> =>
-    ((await db
-      .select()
-      .from(workflowStepAttempt)
-      .where(
-        and(
-          eq(workflowStepAttempt.session_id, sessionId),
-          inArray(
-            workflowStepAttempt.workflow_run_id,
-            db
-              .select({ id: workflowRun.id })
-              .from(workflowRun)
-              .where(eq(workflowRun.org_id, orgId)),
-          ),
-        ),
-      )
-      .get()) as WorkflowStepAttemptRecord | undefined) ?? null
-  const listWorkflowStepAttempts = async (
-    workflowRunId: string | string[],
-    orgId: string,
-  ): Promise<WorkflowStepAttemptRecord[]> => {
-    const runIds = Array.isArray(workflowRunId) ? workflowRunId : [workflowRunId]
-    if (runIds.length === 0) return []
-    return (await db
-      .select()
-      .from(workflowStepAttempt)
-      .where(
-        and(
-          inArray(workflowStepAttempt.workflow_run_id, runIds),
-          inArray(
-            workflowStepAttempt.workflow_run_id,
-            db
-              .select({ id: workflowRun.id })
-              .from(workflowRun)
-              .where(eq(workflowRun.org_id, orgId)),
-          ),
-        ),
-      )
-      .orderBy(
-        asc(workflowStepAttempt.created_at),
-        asc(workflowStepAttempt.node_id),
-        asc(workflowStepAttempt.attempt),
-        asc(workflowStepAttempt.id),
-      )
-      .all()) as WorkflowStepAttemptRecord[]
-  }
-  const transitionWorkflowStepAttempt = async (
-    id: string,
-    workflowRunId: string,
-    orgId: string,
-    expected: WorkflowStepTransitionGuard,
-    transition: WorkflowStepAttemptTransition,
-  ): Promise<WorkflowStepAttemptRecord | null> => {
-    const recordReceipt =
-      transition.recordReceipt === true &&
-      expected.status === transition.status &&
-      (expected.status === "failed" || expected.status === "cancelled") &&
-      transition.selectedRoutes === "[]"
-    if (!recordReceipt && !workflowStepCanTransition(expected.status, transition.status))
-      return null
-    if (!Number.isInteger(expected.stateRevision) || expected.stateRevision < 0) return null
-    if (
-      expected.attemptState &&
-      (!Number.isSafeInteger(expected.attemptState.count) ||
-        expected.attemptState.count < 0 ||
-        !Number.isSafeInteger(expected.attemptState.revisionSum) ||
-        expected.attemptState.revisionSum < 0)
-    )
-      return null
-    const starts = transition.status === "running" || transition.status === "waiting"
-    return (
-      ((await db
-        .update(workflowStepAttempt)
-        .set({
-          status: transition.status,
-          state_revision: sql`${workflowStepAttempt.state_revision} + 1`,
-          updated_at: transition.at,
-          ...(starts
-            ? { started_at: sql`coalesce(${workflowStepAttempt.started_at}, ${transition.at})` }
-            : {}),
-          ...(workflowStatusIsTerminal(transition.status) && !recordReceipt
-            ? { finished_at: transition.at }
-            : {}),
-          ...(transition.sessionId !== undefined ? { session_id: transition.sessionId } : {}),
-          ...(transition.decision !== undefined ? { decision: transition.decision } : {}),
-          ...(transition.selectedRoutes !== undefined
-            ? { selected_routes: transition.selectedRoutes }
-            : {}),
-          ...(transition.routeBasis !== undefined ? { route_basis: transition.routeBasis } : {}),
-          ...(transition.resultArtifactId !== undefined
-            ? { result_artifact_id: transition.resultArtifactId }
-            : {}),
-          ...(transition.output !== undefined ? { output: transition.output } : {}),
-          ...(transition.error !== undefined ? { error: transition.error } : {}),
-        })
-        .where(
-          and(
-            eq(workflowStepAttempt.id, id),
-            eq(workflowStepAttempt.workflow_run_id, workflowRunId),
-            eq(workflowStepAttempt.status, expected.status),
-            eq(workflowStepAttempt.state_revision, expected.stateRevision),
-            expected.attemptState
-              ? and(
-                  eq(
-                    sql`(select count(*) from ${workflowStepAttempt} where ${workflowStepAttempt.workflow_run_id} = ${workflowRunId})`,
-                    expected.attemptState.count,
-                  ),
-                  eq(
-                    sql`(select coalesce(sum(${workflowStepAttempt.state_revision}), 0) from ${workflowStepAttempt} where ${workflowStepAttempt.workflow_run_id} = ${workflowRunId})`,
-                    expected.attemptState.revisionSum,
-                  ),
-                )
-              : undefined,
-            ...(recordReceipt
-              ? [
-                  eq(workflowStepAttempt.kind, "context"),
-                  isNull(workflowStepAttempt.selected_routes),
-                ]
-              : []),
-            inArray(
-              workflowStepAttempt.workflow_run_id,
-              db
-                .select({ id: workflowRun.id })
-                .from(workflowRun)
-                .where(eq(workflowRun.org_id, orgId)),
-            ),
-          ),
-        )
-        .returning()
-        .get()) as WorkflowStepAttemptRecord | undefined) ?? null
-    )
-  }
-  const workflowVersionIsPinned = async (artifactId: string, n: number): Promise<boolean> => {
-    const rows = await db
-      .select({ id: workflowArtifactActivity.id })
-      .from(workflowArtifactActivity)
-      .innerJoin(artifact, eq(artifact.short_id, workflowArtifactActivity.artifact_short_id))
-      .where(
-        and(
-          eq(artifact.id, artifactId),
-          eq(workflowArtifactActivity.artifact_version, n),
-          eq(workflowArtifactActivity.source, "observed"),
-        ),
-      )
-      .limit(1)
-      .all()
-    return rows.length > 0
-  }
 
-  const getWorkflowPublishReceipt = async (
-    key: WorkflowPublishKey,
-  ): Promise<WorkflowPublishReceiptRecord | null> =>
-    ((await db
-      .select()
-      .from(workflowPublishReceipt)
-      .where(
-        and(
-          eq(workflowPublishReceipt.org_id, key.org_id),
-          eq(workflowPublishReceipt.workflow_run_id, key.workflow_run_id),
-          eq(workflowPublishReceipt.node_id, key.node_id),
-          eq(workflowPublishReceipt.attempt, key.attempt),
-          eq(workflowPublishReceipt.dedupe_key, key.dedupe_key),
-        ),
-      )
-      .get()) as WorkflowPublishReceiptRecord | undefined) ?? null
-
-  const recordWorkflowArtifactActivity = async (
-    a: NewWorkflowArtifactActivity,
-  ): Promise<WorkflowArtifactActivityRecord> => {
-    const created = await db
-      .insert(workflowArtifactActivity)
-      .values(a)
-      .onConflictDoNothing()
-      .returning()
-      .get()
-    if (created) return created
-    const existing = await db
-      .select()
-      .from(workflowArtifactActivity)
-      .where(
-        and(
-          eq(workflowArtifactActivity.workflow_run_id, a.workflow_run_id),
-          eq(workflowArtifactActivity.node_id, a.node_id),
-          eq(workflowArtifactActivity.attempt, a.attempt),
-          eq(workflowArtifactActivity.artifact_short_id, a.artifact_short_id),
-          eq(workflowArtifactActivity.artifact_version, a.artifact_version),
-          eq(workflowArtifactActivity.role, a.role),
-        ),
-      )
-      .get()
-    if (!existing) throw new Error("workflow artifact activity conflict could not be resolved")
-    return existing
-  }
-  const listWorkflowArtifactActivity = async (
-    workflowRunId: string | string[],
-    orgId: string,
-  ): Promise<WorkflowArtifactActivityRecord[]> => {
-    const runIds = Array.isArray(workflowRunId) ? workflowRunId : [workflowRunId]
-    if (runIds.length === 0) return []
-    return db
-      .select()
-      .from(workflowArtifactActivity)
-      .where(
-        and(
-          inArray(workflowArtifactActivity.workflow_run_id, runIds),
-          eq(workflowArtifactActivity.org_id, orgId),
-        ),
-      )
-      .orderBy(asc(workflowArtifactActivity.created_at), asc(workflowArtifactActivity.id))
-      .all()
-  }
   const recordArtifactScanEvent = async (
     event: NewArtifactScanEvent,
   ): Promise<ArtifactScanEventRecord> => {
@@ -5908,14 +4649,6 @@ export function makeRepos(db: SqliteDb) {
         .orderBy(desc(plan.created_at))
         .get()) ?? null
     )
-  }
-  const sumRunCostSince = async (orgId: string, sinceIso: string): Promise<number> => {
-    const row = await db
-      .select({ total: sql<number>`coalesce(sum(${run.cost_micro_usd}), 0)` })
-      .from(run)
-      .where(and(eq(run.org_id, orgId), gte(run.created_at, sinceIso)))
-      .get()
-    return Number(row?.total ?? 0)
   }
   const createConnection = async (cn: NewConnection): Promise<ConnectionRecord> =>
     (await db.insert(connection).values(cn).returning().get()) as ConnectionRecord
@@ -6717,7 +5450,7 @@ export function makeRepos(db: SqliteDb) {
   }
 
   return {
-    ...runtimes,
+    ...agentModel,
     createArtifact,
     setAccess,
     setLocked,
@@ -6907,10 +5640,6 @@ export function makeRepos(db: SqliteDb) {
     setSlackInstall,
     listSlackInstallsByTeam,
     deleteSlackInstall,
-    getModelCredential,
-    setModelCredential,
-    deleteModelCredential,
-    listModelCredentials,
     getSlackThreadLink,
     listSlackThreadLinksByThread,
     listSlackSubscriptions,
@@ -6948,11 +5677,6 @@ export function makeRepos(db: SqliteDb) {
     getContext,
     listContexts,
     deleteContext,
-    touchContextSeen,
-    setContextAskPolicy,
-    setContextManifest,
-    setContextConnections,
-    setContextEnvironment,
     setContextCodeUrl,
     setContextAnalysis,
     listContextsForArtifact,
@@ -6968,30 +5692,13 @@ export function makeRepos(db: SqliteDb) {
     acquireImportLease,
     updateImportLease,
     getImportLease,
-    listContextAskers,
     getContextAsker,
-    addContextAsker,
-    removeContextAsker,
-    createSession,
     createSessionWithMessage,
     getSession,
-    listSessions,
-    contextOutputs,
     listChatSessions,
-    pendingSessions,
-    claimPendingSessions,
-    countWorkingSessions,
-    listDueOpenSessions,
-    claimSessionById,
-    findInflightSession,
-    setResultArtifact,
-    renewSessionLease,
     appendFollowupReopen,
-    claimAttendedSession,
-    setSessionState,
     addSessionMessage,
     listSessionMessages,
-    listSessionMessagesFor,
     listRecentAgentMessages,
     createNotification,
     createNotifications,
@@ -7000,45 +5707,9 @@ export function makeRepos(db: SqliteDb) {
     markNotificationsRead,
     createAgent,
     rotateAgentToken,
-    touchAgentRunsSeen,
     listAgents,
     setAgentHosted,
-    createAutomation,
-    getAutomation,
-    getAutomationsByIds,
-    listAutomations,
-    updateAutomation,
-    deleteAutomation,
-    createRun,
-    getRun,
     getAgent,
-    claimDueRuns,
-    claimRunById,
-    requeueRun,
-    reclaimStaleRuns,
-    listEnabledAutomations,
-    listDueQueuedRuns,
-    finishRun,
-    listRuns,
-    latestRunForAutomation,
-    findCoalescibleRun,
-    appendRunPayload,
-    createWorkflowRun,
-    getWorkflowRun,
-    getWorkflowRunById,
-    getWorkflowRunByExternalRunId,
-    listWorkflowRuns,
-    transitionWorkflowRun,
-    setWorkflowRunExternalReceipt,
-    overrideSuccessfulWorkflowRunFromExternal,
-    createWorkflowStepAttempt,
-    getWorkflowStepAttemptBySession,
-    listWorkflowStepAttempts,
-    transitionWorkflowStepAttempt,
-    workflowVersionIsPinned,
-    getWorkflowPublishReceipt,
-    recordWorkflowArtifactActivity,
-    listWorkflowArtifactActivity,
     recordArtifactScanEvent,
     listArtifactScanEvents,
     listArtifactScanSessionEvents,
@@ -7062,7 +5733,6 @@ export function makeRepos(db: SqliteDb) {
     listPlans,
     deletePlan,
     resolvePlan,
-    sumRunCostSince,
     createConnection,
     getConnection,
     getConnectionsByIds,

@@ -5,14 +5,12 @@ import type {
   NewView,
   UserDir,
   UserProfile,
-  VersionRecord,
   ViewStats,
 } from "@derive/core"
 import { sql } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/d1"
 import {
   composeArtifactDetail,
-  composeAutomationsWithExecutors,
   composeBootstrap,
   composeCollectionsOverview,
   composeCommentsPage,
@@ -24,7 +22,6 @@ import {
   composeWorkspacesAndOauthBinding,
 } from "./list-enrichment"
 import { makeRepos, schema } from "./repos"
-import { checkedWorkflowPublishReceipt, workflowPublishStatements } from "./workflow-publish"
 
 const VIEW_WINDOW_MS = 30 * 86400_000
 const LAST_24H_MS = 86400_000
@@ -55,7 +52,6 @@ export function createD1Store(d1: D1Database): MetaStore {
     | "commentsPage"
     | "contextsWithManifests"
     | "notificationsPage"
-    | "automationsWithExecutors"
     | "collectionsOverview"
     | "bootstrap"
     | "workspaceSummary"
@@ -71,17 +67,6 @@ export function createD1Store(d1: D1Database): MetaStore {
         d1.prepare("DELETE FROM template_library_entry WHERE library_id = ?").bind(id),
         d1.prepare("DELETE FROM template_library WHERE id = ?").bind(id),
       ])
-    },
-
-    publishWorkflowVersion: async (input) => {
-      const statements = workflowPublishStatements(input)
-      await d1.batch(
-        statements.map((statement) => d1.prepare(statement.text).bind(...statement.values)),
-      )
-      return checkedWorkflowPublishReceipt(
-        input,
-        await repos.getWorkflowPublishReceipt(input.receipt),
-      )
     },
 
     // ---- View analytics (raw SQL) ----------------------------------------
@@ -361,8 +346,6 @@ export function createD1Store(d1: D1Database): MetaStore {
       composeCommentsPage(store, artifactId, versionN, opts),
     contextsWithManifests: (orgId) => composeContextsWithManifests(store, orgId),
     notificationsPage: (userId, limit) => composeNotificationsPage(store, userId, limit),
-    automationsWithExecutors: (orgId, limit) =>
-      composeAutomationsWithExecutors(store, orgId, limit),
     collectionsOverview: (orgId, viewer) => composeCollectionsOverview(store, orgId, viewer),
     workspaceSummary: (orgId, userId) => composeWorkspaceSummary(store, orgId, userId),
     bootstrap: (orgId, userId, limit, viewer) =>

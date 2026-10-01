@@ -11,6 +11,12 @@ install a coding agent, clone a repository, or run a schedule. It is an operator
 check, separate from the existing hosted-run dispatcher. Its local receipt is
 recovery evidence for this check, not the production job store.
 
+> Sections from "Use Ortam's model connection" onward record the Context runtime controller
+> (context runtimes, run attempts, `dkattempt_` capabilities, workflow drafts and tests), which
+> the agents cutover replaced with Derive machines (`apps/api/src/lib/job-machine.ts`). They are
+> kept as a record; the routes and commands they name no longer exist. The lifecycle check
+> itself, `scripts/ortam-smoke.mjs`, still runs as described here.
+
 ## Run against Ortam
 
 Use Node 24 and an Ortam Developer API key for the intended test organization.
