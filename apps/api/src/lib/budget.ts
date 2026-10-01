@@ -35,3 +35,18 @@ export const overBudget = async (
   const spent = await meta.sumJobCostSince(orgId, monthStartIso())
   return spent >= limit
 }
+
+/** The budget check for agent jobs: asks, schedules, pulls, and Derive-machine dispatch.
+ *  `payer` is who the work bills to (the asker for an ask, the agent's creator otherwise),
+ *  which picks their personal plan's limit or the workspace pool's, as the chat gate does. A
+ *  budget that cannot be read does not stop work: the agent-write switch is the brake that
+ *  fails closed, and a missing meter is the loud failure at execution time. */
+export const jobsOverBudget = (
+  meta: MetaStore,
+  orgId: string,
+  payer: string | null,
+): Promise<boolean> => overBudget(meta, orgId, payer).catch(() => false)
+
+/** What an asker is told when the workspace has spent its month. */
+export const OVER_BUDGET =
+  "This workspace has reached its monthly model budget, so agents take no new work until next month or until the limit is raised."

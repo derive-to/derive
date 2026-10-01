@@ -14,6 +14,7 @@ import {
 import type { Backplane } from "../bus"
 import { log } from "../log"
 import { agentWritesOff } from "./agent-writes"
+import { jobsOverBudget } from "./budget"
 import { leaseUntilFor, RUN_MAX_ATTEMPTS } from "./run-lifecycle"
 import { runtimeFailureReason } from "./runtime-diagnostics"
 import { previousOccurrence } from "./schedule"
@@ -71,6 +72,9 @@ export const canAskAgent = async (
   agent: AgentRecord,
   userId: string,
 ): Promise<boolean> => {
+  // A managed agent is a hidden principal minted for one imported paper: it runs nothing,
+  // so nobody asks it.
+  if (agent.managed === 1) return false
   const m = await meta.getMembership(agent.org_id, userId).catch(() => null)
   if (!m) return false
   if (agent.ask_policy === "workspace") return true
@@ -274,6 +278,8 @@ export const pullJobs = async (
   if (agent.paused_at || (await agentWritesOff(meta, agent.org_id))) return []
   // A Derive machine's work is dispatched to its sandbox, never pulled by another runner.
   if (agent.machine === "derive") return []
+  // A workspace past its monthly budget is held: its work waits, queued, for the next month.
+  if (await jobsOverBudget(meta, agent.org_id, agent.created_by)) return []
   await materializeTriggers(
     meta,
     now,
@@ -430,6 +436,7 @@ export const materializeTriggers = async (
       )
     : await meta.listEnabledScheduleTriggers(scope.orgIds)
   const writesOn = new Map<string, boolean>()
+  const overBudget = new Map<string, boolean>()
   const agents = new Map<string, AgentRecord | null>()
   let created = 0
   for (const t of triggers) {
@@ -450,6 +457,12 @@ export const materializeTriggers = async (
     if (!agents.has(t.agent_id)) agents.set(t.agent_id, await meta.getAgent(t.agent_id))
     const agent = agents.get(t.agent_id)
     if (!agent || agent.org_id !== t.org_id || agent.paused_at) continue
+    // A workspace past its monthly budget opens no scheduled work; the window is skipped,
+    // not saved up to replay when the month turns.
+    const payer = `${t.org_id}\u0000${agent.created_by ?? ""}`
+    if (!overBudget.has(payer))
+      overBudget.set(payer, await jobsOverBudget(meta, t.org_id, agent.created_by))
+    if (overBudget.get(payer)) continue
     try {
       await meta.createJob({
         id: newId("job"),

@@ -93,7 +93,8 @@ export async function graphOf(
 /** The agent a node's `context_ref` names: an agent id or name, or a Context's id or name (whose
  *  agent row the cutover made the agent), in the graph's own workspace. */
 async function nodeAgent(meta: MetaStore, orgId: string, ref: string): Promise<AgentRecord | null> {
-  const agents = await meta.listAgents(orgId)
+  // A managed agent (the hidden principal of an imported paper) is never a step's agent.
+  const agents = (await meta.listAgents(orgId)).filter((a) => a.managed !== 1)
   const direct = agents.find((a) => a.id === ref) ?? agents.find((a) => a.name === ref)
   if (direct) return direct
   const ctx =

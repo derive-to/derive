@@ -2,6 +2,7 @@ import { type AgentRecord, type JobRecord, type MetaStore, newId } from "@derive
 import type { AppDeps } from "../context"
 import { log } from "../log"
 import { agentWritesOff } from "./agent-writes"
+import { jobsOverBudget } from "./budget"
 import { sha256 } from "./crypto"
 import { type JobDeps, reportJob } from "./jobs"
 import { OrtamClient } from "./ortam-client"
@@ -524,6 +525,8 @@ export async function machinePass(
     await guard("dispatch", job.id, async () => {
       let agent = await meta.getAgent(job.agent_id)
       if (!agent || !(await admitted(deps, agent))) return
+      // A workspace past its monthly budget is held: no sandbox comes up, the job waits.
+      if (await jobsOverBudget(meta, agent.org_id, job.asked_by ?? agent.created_by)) return
       // First job for this agent, or its sandbox failed: bring one up, after a backoff that
       // grows with each failure. The job waits for it; after too many, the waiting work fails.
       if (agent.sandbox_phase === null || agent.sandbox_phase === "failed") {

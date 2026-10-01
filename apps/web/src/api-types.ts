@@ -7344,7 +7344,10 @@ export interface components {
             model: string | null;
             /** @enum {string} */
             ask_policy: "workspace" | "invited";
-            /** @enum {string} */
+            /**
+             * @description publish: its writes go live like a person's. review: they still go live, and every new version it writes to an existing page opens a review round for the person it acts for.
+             * @enum {string}
+             */
             write_policy: "publish" | "review";
             paused: boolean;
             /** @description When its runner last pulled work. */

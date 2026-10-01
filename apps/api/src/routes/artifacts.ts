@@ -1396,6 +1396,27 @@ export const artifactRoutes = (ctx: AppContext) => {
         )
         roundCreated = true
       }
+      // THE AGENT'S WRITE POLICY. An agent set to `review` still publishes live (one write
+      // behavior, docs/decisions/0001-one-review-loop.md), but every new version it writes
+      // to an existing page opens a review round for the person it acts for, asked for or
+      // not: the policy is that a person looks at each revision. A page it creates is its
+      // own first draft and opens none unless asked.
+      if (!roundCreated && shortId && agentPrincipal?.write_policy === "review" && onBehalf) {
+        await openReviewRound(
+          { meta, blobs, bus, baseUrl: deps.baseUrl, notify, pokeWebhooks: deps.pokeWebhooks },
+          artifact,
+          {
+            reviewer: onBehalf,
+            requestedById: agentPrincipal.id,
+            requestedByName: agentPrincipal.name,
+            version: version.n,
+            note: str(body["review_note"]) ?? null,
+            actorId: agentPrincipal.id,
+            ...(editSummary ? { summary: editSummary } : {}),
+          },
+        )
+        roundCreated = true
+      }
       // The MCP loop over HTTP: an AGENT-credentialed publish (a registered
       // dk_agt_ token or an OAuth bearer — the CLI and stdio-shim paths) reaches
       // its human exactly like the /mcp path does — the shared bell + auto-open

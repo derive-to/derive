@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest"
+import { newId } from "@derive/core"
+import { describe, expect, it, vi } from "vitest"
 import {
   JobClient,
   jobDrainPass,
@@ -8,6 +9,7 @@ import {
   serveJob,
 } from "../../../packages/cli/src/job-runner.js"
 import { signCapabilityToken } from "../src/lib/capability-token"
+import { encryptSecret } from "../src/lib/crypto"
 import { advanceGraph, graphAware, graphPass } from "../src/lib/job-graph"
 import { machinePass, machineWorkspaces } from "../src/lib/job-machine"
 import { jobTick } from "../src/lib/jobs"
@@ -346,6 +348,55 @@ describe("jobs: who may ask, see, and run", () => {
     expect(await pull(app, a)).toHaveLength(1)
   })
 
+  it("a runner never holds more of an agent's jobs than its concurrency cap", async () => {
+    const { app } = await setup("jobs-concurrency")
+    const a = await createAgent(app, { max_concurrency: 2 })
+    for (const n of [1, 2, 3]) await ask(app, ed.email, a.id, `job ${n}`)
+    const first = await pull(app, a)
+    expect(first).toHaveLength(2)
+    expect(await pull(app, a)).toEqual([])
+    const [done] = first
+    if (!done) throw new Error("nothing pulled")
+    await report(app, a.token, done.id, { started_at: done.started_at, status: "succeeded" })
+    // One slot freed: exactly one more job.
+    expect(await pull(app, a)).toHaveLength(1)
+  })
+
+  it("a workspace whose agent-write switch cannot be read hands a runner nothing", async () => {
+    const { app, meta } = await setup("jobs-brake-closed")
+    const a = await createAgent(app)
+    await ask(app, ed.email, a.id, "while the settings are unreadable")
+    const broken = vi.spyOn(meta, "getOrgSettings").mockRejectedValue(new Error("db down"))
+    try {
+      expect(await pull(app, a)).toEqual([])
+    } finally {
+      broken.mockRestore()
+    }
+    expect(await pull(app, a)).toHaveLength(1)
+  })
+
+  it("an imported paper's hidden managed agent cannot be asked or mentioned", async () => {
+    const { app, meta } = await setup("jobs-managed")
+    const hidden = await meta.createAgent({
+      id: "ag_paper_hidden",
+      org_id: "default",
+      name: "arXiv:2401.00001",
+      token: "hash_not_handed_out",
+      role: "editor",
+      created_by: owner.id,
+      managed: 1,
+    })
+    const asked = await ask(app, owner.email, hidden.id, "Do something")
+    expect(asked.status).toBe(404)
+    expect(await meta.listJobs({ orgId: "default", agentId: hidden.id })).toEqual([])
+    const visible = await createAgent(app, { name: "arXiv helper" })
+    const dir = (await (
+      await app.request("/v1/users?query=arxiv", { headers: as(owner.email) })
+    ).json()) as { users: { id: string }[] }
+    expect(dir.users.map((u) => u.id)).toContain(visible.id)
+    expect(dir.users.map((u) => u.id)).not.toContain(hidden.id)
+  })
+
   it("cancelling a graph job cancels its open children", async () => {
     const { app, meta } = await setup("jobs-cancel")
     const a = await createAgent(app)
@@ -394,6 +445,35 @@ describe("jobs: the agents list the home screen reads", () => {
     expect(mine.status).toBe(200)
     const theirs = await app.request(`/v1/agents/${quiet.id}/rotate`, jsonAs(as(ed.email), {}))
     expect(theirs.status).toBe(404)
+  })
+
+  it("names each agent's instructions page, and edits say whether the agent is lent", async () => {
+    const { app, meta } = await setup("jobs-list-instructions")
+    const page = (await (
+      await publishAs(app, "<h1>Brief</h1>", { title: "Brief" }, as(owner.email))
+    ).json()) as { short_id: string }
+    const briefed = await createAgent(app, { instructions_short_id: page.short_id })
+    const bare = await createAgent(app)
+    const list = (await (await app.request("/v1/agents", { headers: as(ed.email) })).json()) as {
+      agents: { id: string; instructions_short_id: string | null }[]
+    }
+    const byId = new Map(list.agents.map((a) => [a.id, a]))
+    expect(byId.get(briefed.id)?.instructions_short_id).toBe(page.short_id)
+    expect(byId.get(bare.id)?.instructions_short_id).toBeNull()
+    // Lent to its owner's plan: an edit and a key rotation both say so.
+    const settings = await meta.getOrgSettings("default")
+    await meta.setOrgSettings("default", { ...settings, ownerLendAgents: [briefed.id] })
+    const edited = (await (
+      await app.request(`/v1/agents/${briefed.id}`, {
+        ...jsonAs(as(owner.email), { description: "Reads the brief" }),
+        method: "PATCH",
+      })
+    ).json()) as { owner_lend: boolean; instructions_short_id: string | null }
+    expect(edited).toMatchObject({ owner_lend: true, instructions_short_id: page.short_id })
+    const rotated = (await (
+      await app.request(`/v1/agents/${briefed.id}/rotate`, jsonAs(as(owner.email), {}))
+    ).json()) as { owner_lend: boolean; instructions_short_id: string | null }
+    expect(rotated).toMatchObject({ owner_lend: true, instructions_short_id: page.short_id })
   })
 })
 
@@ -646,6 +726,59 @@ describe("jobs: schedules", () => {
     expect(await meta.getJob(job.id)).toMatchObject({ status: "queued", attempt: 1 })
     expect((await pull(app, a))[0]?.id).toBe(job.id)
   })
+
+  it("a job whose lease lapses on every one of its three attempts is lost, not retried again", async () => {
+    const { app, meta } = await setup("jobs-lost")
+    const a = await createAgent(app)
+    const job = (await (await ask(app, ed.email, a.id, "flaky")).json()) as { id: string }
+    for (let attempt = 0; attempt < 3; attempt++) {
+      expect((await pull(app, a))[0]?.id).toBe(job.id)
+      await jobTick({ meta }, new Date(Date.now() + 2 * 60 * 60_000))
+    }
+    const lost = (await (
+      await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
+    ).json()) as { status: string; finished_at: string | null }
+    expect(lost.status).toBe("lost")
+    expect(lost.finished_at).toBeTruthy()
+    expect(await pull(app, a)).toEqual([])
+  })
+})
+
+describe("jobs: the monthly model budget", () => {
+  const limitTo = (meta: ReturnType<typeof makeAuthedApp>["meta"], monthlyMicroUsd: number) =>
+    meta.createPlan({
+      id: newId("plan"),
+      org_id: "default",
+      user_id: null,
+      kind: "model",
+      provider: "anthropic",
+      secret_enc: "enc",
+      limits: JSON.stringify({ monthlyMicroUsd }),
+    })
+
+  it("a workspace past its month refuses new asks and holds pulls and schedules until the limit lifts", async () => {
+    const { app, meta } = await setup("jobs-budget")
+    const a = await createAgent(app, { schedule: { cron: "* * * * *", instruction: "Tick" } })
+    const job = (await (await ask(app, ed.email, a.id, "before the limit")).json()) as {
+      id: string
+    }
+    await meta.addJobCost(job.id, 5_000)
+    const plan = await limitTo(meta, 1_000)
+
+    const refused = await ask(app, ed.email, a.id, "after the limit")
+    expect(refused.status).toBe(402)
+    expect(((await refused.json()) as { error: string }).error).toMatch(/monthly model budget/)
+    // The queued job waits rather than running, and no schedule window opens work.
+    expect(await pull(app, a)).toEqual([])
+    const later = new Date(Date.now() + 2 * 60_000)
+    expect((await jobTick({ meta }, later)).materialized).toBe(0)
+    expect((await meta.getJob(job.id))?.status).toBe("queued")
+
+    await meta.deletePlan(plan.id, "default")
+    expect((await jobTick({ meta }, later)).materialized).toBe(1)
+    expect((await pull(app, a))[0]?.id).toBe(job.id)
+    expect((await ask(app, ed.email, a.id, "after the limit lifts")).status).toBe(201)
+  })
 })
 
 describe("jobs: which account a job runs with", () => {
@@ -721,6 +854,114 @@ describe("jobs: which account a job runs with", () => {
     expect(
       (await app.request(`/v1/jobs/${job.id}/account`, { headers: as(owner.email) })).status,
     ).toBe(401)
+  })
+
+  it("a removed member's key stops paying for their agent's jobs", async () => {
+    const { app, meta } = await setup("jobs-accounts-leaver")
+    const add = async (who: string, body: Record<string, unknown>) =>
+      (await (
+        await app.request(
+          "/v1/accounts",
+          jsonAs(as(who), { provider: "claude", kind: "api_key", ...body }),
+        )
+      ).json()) as { id: string }
+    await add(owner.email, { secret: "sk-shared-1111", shared: true })
+    const edsKey = await add(ed.email, { secret: "sk-ed-secret-2222" })
+    // The list carries a hint, never the secret or its ciphertext.
+    const listed = await (await app.request("/v1/accounts", { headers: as(ed.email) })).text()
+    expect(listed).toContain("…2222")
+    expect(listed).not.toContain("sk-ed-secret")
+    expect(listed).not.toContain("secret_enc")
+
+    const edsAgent = (await (
+      await app.request("/v1/agents", jsonAs(as(ed.email), { name: "Ed's helper" }))
+    ).json()) as { id: string; token: string }
+    await app.request(`/v1/agents/${edsAgent.id}`, {
+      ...jsonAs(as(ed.email), { account_id: edsKey.id }),
+      method: "PATCH",
+    })
+    const job = (await (await ask(app, ed.email, edsAgent.id, "use my key")).json()) as {
+      id: string
+    }
+    const [held] = await pull(app, edsAgent)
+    const credFor = async () =>
+      (await (
+        await app.request(
+          `/v1/jobs/${job.id}/account?claim=${encodeURIComponent(held?.started_at ?? "")}`,
+          { headers: bearer(edsAgent.token) },
+        )
+      ).json()) as { credential: { value: string } | null; source: string }
+    expect(await credFor()).toMatchObject({
+      credential: { value: "sk-ed-secret-2222" },
+      source: "agent",
+    })
+
+    expect(
+      (
+        await app.request(`/v1/workspace/members/${ed.id}`, {
+          method: "DELETE",
+          headers: as(owner.email),
+        })
+      ).status,
+    ).toBe(204)
+    // Their key left with them; the job falls back to the workspace's shared account.
+    expect(await meta.getAccount(edsKey.id)).toBeNull()
+    expect(await credFor()).toMatchObject({
+      credential: { value: "sk-shared-1111" },
+      source: "pool",
+    })
+    // A key row of theirs that outlived the removal (written before it was purged) still
+    // never pays, assigned or not.
+    const leftover = await meta.createAccount({
+      id: newId("acct"),
+      org_id: "default",
+      user_id: ed.id,
+      provider: "claude",
+      kind: "api_key",
+      secret_enc: encryptSecret("sk-ed-leftover-3333", "test-encryption-key"),
+    })
+    await meta.updateAgent(edsAgent.id, "default", { account_id: leftover.id })
+    expect(await credFor()).toMatchObject({
+      credential: { value: "sk-shared-1111" },
+      source: "pool",
+    })
+  })
+
+  it("an agent's tools run on its creator's personal broker plan", async () => {
+    const { app, meta } = await setup("jobs-broker-plan")
+    const attached = await app.request(
+      "/v1/plans",
+      jsonAs(as(owner.email), { kind: "broker", provider: "composio", secret: "ck-owner-plan" }),
+    )
+    expect(attached.status).toBe(201)
+    await meta.createConnection({
+      id: "cn_owner_gmail",
+      org_id: "default",
+      user_id: owner.id,
+      kind: "oauth",
+      broker: "composio",
+      toolkit: "gmail",
+      broker_ref: "ca_owner_gmail",
+      status: "active",
+    })
+    const a = await createAgent(app, { connection_ids: ["cn_owner_gmail"] })
+    await ask(app, ed.email, a.id, "triage the inbox")
+    const keys: (string | null)[] = []
+    const real = globalThis.fetch
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
+      if (!String(url).includes("composio.dev")) return real(url, init)
+      keys.push(new Headers(init?.headers).get("x-api-key"))
+      return new Response(JSON.stringify({ items: [{ name: "GMAIL_LIST", description: "" }] }), {
+        headers: { "content-type": "application/json" },
+      })
+    })
+    try {
+      const [j] = await pull(app, a)
+      expect((j?.tools as { ref: string }[]).map((t) => t.ref)).toContain("ca_owner_gmail")
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    expect(keys).toContain("ck-owner-plan")
   })
 })
 
@@ -1133,6 +1374,27 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
     })
     expect(del.status).toBe(204)
     expect([...m.ortam.sandboxes.values()].map((s) => s.state)).toEqual(["deleted"])
+  })
+
+  it("a workspace past its monthly budget brings up no machine until the limit lifts", async () => {
+    const m = await machineApp("jobs-machine-budget")
+    const job = (await (await ask(m.app, ed.email, m.agent.id, "Go")).json()) as { id: string }
+    await m.meta.addJobCost(job.id, 5_000)
+    const plan = await m.meta.createPlan({
+      id: newId("plan"),
+      org_id: "default",
+      user_id: null,
+      kind: "model",
+      provider: "anthropic",
+      secret_enc: "enc",
+      limits: JSON.stringify({ monthlyMicroUsd: 1_000 }),
+    })
+    for (let i = 0; i < 4; i++) await machinePass(m.deps)
+    expect(m.ortam.sandboxes.size).toBe(0)
+    expect((await m.meta.getJob(job.id))?.status).toBe("queued")
+    await m.meta.deletePlan(plan.id, "default")
+    await m.passUntil(() => m.ortam.launches.length > 0)
+    expect(m.ortam.launches).toHaveLength(1)
   })
 
   it("a Derive agent's work is never pulled by another runner", async () => {
@@ -1593,6 +1855,31 @@ describe("jobs: graphs (a workflow on an agent's instructions page)", () => {
     const still = await meta.getJob(asked.id)
     expect(still?.status).toBe("needs_you")
     expect(JSON.parse(still?.needs_json ?? "{}")).toMatchObject({ question: "Ship it?" })
+  })
+
+  it("a step naming an imported paper's hidden agent is not run by it", async () => {
+    const made = await setup("jobs-graph-managed")
+    const { app, meta } = made
+    const hidden = await meta.createAgent({
+      id: "ag_graph_hidden",
+      org_id: "default",
+      name: "arXiv:2401.00002",
+      token: "hash_not_handed_out_2",
+      role: "editor",
+      created_by: owner.id,
+      managed: 1,
+    })
+    await createAgent(app, { name: "Publisher" })
+    const page = (await (
+      await publishAs(app, graphHtml(hidden.id, "Publisher"), { title: "Flow" }, as(owner.email))
+    ).json()) as { short_id: string }
+    const graph = await createAgent(app, { name: "Flow", instructions_short_id: page.short_id })
+    const asked = (await (await ask(app, ed.email, graph.id, "Go")).json()) as { id: string }
+    await graphPass(graphAware({ meta, blobs: made.ctx.blobs }))
+    expect(await meta.listJobs({ orgId: "default", agentId: hidden.id })).toEqual([])
+    expect((await meta.getJob(asked.id))?.status).toBe("failed")
+    const last = (await meta.listJobMessages(asked.id)).at(-1)?.body_md
+    expect(last).toMatch(/not an agent here/)
   })
 
   it("stops at the loop's limit instead of revising forever", async () => {

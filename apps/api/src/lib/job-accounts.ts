@@ -42,8 +42,18 @@ export const resolveJobCredential = async (
   let sawUnreadable = false
   const want = accountProvider(provider)
   const accounts = await meta.listAccounts(agent.org_id)
-  const tryAccount = (a: AccountRecord | undefined, source: string): JobCredential | null => {
+  // A personal account pays only while its owner holds a seat in the agent's workspace: a
+  // person who has left stops paying for its jobs, whichever tier names their account. The
+  // pool belongs to the workspace and has no seat to check.
+  const seated = async (a: AccountRecord): Promise<boolean> =>
+    a.user_id === WORKSPACE_ACCOUNT_OWNER ||
+    !!(await meta.getMembership(agent.org_id, a.user_id).catch(() => null))
+  const tryAccount = async (
+    a: AccountRecord | undefined,
+    source: string,
+  ): Promise<JobCredential | null> => {
     if (!a || a.provider !== want || !a.secret_enc || a.kind === "ortam_signin") return null
+    if (!(await seated(a))) return null
     const value = readable(a.secret_enc, key)
     if (value === null) {
       sawUnreadable = true
@@ -51,7 +61,7 @@ export const resolveJobCredential = async (
     }
     return { credential: { kind: a.kind, value }, source }
   }
-  const assigned = tryAccount(
+  const assigned = await tryAccount(
     accounts.find((a) => a.id === agent.account_id),
     "agent",
   )
@@ -61,13 +71,13 @@ export const resolveJobCredential = async (
       ? job.asked_by
       : agent.created_by
   if (payer) {
-    const mine = tryAccount(
+    const mine = await tryAccount(
       accounts.find((a) => a.user_id === payer && a.provider === want),
       payer === job.asked_by ? "asker" : "creator",
     )
     if (mine) return mine
   }
-  const pool = tryAccount(
+  const pool = await tryAccount(
     accounts.find((a) => a.user_id === WORKSPACE_ACCOUNT_OWNER && a.provider === want),
     "pool",
   )

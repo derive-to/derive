@@ -3034,6 +3034,10 @@ export class PgMetaStore implements MetaStore {
     await this.db
       .delete(modelCredential)
       .where(and(eq(modelCredential.org_id, orgId), eq(modelCredential.user_id, userId)))
+    // Their personal model accounts too (see the SQLite store).
+    await this.db
+      .delete(modelAccount)
+      .where(and(eq(modelAccount.org_id, orgId), eq(modelAccount.user_id, userId)))
   }
   async getWorkspace(orgId: string): Promise<WorkspaceRecord | null> {
     const rows = await this.db.select().from(workspace).where(eq(workspace.id, orgId))
@@ -3067,6 +3071,20 @@ export class PgMetaStore implements MetaStore {
     // encrypted token is orphaned (the pool row would otherwise have no API path left to
     // delete once memberships are gone). One predicate covers members and the pool.
     await this.db.delete(modelCredential).where(eq(modelCredential.org_id, orgId))
+    // The agent model's rows (see the SQLite store): accounts, agents, schedules, jobs and
+    // their transcripts.
+    await this.db
+      .delete(jobMessage)
+      .where(
+        inArray(
+          jobMessage.job_id,
+          this.db.select({ id: job.id }).from(job).where(eq(job.org_id, orgId)),
+        ),
+      )
+    await this.db.delete(job).where(eq(job.org_id, orgId))
+    await this.db.delete(agentTrigger).where(eq(agentTrigger.org_id, orgId))
+    await this.db.delete(modelAccount).where(eq(modelAccount.org_id, orgId))
+    await this.db.delete(agent).where(eq(agent.org_id, orgId))
     await this.db.delete(workflowFiles).where(eq(workflowFiles.org_id, orgId))
     await this.db.delete(workflowDraft).where(eq(workflowDraft.org_id, orgId))
     await this.db.delete(workflowTest).where(eq(workflowTest.org_id, orgId))
@@ -6601,6 +6619,7 @@ export class PgMetaStore implements MetaStore {
     // Encrypted plan tokens must not linger after the account is gone; the workspace pool's
     // sentinel-user row is keyed differently, so it is never in scope.
     await this.db.delete(modelCredential).where(eq(modelCredential.user_id, userId))
+    await this.db.delete(modelAccount).where(eq(modelAccount.user_id, userId))
     await this.db.update(artifact).set({ author_id: null }).where(eq(artifact.author_id, userId))
     await this.db.update(version).set({ author_id: null }).where(eq(version.author_id, userId))
     await this.db.update(comment).set({ author_id: null }).where(eq(comment.author_id, userId))

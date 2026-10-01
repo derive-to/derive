@@ -97,7 +97,8 @@ export function registerCommentTool(tc: ToolContext): void {
         // workspace agent rather than silently dropping a request.
         const mentions: Mention[] = []
         const seen = new Set<string>()
-        const agents = await ctx.meta.listAgents(a.org_id)
+        // A managed agent (an imported paper's hidden principal) is never a mention target.
+        const agents = (await ctx.meta.listAgents(a.org_id)).filter((x) => x.managed !== 1)
         for (const raw of mentionRefs ?? []) {
           const ref = raw.trim()
           if (!ref) continue
@@ -111,7 +112,7 @@ export function registerCommentTool(tc: ToolContext): void {
           const bare = ref.replace(/^@/, "")
           const direct = await ctx.meta.getAgent(bare)
           const agentTarget =
-            direct?.org_id === a.org_id
+            direct?.org_id === a.org_id && direct.managed !== 1
               ? direct
               : agents.find(
                   (x) => x.id === bare || x.name.trim().toLowerCase() === bare.trim().toLowerCase(),

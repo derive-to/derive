@@ -13,6 +13,7 @@ import {
   spendableConnections,
   toolsForRun,
 } from "../lib/broker"
+import { jobsOverBudget, OVER_BUDGET } from "../lib/budget"
 import { readEnvironmentBindings } from "../lib/context-environment"
 import { decryptSecret } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
@@ -311,6 +312,14 @@ export const jobRoutes = (ctx: AppContext) => {
       const caller = await agentFor(c)
       if (caller && caller.org_id !== agent.org_id)
         return bail(fail(c, 404, "no such agent you can ask"))
+      // A workspace past its monthly model budget takes no new work. Checked before anything
+      // is written, so a refused ask leaves no job behind. A dedupe key naming an open job
+      // still finds it: that work is already asked for.
+      const open = b.dedupe_key
+        ? await meta.findOpenJobByDedupe(agent.id, who.id, b.dedupe_key)
+        : null
+      if (!open && (await jobsOverBudget(meta, agent.org_id, who.id)))
+        return bail(fail(c, 402, OVER_BUDGET))
       const subject: Selector | null = b.subject
         ? (normalizeSelectors([b.subject])[0] ?? null)
         : null
@@ -510,10 +519,12 @@ export const jobRoutes = (ctx: AppContext) => {
     const quiet: SourceQuiet[] = []
     let tools: { def: unknown; ref: string }[] = []
     if (connIds.length && jobs.length) {
+      // The agent's creator's personal broker plan, else the workspace pool's: the agent acts
+      // on their behalf.
       const broker = await brokerFor(
         meta,
         agent.org_id,
-        null,
+        agent.created_by,
         deps.encryptionKey,
         deps.allowEchoStub,
       )
@@ -660,7 +671,13 @@ export const jobRoutes = (ctx: AppContext) => {
     if (b instanceof Response) return b
     const connIds = parseConnectionIds(agent.connection_ids_json)
     if (connIds.length === 0) return fail(c, 403, "this agent has no sources")
-    const broker = await brokerFor(meta, agent.org_id, null, deps.encryptionKey, deps.allowEchoStub)
+    const broker = await brokerFor(
+      meta,
+      agent.org_id,
+      agent.created_by,
+      deps.encryptionKey,
+      deps.allowEchoStub,
+    )
     const route = refRouter(broker, mcpAuthFor(meta, agent.org_id, deps.encryptionKey))
     const allowed = await toolsForRun(meta, broker, agent.org_id, connIds, route)
     const out = await callTool({

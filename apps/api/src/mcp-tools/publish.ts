@@ -1023,7 +1023,10 @@ export function registerPublishTool(tc: ToolContext): void {
         // HTTP route runs, so the two surfaces cannot drift on it.
         let review_round: string | null = null
         const reviewFor = actingFor?.id ?? (profileAskReview ? profileReviewer : null)
-        if ((request_review || profileAskReview) && reviewFor) {
+        // An agent whose write policy is `review` opens a round on every new version of an
+        // existing page, asked for or not (the HTTP route holds the same rule).
+        const policyReview = !!short_id && agent.write_policy === "review"
+        if ((request_review || profileAskReview || policyReview) && reviewFor) {
           review_round = await openReviewRound(
             {
               meta: ctx.meta,

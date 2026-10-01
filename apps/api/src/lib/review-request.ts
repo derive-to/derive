@@ -148,7 +148,7 @@ export const openReviewRound = async (
 export interface AgentPushInput {
   /** The human behind the grant — bell row owner and auto-open channel. */
   user: string
-  /** The agent principal, for attribution and the service-context check. */
+  /** The agent principal, for attribution and the service-agent check. */
   agentId: string
   agentName: string
   version: number
@@ -228,12 +228,19 @@ export const agentPushFanout = async (
   }
   if (input.notifyBrowser === false) return false
 
-  // A context-bound agent is an askable service: its publishes are routinely OTHER
-  // people's asks riding this owner's grant, so the push must not commandeer the owner's
-  // browser. Flag it — the client downgrades auto-open to a toast (the bell row still
-  // lands).
-  const contexts = await deps.meta.listContexts(artifact.org_id)
-  const service = contexts.some((x) => x.agent_id === input.agentId)
+  // An askable agent is a service: its publishes are routinely OTHER people's asks riding
+  // this owner's standing, so the push must not commandeer the owner's browser. Flag it: the
+  // client downgrades auto-open to a toast (the bell row still lands). Askable means a
+  // registered agent that does work on request: it reads an instructions page before every
+  // job (what a context's manifest was before agents replaced contexts), or it runs on a
+  // Derive machine. A person's own coding session (an OAuth grant) is never a service.
+  const registered = input.agentId.startsWith("oauth:")
+    ? null
+    : await deps.meta.getAgent(input.agentId).catch(() => null)
+  const service =
+    !!registered &&
+    registered.org_id === artifact.org_id &&
+    (!!registered.instructions_artifact_id || registered.machine === "derive")
   const pushed = {
     type: "artifact.pushed" as const,
     event_id: newId("ev"),

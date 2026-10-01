@@ -85,6 +85,10 @@ export const agentRoutes = (ctx: AppContext) => {
         null)
       : null
 
+  /** Whether this agent may bill its owner's own plan (the workspace's owner-lend list). */
+  const lentOut = async (a: AgentRecord): Promise<boolean> =>
+    ((await meta.getOrgSettings(a.org_id).catch(() => null))?.ownerLendAgents ?? []).includes(a.id)
+
   // A workspace-registered agent, without its token hash.
   const Agent = z
     .object({
@@ -126,7 +130,11 @@ export const agentRoutes = (ctx: AppContext) => {
       provider: z.enum(["claude-code", "codex"]).describe("Which coding agent runs its jobs."),
       model: z.string().nullable(),
       ask_policy: z.enum(["workspace", "invited"]),
-      write_policy: z.enum(["publish", "review"]),
+      write_policy: z
+        .enum(["publish", "review"])
+        .describe(
+          "publish: its writes go live like a person's. review: they still go live, and every new version it writes to an existing page opens a review round for the person it acts for.",
+        ),
       paused: z.boolean(),
       seen_at: z.string().nullable().describe("When its runner last pulled work."),
       max_run_ms: z.number().nullable(),
@@ -211,9 +219,19 @@ export const agentRoutes = (ctx: AppContext) => {
       const recent = await meta.listJobs({ orgId: org, limit: 200 })
       const lastJob = new Map<string, string>()
       for (const j of recent) if (!lastJob.has(j.agent_id)) lastJob.set(j.agent_id, j.created_at)
+      // Every agent's instructions page, in one lookup rather than one per agent.
+      const pageIds = [
+        ...new Set(agents.map((a) => a.instructions_artifact_id).filter((x): x is string => !!x)),
+      ]
+      const pages = pageIds.length ? await meta.getArtifactsByIds(pageIds).catch(() => []) : []
+      const shortOf = new Map(pages.map((p) => [p.id, p.short_id]))
       return c.json({
         agents: agents.map((a) => ({
-          ...agentJson(a, lent.has(a.id)),
+          ...agentJson(a, lent.has(a.id), {
+            instructions_short_id: a.instructions_artifact_id
+              ? (shortOf.get(a.instructions_artifact_id) ?? null)
+              : null,
+          }),
           triggers: triggers.filter((t) => t.agent_id === a.id).map(triggerJson),
           last_job_at: lastJob.get(a.id) ?? null,
         })),
@@ -460,9 +478,8 @@ export const agentRoutes = (ctx: AppContext) => {
       const agent = await meta.getAgent(c.req.param("id"))
       if (!agent || agent.org_id !== org || !(await meta.getMembership(org, who.id)))
         return bail(fail(c, 404, "agent not found"))
-      const lent = new Set((await meta.getOrgSettings(agent.org_id)).ownerLendAgents ?? [])
       return c.json({
-        ...agentJson(agent, lent.has(agent.id), {
+        ...agentJson(agent, await lentOut(agent), {
           instructions_short_id: await instructionsShortId(agent),
         }),
         triggers: (await meta.listTriggers(agent.org_id, agent.id)).map(triggerJson),
@@ -557,7 +574,9 @@ export const agentRoutes = (ctx: AppContext) => {
       }
       if (!updated) return bail(fail(c, 404, "agent not found"))
       return c.json(
-        agentJson(updated, false, { instructions_short_id: await instructionsShortId(updated) }),
+        agentJson(updated, await lentOut(updated), {
+          instructions_short_id: await instructionsShortId(updated),
+        }),
       )
     },
   )
@@ -684,7 +703,12 @@ export const agentRoutes = (ctx: AppContext) => {
       const token = `dk_agt_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`
       const rotated = await meta.rotateAgentToken(c.req.param("id"), org, sha256(token))
       if (!rotated) return bail(fail(c, 404, "agent not found"))
-      return c.json({ ...agentJson(rotated), token })
+      return c.json({
+        ...agentJson(rotated, await lentOut(rotated), {
+          instructions_short_id: await instructionsShortId(rotated),
+        }),
+        token,
+      })
     },
   )
 

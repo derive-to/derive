@@ -3423,6 +3423,146 @@ export function runStoreContract(
       expect(await store.deleteAccount(mine.id, "org_other")).toBe(false)
       expect(await store.deleteAccount(mine.id, ORG)).toBe(true)
     })
+
+    it("model secrets leave with the member, the user, and the workspace; the workspace takes its agents", async () => {
+      const org = `org_purge_${uuid()}`
+      const other = `org_purge_${uuid()}`
+      const leaver = `u_leave_${uuid()}`
+      const stayer = `u_stay_${uuid()}`
+      const gone = `u_gone_${uuid()}`
+      await store.setWorkspace(org, "Purge")
+      await store.setWorkspace(other, "Elsewhere")
+      for (const [o, u] of [
+        [org, leaver],
+        [org, stayer],
+        [org, gone],
+        [other, gone],
+      ] as const)
+        await store.setMembership({ id: uuid(), org_id: o, user_id: u, role: "editor" })
+      const acct = (o: string, user_id: string) =>
+        store.createAccount({
+          id: uuid(),
+          org_id: o,
+          user_id,
+          provider: "claude",
+          kind: "api_key",
+          secret_enc: "v1.secret",
+        })
+      const leaverKey = await acct(org, leaver)
+      const stayerKey = await acct(org, stayer)
+      const pool = await acct(org, "__workspace__")
+      const goneHere = await acct(org, gone)
+      const goneThere = await acct(other, gone)
+      const otherPool = await acct(other, "__workspace__")
+
+      // A removed member's personal account goes; a teammate's and the pool stay.
+      await store.removeMembership(org, leaver)
+      expect(await store.getAccount(leaverKey.id)).toBeNull()
+      expect(await store.getAccount(stayerKey.id)).not.toBeNull()
+      expect(await store.getAccount(pool.id)).not.toBeNull()
+      // A deleted user's accounts go in every workspace; no pool goes with them.
+      await store.deleteUserData(gone)
+      expect(await store.getAccount(goneHere.id)).toBeNull()
+      expect(await store.getAccount(goneThere.id)).toBeNull()
+      expect(await store.getAccount(otherPool.id)).not.toBeNull()
+
+      // A deleted workspace takes every account, agent, schedule, job and transcript it held.
+      const agent = await store.createAgent({
+        id: uuid(),
+        org_id: org,
+        name: "doomed",
+        token: `tok_${uuid()}`,
+        role: "editor",
+      })
+      const keeper = await store.createAgent({
+        id: uuid(),
+        org_id: other,
+        name: "keeper",
+        token: `tok_${uuid()}`,
+        role: "editor",
+      })
+      const job = await store.createJob({
+        id: uuid(),
+        org_id: org,
+        agent_id: agent.id,
+        kind: "ask",
+        instruction: "x",
+      })
+      await store.addJobMessage({
+        id: uuid(),
+        job_id: job.id,
+        author_kind: "asker",
+        author_id: stayer,
+        body_md: "x",
+      })
+      const keptJob = await store.createJob({
+        id: uuid(),
+        org_id: other,
+        agent_id: keeper.id,
+        kind: "ask",
+        instruction: "y",
+      })
+      const trigger = await store.createTrigger({
+        id: uuid(),
+        org_id: org,
+        agent_id: agent.id,
+        kind: "schedule",
+        cron: "0 9 * * *",
+        instruction: "refresh",
+      })
+      await store.removeMembership(org, stayer)
+      await store.deleteWorkspace(org)
+      expect(await store.getAccount(stayerKey.id)).toBeNull()
+      expect(await store.getAccount(pool.id)).toBeNull()
+      expect(await store.getAgent(agent.id)).toBeNull()
+      expect(await store.getJob(job.id)).toBeNull()
+      expect(await store.listJobMessages(job.id)).toEqual([])
+      expect(await store.getTrigger(trigger.id)).toBeNull()
+      // Another workspace's rows are untouched.
+      expect(await store.getAgent(keeper.id)).not.toBeNull()
+      expect(await store.getJob(keptJob.id)).not.toBeNull()
+      expect(await store.getAccount(otherPool.id)).not.toBeNull()
+    })
+
+    it("addJobCost accumulates onto any job whatever its status, and sumJobCostSince sees it", async () => {
+      const org = `org_cost_${uuid()}`
+      const a = await mkAgent({ org_id: org })
+      const j = await store.createJob({
+        id: uuid(),
+        org_id: org,
+        agent_id: a.id,
+        kind: "ask",
+        instruction: "spend",
+      })
+      // Unknown cost starts null; the first add makes it a number.
+      expect((await store.getJob(j.id))?.cost_micro_usd).toBeNull()
+      await store.addJobCost(j.id, 1_000)
+      await store.updateJob(j.id, { status: "cancelled" })
+      // A late report on a stopped job still adds.
+      await store.addJobCost(j.id, 250)
+      expect((await store.getJob(j.id))?.cost_micro_usd).toBe(1_250)
+      expect(await store.sumJobCostSince(org, at(-60_000))).toBe(1_250)
+      // A missing job is a no-op, not an error.
+      await store.addJobCost(`job_${uuid()}`, 5)
+    })
+
+    it("listOpenGraphJobs lists queued and running graph jobs only", async () => {
+      const a = await mkAgent()
+      const queued = await mkJob(a.id, { kind: "graph" })
+      const running = await mkJob(a.id, { kind: "graph" })
+      await store.updateJob(running.id, { status: "running" })
+      const done = await mkJob(a.id, { kind: "graph" })
+      await store.updateJob(done.id, { status: "succeeded" })
+      const waiting = await mkJob(a.id, { kind: "graph" })
+      await store.updateJob(waiting.id, { status: "needs_you" })
+      const plain = await mkJob(a.id)
+      const ids = (await store.listOpenGraphJobs(200)).map((j) => j.id)
+      expect(ids).toContain(queued.id)
+      expect(ids).toContain(running.id)
+      expect(ids).not.toContain(done.id)
+      expect(ids).not.toContain(waiting.id)
+      expect(ids).not.toContain(plain.id)
+    })
   })
 
   describe(`${label}: contexts + sessions`, () => {

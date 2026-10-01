@@ -714,6 +714,100 @@ describe("the agent model over MCP (agents, ask, jobs, pull)", () => {
     return { text: r.content[0]?.text ?? "", isError: !!r.isError }
   }
 
+  it("an agent set to review opens a round on each revision it publishes, on either surface", async () => {
+    const { app, meta, token } = loopApp("am-review-policy")
+    const careful = await call(app, token, "agents", {
+      action: "create",
+      name: "Careful",
+      write_policy: "review",
+    })
+    const plain = await call(app, token, "agents", { action: "create", name: "Plain" })
+    // MCP creates commenter-grade agents; these two need to write.
+    for (const a of [careful, plain])
+      await meta.updateAgent(a.id as string, "ws_p_u_o", { role: "editor" })
+    const agentKey = { authorization: `Bearer ${careful.token as string}` }
+    // Its own first draft goes live with no round.
+    const created = await publishAs(app, "<h1>v1</h1>", { title: "Careful page" }, agentKey)
+    expect(created.status).toBe(201)
+    const page = (await created.json()) as { short_id: string; review_requested?: boolean }
+    expect(page.review_requested).toBeUndefined()
+    const art = await meta.getByShortId(page.short_id)
+    if (!art) throw new Error("artifact missing")
+    expect(await meta.listReviewRounds(art.id)).toHaveLength(0)
+    // A revision over HTTP still publishes, and asks the person it acts for to look.
+    const revised = await publishAs(app, "<h1>v2</h1>", {}, agentKey, page.short_id)
+    expect(revised.status).toBe(201)
+    expect(((await revised.json()) as { review_requested?: boolean }).review_requested).toBe(true)
+    expect((await meta.getByShortId(page.short_id))?.current_version).toBe(2)
+    expect(await meta.getPendingRound(art.id, "u_o")).toMatchObject({ version: 2 })
+    // And over MCP, with the same key: the person's pending round moves to the new version.
+    const viaMcp = await call(app, careful.token as string, "publish", {
+      short_id: page.short_id,
+      content: "<h1>v3</h1>",
+    })
+    expect(viaMcp.review_requested).toBe(true)
+    expect(await meta.getPendingRound(art.id, "u_o")).toMatchObject({ version: 3 })
+    // An agent set to publish revises with no round.
+    const plainKey = { authorization: `Bearer ${plain.token as string}` }
+    const other = (await (
+      await publishAs(app, "<h1>p1</h1>", { title: "Plain page" }, plainKey)
+    ).json()) as { short_id: string }
+    const plainRevised = await publishAs(app, "<h1>p2</h1>", {}, plainKey, other.short_id)
+    expect(((await plainRevised.json()) as { review_requested?: boolean }).review_requested).toBe(
+      undefined,
+    )
+  })
+
+  it("an askable agent's publish never takes over its person's browser; their own session's does", async () => {
+    const { app, meta, backplane, token } = loopApp("am-service")
+    const userEvents = record(backplane, "u:u_o")
+    const brief = await call(app, token, "publish", { content: "<h1>Brief</h1>", title: "Brief" })
+    const askable = await call(app, token, "agents", {
+      action: "create",
+      name: "Askable",
+      instructions: brief.short_id,
+    })
+    const tool = await call(app, token, "agents", { action: "create", name: "Tool" })
+    // MCP creates commenter-grade agents; these two need to write.
+    for (const a of [askable, tool])
+      await meta.updateAgent(a.id as string, "ws_p_u_o", { role: "editor" })
+    const publishWith = async (key: string, title: string) =>
+      (
+        (await (
+          await publishAs(app, "<h1>x</h1>", { title }, { authorization: `Bearer ${key}` })
+        ).json()) as { short_id: string }
+      ).short_id
+    const pushedFor = (shortId: unknown) =>
+      userEvents.find((e) => e.type === "artifact.pushed" && e.short_id === shortId)
+    // The brief came from the person's own session: it may open their tab.
+    expect(pushedFor(brief.short_id)?.service).toBe(false)
+    // An agent with an instructions page does other people's asks: a toast, never a takeover.
+    expect(pushedFor(await publishWith(askable.token as string, "From askable"))?.service).toBe(
+      true,
+    )
+    // A registered key with no instructions page is a person's tool, as before.
+    expect(pushedFor(await publishWith(tool.token as string, "From tool"))?.service).toBe(false)
+  })
+
+  it("never lists or asks an imported paper's hidden managed agent", async () => {
+    const { app, meta, token } = loopApp("am-managed")
+    const hidden = await meta.createAgent({
+      id: "ag_mcp_hidden",
+      org_id: "ws_p_u_o",
+      name: "arXiv:2401.00003",
+      token: "hash_never_handed_out",
+      role: "editor",
+      created_by: "u_o",
+      managed: 1,
+    })
+    const mine = await call(app, token, "agents", { action: "create", name: "Visible" })
+    const listed = (await call(app, token, "agents", { action: "list" })).agents as { id: string }[]
+    expect(listed.map((a) => a.id)).toContain(mine.id)
+    expect(listed.map((a) => a.id)).not.toContain(hidden.id)
+    const asked = await raw(app, token, "ask", { agent: hidden.id, instruction: "Go", wait: 0 })
+    expect(asked.isError).toBe(true)
+  })
+
   it("creates an owner agent, asks it, runs it from the same session, and reads the result", async () => {
     const { app, token } = loopApp("am-roundtrip")
     const made = await call(app, token, "agents", { action: "create", name: "Digest" })
@@ -845,12 +939,14 @@ describe("the agent model over MCP (agents, ask, jobs, pull)", () => {
       schedule: { cron: "0 4 * * *", instruction: "Tidy up" },
     })
     expect(updated.paused).toBe(true)
-    const triggers = updated.triggers as { cron: string }[]
+    const triggers = updated.triggers as { id: string; cron: string }[]
     expect(triggers.map((t) => t.cron)).toEqual(["0 4 * * *"])
 
     const asked = await call(app, token, "ask", { agent: made.id, instruction: "Now", wait: 0 })
     await call(app, token, "agents", { action: "delete", agent: made.id })
     expect((await meta.getJob(asked.id as string))?.status).toBe("cancelled")
+    // Its schedule goes with it: nothing is left to fire for an agent that is gone.
+    for (const t of triggers) expect(await meta.getTrigger(t.id)).toBeNull()
     const gone = await raw(app, token, "agents", { action: "get", agent: made.id })
     expect(gone.isError).toBe(true)
   })
