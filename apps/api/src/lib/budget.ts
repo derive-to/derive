@@ -32,12 +32,14 @@ export const overBudget = async (
     return false
   }
   if (!limit || limit <= 0) return false
-  const spent = await meta.sumJobCostSince(orgId, monthStartIso())
+  // A personal plan's limit is that person's: only the jobs that bill them count against it.
+  // The pool's limit is the workspace's, so all of its jobs do.
+  const spent = await meta.sumJobCostSince(orgId, monthStartIso(), modelPlan.user_id ?? undefined)
   return spent >= limit
 }
 
-/** The budget check for agent jobs: asks, schedules, pulls, and Derive-machine dispatch.
- *  `payer` is who the work bills to (the asker for an ask, the agent's creator otherwise),
+/** The budget check for agent jobs: asks, follow-ups, schedules, pulls, graph steps and
+ *  Derive-machine dispatch. `payer` is who the work bills to (lib/job-accounts.ts jobPayer),
  *  which picks their personal plan's limit or the workspace pool's, as the chat gate does. A
  *  budget that cannot be read does not stop work: the agent-write switch is the brake that
  *  fails closed, and a missing meter is the loud failure at execution time. */

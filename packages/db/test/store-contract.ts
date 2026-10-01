@@ -3448,22 +3448,74 @@ export function runStoreContract(
           kind: "api_key",
           secret_enc: "v1.secret",
         })
+      const plan = (o: string, user_id: string | null) =>
+        store.createPlan({
+          id: uuid(),
+          org_id: o,
+          user_id,
+          kind: "broker",
+          provider: "composio",
+          secret_enc: "v1.plan",
+        })
       const leaverKey = await acct(org, leaver)
+      const leaverPlan = await plan(org, leaver)
+      const goneElsewherePlan = await plan(other, gone)
       const stayerKey = await acct(org, stayer)
       const pool = await acct(org, "__workspace__")
       const goneHere = await acct(org, gone)
       const goneThere = await acct(other, gone)
       const otherPool = await acct(other, "__workspace__")
 
-      // A removed member's personal account goes; a teammate's and the pool stay.
+      // What a member started: an agent of theirs, and an open job they asked a teammate's.
+      const leaversAgent = await store.createAgent({
+        id: uuid(),
+        org_id: org,
+        name: "leaver's",
+        token: `tok_${uuid()}`,
+        role: "editor",
+        created_by: leaver,
+      })
+      const stayersAgent = await store.createAgent({
+        id: uuid(),
+        org_id: org,
+        name: "stayer's",
+        token: `tok_${uuid()}`,
+        role: "editor",
+        created_by: stayer,
+      })
+      const leaversAsk = await store.createJob({
+        id: uuid(),
+        org_id: org,
+        agent_id: stayersAgent.id,
+        kind: "ask",
+        instruction: "x",
+        asked_by: leaver,
+      })
+      const stayersAsk = await store.createJob({
+        id: uuid(),
+        org_id: org,
+        agent_id: stayersAgent.id,
+        kind: "ask",
+        instruction: "y",
+        asked_by: stayer,
+      })
+
+      // A removed member's personal account and plan go; a teammate's and the pool stay. Their
+      // agents pause and their open asks are cancelled; a teammate's are untouched.
       await store.removeMembership(org, leaver)
       expect(await store.getAccount(leaverKey.id)).toBeNull()
+      expect(await store.getPlan(leaverPlan.id)).toBeNull()
+      expect((await store.getAgent(leaversAgent.id))?.paused_at).toBeTruthy()
+      expect((await store.getAgent(stayersAgent.id))?.paused_at).toBeNull()
+      expect((await store.getJob(leaversAsk.id))?.status).toBe("cancelled")
+      expect((await store.getJob(stayersAsk.id))?.status).toBe("queued")
       expect(await store.getAccount(stayerKey.id)).not.toBeNull()
       expect(await store.getAccount(pool.id)).not.toBeNull()
       // A deleted user's accounts go in every workspace; no pool goes with them.
       await store.deleteUserData(gone)
       expect(await store.getAccount(goneHere.id)).toBeNull()
       expect(await store.getAccount(goneThere.id)).toBeNull()
+      expect(await store.getPlan(goneElsewherePlan.id)).toBeNull()
       expect(await store.getAccount(otherPool.id)).not.toBeNull()
 
       // A deleted workspace takes every account, agent, schedule, job and transcript it held.
@@ -3510,9 +3562,53 @@ export function runStoreContract(
         cron: "0 9 * * *",
         instruction: "refresh",
       })
-      await store.removeMembership(org, stayer)
+      // Every other secret the workspace held.
+      const poolPlan = await plan(org, null)
+      await store.createConnection({
+        id: `cn_${uuid()}`,
+        org_id: org,
+        user_id: stayer,
+        kind: "secret",
+        secret_enc: "v1.conn",
+        broker: "none",
+        toolkit: "custom",
+        broker_ref: `ref_${uuid()}`,
+        status: "active",
+      })
+      await store.setSlackInstall({
+        org_id: org,
+        team_id: `T${uuid()}`,
+        team_name: "Purge",
+        bot_token: "v1.bot",
+        bot_user_id: "UBOT",
+        created_at: new Date().toISOString(),
+      })
+      await store.createWebhook({
+        id: uuid(),
+        org_id: org,
+        url: "https://hooks.test/x",
+        secret: "whsec",
+        kind: "generic",
+        events: "*",
+      })
+      await store.replaceJoinLink({
+        id: `wjl_${uuid()}`,
+        org_id: org,
+        role: "editor",
+        token: `dkj_${uuid()}`,
+        created_by: null,
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      })
+      // Deleted with a member still seated: their key goes with the workspace.
+      expect(await store.getMembership(org, stayer)).not.toBeNull()
       await store.deleteWorkspace(org)
       expect(await store.getAccount(stayerKey.id)).toBeNull()
+      expect(await store.getPlan(poolPlan.id)).toBeNull()
+      expect(await store.listPlans(org)).toEqual([])
+      expect(await store.listConnections(org, stayer)).toEqual([])
+      expect(await store.getSlackInstall(org)).toBeNull()
+      expect(await store.listWebhooks(org)).toEqual([])
+      expect(await store.getJoinLink(org)).toBeNull()
       expect(await store.getAccount(pool.id)).toBeNull()
       expect(await store.getAgent(agent.id)).toBeNull()
       expect(await store.getJob(job.id)).toBeNull()
@@ -3544,6 +3640,33 @@ export function runStoreContract(
       expect(await store.sumJobCostSince(org, at(-60_000))).toBe(1_250)
       // A missing job is a no-op, not an error.
       await store.addJobCost(`job_${uuid()}`, 5)
+    })
+
+    it("sumJobCostSince with a payer counts only the jobs that bill that person", async () => {
+      const org = `org_payer_${uuid()}`
+      const owners = await mkAgent({ org_id: org, created_by: "u_maker" })
+      const derive = await mkAgent({ org_id: org, created_by: "u_maker", machine: "derive" })
+      const job = async (agent_id: string, asked_by: string | null, cost: number) => {
+        const j = await store.createJob({
+          id: uuid(),
+          org_id: org,
+          agent_id,
+          kind: "ask",
+          instruction: "x",
+          asked_by,
+        })
+        await store.addJobCost(j.id, cost)
+      }
+      // An owner machine bills its creator, whoever asked.
+      await job(owners.id, "u_asker", 100)
+      // A Derive machine bills who asked; a scheduled job (nobody asked) bills the creator.
+      await job(derive.id, "u_asker", 20)
+      await job(derive.id, null, 3)
+      const since = at(-60_000)
+      expect(await store.sumJobCostSince(org, since)).toBe(123)
+      expect(await store.sumJobCostSince(org, since, "u_maker")).toBe(103)
+      expect(await store.sumJobCostSince(org, since, "u_asker")).toBe(20)
+      expect(await store.sumJobCostSince(org, since, "u_nobody")).toBe(0)
     })
 
     it("listOpenGraphJobs lists queued and running graph jobs only", async () => {

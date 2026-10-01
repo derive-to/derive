@@ -13,7 +13,7 @@ import {
   spendableConnections,
   toolsForRun,
 } from "../lib/broker"
-import { jobsOverBudget, OVER_BUDGET } from "../lib/budget"
+import { OVER_BUDGET } from "../lib/budget"
 import { readEnvironmentBindings } from "../lib/context-environment"
 import { decryptSecret } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
@@ -28,6 +28,7 @@ import {
   canSteerJob,
   followUpJob,
   jobJson,
+  overBudgetFor,
   pullJobs,
   reportJob,
   retryJob,
@@ -318,7 +319,7 @@ export const jobRoutes = (ctx: AppContext) => {
       const open = b.dedupe_key
         ? await meta.findOpenJobByDedupe(agent.id, who.id, b.dedupe_key)
         : null
-      if (!open && (await jobsOverBudget(meta, agent.org_id, who.id)))
+      if (!open && (await overBudgetFor(meta, agent, who.id)))
         return bail(fail(c, 402, OVER_BUDGET))
       const subject: Selector | null = b.subject
         ? (normalizeSelectors([b.subject])[0] ?? null)
@@ -387,6 +388,7 @@ export const jobRoutes = (ctx: AppContext) => {
           fail(c, 403, "only the person who asked, or the agent's manager, can follow up"),
         )
       if (job.status === "cancelled") return bail(fail(c, 409, "this job was cancelled; ask again"))
+      if (await reopensOverBudget(job, agent)) return bail(fail(c, 402, OVER_BUDGET))
       const b = await readJson(c, z.object({ body_md: z.string().trim().min(1).max(20_000) }))
       if (b instanceof Response) return bail(b)
       const next = await followUpJob(jobDeps, job, who.id, b.body_md)
@@ -394,6 +396,15 @@ export const jobRoutes = (ctx: AppContext) => {
       return c.json({ ...(await showOne(next)), messages })
     },
   )
+
+  /** A write that reopens a settled job is new work, so it meets the same budget an ask does,
+   *  billed to whoever the job already bills. A graph itself spends nothing; its steps meet
+   *  the budget when they open. */
+  const reopensOverBudget = async (job: JobRecord, agent: AgentRecord) =>
+    job.status !== "running" &&
+    job.status !== "queued" &&
+    job.kind !== "graph" &&
+    (await overBudgetFor(meta, agent, job.asked_by))
 
   const personAction = (
     path: string,
@@ -403,6 +414,7 @@ export const jobRoutes = (ctx: AppContext) => {
       c: Context,
       whoId: string,
     ) => Promise<JobRecord | null | { error: string }>,
+    reopens = false,
   ) =>
     app.openapi(
       createRoute({
@@ -425,6 +437,7 @@ export const jobRoutes = (ctx: AppContext) => {
           return bail(
             fail(c, 403, "only the person who asked, or the agent's manager, can do that"),
           )
+        if (reopens && (await reopensOverBudget(job, agent))) return bail(fail(c, 402, OVER_BUDGET))
         const out = await act(job, c, who.id)
         if (!out) return bail(fail(c, 409, "this job cannot do that from where it is"))
         if ("error" in out) return bail(fail(c, 400, out.error))
@@ -434,8 +447,11 @@ export const jobRoutes = (ctx: AppContext) => {
   personAction("/v1/jobs/{id}/cancel", "Cancel an open job (and its children).", (job) =>
     cancelJob(jobDeps, job),
   )
-  personAction("/v1/jobs/{id}/retry", "Run a failed or lost job again.", (job) =>
-    retryJob(jobDeps, job),
+  personAction(
+    "/v1/jobs/{id}/retry",
+    "Run a failed or lost job again.",
+    (job) => retryJob(jobDeps, job),
+    true,
   )
   personAction(
     "/v1/jobs/{id}/answer",
@@ -451,6 +467,7 @@ export const jobRoutes = (ctx: AppContext) => {
       if (b instanceof Response) return { error: "answer needs text or an option" }
       return answerJob(jobDeps, job, whoId, b)
     },
+    true,
   )
 
   // ---- Runners -----------------------------------------------------------------------------

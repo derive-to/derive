@@ -15,6 +15,7 @@ import type { Backplane } from "../bus"
 import { log } from "../log"
 import { agentWritesOff } from "./agent-writes"
 import { jobsOverBudget } from "./budget"
+import { creatorLeft, jobPayer } from "./job-accounts"
 import { leaseUntilFor, RUN_MAX_ATTEMPTS } from "./run-lifecycle"
 import { runtimeFailureReason } from "./runtime-diagnostics"
 import { previousOccurrence } from "./schedule"
@@ -60,6 +61,33 @@ const wake = (
   } catch {
     // A wake is best effort: waiters re-read the store.
   }
+}
+
+// ---- The monthly budget ------------------------------------------------------------------
+
+/** Is the person this agent's work for `askedBy` would bill past their monthly limit? */
+export const overBudgetFor = async (
+  meta: MetaStore,
+  agent: AgentRecord,
+  askedBy: string | null,
+): Promise<boolean> => jobsOverBudget(meta, agent.org_id, await jobPayer(meta, agent, askedBy))
+
+export const HELD_FOR_BUDGET =
+  "Held: the monthly budget is used up. This job waits, and runs once the limit is raised or the month turns."
+
+/** Say on a job, once, that it is waiting for budget rather than for a runner. A progress note,
+ *  so the job stays queued and runs on its own when the budget allows. */
+export const noteHeldForBudget = async (meta: MetaStore, job: JobRecord): Promise<void> => {
+  const last = (await meta.listJobMessages(job.id)).at(-1)
+  if (last?.meta_json && (JSON.parse(last.meta_json) as { held?: string }).held === "budget") return
+  await meta.addJobMessage({
+    id: newId("jm"),
+    job_id: job.id,
+    author_kind: "agent",
+    author_id: job.agent_id,
+    body_md: HELD_FOR_BUDGET,
+    meta_json: JSON.stringify({ progress: true, held: "budget" }),
+  })
 }
 
 // ---- Who may ask -------------------------------------------------------------------------
@@ -278,8 +306,20 @@ export const pullJobs = async (
   if (agent.paused_at || (await agentWritesOff(meta, agent.org_id))) return []
   // A Derive machine's work is dispatched to its sandbox, never pulled by another runner.
   if (agent.machine === "derive") return []
-  // A workspace past its monthly budget is held: its work waits, queued, for the next month.
-  if (await jobsOverBudget(meta, agent.org_id, agent.created_by)) return []
+  // Its creator has left the workspace: nobody's machine or key may run it any more.
+  if (await creatorLeft(meta, agent)) return []
+  // Past its payer's monthly budget: the work waits, queued, and says why. On an owner machine
+  // the payer does not depend on who asked, so one check covers every queued job.
+  if (await overBudgetFor(meta, agent, null)) {
+    for (const j of await meta.listJobs({
+      orgId: agent.org_id,
+      agentId: agent.id,
+      status: ["queued"],
+      limit: 10,
+    }))
+      if (j.attended === 0 && j.kind !== "graph") await noteHeldForBudget(meta, j)
+    return []
+  }
   await materializeTriggers(
     meta,
     now,
@@ -457,14 +497,11 @@ export const materializeTriggers = async (
     if (!agents.has(t.agent_id)) agents.set(t.agent_id, await meta.getAgent(t.agent_id))
     const agent = agents.get(t.agent_id)
     if (!agent || agent.org_id !== t.org_id || agent.paused_at) continue
-    // A workspace past its monthly budget opens no scheduled work; the window is skipped,
-    // not saved up to replay when the month turns.
-    const payer = `${t.org_id}\u0000${agent.created_by ?? ""}`
-    if (!overBudget.has(payer))
-      overBudget.set(payer, await jobsOverBudget(meta, t.org_id, agent.created_by))
-    if (overBudget.get(payer)) continue
+    // Past its payer's monthly budget, the window still opens its job, which waits and says
+    // why. The one-waiting-run rule above keeps a held schedule from piling up.
+    if (!overBudget.has(agent.id)) overBudget.set(agent.id, await overBudgetFor(meta, agent, null))
     try {
-      await meta.createJob({
+      const job = await meta.createJob({
         id: newId("job"),
         org_id: t.org_id,
         agent_id: t.agent_id,
@@ -475,6 +512,7 @@ export const materializeTriggers = async (
         subject_json: t.subject_json,
       })
       created += 1
+      if (overBudget.get(agent.id)) await noteHeldForBudget(meta, job).catch(() => {})
     } catch {
       // Another tick won this window (the unique index): nothing to do.
     }

@@ -282,11 +282,29 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
         UPDATE job SET cost_micro_usd = coalesce(cost_micro_usd, 0) + ${microUsd}
         WHERE id = ${id} RETURNING id`)
     },
-    async sumJobCostSince(orgId, since) {
+    async sumJobCostSince(orgId, since, payer) {
+      // A job's payer, as lib/job-accounts.ts picks it: who asked on a Derive machine, the
+      // agent's creator otherwise.
+      const mine = payer
+        ? sql`AND (CASE WHEN a.machine = 'derive' AND j.asked_by IS NOT NULL THEN j.asked_by
+            ELSE a.created_by END) = ${payer}`
+        : sql``
       const r = await first<{ n: unknown }>(sql`
-        SELECT coalesce(sum(cost_micro_usd), 0) AS n FROM job
-        WHERE org_id = ${orgId} AND created_at >= ${since} AND cost_micro_usd IS NOT NULL`)
+        SELECT coalesce(sum(j.cost_micro_usd), 0) AS n FROM job j
+        LEFT JOIN agent a ON a.id = j.agent_id AND a.org_id = j.org_id
+        WHERE j.org_id = ${orgId} AND j.created_at >= ${since} AND j.cost_micro_usd IS NOT NULL
+          ${mine}`)
       return num(r?.n)
+    },
+    async standDownPerson(userId, orgId, now) {
+      const inOrg = orgId ? sql`AND org_id = ${orgId}` : sql``
+      await execute(sql`
+        UPDATE agent SET paused_at = ${now}
+        WHERE created_by = ${userId} AND paused_at IS NULL ${inOrg} RETURNING id`)
+      await execute(sql`
+        UPDATE job SET status = 'cancelled', finished_at = ${now}, lease_until = NULL,
+          dedupe_key = NULL, updated_at = ${now}
+        WHERE asked_by = ${userId} AND status IN (${list(OPEN)}) ${inOrg} RETURNING id`)
     },
     async addJobMessage(m) {
       // A transcript is ordered by created_at, and two messages written in the same millisecond

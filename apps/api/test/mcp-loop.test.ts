@@ -783,14 +783,31 @@ describe("the agent model over MCP (agents, ask, jobs, pull)", () => {
     expect(revised.status).toBe(201)
     expect(((await revised.json()) as { review_requested?: boolean }).review_requested).toBe(true)
     expect((await meta.getByShortId(page.short_id))?.current_version).toBe(2)
-    expect(await meta.getPendingRound(art.id, "u_o")).toMatchObject({ version: 2 })
-    // And over MCP, with the same key: the person's pending round moves to the new version.
+    const first = await meta.getPendingRound(art.id, "u_o")
+    expect(first).toMatchObject({ version: 2 })
+    const reviewBells = async () =>
+      (await meta.listNotifications("u_o", 50)).filter(
+        (n) => n.kind === "review" && n.artifact_id === art.id,
+      ).length
+    expect(await reviewBells()).toBe(1)
+    // And over MCP, with the same key: the round still pending moves to the new version. It is
+    // the same round, and the person is not asked a second time.
     const viaMcp = await call(app, careful.token as string, "publish", {
       short_id: page.short_id,
       content: "<h1>v3</h1>",
     })
     expect(viaMcp.review_requested).toBe(true)
-    expect(await meta.getPendingRound(art.id, "u_o")).toMatchObject({ version: 3 })
+    expect(await meta.getPendingRound(art.id, "u_o")).toMatchObject({ id: first?.id, version: 3 })
+    expect(await reviewBells()).toBe(1)
+    // A restore is a new version as well.
+    const restored = await app.request(`/v1/artifacts/${page.short_id}/restore`, {
+      method: "POST",
+      headers: { ...agentKey, "content-type": "application/json" },
+      body: JSON.stringify({ version: 1 }),
+    })
+    expect(restored.status).toBe(201)
+    expect(await meta.getPendingRound(art.id, "u_o")).toMatchObject({ id: first?.id, version: 4 })
+    expect(await reviewBells()).toBe(1)
     // An agent set to publish revises with no round.
     const plainKey = { authorization: `Bearer ${plain.token as string}` }
     const other = (await (

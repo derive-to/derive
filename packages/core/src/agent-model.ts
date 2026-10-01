@@ -324,10 +324,15 @@ export interface AgentModelStore<Agent = unknown> {
     askedBy: string | null,
     dedupeKey: string,
   ): Promise<JobRecord | null>
-  /** Sum of reported job cost since `since`, in micro-USD. Unknown costs are skipped. */
-  sumJobCostSince(orgId: string, since: string): Promise<number>
+  /** Sum of reported job cost since `since`, in micro-USD. Unknown costs are skipped. With
+   *  `payer`, only the jobs that bill that person: on a Derive machine the person who asked
+   *  (a scheduled job, its agent's creator), on an owner machine the agent's creator. */
+  sumJobCostSince(orgId: string, since: string, payer?: string): Promise<number>
   /** Add spend to a job in one statement, whatever its status: a late report's cost is real. */
   addJobCost(id: string, microUsd: number): Promise<void>
+  /** A person has left a workspace (`orgId`) or Derive (`orgId` null): pause the agents they
+   *  created there, and cancel the open jobs they asked. Nobody is left to run or pay for them. */
+  standDownPerson(userId: string, orgId: string | null, now: string): Promise<void>
 
   // ---- Derive machines ------------------------------------------------------------------
   /** Compare-and-set the agent's sandbox state on sandbox_rev; null when another writer won. */

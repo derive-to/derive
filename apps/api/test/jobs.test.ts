@@ -12,7 +12,7 @@ import { signCapabilityToken } from "../src/lib/capability-token"
 import { encryptSecret } from "../src/lib/crypto"
 import { advanceGraph, graphAware, graphPass } from "../src/lib/job-graph"
 import { machinePass, machineWorkspaces } from "../src/lib/job-machine"
-import { jobTick } from "../src/lib/jobs"
+import { HELD_FOR_BUDGET, jobTick } from "../src/lib/jobs"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // THE AGENT MODEL, through the surface people and runners use: an agent is created, asked,
@@ -756,28 +756,79 @@ describe("jobs: the monthly model budget", () => {
       limits: JSON.stringify({ monthlyMicroUsd }),
     })
 
-  it("a workspace past its month refuses new asks and holds pulls and schedules until the limit lifts", async () => {
+  const lastMessage = async (meta: ReturnType<typeof makeAuthedApp>["meta"], id: string) =>
+    (await meta.listJobMessages(id)).at(-1)?.body_md
+
+  it("a workspace past its month refuses new work, and held work says why and waits", async () => {
     const { app, meta } = await setup("jobs-budget")
     const a = await createAgent(app, { schedule: { cron: "* * * * *", instruction: "Tick" } })
-    const job = (await (await ask(app, ed.email, a.id, "before the limit")).json()) as {
+    const done = (await (await ask(app, ed.email, a.id, "before the limit")).json()) as {
       id: string
     }
-    await meta.addJobCost(job.id, 5_000)
+    const [p] = await pull(app, a)
+    await report(app, a.token, done.id, { started_at: p?.started_at, status: "succeeded" })
+    await meta.addJobCost(done.id, 5_000)
+    const waiting = (await (await ask(app, ed.email, a.id, "queued before the limit")).json()) as {
+      id: string
+    }
     const plan = await limitTo(meta, 1_000)
 
     const refused = await ask(app, ed.email, a.id, "after the limit")
     expect(refused.status).toBe(402)
     expect(((await refused.json()) as { error: string }).error).toMatch(/monthly model budget/)
-    // The queued job waits rather than running, and no schedule window opens work.
+    // A follow-up that would reopen a settled job is new work too.
+    const followUp = await app.request(
+      `/v1/jobs/${done.id}/messages`,
+      jsonAs(as(ed.email), { body_md: "one more thing" }),
+    )
+    expect(followUp.status).toBe(402)
+    // The queued job waits rather than running, and says so once however often it is pulled.
     expect(await pull(app, a)).toEqual([])
+    expect(await pull(app, a)).toEqual([])
+    expect(await lastMessage(meta, waiting.id)).toBe(HELD_FOR_BUDGET)
+    expect(
+      (await meta.listJobMessages(waiting.id)).filter((m) => m.body_md === HELD_FOR_BUDGET),
+    ).toHaveLength(1)
+    // A schedule window opens its job, held and saying so.
     const later = new Date(Date.now() + 2 * 60_000)
-    expect((await jobTick({ meta }, later)).materialized).toBe(0)
-    expect((await meta.getJob(job.id))?.status).toBe("queued")
+    expect((await jobTick({ meta }, later)).materialized).toBe(1)
+    const [scheduled] = await meta.listJobs({
+      orgId: "default",
+      agentId: a.id,
+      kind: ["scheduled"],
+    })
+    expect(scheduled?.status).toBe("queued")
+    expect(await lastMessage(meta, scheduled?.id ?? "")).toBe(HELD_FOR_BUDGET)
 
     await meta.deletePlan(plan.id, "default")
-    expect((await jobTick({ meta }, later)).materialized).toBe(1)
-    expect((await pull(app, a))[0]?.id).toBe(job.id)
-    expect((await ask(app, ed.email, a.id, "after the limit lifts")).status).toBe(201)
+    expect((await pull(app, a))[0]?.id).toBe(waiting.id)
+  })
+
+  it("a personal limit counts only the spend that bills that person", async () => {
+    const { app, meta } = await setup("jobs-budget-personal")
+    const owners = await createAgent(app)
+    const edsAgent = (await (
+      await app.request("/v1/agents", jsonAs(as(ed.email), { name: "Ed's own" }))
+    ).json()) as { id: string }
+    // The owner's agent spent well past what Ed allows himself.
+    const big = (await (await ask(app, ed.email, owners.id, "big")).json()) as { id: string }
+    await meta.addJobCost(big.id, 50_000)
+    await meta.createPlan({
+      id: newId("plan"),
+      org_id: "default",
+      user_id: ed.id,
+      kind: "model",
+      provider: "anthropic",
+      secret_enc: "enc",
+      limits: JSON.stringify({ monthlyMicroUsd: 1_000 }),
+    })
+    // Ed's own agent bills Ed: none of that spend was his.
+    const mine = await ask(app, ed.email, edsAgent.id, "mine")
+    expect(mine.status).toBe(201)
+    await meta.addJobCost(((await mine.json()) as { id: string }).id, 2_000)
+    // Now his own is spent; the owner's agent bills the owner, who has no limit.
+    expect((await ask(app, ed.email, edsAgent.id, "again")).status).toBe(402)
+    expect((await ask(app, ed.email, owners.id, "theirs")).status).toBe(201)
   })
 })
 
@@ -880,10 +931,15 @@ describe("jobs: which account a job runs with", () => {
       ...jsonAs(as(ed.email), { account_id: edsKey.id }),
       method: "PATCH",
     })
-    const job = (await (await ask(app, ed.email, edsAgent.id, "use my key")).json()) as {
+    // A teammate asks Ed's agent, and Ed asks it something too.
+    const job = (await (await ask(app, owner.email, edsAgent.id, "use Ed's key")).json()) as {
+      id: string
+    }
+    const edsAsk = (await (await ask(app, ed.email, edsAgent.id, "mine")).json()) as {
       id: string
     }
     const [held] = await pull(app, edsAgent)
+    expect(held?.id).toBe(job.id)
     const credFor = async () =>
       (await (
         await app.request(
@@ -904,14 +960,23 @@ describe("jobs: which account a job runs with", () => {
         })
       ).status,
     ).toBe(204)
-    // Their key left with them; the job falls back to the workspace's shared account.
+    // Their key left with them, and their agent's machine was theirs: its job runs on nobody's
+    // key, not even the workspace's shared one.
     expect(await meta.getAccount(edsKey.id)).toBeNull()
-    expect(await credFor()).toMatchObject({
-      credential: { value: "sk-shared-1111" },
-      source: "pool",
-    })
+    expect(await credFor()).toMatchObject({ credential: null })
+    // Their agent is paused and the job they asked is cancelled; a teammate's ask stays.
+    const agentNow = (await (
+      await app.request(`/v1/agents/${edsAgent.id}`, { headers: as(owner.email) })
+    ).json()) as { paused: boolean }
+    expect(agentNow.paused).toBe(true)
+    expect((await meta.getJob(edsAsk.id))?.status).toBe("cancelled")
+    expect((await meta.getJob(job.id))?.status).toBe("running")
+    // Unpaused by hand, it still hands its runner nothing.
+    await ask(app, owner.email, edsAgent.id, "after Ed left")
+    await meta.updateAgent(edsAgent.id, "default", { paused_at: null })
+    expect(await pull(app, edsAgent)).toEqual([])
     // A key row of theirs that outlived the removal (written before it was purged) still
-    // never pays, assigned or not.
+    // never pays.
     const leftover = await meta.createAccount({
       id: newId("acct"),
       org_id: "default",
@@ -921,10 +986,7 @@ describe("jobs: which account a job runs with", () => {
       secret_enc: encryptSecret("sk-ed-leftover-3333", "test-encryption-key"),
     })
     await meta.updateAgent(edsAgent.id, "default", { account_id: leftover.id })
-    expect(await credFor()).toMatchObject({
-      credential: { value: "sk-shared-1111" },
-      source: "pool",
-    })
+    expect(await credFor()).toMatchObject({ credential: null })
   })
 
   it("an agent's tools run on its creator's personal broker plan", async () => {
@@ -1392,6 +1454,8 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
     for (let i = 0; i < 4; i++) await machinePass(m.deps)
     expect(m.ortam.sandboxes.size).toBe(0)
     expect((await m.meta.getJob(job.id))?.status).toBe("queued")
+    const said = (await m.meta.listJobMessages(job.id)).map((x) => x.body_md)
+    expect(said.filter((b) => b === HELD_FOR_BUDGET)).toHaveLength(1)
     await m.meta.deletePlan(plan.id, "default")
     await m.passUntil(() => m.ortam.launches.length > 0)
     expect(m.ortam.launches).toHaveLength(1)
@@ -1855,6 +1919,52 @@ describe("jobs: graphs (a workflow on an agent's instructions page)", () => {
     const still = await meta.getJob(asked.id)
     expect(still?.status).toBe("needs_you")
     expect(JSON.parse(still?.needs_json ?? "{}")).toMatchObject({ question: "Ship it?" })
+  })
+
+  it("a step whose budget is used up waits, says so, and opens once the limit lifts", async () => {
+    const made = await setup("jobs-graph-budget")
+    const { app, meta } = made
+    const writer = await createAgent(app, { name: "Writer" })
+    await createAgent(app, { name: "Publisher" })
+    const page = (await (
+      await publishAs(app, graphHtml(writer.id, "Publisher"), { title: "Flow" }, as(owner.email))
+    ).json()) as { short_id: string }
+    const graph = await createAgent(app, { name: "Flow", instructions_short_id: page.short_id })
+    const asked = (await (await ask(app, ed.email, graph.id, "Go")).json()) as { id: string }
+    // The budget runs out after the graph was asked, before its first step opens.
+    await meta.addJobCost(asked.id, 5_000)
+    const plan = await meta.createPlan({
+      id: newId("plan"),
+      org_id: "default",
+      user_id: null,
+      kind: "model",
+      provider: "anthropic",
+      secret_enc: "enc",
+      limits: JSON.stringify({ monthlyMicroUsd: 1_000 }),
+    })
+    const deps = graphAware({ meta, blobs: made.ctx.blobs })
+    await graphPass(deps)
+    expect(await meta.listJobs({ orgId: "default", agentId: writer.id })).toEqual([])
+    expect((await meta.listJobMessages(asked.id)).at(-1)?.body_md).toBe(HELD_FOR_BUDGET)
+    expect((await meta.getJob(asked.id))?.status).not.toBe("failed")
+    await meta.deletePlan(plan.id, "default")
+    await graphPass(deps)
+    // The graph holds each pass for a short window; let it lapse.
+    for (
+      let i = 0;
+      i < 3 && !(await meta.listJobs({ orgId: "default", agentId: writer.id })).length;
+      i++
+    ) {
+      const g = await meta.getJob(asked.id)
+      await meta.updateJob(asked.id, {
+        meta_json: JSON.stringify({
+          ...JSON.parse(g?.meta_json ?? "{}"),
+          graph: { ...JSON.parse(g?.meta_json ?? "{}").graph, pass_until: undefined },
+        }),
+      })
+      await graphPass(deps)
+    }
+    expect(await meta.listJobs({ orgId: "default", agentId: writer.id })).toHaveLength(1)
   })
 
   it("a step naming an imported paper's hidden agent is not run by it", async () => {
