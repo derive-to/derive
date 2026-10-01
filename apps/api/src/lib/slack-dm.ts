@@ -363,15 +363,20 @@ const JOB_GLYPH: Record<string, string> = {
 /** One coalescing window for a job's interrupts: a minute, about one tick. */
 const JOB_WINDOW_MS = 60_000
 
-/** Email and Slack DM the people an agent's job needs, or tells it finished. Each delivery
- *  coalesces per (agent, person, event) in a one-minute window: a burst of settles on one
- *  agent (a pass failing its waiting queue, a reclaim losing several) is one message, the
- *  latest, rather than one per job. The caller (lib/notify-job.ts) decides who and when. */
+/** Email and Slack DM the people an agent's job needs, or tells it finished. A needs-you is
+ *  never collapsed: each one is its own question, keyed by the job and the moment it started
+ *  waiting (a job answered and waiting again asks again). A finish coalesces per (agent,
+ *  person) in a one-minute window: a burst of settles on one agent (a pass failing its waiting
+ *  queue, a reclaim losing several) is one message, the latest, rather than one per job. The
+ *  caller (lib/notify-job.ts) decides who and when. */
 export const enqueueJobInterrupts = async (
   meta: MetaStore,
   input: {
     orgId: string
     agentId: string
+    /** The job, and when it reached this state: a needs-you's own delivery key. */
+    jobId: string
+    since: string
     agentName: string
     recipients: string[]
     event: "job.needs_you" | "job.finished"
@@ -385,7 +390,9 @@ export const enqueueJobInterrupts = async (
 ): Promise<void> => {
   const window = Math.floor(Date.now() / JOB_WINDOW_MS)
   const key = (kind: string, uid: string) =>
-    `wd_job_${kind}_${input.agentId}_${uid}_${input.event}_${window}`
+    input.event === "job.needs_you"
+      ? `wd_jobq_${kind}_${input.jobId}_${uid}_${input.since}`
+      : `wd_job_${kind}_${input.agentId}_${uid}_${input.event}_${window}`
   const [settings, install, users] = await Promise.all([
     meta.getOrgSettings(input.orgId).catch(() => null),
     meta.getSlackInstall(input.orgId),

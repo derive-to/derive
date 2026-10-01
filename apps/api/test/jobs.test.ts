@@ -931,6 +931,49 @@ describe("jobs: telling people", () => {
     expect(emails.map((d) => JSON.parse(d.payload).to)).toEqual([ed.email])
   })
 
+  it("every question is its own email, even two from one agent in the same minute", async () => {
+    const { app, meta } = await setup("jobs-tell-questions")
+    await meta.setOrgSettings("default", {
+      ...(await meta.getOrgSettings("default")),
+      emailNotifications: true,
+    })
+    await meta.setUserNotificationPref({
+      id: "unp-jobs-q-ed",
+      org_id: "default",
+      user_id: ed.id,
+      prefs: JSON.stringify({ reviewEmail: true }),
+      created_at: new Date().toISOString(),
+    })
+    const a = await createAgent(app)
+    const asked = async (instruction: string) =>
+      ((await (await ask(app, ed.email, a.id, instruction)).json()) as { id: string }).id
+    const waits = async (id: string, question: string) => {
+      const claimed = await meta.claimJob(
+        id,
+        new Date(Date.now() + 60_000).toISOString(),
+        new Date().toISOString(),
+      )
+      await report(app, a.token, id, {
+        started_at: claimed?.started_at ?? null,
+        status: "needs_you",
+        needs: { kind: "decision", question },
+      })
+    }
+    const first = await asked("Pick a plan")
+    await waits(first, "Monthly or yearly?")
+    await waits(await asked("Pick a region"), "EU or US?")
+    // Answered, it asks again: a new question, so a new email too.
+    await app.request(`/v1/jobs/${first}/answer`, jsonAs(as(ed.email), { text: "Monthly" }))
+    await waits(first, "Which card?")
+    const emails = (await outbox(meta)).filter(
+      (d) => d.kind === "email" && d.event_type === "job.needs_you",
+    )
+    expect(emails.map((d) => JSON.parse(d.payload).text.split("\n")[2])).toEqual(
+      expect.arrayContaining(["Monthly or yearly?", "EU or US?", "Which card?"]),
+    )
+    expect(emails).toHaveLength(3)
+  })
+
   it("a graph's step that needs a person tells the graph's asker and manager", async () => {
     const { app, meta } = await setup("jobs-tell-step")
     const graphAgent = await createAgent(app)

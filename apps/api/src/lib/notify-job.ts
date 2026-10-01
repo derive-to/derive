@@ -17,9 +17,9 @@
 // How: a bell row and the live `u:<id>` events for every one of those; then the interrupts,
 // an email (workspace email on and the person's agent-email opt-in) and a Slack DM (the
 // workspace has Slack and the person has not turned DMs off). A finished job nobody asked
-// rings the bell only. The interrupts collapse per agent: at most one email and one DM per
-// agent, person and event in a minute, so a pass that fails a queue of waiting jobs is one
-// message, not one per job. Then the workspace's webhooks, subscribed to the event by name.
+// rings the bell only. Every needs-you is its own email and DM; finishes collapse per agent,
+// at most one email and one DM per agent and person in a minute, so a pass that fails a
+// queue of waiting jobs is one message, not one per job. Then the workspace's webhooks, subscribed to the event by name.
 
 import {
   type AgentRecord,
@@ -192,6 +192,8 @@ export const notifyJob = async (
       enqueueJobInterrupts(meta, {
         orgId: job.org_id,
         agentId: agent.id,
+        jobId: job.id,
+        since: job.updated_at,
         agentName: agent.name,
         recipients,
         event,
