@@ -5,8 +5,11 @@
 --   D1 (edge):         wrangler d1 execute <db> --remote --file=deploy/drop-agents-retired-sqlite.sql
 --
 -- WHEN. Run it ONCE per existing database, AFTER deploying code at this revision: that is the
--- deploy that stops creating and reading these tables. An older build re-creates them at boot,
--- so running this first only buys you empty tables back. Nothing carries SQLite or D1 data into
+-- deploy that stops creating and reading these tables. Stop the self-host server first (a live
+-- server can hold the WAL lock and stop the script part way). It is not re-runnable once the
+-- agent columns are gone. Do not leave it unrun: until it runs, deleting a Context that has old
+-- sessions fails on the context_session foreign key, and old encrypted model credentials
+-- outlive account deletion. Nothing carries SQLite or D1 data into
 -- the agent model automatically, so recreate whatever you still need by hand BEFORE this (see
 -- the upgrade note in the self-hosting quickstart): this script deletes that data for good.
 -- Take a backup first.

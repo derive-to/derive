@@ -4,9 +4,13 @@
 --
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f deploy/drop-agents-retired.sql
 --
--- WHEN. Run it ONCE per existing database, AFTER deploying code at this revision: that is the
--- deploy that stops creating and reading these tables. An older build re-creates them at boot,
--- so running this first only buys you empty tables back. If the database ever held Contexts,
+-- WHEN. Run it ONCE per existing database, right AFTER deploying code at this revision: that is
+-- the deploy that stops reading these tables. Running it BEFORE that deploy breaks the running
+-- build: on Workers the schema only applies at deploy time, so the old code's agent queries fail
+-- on the missing columns until the next deploy. Do not leave it unrun either: until it runs,
+-- deleting a Context (or its manifest artifact) that has old sessions fails on the
+-- context_session foreign key, and old encrypted model credentials outlive account deletion.
+-- If the database ever held Contexts,
 -- automations or stored model credentials, run scripts/agents-cutover.sql with -v apply=1
 -- BEFORE this: the cutover reads these tables to carry their data into agents, schedules and
 -- model accounts, and this script deletes that data for good. Take a backup first.
@@ -22,6 +26,9 @@
 -- every drop lands or none does. Safe to re-run: every statement is IF EXISTS.
 
 BEGIN;
+
+-- agent is a hot table; give up instead of queueing every agent query behind the lock.
+SET LOCAL lock_timeout = '5s';
 
 -- Children before parents: these four reference context_session or workflow_run.
 DROP TABLE IF EXISTS session_message;
