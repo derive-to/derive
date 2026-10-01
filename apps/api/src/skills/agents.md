@@ -29,7 +29,9 @@ agents({ action: "create", name: "Weekly churn digest", instructions: "<short_id
 
 The reply carries the agent's key once. For an `owner` agent it also carries `runner_command`: give
 it to the person to run where the work should happen. The key rides `DERIVE_TOKEN` in that line;
-never echo it anywhere else. An agent may use only connections its creator could attach: their
+never echo it anywhere else. `role` defaults to `editor`, so its jobs can publish their reports;
+pass `commenter` for one that should only comment. It is capped at your own seat. An agent may use
+only connections its creator could attach: their
 own, or the workspace's if they manage it. When a step needs a person in a browser
 (signing in a model account, authorizing a source), the reply lists it under `needs_browser` with a
 link. Pass those links on; do not try to do them yourself.

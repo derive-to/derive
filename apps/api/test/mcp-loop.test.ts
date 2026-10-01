@@ -714,6 +714,53 @@ describe("the agent model over MCP (agents, ask, jobs, pull)", () => {
     return { text: r.content[0]?.text ?? "", isError: !!r.isError }
   }
 
+  it("an agent made over MCP is an editor by default, so its runner can publish its report", async () => {
+    const { app, token } = loopApp("am-report")
+    const made = await call(app, token, "agents", { action: "create", name: "Reporter" })
+    expect(made.role).toBe("editor")
+    const asked = await call(app, token, "ask", {
+      agent: made.id,
+      instruction: "Write the report",
+      wait: 0,
+    })
+    const key = { authorization: `Bearer ${made.token as string}` }
+    const pulled = await app.request(`/v1/agents/${made.id}/pull`, {
+      method: "POST",
+      headers: { ...key, "content-type": "application/json" },
+      body: "{}",
+    })
+    const [job] = ((await pulled.json()) as { jobs: { id: string; started_at: string }[] }).jobs
+    expect(job?.id).toBe(asked.id)
+    const page = await publishAs(app, "<h1>Report</h1>", { title: "The report" }, key)
+    expect(page.status).toBe(201)
+    const { short_id } = (await page.json()) as { short_id: string }
+    const settled = await app.request(`/v1/jobs/${asked.id}/report`, {
+      method: "POST",
+      headers: { ...key, "content-type": "application/json" },
+      body: JSON.stringify({
+        started_at: job?.started_at,
+        status: "succeeded",
+        report_short_id: short_id,
+      }),
+    })
+    expect(settled.status).toBe(200)
+    const done = await call(app, token, "jobs", { job_id: asked.id })
+    expect(done).toMatchObject({ status: "succeeded", report_short_id: short_id })
+    // A role can still be named, and changed later.
+    const quiet = await call(app, token, "agents", {
+      action: "create",
+      name: "Quiet",
+      role: "commenter",
+    })
+    expect(quiet.role).toBe("commenter")
+    const raised = await call(app, token, "agents", {
+      action: "update",
+      agent: quiet.id,
+      role: "editor",
+    })
+    expect(raised.role).toBe("editor")
+  })
+
   it("an agent set to review opens a round on each revision it publishes, on either surface", async () => {
     const { app, meta, token } = loopApp("am-review-policy")
     const careful = await call(app, token, "agents", {
@@ -722,9 +769,6 @@ describe("the agent model over MCP (agents, ask, jobs, pull)", () => {
       write_policy: "review",
     })
     const plain = await call(app, token, "agents", { action: "create", name: "Plain" })
-    // MCP creates commenter-grade agents; these two need to write.
-    for (const a of [careful, plain])
-      await meta.updateAgent(a.id as string, "ws_p_u_o", { role: "editor" })
     const agentKey = { authorization: `Bearer ${careful.token as string}` }
     // Its own first draft goes live with no round.
     const created = await publishAs(app, "<h1>v1</h1>", { title: "Careful page" }, agentKey)
@@ -759,7 +803,7 @@ describe("the agent model over MCP (agents, ask, jobs, pull)", () => {
   })
 
   it("an askable agent's publish never takes over its person's browser; their own session's does", async () => {
-    const { app, meta, backplane, token } = loopApp("am-service")
+    const { app, backplane, token } = loopApp("am-service")
     const userEvents = record(backplane, "u:u_o")
     const brief = await call(app, token, "publish", { content: "<h1>Brief</h1>", title: "Brief" })
     const askable = await call(app, token, "agents", {
@@ -768,9 +812,6 @@ describe("the agent model over MCP (agents, ask, jobs, pull)", () => {
       instructions: brief.short_id,
     })
     const tool = await call(app, token, "agents", { action: "create", name: "Tool" })
-    // MCP creates commenter-grade agents; these two need to write.
-    for (const a of [askable, tool])
-      await meta.updateAgent(a.id as string, "ws_p_u_o", { role: "editor" })
     const publishWith = async (key: string, title: string) =>
       (
         (await (

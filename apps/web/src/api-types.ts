@@ -7314,7 +7314,7 @@ export interface components {
             id: string;
             name: string;
             /**
-             * @description Permission level; commenter comments only, editor can write, owner never allowed
+             * @description Permission level; commenter comments only, editor can write, owner never allowed. Defaults to editor, capped at the creator's seat.
              * @enum {string}
              */
             role: "viewer" | "commenter" | "editor" | "owner";

@@ -79,6 +79,10 @@ export function registerAgentsTool(tc: ToolContext): void {
         model: z.string().nullable().optional(),
         schedule: ScheduleArg,
         sources: z.array(z.string()).optional().describe("Connection ids."),
+        role: z
+          .enum(["viewer", "commenter", "editor"])
+          .optional()
+          .describe("Default editor (can publish), capped at your seat."),
         ask_policy: z.enum(["workspace", "invited"]).optional(),
         write_policy: z
           .enum(["publish", "review"])
@@ -108,6 +112,7 @@ export function registerAgentsTool(tc: ToolContext): void {
         if (!a.name) return err("create needs a name.")
         const r = await call(tc, org, "/v1/agents", "POST", {
           name: a.name,
+          role: a.role,
           description: a.description,
           instructions_short_id: a.instructions ?? undefined,
           machine: a.machine,
@@ -151,6 +156,7 @@ export function registerAgentsTool(tc: ToolContext): void {
       }
       const patch = {
         name: a.name,
+        role: a.role,
         description: a.description,
         instructions_short_id: a.instructions,
         machine: a.machine,

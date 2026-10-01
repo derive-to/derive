@@ -97,7 +97,7 @@ export const agentRoutes = (ctx: AppContext) => {
       role: z
         .enum(["viewer", "commenter", "editor", "owner"])
         .describe(
-          "Permission level; commenter comments only, editor can write, owner never allowed",
+          "Permission level; commenter comments only, editor can write, owner never allowed. Defaults to editor, capped at the creator's seat.",
         ),
       hosted: z
         .boolean()
@@ -371,8 +371,8 @@ export const agentRoutes = (ctx: AppContext) => {
       )
       if (b instanceof Response) return bail(b)
       const name = b.name.trim()
-      const role: Role =
-        b.role === "viewer" || b.role === "commenter" || b.role === "editor" ? b.role : "commenter"
+      const asked: Role | null =
+        b.role === "viewer" || b.role === "commenter" || b.role === "editor" ? b.role : null
       let instructionsId: string | null = null
       if (b.instructions_short_id) {
         const art = await instructionsFor(c, org, b.instructions_short_id)
@@ -383,6 +383,13 @@ export const agentRoutes = (ctx: AppContext) => {
       const creator = (await privateOwnerId(c)) ?? null
       const refused = await definitionError(c, org, creator, b)
       if (refused) return bail(fail(c, 400, refused))
+      // No role named: an editor, so it can publish the reports its jobs produce, capped at its
+      // creator's own seat (a commenter's agent comments). A role named above that seat was
+      // refused just above. Nobody to cap by: a commenter.
+      const seat = creator
+        ? (await meta.getMembership(org, creator).catch(() => null))?.role
+        : undefined
+      const role: Role = asked ?? (seat ? capRole("editor", seat) : "commenter")
       if (b.machine === "derive" && !machineWorkspaces(deps.runtime).has(org))
         return bail(
           fail(c, 400, "Derive machines are not turned on for this workspace; use machine: owner"),

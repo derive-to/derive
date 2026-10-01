@@ -1689,7 +1689,7 @@
               "editor",
               "owner"
             ],
-            "description": "Permission level; commenter comments only, editor can write, owner never allowed"
+            "description": "Permission level; commenter comments only, editor can write, owner never allowed. Defaults to editor, capped at the creator's seat."
           },
           "hosted": {
             "type": "boolean",
