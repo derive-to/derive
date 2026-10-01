@@ -28,7 +28,10 @@ export const notifyMentions = async (
   const real = new Set((await meta.getUsers(targetIds)).map((u) => u.id))
   // Registered agents are mentionable too; a mention of an agent lands in its
   // pull inbox instead of a notification bell.
-  const agentIds = new Set((await meta.listAgents(a.org_id)).map((ag) => ag.id))
+  // A managed agent (an imported paper's hidden principal) is never mentionable.
+  const agentIds = new Set(
+    (await meta.listAgents(a.org_id)).filter((ag) => ag.managed !== 1).map((ag) => ag.id),
+  )
   // A public link is never enough to page somebody: recipient eligibility is shared
   // with live-source mentions and includes only workspace/direct/collection standing.
   const collaborators = await eligibleMentionRecipientIds(meta, a, real)
@@ -102,7 +105,11 @@ export const notifyThreadReplyAgents = async (
   if (!actorId) return
   // Never treat an opaque Slack identity, another agent, or a deleted account as a human answer.
   if (!(await deps.meta.getUsers([actorId]))[0]) return
-  const agents = new Map((await deps.meta.listAgents(artifact.org_id)).map((a) => [a.id, a]))
+  const agents = new Map(
+    (await deps.meta.listAgents(artifact.org_id))
+      .filter((a) => a.managed !== 1)
+      .map((a) => [a.id, a]),
+  )
   const participants = await deps.meta.listComments(artifact.id, { threadId: comment.thread_id })
   const recipients = new Set(
     participants

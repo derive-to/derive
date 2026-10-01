@@ -731,7 +731,8 @@ export const sessionRoutes = (ctx: AppContext) => {
         profession: u.profession ?? null,
       }))
       const agents = (await meta.listAgents(org))
-        .filter((ag) => !q || ag.name.toLowerCase().includes(q))
+        // A managed agent (an imported paper's hidden principal) is nobody to mention.
+        .filter((ag) => ag.managed !== 1 && (!q || ag.name.toLowerCase().includes(q)))
         .map((ag) => ({
           id: ag.id,
           handle: null,

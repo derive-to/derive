@@ -56,3 +56,7 @@ promised was largely advisory — it ran inside the executor, which already held
   `agentAutoEnabled`, both off by default) are retired keys the settings parser drops.
 - The CLI runner no longer hand-copies a write gate; the one remaining hand-copy is the run
   contract, whose parity test now imports core's string instead of comparing copy to copy.
+- An agent's `write_policy: review` (the agent model's one per-agent write setting) does not
+  bring back held drafts. Its writes still publish live; every new version it writes to an
+  existing page opens a review round for the person it acts for, on the HTTP and MCP publish
+  surfaces alike. A page it creates opens no round unless asked.

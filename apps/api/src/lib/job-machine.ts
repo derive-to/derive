@@ -3,7 +3,7 @@ import type { AppDeps } from "../context"
 import { log } from "../log"
 import { agentWritesOff } from "./agent-writes"
 import { sha256 } from "./crypto"
-import { type JobDeps, reportJob } from "./jobs"
+import { type JobDeps, jobOverBudget, noteHeldForBudget, reportJob } from "./jobs"
 import { OrtamClient } from "./ortam-client"
 import { signWorkToken } from "./run-token"
 import { runtimeFailureReason } from "./runtime-diagnostics"
@@ -524,6 +524,11 @@ export async function machinePass(
     await guard("dispatch", job.id, async () => {
       let agent = await meta.getAgent(job.agent_id)
       if (!agent || !(await admitted(deps, agent))) return
+      // Past its payer's monthly budget: no sandbox comes up, and the job says why it waits.
+      if (await jobOverBudget(meta, job)) {
+        await noteHeldForBudget(meta, job)
+        return
+      }
       // First job for this agent, or its sandbox failed: bring one up, after a backoff that
       // grows with each failure. The job waits for it; after too many, the waiting work fails.
       if (agent.sandbox_phase === null || agent.sandbox_phase === "failed") {

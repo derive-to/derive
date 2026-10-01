@@ -118,7 +118,7 @@ import { bundleTextFiles, bundleTextResolver } from "../lib/latex-bundle"
 import { analysisContextOf } from "../lib/paper-analysis"
 import { agentName } from "../lib/principal-kind"
 import { PUBLISH_TARGET_CREATE, verifyPublishToken } from "../lib/publish-token"
-import { agentPushFanout, openReviewRound } from "../lib/review-request"
+import { agentPushFanout, openReviewRound, policyReviewRound } from "../lib/review-request"
 import { type ReviewSummary, summarizeTextEdits } from "../lib/review-summary"
 import {
   deleteArtifactAndUnindex,
@@ -1396,6 +1396,28 @@ export const artifactRoutes = (ctx: AppContext) => {
         )
         roundCreated = true
       }
+      // THE AGENT'S WRITE POLICY. An agent set to `review` still publishes live (one write
+      // behavior, docs/decisions/0001-one-review-loop.md), but every new version it writes
+      // to an existing page opens a review round for the person it acts for, asked for or
+      // not: the policy is that a person looks at each revision. A page it creates is its
+      // own first draft and opens none unless asked. A round still pending moves to the new
+      // version instead of asking again.
+      let roundMoved = false
+      if (!roundCreated && shortId && agentPrincipal?.write_policy === "review" && onBehalf) {
+        const round = await policyReviewRound(
+          { meta, blobs, bus, baseUrl: deps.baseUrl, notify, pokeWebhooks: deps.pokeWebhooks },
+          artifact,
+          {
+            agent: agentPrincipal,
+            reviewer: onBehalf,
+            version: version.n,
+            note: str(body["review_note"]) ?? null,
+            ...(editSummary ? { summary: editSummary } : {}),
+          },
+        )
+        roundCreated = true
+        roundMoved = round.moved
+      }
       // The MCP loop over HTTP: an AGENT-credentialed publish (a registered
       // dk_agt_ token or an OAuth bearer — the CLI and stdio-shim paths) reaches
       // its human exactly like the /mcp path does — the shared bell + auto-open
@@ -1481,7 +1503,8 @@ export const artifactRoutes = (ctx: AppContext) => {
                     agentId: agentPrincipal.id,
                     agentName: agentPrincipal.name,
                     version: version.n,
-                    reviewRound: roundCreated,
+                    // A moved round was asked for already: this push is a plain revision.
+                    reviewRound: roundCreated && !roundMoved,
                     isNew: !shortId,
                     ...(editSummary ? { summary: editSummary } : {}),
                   },
@@ -2818,6 +2841,15 @@ export const artifactRoutes = (ctx: AppContext) => {
         // starts from the numbers v3 ended with, not from whatever v6 had.
         dynamicSeedFrom: src.n,
       })
+      // A restore is a new version like any other: an agent set to review asks its person to
+      // look at it (or moves the round they already have).
+      const reviewer = agent?.created_by ?? null
+      if (agent?.write_policy === "review" && reviewer)
+        await policyReviewRound(
+          { meta, blobs, bus, baseUrl: deps.baseUrl, notify, pokeWebhooks: deps.pokeWebhooks },
+          artifact,
+          { agent, reviewer, version: version.n },
+        )
       const fresh = (await meta.getByShortId(artifact.short_id)) as ArtifactRecord
       const versions = await meta.listVersions(artifact.id)
       return c.json(

@@ -86,6 +86,8 @@ export interface JobRecord {
   node_id: string | null
   trigger_id: string | null
   asked_by: string | null
+  /** Who the job bills, fixed when it opens (null = the workspace pool). The budget reads it. */
+  payer_id: string | null
   attended: 0 | 1
   instruction: string
   subject_json: string | null
@@ -118,6 +120,7 @@ export interface NewJob {
   node_id?: string | null
   trigger_id?: string | null
   asked_by?: string | null
+  payer_id?: string | null
   attended?: 0 | 1
   subject_json?: string | null
   scheduled_for?: string | null
@@ -299,7 +302,14 @@ export interface AgentModelStore<Agent = unknown> {
   /** Claim up to `limit` of an agent's queued jobs, oldest first: queued → running with the
    *  lease set and started_at stamped. Atomic, so overlapping claims get disjoint sets.
    *  Attended jobs are never claimed here; whoever asked serves them in-process. */
-  claimJobs(agentId: string, limit: number, leaseUntil: string, now: string): Promise<JobRecord[]>
+  claimJobs(
+    agentId: string,
+    limit: number,
+    leaseUntil: string,
+    now: string,
+    /** Jobs billing these payers stay queued (held for budget). `null` names the pool. */
+    heldPayers?: readonly (string | null)[],
+  ): Promise<JobRecord[]>
   /** Claim one queued job by id (attended turns and Derive machines). Null when it is not queued. */
   claimJob(id: string, leaseUntil: string, now: string): Promise<JobRecord | null>
   /** Patch a job, optionally compare-and-set on `expect`. Always stamps updated_at. Null when
@@ -324,10 +334,19 @@ export interface AgentModelStore<Agent = unknown> {
     askedBy: string | null,
     dedupeKey: string,
   ): Promise<JobRecord | null>
-  /** Sum of reported job cost since `since`, in micro-USD. Unknown costs are skipped. */
-  sumJobCostSince(orgId: string, since: string): Promise<number>
+  /** Sum of reported job cost since `since`, in micro-USD. Unknown costs are skipped. With
+   *  `payer`, only the jobs whose payer_id is that person. */
+  sumJobCostSince(orgId: string, since: string, payer?: string): Promise<number>
   /** Add spend to a job in one statement, whatever its status: a late report's cost is real. */
   addJobCost(id: string, microUsd: number): Promise<void>
+  /** A person has left a workspace (`orgId`) or Derive (`orgId` null): pause the agents they
+   *  created there, in the same write as the seat going, so nothing runs for them in between.
+   *  Their open jobs are cancelled by lib/jobs.ts standDownMember, which wakes the askers. */
+  pauseAgentsCreatedBy(userId: string, orgId: string | null, now: string): Promise<void>
+  /** A person's account is being deleted: their agents' keys die (the stored hash becomes one
+   *  no key can produce) and the agents stay paused, BEFORE created_by is cleared, since an
+   *  agent with no creator would otherwise authenticate again. */
+  revokeAgentsCreatedBy(userId: string, now: string): Promise<void>
 
   // ---- Derive machines ------------------------------------------------------------------
   /** Compare-and-set the agent's sandbox state on sandbox_rev; null when another writer won. */

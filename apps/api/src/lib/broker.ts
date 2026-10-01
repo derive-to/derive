@@ -586,7 +586,10 @@ export const brokerFor = async (
    *  broker rather than one that fabricates plausible answers. */
   allowEchoStub = false,
 ): Promise<ToolBroker> => {
-  const plan = await meta.resolvePlan(orgId, ownerUserId, "broker")
+  // A personal plan spends only while its owner holds a seat here (a lookup error answers no);
+  // otherwise the workspace pool's, if any.
+  const seated = !!ownerUserId && !!(await meta.getMembership(orgId, ownerUserId).catch(() => null))
+  const plan = await meta.resolvePlan(orgId, seated ? ownerUserId : null, "broker")
   if (plan && encryptionKey) {
     return makeBroker({
       provider: plan.provider,

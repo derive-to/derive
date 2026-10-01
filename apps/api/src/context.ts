@@ -788,9 +788,18 @@ export function buildContext(deps: AppDeps) {
       // it (every OAuth/JWT MCP token) can never match — skip the guaranteed-miss
       // round trip instead of paying it on every one of those calls.
       const reg = b.startsWith(AGENT_TOKEN_PREFIX) ? await meta.getAgentByToken(sha256(b)) : null
+      // A registered key acts on its creator's behalf, so it lives only as long as their seat
+      // in the agent's workspace: once they are removed it authenticates nobody. A lookup
+      // that fails counts as no seat. A pre-column agent (no creator) is unaffected.
+      const seated =
+        !reg?.created_by ||
+        !!(await meta.getMembership(reg.org_id, reg.created_by).catch(() => null))
       if (reg) {
-        a = reg
-        owner = reg.created_by ?? null
+        // Known key, departed creator: anonymous, never an OAuth lookup.
+        if (seated) {
+          a = reg
+          owner = reg.created_by ?? null
+        }
       } else {
         const o = await oauthAgent(b)
         if (o) {

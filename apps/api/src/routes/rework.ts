@@ -131,9 +131,11 @@ export const reworkRoutes = (ctx: AppContext) => {
   // Pick the addressee: the named agent, else the workspace's sole one.
   const pickAgent = (
     c: Context,
-    agents: AgentRecord[],
+    registered: AgentRecord[],
     agentId?: string,
   ): AgentRecord | Response => {
+    // A managed agent (an imported paper's hidden principal) runs nothing: never a pick.
+    const agents = registered.filter((a) => a.managed !== 1)
     if (agents.length === 0)
       return fail(c, 409, "no agent is registered in this workspace", { code: "needsAgent" })
     if (agentId)

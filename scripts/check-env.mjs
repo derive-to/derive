@@ -5,11 +5,25 @@
 // must actually be read (no phantom setting like the old REDIS_URL, which did nothing).
 // Both directions fail here so `.env.example` can't drift from the code. Runs in the CI
 // gate. Escape hatch for a genuinely non-user-facing var: add it to NON_CONFIG below.
-import { readdirSync, readFileSync, statSync } from "node:fs"
+//
+// `.env.example` is also GENERATED from apps/api/src/config-manifest.ts (the one place a var
+// is declared), so a hand edit the manifest does not carry fails here too. `--write`
+// regenerates it (`pnpm --filter @derive/api gen:env`). Node imports the manifest's
+// TypeScript directly: it is pure and type-only.
+import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { pathToFileURL } from "node:url"
 
-const API_SRC = join(process.cwd(), "apps/api/src")
-const ENV_EXAMPLE = join(process.cwd(), ".env.example")
+const ROOT = join(import.meta.dirname, "..")
+const API_SRC = join(ROOT, "apps/api/src")
+const ENV_EXAMPLE = join(ROOT, ".env.example")
+
+const { genEnvExample } = await import(pathToFileURL(join(API_SRC, "config-manifest.ts")).href)
+const generated = genEnvExample()
+if (process.argv.includes("--write")) {
+  writeFileSync(ENV_EXAMPLE, generated)
+  console.log("check-env: wrote .env.example from apps/api/src/config-manifest.ts")
+}
 
 // Vars the server reads that are NOT user-facing self-host config, so they don't belong
 // in `.env.example`. Each must be justified — this list is the deliberate exceptions.
@@ -81,6 +95,10 @@ const undocumented = userConfig.filter((v) => !documented.has(v)).sort()
 const phantom = [...documented].filter((v) => !readVars.has(v)).sort()
 
 const problems = []
+if (readFileSync(ENV_EXAMPLE, "utf8") !== generated)
+  problems.push(
+    "  .env.example differs from apps/api/src/config-manifest.ts: declare the var there and run `pnpm --filter @derive/api gen:env`",
+  )
 for (const v of undocumented)
   problems.push(
     `  ${v}: read by the server but not in .env.example — document it (or add to NON_CONFIG if it's a binding/platform var)`,

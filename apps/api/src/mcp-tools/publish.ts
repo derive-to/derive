@@ -56,7 +56,7 @@ import {
   type PreparedAnalysis,
   preparePaperAnalysis,
 } from "../lib/paper-analysis"
-import { agentPushFanout, openReviewRound } from "../lib/review-request"
+import { agentPushFanout, openReviewRound, policyReviewRound } from "../lib/review-request"
 import { type ReviewSummary, summarizeTextEdits } from "../lib/review-summary"
 import { normalizeTags } from "../lib/tags"
 import { canReadTemplateLibrary } from "../lib/template-library-access"
@@ -1023,7 +1023,34 @@ export function registerPublishTool(tc: ToolContext): void {
         // HTTP route runs, so the two surfaces cannot drift on it.
         let review_round: string | null = null
         const reviewFor = actingFor?.id ?? (profileAskReview ? profileReviewer : null)
-        if ((request_review || profileAskReview) && reviewFor) {
+        // An agent whose write policy is `review` opens a round on every new version of an
+        // existing page, asked for or not, or moves the one still pending (the HTTP route
+        // holds the same rule).
+        let roundMoved = false
+        const reviewDeps = {
+          meta: ctx.meta,
+          blobs: ctx.blobs,
+          bus: ctx.bus,
+          baseUrl: ctx.deps.baseUrl,
+          notify: ctx.notify,
+          pokeWebhooks: ctx.deps.pokeWebhooks,
+        }
+        if (
+          !request_review &&
+          !profileAskReview &&
+          short_id &&
+          agent.write_policy === "review" &&
+          reviewFor
+        ) {
+          const round = await policyReviewRound(reviewDeps, artifact, {
+            agent,
+            reviewer: reviewFor,
+            version: version.n,
+            ...(editSummary ? { summary: editSummary } : {}),
+          })
+          review_round = round.id
+          roundMoved = round.moved
+        } else if ((request_review || profileAskReview) && reviewFor) {
           review_round = await openReviewRound(
             {
               meta: ctx.meta,
@@ -1066,7 +1093,7 @@ export function registerPublishTool(tc: ToolContext): void {
                 agentId: agent.id,
                 agentName: agent.name,
                 version: version.n,
-                reviewRound: !!review_round,
+                reviewRound: !!review_round && !roundMoved,
                 isNew: !short_id,
                 notifyBrowser: !attended || !short_id,
                 ...(editSummary ? { summary: editSummary } : {}),

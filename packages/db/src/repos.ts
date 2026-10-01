@@ -2242,6 +2242,20 @@ export function makeRepos(db: SqliteDb) {
       .delete(modelCredential)
       .where(and(eq(modelCredential.org_id, orgId), eq(modelCredential.user_id, userId)))
       .run()
+    // Their personal model accounts too: an agent's job must not keep running on the key of
+    // someone who has left. The shared pool's sentinel row is keyed differently, never in scope.
+    await db
+      .delete(modelAccount)
+      .where(and(eq(modelAccount.org_id, orgId), eq(modelAccount.user_id, userId)))
+      .run()
+    // Their personal plans (a broker or model key) likewise.
+    await db
+      .delete(plan)
+      .where(and(eq(plan.org_id, orgId), eq(plan.user_id, userId)))
+      .run()
+    // Nobody is left to run or pay for what they started here: their agents pause. (Their
+    // open jobs are cancelled by the caller, lib/jobs.ts standDownMember, which wakes askers.)
+    await agentModel.pauseAgentsCreatedBy(userId, orgId, new Date().toISOString())
   }
   const getWorkspace = async (orgId: string): Promise<WorkspaceRecord | null> =>
     (await db.select().from(workspace).where(eq(workspace.id, orgId)).get()) ?? null
@@ -2274,6 +2288,39 @@ export function makeRepos(db: SqliteDb) {
     // encrypted token is orphaned (the pool row would otherwise have no API path left to
     // delete once memberships are gone). One predicate covers members and the pool.
     await db.delete(modelCredential).where(eq(modelCredential.org_id, orgId)).run()
+    // The agent model's rows: every model account (personal and shared, so no encrypted
+    // secret outlives its workspace), every agent, its schedules, and its jobs with their
+    // transcripts. job_message has no org column, so it goes by its job first.
+    await db
+      .delete(jobMessage)
+      .where(
+        inArray(
+          jobMessage.job_id,
+          db.select({ id: job.id }).from(job).where(eq(job.org_id, orgId)),
+        ),
+      )
+      .run()
+    await db.delete(job).where(eq(job.org_id, orgId)).run()
+    await db.delete(agentTrigger).where(eq(agentTrigger.org_id, orgId)).run()
+    await db.delete(modelAccount).where(eq(modelAccount.org_id, orgId)).run()
+    await db.delete(agent).where(eq(agent.org_id, orgId)).run()
+    // And every other secret the workspace held: plans, connections, the Slack bot token,
+    // webhook signing secrets, the join link.
+    await db.delete(plan).where(eq(plan.org_id, orgId)).run()
+    await db.delete(connection).where(eq(connection.org_id, orgId)).run()
+    await db.delete(slackInstall).where(eq(slackInstall.org_id, orgId)).run()
+    // Queued deliveries carry their webhook's signing secret: they go first, then the hooks.
+    await db
+      .delete(webhookDelivery)
+      .where(
+        inArray(
+          webhookDelivery.webhook_id,
+          db.select({ id: webhook.id }).from(webhook).where(eq(webhook.org_id, orgId)),
+        ),
+      )
+      .run()
+    await db.delete(webhook).where(eq(webhook.org_id, orgId)).run()
+    await db.delete(workspaceJoinLink).where(eq(workspaceJoinLink.org_id, orgId)).run()
     await db.delete(workflowFiles).where(eq(workflowFiles.org_id, orgId)).run()
     await db.delete(workflowDraft).where(eq(workflowDraft.org_id, orgId)).run()
     await db.delete(workflowTest).where(eq(workflowTest.org_id, orgId)).run()
@@ -5209,6 +5256,12 @@ export function makeRepos(db: SqliteDb) {
     // the account is gone. Keyed on a real user id, so the workspace pool's sentinel row is
     // never in scope.
     await db.delete(modelCredential).where(eq(modelCredential.user_id, userId)).run()
+    // And their model accounts, in every workspace (the pool sentinel is never a user id).
+    await db.delete(modelAccount).where(eq(modelAccount.user_id, userId)).run()
+    await db.delete(plan).where(eq(plan.user_id, userId)).run()
+    // Before created_by is cleared below: their agents' keys die and the agents stay paused.
+    // An agent with no creator is a legacy agent that authenticates on its own.
+    await agentModel.revokeAgentsCreatedBy(userId, new Date().toISOString())
     // Authorship is anonymized (nullable), so others' artifacts/threads survive intact.
     await db.update(artifact).set({ author_id: null }).where(eq(artifact.author_id, userId)).run()
     await db.update(version).set({ author_id: null }).where(eq(version.author_id, userId)).run()

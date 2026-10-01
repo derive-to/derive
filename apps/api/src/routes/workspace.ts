@@ -13,6 +13,7 @@ import {
   isLiveInvite,
   looksLikeEmail,
 } from "../lib/invite"
+import { standDownMember } from "../lib/jobs"
 import { resolveUserRef } from "../lib/resolve-user"
 import { syncSeats } from "../lib/seats"
 import { armInviteAdmission } from "../lib/signup-policy"
@@ -336,6 +337,8 @@ export const workspaceRoutes = (ctx: AppContext) => {
         )
       }
       await meta.removeMembership(org, userId)
+      // What they started here stops, and everyone waiting on it is told.
+      await standDownMember({ meta, bus: ctx.backplane }, org, userId)
       await syncSeats({ meta, billing }, org)
       return c.body(null, 204)
     },

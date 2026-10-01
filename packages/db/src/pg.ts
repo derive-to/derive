@@ -708,6 +708,8 @@ export class PgMetaStore implements MetaStore {
   findOpenJobByDedupe = this.agentModel.findOpenJobByDedupe
   sumJobCostSince = this.agentModel.sumJobCostSince
   addJobCost = this.agentModel.addJobCost
+  pauseAgentsCreatedBy = this.agentModel.pauseAgentsCreatedBy
+  revokeAgentsCreatedBy = this.agentModel.revokeAgentsCreatedBy
   transitionAgentSandbox = this.agentModel.transitionAgentSandbox
   listAgentsInSandboxPhase = this.agentModel.listAgentsInSandboxPhase
   transitionJobMachine = this.agentModel.transitionJobMachine
@@ -3034,6 +3036,13 @@ export class PgMetaStore implements MetaStore {
     await this.db
       .delete(modelCredential)
       .where(and(eq(modelCredential.org_id, orgId), eq(modelCredential.user_id, userId)))
+    // Their personal model accounts and plans too, and their agents stand down (see the
+    // SQLite store).
+    await this.db
+      .delete(modelAccount)
+      .where(and(eq(modelAccount.org_id, orgId), eq(modelAccount.user_id, userId)))
+    await this.db.delete(plan).where(and(eq(plan.org_id, orgId), eq(plan.user_id, userId)))
+    await this.agentModel.pauseAgentsCreatedBy(userId, orgId, new Date().toISOString())
   }
   async getWorkspace(orgId: string): Promise<WorkspaceRecord | null> {
     const rows = await this.db.select().from(workspace).where(eq(workspace.id, orgId))
@@ -3067,6 +3076,36 @@ export class PgMetaStore implements MetaStore {
     // encrypted token is orphaned (the pool row would otherwise have no API path left to
     // delete once memberships are gone). One predicate covers members and the pool.
     await this.db.delete(modelCredential).where(eq(modelCredential.org_id, orgId))
+    // The agent model's rows (see the SQLite store): accounts, agents, schedules, jobs and
+    // their transcripts.
+    await this.db
+      .delete(jobMessage)
+      .where(
+        inArray(
+          jobMessage.job_id,
+          this.db.select({ id: job.id }).from(job).where(eq(job.org_id, orgId)),
+        ),
+      )
+    await this.db.delete(job).where(eq(job.org_id, orgId))
+    await this.db.delete(agentTrigger).where(eq(agentTrigger.org_id, orgId))
+    await this.db.delete(modelAccount).where(eq(modelAccount.org_id, orgId))
+    await this.db.delete(agent).where(eq(agent.org_id, orgId))
+    // And every other secret the workspace held: plans, connections, the Slack bot token,
+    // webhook signing secrets, the join link.
+    await this.db.delete(plan).where(eq(plan.org_id, orgId))
+    await this.db.delete(connection).where(eq(connection.org_id, orgId))
+    await this.db.delete(slackInstall).where(eq(slackInstall.org_id, orgId))
+    // Queued deliveries carry their webhook's signing secret: they go first, then the hooks.
+    await this.db
+      .delete(webhookDelivery)
+      .where(
+        inArray(
+          webhookDelivery.webhook_id,
+          this.db.select({ id: webhook.id }).from(webhook).where(eq(webhook.org_id, orgId)),
+        ),
+      )
+    await this.db.delete(webhook).where(eq(webhook.org_id, orgId))
+    await this.db.delete(workspaceJoinLink).where(eq(workspaceJoinLink.org_id, orgId))
     await this.db.delete(workflowFiles).where(eq(workflowFiles.org_id, orgId))
     await this.db.delete(workflowDraft).where(eq(workflowDraft.org_id, orgId))
     await this.db.delete(workflowTest).where(eq(workflowTest.org_id, orgId))
@@ -6601,6 +6640,11 @@ export class PgMetaStore implements MetaStore {
     // Encrypted plan tokens must not linger after the account is gone; the workspace pool's
     // sentinel-user row is keyed differently, so it is never in scope.
     await this.db.delete(modelCredential).where(eq(modelCredential.user_id, userId))
+    await this.db.delete(modelAccount).where(eq(modelAccount.user_id, userId))
+    await this.db.delete(plan).where(eq(plan.user_id, userId))
+    // Before created_by is cleared below: their agents' keys die and the agents stay paused.
+    // An agent with no creator is a legacy agent that authenticates on its own.
+    await this.agentModel.revokeAgentsCreatedBy(userId, new Date().toISOString())
     await this.db.update(artifact).set({ author_id: null }).where(eq(artifact.author_id, userId))
     await this.db.update(version).set({ author_id: null }).where(eq(version.author_id, userId))
     await this.db.update(comment).set({ author_id: null }).where(eq(comment.author_id, userId))

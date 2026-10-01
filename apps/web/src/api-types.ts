@@ -7314,7 +7314,7 @@ export interface components {
             id: string;
             name: string;
             /**
-             * @description Permission level; commenter comments only, editor can write, owner never allowed
+             * @description Permission level; commenter comments only, editor can write, owner never allowed. Defaults to editor, capped at the creator's seat.
              * @enum {string}
              */
             role: "viewer" | "commenter" | "editor" | "owner";
@@ -7344,7 +7344,10 @@ export interface components {
             model: string | null;
             /** @enum {string} */
             ask_policy: "workspace" | "invited";
-            /** @enum {string} */
+            /**
+             * @description publish: its writes go live like a person's. review: they still go live, and every new version it writes to an existing page opens a review round for the person it acts for.
+             * @enum {string}
+             */
             write_policy: "publish" | "review";
             paused: boolean;
             /** @description When its runner last pulled work. */

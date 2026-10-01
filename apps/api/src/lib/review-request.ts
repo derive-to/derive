@@ -145,10 +145,54 @@ export const openReviewRound = async (
   return round.id
 }
 
+/**
+ * The round an agent's `write_policy: review` owes a new version of an existing page. The
+ * first one opens with the whole fan-out. While the person still has that round pending, a
+ * further revision MOVES it to the new version (same round, one live event on the artifact)
+ * rather than ringing the bell, Slack, email and webhooks again for every save. `moved` tells
+ * the caller not to send the push a fresh review ask would.
+ */
+export const policyReviewRound = async (
+  deps: ReviewRequestDeps,
+  artifact: ArtifactRecord,
+  input: {
+    agent: { id: string; name: string }
+    reviewer: string
+    version: number
+    note?: string | null
+    summary?: ReviewSummary
+  },
+): Promise<{ id: string; moved: boolean }> => {
+  const pending = await deps.meta.getPendingRound(artifact.id, input.reviewer)
+  if (pending) {
+    const moved = await deps.meta.createReviewRound({
+      id: pending.id,
+      artifact_id: artifact.id,
+      version: input.version,
+      requested_by: input.agent.id,
+      requested_by_name: input.agent.name,
+      requested_for: input.reviewer,
+      note: input.note ?? pending.note,
+    })
+    deps.bus.publish(artifact.id, { type: "review.requested", round_id: moved.id })
+    return { id: moved.id, moved: true }
+  }
+  const id = await openReviewRound(deps, artifact, {
+    reviewer: input.reviewer,
+    requestedById: input.agent.id,
+    requestedByName: input.agent.name,
+    version: input.version,
+    note: input.note ?? null,
+    actorId: input.agent.id,
+    ...(input.summary ? { summary: input.summary } : {}),
+  })
+  return { id, moved: false }
+}
+
 export interface AgentPushInput {
   /** The human behind the grant — bell row owner and auto-open channel. */
   user: string
-  /** The agent principal, for attribution and the service-context check. */
+  /** The agent principal, for attribution and the service-agent check. */
   agentId: string
   agentName: string
   version: number
@@ -228,12 +272,19 @@ export const agentPushFanout = async (
   }
   if (input.notifyBrowser === false) return false
 
-  // A context-bound agent is an askable service: its publishes are routinely OTHER
-  // people's asks riding this owner's grant, so the push must not commandeer the owner's
-  // browser. Flag it — the client downgrades auto-open to a toast (the bell row still
-  // lands).
-  const contexts = await deps.meta.listContexts(artifact.org_id)
-  const service = contexts.some((x) => x.agent_id === input.agentId)
+  // An askable agent is a service: its publishes are routinely OTHER people's asks riding
+  // this owner's standing, so the push must not commandeer the owner's browser. Flag it: the
+  // client downgrades auto-open to a toast (the bell row still lands). Askable means a
+  // registered agent that does work on request: it reads an instructions page before every
+  // job (what a context's manifest was before agents replaced contexts), or it runs on a
+  // Derive machine. A person's own coding session (an OAuth grant) is never a service.
+  const registered = input.agentId.startsWith("oauth:")
+    ? null
+    : await deps.meta.getAgent(input.agentId).catch(() => null)
+  const service =
+    !!registered &&
+    registered.org_id === artifact.org_id &&
+    (!!registered.instructions_artifact_id || registered.machine === "derive")
   const pushed = {
     type: "artifact.pushed" as const,
     event_id: newId("ev"),

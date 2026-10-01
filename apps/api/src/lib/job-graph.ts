@@ -13,7 +13,14 @@ import {
 } from "@derive/core"
 import { log } from "../log"
 import { agentWritesOff } from "./agent-writes"
-import { askAgent, canAskAgent, cancelJob, type JobDeps } from "./jobs"
+import {
+  askAgent,
+  canAskAgent,
+  cancelJob,
+  type JobDeps,
+  noteHeldForBudget,
+  overBudgetFor,
+} from "./jobs"
 import { runtimeFailureReason } from "./runtime-diagnostics"
 
 // GRAPHS ON JOBS: an agent whose instructions page carries a `derive.workflow/v1` definition is
@@ -93,7 +100,8 @@ export async function graphOf(
 /** The agent a node's `context_ref` names: an agent id or name, or a Context's id or name (whose
  *  agent row the cutover made the agent), in the graph's own workspace. */
 async function nodeAgent(meta: MetaStore, orgId: string, ref: string): Promise<AgentRecord | null> {
-  const agents = await meta.listAgents(orgId)
+  // A managed agent (the hidden principal of an imported paper) is never a step's agent.
+  const agents = (await meta.listAgents(orgId)).filter((a) => a.managed !== 1)
   const direct = agents.find((a) => a.id === ref) ?? agents.find((a) => a.name === ref)
   if (direct) return direct
   const ctx =
@@ -364,6 +372,7 @@ async function walk(deps: GraphDeps, given: JobRecord): Promise<void> {
   const openNow = children.filter((c) => isJobOpen(c.status))
   const askedBy = job.asked_by ?? agent.created_by ?? agent.id
   const joined = new Set<string>()
+  let heldForBudget = false
   for (let i = 0; i < toOpen.length; i++) {
     const { to, from } = toOpen[i] as { to: string; from: string }
     if (failure) break
@@ -422,6 +431,14 @@ async function walk(deps: GraphDeps, given: JobRecord): Promise<void> {
       failure = `Step "${node.id}" names ${target.name}, which is itself a workflow; nesting is not supported.`
       break
     }
+    // Past the step's payer's monthly budget: the step is not opened yet. It waits with the
+    // graph (as a step where branches meet waits), and a later pass opens it.
+    if (await overBudgetFor(meta, target, askedBy)) {
+      pending.add(to)
+      heldForBudget = true
+      continue
+    }
+    pending.delete(to)
     const choices = routesFrom(d, node.id)
     const menu =
       node.routing === "one" && choices.length > 1
@@ -445,6 +462,7 @@ async function walk(deps: GraphDeps, given: JobRecord): Promise<void> {
     meta_json: JSON.stringify({ ...parse(job.meta_json), graph: g }),
   })
   if (failure) return settle("failed", failure)
+  if (heldForBudget) await noteHeldForBudget(meta, job)
   if (waiting) {
     const node = nodeOf(d, waiting)
     await write(

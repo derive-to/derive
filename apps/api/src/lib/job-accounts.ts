@@ -31,6 +31,36 @@ const readable = (secret: string, key: string): string | null => {
   return secret.startsWith("v1.") && value === secret ? null : value
 }
 
+/** Does this person hold a seat in the workspace? A lookup error answers no: a seat that
+ *  cannot be confirmed does not spend anyone's key. */
+export const hasSeat = async (meta: MetaStore, orgId: string, userId: string): Promise<boolean> =>
+  !!(await meta.getMembership(orgId, userId).catch(() => null))
+
+/** Has this agent's creator left its workspace? An owner-machine agent then runs nothing: the
+ *  machine and the key it ran on were theirs. A creator-less (legacy) agent has not. */
+export const creatorLeft = async (meta: MetaStore, agent: AgentRecord): Promise<boolean> =>
+  !!agent.created_by && !(await hasSeat(meta, agent.org_id, agent.created_by))
+
+/** WHO A JOB BILLS, picked the way resolveJobCredential picks its account: the owner of the
+ *  account assigned to the agent; else the asker, where the asker's key would be the one used
+ *  (a Derive machine, or the asker's own agent); else the agent's creator. Null = the
+ *  workspace pool. The budget check reads this at ask, pull, schedule, dispatch and graph
+ *  steps alike, so a job accepted at ask is never held later against another person's limit.
+ *  On an owner machine the answer never depends on the asker. */
+export const jobPayer = async (
+  meta: MetaStore,
+  agent: AgentRecord,
+  askedBy: string | null,
+): Promise<string | null> => {
+  if (agent.account_id) {
+    const acct = await meta.getAccount(agent.account_id).catch(() => null)
+    if (acct && acct.org_id === agent.org_id)
+      return acct.user_id === WORKSPACE_ACCOUNT_OWNER ? null : acct.user_id
+  }
+  if (askedBy && (agent.machine === "derive" || askedBy === agent.created_by)) return askedBy
+  return agent.created_by ?? null
+}
+
 export const resolveJobCredential = async (
   meta: MetaStore,
   key: string | undefined,
@@ -39,11 +69,23 @@ export const resolveJobCredential = async (
   provider: ExecutionProvider,
 ): Promise<JobCredential> => {
   if (!key) return { credential: null, reason: "not_configured" }
+  // An owner-machine agent whose creator has left runs on nobody's key, not even the pool's.
+  if (agent.machine === "owner" && (await creatorLeft(meta, agent)))
+    return { credential: null, reason: "none" }
   let sawUnreadable = false
   const want = accountProvider(provider)
   const accounts = await meta.listAccounts(agent.org_id)
-  const tryAccount = (a: AccountRecord | undefined, source: string): JobCredential | null => {
+  // A personal account pays only while its owner holds a seat in the agent's workspace: a
+  // person who has left stops paying for its jobs, whichever tier names their account. The
+  // pool belongs to the workspace and has no seat to check.
+  const seated = async (a: AccountRecord): Promise<boolean> =>
+    a.user_id === WORKSPACE_ACCOUNT_OWNER || (await hasSeat(meta, agent.org_id, a.user_id))
+  const tryAccount = async (
+    a: AccountRecord | undefined,
+    source: string,
+  ): Promise<JobCredential | null> => {
     if (!a || a.provider !== want || !a.secret_enc || a.kind === "ortam_signin") return null
+    if (!(await seated(a))) return null
     const value = readable(a.secret_enc, key)
     if (value === null) {
       sawUnreadable = true
@@ -51,7 +93,7 @@ export const resolveJobCredential = async (
     }
     return { credential: { kind: a.kind, value }, source }
   }
-  const assigned = tryAccount(
+  const assigned = await tryAccount(
     accounts.find((a) => a.id === agent.account_id),
     "agent",
   )
@@ -61,13 +103,13 @@ export const resolveJobCredential = async (
       ? job.asked_by
       : agent.created_by
   if (payer) {
-    const mine = tryAccount(
+    const mine = await tryAccount(
       accounts.find((a) => a.user_id === payer && a.provider === want),
       payer === job.asked_by ? "asker" : "creator",
     )
     if (mine) return mine
   }
-  const pool = tryAccount(
+  const pool = await tryAccount(
     accounts.find((a) => a.user_id === WORKSPACE_ACCOUNT_OWNER && a.provider === want),
     "pool",
   )

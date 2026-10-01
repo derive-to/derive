@@ -1,5 +1,6 @@
 import type { MembershipRecord, MetaStore } from "@derive/core"
 import type { BillingDriver } from "./billing"
+import { standDownMember } from "./jobs"
 import { isBillableRole, syncSeats } from "./seats"
 
 // Account-deletion guard: workspaces where removing this person would strand either
@@ -58,9 +59,10 @@ export async function purgeUserDataAndSyncSeats(
   billing: BillingDriver | undefined,
   userId: string,
 ): Promise<void> {
-  const billableOrgs = (await meta.listWorkspaces(userId))
-    .filter((ws) => isBillableRole(ws.role))
-    .map((ws) => ws.id)
+  const workspaces = await meta.listWorkspaces(userId)
+  const billableOrgs = workspaces.filter((ws) => isBillableRole(ws.role)).map((ws) => ws.id)
+  // Their agents and asks stop in every workspace, while the agents still name them.
+  for (const ws of workspaces) await standDownMember({ meta }, ws.id, userId).catch(() => {})
   await meta.deleteUserData(userId)
   await Promise.all(billableOrgs.map((orgId) => syncSeats({ meta, billing }, orgId)))
 }

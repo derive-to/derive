@@ -79,8 +79,17 @@ export function registerAgentsTool(tc: ToolContext): void {
         model: z.string().nullable().optional(),
         schedule: ScheduleArg,
         sources: z.array(z.string()).optional().describe("Connection ids."),
+        role: z
+          .enum(["viewer", "commenter", "editor"])
+          .optional()
+          .describe("Default editor (can publish), capped at your seat."),
         ask_policy: z.enum(["workspace", "invited"]).optional(),
-        write_policy: z.enum(["publish", "review"]).optional(),
+        write_policy: z
+          .enum(["publish", "review"])
+          .optional()
+          .describe(
+            "review: each new version it writes to an existing page asks its person for review.",
+          ),
         account_id: z.string().nullable().optional(),
         paused: z.boolean().optional(),
         workspace: wsArg,
@@ -93,13 +102,17 @@ export function registerAgentsTool(tc: ToolContext): void {
       if (a.action === "list") {
         const r = await call(tc, org, "/v1/agents")
         if (!r.ok) return err(r.error)
-        const agents = (r.body.agents as { id: string }[]).filter((x) => !x.id.startsWith("oauth:"))
+        // Hidden managed agents (one per imported paper) run nothing and are never asked.
+        const agents = (r.body.agents as { id: string; managed?: boolean }[]).filter(
+          (x) => !x.id.startsWith("oauth:") && !x.managed,
+        )
         return json({ agents })
       }
       if (a.action === "create") {
         if (!a.name) return err("create needs a name.")
         const r = await call(tc, org, "/v1/agents", "POST", {
           name: a.name,
+          role: a.role,
           description: a.description,
           instructions_short_id: a.instructions ?? undefined,
           machine: a.machine,
@@ -143,6 +156,7 @@ export function registerAgentsTool(tc: ToolContext): void {
       }
       const patch = {
         name: a.name,
+        role: a.role,
         description: a.description,
         instructions_short_id: a.instructions,
         machine: a.machine,

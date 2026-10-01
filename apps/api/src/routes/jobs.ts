@@ -13,6 +13,7 @@ import {
   spendableConnections,
   toolsForRun,
 } from "../lib/broker"
+import { OVER_BUDGET } from "../lib/budget"
 import { readEnvironmentBindings } from "../lib/context-environment"
 import { decryptSecret } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
@@ -26,7 +27,10 @@ import {
   canManageAgent,
   canSteerJob,
   followUpJob,
+  isServerNote,
   jobJson,
+  jobOverBudget,
+  overBudgetFor,
   pullJobs,
   reportJob,
   retryJob,
@@ -311,6 +315,14 @@ export const jobRoutes = (ctx: AppContext) => {
       const caller = await agentFor(c)
       if (caller && caller.org_id !== agent.org_id)
         return bail(fail(c, 404, "no such agent you can ask"))
+      // A workspace past its monthly model budget takes no new work. Checked before anything
+      // is written, so a refused ask leaves no job behind. A dedupe key naming an open job
+      // still finds it: that work is already asked for.
+      const open = b.dedupe_key
+        ? await meta.findOpenJobByDedupe(agent.id, who.id, b.dedupe_key)
+        : null
+      if (!open && (await overBudgetFor(meta, agent, who.id)))
+        return bail(fail(c, 402, OVER_BUDGET))
       const subject: Selector | null = b.subject
         ? (normalizeSelectors([b.subject])[0] ?? null)
         : null
@@ -378,6 +390,7 @@ export const jobRoutes = (ctx: AppContext) => {
           fail(c, 403, "only the person who asked, or the agent's manager, can follow up"),
         )
       if (job.status === "cancelled") return bail(fail(c, 409, "this job was cancelled; ask again"))
+      if (await reopensOverBudget(job)) return bail(fail(c, 402, OVER_BUDGET))
       const b = await readJson(c, z.object({ body_md: z.string().trim().min(1).max(20_000) }))
       if (b instanceof Response) return bail(b)
       const next = await followUpJob(jobDeps, job, who.id, b.body_md)
@@ -385,6 +398,15 @@ export const jobRoutes = (ctx: AppContext) => {
       return c.json({ ...(await showOne(next)), messages })
     },
   )
+
+  /** A write that reopens a settled job is new work, so it meets the same budget an ask does,
+   *  billed to the payer it opened with. A graph itself spends nothing; its steps meet
+   *  the budget when they open. */
+  const reopensOverBudget = async (job: JobRecord) =>
+    job.status !== "running" &&
+    job.status !== "queued" &&
+    job.kind !== "graph" &&
+    (await jobOverBudget(meta, job))
 
   const personAction = (
     path: string,
@@ -394,6 +416,7 @@ export const jobRoutes = (ctx: AppContext) => {
       c: Context,
       whoId: string,
     ) => Promise<JobRecord | null | { error: string }>,
+    reopens = false,
   ) =>
     app.openapi(
       createRoute({
@@ -416,6 +439,7 @@ export const jobRoutes = (ctx: AppContext) => {
           return bail(
             fail(c, 403, "only the person who asked, or the agent's manager, can do that"),
           )
+        if (reopens && (await reopensOverBudget(job))) return bail(fail(c, 402, OVER_BUDGET))
         const out = await act(job, c, who.id)
         if (!out) return bail(fail(c, 409, "this job cannot do that from where it is"))
         if ("error" in out) return bail(fail(c, 400, out.error))
@@ -425,8 +449,11 @@ export const jobRoutes = (ctx: AppContext) => {
   personAction("/v1/jobs/{id}/cancel", "Cancel an open job (and its children).", (job) =>
     cancelJob(jobDeps, job),
   )
-  personAction("/v1/jobs/{id}/retry", "Run a failed or lost job again.", (job) =>
-    retryJob(jobDeps, job),
+  personAction(
+    "/v1/jobs/{id}/retry",
+    "Run a failed or lost job again.",
+    (job) => retryJob(jobDeps, job),
+    true,
   )
   personAction(
     "/v1/jobs/{id}/answer",
@@ -442,6 +469,7 @@ export const jobRoutes = (ctx: AppContext) => {
       if (b instanceof Response) return { error: "answer needs text or an option" }
       return answerJob(jobDeps, job, whoId, b)
     },
+    true,
   )
 
   // ---- Runners -----------------------------------------------------------------------------
@@ -510,10 +538,12 @@ export const jobRoutes = (ctx: AppContext) => {
     const quiet: SourceQuiet[] = []
     let tools: { def: unknown; ref: string }[] = []
     if (connIds.length && jobs.length) {
+      // The agent's creator's personal broker plan, else the workspace pool's: the agent acts
+      // on their behalf.
       const broker = await brokerFor(
         meta,
         agent.org_id,
-        null,
+        agent.created_by,
         deps.encryptionKey,
         deps.allowEchoStub,
       )
@@ -528,7 +558,11 @@ export const jobRoutes = (ctx: AppContext) => {
     return Promise.all(
       jobs.map(async (j) => ({
         ...(await showOne(j)),
-        messages: (await meta.listJobMessages(j.id)).map(messageJson),
+        // The transcript the model reads: what people and the agent said. Notes the server
+        // wrote about the job itself (held for budget) are for the people watching it.
+        messages: (await meta.listJobMessages(j.id))
+          .filter((m) => !isServerNote(m))
+          .map(messageJson),
         instructions,
         execution: { provider: agent.provider, model: agent.model },
         tools,
@@ -660,7 +694,13 @@ export const jobRoutes = (ctx: AppContext) => {
     if (b instanceof Response) return b
     const connIds = parseConnectionIds(agent.connection_ids_json)
     if (connIds.length === 0) return fail(c, 403, "this agent has no sources")
-    const broker = await brokerFor(meta, agent.org_id, null, deps.encryptionKey, deps.allowEchoStub)
+    const broker = await brokerFor(
+      meta,
+      agent.org_id,
+      agent.created_by,
+      deps.encryptionKey,
+      deps.allowEchoStub,
+    )
     const route = refRouter(broker, mcpAuthFor(meta, agent.org_id, deps.encryptionKey))
     const allowed = await toolsForRun(meta, broker, agent.org_id, connIds, route)
     const out = await callTool({

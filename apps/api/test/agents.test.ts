@@ -22,7 +22,9 @@ describe("agents: @mention → pull inbox → ack", () => {
     const a = await res.json()
     agentId = a.id
     agentToken = a.token
-    expect(a.role).toBe("commenter")
+    // No role named: an editor, so its jobs can publish their reports (capped at the
+    // creator's seat, here an owner's).
+    expect(a.role).toBe("editor")
     expect(typeof agentToken).toBe("string")
   })
 

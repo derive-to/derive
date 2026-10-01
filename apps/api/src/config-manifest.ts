@@ -390,7 +390,7 @@ const CONFIG_VARS: ConfigVar[] = [
   {
     name: "DERIVE_MODEL_AUTO_PROVIDERS",
     group: "advanced",
-    doc: "Upstream backends eligible for automatic routing, comma-separated. When set, this takes\nprecedence over DERIVE_MODEL_PROVIDERS: the gateway chooses among the allowlist using current\nlatency, while preferring endpoints sustaining at least 50 output tokens/sec. Fallbacks remain\nenabled, so a rate-limited backend is tried elsewhere automatically.",
+    doc: "Upstream backends ELIGIBLE for automatic routing, comma-separated. When set, this takes\nprecedence over DERIVE_MODEL_PROVIDERS: the gateway chooses among this allowlist using\ncurrent latency, while preferring endpoints sustaining at least 50 output tokens/sec.\nFallbacks remain enabled, so a rate-limited backend is tried elsewhere automatically.\nUse this instead of a fixed order when availability and interactive speed matter most.",
     example: "DeepInfra,DigitalOcean,BaseTen,CoreWeave,Together,Cloudflare",
   },
   {
@@ -398,6 +398,30 @@ const CONFIG_VARS: ConfigVar[] = [
     group: "advanced",
     doc: "DEV ONLY — let a workspace with no broker plan use the ECHO stub instead of a broker that\nrefuses. The stub's `execute` returns the caller's own arguments: it reaches Stripe, Gmail\nand nothing else, so a run using it reports success over data that never existed and writes\nan artifact full of invented numbers, with no error anywhere. Unset = a workspace with no\nplan gets a refusing broker, which is what you want everywhere a human might see the output.\nMCP connections are unaffected either way — they carry their own server and route on their\nown ref.",
     example: "1",
+  },
+  {
+    name: "DERIVE_ORTAM_RUNNER_PATH",
+    group: "advanced",
+    doc: "Derive machines (Ortam sandboxes). Each sandbox installs this exact, pinned CLI. Unset =\nno Derive machines on this deploy.",
+    example: "/opt/derive/bin/derive.js",
+  },
+  {
+    name: "DERIVE_ORTAM_API_URL",
+    group: "advanced",
+    doc: "The Ortam API Derive machines are created through.",
+    example: "https://api.ortam.dev/v1",
+  },
+  {
+    name: "DERIVE_ORTAM_INTEGRATION_KEY",
+    group: "advanced",
+    doc: "Managed cloud jobs: service integration key owned by the deployment, never a user\nconnection. Requires Ortam's explicit integration profile. Rotate under the same\nOrtam owner and organization to retain job connection identities. Keep the key\navailable for shutdown/cleanup even after withdrawing the rollout allowlist.",
+    active: true,
+  },
+  {
+    name: "DERIVE_MANAGED_RUNS_ALLOWLIST",
+    group: "advanced",
+    doc: "Workspace IDs whose agents may run on a Derive machine, comma-separated. Empty keeps\nthem off.",
+    active: true,
   },
 ]
 
