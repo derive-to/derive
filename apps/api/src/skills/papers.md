@@ -5,9 +5,9 @@ order: 6
 ---
 # Papers: read an imported paper and map it to its code
 
-A workspace can import a paper from arXiv. It is stored as a read-only Context whose one artifact
-IS the paper: no manifest beside it, and no runs. `read({ short_id: "ctx_..." })` with the
-Context's id returns a summary computed from the paper (title, authors,
+A workspace can import a paper from arXiv. An imported paper (id `ctx_...`) is read-only, and its
+one artifact IS the paper: nothing runs it. `read({ short_id: "ctx_..." })` with the imported
+paper's id returns a summary computed from the paper (title, authors,
 abstract, its BibTeX) with `documents` naming the one artifact it lives in. Read that short
 id for the full LaTeX source, section by section; its outline carries `citation` (the key
 and BibTeX to cite the paper itself). People see the rendered paper and never its source,
@@ -30,13 +30,13 @@ not how faithfully the code follows it. When `read({ short_id: "ctx_..." })` sho
 `import.analysis`, read that short id (the `analysis` entry in `documents`) before you map the
 paper to its code yourself. Its `derive.paper-analysis.json` page is the data; `index.md` is the
 same analysis written out for people. `stale: true` means it was made against an arXiv version or
-a commit the Context no longer holds: trust it less, and update it.
+a commit the import no longer holds: trust it less, and update it.
 
 ### Writing one
 
-A person usually starts this by pasting a prompt from the paper's Context page.
+A person usually starts this by pasting a prompt from the paper's page (`/papers/<id>`).
 
-1. `read` the Context, then the paper. The paper's outline lists its pages with their heading
+1. `read` the imported paper's id, then the paper. The paper's outline lists its pages with their heading
    slugs, and `code` lists the implementation.
 2. Read the abstract, the introduction and the method. List what the paper contributes, and for
    each contribution the ideas its method is built from: the architecture, the objectives, the
@@ -48,9 +48,9 @@ A person usually starts this by pasting a prompt from the paper's Context page.
    line range and symbol you cite.
 4. Give each detail a status by its core idea, as "Choosing a status" says, with `notes` on where
    and how the code carries it out.
-5. Publish the analysis as one file, in the Context's workspace and without a `short_id`:
+5. Publish the analysis as one file, in the paper's workspace and without a `short_id`:
    `publish({ title, files: { "derive.paper-analysis.json": "<the JSON>" } })`. Derive checks it,
-   writes `index.md`, gives it the paper's access and links it to the Context.
+   writes `index.md`, gives it the paper's access and links it to the imported paper.
 
 ```json
 {
@@ -106,7 +106,7 @@ locate or could not tell from the paper and the code, not for doubts about its d
 
 Derive refuses an analysis that does not hold, listing every problem:
 
-- `context`, `paper` and `implementation` describe what the Context holds now: its id, the
+- `context`, `paper` and `implementation` describe what the import holds now: its `ctx_` id, the
   paper's short id, `import.version`, the repository `import.code.url` names, and
   `import.code.commit` (null when it has none).
 - `status` is `implemented` or `could_not_map`. An `implemented` detail names its code; a

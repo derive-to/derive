@@ -79,13 +79,15 @@ export const agentDiscoveryRoutes = (ctx: AppContext) => {
           "Text-anchored comment threads that survive rewrites; reply, react, resolve",
           "Optional review rounds — a person answers in comments and sends the work back with a note",
           "Search and browse workspace libraries; tags and collections",
-          "Ask live workspace contexts (agents) for answers or delegated work",
+          "Make named agents with standing instructions, ask them for work, and follow their jobs (MCP agents, ask, jobs, pull)",
+          "Run agent jobs on the owner's own machine (`derive runner serve --agent <id>`) or, where a workspace has them, on a Derive machine",
+          "Schedules and graph workflows: an agent whose instructions page holds a derive.workflow/v1 definition, walked step by step",
           "Save resumable checkpoints of working state",
           "Add small live JSON collections to HTML artifacts with derive.shared; commenters can interact without source-edit rights",
         ],
         auth: {
           mcp: "OAuth at the MCP endpoint — connect and complete the browser flow; no pasted secrets",
-          http: "Authorization: Bearer <token> on /v1 — a static agent token from Settings → Agents",
+          http: "Authorization: Bearer <token> on /v1: an agent's key, from the agents tool or the agent's page in Derive",
         },
         protocols: { mcp: true, openapi: true, a2a: false },
         endpoints: {
@@ -103,8 +105,8 @@ export const agentDiscoveryRoutes = (ctx: AppContext) => {
         },
         source: "https://github.com/derive-to/derive",
         not_for:
-          "Server-side code execution, general-purpose data storage, secrets, or general app backends — " +
-          "Derive hosts artifacts plus bounded interactive state, not compute.",
+          "General server-side code execution, general-purpose data storage, secrets, or general app backends. " +
+          "Derive hosts artifacts and bounded interactive state, and runs agent jobs on agent machines.",
       },
       200,
       { "Cache-Control": CACHE },

@@ -5551,7 +5551,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** One context; a human asker also gets the manifest package, the agent the source to run. */
+        /** One imported paper: its import status, its document, and its BibTeX. An id that was not imported returns 404. */
         get: {
             parameters: {
                 query?: never;
@@ -5563,7 +5563,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description The context — for a human asker, the manifest rendered as a package. */
+                /** @description The imported paper. */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -5613,7 +5613,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description The context was deleted. */
+                /** @description The imported paper was deleted. */
                 204: {
                     headers: {
                         [name: string]: unknown;
@@ -7100,6 +7100,7 @@ export interface components {
                     instruction: string | null;
                     result: string | null;
                 }[];
+                /** @description The steps that ask an agent (`kind: "context"` nodes): the agent each names in `context_ref`, the result it should return, and when it starts. */
                 context_sessions: {
                     node_id: string;
                     label: string;
@@ -7215,9 +7216,9 @@ export interface components {
             defaultListed: "none" | "workspace" | "public";
             /** @description Hide the Made-with-Derive marks on public artifacts and embeds, and honor the bare ?chrome=none embed. */
             whiteLabel: boolean;
-            /** @description Connection ids the workspace's CHAT may reach through the call tool. Empty means none — connecting a server does not by itself let a conversation use it. Unattended runs are unaffected: they declare their own connections per run. */
+            /** @description Connection ids that @Derive replies (in comments and Slack) may reach through the call tool. Empty means none: connecting a server does not by itself let a reply use it. Agents are unaffected: each declares its own sources. */
             chatSources: string[];
-            /** @description The one agent-write switch, on by default. Off: hosted runs and asks are not materialized, dispatched, or claimed, chat's publish tool refuses (the draft surfaces in the reply), and any agent-credentialed publish is refused at the API. */
+            /** @description The one agent-write switch, on by default. Off: no agent job is claimed, dispatched, or opened by a schedule, an @Derive reply cannot publish, and any agent-credentialed publish is refused at the API. */
             agentWrites: boolean;
             /** @description The workspace's default agent: the fallback actor for users with no connected agent. Absent = none. */
             defaultAgentId?: string;
@@ -7320,13 +7321,13 @@ export interface components {
              * @enum {string}
              */
             role: "viewer" | "commenter" | "editor" | "owner";
-            /** @description Served by Derive's managed executor. Hosting changes where the agent runs, never its principal or cap. */
+            /** @description A stored flag from before Derive machines. Nothing reads it; `machine` says where the agent runs. */
             hosted: boolean;
-            /** @description Auto-minted for one context at creation — the context's Derive access, not a user-named persona. Hidden from the roster UI. */
+            /** @description Made automatically for one imported paper, not named by a person. Never listed over MCP, asked, or used as a workflow step. */
             managed: boolean;
             /** @description The user who registered the agent — who it publishes and bills on behalf of. */
             created_by: string | null;
-            /** @description When true, this agent may bill its OWNER's own model plan as a fallback (initiator -> owner -> pool). Only the owner toggles it; default off. */
+            /** @description A stored per-agent setting from before model accounts. Job billing does not read it: the agent's assigned account, then its creator's or asker's, then the shared one, pays. */
             owner_lend: boolean;
             created_at: string;
             /** @description One line: what this agent does. */
@@ -7837,7 +7838,7 @@ export interface components {
             body_md: string;
             /** @description Author's display name; "anonymous" for an anonymous poster. */
             author: string;
-            /** @description Stable id of the author — a user id, an agent id, or "derive" for the built-in chat agent; null for anonymous or legacy rows. */
+            /** @description Stable id of the author: a user id, an agent id, or "derive" for an @Derive reply; null for anonymous or legacy rows. */
             author_id?: string | null;
             /**
              * @description What kind of principal wrote it, from the recorded id.
@@ -7884,7 +7885,7 @@ export interface components {
         ContextInfo: {
             id: string;
             name: string;
-            /** @description The registered agent this context routes asks to. */
+            /** @description The hidden agent made for this imported paper. It is never listed or asked. */
             agent_id: string;
             /** @description Short id of the linked manifest artifact; null if it can't be resolved. */
             manifest_short_id: string | null;

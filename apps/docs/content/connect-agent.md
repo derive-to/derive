@@ -38,29 +38,27 @@ rendered output, and how to close the feedback loop without dropping human comme
 ## What the agent can do
 
 The remote MCP server exposes tools to find and read work, catch up on feedback, comment,
-publish revisions, stage large content and assets, organize artifacts, save checkpoints,
-and use workspace Contexts. A Context packages reusable instructions, skills, sources, and
-permissions; the connected agent is the actor using it. A Context can also be a paper
-imported from arXiv, which the agent reads and cites but never runs. Every tool call remains
-subject to the authenticated role.
+publish revisions, stage large content and assets, organize artifacts, and save checkpoints.
+It also has four agent tools: `agents` makes and changes workspace agents, `ask` gives one
+work, `jobs` follows and answers that work, and `pull` lets your session do an agent's queued
+jobs itself. Every tool call remains subject to the authenticated role.
 
-Continue with the [MCP guide](/agents/mcp/) for the complete tool surface or the
-[CLI guide](/agents/cli/) for terminal and CI workflows.
+A connected agent can also read papers the workspace imported from arXiv, and cite them. An
+imported paper is read-only; nothing runs it.
 
-## Configure a Context's runtime access
+Continue with the [MCP guide](/agents/mcp/) for the complete tool surface, the
+[CLI guide](/agents/cli/) for terminal and CI workflows, or [Run agents](/agents/run/) to
+make an agent that takes work on its own.
 
-Open a Context's **Agent access → Manage access** to select existing connections or
-connect GitHub. GitHub keeps its existing tool permissions; selecting a connection does
-not grant the runner a clone/push token.
+## What an agent may reach
 
-Add named environment variables here for CLI-run tasks. Values are encrypted in Derive's
-secret connection store and are never included in the Context manifest or returned by the
-settings page. You can also bind an existing secret under a variable name. Each active
-session or scheduled run retrieves only its Context's selected values before starting the
-coding agent. Missing, revoked or unreadable secrets fail the run before the agent starts.
-In-app chat tools do not receive environment variables.
+An agent made in Derive uses only what it is given. Its sources (connected MCP servers) are
+chosen on its **Settings** tab, from your own connections or, if you manage them, the
+workspace's; an agent's jobs can call the tools of the sources bound to it. Secrets it reads as environment variables, such as a database password, are saved
+under **Settings, Credentials**, which also shows the agents that use each one. Model accounts
+are separate, under **Settings, Accounts**.
 
-The agent can read these values and use their permissions. Removing a binding or revoking
-a connection prevents subsequent retrieval; it cannot erase a value from an already-running
-process. Runner identity, model-login and system environment names are reserved. Ortam
-provisioning and repository-specific clone/PR permissions are separate integration work.
+Values are encrypted in Derive's secret store and are never shown again or returned by any
+API. A job retrieves only its own agent's values before it starts. Removing a source or
+revoking a credential stops the next job from getting it; it cannot erase a value from a job
+that is already running.

@@ -32,10 +32,11 @@ keystroke, or Edit on a selection, away.
 
 ## Importing a paper from arXiv
 
-A paper somebody else wrote can join a workspace as a read-only Context. On the import
-page, "Import a paper from arXiv" takes the abstract page, a PDF link, the
+A paper somebody else wrote can join a workspace as an imported paper (id `ctx_…`),
+read-only. On the import page (`/papers/new`, also reached from the Templates page's Academic
+section), "Import a paper from arXiv" takes the abstract page, a PDF link, the
 DOI, an `arXiv:` reference or a bare id; the form says what it will fetch as you type
-and refuses anything that is not an arXiv reference. The Context appears in the list
+and refuses anything that is not an arXiv reference. The paper's page (`/papers/<id>`) opens
 at once, marked "fetching from arXiv", and a worker fetches the paper in the background:
 its metadata (title, authors, abstract), its LaTeX source (never the PDF) and the BibTeX
 entry arXiv publishes for it, in that order and never faster than arXiv allows (one
@@ -54,15 +55,15 @@ the import decided is recorded on the version, where it reads as history.
 authors and abstract, and that is the whole surface: an imported paper offers no file list,
 no source download, no bibliography editor and no diff, and its raw source is not served to
 a person. Agents keep full access, because reading the source is how a model understands a
-paper: `read` on the Context returns a summary (authors, abstract, BibTeX) computed from
-the paper, `documents` names the one artifact, and reading that short id gives the source
+paper: `read` on the imported paper's id (`ctx_…`) returns a summary (authors, abstract,
+BibTeX) computed from the paper, `documents` names the one artifact, and reading that short id gives the source
 section by section plus the `citation` to cite it with. Nothing runs it. People open it from
 its paper page, where the arXiv chip marks it, and from the Templates page's Academic section.
 
 ### The paper's implementation
 
 A paper can carry the code that implements it. The import form takes an optional public
-GitHub or GitLab repository beside the arXiv link, and an imported paper's console can
+GitHub or GitLab repository beside the arXiv link, and the paper's page can
 attach, replace or remove one at any time afterwards. Derive fetches the repository as
 one anonymous archive of its whole tree, follows the submodules it declares (each at the
 branch it names, since an archive carries no pinned commits), skips Git LFS pointers,
@@ -73,7 +74,7 @@ arrives.
 
 **Your agents read the code; you get a link to it.** The implementation is not browsable
 on Derive: the paper's page lists no repository files, the content API's outline and the
-source download leave them out, and requesting one returns nothing. The console shows
+source download leave them out, and requesting one returns nothing. The paper's page shows
 "Open the repository", which goes to the repository on its own host, beside the commit that
 was fetched when the host records one (GitHub and GitLab archives do). An agent reading the
 paper sees the implementation summarised beside the paper's pages, with a file count and
@@ -89,7 +90,7 @@ source may be up to 250 MB in up to 8,000 files, and the repository's archives m
 to 600 MB, source and data together (the Node server allows more files and more
 unpacking). A repository past those is not attached, since part of a tree would read like
 all of it, and a submodule past them is skipped and named. A repository that is gone,
-private, unreachable or too large leaves the paper imported and says why on its console,
+private, unreachable or too large leaves the paper imported and says why on its page,
 so the link can be fixed without fetching the paper again.
 
 An imported paper may hold 250 MB in up to 5,000 files, and its implementation up to
@@ -106,24 +107,24 @@ Import notes say what was shrunk and by how much. PDF and EPS figures are never 
 a source that still does not fit fails naming its largest files. Workers deployments shrink
 the same way in a headless browser, one figure at a time. A paper arXiv holds only as a PDF,
 one whose source has no document, one that was withdrawn or one arXiv does not know fails
-at once with a reason; arXiv being slow or away is retried three times. A failed import can be tried again from its console, or
-discarded, which removes the Context and its generated manifest (a paper already
-published stays in the library). The same paper pasted twice opens the one Context.
+at once with a reason; arXiv being slow or away is retried three times. A failed import can be tried again from the paper's page, or
+discarded, which removes the import (a paper already published stays in the library). The
+same paper pasted twice opens the one imported paper.
 
 ### Mapping the paper to its implementation
 
-Once a paper's implementation has arrived, its Context page offers a **paper-to-implementation
+Once a paper's implementation has arrived, the paper's page (`/papers/<id>`) offers a **paper-to-implementation
 analysis**: a map from each contribution the paper claims, and each idea its method is built
 from, to the files, symbols and lines that carry it out. It is a map, not a review: a detail the
 code carries out approximately, with other numbers or extra steps around it, counts as
 implemented. Derive does not write it; your agent does. Copy the prompt the page shows into your
 agent, connected to Derive over MCP, and it reads the paper and the code and publishes the
-analysis, which the page then shows. Agents that later read the Context are pointed to it before
+analysis, which the page then shows. Agents that later read the imported paper are pointed to it before
 they map the paper again. Agents can make mistakes in this mapping, and the page says so: check
 the analysis against the paper and the code before you rely on it.
 
 Before anything is stored, Derive checks the analysis against what it describes. It must name the
-arXiv version and the commit the Context holds, every code path must exist in the
+arXiv version and the commit the import holds, every code path must exist in the
 implementation, every line range must fit and every symbol must appear in it, and every section
 it cites must be one of the paper's. It refers to code and never quotes it, so a person follows
 each reference to the repository on its own host, at the commit that was read.

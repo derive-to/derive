@@ -235,9 +235,10 @@ delete the original volume during an upgrade.
 
 ### Upgrading past the agents release
 
-This release replaces Contexts, automations and stored model plans with agents, schedules and
-model accounts. The old tables stay in the database, but nothing reads them any more, so an
-instance that used them has to carry its data across once.
+This release replaces Contexts, automations, chat and hosted runs with agents, jobs, schedules
+and model accounts. Imported arXiv papers are the one kind of Context that stays; they keep
+working and move to `/papers/<id>`. The old tables stay in the database, but nothing reads
+them any more, so an instance that used them has to carry its data across once.
 
 - **Postgres.** Run `scripts/agents-cutover.sql` from the repository with `psql`. Without
   `-v apply=1` it only prints what it would change; with it, it applies everything in one
@@ -246,6 +247,11 @@ instance that used them has to carry its data across once.
   Context you used becomes an agent (its manifest page is the agent's instructions), each stored
   model credential becomes a model account under Settings › Accounts, and each scheduled
   automation becomes a schedule on its agent.
+
+Old runners stop working. `derive runner serve <ctx_id>`, `runner install` and `runner doctor`
+are gone, and `dkrun_`, `dksess_`, `dkwfr_` and `dkattempt_` tokens no longer authenticate.
+Start each agent's runner again with the command on its page:
+`derive runner serve --agent <id>`, with the agent's key in `DERIVE_TOKEN` or `--token-file`.
 
 `DERIVE_HOSTED_RUNS` and `DERIVE_LOOP_RUNS` no longer do anything; the server logs a warning at
 startup while either is set.

@@ -91,15 +91,19 @@ export const WorkflowPreview = z
             result: z.string().nullable(),
           }),
         ),
-        context_sessions: z.array(
-          z.object({
-            node_id: z.string(),
-            label: z.string(),
-            context_ref: z.string(),
-            result: z.string(),
-            starts_when: z.string(),
-          }),
-        ),
+        context_sessions: z
+          .array(
+            z.object({
+              node_id: z.string(),
+              label: z.string(),
+              context_ref: z.string(),
+              result: z.string(),
+              starts_when: z.string(),
+            }),
+          )
+          .describe(
+            'The steps that ask an agent (`kind: "context"` nodes): the agent each names in `context_ref`, the result it should return, and when it starts.',
+          ),
         scenarios: z.array(
           z.object({
             kind: z.enum(["expected", "failure", "human"]),
@@ -169,7 +173,7 @@ export const Comment = z
       .nullable()
       .optional()
       .describe(
-        'Stable id of the author — a user id, an agent id, or "derive" for the built-in chat agent; null for anonymous or legacy rows.',
+        'Stable id of the author: a user id, an agent id, or "derive" for an @Derive reply; null for anonymous or legacy rows.',
       ),
     author_kind: z
       .enum(["user", "agent", "anonymous"])

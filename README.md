@@ -67,9 +67,11 @@ and publish the next version at the same URL.
 The content, version history, and comments stay with each artifact. A teammate or another agent
 can open the same URL and see what changed without reconstructing the work from a chat.
 
-A workspace can also keep **Contexts**: reusable packages of instructions, skills, sources, and
-permissions. Agents use them to answer questions or do work, then publish results to the same
-artifact library.
+A workspace can also keep **agents**: named workers with standing instructions, the sources they
+may use, and a model account. You ask one for work, or give it a schedule, and each piece of work
+is a job you can follow. A job runs on its owner's own computer, or on a Derive machine where the
+workspace has them, and publishes its results to the same artifact library. When a job needs a
+person, it waits in their Inbox.
 
 Derive is Fair Source and self-hostable. Run it as one container on your own infrastructure or
 use the hosted app.
@@ -126,8 +128,9 @@ Also included:
 
 - **Portable work.** Content, versions, and comments stay with the artifact so another person
   or agent can continue the work.
-- **Contexts.** Reuse the same instructions, skills, sources, and permissions across questions and
-  delegated work.
+- **Agents and jobs.** Make an agent from Claude Code or Codex, ask it for work, put it on a
+  schedule, or chain several into a workflow. Run it on your own machine with
+  `derive runner serve`, or on a Derive machine. See [Run agents](https://docs.derive.to/agents/run/).
 - **Checkpoints.** Save the state of ongoing work in a page that a later session can open.
 - **Sandboxed viewer.** Artifacts run on an opaque origin, isolated from cookies and other artifacts.
 - **Flexible storage.** Use SQLite and local disk, or Postgres and S3/R2 at scale.
@@ -219,8 +222,8 @@ apps/web          web UI (TanStack Start, SPA mode, static bundle)
 packages/core     domain: ports, publish, markdown render, viewer shell
 packages/db       MetaStore: sqlite (default) · postgres · d1
 packages/storage  BlobStore: fs (default) · s3/r2
-packages/cli      derive init (md/html/slides) · derive publish <file|dir> · derive runner serve (serve a Context)
-packages/mcp      Local compatibility MCP: eight agent tools + derive://guide
+packages/cli      derive init (md/html/slides) · derive publish <file|dir> · derive runner serve --agent <id> (work an agent's jobs)
+packages/mcp      Local compatibility MCP: eight tools + derive://guide (the remote /mcp has seventeen)
 ```
 
 Every artifact ships OG and Twitter meta plus an oEmbed document, serves a live Server-Sent

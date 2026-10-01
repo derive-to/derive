@@ -1012,7 +1012,8 @@
                       "result",
                       "starts_when"
                     ]
-                  }
+                  },
+                  "description": "The steps that ask an agent (`kind: \"context\"` nodes): the agent each names in `context_ref`, the result it should return, and when it starts."
                 },
                 "scenarios": {
                   "type": "array",
@@ -1337,11 +1338,11 @@
             "items": {
               "type": "string"
             },
-            "description": "Connection ids the workspace's CHAT may reach through the call tool. Empty means none — connecting a server does not by itself let a conversation use it. Unattended runs are unaffected: they declare their own connections per run."
+            "description": "Connection ids that @Derive replies (in comments and Slack) may reach through the call tool. Empty means none: connecting a server does not by itself let a reply use it. Agents are unaffected: each declares its own sources."
           },
           "agentWrites": {
             "type": "boolean",
-            "description": "The one agent-write switch, on by default. Off: hosted runs and asks are not materialized, dispatched, or claimed, chat's publish tool refuses (the draft surfaces in the reply), and any agent-credentialed publish is refused at the API."
+            "description": "The one agent-write switch, on by default. Off: no agent job is claimed, dispatched, or opened by a schedule, an @Derive reply cannot publish, and any agent-credentialed publish is refused at the API."
           },
           "defaultAgentId": {
             "type": "string",
@@ -1693,11 +1694,11 @@
           },
           "hosted": {
             "type": "boolean",
-            "description": "Served by Derive's managed executor. Hosting changes where the agent runs, never its principal or cap."
+            "description": "A stored flag from before Derive machines. Nothing reads it; `machine` says where the agent runs."
           },
           "managed": {
             "type": "boolean",
-            "description": "Auto-minted for one context at creation — the context's Derive access, not a user-named persona. Hidden from the roster UI."
+            "description": "Made automatically for one imported paper, not named by a person. Never listed over MCP, asked, or used as a workflow step."
           },
           "created_by": {
             "type": "string",
@@ -1706,7 +1707,7 @@
           },
           "owner_lend": {
             "type": "boolean",
-            "description": "When true, this agent may bill its OWNER's own model plan as a fallback (initiator -> owner -> pool). Only the owner toggles it; default off."
+            "description": "A stored per-agent setting from before model accounts. Job billing does not read it: the agent's assigned account, then its creator's or asker's, then the shared one, pays."
           },
           "created_at": {
             "type": "string"
@@ -3382,7 +3383,7 @@
           "author_id": {
             "type": "string",
             "nullable": true,
-            "description": "Stable id of the author — a user id, an agent id, or \"derive\" for the built-in chat agent; null for anonymous or legacy rows."
+            "description": "Stable id of the author: a user id, an agent id, or \"derive\" for an @Derive reply; null for anonymous or legacy rows."
           },
           "author_kind": {
             "type": "string",
@@ -3521,7 +3522,7 @@
           },
           "agent_id": {
             "type": "string",
-            "description": "The registered agent this context routes asks to."
+            "description": "The hidden agent made for this imported paper. It is never listed or asked."
           },
           "manifest_short_id": {
             "type": "string",
@@ -10439,7 +10440,7 @@
         "tags": [
           "Contexts"
         ],
-        "summary": "One context; a human asker also gets the manifest package, the agent the source to run.",
+        "summary": "One imported paper: its import status, its document, and its BibTeX. An id that was not imported returns 404.",
         "parameters": [
           {
             "schema": {
@@ -10452,7 +10453,7 @@
         ],
         "responses": {
           "200": {
-            "description": "The context — for a human asker, the manifest rendered as a package.",
+            "description": "The imported paper.",
             "content": {
               "application/json": {
                 "schema": {
@@ -10563,7 +10564,7 @@
         ],
         "responses": {
           "204": {
-            "description": "The context was deleted."
+            "description": "The imported paper was deleted."
           }
         }
       }
