@@ -42,7 +42,10 @@ export const RUN_MAX_ATTEMPTS = 3
  *  derived from: a job that never ticks and finishes right at its budget would otherwise land
  *  on an expired lease and be re-served, a double run. The margin covers the final write and
  *  clock skew between the runner and the API. */
+/** The longest a single job run may be leased for, whatever the agent's own cap says. */
+export const MAX_RUN_CEILING_MS = 6 * 60 * 60_000
+
 export const leaseUntilFor = (maxRunMs: number | null, now = Date.now()): string => {
-  const ms = Math.min(Math.max(maxRunMs ?? 600_000, 30_000), 6 * 60 * 60_000)
+  const ms = Math.min(Math.max(maxRunMs ?? 600_000, 30_000), MAX_RUN_CEILING_MS)
   return new Date(now + ms + 60_000).toISOString()
 }

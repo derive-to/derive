@@ -158,7 +158,7 @@ const runnerFreeEnv = (env, { keepModelLogin = false } = {}) => {
     "DERIVE_AGENT",
     "DERIVE_SERVER",
     "DERIVE_JOB_ID",
-    "DERIVE_JOB_TOKEN",
+    "DERIVE_TOOL_TOKEN",
     "DERIVE_JOB_CLAIM",
   ])
     delete out[k]
@@ -230,8 +230,8 @@ export function jobSystemPrompt(job, { shim = null } = {}) {
 // The source-tool shim, written into the job's cwd when the job has tools. The model calls a
 // source with `node .derive/source-<job>.mjs <tool> '<json args>'`; the shim posts to the job's
 // tool route, where the server checks the tool against the agent's sources and runs it. It
-// authenticates with the job's own token (DERIVE_JOB_TOKEN), which reaches only this job's
-// routes while this claim holds, so the model never holds the agent's key.
+// authenticates with the job's tool token (DERIVE_TOOL_TOKEN), which reaches only this job's
+// tool route while this claim holds, so the model never holds the runner's own credential.
 export const TOOL_SHIM_SRC = `#!/usr/bin/env node
 const env = process.env
 const [tool, argsJson] = process.argv.slice(2)
@@ -252,7 +252,7 @@ const url = env.DERIVE_SERVER + "/v1/jobs/" + encodeURIComponent(env.DERIVE_JOB_
 const res = await fetch(url, {
   method: "POST",
   headers: {
-    authorization: "Bearer " + env.DERIVE_JOB_TOKEN,
+    authorization: "Bearer " + env.DERIVE_TOOL_TOKEN,
     "content-type": "application/json",
     "x-derive-claim": env.DERIVE_JOB_CLAIM,
   },
@@ -365,15 +365,16 @@ export async function serveJob(client, job, cfg, deps = {}) {
       })
       cleanup = cred.cleanup
       // Source tools: a shim in cwd and exactly what it needs to call this job's tool route.
-      // The job token, never the agent key: it reaches this one job and dies with the claim.
+      // The job's tool token, never the runner's credential: it reaches this job's tool route
+      // and nothing else, and dies with the claim.
       let toolEnv = {}
-      if (job.tools?.length && job.job_token) {
+      if (job.tools?.length && job.tool_token) {
         shim = writeToolShim(cfg.cwd, job)
         toolEnv = {
           DERIVE_SERVER: cfg.server,
           DERIVE_JOB_ID: job.id,
           DERIVE_JOB_CLAIM: job.started_at,
-          DERIVE_JOB_TOKEN: job.job_token,
+          DERIVE_TOOL_TOKEN: job.tool_token,
         }
       }
       env = {

@@ -399,7 +399,7 @@ export function registerPullTool(tc: ToolContext): void {
           ? jobs.some((j) => j.tools?.length)
             ? {
                 ...r.body,
-                note: "To call one of a job's tools: POST /v1/jobs/{id}/tool with body {tool, args}, headers Authorization: Bearer <its job_token> and x-derive-claim: <its started_at>. The result comes back as {result}.",
+                note: "To call one of a job's tools: POST /v1/jobs/{id}/tool with body {tool, args}, headers Authorization: Bearer <its tool_token> and x-derive-claim: <its started_at>. The result comes back as {result}.",
               }
             : r.body
           : {

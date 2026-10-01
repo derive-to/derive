@@ -1650,8 +1650,9 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
       const [pulled] = (await client.pull(1)).jobs
       if (!pulled) throw new Error("nothing pulled")
       expect(pulled.id).toBe(job.id)
-      const token = pulled.job_token ?? ""
-      expect(token).toMatch(/^dkjob_/)
+      // The model's token is a tool token, never the runner's own kind.
+      const token = pulled.tool_token ?? ""
+      expect(token).toMatch(/^dkjtool_/)
 
       const call = (jobId: string) =>
         app.request(`/v1/jobs/${jobId}/tool`, {
@@ -1678,19 +1679,62 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
             { cwd: String(opts.cwd), env: sawEnv },
           )
           result = JSON.parse(run.stdout)
-          // While it is live, the job token reaches no other job and cannot pull.
-          expect((await call(other.id)).status).toBe(404)
-          expect(
-            (await app.request(`/v1/agents/${agent.id}/pull`, jsonAs(bearer(token), {}))).status,
-          ).toBe(403)
+          // While it is live, the model's token reaches its own job's tool route and nothing
+          // else: not another job, not the runner's routes, not MCP, not a publish.
+          const key = bearer(token)
+          const claim = { ...key, "x-derive-claim": pulled.started_at }
+          const refused: [string, Response][] = [
+            ["other job's tool", await call(other.id)],
+            ["pull", await app.request(`/v1/agents/${agent.id}/pull`, jsonAs(key, {}))],
+            [
+              "ask",
+              await app.request("/v1/jobs", jsonAs(key, { agent_id: agent.id, instruction: "x" })),
+            ],
+            ["read job", await app.request(`/v1/jobs/${job.id}`, { headers: key })],
+            [
+              "account",
+              await app.request(`/v1/jobs/${job.id}/account?provider=codex`, { headers: claim }),
+            ],
+            [
+              "environment",
+              await app.request(`/v1/jobs/${job.id}/environment`, { headers: claim }),
+            ],
+            [
+              "report",
+              await app.request(
+                `/v1/jobs/${job.id}/report`,
+                jsonAs(key, { started_at: pulled.started_at, status: "progress" }),
+              ),
+            ],
+            ["work", await app.request(`/v1/jobs/${job.id}/work`, { headers: key })],
+            ["publish", await publishAs(app, "<h1>x</h1>", { title: "X" }, key)],
+            [
+              "mcp",
+              await app.request("/mcp", {
+                method: "POST",
+                headers: {
+                  ...key,
+                  "content-type": "application/json",
+                  accept: "application/json, text/event-stream",
+                },
+                body: JSON.stringify({
+                  jsonrpc: "2.0",
+                  id: 1,
+                  method: "tools/call",
+                  params: { name: "list_workspaces", arguments: {} },
+                }),
+              }),
+            ],
+          ]
+          for (const [what, res] of refused) expect([401, 403], what).toContain(res.status)
           return { ok: true, answer: { body_md: "MRR read." } }
         },
       })
       expect(out).toBe("succeeded")
       // The call went through the job's tool route to the agent's source.
       expect(result).toMatchObject({ tool: "stripe.read", args: { query: "mrr" } })
-      // The model held this job's token, and neither the agent's key nor anything else of it.
-      expect(sawEnv.DERIVE_JOB_TOKEN).toBe(token)
+      // The model held the tool token, and not the agent's key.
+      expect(sawEnv.DERIVE_TOOL_TOKEN).toBe(token)
       expect(sawEnv.DERIVE_TOKEN).toBeUndefined()
       expect(Object.values(sawEnv)).not.toContain(agent.token)
       // The shim is gone after the job.
