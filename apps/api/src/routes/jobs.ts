@@ -36,6 +36,7 @@ import {
   reportJob,
   retryJob,
 } from "../lib/jobs"
+import { signWorkToken } from "../lib/run-token"
 import { runtimeFailureReason } from "../lib/runtime-diagnostics"
 import { log } from "../log"
 
@@ -555,9 +556,25 @@ export const jobRoutes = (ctx: AppContext) => {
         ref: t.ref,
       }))
     }
+    // A credential for this one claim, for the model's own tool calls. The runner keeps the
+    // agent key out of the model's environment, so the model calls a source with this instead:
+    // bound to `<job>~<claim>` exactly as a Derive machine's is, it reaches only this job's
+    // routes and dies when the job settles or is reclaimed, whatever its expiry says.
+    const jobToken = async (j: JobRecord) =>
+      deps.encryptionKey && j.started_at
+        ? signWorkToken(
+            "job",
+            deps.encryptionKey,
+            `${j.id}~${Date.parse(j.started_at)}`,
+            agent.id,
+            agent.org_id,
+            (j.lease_until ? Date.parse(j.lease_until) : Date.now()) + 5 * 60_000,
+          )
+        : null
     return Promise.all(
       jobs.map(async (j) => ({
         ...(await showOne(j)),
+        job_token: await jobToken(j),
         // The transcript the model reads: what people and the agent said. Notes the server
         // wrote about the job itself (held for budget) are for the people watching it.
         messages: (await meta.listJobMessages(j.id))

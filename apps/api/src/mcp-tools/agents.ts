@@ -393,10 +393,15 @@ export function registerPullTool(tc: ToolContext): void {
         limit: a.limit,
       })
       if (!r.ok) return err(r.error)
-      const jobs = r.body.jobs as unknown[]
+      const jobs = r.body.jobs as { tools?: unknown[] }[]
       return json(
         jobs.length
-          ? r.body
+          ? jobs.some((j) => j.tools?.length)
+            ? {
+                ...r.body,
+                note: "To call one of a job's tools: POST /v1/jobs/{id}/tool with body {tool, args}, headers Authorization: Bearer <its job_token> and x-derive-claim: <its started_at>. The result comes back as {result}.",
+              }
+            : r.body
           : {
               jobs,
               note: "Nothing queued. Pull again later; each pull also counts as the agent being online.",

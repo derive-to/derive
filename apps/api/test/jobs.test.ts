@@ -1,3 +1,10 @@
+import { execFile } from "node:child_process"
+import { existsSync, mkdtempSync } from "node:fs"
+import { createServer } from "node:http"
+import type { AddressInfo } from "node:net"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { promisify } from "node:util"
 import { newId } from "@derive/core"
 import { describe, expect, it, vi } from "vitest"
 import {
@@ -1599,6 +1606,101 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
     ).json()) as { status: string; messages: { body_md: string }[] }
     expect(after.status).toBe("failed")
     expect(after.messages.at(-1)?.body_md).toMatch(/no claude-code account for this agent/)
+  })
+
+  it("gives the model its sources' tools through a shim and a job token, never the agent key", async () => {
+    const { app, meta } = await setup("jobs-cli-tools")
+    await meta.createConnection({
+      id: "cn_owner_stripe",
+      org_id: "default",
+      user_id: owner.id,
+      kind: "oauth",
+      broker: "local",
+      toolkit: "stripe",
+      broker_ref: `local:stripe:${owner.id}`,
+      status: "active",
+    })
+    const agent = await createAgent(app, { connection_ids: ["cn_owner_stripe"] })
+    const job = (await (await ask(app, ed.email, agent.id, "What is MRR?")).json()) as {
+      id: string
+    }
+    const other = (await (await ask(app, ed.email, agent.id, "And churn?")).json()) as {
+      id: string
+    }
+    // The shim runs as its own process, as the model would run it, so the app needs a real
+    // address for it to reach.
+    const bridge = createServer((req, res) => {
+      const chunks: Buffer[] = []
+      req.on("data", (c: Buffer) => chunks.push(c))
+      req.on("end", async () => {
+        const r = await app.request(req.url ?? "/", {
+          method: req.method,
+          headers: req.headers as Record<string, string>,
+          body: chunks.length ? Buffer.concat(chunks) : undefined,
+        })
+        res.writeHead(r.status, { "content-type": r.headers.get("content-type") ?? "text/plain" })
+        res.end(Buffer.from(await r.arrayBuffer()))
+      })
+    })
+    await new Promise<void>((r) => bridge.listen(0, "127.0.0.1", r))
+    const server = `http://127.0.0.1:${(bridge.address() as AddressInfo).port}`
+    const cwd = mkdtempSync(join(tmpdir(), "jobs-cli-tools-"))
+    try {
+      const { cfg, client } = runnerFor(app, agent, { server, cwd })
+      const [pulled] = (await client.pull(1)).jobs
+      if (!pulled) throw new Error("nothing pulled")
+      expect(pulled.id).toBe(job.id)
+      const token = pulled.job_token ?? ""
+      expect(token).toMatch(/^dkjob_/)
+
+      const call = (jobId: string) =>
+        app.request(`/v1/jobs/${jobId}/tool`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/json",
+            "x-derive-claim": pulled.started_at,
+          },
+          body: JSON.stringify({ tool: "stripe.read", args: {} }),
+        })
+      let sawEnv: Record<string, string> = {}
+      let result: unknown = null
+      const out = await serveJob(client, pulled, cfg, {
+        runAgent: async (_p, opts) => {
+          sawEnv = opts.env as Record<string, string>
+          // The model reads the tool and how to call it from its prompt, then runs the shim.
+          const shim = /`node (\S+) <tool>/.exec(String(opts.systemPrompt))?.[1]
+          expect(String(opts.systemPrompt)).toContain("stripe.read")
+          if (!shim) throw new Error("no shim in the prompt")
+          const run = await promisify(execFile)(
+            process.execPath,
+            [shim, "stripe.read", '{"query":"mrr"}'],
+            { cwd: String(opts.cwd), env: sawEnv },
+          )
+          result = JSON.parse(run.stdout)
+          // While it is live, the job token reaches no other job and cannot pull.
+          expect((await call(other.id)).status).toBe(404)
+          expect(
+            (await app.request(`/v1/agents/${agent.id}/pull`, jsonAs(bearer(token), {}))).status,
+          ).toBe(403)
+          return { ok: true, answer: { body_md: "MRR read." } }
+        },
+      })
+      expect(out).toBe("succeeded")
+      // The call went through the job's tool route to the agent's source.
+      expect(result).toMatchObject({ tool: "stripe.read", args: { query: "mrr" } })
+      // The model held this job's token, and neither the agent's key nor anything else of it.
+      expect(sawEnv.DERIVE_JOB_TOKEN).toBe(token)
+      expect(sawEnv.DERIVE_TOKEN).toBeUndefined()
+      expect(Object.values(sawEnv)).not.toContain(agent.token)
+      // The shim is gone after the job.
+      expect(existsSync(join(cwd, ".derive"))).toBe(false)
+
+      // And it dies with its job.
+      expect([401, 403]).toContain((await call(job.id)).status)
+    } finally {
+      bridge.close()
+    }
   })
 })
 

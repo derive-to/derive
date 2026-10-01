@@ -7,7 +7,7 @@
 // so a report from a claim the server already handed to another runner is refused. And a long
 // job reports `progress` at a third of its lease, which renews the lease; a runner that stops
 // ticking (a closed laptop) loses the job to the server's reclaim instead of holding it forever.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { selectProvider } from "./providers/index.js"
@@ -152,7 +152,15 @@ export class JobClient {
  *  jobs or fetch their credentials. */
 const runnerFreeEnv = (env, { keepModelLogin = false } = {}) => {
   const out = keepModelLogin ? { ...env } : stripModelTokens(env)
-  for (const k of ["DERIVE_TOKEN", "DERIVE_TOKEN_FILE", "DERIVE_AGENT", "DERIVE_SERVER"])
+  for (const k of [
+    "DERIVE_TOKEN",
+    "DERIVE_TOKEN_FILE",
+    "DERIVE_AGENT",
+    "DERIVE_SERVER",
+    "DERIVE_JOB_ID",
+    "DERIVE_JOB_TOKEN",
+    "DERIVE_JOB_CLAIM",
+  ])
     delete out[k]
   return out
 }
@@ -190,13 +198,94 @@ export function reportMarkdown(job, answer, { made = [], flagged = [], cfg = {} 
   return `${parts.join("\n")}\n`
 }
 
-/** The system prompt for one job: the agent's standing instructions, then what this job is. */
-export function jobSystemPrompt(job) {
+/** The system prompt for one job: the agent's standing instructions, then what this job is,
+ *  then the source tools it may call (when the runner wrote a shim for them). */
+export function jobSystemPrompt(job, { shim = null } = {}) {
   const parts = []
   if (job.instructions?.body_md) parts.push(job.instructions.body_md.trim())
   else parts.push("You are an agent working for a team in Derive. Do the work you are asked to do.")
   if (job.subject) parts.push(`This job is about: ${JSON.stringify(job.subject)}`)
+  if (shim && job.tools?.length) {
+    const list = job.tools
+      .map(({ def }) => {
+        const args = def.params ?? def.input_schema ?? def.inputSchema
+        return `- ${def.name}: ${def.description ?? ""}${args ? ` Arguments: ${JSON.stringify(args)}` : ""}`
+      })
+      .join("\n")
+    parts.push(
+      `You can use this agent's sources through these tools. Call one by running \`node ${shim} <tool> '<json args>'\` in the shell; it prints the tool's JSON result:\n${list}`,
+    )
+  }
+  // A bound source that gave no tools. Saying so beats letting the model work as though the
+  // source was never configured.
+  if (job.sources_quiet?.length) {
+    const lost = job.sources_quiet.map((q) => `- ${q.toolkit}: ${q.why ?? q.reason}`).join("\n")
+    parts.push(
+      `These sources are unavailable for this job:\n${lost}\nDo not guess what they would have returned. Do the rest and say plainly which source was missing and why.`,
+    )
+  }
   return `${parts.join("\n\n")}\n`
+}
+
+// The source-tool shim, written into the job's cwd when the job has tools. The model calls a
+// source with `node .derive/source-<job>.mjs <tool> '<json args>'`; the shim posts to the job's
+// tool route, where the server checks the tool against the agent's sources and runs it. It
+// authenticates with the job's own token (DERIVE_JOB_TOKEN), which reaches only this job's
+// routes while this claim holds, so the model never holds the agent's key.
+export const TOOL_SHIM_SRC = `#!/usr/bin/env node
+const env = process.env
+const [tool, argsJson] = process.argv.slice(2)
+if (!tool) {
+  console.error("usage: node <shim> <tool> '<json args>'")
+  process.exit(2)
+}
+let args = {}
+if (argsJson) {
+  try {
+    args = JSON.parse(argsJson)
+  } catch (e) {
+    console.error("args must be JSON: " + e.message)
+    process.exit(2)
+  }
+}
+const url = env.DERIVE_SERVER + "/v1/jobs/" + encodeURIComponent(env.DERIVE_JOB_ID) + "/tool"
+const res = await fetch(url, {
+  method: "POST",
+  headers: {
+    authorization: "Bearer " + env.DERIVE_JOB_TOKEN,
+    "content-type": "application/json",
+    "x-derive-claim": env.DERIVE_JOB_CLAIM,
+  },
+  body: JSON.stringify({ tool, args }),
+})
+const text = await res.text()
+if (!res.ok) {
+  console.error("tool " + tool + " failed (" + res.status + "): " + text.slice(0, 1000))
+  process.exit(1)
+}
+try {
+  console.log(JSON.stringify(JSON.parse(text).result))
+} catch {
+  console.log(text)
+}
+`
+
+/** Write the shim for one job (concurrent jobs share a cwd, so each gets its own file) and
+ *  return its path relative to cwd, plus its cleanup. */
+function writeToolShim(cwd, job) {
+  const dir = join(cwd, ".derive")
+  const rel = `.derive/source-${job.id}.mjs`
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(cwd, rel), TOOL_SHIM_SRC, { mode: 0o755 })
+  return {
+    rel,
+    cleanup: () => {
+      try {
+        rmSync(join(cwd, rel), { force: true })
+        rmdirSync(dir) // only when empty: the directory may hold other things
+      } catch {}
+    },
+  }
 }
 
 /** The model credential for this job as a per-spawn env overlay, plus its cleanup. Throws with
@@ -265,6 +354,7 @@ export async function serveJob(client, job, cfg, deps = {}) {
   tick.unref?.()
 
   let cleanup = () => {}
+  let shim = null
   try {
     let env
     if (!cfg.mock) {
@@ -274,10 +364,23 @@ export async function serveJob(client, job, cfg, deps = {}) {
         localLogin: cfg.localLogin,
       })
       cleanup = cred.cleanup
+      // Source tools: a shim in cwd and exactly what it needs to call this job's tool route.
+      // The job token, never the agent key: it reaches this one job and dies with the claim.
+      let toolEnv = {}
+      if (job.tools?.length && job.job_token) {
+        shim = writeToolShim(cfg.cwd, job)
+        toolEnv = {
+          DERIVE_SERVER: cfg.server,
+          DERIVE_JOB_ID: job.id,
+          DERIVE_JOB_CLAIM: job.started_at,
+          DERIVE_JOB_TOKEN: job.job_token,
+        }
+      }
       env = {
         ...runnerFreeEnv(process.env, { keepModelLogin: cred.local }),
         ...environment,
         ...cred.env,
+        ...toolEnv,
       }
     }
     const result = cfg.mock
@@ -287,7 +390,7 @@ export async function serveJob(client, job, cfg, deps = {}) {
           cwd: cfg.cwd,
           model: cfg.model ?? job.execution?.model ?? provider.defaultModel,
           timeoutMs: cfg.timeoutMs,
-          systemPrompt: jobSystemPrompt(job),
+          systemPrompt: jobSystemPrompt(job, { shim: shim?.rel }),
           prompt: buildPrompt(job.messages ?? []),
           env,
           meter: deps.meter,
@@ -358,6 +461,7 @@ export async function serveJob(client, job, cfg, deps = {}) {
   } finally {
     clearInterval(tick)
     cleanup()
+    shim?.cleanup()
   }
 }
 
