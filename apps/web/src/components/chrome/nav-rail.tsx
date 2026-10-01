@@ -27,12 +27,13 @@ import { useBootGate } from "@/lib/bootstrap"
 import { getMonogram } from "@/lib/initials"
 import {
   collectionsQuery,
-  inboxJobsQuery,
+  needsYouCountQuery,
   summaryQuery,
   workspaceActivityQuery,
   workspacesQuery,
 } from "@/lib/queries"
 import { useBrandprintCollectionIds } from "@/lib/use-brandprint-ids"
+import { useJobEvents } from "@/lib/use-job-events"
 import { cn } from "@/lib/utils"
 import type { LibrarySearch } from "@/pages/library/types"
 import { GettingStarted } from "./getting-started"
@@ -363,12 +364,14 @@ export function NavRail() {
     enabled: !!me && bootGate,
   })
   const { data: workspaces } = useQuery({ ...workspacesQuery(), enabled: !!me })
-  // The Inbox count: jobs waiting on this person. Not in the boot batch; it refetches on a
-  // slow timer so an answer given elsewhere clears the badge.
+  // The Inbox count: jobs waiting on this person. Seeded by the boot batch and refreshed by
+  // job events; the slow timer only catches what sends this person no event (a teammate
+  // answering a job on an agent they manage).
+  useJobEvents()
   const { data: waiting } = useQuery({
-    ...inboxJobsQuery(),
+    ...needsYouCountQuery(),
     enabled: !!me && bootGate,
-    refetchInterval: 30_000,
+    refetchInterval: 120_000,
   })
   // The pod subtitle: "Personal" for the auto-provisioned workspace (its stored
   // name is provisioning plumbing), else the summary's workspace name.
@@ -427,7 +430,7 @@ export function NavRail() {
                 icon="inbox"
                 label="Inbox"
                 to="/inbox"
-                count={waiting?.length}
+                count={waiting || undefined}
                 active={onInbox}
                 testId="nav-inbox"
               />

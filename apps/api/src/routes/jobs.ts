@@ -27,6 +27,7 @@ import {
   canManageAgent,
   canSteerJob,
   followUpJob,
+  inboxScope,
   isServerNote,
   jobJson,
   jobOverBudget,
@@ -147,7 +148,12 @@ const KINDS = ["ask", "scheduled", "graph", "node"] as const
 export const jobRoutes = (ctx: AppContext) => {
   const { meta, deps, agentFor, actingHuman } = ctx
   const app = new OpenAPIHono<BlankEnv>()
-  const jobDeps = graphAware({ meta, bus: ctx.backplane, blobs: ctx.blobs })
+  const jobDeps = graphAware({
+    meta,
+    bus: ctx.backplane,
+    blobs: ctx.blobs,
+    announce: ctx.announceJob,
+  })
 
   const messageJson = (m: {
     id: string
@@ -252,15 +258,9 @@ export const jobRoutes = (ctx: AppContext) => {
       if (q.mine === "1") {
         const who = await actingHuman(c)
         if (!who) return bail(fail(c, 401, "unauthenticated"))
-        const seat = await meta.getMembership(org, who.id).catch(() => null)
-        if (!seat) return c.json({ jobs: [] })
-        if (seat.role !== "owner") {
-          const own =
-            seat.role === "viewer"
-              ? []
-              : (await meta.listAgents(org)).filter((a) => a.created_by === who.id)
-          askedByOrAgent = { askedBy: who.id, agentIds: own.map((a) => a.id) }
-        }
+        const scope = await inboxScope(meta, org, who.id)
+        if (!scope) return c.json({ jobs: [] })
+        if (scope !== "all") askedByOrAgent = scope
       }
       const jobs = await meta.listJobs({
         orgId: org,
@@ -446,8 +446,8 @@ export const jobRoutes = (ctx: AppContext) => {
         return c.json(await showOne(out))
       },
     )
-  personAction("/v1/jobs/{id}/cancel", "Cancel an open job (and its children).", (job) =>
-    cancelJob(jobDeps, job),
+  personAction("/v1/jobs/{id}/cancel", "Cancel an open job (and its children).", (job, _c, whoId) =>
+    cancelJob(jobDeps, job, whoId),
   )
   personAction(
     "/v1/jobs/{id}/retry",
@@ -616,6 +616,12 @@ export const jobRoutes = (ctx: AppContext) => {
       const first = art ? await meta.getVersion(art.id, 1).catch(() => null) : null
       if (!art || art.org_id !== agent.org_id || first?.agent_id !== agent.id)
         return fail(c, 400, "a report must be a page this agent made")
+      // A report is the job's record, private to the workspace (members open it, no link,
+      // listed nowhere) when it is first attached, whatever the runner published it as: an
+      // older runner made its report pages with the workspace's sharing defaults. Sharing it
+      // further afterwards is a person's choice, so a later attach of the same page keeps it.
+      if (held.report_artifact_id !== art.id && held.status === "running")
+        await meta.setAccess(art.id, "member", "none", "none", null)
       report.report_artifact_id = art.id
     }
     const out = await reportJob(jobDeps, agent, c.req.param("id"), report)

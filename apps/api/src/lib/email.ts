@@ -322,6 +322,36 @@ export const buildShareEmail = (
   return { subject, html, text }
 }
 
+/** Render a job email: an agent's job needs the recipient, or it finished. `link` is the
+ *  job's report page, or its agent's page when it has no report yet. */
+export const buildJobEmail = (input: {
+  agentName: string
+  /** "needs you", "finished", "failed", and so on: a fixed vocabulary. */
+  verb: string
+  instruction: string
+  question: string | null
+  link: string
+}): { subject: string; html: string; text: string } => {
+  const what = truncate(input.instruction.split("\n").find((l) => l.trim()) ?? "a job", 120)
+  const subject = `${input.agentName} ${input.verb}: ${what}`
+  const question = input.question ? truncate(input.question, 600) : null
+  const html = `<!doctype html><html><body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1a;line-height:1.5">
+  <p><strong>${escapeHtml(input.agentName)}</strong> ${escapeHtml(input.verb)}: ${escapeHtml(what)}</p>
+  ${question ? `<p style="white-space:pre-wrap;background:#f6f6f6;border-radius:8px;padding:12px 14px">${escapeHtml(question)}</p>` : ""}
+  <p><a href="${escapeHtml(input.link)}" style="display:inline-block;background:#111;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none">Open in Derive</a></p>
+  <hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
+  <p style="color:#999;font-size:12px">You're receiving this because you asked this agent, or you manage it.</p>
+  </body></html>`
+  const text = [
+    `${input.agentName} ${input.verb}: ${what}`,
+    question ? `\n${question}` : "",
+    `\nOpen in Derive: ${input.link}`,
+  ]
+    .filter(Boolean)
+    .join("\n")
+  return { subject, html, text }
+}
+
 /**
  * The inverse of buildShareEmail: someone who cannot open the artifact is asking to.
  *

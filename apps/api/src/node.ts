@@ -33,6 +33,7 @@ import { machineDepsFrom, machinePass } from "./lib/job-machine"
 import { jobTick } from "./lib/jobs"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { modelSource, readLibrary } from "./lib/model-library"
+import { jobAnnouncer } from "./lib/notify-job"
 import { NODE_REPO_CAPS } from "./lib/repo-fetch"
 import { mountWeb } from "./lib/serve-web"
 import { signupPolicy } from "./lib/signup-policy"
@@ -643,12 +644,22 @@ if (cfg.backgroundWorkers) {
   const tick = () => {
     if (ticking) return
     ticking = true
+    // A job the tick settles (a lapsed lease lost, a machine that stopped, a graph that
+    // finished) tells its people like one a runner settles.
+    const announce = jobAnnouncer({
+      meta,
+      bus: backplane,
+      baseUrl: cfg.baseUrl,
+      pokeWebhooks: webhookWorker?.poke,
+    })
     const machines = machineDepsFrom(meta, {
       secret: authSecret,
       server: cfg.baseUrl,
       config: runtimeConfig,
+      bus: backplane,
+      announce,
     })
-    const graphs = graphAware({ meta, blobs })
+    const graphs = graphAware({ meta, blobs, bus: backplane, announce })
     void jobTick(graphs, new Date())
       .then(() => graphPass(graphs))
       .then(() => (machines ? machinePass(machines) : undefined))

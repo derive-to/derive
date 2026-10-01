@@ -39,6 +39,7 @@ import { graphAware, graphPass } from "./lib/job-graph"
 import { machineDepsFrom, machinePass } from "./lib/job-machine"
 import { jobTick } from "./lib/jobs"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
+import { jobAnnouncer } from "./lib/notify-job"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
 import { runtimeFailureReason } from "./lib/runtime-diagnostics"
@@ -583,7 +584,7 @@ export default {
     ctx.waitUntil(sweepEditSessions(env, ctx))
     // The job tick: due schedules become jobs, lapsed leases are reclaimed, graph jobs
     // advance, and queued jobs for Derive machines are dispatched.
-    ctx.waitUntil(jobTickEdge(env))
+    ctx.waitUntil(edgeCtx.run(ctx, () => jobTickEdge(env)))
   },
 }
 
@@ -612,7 +613,19 @@ function workerGateway(env: Env): GatewayConfig | undefined {
 async function jobTickEdge(env: Env): Promise<void> {
   const pass = async () => {
     const meta = env.HYPERDRIVE ? PgMetaStore.fromPool(livePgPool) : createD1Store(liveD1)
-    const graphs = graphAware({ meta, blobs: new R2BlobStore(env.BUCKET) })
+    // A job the tick settles (a lapsed lease lost, a machine that stopped, a graph that
+    // finished) tells its people like one a runner settles. The DO backplane's publish needs
+    // the cron's execution context, which scheduled() runs this under.
+    const bus = createDoBackplane(env.ROOMS)
+    const announce = env.BASE_URL
+      ? jobAnnouncer({
+          meta,
+          bus,
+          baseUrl: env.BASE_URL,
+          pokeWebhooks: () => edgeWaitUntil(pokeOutbox(env)),
+        })
+      : undefined
+    const graphs = graphAware({ meta, blobs: new R2BlobStore(env.BUCKET), bus, announce })
     await jobTick(graphs, new Date())
     await graphPass(graphs)
     const machines = machineDepsFrom(meta, {
@@ -630,6 +643,8 @@ async function jobTickEdge(env: Env): Promise<void> {
               : undefined,
           }
         : undefined,
+      bus,
+      announce,
     })
     if (machines) await machinePass(machines)
   }

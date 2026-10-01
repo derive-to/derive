@@ -2985,9 +2985,10 @@
               "follow",
               "publish",
               "review",
-              "access_request"
+              "access_request",
+              "job"
             ],
-            "description": "What happened: mention, comment, share, follow, publish, review, or access_request (someone who cannot open the artifact is asking you to grant it)"
+            "description": "What happened: mention, comment, share, follow, publish, review, access_request (someone who cannot open the artifact is asking you to grant it), or job (an agent's job needs you or finished; thread_id is the agent id, comment_id the job id, and the artifact fields name its report page when it has one)"
           },
           "artifact_id": {
             "type": "string"
@@ -3012,6 +3013,11 @@
           "preview": {
             "type": "string",
             "description": "Short text preview shown in the notification bell"
+          },
+          "org_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "The workspace the row is about, when opening it means switching there first (a job row); null otherwise"
           },
           "read": {
             "anyOf": [
@@ -9203,6 +9209,10 @@
                     "unread": {
                       "type": "number"
                     },
+                    "needs_you": {
+                      "type": "number",
+                      "description": "How many jobs wait on you: needs_you, and you asked them or manage their agent. The count GET /v1/jobs?mine=1&status=needs_you lists."
+                    },
                     "blocked": {
                       "type": "object",
                       "nullable": true,
@@ -9227,6 +9237,7 @@
                     "settings",
                     "notifications",
                     "unread",
+                    "needs_you",
                     "blocked"
                   ]
                 }
@@ -11150,7 +11161,9 @@
                           "comment.resolved",
                           "version.published",
                           "review.requested",
-                          "review.sent_back"
+                          "review.sent_back",
+                          "job.needs_you",
+                          "job.finished"
                         ]
                       }
                     }

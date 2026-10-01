@@ -90,11 +90,15 @@ export class JobClient {
     return parsed
   }
 
-  /** Publish a new page through the ordinary publish route, as the agent. */
-  async publish({ title, filename, type, body, shortId }) {
+  /** Publish a new page through the ordinary publish route, as the agent. `access` sets a new
+   *  page's sharing (workspace_access, link_role, listed); a new version never changes it. */
+  async publish({ title, filename, type, body, shortId, access }) {
     const form = new FormData()
     form.set("file", new Blob([body], { type }), filename)
-    if (!shortId) form.set("title", title)
+    if (!shortId) {
+      form.set("title", title)
+      for (const [k, v] of Object.entries(access ?? {})) form.set(k, v)
+    }
     const res = await this.fetch(
       `${this.cfg.server}/v1/artifacts${shortId ? `/${encodeURIComponent(shortId)}/versions` : ""}`,
       {
@@ -107,7 +111,9 @@ export class JobClient {
     return res.json()
   }
 
-  /** The job's report page: a new version of the one it already has, or its first. */
+  /** The job's report page: a new version of the one it already has, or its first. A first
+   *  report is private to the workspace (members can open it, no link, listed nowhere): it is
+   *  the job's record, found from the job, and sharing it further is a person's choice. */
   publishReport(job, md) {
     return this.publish({
       title: reportTitle(job),
@@ -115,6 +121,7 @@ export class JobClient {
       type: "text/markdown",
       body: md,
       shortId: job.report_short_id ?? undefined,
+      access: REPORT_ACCESS,
     })
   }
 
@@ -149,6 +156,9 @@ const runnerFreeEnv = (env, { keepModelLogin = false } = {}) => {
     delete out[k]
   return out
 }
+
+/** How a job's report page is shared when it is first made. */
+const REPORT_ACCESS = { workspace_access: "member", link_role: "none", listed: "none" }
 
 const firstLine = (s) =>
   (s ?? "")

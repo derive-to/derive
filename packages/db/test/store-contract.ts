@@ -3167,6 +3167,32 @@ export function runStoreContract(
       })
     const at = (msFromNow: number) => new Date(Date.now() + msFromNow).toISOString()
 
+    it("the boot read counts the jobs waiting on a person by the inbox's rule", async () => {
+      const org = `org_${uuid()}`
+      await store.setWorkspace(org, "Inbox count")
+      await store.setMembership({ id: uuid(), org_id: org, user_id: "amy", role: "editor" })
+      await store.setMembership({ id: uuid(), org_id: org, user_id: "zed", role: "owner" })
+      const mine = await mkAgent({ org_id: org, created_by: "amy" })
+      const theirs = await mkAgent({ org_id: org, created_by: "zed" })
+      const waits = (agentId: string, askedBy: string | null) =>
+        mkJob(agentId, { org_id: org, asked_by: askedBy }).then((j) =>
+          store.updateJob(j.id, { status: "needs_you" }),
+        )
+      await waits(theirs.id, "amy") // she asked it
+      await waits(mine.id, null) // her agent's schedule
+      await waits(theirs.id, "zed") // not hers
+      await mkJob(mine.id, { org_id: org, asked_by: "amy" }) // queued, not waiting
+      const boot = (user: string) =>
+        store.bootstrap(org, user, 20, {
+          activeSince: new Date(Date.now() - 30 * 86400_000).toISOString(),
+          previewPer: 4,
+        })
+      expect((await boot("amy")).needsYou).toBe(2)
+      // The owner manages every agent; someone without a seat has nothing waiting.
+      expect((await boot("zed")).needsYou).toBe(3)
+      expect((await boot("nobody")).needsYou).toBe(0)
+    })
+
     it("an agent carries its model fields with defaults, and updateAgent is org-scoped", async () => {
       const a = await mkAgent()
       expect(a).toMatchObject({

@@ -7,6 +7,7 @@ import { PageShell } from "@/components/shared/page-shell"
 import { useAuth } from "@/ctx"
 import { agentsQuery, inboxJobsQuery, workspaceActivityQuery } from "@/lib/queries"
 import { useDocumentTitle } from "@/lib/use-document-title"
+import { useJobEvents } from "@/lib/use-job-events"
 import { AnswerBox, useCanSteer } from "./agents/agent-jobs"
 import { firstLine, when } from "./agents/format"
 import { Group, Meta, RowLine, rowClass, Time } from "./agents/rows"
@@ -17,7 +18,9 @@ import { AgentRowsSkeleton } from "./agents/skeleton"
 // manage; the answer goes through the same POST /v1/jobs/{id}/answer as the agent page.
 export function Inbox() {
   useDocumentTitle("Inbox")
-  const jobs = useQuery({ ...inboxJobsQuery(), refetchInterval: 15_000 })
+  // Job events keep this live; the slow poll is the fallback for what no event reaches.
+  useJobEvents()
+  const jobs = useQuery({ ...inboxJobsQuery(), refetchInterval: 60_000 })
   const agents = useQuery(agentsQuery())
   // Shared with the rail, which keeps it warm for 30s; the inbox always reads it fresh.
   const activity = useQuery({ ...workspaceActivityQuery(), refetchOnMount: "always" })

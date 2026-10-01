@@ -744,6 +744,338 @@ describe("jobs: schedules", () => {
   })
 })
 
+describe("jobs: telling people", () => {
+  type Bell = { kind: string; preview: string; thread_id: string; comment_id: string }
+  const bells = async (app: App, email: string) =>
+    (
+      (await (await app.request("/v1/notifications", { headers: as(email) })).json()) as {
+        notifications: Bell[]
+      }
+    ).notifications.filter((n) => n.kind === "job")
+  const outbox = async (meta: ReturnType<typeof makeAuthedApp>["meta"]) => {
+    const far = new Date(Date.now() + 10_000_000).toISOString()
+    return meta.claimDueDeliveries(far, 200, far)
+  }
+
+  it("needs_you tells the asker and the agent's manager once, by bell, email and webhook", async () => {
+    const { app, meta } = await setup("jobs-tell-needs")
+    await meta.setOrgSettings("default", {
+      ...(await meta.getOrgSettings("default")),
+      emailNotifications: true,
+    })
+    await meta.setUserNotificationPref({
+      id: "unp-jobs-tell-ed",
+      org_id: "default",
+      user_id: ed.id,
+      prefs: JSON.stringify({ reviewEmail: true }),
+      created_at: new Date().toISOString(),
+    })
+    await meta.createWebhook({
+      id: "wh_jobs_tell",
+      org_id: "default",
+      url: "http://example.com/hook",
+      secret: "s",
+      kind: "generic",
+      events: "job.needs_you,job.finished",
+    })
+    // A hook on every event predates job events: it does not start receiving them.
+    await meta.createWebhook({
+      id: "wh_jobs_star",
+      org_id: "default",
+      url: "http://example.com/all",
+      secret: "s",
+      kind: "generic",
+      events: "*",
+    })
+    const a = await createAgent(app)
+    const job = (await (await ask(app, ed.email, a.id, "Send the update")).json()) as {
+      id: string
+    }
+    const [p] = await pull(app, a)
+    const waits = {
+      started_at: p?.started_at ?? null,
+      status: "needs_you",
+      needs: { kind: "effect", question: "Send to 14 people?", options: ["Send", "Skip"] },
+    }
+    expect((await report(app, a.token, job.id, waits)).status).toBe(200)
+    // Sent again, the settle lands nowhere and tells nobody twice.
+    expect((await report(app, a.token, job.id, waits)).status).toBe(409)
+    for (const who of [ed, owner]) {
+      const mine = await bells(app, who.email)
+      expect(mine).toHaveLength(1)
+      expect(mine[0]).toMatchObject({ thread_id: a.id, comment_id: job.id })
+      expect(mine[0]?.preview).toContain("Send to 14 people?")
+    }
+    const sent = await outbox(meta)
+    // Email only for the person who opted in; one webhook delivery for the workspace.
+    expect(sent.filter((d) => d.kind === "email" && d.event_type === "job.needs_you")).toHaveLength(
+      1,
+    )
+    const hooks = sent.filter((d) => d.webhook_id === "wh_jobs_tell")
+    expect(hooks.map((d) => d.event_type)).toEqual(["job.needs_you"])
+    expect(sent.filter((d) => d.webhook_id === "wh_jobs_star")).toEqual([])
+    expect(JSON.parse(hooks[0]?.payload ?? "{}")).toMatchObject({
+      event: "job.needs_you",
+      job: { id: job.id, status: "needs_you", question: "Send to 14 people?" },
+    })
+  })
+
+  it("finished tells the asker once, even across a retry, and not the manager", async () => {
+    const { app } = await setup("jobs-tell-finished")
+    const a = await createAgent(app)
+    const job = (await (await ask(app, ed.email, a.id, "flaky")).json()) as { id: string }
+    const [p1] = await pull(app, a)
+    await report(app, a.token, job.id, {
+      started_at: p1?.started_at ?? null,
+      status: "failed",
+      retryable: true,
+    })
+    // Back in the queue for another attempt: not finished, so nobody is told.
+    expect(await bells(app, ed.email)).toHaveLength(0)
+    const [p2] = await pull(app, a)
+    const done = { started_at: p2?.started_at ?? null, status: "succeeded", body_md: "Done." }
+    expect((await report(app, a.token, job.id, done)).status).toBe(200)
+    expect((await report(app, a.token, job.id, done)).status).toBe(409)
+    const mine = await bells(app, ed.email)
+    expect(mine).toHaveLength(1)
+    expect(mine[0]?.preview).toContain("finished")
+    expect(await bells(app, owner.email)).toHaveLength(0)
+    // Cancelling your own job tells you nothing.
+    const other = (await (await ask(app, ed.email, a.id, "never mind")).json()) as { id: string }
+    await app.request(`/v1/jobs/${other.id}/cancel`, jsonAs(as(ed.email), {}))
+    expect(await bells(app, ed.email)).toHaveLength(1)
+  })
+
+  it("a scheduled job, which nobody asked, tells the agent's creator", async () => {
+    const { app, meta } = await setup("jobs-tell-scheduled")
+    const created = await app.request(
+      "/v1/agents",
+      jsonAs(as(owner.email), {
+        name: "Weekly digest",
+        role: "editor",
+        schedule: { cron: "0 9 * * *", tz: "UTC", instruction: "Write the weekly digest" },
+      }),
+    )
+    const a = (await created.json()) as { id: string; token: string }
+    const day = new Date(Date.now() + 2 * 86_400_000)
+    const at = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 9, 30))
+    await jobTick({ meta }, at)
+    const [job] = await meta.listJobs({ orgId: "default", agentId: a.id })
+    if (!job) throw new Error("no scheduled job")
+    const claimed = await meta.claimJob(
+      job.id,
+      new Date(Date.now() + 60_000).toISOString(),
+      new Date().toISOString(),
+    )
+    expect(
+      (
+        await report(app, a.token, job.id, {
+          started_at: claimed?.started_at ?? null,
+          status: "succeeded",
+        })
+      ).status,
+    ).toBe(200)
+    expect(await bells(app, owner.email)).toHaveLength(1)
+    expect(await bells(app, ed.email)).toHaveLength(0)
+  })
+
+  it("interrupts are for asked work, and a burst on one agent is one message", async () => {
+    const { app, meta } = await setup("jobs-tell-interrupts")
+    await meta.setOrgSettings("default", {
+      ...(await meta.getOrgSettings("default")),
+      emailNotifications: true,
+    })
+    for (const u of [owner, ed])
+      await meta.setUserNotificationPref({
+        id: `unp-jobs-int-${u.id}`,
+        org_id: "default",
+        user_id: u.id,
+        prefs: JSON.stringify({ reviewEmail: true }),
+        created_at: new Date().toISOString(),
+      })
+    const a = await createAgent(app)
+    // Three of Ed's asks fail in one pass: three bells, one email.
+    const ids: string[] = []
+    for (const n of [1, 2, 3])
+      ids.push(((await (await ask(app, ed.email, a.id, `job ${n}`)).json()) as { id: string }).id)
+    for (const id of ids) {
+      const claimed = await meta.claimJob(
+        id,
+        new Date(Date.now() + 60_000).toISOString(),
+        new Date().toISOString(),
+      )
+      await report(app, a.token, id, { started_at: claimed?.started_at ?? null, status: "failed" })
+    }
+    expect(await bells(app, ed.email)).toHaveLength(3)
+
+    // A schedule's routine result rings its creator's bell and sends nothing louder.
+    const job = await meta.createJob({
+      id: newId("job"),
+      org_id: "default",
+      agent_id: a.id,
+      kind: "scheduled",
+      instruction: "nightly",
+    })
+    const claimed = await meta.claimJob(
+      job.id,
+      new Date(Date.now() + 60_000).toISOString(),
+      new Date().toISOString(),
+    )
+    await report(app, a.token, job.id, {
+      started_at: claimed?.started_at ?? null,
+      status: "succeeded",
+    })
+    expect(await bells(app, owner.email)).toHaveLength(1)
+    // One email in all: Ed's, for the burst. None for the schedule's owner.
+    const emails = (await outbox(meta)).filter((d) => d.kind === "email")
+    expect(emails.map((d) => JSON.parse(d.payload).to)).toEqual([ed.email])
+  })
+
+  it("every question is its own email, even two from one agent in the same minute", async () => {
+    const { app, meta } = await setup("jobs-tell-questions")
+    await meta.setOrgSettings("default", {
+      ...(await meta.getOrgSettings("default")),
+      emailNotifications: true,
+    })
+    await meta.setUserNotificationPref({
+      id: "unp-jobs-q-ed",
+      org_id: "default",
+      user_id: ed.id,
+      prefs: JSON.stringify({ reviewEmail: true }),
+      created_at: new Date().toISOString(),
+    })
+    const a = await createAgent(app)
+    const asked = async (instruction: string) =>
+      ((await (await ask(app, ed.email, a.id, instruction)).json()) as { id: string }).id
+    const waits = async (id: string, question: string) => {
+      const claimed = await meta.claimJob(
+        id,
+        new Date(Date.now() + 60_000).toISOString(),
+        new Date().toISOString(),
+      )
+      await report(app, a.token, id, {
+        started_at: claimed?.started_at ?? null,
+        status: "needs_you",
+        needs: { kind: "decision", question },
+      })
+    }
+    const first = await asked("Pick a plan")
+    await waits(first, "Monthly or yearly?")
+    await waits(await asked("Pick a region"), "EU or US?")
+    // Answered, it asks again: a new question, so a new email too.
+    await app.request(`/v1/jobs/${first}/answer`, jsonAs(as(ed.email), { text: "Monthly" }))
+    await waits(first, "Which card?")
+    const emails = (await outbox(meta)).filter(
+      (d) => d.kind === "email" && d.event_type === "job.needs_you",
+    )
+    expect(emails.map((d) => JSON.parse(d.payload).text.split("\n")[2])).toEqual(
+      expect.arrayContaining(["Monthly or yearly?", "EU or US?", "Which card?"]),
+    )
+    expect(emails).toHaveLength(3)
+  })
+
+  it("a graph's step that needs a person tells the graph's asker and manager", async () => {
+    const { app, meta } = await setup("jobs-tell-step")
+    const graphAgent = await createAgent(app)
+    const stepAgent = await createAgent(app)
+    const graph = await meta.createJob({
+      id: newId("job"),
+      org_id: "default",
+      agent_id: graphAgent.id,
+      kind: "graph",
+      instruction: "Ship the release",
+      asked_by: ed.id,
+    })
+    const step = await meta.createJob({
+      id: newId("job"),
+      org_id: "default",
+      agent_id: stepAgent.id,
+      kind: "node",
+      instruction: "Check the changelog",
+      asked_by: ed.id,
+      parent_id: graph.id,
+      node_id: "check",
+    })
+    const [p] = await pull(app, stepAgent)
+    expect(p?.id).toBe(step.id)
+    await report(app, stepAgent.token, step.id, {
+      started_at: p?.started_at ?? null,
+      status: "needs_you",
+      needs: { kind: "decision", question: "Include the beta notes?" },
+    })
+    for (const who of [ed, owner]) {
+      const mine = (await bells(app, who.email)).filter((b) => b.preview.startsWith("needs you"))
+      expect(mine).toHaveLength(1)
+      expect(mine[0]).toMatchObject({ thread_id: graphAgent.id, comment_id: graph.id })
+      expect(mine[0]?.preview).toContain("Include the beta notes?")
+    }
+  })
+
+  it("needs_you tells the agent's creator only while they may still manage it", async () => {
+    const { app, meta } = await setup("jobs-tell-demoted")
+    const made = await app.request("/v1/agents", jsonAs(as(ed.email), { name: "Ed's helper" }))
+    expect(made.status).toBe(201)
+    const a = (await made.json()) as { id: string; token: string }
+    const seat = await meta.getMembership("default", ed.id)
+    if (!seat) throw new Error("no seat")
+    await meta.setMembership({ id: seat.id, org_id: "default", user_id: ed.id, role: "viewer" })
+    const job = (await (await ask(app, owner.email, a.id, "Which one?")).json()) as { id: string }
+    const [p] = await pull(app, a)
+    await report(app, a.token, job.id, {
+      started_at: p?.started_at ?? null,
+      status: "needs_you",
+      needs: { kind: "decision", question: "Left or right?" },
+    })
+    expect(await bells(app, owner.email)).toHaveLength(1)
+    expect(await bells(app, ed.email)).toHaveLength(0)
+  })
+
+  it("a report page a runner attaches becomes private to the workspace", async () => {
+    const { app, meta } = await setup("jobs-tell-report-private")
+    const a = await createAgent(app)
+    const job = (await (await ask(app, ed.email, a.id, "Write it up")).json()) as { id: string }
+    const [p] = await pull(app, a)
+    // An older runner publishes with the workspace's defaults, or wider.
+    const page = (await (
+      await publishAs(app, "# Report", { link_role: "viewer" }, bearer(a.token))
+    ).json()) as { short_id: string }
+    await report(app, a.token, job.id, {
+      started_at: p?.started_at ?? null,
+      status: "succeeded",
+      report_short_id: page.short_id,
+    })
+    expect(await meta.getByShortId(page.short_id)).toMatchObject({
+      workspace_access: "member",
+      link_role: "none",
+      listed: "none",
+    })
+  })
+
+  it("the boot payload carries how many jobs wait on you", async () => {
+    const { app } = await setup("jobs-tell-boot")
+    const a = await createAgent(app)
+    const count = async (email: string) =>
+      (
+        (await (await app.request("/v1/bootstrap", { headers: as(email) })).json()) as {
+          needs_you: number
+        }
+      ).needs_you
+    const job = (await (await ask(app, ed.email, a.id, "Which plan?")).json()) as { id: string }
+    expect(await count(ed.email)).toBe(0)
+    const [p] = await pull(app, a)
+    await report(app, a.token, job.id, {
+      started_at: p?.started_at ?? null,
+      status: "needs_you",
+      needs: { kind: "decision", question: "Monthly or yearly?" },
+    })
+    // The asker, and the owner who manages every agent.
+    expect(await count(ed.email)).toBe(1)
+    expect(await count(owner.email)).toBe(1)
+    await app.request(`/v1/jobs/${job.id}/answer`, jsonAs(as(ed.email), { text: "Monthly" }))
+    expect(await count(ed.email)).toBe(0)
+  })
+})
+
 describe("jobs: the monthly model budget", () => {
   const limitTo = (meta: ReturnType<typeof makeAuthedApp>["meta"], monthlyMicroUsd: number) =>
     meta.createPlan({
@@ -1105,6 +1437,67 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
     ).json()) as { report_short_id: string | null }
     expect(again.report_short_id).toBe(done.report_short_id)
     expect(await source()).toContain("## Asked\n\nAnd last week?")
+  })
+
+  it("makes the report private to the workspace, and a person's comment on it reopens the job", async () => {
+    const { app } = await setup("jobs-cli-report-private")
+    const agent = await createAgent(app)
+    const job = (await (await ask(app, ed.email, agent.id, "Count the signups")).json()) as {
+      id: string
+    }
+    const { cfg, client } = runnerFor(app, agent, { mock: "true" })
+    expect(await jobDrainPass(cfg, client)).toMatchObject({ served: 1 })
+    const done = (await (
+      await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
+    ).json()) as { status: string; report_short_id: string }
+    expect(done.status).toBe("succeeded")
+    const page = (await (
+      await app.request(`/v1/artifacts/${done.report_short_id}`, { headers: as(ed.email) })
+    ).json()) as { workspace_access: string; link_role: string; listed: string }
+    expect(page).toMatchObject({ workspace_access: "member", link_role: "none", listed: "none" })
+
+    // The asker comments in the report's margin: the job reopens with that as the next turn.
+    const commented = await app.request(
+      `/v1/artifacts/${done.report_short_id}/comments`,
+      jsonAs(as(ed.email), { body_md: "Split it by plan too." }),
+    )
+    expect(commented.status).toBe(201)
+    const reopened = (await (
+      await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
+    ).json()) as { status: string; messages: { author_kind: string; body_md: string }[] }
+    expect(reopened.status).toBe("queued")
+    expect(reopened.messages.at(-1)).toMatchObject({
+      author_kind: "asker",
+      body_md: "Split it by plan too.",
+    })
+    // The runner's next turn rewrites the same report.
+    expect(await jobDrainPass(cfg, client)).toMatchObject({ served: 1 })
+    const again = (await (
+      await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
+    ).json()) as { status: string; report_short_id: string }
+    expect(again).toMatchObject({ status: "succeeded", report_short_id: done.report_short_id })
+
+    // A reply rides its thread, and a comment that @mentions the agent reaches it through its
+    // inbox: neither also reopens the job, which would set the agent to the same work twice.
+    const thread = ((await commented.json()) as { thread_id: string }).thread_id
+    await app.request(
+      `/v1/artifacts/${done.report_short_id}/comments`,
+      jsonAs(as(ed.email), { body_md: "Thanks.", thread_id: thread }),
+    )
+    await app.request(
+      `/v1/artifacts/${done.report_short_id}/comments`,
+      jsonAs(as(ed.email), {
+        body_md: "@agent one more pass",
+        mentions: [{ id: agent.id, name: "agent" }],
+      }),
+    )
+    expect(
+      (
+        (await (await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })).json()) as {
+          status: string
+        }
+      ).status,
+    ).toBe("succeeded")
   })
 
   it("a report must be a page the agent made, not a teammate's", async () => {

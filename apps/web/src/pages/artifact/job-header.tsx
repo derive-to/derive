@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router"
 import type { JobStatus } from "@/api"
 import { Icon } from "@/components/icons"
 import { agentsQuery, reportJobQuery } from "@/lib/queries"
+import { useJobEvents } from "@/lib/use-job-events"
 import { cn } from "@/lib/utils"
 import { firstName, JOB_ICON, took, when } from "@/pages/agents/format"
 import { useMemberNames } from "@/pages/agents/use-member-names"
@@ -21,6 +22,8 @@ const STATUS_WORD: Record<JobStatus, string> = {
 // who asked, when, and how long it took. Every other page reads nothing here. A failed read
 // hides the line; the page underneath is the same page either way.
 export function JobHeader({ shortId }: { shortId: string }) {
+  // A follow-up from the margin reopens the job: its events keep this line current.
+  useJobEvents()
   const job = useQuery(reportJobQuery(shortId))
   const agents = useQuery(agentsQuery())
   const names = useMemberNames()

@@ -40,6 +40,10 @@ export interface JobDeps {
   /** Is this agent a graph (its instructions page holds a workflow)? Its work opens as `graph`
    *  jobs the server walks. Absent: never (a caller with no page store). */
   isGraph?: (agent: AgentRecord) => Promise<boolean>
+  /** Tell the people a job concerns that it needs them or finished (lib/notify-job.ts). Called
+   *  once per transition, after the status-guarded write that made it landed; `actorId` is the
+   *  person whose own action caused it, who is not told. Absent: nobody is told. */
+  announce?: (job: JobRecord, actorId?: string | null) => Promise<void>
 }
 
 const iso = (ms = Date.now()) => new Date(ms).toISOString()
@@ -47,7 +51,7 @@ const iso = (ms = Date.now()) => new Date(ms).toISOString()
 const wake = (
   deps: JobDeps,
   channel: string | null,
-  type: "job.queued" | "job.progress" | "job.settled",
+  type: "job.queued" | "job.started" | "job.progress" | "job.settled",
   job: JobRecord,
 ) => {
   if (!channel || !deps.bus) return
@@ -60,6 +64,20 @@ const wake = (
     })
   } catch {
     // A wake is best effort: waiters re-read the store.
+  }
+}
+
+/** A job just reached needs_you or a final status: tell its people. Never fails the caller. */
+export const announceJob = async (
+  deps: JobDeps,
+  job: JobRecord,
+  actorId: string | null = null,
+): Promise<void> => {
+  if (!deps.announce) return
+  try {
+    await deps.announce(job, actorId)
+  } catch (e) {
+    log.warn("jobs: announce failed", { job: job.id, reason: runtimeFailureReason(e) })
   }
 }
 
@@ -133,7 +151,7 @@ export const standDownMember = async (
       let moved = 0
       for (const job of page) {
         await before?.(job)
-        if ((await cancelJob(deps, job))?.status === "cancelled") moved++
+        if ((await cancelJob(deps, job, userId))?.status === "cancelled") moved++
       }
       if (page.length < 200 || moved === 0) return
     }
@@ -201,6 +219,24 @@ export const canSteerJob = async (
 ): Promise<boolean> =>
   (job.asked_by === userId && (await canAskAgent(meta, agent, userId))) ||
   (await canManageAgent(meta, agent, userId))
+
+/** Whose jobs are a person's to act on (the Inbox): the ones they asked, or on agents they
+ *  manage (canManageAgent's rule, read with one membership lookup). `"all"` for a workspace
+ *  owner, who manages every agent; null for someone with no seat here. */
+export const inboxScope = async (
+  meta: MetaStore,
+  orgId: string,
+  userId: string,
+): Promise<"all" | { askedBy: string; agentIds: string[] } | null> => {
+  const seat = await meta.getMembership(orgId, userId).catch(() => null)
+  if (!seat) return null
+  if (seat.role === "owner") return "all"
+  const own =
+    seat.role === "viewer"
+      ? []
+      : (await meta.listAgents(orgId)).filter((a) => a.created_by === userId)
+  return { askedBy: userId, agentIds: own.map((a) => a.id) }
+}
 
 // ---- Asking ------------------------------------------------------------------------------
 
@@ -319,7 +355,12 @@ export const answerJob = async (
   return followUpJob(deps, job, authorId, body)
 }
 
-export const cancelJob = async (deps: JobDeps, job: JobRecord): Promise<JobRecord | null> => {
+/** Cancel an open job and its children. `actorId` is who cancelled it (not told about it). */
+export const cancelJob = async (
+  deps: JobDeps,
+  job: JobRecord,
+  actorId: string | null = null,
+): Promise<JobRecord | null> => {
   if (!isJobOpen(job.status)) return job
   const done = await deps.meta.updateJob(
     job.id,
@@ -328,6 +369,7 @@ export const cancelJob = async (deps: JobDeps, job: JobRecord): Promise<JobRecor
   )
   if (done) {
     wake(deps, done.asked_by, "job.settled", done)
+    await announceJob(deps, done, actorId)
     // Children of a graph job stop with it.
     for (const child of await deps.meta.listJobs({
       orgId: done.org_id,
@@ -398,14 +440,21 @@ export const pullJobs = async (
   const running = await meta.countRunningJobs(agent.id, stamp)
   const room = Math.max(0, agent.max_concurrency - running)
   if (room === 0) return []
-  return meta.claimJobs(
+  const claimed = await meta.claimJobs(
     agent.id,
     Math.min(room, opts.limit ?? 10),
     leaseUntilFor(agent.max_run_ms, now.getTime()),
     stamp,
     held,
   )
+  for (const j of claimed) wakeClaimed(deps, j)
+  return claimed
 }
+
+/** A job was claimed (queued to running): tell its asker's open pages, which re-read it, so a
+ *  margin Ask stops saying it waits for a machine the moment one takes it. */
+export const wakeClaimed = (deps: JobDeps, job: JobRecord): void =>
+  wake(deps, job.asked_by, "job.started", job)
 
 export interface JobReport {
   /** The claim's started_at, echoed back: proof this settle belongs to the claim it names. */
@@ -526,6 +575,8 @@ export const reportJob = async (
   )
   // A graph node settling wakes the graph's runner, which is waiting on its children.
   if (next.parent_id && next.status !== "queued") wake(deps, next.agent_id, "job.settled", next)
+  // Requeued for another attempt is not news; waiting on a person or done is.
+  if (next.status !== "queued") await announceJob(deps, next)
   return { job: next }
 }
 
@@ -615,7 +666,10 @@ export const jobTick = async (
     out.requeued = requeued.length
     out.lost = lost.length
     for (const j of requeued) wake(deps, j.agent_id, "job.queued", j)
-    for (const j of lost) wake(deps, j.asked_by, "job.settled", j)
+    for (const j of lost) {
+      wake(deps, j.asked_by, "job.settled", j)
+      await announceJob(deps, j)
+    }
   } catch (e) {
     log.warn("jobs: reclaim failed", { reason: runtimeFailureReason(e) })
   }

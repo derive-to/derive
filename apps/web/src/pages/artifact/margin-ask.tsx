@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
-import { useState } from "react"
-import { type Agent, api } from "@/api"
+import { useCallback, useEffect, useState } from "react"
+import { type Agent, ApiError, api } from "@/api"
 import { LoadError } from "@/components/shared/load-error"
 import { Button } from "@/components/ui/button"
 import {
@@ -14,15 +14,45 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
 import { agentsQuery, jobQuery, workspaceQuery } from "@/lib/queries"
+import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { useJobEvents } from "@/lib/use-job-events"
 import { cn } from "@/lib/utils"
-import { AnswerBox, useCanSteer } from "@/pages/agents/agent-jobs"
+import { AnswerBox, useCanSteer, warningFor } from "@/pages/agents/agent-jobs"
 import { OPEN_STATUSES, rosterOf } from "@/pages/agents/format"
+import { useMemberNames } from "@/pages/agents/use-member-names"
 
 /** Mirrors the server's canAskAgent: anyone in the workspace, or for an invited-only agent,
  *  its creator and workspace owners. The server still decides. */
 const canAsk = (a: Agent, meId: string, isOwner: boolean) =>
   !a.paused && (a.ask_policy === "workspace" || a.created_by === meId || isOwner)
+
+/** The job this page's margin is following, kept per tab (sessionStorage) so a reload shows
+ *  the reply rather than an empty box. Storage can be unavailable; then it lasts the render. */
+const followKey = (shortId: string) => `${STORAGE_KEYS.marginAskJob}.${shortId}`
+const readFollowed = (shortId: string): string | null => {
+  try {
+    return sessionStorage.getItem(followKey(shortId))
+  } catch {
+    return null
+  }
+}
+function useFollowedJob(shortId: string): [string | null, (id: string | null) => void] {
+  const [jobId, setState] = useState(() => readFollowed(shortId))
+  const set = useCallback(
+    (id: string | null) => {
+      setState(id)
+      try {
+        if (id) sessionStorage.setItem(followKey(shortId), id)
+        else sessionStorage.removeItem(followKey(shortId))
+      } catch {
+        // Unavailable storage: the box still follows the job until the page goes.
+      }
+    },
+    [shortId],
+  )
+  return [jobId, set]
+}
 
 // The margin Ask: at the top of a page's activity stream, pick one of the workspace's agents
 // and ask it about this page. The ask is a job whose subject is the page; the box then follows
@@ -35,7 +65,7 @@ export function MarginAsk({ shortId }: { shortId: string }) {
   const askable = rosterOf(agents.data ?? []).filter((a) => me && canAsk(a, me.id, isOwner))
   const [picked, setPicked] = useState<string | null>(null)
   const [text, setText] = useState("")
-  const [jobId, setJobId] = useState<string | null>(null)
+  const [jobId, setJobId] = useFollowedJob(shortId)
   const agent = askable.find((a) => a.id === picked) ?? askable[0]
   const ask = useApiMutation({
     mutationFn: (a: Agent) => api.askAgent(a.id, text.trim(), { kind: "artifact", id: shortId }),
@@ -127,7 +157,8 @@ const WORD: Record<string, string> = {
   cancelled: "Cancelled",
 }
 
-/** One asked job, polled every few seconds until it settles. */
+/** One asked job, followed until it settles. The asker hears its progress and its settle as
+ *  events; the slow poll is only the fallback for a stream that dropped. */
 function AskFollow({
   id,
   agentName,
@@ -137,22 +168,32 @@ function AskFollow({
   agentName: string
   onDone: () => void
 }) {
+  useJobEvents()
   const q = useQuery({
     ...jobQuery(id),
-    // Quick while it is working; slow while it waits on a machine or on a person.
+    // A reload restores the persisted copy, which may be from before it settled: the
+    // events only say what changes from here on, so read it fresh once on mount.
+    refetchOnMount: "always",
     refetchInterval: (query) => {
       const status = query.state.data?.status
-      if (!status || status === "running") return 3000
-      if (status === "queued" || status === "needs_you") return 20_000
-      return false
+      return !status || OPEN_STATUSES.includes(status) ? 60_000 : false
     },
   })
   const job = q.data
   const { me } = useAuth()
   const agents = useQuery(agentsQuery())
+  const names = useMemberNames()
   const canSteer = useCanSteer(job, me?.id)
   // The job's own agent, which is the one asked even if the picker has moved on since.
-  const name = agents.data?.find((a) => a.id === job?.agent_id)?.name ?? agentName
+  const asked = agents.data?.find((a) => a.id === job?.agent_id)
+  const name = asked?.name ?? agentName
+  // While it waits, say why it might keep waiting (paused, or its machine is off).
+  const warning = job?.status === "queued" && asked ? warningFor(asked, names) : null
+  // A remembered job that is gone (or in another workspace now) is forgotten, not retried.
+  const gone = q.error instanceof ApiError && q.error.status === 404
+  useEffect(() => {
+    if (gone) onDone()
+  }, [gone, onDone])
   if (q.isError)
     return (
       <LoadError
@@ -182,6 +223,11 @@ function AskFollow({
           </Link>
         )}
       </div>
+      {warning && (
+        <p data-testid="margin-ask-warning" className="text-xs text-warning">
+          {warning}
+        </p>
+      )}
       {replies.map((m) => (
         <p
           key={m.id}

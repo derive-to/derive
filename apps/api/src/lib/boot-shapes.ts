@@ -58,9 +58,9 @@ export const Notification = z
       .string()
       .describe("Who triggered it — a person's display name (their handle when they have none)"),
     kind: z
-      .enum(["mention", "comment", "share", "follow", "publish", "review", "access_request"])
+      .enum(["mention", "comment", "share", "follow", "publish", "review", "access_request", "job"])
       .describe(
-        "What happened: mention, comment, share, follow, publish, review, or access_request (someone who cannot open the artifact is asking you to grant it)",
+        "What happened: mention, comment, share, follow, publish, review, access_request (someone who cannot open the artifact is asking you to grant it), or job (an agent's job needs you or finished; thread_id is the agent id, comment_id the job id, and the artifact fields name its report page when it has one)",
       ),
     artifact_id: z.string(),
     artifact_short_id: z
@@ -73,6 +73,13 @@ export const Notification = z
     thread_id: z.string().describe("The comment thread anchor; empty when not comment-related"),
     comment_id: z.string().describe("The specific comment anchor; empty when not comment-related"),
     preview: z.string().describe("Short text preview shown in the notification bell"),
+    org_id: z
+      .string()
+      .nullable()
+      .optional()
+      .describe(
+        "The workspace the row is about, when opening it means switching there first (a job row); null otherwise",
+      ),
     read: z
       .union([z.literal(0), z.literal(1)])
       .describe("Whether the user has read it: 0 unread, 1 read"),

@@ -49,4 +49,7 @@ export const STORAGE_KEYS = {
   // Inline edits the server hasn't confirmed yet, suffixed `.<shortId>` (offline, or a
   // tab closed mid-save): resent on the next visit — see pages/artifact/use-auto-save.
   editQueue: "derive.edit-queue",
+  // The job a page's margin Ask is following (sessionStorage), suffixed `.<shortId>`, so a
+  // reload keeps showing the reply instead of an empty box — see pages/artifact/margin-ask.
+  marginAskJob: "derive.margin-ask.job",
 } as const

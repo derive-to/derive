@@ -15,7 +15,8 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAuth } from "@/ctx"
 import { useBootGate } from "@/lib/bootstrap"
-import { notificationsQuery } from "@/lib/queries"
+import { reloadAfterWorkspaceChange } from "@/lib/persist"
+import { notificationsQuery, workspacesQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { usePageVisible } from "@/lib/use-page-visible"
 import { useUserEvent } from "@/lib/use-user-events"
@@ -32,6 +33,7 @@ export function NotificationBell() {
   // Icon rail: the unread signal collapses to the ink dot on the bell (never a solid
   // count block). The hook lives here so it runs before the early return below.
   const iconMode = useIconRail()
+  const { data: workspaces } = useQuery({ ...workspacesQuery(), enabled: !!me })
   const [open, setOpen] = useState(false)
   const visible = usePageVisible()
   const qc = useQueryClient()
@@ -99,11 +101,33 @@ export function NotificationBell() {
       nav({ to: "/users/$handle", params: { handle } })
       return
     }
+    // An agent's job: its report page when it has one, else the agent (its id rides
+    // thread_id on a job row). A job in another workspace switches there first: its agent
+    // and its report only resolve in their own workspace.
+    if (n.kind === "job") {
+      const ref = n.artifact_short_id
+        ? refFor({ short_id: n.artifact_short_id, title: n.artifact_title })
+        : null
+      const target = ref
+        ? `/artifacts/${encodeURIComponent(ref)}`
+        : `/agents/${encodeURIComponent(n.thread_id)}`
+      if (n.org_id && workspaces && n.org_id !== workspaces.active) {
+        void api
+          .switchWorkspace(n.org_id)
+          .then(() => reloadAfterWorkspaceChange(target))
+          .catch(() => {})
+        return
+      }
+      if (!ref) {
+        nav({ to: "/agents/$id", params: { id: n.thread_id }, search: {} })
+        return
+      }
+    }
     nav({
       to: "/artifacts/$ref",
       params: { ref: refFor({ short_id: n.artifact_short_id, title: n.artifact_title }) },
-      // A share/publish notification has no thread; open the artifact itself.
-      search: n.thread_id ? { comment: n.thread_id } : {},
+      // A share/publish/job notification has no thread; open the artifact itself.
+      search: n.thread_id && n.kind !== "job" ? { comment: n.thread_id } : {},
     })
   }
 
@@ -182,6 +206,18 @@ export function NotificationBell() {
                     is reserved. */}
                   {n.kind === "mention" ? (
                     <Icon name="at" className="mt-0.5 text-primary" />
+                  ) : n.kind === "job" ? (
+                    // A job that waits on you is addressed to you; one that finished is news.
+                    <Icon
+                      name="agent"
+                      size={16}
+                      className={cn(
+                        "mt-0.5",
+                        n.preview.startsWith("needs you")
+                          ? "text-primary"
+                          : "text-muted-foreground",
+                      )}
+                    />
                   ) : (
                     <Icon
                       name={
@@ -212,6 +248,9 @@ export function NotificationBell() {
                       <strong>{n.actor}</strong>{" "}
                       {n.kind === "follow" ? (
                         "started following you"
+                      ) : n.kind === "job" ? (
+                        // The preview is the whole line: "needs you: …", "finished: …".
+                        n.preview
                       ) : n.kind === "review" ? (
                         <>
                           requested your review of{" "}
