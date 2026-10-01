@@ -709,6 +709,7 @@ export class PgMetaStore implements MetaStore {
   sumJobCostSince = this.agentModel.sumJobCostSince
   addJobCost = this.agentModel.addJobCost
   pauseAgentsCreatedBy = this.agentModel.pauseAgentsCreatedBy
+  revokeAgentsCreatedBy = this.agentModel.revokeAgentsCreatedBy
   transitionAgentSandbox = this.agentModel.transitionAgentSandbox
   listAgentsInSandboxPhase = this.agentModel.listAgentsInSandboxPhase
   transitionJobMachine = this.agentModel.transitionJobMachine
@@ -6641,8 +6642,9 @@ export class PgMetaStore implements MetaStore {
     await this.db.delete(modelCredential).where(eq(modelCredential.user_id, userId))
     await this.db.delete(modelAccount).where(eq(modelAccount.user_id, userId))
     await this.db.delete(plan).where(eq(plan.user_id, userId))
-    // Before created_by is cleared below: their agents pause.
-    await this.agentModel.pauseAgentsCreatedBy(userId, null, new Date().toISOString())
+    // Before created_by is cleared below: their agents' keys die and the agents stay paused.
+    // An agent with no creator is a legacy agent that authenticates on its own.
+    await this.agentModel.revokeAgentsCreatedBy(userId, new Date().toISOString())
     await this.db.update(artifact).set({ author_id: null }).where(eq(artifact.author_id, userId))
     await this.db.update(version).set({ author_id: null }).where(eq(version.author_id, userId))
     await this.db.update(comment).set({ author_id: null }).where(eq(comment.author_id, userId))

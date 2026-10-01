@@ -5259,8 +5259,9 @@ export function makeRepos(db: SqliteDb) {
     // And their model accounts, in every workspace (the pool sentinel is never a user id).
     await db.delete(modelAccount).where(eq(modelAccount.user_id, userId)).run()
     await db.delete(plan).where(eq(plan.user_id, userId)).run()
-    // Before created_by is cleared below: their agents pause.
-    await agentModel.pauseAgentsCreatedBy(userId, null, new Date().toISOString())
+    // Before created_by is cleared below: their agents' keys die and the agents stay paused.
+    // An agent with no creator is a legacy agent that authenticates on its own.
+    await agentModel.revokeAgentsCreatedBy(userId, new Date().toISOString())
     // Authorship is anonymized (nullable), so others' artifacts/threads survive intact.
     await db.update(artifact).set({ author_id: null }).where(eq(artifact.author_id, userId)).run()
     await db.update(version).set({ author_id: null }).where(eq(version.author_id, userId)).run()

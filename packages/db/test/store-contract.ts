@@ -3512,8 +3512,22 @@ export function runStoreContract(
       expect((await store.getJob(stayersAsk.id))?.status).toBe("queued")
       expect(await store.getAccount(stayerKey.id)).not.toBeNull()
       expect(await store.getAccount(pool.id)).not.toBeNull()
+      // A deleted user's agents lose their key before they lose their creator.
+      const goneToken = `tok_${uuid()}`
+      const goneAgent = await store.createAgent({
+        id: uuid(),
+        org_id: other,
+        name: "gone's",
+        token: goneToken,
+        role: "editor",
+        created_by: gone,
+      })
+      expect(await store.getAgentByToken(goneToken)).not.toBeNull()
       // A deleted user's accounts go in every workspace; no pool goes with them.
       await store.deleteUserData(gone)
+      expect(await store.getAgentByToken(goneToken)).toBeNull()
+      expect(await store.getAgent(goneAgent.id)).toMatchObject({ created_by: null })
+      expect((await store.getAgent(goneAgent.id))?.paused_at).toBeTruthy()
       expect(await store.getAccount(goneHere.id)).toBeNull()
       expect(await store.getAccount(goneThere.id)).toBeNull()
       expect(await store.getPlan(goneElsewherePlan.id)).toBeNull()

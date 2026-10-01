@@ -343,6 +343,10 @@ export interface AgentModelStore<Agent = unknown> {
    *  created there, in the same write as the seat going, so nothing runs for them in between.
    *  Their open jobs are cancelled by lib/jobs.ts standDownMember, which wakes the askers. */
   pauseAgentsCreatedBy(userId: string, orgId: string | null, now: string): Promise<void>
+  /** A person's account is being deleted: their agents' keys die (the stored hash becomes one
+   *  no key can produce) and the agents stay paused, BEFORE created_by is cleared, since an
+   *  agent with no creator would otherwise authenticate again. */
+  revokeAgentsCreatedBy(userId: string, now: string): Promise<void>
 
   // ---- Derive machines ------------------------------------------------------------------
   /** Compare-and-set the agent's sandbox state on sandbox_rev; null when another writer won. */

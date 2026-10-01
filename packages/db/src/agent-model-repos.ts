@@ -294,6 +294,13 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
           ${payer ? sql`AND payer_id = ${payer}` : sql``}`)
       return num(r?.n)
     },
+    async revokeAgentsCreatedBy(userId, now) {
+      // A stored token is a SHA-256 hex digest; 'revoked:<id>' is never one, so no key matches,
+      // and the agent id keeps the unique index satisfied.
+      await execute(sql`
+        UPDATE agent SET token = ${"revoked:"} || id, paused_at = coalesce(paused_at, ${now})
+        WHERE created_by = ${userId} RETURNING id`)
+    },
     async pauseAgentsCreatedBy(userId, orgId, now) {
       const inOrg = orgId ? sql`AND org_id = ${orgId}` : sql``
       await execute(sql`

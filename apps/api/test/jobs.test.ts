@@ -8,6 +8,7 @@ import {
   runOneJob,
   serveJob,
 } from "../../../packages/cli/src/job-runner.js"
+import { purgeUserDataAndSyncSeats } from "../src/lib/account"
 import { signCapabilityToken } from "../src/lib/capability-token"
 import { advanceGraph, graphAware, graphPass } from "../src/lib/job-graph"
 import { machinePass, machineWorkspaces } from "../src/lib/job-machine"
@@ -976,8 +977,8 @@ describe("jobs: which account a job runs with", () => {
     expect([401, 403]).toContain(
       (await publishAs(app, "<h1>after</h1>", { title: "After" }, bearer(edsAgent.token))).status,
     )
-    // Their agent is paused. The job they asked is cancelled, and so is a teammate's waiting
-    // job on it, which says why. The job already running is left to settle or lapse.
+    // Their agent is paused. The job they asked is cancelled, and so are a teammate's jobs on
+    // it, waiting or running (its runner's key is dead, so it could only lapse), each saying why.
     const agentNow = (await (
       await app.request(`/v1/agents/${edsAgent.id}`, { headers: as(owner.email) })
     ).json()) as { paused: boolean }
@@ -988,7 +989,28 @@ describe("jobs: which account a job runs with", () => {
     ).json()) as { status: string; messages: { body_md: string }[] }
     expect(told.status).toBe("cancelled")
     expect(told.messages.at(-1)?.body_md).toBe(OWNER_LEFT)
-    expect((await meta.getJob(job.id))?.status).toBe("running")
+    expect((await meta.getJob(job.id))?.status).toBe("cancelled")
+  })
+
+  it("a deleted account's agent keys stop working, though the agents lose their creator", async () => {
+    const { app, meta } = await setup("jobs-accounts-deleted")
+    const edsAgent = (await (
+      await app.request("/v1/agents", jsonAs(as(ed.email), { name: "Ed's runner" }))
+    ).json()) as { id: string; token: string }
+    const asked = (await (await ask(app, owner.email, edsAgent.id, "go")).json()) as { id: string }
+    expect((await pull(app, edsAgent))[0]?.id).toBe(asked.id)
+    // The path the auth layer's delete-user hook takes.
+    await purgeUserDataAndSyncSeats(meta, undefined, ed.id)
+    expect(await meta.getAgent(edsAgent.id)).toMatchObject({ created_by: null })
+    const key = bearer(edsAgent.token)
+    expect((await app.request(`/v1/jobs/${asked.id}/work`, { headers: key })).status).toBe(401)
+    expect([401, 403]).toContain(
+      (await app.request(`/v1/agents/${edsAgent.id}/pull`, jsonAs(key, {}))).status,
+    )
+    expect([401, 403]).toContain(
+      (await publishAs(app, "<h1>after</h1>", { title: "After" }, key)).status,
+    )
+    expect((await meta.getJob(asked.id))?.status).toBe("cancelled")
   })
 
   it("an agent's tools run on its creator's personal broker plan", async () => {

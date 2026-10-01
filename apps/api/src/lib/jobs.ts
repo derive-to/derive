@@ -115,22 +115,38 @@ export const OWNER_LEFT =
 /** Someone left a workspace (removed, or their account deleted). Call it with their agents
  *  still attributed to them. The open jobs they asked are cancelled, and so are teammates'
  *  waiting jobs on the agents they created (paused by the store as the seat went), each with a
- *  short note, so every asker hears it rather than finding a job that never moves. Running
- *  jobs are left to settle or lapse: the departed creator's agent key stops authenticating. */
+ *  short note, so every asker hears it rather than finding a job that never moves. */
 export const standDownMember = async (
   deps: JobDeps,
   orgId: string,
   userId: string,
 ): Promise<void> => {
   const { meta } = deps
-  const open = (q: Omit<Parameters<MetaStore["listJobs"]>[0], "orgId">) =>
-    meta.listJobs({ ...q, orgId, limit: 200 })
-  for (const job of await open({ askedBy: userId, status: ["queued", "running", "needs_you"] }))
-    await cancelJob(deps, job)
+  /** Cancel every job a query finds, a page at a time, until none is left (or a page moves
+   *  nothing, so a job that will not cancel cannot spin this forever). */
+  const cancelAll = async (
+    q: Omit<Parameters<MetaStore["listJobs"]>[0], "orgId">,
+    before?: (job: JobRecord) => Promise<void>,
+  ) => {
+    for (;;) {
+      const page = await meta.listJobs({ ...q, orgId, limit: 200 })
+      let moved = 0
+      for (const job of page) {
+        await before?.(job)
+        if ((await cancelJob(deps, job))?.status === "cancelled") moved++
+      }
+      if (page.length < 200 || moved === 0) return
+    }
+  }
+  await cancelAll({ askedBy: userId, status: ["queued", "running", "needs_you"] })
   const theirs = (await meta.listAgents(orgId)).filter((a) => a.created_by === userId)
   for (const agent of theirs) {
     await meta.updateAgent(agent.id, orgId, { paused_at: agent.paused_at ?? iso() })
-    for (const job of await open({ agentId: agent.id, status: ["queued", "needs_you"] })) {
+    // On their own machine even a running job stops: its runner's key no longer works, so it
+    // would only lapse and requeue on a paused agent. A Derive machine's running job settles.
+    const status: JobStatus[] =
+      agent.machine === "owner" ? ["queued", "running", "needs_you"] : ["queued", "needs_you"]
+    await cancelAll({ agentId: agent.id, status }, async (job) => {
       await meta.addJobMessage({
         id: newId("jm"),
         job_id: job.id,
@@ -139,8 +155,7 @@ export const standDownMember = async (
         body_md: OWNER_LEFT,
         meta_json: JSON.stringify({ server: true }),
       })
-      await cancelJob(deps, job)
-    }
+    })
   }
 }
 
