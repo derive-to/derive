@@ -33,14 +33,12 @@ import {
   artifactScanEvent,
   artifactTag,
   auditLog,
-  CONTEXT_SESSION_RELAX_SQLITE,
   collection,
   collectionItem,
   collectionMember,
   comment,
   context,
   contextAsker,
-  contextSession,
   domain,
   dynamicRevision,
   importJob,
@@ -48,10 +46,8 @@ import {
   notification,
   report,
   reviewRound,
-  runtimeControllerRelaxation,
   SCHEMA_STATEMENTS,
   SLACK_THREAD_LINK_REKEY_SQLITE,
-  sessionMessage,
   sharedState,
   sharedStateActivity,
   slackThreadLink,
@@ -79,11 +75,10 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
   raw.pragma("busy_timeout = 5000")
   raw.pragma("synchronous = NORMAL")
   // Forward-only column adds run BEFORE the schema statements so a raw partial
-  // index in SCHEMA_STATEMENTS that references a migrated column (e.g. the
-  // dedupe uniqueness on context_session.dedupe_key) resolves on a pre-existing
-  // DB. On a FRESH DB these ALTERs harmlessly fail — the table isn't created yet,
-  // swallowed below — and the SCHEMA_STATEMENTS pass then creates the full tables
-  // WITH those columns. SQLite lacks ADD COLUMN IF NOT EXISTS; a "duplicate
+  // index in SCHEMA_STATEMENTS that references a migrated column resolves on a
+  // pre-existing DB. On a FRESH DB these ALTERs harmlessly fail (the table isn't
+  // created yet, swallowed below), and the SCHEMA_STATEMENTS pass then creates the
+  // full tables WITH those columns. SQLite lacks ADD COLUMN IF NOT EXISTS; a "duplicate
   // column" throw just means the migration is already applied.
   for (const stmt of MIGRATION_STATEMENTS) {
     try {
@@ -93,68 +88,9 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
     }
   }
   for (const stmt of SCHEMA_STATEMENTS) raw.exec(stmt)
-  for (const table of ["context_runtime", "runtime_setup"] as const) {
-    const columns = raw.pragma(`table_info(${table})`) as { name: string; notnull: number }[]
-    if (!columns.some((column) => column.name === "connection_id" && column.notnull === 1)) continue
-    // These receipt tables have no foreign keys. SQLite's transaction makes the
-    // copy/rename atomic; any failure preserves the original rows and aborts boot.
-    raw.transaction(() => {
-      for (const statement of runtimeControllerRelaxation(table)) raw.exec(statement)
-    })()
-  }
-  // RELAXATIONS: a rebuild, so it runs only when the old constraint is actually still there.
-  // `PRAGMA table_info` is the check — cheap, exact, and it makes a second boot a no-op instead
-  // of a second rebuild. Wrapped in a transaction so a failure mid-way leaves the original table
-  // intact rather than a half-copied one.
-  try {
-    const cols = raw.pragma("table_info(context_session)") as { name: string; notnull: number }[]
-    const stale = cols.some((c) => c.name === "context_id" && c.notnull === 1)
-    if (stale) {
-      // Foreign keys OFF for the duration. A rebuild re-validates every FK on the copied
-      // rows, so a single pre-existing orphan (a session whose context was deleted) would
-      // abort the whole migration and wedge the deploy. This is the documented SQLite
-      // procedure for altering a table, not a shortcut. It is a no-op inside a transaction,
-      // hence the ordering: pragma, then BEGIN.
-      const fkWasOn = (raw.pragma("foreign_keys", { simple: true }) as number) === 1
-      if (fkWasOn) raw.pragma("foreign_keys = OFF")
-      raw.exec("BEGIN")
-      try {
-        for (const stmt of CONTEXT_SESSION_RELAX_SQLITE) raw.exec(stmt)
-        raw.exec("COMMIT")
-      } catch (e) {
-        raw.exec("ROLLBACK")
-        throw e
-      } finally {
-        if (fkWasOn) raw.pragma("foreign_keys = ON")
-      }
-    }
-  } catch (e) {
-    // ONLY the fresh-database case is tolerable: no legacy `context_session` to relax, so
-    // there is nothing to do. It is matched BY NAME.
-    //
-    // The old filter was a bare /no such table/, which is exactly the text a genuinely broken
-    // rebuild emits: `ALTER TABLE context_session__new RENAME TO context_session` re-parses
-    // every dependent object, and a dangling reference (session_message's foreign key, a view)
-    // fails with "no such table: <that object's target>". So the one error this migration is
-    // most likely to produce was the one error it treated as success — the deploy then booted
-    // on the un-relaxed schema, and every contextless chat session 500'd with
-    // `NOT NULL constraint failed` far away from here, with nothing in any log pointing back.
-    //
-    // Anything else is rethrown, wrapped so the boot failure names the migration rather than
-    // surfacing a bare SQLite string. There is no logger in this package (and `console` is
-    // lint-banned here), so the throw IS the report — and it is the correct response anyway:
-    // the rollback above already restored the original table, so failing to start beats
-    // serving on a schema we know is wrong.
-    const msg = e instanceof Error ? e.message : String(e)
-    if (!/no such table:\s*(main\.)?context_session\b/i.test(msg))
-      throw new Error(`context_session relaxation failed (schema left unchanged): ${msg}`, {
-        cause: e,
-      })
-  }
-  // Re-key slack_thread_link to UNIQUE(thread_id, channel). Same shape as the relaxation above
-  // and for the same reason: a constraint change has no additive form, so an existing database
-  // keeps the old single-column unique forever and rejects the second channel a thread mirrors
-  // into. Gated on the stale constraint actually being present, so it runs at most once and
+  // Re-key slack_thread_link to UNIQUE(thread_id, channel). A constraint change has no
+  // additive form, so an existing database keeps the old single-column unique forever and
+  // rejects the second channel a thread mirrors into. Gated on the stale constraint actually being present, so it runs at most once and
   // never touches a fresh database.
   try {
     const idx = raw.pragma("index_list(slack_thread_link)") as { name: string; unique: number }[]
@@ -178,10 +114,8 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
       }
     }
   } catch (e) {
-    // ALWAYS rethrow. The sibling context_session migration carries a long comment about a
-    // filter that swallowed the one error its rebuild was most likely to produce; this had the
-    // same shape and would have repeated it. `ALTER TABLE ... RENAME TO slack_thread_link`
-    // re-parses every dependent object, and a dangling view or trigger fails with
+    // ALWAYS rethrow, never filter on /no such table/. `ALTER TABLE ... RENAME TO
+    // slack_thread_link` re-parses every dependent object, and a dangling view or trigger fails with
     // "no such table: main.slack_thread_link" - the exact string a /no such table/ filter
     // tolerates. It would have booted on the un-rekeyed schema and thrown UNIQUE constraint
     // failures far from here.
@@ -374,25 +308,13 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
     // Atomic delete: all FK-dependent rows and the artifact itself commit together.
     deleteArtifact: async (id: string): Promise<void> => {
       raw.transaction(() => {
-        // A context's manifest FK means deleting a manifest deletes its context
-        // (and sessions) — a context cannot outlive its definition, by design.
-        // Subqueries, matching the shared query layer (D1 bound-parameter cap).
+        // A context's manifest FK means deleting a manifest deletes its context: a
+        // context cannot outlive its definition, by design. Subqueries, matching the
+        // shared query layer (D1 bound-parameter cap).
         const ctxIds = db
           .select({ id: context.id })
           .from(context)
           .where(eq(context.manifest_artifact_id, id))
-        db.delete(sessionMessage)
-          .where(
-            inArray(
-              sessionMessage.session_id,
-              db
-                .select({ id: contextSession.id })
-                .from(contextSession)
-                .where(inArray(contextSession.context_id, ctxIds)),
-            ),
-          )
-          .run()
-        db.delete(contextSession).where(inArray(contextSession.context_id, ctxIds)).run()
         db.delete(contextAsker).where(inArray(contextAsker.context_id, ctxIds)).run()
         db.delete(importJob).where(inArray(importJob.context_id, ctxIds)).run()
         db.delete(context).where(eq(context.manifest_artifact_id, id)).run()

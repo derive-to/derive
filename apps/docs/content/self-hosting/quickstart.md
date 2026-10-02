@@ -248,6 +248,11 @@ them any more, so an instance that used them has to carry its data across once.
   model credential becomes a model account under Settings › Accounts, and each scheduled
   automation becomes a schedule on its agent.
 
+Once the data you need has moved, drop the retired tables. Run it once, after the new image is
+up and after a backup: `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f deploy/drop-agents-retired.sql`
+on Postgres, or `deploy/drop-agents-retired-sqlite.sql` on SQLite and D1 (the file's header has
+the exact command). It deletes the old rows for good, including stored model credentials.
+
 Old runners stop working. `derive runner serve <ctx_id>`, `runner install` and `runner doctor`
 are gone, and `dkrun_`, `dksess_`, `dkwfr_` and `dkattempt_` tokens no longer authenticate.
 Start each agent's runner again with the command on its page:

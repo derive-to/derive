@@ -114,17 +114,10 @@ export function generateDdl(tables: Any[], getConfig: (t: Any) => Any, o: DdlOpt
   }
 }
 
-/** The not-yet-queried placeholder tables (no drizzle def), created up front so
+/** The raw-DDL tables (no drizzle def), created up front so
  *  migrations stay forward-only. `iso` is the dialect timestamp default. Inline
  *  REFERENCES works in both SQLite and Postgres CREATE. */
 export const placeholderTables = (iso: string): string[] => [
-  `CREATE TABLE IF NOT EXISTS principal (
-    id TEXT PRIMARY KEY,
-    org_id TEXT NOT NULL,
-    email TEXT,
-    kind TEXT NOT NULL DEFAULT 'human',
-    created_at TEXT NOT NULL DEFAULT ${iso}
-  )`,
   `CREATE TABLE IF NOT EXISTS view (
     id TEXT PRIMARY KEY,
     artifact_id TEXT NOT NULL REFERENCES artifact(id),
@@ -156,13 +149,6 @@ export const PERF_INDEXES: string[] = [
   `CREATE UNIQUE INDEX IF NOT EXISTS job_machine_holder ON job (agent_id) WHERE machine_phase IS NOT NULL AND machine_phase <> 'released'`,
   // A report page finds its job (GET /v1/jobs?report=).
   `CREATE INDEX IF NOT EXISTS job_report ON job (org_id, report_artifact_id) WHERE report_artifact_id IS NOT NULL`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS workflow_test_pending ON workflow_test (context_id) WHERE status = 'pending'`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS run_runtime_schedule_pending ON run (runtime_id) WHERE runtime_id IS NOT NULL AND reason = 'schedule' AND status IN ('queued', 'running')`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS automation_runtime ON automation (runtime_id)`,
-  // Ownership persists until compute release, regardless of worker deadlines.
-  `CREATE UNIQUE INDEX IF NOT EXISTS run_attempt_runtime_owner ON run_attempt (runtime_id) WHERE released_at IS NULL`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS run_attempt_run_owner ON run_attempt (run_id) WHERE released_at IS NULL`,
-  `CREATE INDEX IF NOT EXISTS run_attempt_cleanup ON run_attempt (released_at, updated_at)`,
   `CREATE INDEX IF NOT EXISTS artifact_org_created ON artifact (org_id, created_at, id)`,
   `CREATE INDEX IF NOT EXISTS artifact_org_archived_created ON artifact (org_id, archived_at, created_at, id)`,
   `CREATE INDEX IF NOT EXISTS view_artifact_time ON view (artifact_id, created_at)`,

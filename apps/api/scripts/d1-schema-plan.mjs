@@ -28,7 +28,7 @@ export const parseExpectedColumns = (sql) => {
 /**
  * Split a generated d1-schema.sql into the statements that must run BEFORE the additive
  * column reconciler (tables, virtual tables) and the CREATE [UNIQUE] INDEX statements that
- * must run AFTER it. A partial index — context_session_dedupe — references a column the
+ * must run AFTER it. A partial index (job_dedupe_open, say) can reference a column the
  * `alters` add on an existing DB, so creating it before the ADD COLUMN throws "no such
  * column" and aborts the whole apply before any ALTER runs (the exact hazard PG and SQLite
  * already order around: index after alters). Deferring every index to the tail mirrors that.

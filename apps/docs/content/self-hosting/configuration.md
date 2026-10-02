@@ -461,25 +461,8 @@ catch-all that otherwise hijacks `/assets/*`); see `apps/api/scripts/prep-edge-a
 ### Upgrading an existing D1 database
 
 New D1 databases get the current shape from `deploy/d1-schema.sql` and need nothing extra.
-An **existing** one created before contextless sessions still has `context_id NOT NULL` on
-`context_session`. The step is still needed after the agents release: an @Derive reply in
-Slack opens a session with no context, and on an unrelaxed table that insert fails. Run the
-one-shot relaxation:
 
-```
-wrangler d1 execute <db> --remote --file=deploy/relax-context-session-d1.sql
-```
-
-Run it once. It rebuilds the table (SQLite has no `ALTER COLUMN`), holding foreign keys
-until COMMIT so a session whose context was deleted cannot abort the migration. Postgres
-and self-host SQLite need no manual step: the former rides `deploy:pg-schema`, the latter
-runs the same rebuild guarded at boot. Check whether you need it with:
-
-```
-wrangler d1 execute <db> --remote --command "SELECT sql FROM sqlite_master WHERE name='context_session'"
-```
-
-An existing D1 database also needs the inline-mention columns before it can store personal Slack
+An **existing** D1 database needs the inline-mention columns before it can store personal Slack
 DM reply routes and agent thread-reply wakes. Apply this one-time additive migration first:
 
 ```
@@ -494,12 +477,21 @@ wrangler d1 execute <db> --remote --file=deploy/rekey-slack-thread-link-d1.sql
 ```
 
 The re-key is safe to re-run; the additive migration is not, so skip both on a new database.
-Postgres and self-host SQLite need no manual step here either: the former swaps the constraint
+Postgres and self-host SQLite need no manual step here: the former swaps the constraint
 during `deploy:pg-schema` (only when the stale one is present), the latter rebuilds the table
 guarded at boot. Check with:
 
 ```
 wrangler d1 execute <db> --remote --command "SELECT sql FROM sqlite_master WHERE name='slack_thread_link'"
+```
+
+After the deploy that ships the agents release, drop the tables it retired (Contexts' sessions,
+automations, runs, hosted runtimes, workflow runs and stored model credentials). Nothing reads
+them, and the stored credentials are still encrypted secrets. Recreate anything you still need
+first (see the upgrade note in the [quickstart](quickstart.md)), then run it once:
+
+```
+wrangler d1 execute <db> --remote --file=deploy/drop-agents-retired-sqlite.sql
 ```
 
 ### The model gateway for @Derive replies

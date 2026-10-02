@@ -71,8 +71,6 @@ import type {
   NewRenderJob,
   NewReport,
   NewReviewRound,
-  NewSession,
-  NewSessionMessage,
   NewSharedStateActivity,
   NewSignupAttribution,
   NewSkillInstallation,
@@ -98,9 +96,6 @@ import type {
   ReportState,
   ReviewRoundRecord,
   Role,
-  SessionMessageRecord,
-  SessionRecord,
-  SessionState,
   SharedStateActivityRecord,
   SharedStateRecord,
   SharedStateWrite,
@@ -195,7 +190,6 @@ import {
   artifactTag,
   asset,
   auditLog,
-  automation,
   collection,
   collectionFavorite,
   collectionInvite,
@@ -205,8 +199,6 @@ import {
   connection,
   context,
   contextAsker,
-  contextRuntime,
-  contextSession,
   domain,
   dynamicRevision,
   exportJob,
@@ -221,7 +213,6 @@ import {
   jobMessage,
   membership,
   modelAccount,
-  modelCredential,
   notification,
   oauthClientWorkspace,
   orgSettings,
@@ -229,13 +220,6 @@ import {
   renderJob,
   report,
   reviewRound,
-  run,
-  runAttempt,
-  runtimeModelBinding,
-  runtimeModelConnection,
-  runtimeOwner,
-  runtimeSetup,
-  sessionMessage,
   sharedState,
   sharedStateActivity,
   signupAttribution,
@@ -255,13 +239,6 @@ import {
   versionData,
   webhook,
   webhookDelivery,
-  workflowArtifactActivity,
-  workflowDraft,
-  workflowFiles,
-  workflowPublishReceipt,
-  workflowRun,
-  workflowStepAttempt,
-  workflowTest,
   workspace,
   workspaceJoinLink,
 } from "./schema"
@@ -445,21 +422,6 @@ export const schema = {
   agentTrigger,
   modelAccount,
   agentMention,
-  automation,
-  run,
-  contextRuntime,
-  runtimeSetup,
-  runtimeOwner,
-  runtimeModelConnection,
-  runtimeModelBinding,
-  workflowDraft,
-  workflowFiles,
-  workflowTest,
-  runAttempt,
-  workflowRun,
-  workflowStepAttempt,
-  workflowArtifactActivity,
-  workflowPublishReceipt,
   artifactScanEvent,
   artifactScanCoverage,
   skillRelation,
@@ -478,8 +440,6 @@ export const schema = {
   oauthClientWorkspace,
   context,
   contextAsker,
-  contextSession,
-  sessionMessage,
   collection,
   collectionItem,
   collectionMember,
@@ -524,20 +484,6 @@ const _schemaShapes: Shapes<typeof schema> = {
   agentTrigger: true,
   modelAccount: true,
   agentMention: true,
-  automation: true,
-  run: true,
-  contextRuntime: true,
-  runtimeSetup: true,
-  runtimeModelConnection: true,
-  runtimeModelBinding: true,
-  workflowDraft: true,
-  workflowFiles: true,
-  workflowTest: true,
-  runAttempt: true,
-  workflowRun: true,
-  workflowStepAttempt: true,
-  workflowArtifactActivity: true,
-  workflowPublishReceipt: true,
   artifactScanEvent: true,
   artifactScanCoverage: true,
   skillRelation: true,
@@ -554,8 +500,6 @@ const _schemaShapes: Shapes<typeof schema> = {
   subscription: true,
   context: true,
   contextAsker: true,
-  contextSession: true,
-  sessionMessage: true,
   collection: true,
   collectionMember: true,
   folder: true,
@@ -1019,21 +963,6 @@ export function makeRepos(db: SqliteDb) {
       artifact: (row?.a as ArtifactRecord | undefined) ?? null,
       settings: parseOrgSettings(row?.settings ?? null),
     }
-  }
-
-  // Session + first message + state, together. The embedded drivers run the three writes
-  // sequentially (their round trips are free); the Postgres driver overrides this with one
-  // CTE chain, which is also where the atomicity matters.
-  const createSessionWithMessage = async (
-    s: NewSession,
-    m: Omit<NewSessionMessage, "session_id">,
-    state: SessionState,
-  ): Promise<{ session: SessionRecord; message: SessionMessageRecord }> => {
-    const session = await createSession(s)
-    const message = await addSessionMessage({ ...m, session_id: session.id }, state)
-    // The state update happens inside addSessionMessage, so re-read to return the row as it
-    // now stands rather than the pre-update one.
-    return { session: (await getSession(session.id)) ?? session, message }
   }
 
   // The unfurl card's counts + current version. The counts are computed by the database
@@ -2221,13 +2150,7 @@ export function makeRepos(db: SqliteDb) {
       .delete(membership)
       .where(and(eq(membership.org_id, orgId), eq(membership.user_id, userId)))
       .run()
-    // A removed member's connected plan must stop being billable here — otherwise a lent
-    // agent would keep charging their token after they've lost workspace access.
-    await db
-      .delete(modelCredential)
-      .where(and(eq(modelCredential.org_id, orgId), eq(modelCredential.user_id, userId)))
-      .run()
-    // Their personal model accounts too: an agent's job must not keep running on the key of
+    // Their personal model accounts: an agent's job must not keep running on the key of
     // someone who has left. The shared pool's sentinel row is keyed differently, never in scope.
     await db
       .delete(modelAccount)
@@ -2269,10 +2192,6 @@ export function makeRepos(db: SqliteDb) {
       .run()
     await db.delete(templateLibrary).where(eq(templateLibrary.org_id, orgId)).run()
     await db.delete(membership).where(eq(membership.org_id, orgId)).run()
-    // Every connected plan for this org, INCLUDING the workspace-pool sentinel row, so no
-    // encrypted token is orphaned (the pool row would otherwise have no API path left to
-    // delete once memberships are gone). One predicate covers members and the pool.
-    await db.delete(modelCredential).where(eq(modelCredential.org_id, orgId)).run()
     // The agent model's rows: every model account (personal and shared, so no encrypted
     // secret outlives its workspace), every agent, its schedules, and its jobs with their
     // transcripts. job_message has no org column, so it goes by its job first.
@@ -2306,9 +2225,6 @@ export function makeRepos(db: SqliteDb) {
       .run()
     await db.delete(webhook).where(eq(webhook.org_id, orgId)).run()
     await db.delete(workspaceJoinLink).where(eq(workspaceJoinLink.org_id, orgId)).run()
-    await db.delete(workflowFiles).where(eq(workflowFiles.org_id, orgId)).run()
-    await db.delete(workflowDraft).where(eq(workflowDraft.org_id, orgId)).run()
-    await db.delete(workflowTest).where(eq(workflowTest.org_id, orgId)).run()
     await db.delete(workspace).where(eq(workspace.id, orgId)).run()
   }
   const listWorkspaces = async (userId: string): Promise<(WorkspaceRecord & { role: Role })[]> =>
@@ -3884,7 +3800,7 @@ export function makeRepos(db: SqliteDb) {
     return updated
   }
 
-  // ---- Contexts + sessions -------------------------------------------------
+  // ---- Contexts ------------------------------------------------------------
   const createContext = async (x: NewContext): Promise<ContextRecord> =>
     (await db.insert(context).values(x).returning().get()) as ContextRecord
   const getContext = async (id: string): Promise<ContextRecord | null> =>
@@ -3896,9 +3812,8 @@ export function makeRepos(db: SqliteDb) {
       .where(eq(context.org_id, orgId))
       .orderBy(desc(context.created_at))
       .all()
-  // Sequential cascade (messages → sessions → context), like deleteCollection.
-  // The org scope gates the WHOLE cascade, not just the context row — otherwise a
-  // wrong-workspace call would wipe another tenant's sessions and leave the context.
+  // The org scope gates the WHOLE cascade, not just the context row: a wrong-workspace
+  // call must not touch another tenant's rows.
   const deleteContext = async (id: string, orgId: string): Promise<void> => {
     const owned = await db
       .select({ id: context.id })
@@ -3906,29 +3821,10 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(context.id, id), eq(context.org_id, orgId)))
       .get()
     if (!owned) return
-    // Subqueries, never materialized id lists: a long-lived context accumulates
-    // one session per ask, and an expanded IN (...) would blow D1's
-    // 100-bound-parameter cap (the same constraint listArtifacts documents).
-    await db
-      .delete(sessionMessage)
-      .where(
-        inArray(
-          sessionMessage.session_id,
-          db
-            .select({ id: contextSession.id })
-            .from(contextSession)
-            .where(eq(contextSession.context_id, id)),
-        ),
-      )
-      .run()
-    await db.delete(contextSession).where(eq(contextSession.context_id, id)).run()
     // The asker roster and the import job FK the context — clear them before the
     // parent row. Deleting the job is how a running import learns it was cancelled.
     await db.delete(contextAsker).where(eq(contextAsker.context_id, id)).run()
     await db.delete(importJob).where(eq(importJob.context_id, id)).run()
-    await db.delete(workflowFiles).where(eq(workflowFiles.context_id, id)).run()
-    await db.delete(workflowDraft).where(eq(workflowDraft.context_id, id)).run()
-    await db.delete(workflowTest).where(eq(workflowTest.context_id, id)).run()
     await db.delete(context).where(eq(context.id, id)).run()
   }
   const setContextCodeUrl = async (id: string, codeUrl: string | null): Promise<void> => {
@@ -4135,39 +4031,6 @@ export function makeRepos(db: SqliteDb) {
       .from(contextAsker)
       .where(and(eq(contextAsker.context_id, contextId), eq(contextAsker.user_id, userId)))
       .get()) ?? null
-  // Internal: createSessionWithMessage is the one way a session is opened.
-  const createSession = async (s: NewSession): Promise<SessionRecord> =>
-    (await db.insert(contextSession).values(s).returning().get()) as SessionRecord
-  const getSession = async (id: string): Promise<SessionRecord | null> =>
-    (await db.select().from(contextSession).where(eq(contextSession.id, id)).get()) ?? null
-  // Two writes, no transaction (the createReviewRound pattern; D1 has no txn in
-  // this driver). A crash between them leaves state stale: an unsettled agent
-  // turn is caught by the runner's last-turn guard; a lost asker `open` waits
-  // for the asker's next message. Both windows are milliseconds.
-  const addSessionMessage = async (
-    m: NewSessionMessage,
-    state: SessionState,
-  ): Promise<SessionMessageRecord> => {
-    const row = (await db
-      .insert(sessionMessage)
-      .values(m)
-      .returning()
-      .get()) as SessionMessageRecord
-    await db
-      .update(contextSession)
-      .set({ state, updated_at: new Date().toISOString() })
-      .where(eq(contextSession.id, m.session_id))
-      .run()
-    return row
-  }
-  const listSessionMessages = async (sessionId: string): Promise<SessionMessageRecord[]> =>
-    db
-      .select()
-      .from(sessionMessage)
-      .where(eq(sessionMessage.session_id, sessionId))
-      .orderBy(asc(sessionMessage.created_at))
-      .all()
-
   // ---- Notifications -----------------------------------------------------
   const createNotification = async (n: NewNotification): Promise<void> => {
     await db.insert(notification).values(n).run()
@@ -5115,11 +4978,8 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(follow).where(eq(follow.user_id, userId)).run()
     await db.delete(artifactFavorite).where(eq(artifactFavorite.user_id, userId)).run()
     await db.delete(notification).where(eq(notification.user_id, userId)).run()
-    // Their connected model-plan credentials — encrypted plan tokens must not linger after
-    // the account is gone. Keyed on a real user id, so the workspace pool's sentinel row is
-    // never in scope.
-    await db.delete(modelCredential).where(eq(modelCredential.user_id, userId)).run()
-    // And their model accounts, in every workspace (the pool sentinel is never a user id).
+    // Their model accounts, in every workspace (the pool sentinel is never a user id), so no
+    // encrypted key lingers after the account is gone.
     await db.delete(modelAccount).where(eq(modelAccount.user_id, userId)).run()
     await db.delete(plan).where(eq(plan.user_id, userId)).run()
     // Before created_by is cleared below: their agents' keys die and the agents stay paused.
@@ -5214,26 +5074,13 @@ export function makeRepos(db: SqliteDb) {
   // Sequential cascade (used by D1). better-sqlite3 + pg override with a transaction.
   const deleteArtifact = async (id: string): Promise<void> => {
     // Delete FK-referencing tables before the artifact row itself. A context's
-    // manifest FK means deleting a manifest deletes its context (and sessions) —
-    // a context cannot outlive its definition, by design. Subqueries throughout
-    // (D1's 100-bound-parameter cap; see deleteContext).
+    // manifest FK means deleting a manifest deletes its context: a context cannot
+    // outlive its definition, by design. Subqueries throughout (D1's
+    // 100-bound-parameter cap).
     const ctxIds = db
       .select({ id: context.id })
       .from(context)
       .where(eq(context.manifest_artifact_id, id))
-    await db
-      .delete(sessionMessage)
-      .where(
-        inArray(
-          sessionMessage.session_id,
-          db
-            .select({ id: contextSession.id })
-            .from(contextSession)
-            .where(inArray(contextSession.context_id, ctxIds)),
-        ),
-      )
-      .run()
-    await db.delete(contextSession).where(inArray(contextSession.context_id, ctxIds)).run()
     await db.delete(contextAsker).where(inArray(contextAsker.context_id, ctxIds)).run()
     await db.delete(importJob).where(inArray(importJob.context_id, ctxIds)).run()
     await db.delete(context).where(eq(context.manifest_artifact_id, id)).run()
@@ -5609,10 +5456,6 @@ export function makeRepos(db: SqliteDb) {
     updateImportLease,
     getImportLease,
     getContextAsker,
-    createSessionWithMessage,
-    getSession,
-    addSessionMessage,
-    listSessionMessages,
     createNotification,
     createNotifications,
     listNotifications,

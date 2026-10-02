@@ -23,14 +23,12 @@ import type {
   ArtifactSkillLinkRecord,
   AssetRecord,
   AuditLogRecord,
-  AutomationRecord,
   CollectionMemberRecord,
   CollectionRecord,
   CommentRecord,
   ConnectionRecord,
   ContextAskerRecord,
   ContextRecord,
-  ContextRuntimeRecord,
   DeliveryRecord,
   DomainRecord,
   DynamicRevisionRecord,
@@ -48,13 +46,6 @@ import type {
   RenderJobRecord,
   ReportRecord,
   ReviewRoundRecord,
-  RunAttemptRecord,
-  RunRecord,
-  RuntimeModelBindingRecord,
-  RuntimeModelConnectionRecord,
-  RuntimeSetupRecord,
-  SessionMessageRecord,
-  SessionRecord,
   SharedStateActivityRecord,
   SharedStateRecord,
   SignupAttributionRecord,
@@ -68,10 +59,6 @@ import type {
   VersionDataRecord,
   VersionRecord,
   WebhookRecord,
-  WorkflowArtifactActivityRecord,
-  WorkflowPublishReceiptRecord,
-  WorkflowRunRecord,
-  WorkflowStepAttemptRecord,
   WorkspaceRecord,
 } from "@derive/core"
 
@@ -105,20 +92,6 @@ export interface TypedTables {
   agentTrigger: import("@derive/core").TriggerRecord
   modelAccount: import("@derive/core").AccountRecord
   agentMention: AgentMentionRecord
-  automation: AutomationRecord
-  contextRuntime: ContextRuntimeRecord
-  runtimeModelConnection: RuntimeModelConnectionRecord
-  runtimeModelBinding: RuntimeModelBindingRecord
-  workflowFiles: import("@derive/core").WorkflowFilesRecord
-  workflowDraft: import("@derive/core").WorkflowDraftRecord
-  workflowTest: import("@derive/core").WorkflowTestRecord
-  runtimeSetup: RuntimeSetupRecord
-  runAttempt: RunAttemptRecord
-  run: RunRecord
-  workflowRun: WorkflowRunRecord
-  workflowStepAttempt: WorkflowStepAttemptRecord
-  workflowArtifactActivity: WorkflowArtifactActivityRecord
-  workflowPublishReceipt: WorkflowPublishReceiptRecord
   artifactScanEvent: ArtifactScanEventRecord
   artifactScanCoverage: ArtifactScanCoverageRecord
   skillRelation: SkillRelationRecord
@@ -135,8 +108,6 @@ export interface TypedTables {
   subscription: SubscriptionRecord
   context: ContextRecord
   contextAsker: ContextAskerRecord
-  contextSession: SessionRecord
-  sessionMessage: SessionMessageRecord
   collection: CollectionRecord
   collectionMember: CollectionMemberRecord
   folder: FolderRecord
@@ -155,7 +126,6 @@ export interface TypedTables {
  * shape parity — but it still has to be named, so it can't be forgotten.
  */
 export type JunctionTable =
-  | "runtimeOwner"
   | "artifactFavorite"
   | "collectionFavorite"
   | "artifactTag"
