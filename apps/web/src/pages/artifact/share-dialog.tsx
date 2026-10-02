@@ -44,6 +44,7 @@ import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { ShareCollectionDialog } from "@/pages/library/share-collection-dialog"
 import { ExportButton } from "./export-dialog"
+import { placeHash } from "./use-url-place"
 
 // Access is ONE primary question — who can open this — projected from the v2
 // triple (workspace_access, link_role, listed; see access-model.md). Each segment
@@ -171,12 +172,6 @@ export function ShareButton({
     linkRole: lRole,
     locked: hasLock || lockDraft,
   })
-  // The reader's place rides along (use-url-place keeps it in the page's hash), so the
-  // link opens on the slide or passage being worked on.
-  const here = typeof window === "undefined" ? "" : window.location.hash
-  const place = /^#(?:slide=\d+|at=.+)$/.test(here) ? here : ""
-  const shareUrl = branded.url + place
-  const placeNote = /^#slide=(\d+)$/.exec(place)?.[1]
   // A moment link is a viewer feature (scene + time are read by the app), so it
   // always points at the app.
   const momentUrl = videoMoment
@@ -319,13 +314,17 @@ export function ShareButton({
       collectionShared: grants.length > 0,
       locked: hasLock,
     })
-    const what = placeNote ? `Link to slide ${placeNote} copied` : "Link copied"
+    // The reader's place rides along (see use-url-place), so the link opens on the slide
+    // or passage being worked on. Read at the click: scrolling doesn't re-render this.
+    const here = placeHash(shortId)
+    const slideNote = /^#slide=(\d+)$/.exec(here)?.[1]
+    const what = slideNote ? `Link to slide ${slideNote} copied` : "Link copied"
     const success = reach
       ? `${what} — ${reach.toLowerCase()}`
       : branded.host
         ? `${what} — ${branded.host}`
         : what
-    if (await copyLinkToClipboard(shareUrl, { success })) {
+    if (await copyLinkToClipboard(branded.url + here, { success })) {
       // The getting-started checklist's "share a link" step completes here — the
       // one gesture that means "I sent this to someone" (see chrome/getting-started).
       try {

@@ -1272,7 +1272,7 @@ export async function runSession(
   // (the frame swapped under the editor) from environment noise (the dev servers
   // hot-reloading while other work edits the tree).
   const events: string[] = []
-  // The page keeps the reader's place in its hash (#slide=N, #at=…): that is not a load.
+  // A link may carry a place in its hash (#slide=N, #at=…), dropped once taken: not a load.
   const unhashed = (u: string) => u.replace(/#.*$/, "")
   let pageUrl = ""
   const onNav = (f: Frame) => {

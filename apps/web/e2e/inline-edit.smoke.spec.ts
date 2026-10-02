@@ -2295,7 +2295,18 @@ test.describe("live auto-save", () => {
     await doc(owner)
       .locator("#head")
       .evaluate((el) => el.scrollIntoView())
-    await expect(owner).toHaveURL(/#at=head,/)
+    // A copied link carries the place; the address bar doesn't follow the scroll (every
+    // URL rewrite re-runs the router and re-renders the page).
+    await owner.context().grantPermissions(["clipboard-read", "clipboard-write"])
+    await expect
+      .poll(async () => {
+        await owner.getByTestId("share-trigger").click()
+        await owner.getByTestId("share-url-copy").click()
+        await owner.keyboard.press("Escape")
+        return owner.evaluate(() => navigator.clipboard.readText())
+      })
+      .toMatch(/#at=head,\d+$/)
+    expect(new URL(owner.url()).hash).toBe("")
     const before = await doc(owner)
       .locator("html")
       .evaluate(() => window.scrollY)
@@ -2319,10 +2330,10 @@ test.describe("live auto-save", () => {
     await expect(owner.getByTestId("deck-position")).toBeVisible()
     await owner.getByTestId("deck-next").click()
     await owner.getByTestId("deck-next").click()
-    await expect(owner).toHaveURL(/#slide=3$/)
+    await expect(owner.getByTestId("deck-position")).toContainText("3 / 3")
     await owner.reload()
     await expect(owner.getByTestId("deck-position")).toContainText("3 / 3")
-    await expect(owner).toHaveURL(/#slide=3$/)
+    expect(new URL(owner.url()).hash).toBe("")
   })
 
   test("someone else's edit lands in place while you type elsewhere", async ({

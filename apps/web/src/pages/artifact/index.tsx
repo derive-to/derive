@@ -607,7 +607,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
     onResync: onLiveResync,
   })
 
-  // The reader's place (slide, scroll anchor) in the URL, handed back to every load.
+  // The reader's place (slide, scroll anchor), handed back to every load.
   const place = useUrlPlace(shortId)
 
   // The whole postMessage channel with the sandboxed iframe: text selection,
@@ -738,7 +738,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
   useEffect(() => {
     live.setViewSlide(deck?.i ?? null)
   }, [live.setViewSlide, deck?.i])
-  // The slide on screen is the place in the URL.
+  // The slide on screen is the reader's place.
   // biome-ignore lint/correctness/useExhaustiveDependencies: place reads refs; the slide is the trigger.
   useEffect(() => {
     if (deck) place.onSlide(deck.i)
@@ -1393,7 +1393,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
       positionFor={() => ({ ...place.current(), slideId: deck?.slides[deck.i]?.id })}
       onFrameLoad={(swapped) => {
         frameContent.current = { shortId, version: frameDoc.version }
-        // Back to the reader's place: the URL's on the first load, the current one after.
+        // Back to the reader's place: the link's or this tab's on the first load, the current one after.
         // A version swapped in is there already (the stage brought it to where the
         // reader was the moment it went on screen).
         if (!swapped) post({ type: "restore-position", ...place.restore() })
