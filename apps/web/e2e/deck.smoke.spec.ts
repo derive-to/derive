@@ -80,7 +80,6 @@ test.describe("deck", () => {
     await page.getByTestId("deck-next").click()
     await page.getByTestId("deck-next").click()
     await expect(page.getByTestId("deck-position")).toHaveText("3 / 3")
-    await expect.poll(() => new URL(page.url()).hash).toBe("#slide=3")
 
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
     await page.getByTestId("share-trigger").click()
@@ -94,6 +93,9 @@ test.describe("deck", () => {
     const { pathname, hash } = new URL(link)
     await other.goto(new URL(`${pathname}${hash}`, page.url()).href)
     await expect(other.getByTestId("deck-position")).toHaveText("3 / 3")
+    // The link's place is taken, then dropped from the address bar: a later refresh
+    // lands where the reader got to, not back on slide 3.
+    await expect.poll(() => new URL(other.url()).hash).toBe("")
 
     // The page itself, opened without the app (as a workspace domain serves it).
     const raw = await page.locator("iframe[title]:not([aria-hidden])").getAttribute("src")

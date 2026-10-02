@@ -22,6 +22,9 @@ export const STORAGE_KEYS = {
   // echoed on every realtime call, so one browser stays one "viewing now" row instead of
   // racing a server cookie into several phantom viewers (see lib/guest-id).
   guestId: "derive.guest",
+  // Prefix (sessionStorage), + an artifact's short id: the reader's place in it, for a
+  // refresh (see pages/artifact/use-url-place).
+  place: "derive.place.",
   // Legacy literals (the colon convention predates the dot switch) — kept as-is so a
   // saved folder pref survives the rename. The onboarded value is the USER ID that
   // finished onboarding (needsOnboarding only honors a match), so a second account in
