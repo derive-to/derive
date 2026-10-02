@@ -20,6 +20,7 @@ import {
   toolsForRun,
 } from "../lib/broker"
 import { OVER_BUDGET } from "../lib/budget"
+import { liveChatArrival, refusalMessage } from "../lib/chat-gate"
 import { readEnvironmentBindings } from "../lib/context-environment"
 import { decryptSecret } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
@@ -42,6 +43,13 @@ import {
   reportJob,
   retryJob,
 } from "../lib/jobs"
+import {
+  continuePageAsk,
+  isPageAsk,
+  openPageAsk,
+  type PageTurnGrant,
+  servePageTurn,
+} from "../lib/page-ask"
 import { MAX_RUN_CEILING_MS } from "../lib/run-lifecycle"
 import { signWorkToken } from "../lib/run-token"
 import { runtimeFailureReason } from "../lib/runtime-diagnostics"
@@ -222,6 +230,47 @@ export const jobRoutes = (ctx: AppContext) => {
     return job
   }
 
+  // ---- The built-in Derive, asked from a page (lib/page-ask.ts) ---------------------------
+
+  /** The page a built-in ask is about: readable by the asker, in the active workspace. Anything
+   *  else is not found, the same answer an agent ask gives. */
+  const readablePage = async (c: Context, org: string, id: string) => {
+    const byId = await meta.getArtifactById(id).catch(() => null)
+    const page = await ctx.requireArtifact(c, "read", { shortId: byId?.short_id ?? id })
+    if (page instanceof Response || page.org_id !== org)
+      return fail(c, 404, "no such page you can read in this workspace")
+    return page
+  }
+
+  /** Every rung a built-in turn walks before it spends (lib/chat-gate.ts), as HTTP. The rate
+   *  limit is the request's own (Retry-After included); the rest is the shared gate. */
+  const deriveGate = async (
+    c: Context,
+    org: string,
+    userId: string,
+  ): Promise<PageTurnGrant | Response> => {
+    const rl = await ctx.limited(c, ctx.askLimiter)
+    if (rl) return rl
+    const gate = await liveChatArrival(
+      { meta, models: ctx.modelsFor, chatAllowlist: ctx.chatAllowlist },
+      { org, userId },
+    )
+    if (gate.ok) return gate
+    return gate.reason === "not_member"
+      ? fail(c, 404, "not found")
+      : gate.reason === "over_budget"
+        ? fail(c, 402, OVER_BUDGET)
+        : gate.reason === "rate_limited"
+          ? fail(c, 429, refusalMessage(gate.reason))
+          : fail(c, 503, refusalMessage(gate.reason))
+  }
+
+  /** Who the turn speaks to, by name. */
+  const askerOf = async (id: string) => ({
+    id,
+    name: (await meta.getUsers([id]).catch(() => []))[0]?.name ?? null,
+  })
+
   // ---- People ---------------------------------------------------------------------------
 
   app.openapi(
@@ -326,6 +375,30 @@ export const jobRoutes = (ctx: AppContext) => {
         }),
       )
       if (b instanceof Response) return bail(b)
+      // The built-in Derive has no agent row and nothing to pull its work: it is asked about a
+      // page, by a person, and this request serves the turn after it responds.
+      if (b.agent_id === DERIVE_AGENT_ID) {
+        if (await agentFor(c)) return bail(fail(c, 404, "no such agent you can ask"))
+        const about = b.subject ? normalizeSelectors([b.subject])[0] : null
+        if (about?.kind !== "artifact")
+          return bail(fail(c, 400, "the built-in Derive is asked about a page"))
+        const org = await ctx.requireWorkspace(c, "read")
+        if (org instanceof Response) return bail(org)
+        const page = await readablePage(c, org, about.id)
+        if (page instanceof Response) return bail(page)
+        const grant = await deriveGate(c, org, who.id)
+        if (grant instanceof Response) return bail(grant)
+        const job = await openPageAsk(ctx, {
+          org,
+          askerId: who.id,
+          page,
+          question: b.instruction,
+        })
+        const asker = await askerOf(who.id)
+        await ctx.afterResponse(c, () => servePageTurn(ctx, job, asker, page, grant))
+        const messages = (await meta.listJobMessages(job.id)).map(messageJson)
+        return c.json({ ...(await showOne((await meta.getJob(job.id)) ?? job)), messages }, 201)
+      }
       const agent = await meta.getAgent(b.agent_id)
       if (!agent || !(await canAskAgent(meta, agent, who.id)))
         return bail(fail(c, 404, "no such agent you can ask"))
@@ -402,6 +475,29 @@ export const jobRoutes = (ctx: AppContext) => {
       if (job instanceof Response) return bail(job)
       const who = await personFor(c)
       if (who instanceof Response) return bail(who)
+      // A built-in page ask continues as another turn on the same job. Only its asker sees it
+      // (visibleJob), and it meets every gate an ask does, page access included: a page they
+      // lost access to since is not read again on their behalf.
+      if (isPageAsk(job)) {
+        // Asked by a person on the page, never driven by an agent's token: the same refusal
+        // the opening ask gives.
+        if (await agentFor(c)) return bail(fail(c, 404, "not found"))
+        if (job.status === "running")
+          return bail(fail(c, 409, "Derive is still answering; wait for it to finish"))
+        const b = await readJson(c, z.object({ body_md: z.string().trim().min(1).max(20_000) }))
+        if (b instanceof Response) return bail(b)
+        const about = JSON.parse(job.subject_json ?? "{}") as { id?: string }
+        const page = await readablePage(c, job.org_id, about.id ?? "")
+        if (page instanceof Response) return bail(page)
+        const grant = await deriveGate(c, job.org_id, who.id)
+        if (grant instanceof Response) return bail(grant)
+        const next = await continuePageAsk(ctx, job, who.id, b.body_md)
+        if (!next) return bail(fail(c, 409, "Derive is already answering; wait for it to finish"))
+        const asker = await askerOf(who.id)
+        await ctx.afterResponse(c, () => servePageTurn(ctx, next, asker, page, grant))
+        const messages = (await meta.listJobMessages(job.id)).map(messageJson)
+        return c.json({ ...(await showOne((await meta.getJob(job.id)) ?? next)), messages })
+      }
       const agent = await meta.getAgent(job.agent_id)
       if (!agent || !(await canSteerJob(meta, agent, job, who.id)))
         return bail(

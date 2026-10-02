@@ -456,6 +456,11 @@ export const pullJobs = async (
 export const wakeClaimed = (deps: JobDeps, job: JobRecord): void =>
   wake(deps, job.asked_by, "job.started", job)
 
+/** A job served in-process (the built-in Derive) settled: tell its asker's open pages, the same
+ *  event a runner's report sends, so the margin Ask shows the reply without waiting on a poll. */
+export const wakeSettled = (deps: JobDeps, job: JobRecord): void =>
+  wake(deps, job.asked_by, "job.settled", job)
+
 export interface JobReport {
   /** The claim's started_at, echoed back: proof this settle belongs to the claim it names. */
   started_at: string | null

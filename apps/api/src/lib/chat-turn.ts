@@ -17,7 +17,20 @@ export interface ChatTurnDeps {
   /** The model this turn runs on — resolved from the catalog by the route, so the person's
    *  choice reaches the call rather than the deploy's default always winning. */
   model: ResolvedChatModel
+  /**
+   * How long this turn may run before it stops and answers with a failure (the context's
+   * `attendedTurnBudgetMs`). Absent = no limit.
+   *
+   * Needed where the runtime ends after-response work on its own clock (waitUntil on Workers):
+   * a turn cut off there writes nothing and leaves its job running until the lease lapses. So
+   * the turn gives up first, while it can still settle the job and say why.
+   */
+  budgetMs?: number
 }
+
+/** What the person reads when a turn ran out of time. */
+export const TURN_TOO_LONG =
+  "That question took too long to answer in one go, so I stopped. Try asking something narrower."
 
 /** What a chat turn produced, for the transcript and the ledger. */
 export interface ChatTurnResult {
@@ -73,6 +86,10 @@ export interface ChatTurnInput {
      */
     note?: string
   }
+  /** The page this conversation is about, when it was asked from one (the margin Ask). Named in
+   *  the prompt so "this page" resolves; the turn reads it with its `read` tool rather than
+   *  being handed the whole body, so a long page costs nothing on a turn that does not need it. */
+  page?: { shortId: string; title: string | null }
   /** The skill index for the tools this turn holds — one line each in the prompt, bodies read
    *  on demand. Empty when the turn has no tools with separate procedure. */
   skills: { name: string; summary: string }[]
@@ -130,8 +147,16 @@ Four things hold on every answer:
 - SAY SO WHEN THERE IS NOTHING. An empty workspace is a fact; plausible invented content is the one failure the person cannot detect by reading your answer.
 - YOU SEE EXACTLY WHAT THEY SEE, no more: your tools run with this person's own permissions. So an empty result means nothing THEY can reach matched it, which is not the same as the workspace not having it — a teammate's invite-only document is invisible to you both. Say "I could not find" rather than "there is no", and when it matters, that a colleague may have it somewhere you cannot look.
 
-HOW TO WRITE. Short, and human with it — a helpful colleague at their desk, not a reference manual. Warmth costs a word or two, not a paragraph. A one-line question gets a one-line answer. No preamble, no restating the question, no summarising what you just said, and no filler enthusiasm. When you are reporting more than two things, use bullets rather than a paragraph that lists them — a bullet per fact, one line each. Markdown renders, so bullets, bold and links are fine; headings in a chat reply are not. Say the answer first; add caveats only if they change what someone would do. Offering an obvious next step is welcome when there is one; inventing one is not. A broad question still gets a full answer, it is just written tightly. Never emit a revision or edits block: this conversation is not about one document, and nothing here would apply it.
+HOW TO WRITE. Short, and human with it — a helpful colleague at their desk, not a reference manual. Warmth costs a word or two, not a paragraph. A one-line question gets a one-line answer. No preamble, no restating the question, no summarising what you just said, and no filler enthusiasm. When you are reporting more than two things, use bullets rather than a paragraph that lists them — a bullet per fact, one line each. Markdown renders, so bullets, bold and links are fine; headings in a chat reply are not. Say the answer first; add caveats only if they change what someone would do. Offering an obvious next step is welcome when there is one; inventing one is not. A broad question still gets a full answer, it is just written tightly. ${
+    input.page
+      ? `Never emit a revision or edits block: nothing here would apply it. A change they ask for goes through the publish tool as a new version of this page, and you say what you changed.`
+      : `Never emit a revision or edits block: this conversation is not about one document, and nothing here would apply it.`
+  }
 ${
+  input.page
+    ? `\nTHIS PAGE: they asked from the page titled ${JSON.stringify(input.page.title ?? input.page.shortId)} (short_id ${input.page.shortId}). "This page", "this doc" and "it" mean that page. Read it with the read tool before you answer anything about what it says.\n`
+    : ""
+}${
   skills.length
     ? `\nSKILLS carry the procedure. Read the matching one with the read tool when you need it:\n${skills.join("\n")}`
     : ""
@@ -151,7 +176,13 @@ export const runChatTurn = async (
   // Model time only: a tool that spends seconds on somebody's API is not the model being slow.
   let modelMs = 0
   const callModel = deps.model.callModel as AgentLoopInput["callModel"]
-  const out = await runTurn({
+  // What the model calls that came back have cost so far, so a turn stopped by its budget still
+  // charges what it spent. A call in flight when the budget ran out reports nothing.
+  let spentUsd = 0
+  // Once the budget has run out, the abandoned turn may keep running (nothing cancels it from
+  // here), but it must not act: no further model call and, above all, no write.
+  let expired = false
+  const turn = runTurn({
     system: systemPrompt(input),
     messages: asTurns(input.transcript, (m) => ({
       fromAgent: m.author_kind !== "asker",
@@ -159,15 +190,19 @@ export const runChatTurn = async (
     })),
     contract: proseContract,
     callModel: async (call) => {
+      if (expired) throw new Error("turn budget spent")
       const started = Date.now()
       try {
-        return await callModel(call)
+        const res = await callModel(call)
+        spentUsd += res.costUsd ?? 0
+        return res
       } finally {
         modelMs += Date.now() - started
       }
     },
     tools: input.tools.tools,
     executeTool: async (name, args) => {
+      if (expired) return { error: "turn budget spent" }
       if (!used.includes(name)) used.push(name)
       return input.tools.execute(name, args)
     },
@@ -179,6 +214,30 @@ export const runChatTurn = async (
       throw new Error("chat turn has no landing port: writes ride the tools")
     },
   })
+
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const out = deps.budgetMs
+    ? await Promise.race([
+        turn,
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), deps.budgetMs)
+        }),
+      ]).finally(() => clearTimeout(timer))
+    : await turn
+  if (!out) {
+    expired = true
+    // The abandoned turn settles on its own later; nothing waits for it, so keep it quiet.
+    turn.catch(() => {})
+    log.warn("chat turn ran out of time", { job: input.jobId, model: model.id })
+    return {
+      reply: TURN_TOO_LONG,
+      outcome: "failed",
+      costMicroUsd: toMicroUsd(spentUsd),
+      model,
+      modelMs,
+      tools: used,
+    }
+  }
 
   if (out.failure) {
     log.warn("chat turn produced nothing", {

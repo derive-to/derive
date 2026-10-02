@@ -274,6 +274,10 @@ export type WorkspaceDomain = components["schemas"]["WorkspaceDomain"]
 export type WorkspaceSubdomain = components["schemas"]["WorkspaceSubdomain"]
 /** The workspace: its name, the caller's role, and the member directory. */
 export type Workspace = components["schemas"]["Workspace"]
+/** The active workspace as GET /v1/workspace returns it: the workspace, plus whether the
+ *  built-in Derive can answer here (`assistant`). */
+export type ActiveWorkspace =
+  paths["/v1/workspace"]["get"]["responses"][200]["content"]["application/json"]
 /** A pending workspace invitation (Admin view; the token is never exposed). */
 export type Invite = components["schemas"]["Invite"]
 /** The result of inviting by email: either the person was an existing Derive account
@@ -1394,6 +1398,9 @@ export const api = {
     ),
   cancelJob: (id: string): Promise<Job> => f(`/v1/jobs/${id}/cancel`, opts({})).then(j),
   retryJob: (id: string): Promise<Job> => f(`/v1/jobs/${id}/retry`, opts({})).then(j),
+  /** Write to a job: a follow-up. A settled built-in Derive page ask answers it as another turn. */
+  writeJob: (id: string, body_md: string): Promise<JobDetail> =>
+    f(`/v1/jobs/${id}/messages`, opts({ body_md })).then(j),
   answerJob: (id: string, answer: { text?: string; option?: string }): Promise<Job> =>
     f(`/v1/jobs/${id}/answer`, opts(answer)).then(j),
 
@@ -1562,7 +1569,7 @@ export const api = {
     f("/v1/slack/link", { method: "DELETE", credentials: "include" }).then(() => undefined),
 
   // Workspace name + members (Admin / Creator / Viewer = owner / editor / commenter)
-  getWorkspace: (): Promise<Workspace> => f("/v1/workspace", opts()).then(j),
+  getWorkspace: (): Promise<ActiveWorkspace> => f("/v1/workspace", opts()).then(j),
   renameWorkspace: (name: string): Promise<{ name: string }> =>
     f("/v1/workspace", { ...opts({ name }), method: "PATCH" }).then(j),
   addWorkspaceMember: (user: string, role: Role): Promise<ArtifactMember> =>

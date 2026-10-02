@@ -388,6 +388,12 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // window is fixed at 60s, so unlock / oauth-register run a tighter per-minute cap
         // here than the long-window in-process defaults (see wrangler.toml [[ratelimits]]).
         rateLimit: true,
+        // THE CEILING THIS TIER ACTUALLY HAS. An attended @Derive turn (a page ask, a Slack
+        // mention) runs after the response through waitUntil, which the runtime ends a short
+        // while after the response is sent: the isolate stops and the turn writes nothing. This
+        // leaves the turn several seconds of live isolate to settle its own job instead. Set only
+        // here; Node has no such ceiling.
+        attendedTurnBudgetMs: 22_000,
         rateLimiters: {
           auth: nativeLimiter(env.RL_AUTH, 60),
           // Mail-triggering auth endpoints ride RL_STRICT (tight), namespaced so their

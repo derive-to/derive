@@ -883,14 +883,40 @@ test("asking an agent from a page's margin opens a job about that page and shows
   owner,
 }, testInfo) => {
   const agent = await makeAgent(owner, { name: "Helper", role: "editor" })
-  const page = await publishArtifact(owner, "plan.md", "# The plan\n\nbody")
+  // An agent on a machine that never checked in, with nothing to do with the page: a question
+  // to it would wait for ever, so the margin does not offer it.
+  await makeAgent(owner, { name: "Elsewhere", role: "editor" })
+  // The page's own agent published it, and its runner is on (it just checked in).
+  const page = await publishAsAgent(owner, agent, "The plan")
+  expect(await pullAs(owner, agent)).toEqual([])
   await openArtifact(owner, page)
+  // Derive itself comes first where this deploy has a model; either way the only agent offered
+  // is Helper.
+  const { assistant } = (await (await owner.request.get("/v1/workspace")).json()) as {
+    assistant: boolean
+  }
+  if (assistant) {
+    await owner.getByTestId("margin-ask-agent").click()
+    await expect(owner.getByRole("option")).toHaveText(["Derive", "Helper"])
+    await owner.getByRole("option", { name: "Helper" }).click()
+  }
+  await expect(owner.getByTestId("margin-ask-input")).toHaveAttribute(
+    "placeholder",
+    "Ask Helper about this page",
+  )
+  if (!assistant) await expect(owner.getByTestId("margin-ask-agent")).toHaveCount(0)
   await owner.getByTestId("margin-ask-input").fill("What is missing from this plan?")
   await owner.getByTestId("margin-ask-send").click()
   const follow = owner.getByTestId("margin-ask-job")
   await expect(follow).toHaveAttribute("data-status", "queued")
-  // Its runner has never checked in, and the box says why the job waits.
-  await expect(owner.getByTestId("margin-ask-warning")).toContainText("never checked in")
+
+  // Paused after it was asked: the box says why the job waits.
+  const pause = (paused: boolean) =>
+    owner.request.patch(`/v1/agents/${agent.id}`, { data: { paused } })
+  expect((await pause(true)).ok()).toBeTruthy()
+  await owner.reload()
+  await expect(owner.getByTestId("margin-ask-warning")).toContainText("Paused")
+  expect((await pause(false)).ok()).toBeTruthy()
 
   // The job is about this page; its runner picks it up and answers.
   const [held] = await pullAs(owner, agent)
