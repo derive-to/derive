@@ -901,7 +901,8 @@ test("asking from a page's Ask panel opens a private job about that page and sho
   await expect(askButton).toHaveAttribute("aria-pressed", "true")
   await expect(owner.getByTestId("artifact-show-comments")).toHaveAttribute("aria-pressed", "false")
   await expect(owner.getByTestId("activity-stream")).toHaveCount(0)
-  await expect(owner.getByTestId("ask-panel")).toContainText("Only you see this conversation")
+  // Opening Ask puts the caret in its box.
+  await expect(owner.getByTestId("ask-input")).toBeFocused()
 
   // Derive itself comes first where this deploy has a model; either way the only agent offered
   // is Helper.
@@ -909,7 +910,12 @@ test("asking from a page's Ask panel opens a private job about that page and sho
     assistant: boolean
   }
   if (assistant) {
+    // Derive's conversations are the asker's alone.
     await expect(owner.getByTestId("ask-panel-title")).toHaveText("Ask Derive")
+    await expect(owner.getByTestId("ask-panel-audience")).toHaveText(
+      "Only you see this conversation",
+    )
+    await expect(owner.getByTestId("ask-footnote")).toContainText("Private to you.")
     await owner.getByTestId("ask-agent").click()
     const offered = owner.getByRole("menuitemradio")
     await expect(offered).toHaveCount(2)
@@ -921,7 +927,14 @@ test("asking from a page's Ask panel opens a private job about that page and sho
   } else {
     await expect(owner.getByTestId("ask-agent")).toHaveCount(0)
   }
-  await expect(owner.getByTestId("ask-panel-title")).toHaveText("Ask Helper")
+  // Another agent's job is the workspace's to see, and the panel says so.
+  await expect(owner.getByRole("region", { name: "Ask Helper" })).toBeVisible()
+  await expect(owner.getByTestId("ask-panel-audience")).toHaveText(
+    "Your workspace can see this conversation",
+  )
+  await expect(owner.getByTestId("ask-footnote")).toHaveText(
+    "Your team can see this job and its answer.",
+  )
   await owner.getByTestId("ask-input").fill("What is missing from this plan?")
   await owner.getByTestId("ask-send").click()
   const follow = owner.getByTestId("ask-job")

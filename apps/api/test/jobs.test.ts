@@ -788,15 +788,32 @@ describe("jobs: the built-in Derive, asked from a page", () => {
     ])
 
     // The asker finds the page's conversation by its subject; nobody else does.
-    const about = async (who: string, shortId: string) =>
+    const about = async (who: string, shortId: string, limit = 50) =>
       (
         (await (
-          await app.request(`/v1/jobs?mine=1&subject=${shortId}`, { headers: as(who) })
-        ).json()) as { jobs: { id: string }[] }
-      ).jobs.map((j) => j.id)
-    expect(await about(ed.email, page.short_id)).toEqual([job.id])
+          await app.request(`/v1/jobs?subject=${shortId}&limit=${limit}`, { headers: as(who) })
+        ).json()) as { jobs: { id: string; asked_by: string }[] }
+      ).jobs
+    expect((await about(ed.email, page.short_id)).map((j) => j.id)).toEqual([job.id])
     expect(await about(ed.email, other.short_id)).toEqual([])
     expect(await about(owner.email, page.short_id)).toEqual([])
+
+    // The subject lists the caller's own asks only, so a busy page cannot crowd yours out:
+    // the owner (who manages every agent) asks a workspace agent about it many times, and the
+    // newest of Ed's own is still the one he gets back, while the owner never gets Ed's.
+    const agent = await createAgent(app)
+    for (let i = 0; i < 21; i++)
+      expect(
+        (
+          await ask(app, owner.email, agent.id, `Check ${i}`, {
+            subject: { kind: "artifact", id: page.short_id },
+          })
+        ).status,
+      ).toBe(201)
+    expect((await about(ed.email, page.short_id, 1)).map((j) => j.id)).toEqual([job.id])
+    const owners = await about(owner.email, page.short_id)
+    expect(owners).toHaveLength(21)
+    expect(owners.every((j) => j.asked_by === owner.id)).toBe(true)
   })
 
   it("is not found for a page the asker cannot read, and refuses plainly with no model", async () => {

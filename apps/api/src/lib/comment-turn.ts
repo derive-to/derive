@@ -338,7 +338,7 @@ export const answerDeriveMention =
         body_md: comment.body_md,
       })
       .catch(() => null)
-    await meta
+    const running = await meta
       .updateJob(job.id, {
         status: "running",
         started_at: startedAt,
@@ -348,6 +348,14 @@ export const answerDeriveMention =
         ).toISOString(),
       })
       .catch(() => null)
+    // Not running means no turn: settle it now, so an attended job (which nothing claims)
+    // never waits as queued for ever.
+    if (!running) {
+      await meta
+        .updateJob(job.id, { status: "failed", finished_at: new Date().toISOString() })
+        .catch((e) => log.warn("derive mention job not settled", { job: job.id, error: String(e) }))
+      return quiet("job not started")
+    }
 
     const result = await runCommentTurn(
       {

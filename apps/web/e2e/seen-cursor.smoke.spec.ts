@@ -106,7 +106,7 @@ test("the New marker is the account's position: first visit, arrivals, own rows,
   //    underneath it during the dwell: leave for the library, come back, same line.
   const before = await cursor()
   await expect.poll(cursor, { timeout: 10_000 }).not.toBe(before)
-  await page.getByRole("link", { name: "Library" }).first().click()
+  await page.getByRole("link", { name: "Artifacts" }).first().click()
   await expect(page).not.toHaveURL(/\/activity$/)
   await page.getByTestId("menu-activity").click()
   await expect(page.getByTestId("wa-unread-marker")).toHaveCount(1)

@@ -298,7 +298,7 @@ export const jobRoutes = (ctx: AppContext) => {
           subject: z
             .string()
             .optional()
-            .describe("A page's short id: only the jobs asked about that page."),
+            .describe("A page's short id: only the jobs you asked about that page."),
         }),
       },
       responses: {
@@ -323,11 +323,17 @@ export const jobRoutes = (ctx: AppContext) => {
         reportArtifactId = art.id
       }
       // A subject is stored as the asker named it: by short id, or (leniently) by artifact id.
+      // It lists the caller's own asks only: what the Ask panel resumes is a conversation you
+      // had, and an owner's `mine` (every job) would otherwise crowd it out.
       let subjectJson: string[] | undefined
+      let askedBy: string | undefined
       if (q.subject) {
+        const who = await actingHuman(c)
+        if (!who) return bail(fail(c, 401, "unauthenticated"))
         const art = await meta.getByShortId(q.subject).catch(() => null)
         if (!art || art.org_id !== org) return c.json({ jobs: [] })
         subjectJson = [art.short_id, art.id].map((id) => JSON.stringify({ kind: "artifact", id }))
+        askedBy = who.id
       }
       // `mine`: jobs you asked, or on agents you manage (canManageAgent's rule, read with one
       // membership lookup). A workspace owner manages every agent, so every job is theirs.
@@ -347,6 +353,7 @@ export const jobRoutes = (ctx: AppContext) => {
         parentId: q.parent || undefined,
         reportArtifactId,
         subjectJson,
+        askedBy,
         askedByOrAgent,
         viewer: (await actingHuman(c))?.id ?? "",
         before: q.before || undefined,

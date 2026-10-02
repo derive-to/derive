@@ -6318,10 +6318,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "A page's short id: only the jobs asked about that page."
+              "description": "A page's short id: only the jobs you asked about that page."
             },
             "required": false,
-            "description": "A page's short id: only the jobs asked about that page.",
+            "description": "A page's short id: only the jobs you asked about that page.",
             "name": "subject",
             "in": "query"
           }

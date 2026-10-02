@@ -1375,7 +1375,7 @@ export const api = {
       mine?: boolean
       /** The job whose report page has this short id. */
       report?: string
-      /** Only jobs asked about this page (its short id). */
+      /** Only the jobs you asked about this page (its short id). */
       subject?: string
     } = {},
   ): Promise<{ jobs: Job[] }> => {

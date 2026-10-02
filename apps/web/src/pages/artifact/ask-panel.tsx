@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { ArrowUp } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useId, useRef, useState } from "react"
 import { type Agent, ApiError, api, type JobDetail } from "@/api"
 import { Icon } from "@/components/icons"
 import { LoadError } from "@/components/shared/load-error"
@@ -68,7 +68,7 @@ export function useAskOptions(shortId: string, publisherId: string | null, enabl
       ]
     : []
   const options = all.filter((o, i) => all.findIndex((x) => x.id === o.id) === i)
-  const returning = !!asks.data?.some((j) => j.asked_by === me?.id)
+  const returning = (asks.data?.length ?? 0) > 0
   return {
     options,
     available: options.length > 0 || returning,
@@ -119,11 +119,14 @@ export function AskPanel({
   const asks = useQuery(pageAsksQuery(shortId))
   // undefined: resume the latest conversation; null: a fresh one (New); else that job.
   const [chosen, setChosen] = useState<string | null | undefined>(undefined)
-  const latest = asks.data?.find((j) => j.asked_by === me?.id)?.id ?? null
+  const latest = asks.data?.[0]?.id ?? null
   const followId = chosen === undefined ? latest : chosen
   const q = useQuery({
     ...jobQuery(followId ?? ""),
     enabled: !!followId,
+    // A reload restores the persisted copy, which may be from before it settled: the events
+    // only say what changes from here on, so read it fresh once on mount.
+    refetchOnMount: "always",
     // The events say what changes from here on; the slow poll is only the fallback for a
     // stream that dropped.
     refetchInterval: (query) => {
@@ -152,7 +155,11 @@ export function AskPanel({
     !["cancelled", "lost", "needs_you"].includes(job.status) &&
     !(builtIn && job.status === "running")
   const waiting = !!job && builtIn && job.status === "running"
+  // Only the built-in Derive's jobs are the asker's alone (it reads with their permissions);
+  // any other agent's job is the workspace's to see, like the pages it publishes.
+  const privateToMe = job ? builtIn : (option?.id ?? DERIVE) === DERIVE
 
+  const titleId = useId()
   const list = useRef<HTMLDivElement>(null)
   const count = job?.messages.length ?? 0
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on each new message.
@@ -162,15 +169,28 @@ export function AskPanel({
   }, [count, job?.status])
 
   return (
-    <div data-testid="ask-panel" className="flex min-h-0 flex-1 flex-col">
+    <section
+      data-testid="ask-panel"
+      aria-labelledby={titleId}
+      className="flex min-h-0 flex-1 flex-col"
+    >
       <div className="flex items-center gap-1 border-b border-border-soft py-1.5 pl-2.5 pr-2">
         <div className="flex min-w-0 flex-1 flex-col pl-1.5">
-          <span data-testid="ask-panel-title" className="truncate text-sm font-medium">
+          <h2 id={titleId} data-testid="ask-panel-title" className="truncate text-sm font-medium">
             Ask {name}
-          </span>
-          <span className="flex items-center gap-1 text-2xs text-muted-foreground">
-            <Icon name="lock" size={10} />
-            Only you see this conversation
+          </h2>
+          <span
+            data-testid="ask-panel-audience"
+            className="flex items-center gap-1 text-2xs text-muted-foreground"
+          >
+            {privateToMe ? (
+              <>
+                <Icon name="lock" size={10} />
+                Only you see this conversation
+              </>
+            ) : (
+              "Your workspace can see this conversation"
+            )}
           </span>
         </div>
         <Button
@@ -246,8 +266,12 @@ export function AskPanel({
         continueJob={continuing ? job?.id : undefined}
         disabled={waiting || job?.status === "needs_you" || (!continuing && !option)}
         onAsked={(id) => setChosen(id)}
+        privateToMe={privateToMe}
+        // A desktop opening (the top bar's Ask) puts the caret in the box; a phone's tab does
+        // not, so the keyboard does not cover the sheet before anyone asked for it.
+        focusOnOpen={!!onClose}
       />
-    </div>
+    </section>
   )
 }
 
@@ -279,6 +303,12 @@ function Conversation({
     (e): e is typeof e & { ref: string; version: number } =>
       e.kind === "page" && !!e.ref && typeof e.version === "number",
   )
+  // Undo puts back the page as it was before this conversation first changed it, so a run
+  // that published two versions is undone whole, not to its own first draft. Only while its
+  // newest version is still the page's current one: a later publish by anyone is not undone.
+  const here = published.filter((e) => e.ref === shortId).map((e) => e.version)
+  const first = here.length ? Math.min(...here) : 0
+  const last = here.length ? Math.max(...here) : 0
   return (
     <div data-testid="ask-job" data-status={job.status} className="flex flex-col gap-3">
       {job.messages.map((m) =>
@@ -330,16 +360,20 @@ function Conversation({
               {e.label} published by {name}, for you
             </Link>
           )}
-          {onUndo && e.ref === shortId && e.version === currentVersion && e.version > 1 && (
-            <Button
-              variant="ghost"
-              size="xs"
-              data-testid="ask-undo"
-              onClick={() => onUndo(e.version - 1)}
-            >
-              Undo
-            </Button>
-          )}
+          {onUndo &&
+            e.ref === shortId &&
+            e.version === last &&
+            last === currentVersion &&
+            first > 1 && (
+              <Button
+                variant="ghost"
+                size="xs"
+                data-testid="ask-undo"
+                onClick={() => onUndo(first - 1)}
+              >
+                Undo
+              </Button>
+            )}
         </div>
       ))}
       {open && (
@@ -382,6 +416,8 @@ function AskComposer({
   continueJob,
   disabled,
   onAsked,
+  privateToMe,
+  focusOnOpen,
 }: {
   shortId: string
   /** The picker's options; empty while continuing a conversation (its agent is fixed). */
@@ -392,8 +428,16 @@ function AskComposer({
   continueJob?: string
   disabled: boolean
   onAsked: (jobId: string) => void
+  /** Derive's conversations are the asker's alone; another agent's job the workspace sees. */
+  privateToMe: boolean
+  focusOnOpen: boolean
 }) {
   const [text, setText] = useState("")
+  const field = useRef<HTMLTextAreaElement>(null)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once, when the panel opens.
+  useEffect(() => {
+    if (focusOnOpen) field.current?.focus()
+  }, [])
   const send = useApiMutation({
     mutationFn: (body: string) =>
       continueJob
@@ -417,6 +461,7 @@ function AskComposer({
       }}
     >
       <Textarea
+        ref={field}
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
@@ -473,8 +518,10 @@ function AskComposer({
           <ArrowUp />
         </Button>
       </div>
-      <p className="text-2xs text-muted-foreground">
-        Private to you. If {name} changes the page, the new version shows in Activity.
+      <p data-testid="ask-footnote" className="text-2xs text-muted-foreground">
+        {privateToMe
+          ? `Private to you. If ${name} changes the page, the new version shows in Activity.`
+          : "Your team can see this job and its answer."}
       </p>
     </form>
   )
