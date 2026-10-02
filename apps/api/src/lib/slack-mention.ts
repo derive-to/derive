@@ -521,7 +521,8 @@ export const handleSlackMention = async (
       flags: { agentWrites: settings.agentWrites },
     })
     const res = await runChatTurn(
-      { model },
+      // This runs after Slack's ack, on the same waitUntil clock as a page ask.
+      { model, budgetMs: deps.ctx.attendedTurnBudgetMs },
       {
         jobId,
         transcript: [

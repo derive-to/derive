@@ -479,6 +479,9 @@ export const jobRoutes = (ctx: AppContext) => {
       // (visibleJob), and it meets every gate an ask does, page access included: a page they
       // lost access to since is not read again on their behalf.
       if (isPageAsk(job)) {
+        // Asked by a person on the page, never driven by an agent's token: the same refusal
+        // the opening ask gives.
+        if (await agentFor(c)) return bail(fail(c, 404, "not found"))
         if (job.status === "running")
           return bail(fail(c, 409, "Derive is still answering; wait for it to finish"))
         const b = await readJson(c, z.object({ body_md: z.string().trim().min(1).max(20_000) }))

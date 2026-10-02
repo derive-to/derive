@@ -773,6 +773,130 @@ describe("jobs: the built-in Derive, asked from a page", () => {
     expect(refused.status).toBe(503)
     expect(((await refused.json()) as { error: string }).error).toMatch(/No model is configured/)
   })
+
+  it("is asked by a person, not an agent's token, and a follow-up needs the page still readable", async () => {
+    const { app } = await setup("jobs-derive-who", { models: pageReader() })
+    // Ed's own agent: its token acts for Ed, the asker, so only the token check refuses it.
+    const made = await app.request(
+      "/v1/agents",
+      jsonAs(as(ed.email), { name: "Ed's helper", role: "editor" }),
+    )
+    expect(made.status).toBe(201)
+    const agent = (await made.json()) as { id: string; token: string }
+    const page = (await (
+      await publishAs(app, "# Pricing\n\nSeats are billed annually.", {}, as(owner.email))
+    ).json()) as { short_id: string }
+    const subject = { kind: "artifact", id: page.short_id }
+    const byToken = await app.request(
+      "/v1/jobs",
+      jsonAs(bearer(agent.token), { agent_id: "derive", instruction: "Summarize", subject }),
+    )
+    expect(byToken.status).toBe(404)
+
+    const job = (await (
+      await ask(app, ed.email, "derive", "What about seats?", { subject })
+    ).json()) as { id: string }
+    const write = (headers: Record<string, string>) =>
+      app.request(`/v1/jobs/${job.id}/messages`, jsonAs(headers, { body_md: "And monthly?" }))
+    expect((await write(bearer(agent.token))).status).toBe(404)
+
+    // The owner locks the page away from the workspace: Ed's follow-up is not read on his behalf.
+    const locked = await app.request(
+      `/v1/artifacts/${page.short_id}/access`,
+      jsonAs(as(owner.email), { workspaceAccess: "none", linkRole: "none" }, "PATCH"),
+    )
+    expect(locked.status).toBe(200)
+    expect((await write(as(ed.email))).status).toBe(404)
+    const after = (await (
+      await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
+    ).json()) as { messages: unknown[] }
+    expect(after.messages).toHaveLength(2)
+  })
+
+  it("a follow-up waits for the running turn, and a turn past its budget settles failed and says so", async () => {
+    // A model that holds its first answer until the test lets it go.
+    let release: () => void = () => {}
+    const held = new Promise<void>((r) => {
+      release = r
+    })
+    const slow = catalogOf([
+      {
+        id: "m1",
+        label: "M1",
+        isDefault: true,
+        build: () => async (): Promise<ModelTurn> => {
+          await held
+          return { text: "Done.", toolUses: [], costUsd: 0.001, done: true }
+        },
+      },
+    ])
+    // Served after the response, as the deploys do, so the test can act while the turn runs.
+    const { app } = await setup("jobs-derive-running", { models: slow, detachAfterResponse: true })
+    const page = (await (await publishAs(app, "# Plan", {}, as(ed.email))).json()) as {
+      short_id: string
+    }
+    const job = (await (
+      await ask(app, ed.email, "derive", "What is missing?", {
+        subject: { kind: "artifact", id: page.short_id },
+      })
+    ).json()) as { id: string; status: string }
+    expect(job.status).toBe("running")
+    const again = await app.request(
+      `/v1/jobs/${job.id}/messages`,
+      jsonAs(as(ed.email), { body_md: "Also this?" }),
+    )
+    expect(again.status).toBe(409)
+    release()
+    await vi.waitFor(async () => {
+      const now = (await (
+        await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
+      ).json()) as { status: string }
+      expect(now.status).toBe("succeeded")
+    })
+
+    // Reads the page (a call that comes back and costs), then never answers the second call.
+    const stalls = catalogOf([
+      {
+        id: "m1",
+        label: "M1",
+        isDefault: true,
+        build:
+          () =>
+          async (input: { system: string; messages: unknown[] }): Promise<ModelTurn> => {
+            if (input.messages.length > 1) return new Promise<ModelTurn>(() => {})
+            const shortId = /short_id (\w+)\)/.exec(input.system)?.[1] ?? ""
+            return {
+              text: "",
+              toolUses: [{ id: "t1", name: "read", input: { short_id: shortId } }],
+              costUsd: 0.002,
+              done: false,
+            }
+          },
+      },
+    ])
+    const budgeted = await setup("jobs-derive-budget", {
+      models: stalls,
+      attendedTurnBudgetMs: 50,
+    })
+    const plan = (await (await publishAs(budgeted.app, "# Plan", {}, as(ed.email))).json()) as {
+      short_id: string
+    }
+    const late = (await (
+      await ask(budgeted.app, ed.email, "derive", "Read all of it", {
+        subject: { kind: "artifact", id: plan.short_id },
+      })
+    ).json()) as { id: string }
+    const settled = (await (
+      await budgeted.app.request(`/v1/jobs/${late.id}`, { headers: as(ed.email) })
+    ).json()) as {
+      status: string
+      cost_micro_usd: number | null
+      messages: { author_kind: string; body_md: string }[]
+    }
+    expect(settled.status).toBe("failed")
+    expect(settled.cost_micro_usd).toBeGreaterThan(0)
+    expect(settled.messages.at(-1)?.body_md).toMatch(/took too long to answer in one go/)
+  })
 })
 
 describe("jobs: schedules", () => {

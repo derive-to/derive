@@ -154,6 +154,16 @@ export interface AppDeps {
    *  Workers (waitUntil). The Node server sets it; tests leave it off so that work finishes
    *  before they assert. */
   detachAfterResponse?: boolean
+  /**
+   * How long an attended @Derive turn may run before it gives up and settles its job itself.
+   *
+   * Set ONLY where the runtime imposes a deadline the turn cannot see. On Workers the turn runs
+   * after the response through `waitUntil`, which the runtime ends a short while after the
+   * response is sent: the isolate stops, no timer fires, no catch runs, and the job is left
+   * `running` until its lease lapses. So the turn has to give up while it is still alive and can
+   * still write its own failure. Unset on Node, where nothing reclaims the turn.
+   */
+  attendedTurnBudgetMs?: number
   /** Optional dense/semantic search index. Unset ⇒ workspace search stays lexical-only. Both the
    *  edge and a Postgres self-host inject a pgvector adapter (embeddings from Workers AI or, on
    *  self-host, a local ONNX model); it's absent on SQLite / when no embedder is configured. */
@@ -1895,6 +1905,7 @@ export function buildContext(deps: AppDeps) {
     background,
     afterResponse,
     detachesAfterResponse,
+    attendedTurnBudgetMs: deps.attendedTurnBudgetMs,
     overKnownUsage,
     recountUsage: usage.recount,
     rememberSource,

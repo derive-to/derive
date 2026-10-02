@@ -28,9 +28,20 @@ import type { ResolvedChatModel } from "./model-catalog"
  *  the oldest turns fall away rather than growing every call. */
 const TRANSCRIPT_CONTEXT = 12
 
-/** How long a turn holds its job before the reaper may call it lost. Far past any turn ceiling,
- *  so only a request that died mid-turn ever reaches it. */
-export const PAGE_TURN_LEASE_MS = 10 * 60 * 1000
+/**
+ * How long a turn holds its job before the reaper may call it lost.
+ *
+ * Where the runtime puts a ceiling on the turn (attendedTurnBudgetMs, Workers), the turn settles
+ * itself inside that ceiling, so a lease a little past it only ever lapses for an isolate that
+ * died, and the reaper (every minute) frees the job soon after. Without a ceiling (Node) a turn
+ * may legitimately run for minutes, so the lease stays long enough not to reap a live one.
+ */
+const leaseMsFor = (ctx: AppContext) => (ctx.attendedTurnBudgetMs ? 2 * 60_000 : 10 * 60_000)
+
+/** The tools a page ask holds: Derive's own, and not the workspace's connected sources. A page
+ *  ask reads pages that teammates and agents wrote, so the text in front of the model is not the
+ *  asker's own words, and a source call is the one tool that reaches outside Derive. */
+const PAGE_TOOLS: ReadonlySet<string> = new Set(["find", "read", "publish"])
 
 /** Is this one of the built-in Derive's page jobs (as opposed to its Slack threads)? */
 export const isPageAsk = (job: JobRecord): boolean => {
@@ -89,13 +100,31 @@ export const continuePageAsk = async (
 ): Promise<JobRecord | null> => {
   const running = await startTurn(ctx, job)
   if (!running) return null
-  await ctx.meta.addJobMessage({
-    id: newId("jm"),
-    job_id: job.id,
-    author_kind: "asker",
-    author_id: askerId,
-    body_md: body,
-  })
+  try {
+    await ctx.meta.addJobMessage({
+      id: newId("jm"),
+      job_id: job.id,
+      author_kind: "asker",
+      author_id: askerId,
+      body_md: body,
+    })
+  } catch (e) {
+    // No message, no turn: put the job back where it was rather than leave it running with
+    // nothing to answer until its lease lapses.
+    await ctx.meta
+      .updateJob(
+        job.id,
+        {
+          status: job.status,
+          started_at: job.started_at,
+          finished_at: job.finished_at,
+          lease_until: null,
+        },
+        { status: "running", started_at: running.started_at },
+      )
+      .catch(() => null)
+    throw e
+  }
   return running
 }
 
@@ -109,7 +138,7 @@ const startTurn = (ctx: AppContext, job: JobRecord) =>
       started_at: new Date().toISOString(),
       finished_at: null,
       needs_json: null,
-      lease_until: new Date(Date.now() + PAGE_TURN_LEASE_MS).toISOString(),
+      lease_until: new Date(Date.now() + leaseMsFor(ctx)).toISOString(),
     },
     { status: job.status },
   )
@@ -142,15 +171,23 @@ export const servePageTurn = async (
       })
     if (done) wakeSettled(deps, done)
   }
+  const stillHeld = async () => {
+    const now = await meta.getJob(job.id).catch(() => null)
+    return now?.status === "running" && now.started_at === job.started_at
+  }
   try {
-    const tools = buildChatTools(ctx, {
-      org: job.org_id,
-      user: asker,
-      seatRole: grant.seatRole,
-      flags: { agentWrites: grant.settings.agentWrites },
-    })
+    const tools = buildChatTools(
+      ctx,
+      {
+        org: job.org_id,
+        user: asker,
+        seatRole: grant.seatRole,
+        flags: { agentWrites: grant.settings.agentWrites },
+      },
+      PAGE_TOOLS,
+    )
     const res = await runChatTurn(
-      { model: grant.model },
+      { model: grant.model, budgetMs: ctx.attendedTurnBudgetMs },
       {
         jobId: job.id,
         transcript: (await meta.listJobMessages(job.id))
@@ -164,6 +201,13 @@ export const servePageTurn = async (
         page: { shortId: page.short_id, title: page.title ?? null },
       },
     )
+    // A turn that outlived its claim (reaped as lost, or another turn started since) does not
+    // speak: its answer would land after the job already said it stopped.
+    if (!(await stillHeld())) {
+      if (res.costMicroUsd) await meta.addJobCost(job.id, res.costMicroUsd).catch(() => null)
+      log.warn("page ask answered after its claim ended", { job: job.id })
+      return
+    }
     await meta.addJobMessage({
       id: newId("jm"),
       job_id: job.id,
@@ -184,6 +228,7 @@ export const servePageTurn = async (
       job: job.id,
       error: e instanceof Error ? e.message : String(e),
     })
+    if (!(await stillHeld())) return
     await meta
       .addJobMessage({
         id: newId("jm"),
