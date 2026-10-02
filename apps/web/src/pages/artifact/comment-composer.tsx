@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query"
 import { ArrowUp } from "lucide-react"
 import {
   type CSSProperties,
@@ -19,6 +20,7 @@ import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { PICKER_EMOJI } from "@/lib/emoji"
+import { workspaceQuery } from "@/lib/queries"
 import { useIsMobile } from "@/lib/use-is-mobile"
 import { cn } from "@/lib/utils"
 import { useCommentScope } from "./lib/comment-scope"
@@ -102,12 +104,13 @@ export function MentionField({
   const ref = useRef<HTMLTextAreaElement & HTMLInputElement>(null)
   const backdropRef = useRef<HTMLDivElement>(null)
   const { shortId } = useCommentScope()
-  // Is @derive worth offering? Same flag, same cached read the artifact page already made
-  // (staleTime keeps this a cache hit, not a second request).
+  // Is @derive worth offering? Only where something answers it: the workspace's `assistant`
+  // (this deploy has a model and does not exclude the workspace), the same read the page's
+  // Ask button makes (staleTime keeps this a cache hit, not a second request).
   // surface-ignore: an ambient read that degrades to "Derive is not offered in the picker".
   // A failure here costs one optional menu row; every other mention keeps working, so a
   // page-level error state would be wildly out of proportion to what was lost.
-  const chatEnabled = true
+  const chatEnabled = useQuery(workspaceQuery()).data?.assistant === true
   const isMobile = useIsMobile()
   const [menu, setMenu] = useState<{ at: number; end: number; q: string } | null>(null)
   const [results, setResults] = useState<DirUser[]>([])
@@ -170,7 +173,7 @@ export function MentionField({
     return () => {
       cancelled = true
     }
-  }, [menu, shortId])
+  }, [menu, shortId, chatEnabled])
 
   // Is the caret sitting at the end of an "@token"? If so, open the popover.
   const detect = (el: HTMLTextAreaElement | HTMLInputElement) => {

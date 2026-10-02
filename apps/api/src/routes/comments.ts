@@ -184,6 +184,7 @@ export const commentRoutes = (ctx: AppContext) => {
       // fan-out, so they run after the response instead of stacking sequential D1
       // round-trips onto the post (the "couple of seconds to send" people felt).
       bus.publish(artifact.id, { type: "comment.created" })
+      const answerDerive = ctx.answerDeriveMention
       await background(
         commentCreatedAction(
           {
@@ -192,8 +193,12 @@ export const commentRoutes = (ctx: AppContext) => {
             baseUrl: deps.baseUrl,
             notify,
             pokeWebhooks: deps.pokeWebhooks,
-            // @derive in a thread answers from HERE too — same fan-out, same turn.
-            answerDeriveMention: ctx.answerDeriveMention,
+            // @derive in a thread answers from HERE too — same fan-out, same turn. The turn
+            // is a model call, so it runs after the response: on Node, background() would
+            // otherwise hold this POST open until Derive had answered.
+            answerDeriveMention: answerDerive
+              ? (a, cm, asker) => ctx.afterResponse(c, () => answerDerive(a, cm, asker))
+              : undefined,
           },
           artifact,
           created,

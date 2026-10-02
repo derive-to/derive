@@ -1,0 +1,481 @@
+import { useQuery } from "@tanstack/react-query"
+import { Link } from "@tanstack/react-router"
+import { ArrowUp } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
+import { type Agent, ApiError, api, type JobDetail } from "@/api"
+import { Icon } from "@/components/icons"
+import { LoadError } from "@/components/shared/load-error"
+import { Spinner } from "@/components/shared/spinner"
+import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Textarea } from "@/components/ui/textarea"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { useAuth } from "@/ctx"
+import { agentsQuery, jobQuery, pageAsksQuery, workspaceQuery } from "@/lib/queries"
+import { useApiMutation } from "@/lib/use-api-mutation"
+import { useJobEvents } from "@/lib/use-job-events"
+import { cn } from "@/lib/utils"
+import { AnswerBox, useCanSteer, warningFor } from "@/pages/agents/agent-jobs"
+import { machineOf, OPEN_STATUSES, rosterOf } from "@/pages/agents/format"
+import { useMemberNames } from "@/pages/agents/use-member-names"
+import { ActorGlyph } from "./activity-rows"
+
+/** Mirrors the server's canAskAgent: anyone in the workspace, or for an invited-only agent,
+ *  its creator and workspace owners. The server still decides. */
+const canAsk = (a: Agent, meId: string, isOwner: boolean) =>
+  !a.paused && (a.ask_policy === "workspace" || a.created_by === meId || isOwner)
+
+/** The built-in Derive's agent id (DERIVE_AGENT_ID on the server). No agent row has it. */
+const DERIVE = "derive"
+
+/** One answerer the panel offers, and the line that says why it is offered. */
+export type AskOption = { id: string; name: string; note: string }
+
+/**
+ * Who the page offers to ask, in order: the built-in Derive (it answers at once, when this
+ * deploy has a model), then the agent that published this page while its machine is on, then the
+ * agents that run on Derive's own machines. An agent on someone's laptop that is off, or that has
+ * nothing to do with this page, would leave the question waiting, so it is not offered.
+ *
+ * The page reads this once: the top bar shows its Ask button when there is someone to ask, or
+ * a conversation of yours about this page to come back to (its agent may since have paused),
+ * and the panel's picker lists the same options.
+ */
+export function useAskOptions(shortId: string, publisherId: string | null, enabled: boolean) {
+  const { me } = useAuth()
+  const agents = useQuery({ ...agentsQuery(), enabled })
+  const workspace = useQuery({ ...workspaceQuery(), enabled })
+  const asks = useQuery({ ...pageAsksQuery(shortId), enabled })
+  const names = useMemberNames()
+  const isOwner = workspace.data?.role === "owner"
+  const askable = rosterOf(agents.data ?? []).filter((a) => me && canAsk(a, me.id, isOwner))
+  const publisher = askable.find((a) => a.id === publisherId)
+  const all: AskOption[] = enabled
+    ? [
+        ...(workspace.data?.assistant ? [{ id: DERIVE, name: "Derive", note: "answers now" }] : []),
+        ...(publisher && machineOf(publisher, names).on
+          ? [{ id: publisher.id, name: publisher.name, note: "made this page · connected" }]
+          : []),
+        ...askable
+          .filter((a) => a.machine === "derive")
+          .map((a) => ({ id: a.id, name: a.name, note: "on a Derive machine" })),
+      ]
+    : []
+  const options = all.filter((o, i) => all.findIndex((x) => x.id === o.id) === i)
+  const returning = !!asks.data?.some((j) => j.asked_by === me?.id)
+  return {
+    options,
+    available: options.length > 0 || returning,
+    agentsError: agents.isError,
+    retryAgents: () => void agents.refetch(),
+  }
+}
+
+const WORD: Record<string, string> = {
+  queued: "Waiting for its machine",
+  running: "Working on it",
+  needs_you: "Needs your answer",
+  failed: "Failed",
+  lost: "Its machine stopped answering",
+  cancelled: "Cancelled",
+}
+
+/**
+ * THE ASK PANEL: a private conversation about this page, beside the page's shared Activity
+ * rather than inside it. A conversation is one job whose subject is the page; follow-ups are
+ * more turns on that job. Opening the panel resumes the latest one you asked about this page
+ * (the server lists them by subject); New starts a fresh one.
+ */
+export function AskPanel({
+  shortId,
+  options,
+  agentsError,
+  onRetryAgents,
+  currentVersion,
+  onGoToVersion,
+  onUndo,
+  onClose,
+}: {
+  shortId: string
+  options: AskOption[]
+  agentsError: boolean
+  onRetryAgents: () => void
+  currentVersion: number
+  onGoToVersion: (n: number) => void
+  /** Restore this version as the newest (the page's own restore). Absent: this reader cannot
+   *  publish here, so a version Derive made is linked but not undoable from the panel. */
+  onUndo?: (n: number) => void
+  /** Absent on a phone, where the sheet carries its own controls. */
+  onClose?: () => void
+}) {
+  const { me } = useAuth()
+  useJobEvents()
+  const asks = useQuery(pageAsksQuery(shortId))
+  // undefined: resume the latest conversation; null: a fresh one (New); else that job.
+  const [chosen, setChosen] = useState<string | null | undefined>(undefined)
+  const latest = asks.data?.find((j) => j.asked_by === me?.id)?.id ?? null
+  const followId = chosen === undefined ? latest : chosen
+  const q = useQuery({
+    ...jobQuery(followId ?? ""),
+    enabled: !!followId,
+    // The events say what changes from here on; the slow poll is only the fallback for a
+    // stream that dropped.
+    refetchInterval: (query) => {
+      const status = query.state.data?.status
+      return !status || OPEN_STATUSES.includes(status) ? 60_000 : false
+    },
+  })
+  const job = followId ? q.data : undefined
+  // A job that is gone (or in another workspace now) is let go, not retried.
+  const gone = q.error instanceof ApiError && q.error.status === 404
+  useEffect(() => {
+    if (gone) setChosen(null)
+  }, [gone])
+
+  const agents = useQuery(agentsQuery())
+  const [picked, setPicked] = useState<string | null>(null)
+  const option = options.find((o) => o.id === picked) ?? options[0]
+  const builtIn = job?.agent_id === DERIVE
+  const jobAgent = builtIn ? "Derive" : agents.data?.find((a) => a.id === job?.agent_id)?.name
+  const name = job ? (jobAgent ?? "Agent") : (option?.name ?? "Derive")
+  // A reply continues the job you asked, unless it can no longer take one: then the next
+  // message starts a new conversation with whoever the picker names.
+  const continuing =
+    !!job &&
+    job.asked_by === me?.id &&
+    !["cancelled", "lost", "needs_you"].includes(job.status) &&
+    !(builtIn && job.status === "running")
+  const waiting = !!job && builtIn && job.status === "running"
+
+  const list = useRef<HTMLDivElement>(null)
+  const count = job?.messages.length ?? 0
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on each new message.
+  useEffect(() => {
+    const el = list.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [count, job?.status])
+
+  return (
+    <div data-testid="ask-panel" className="flex min-h-0 flex-1 flex-col">
+      <div className="flex items-center gap-1 border-b border-border-soft py-1.5 pl-2.5 pr-2">
+        <div className="flex min-w-0 flex-1 flex-col pl-1.5">
+          <span data-testid="ask-panel-title" className="truncate text-sm font-medium">
+            Ask {name}
+          </span>
+          <span className="flex items-center gap-1 text-2xs text-muted-foreground">
+            <Icon name="lock" size={10} />
+            Only you see this conversation
+          </span>
+        </div>
+        <Button
+          variant="ghost"
+          size="xs"
+          data-testid="ask-panel-new"
+          disabled={!followId}
+          onClick={() => setChosen(null)}
+        >
+          <Icon name="plus" />
+          New
+        </Button>
+        {onClose && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label="Close Ask"
+                data-testid="ask-panel-close"
+                onClick={onClose}
+              >
+                <Icon name="close" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Close Ask</TooltipContent>
+          </Tooltip>
+        )}
+      </div>
+
+      <div ref={list} className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto px-3 py-3">
+        {agentsError && (
+          <LoadError
+            layout="inline"
+            title="Couldn’t load agents to ask."
+            testId="ask-agents-retry"
+            onRetry={onRetryAgents}
+          />
+        )}
+        {followId && q.isError && !gone ? (
+          <LoadError
+            layout="inline"
+            title="Couldn’t load this conversation."
+            testId="ask-follow-retry"
+            onRetry={() => void q.refetch()}
+          />
+        ) : job ? (
+          <Conversation
+            job={job}
+            name={name}
+            shortId={shortId}
+            currentVersion={currentVersion}
+            onGoToVersion={onGoToVersion}
+            onUndo={onUndo}
+          />
+        ) : followId || (chosen === undefined && asks.isPending) ? (
+          <Spinner size="sm" className="self-center" />
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            Ask {name} about this page. It reads what you can read.
+          </p>
+        )}
+      </div>
+
+      {/* Keyed on the conversation, so a draft never carries over into a different one. */}
+      <AskComposer
+        key={followId ?? "new"}
+        shortId={shortId}
+        options={continuing ? [] : options}
+        option={option}
+        onPick={setPicked}
+        name={continuing ? name : (option?.name ?? name)}
+        continueJob={continuing ? job?.id : undefined}
+        disabled={waiting || job?.status === "needs_you" || (!continuing && !option)}
+        onAsked={(id) => setChosen(id)}
+      />
+    </div>
+  )
+}
+
+/** The followed job's transcript: your messages on the right, the answers on the left. */
+function Conversation({
+  job,
+  name,
+  shortId,
+  currentVersion,
+  onGoToVersion,
+  onUndo,
+}: {
+  job: JobDetail
+  name: string
+  shortId: string
+  currentVersion: number
+  onGoToVersion: (n: number) => void
+  onUndo?: (n: number) => void
+}) {
+  const { me } = useAuth()
+  const agents = useQuery(agentsQuery())
+  const names = useMemberNames()
+  const canSteer = useCanSteer(job, me?.id)
+  const asked = agents.data?.find((a) => a.id === job.agent_id)
+  // While it waits, say why it might keep waiting (paused, or its machine is off).
+  const warning = job.status === "queued" && asked ? warningFor(asked, names) : null
+  const open = OPEN_STATUSES.includes(job.status)
+  const published = (job.result.effects ?? []).filter(
+    (e): e is typeof e & { ref: string; version: number } =>
+      e.kind === "page" && !!e.ref && typeof e.version === "number",
+  )
+  return (
+    <div data-testid="ask-job" data-status={job.status} className="flex flex-col gap-3">
+      {job.messages.map((m) =>
+        m.author_kind === "asker" ? (
+          <p
+            key={m.id}
+            className="max-w-[85%] self-end rounded-lg bg-muted px-2.5 py-1.5 text-sm whitespace-pre-wrap"
+          >
+            {m.body_md}
+          </p>
+        ) : (
+          <div key={m.id} className="flex items-start gap-2">
+            <ActorGlyph by={name} agent />
+            <p
+              className={cn(
+                "min-w-0 flex-1 text-sm whitespace-pre-wrap",
+                m.progress ? "text-muted-foreground" : "text-foreground",
+              )}
+            >
+              {m.body_md}
+            </p>
+          </div>
+        ),
+      )}
+      {published.map((e) => (
+        <div
+          key={`${e.ref}@${e.version}`}
+          data-testid="ask-published"
+          className="flex items-center gap-2 rounded-lg border border-border px-2.5 py-1.5 text-xs"
+        >
+          <Icon name="history" size={14} className="text-muted-foreground" />
+          {e.ref === shortId ? (
+            <button
+              type="button"
+              data-testid="ask-published-version"
+              className="min-w-0 flex-1 truncate text-left hover:underline"
+              onClick={() => onGoToVersion(e.version)}
+            >
+              <span className="font-mono tabular-nums">v{e.version}</span> published by {name}, for
+              you
+            </button>
+          ) : (
+            <Link
+              to="/artifacts/$ref"
+              params={{ ref: e.ref }}
+              data-testid="ask-published-page"
+              className="min-w-0 flex-1 truncate hover:underline"
+            >
+              {e.label} published by {name}, for you
+            </Link>
+          )}
+          {onUndo && e.ref === shortId && e.version === currentVersion && e.version > 1 && (
+            <Button
+              variant="ghost"
+              size="xs"
+              data-testid="ask-undo"
+              onClick={() => onUndo(e.version - 1)}
+            >
+              Undo
+            </Button>
+          )}
+        </div>
+      ))}
+      {open && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          {job.status !== "needs_you" && <Spinner size="sm" role="presentation" />}
+          {WORD[job.status]}
+        </div>
+      )}
+      {!open && job.status !== "succeeded" && (
+        <p className="text-xs text-muted-foreground">{WORD[job.status]}</p>
+      )}
+      {warning && (
+        <p data-testid="ask-warning" className="text-xs text-warning">
+          {warning}
+        </p>
+      )}
+      {job.status === "needs_you" && canSteer && <AnswerBox job={job} />}
+      {job.report_short_id && (
+        <Link
+          to="/artifacts/$ref"
+          params={{ ref: job.report_short_id }}
+          data-testid="ask-report"
+          className="self-start text-xs font-medium hover:underline"
+        >
+          Report
+        </Link>
+      )}
+    </div>
+  )
+}
+
+/** The composer pinned at the bottom: a new question (to whoever the chip names), or the next
+ *  message on the conversation it continues. */
+function AskComposer({
+  shortId,
+  options,
+  option,
+  onPick,
+  name,
+  continueJob,
+  disabled,
+  onAsked,
+}: {
+  shortId: string
+  /** The picker's options; empty while continuing a conversation (its agent is fixed). */
+  options: AskOption[]
+  option: AskOption | undefined
+  onPick: (id: string) => void
+  name: string
+  continueJob?: string
+  disabled: boolean
+  onAsked: (jobId: string) => void
+}) {
+  const [text, setText] = useState("")
+  const send = useApiMutation({
+    mutationFn: (body: string) =>
+      continueJob
+        ? api.writeJob(continueJob, body)
+        : api.askAgent(option?.id ?? DERIVE, body, { kind: "artifact", id: shortId }),
+    invalidate: [["jobs"]],
+    onSuccess: (job) => {
+      setText("")
+      if (!continueJob) onAsked(job.id)
+    },
+  })
+  const submit = () => {
+    if (text.trim() && !disabled && !send.isPending) send.mutate(text.trim())
+  }
+  return (
+    <form
+      className="flex shrink-0 flex-col gap-1.5 border-t border-border px-2.5 pt-2 pb-2.5"
+      onSubmit={(e) => {
+        e.preventDefault()
+        submit()
+      }}
+    >
+      <Textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            e.preventDefault()
+            submit()
+          }
+        }}
+        placeholder={continueJob ? `Reply to ${name}…` : "Ask about this page…"}
+        aria-label={continueJob ? `Reply to ${name}` : `Ask ${name}`}
+        data-testid="ask-input"
+        className="field-sizing-content max-h-40 min-h-14"
+      />
+      <div className="flex items-center gap-2">
+        {options.length > 1 && option ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="xs"
+                data-testid="ask-agent"
+                aria-label={`Asking ${option.name}`}
+                className="text-muted-foreground"
+              >
+                {option.name}
+                <Icon name="caret" size={12} />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuRadioGroup value={option.id} onValueChange={onPick}>
+                {options.map((o) => (
+                  <DropdownMenuRadioItem key={o.id} value={o.id} data-testid={`ask-agent-${o.id}`}>
+                    <span className="flex flex-col">
+                      <span>{o.name}</span>
+                      <span className="text-2xs text-muted-foreground">{o.note}</span>
+                    </span>
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          <span className="pl-2 text-xs text-muted-foreground">{name}</span>
+        )}
+        <span className="flex-1" />
+        <Button
+          type="submit"
+          size="icon-xs"
+          aria-label="Send"
+          data-testid="ask-send"
+          disabled={!text.trim() || disabled}
+          loading={send.isPending}
+        >
+          <ArrowUp />
+        </Button>
+      </div>
+      <p className="text-2xs text-muted-foreground">
+        Private to you. If {name} changes the page, the new version shows in Activity.
+      </p>
+    </form>
+  )
+}

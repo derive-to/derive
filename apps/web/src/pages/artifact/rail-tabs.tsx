@@ -3,15 +3,18 @@ import { cn } from "@/lib/utils"
 /** The small, shared vocabulary for the artifact's one right rail. Activity (the key is
  * still "comments": every caller and deep link speaks it) must remain first: it is the
  * default reading companion, the one stream of threads and changes. Inspect is optional per
- * artifact and role; it never becomes a parallel primary surface. Asking an agent lives at
- * the top of the Activity stream (margin-ask.tsx), not in a tab of its own. */
-export type RailTab = "comments" | "data" | "references" | "inspect"
+ * artifact and role; it never becomes a parallel primary surface. Ask (ask-panel.tsx) is a
+ * private conversation, kept out of the shared stream: on a desktop the top bar's Ask button
+ * opens it, so the strip there never lists it; on a phone the sheet's strip is the only way
+ * in, so it is the strip's last tab. */
+export type RailTab = "comments" | "data" | "references" | "inspect" | "ask"
 
 const RAIL_LABEL: Record<RailTab, string> = {
   comments: "Activity",
   data: "Data",
   references: "References",
   inspect: "Inspect",
+  ask: "Ask",
 }
 
 /** The rail's tab strip. It stays a handful of buttons rather than a full Tabs primitive: it
@@ -26,6 +29,8 @@ export function RailTabs(props: {
   /** A paper bundle with a .bib: show the References tab. */
   referencesEnabled?: boolean
   inspectEnabled?: boolean
+  /** The phone sheet's strip: list Ask, when there is someone to ask. */
+  askEnabled?: boolean
 }) {
   const {
     tab,
@@ -34,12 +39,14 @@ export function RailTabs(props: {
     dataEnabled = false,
     referencesEnabled = false,
     inspectEnabled = false,
+    askEnabled = false,
   } = props
   const tabs: RailTab[] = [
     "comments",
     ...(dataEnabled ? (["data"] as const) : []),
     ...(referencesEnabled ? (["references"] as const) : []),
     ...(inspectEnabled ? (["inspect"] as const) : []),
+    ...(askEnabled ? (["ask"] as const) : []),
   ]
   return (
     <div className="flex items-center gap-1" data-testid="rail-tabs">

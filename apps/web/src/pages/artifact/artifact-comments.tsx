@@ -53,6 +53,9 @@ export function ArtifactComments(p: {
   /** A paper bundle with a .bib; the References tab lists and edits its entries. */
   referencesEnabled?: boolean
   referencesPanel?: ReactNode
+  /** Someone can be asked about this page: the rail's private Ask conversation. */
+  askEnabled?: boolean
+  askPanel?: ReactNode
   isAnon: boolean
   /** May the caller create comments here (commenter+)? Gates every write affordance;
    *  reading stays open to any authenticated viewer. */
@@ -126,6 +129,8 @@ export function ArtifactComments(p: {
 }) {
   const { isMobile, isAnon, canComment, panel, sel } = p
   const hasRailTabs = !!p.dataEnabled || !!p.referencesEnabled || !!p.inspectEnabled
+  // A phone has no top bar to open Ask from, so there the strip carries it.
+  const hasSheetTabs = hasRailTabs || !!p.askEnabled
   // THE STREAM, built once for both surfaces: the versions (grouped by the server's
   // sessions), the threads, the review rounds, and — after the reader's last visit —
   // the replies. The lens is rail state like `rail` itself.
@@ -222,19 +227,26 @@ export function ArtifactComments(p: {
                 control the mobile peek bar renders, just at the top of a column instead of
                 the top of a sheet. The activity body takes the strip INTO its own header
                 row (one row, not a strip over a heading that repeats the tab's name). */}
-            {panel !== "hidden" && hasRailTabs && p.rail && p.rail !== "comments" && p.onRail && (
-              <div className="flex shrink-0 items-center border-b border-border px-2 py-1.5">
-                <RailTabs
-                  tab={p.rail}
-                  commentCount={p.openCount}
-                  dataEnabled={p.dataEnabled}
-                  referencesEnabled={p.referencesEnabled}
-                  inspectEnabled={p.inspectEnabled}
-                  onTab={p.onRail}
-                />
-              </div>
-            )}
-            {panel !== "hidden" && p.rail === "data" && p.dataEnabled ? (
+            {panel !== "hidden" &&
+              hasRailTabs &&
+              p.rail &&
+              p.rail !== "comments" &&
+              p.rail !== "ask" &&
+              p.onRail && (
+                <div className="flex shrink-0 items-center border-b border-border px-2 py-1.5">
+                  <RailTabs
+                    tab={p.rail}
+                    commentCount={p.openCount}
+                    dataEnabled={p.dataEnabled}
+                    referencesEnabled={p.referencesEnabled}
+                    inspectEnabled={p.inspectEnabled}
+                    onTab={p.onRail}
+                  />
+                </div>
+              )}
+            {panel !== "hidden" && p.rail === "ask" && p.askEnabled ? (
+              p.askPanel
+            ) : panel !== "hidden" && p.rail === "data" && p.dataEnabled ? (
               p.dataPanel
             ) : panel !== "hidden" && p.rail === "references" && p.referencesEnabled ? (
               p.referencesPanel
@@ -302,8 +314,10 @@ export function ArtifactComments(p: {
             onHeightChange={p.onSheetHeight}
             // The peek bar IS the tab strip on a phone: always docked, so comments never
             // lose their entry point.
-            rail={hasRailTabs ? p.rail : undefined}
+            rail={hasSheetTabs ? p.rail : undefined}
             onRail={p.onRail}
+            askPanel={p.askPanel}
+            askEnabled={p.askEnabled}
             dataPanel={p.dataPanel}
             dataEnabled={p.dataEnabled}
             referencesPanel={p.referencesPanel}

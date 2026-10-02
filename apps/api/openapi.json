@@ -6314,6 +6314,16 @@
             "description": "A report page's short id: the job that report is for.",
             "name": "report",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "A page's short id: only the jobs asked about that page."
+            },
+            "required": false,
+            "description": "A page's short id: only the jobs asked about that page.",
+            "name": "subject",
+            "in": "query"
           }
         ],
         "responses": {

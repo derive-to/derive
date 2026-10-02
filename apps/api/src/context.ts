@@ -1926,6 +1926,8 @@ export function buildContext(deps: AppDeps) {
           models: modelsFor,
           notify,
           chatAllowlist: deps.chatAllowlist,
+          askLimiter,
+          budgetMs: deps.attendedTurnBudgetMs,
         })
       : undefined,
     currentUser,

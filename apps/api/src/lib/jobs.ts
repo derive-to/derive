@@ -452,12 +452,12 @@ export const pullJobs = async (
 }
 
 /** A job was claimed (queued to running): tell its asker's open pages, which re-read it, so a
- *  margin Ask stops saying it waits for a machine the moment one takes it. */
+ *  Ask panel stops saying it waits for a machine the moment one takes it. */
 export const wakeClaimed = (deps: JobDeps, job: JobRecord): void =>
   wake(deps, job.asked_by, "job.started", job)
 
 /** A job served in-process (the built-in Derive) settled: tell its asker's open pages, the same
- *  event a runner's report sends, so the margin Ask shows the reply without waiting on a poll. */
+ *  event a runner's report sends, so the Ask panel shows the reply without waiting on a poll. */
 export const wakeSettled = (deps: JobDeps, job: JobRecord): void =>
   wake(deps, job.asked_by, "job.settled", job)
 

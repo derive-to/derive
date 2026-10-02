@@ -577,6 +577,13 @@ export const agentQuery = (id: string) =>
     queryFn: () => api.getAgent(id),
   })
 
+// The jobs you asked about one page, newest first: the Ask panel resumes the latest.
+export const pageAsksQuery = (shortId: string) =>
+  queryOptions({
+    queryKey: ["jobs", "page", shortId] as const,
+    queryFn: () => api.listJobs({ mine: true, subject: shortId, limit: 20 }).then((r) => r.jobs),
+  })
+
 // Every open job in the workspace: what the Agents home groups agents by.
 export const openJobsQuery = () =>
   queryOptions({

@@ -268,6 +268,10 @@ export interface TurnOutcome {
   }
 }
 
+/** What the person reads when a turn ran out of time (chat-turn's and comment-turn's budgets). */
+export const TURN_TOO_LONG =
+  "That question took too long to answer in one go, so I stopped. Try asking something narrower."
+
 /** Run one turn: ask, nudge once, land. Never throws — a lane that cannot report an
  *  outcome cannot settle its work, and unsettled work is worse than a failed one. */
 export const runTurn = async (input: TurnInput): Promise<TurnOutcome> => {

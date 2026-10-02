@@ -10,7 +10,7 @@ import { subscribeUserEvent } from "./use-user-events"
 // about). Any of them re-reads every job query on screen, so a page following jobs needs only
 // a slow poll as a fallback for jobs nobody told you about (a teammate's).
 //
-// One subscription per tab, however many screens ask for it (the rail, a page, the margin):
+// One subscription per tab, however many screens ask for it (the rail, a page, the Ask panel):
 // the first caller attaches, the last one to go detaches. A burst of events (a pass settling
 // several jobs) is one re-read, a short moment after the last of them.
 

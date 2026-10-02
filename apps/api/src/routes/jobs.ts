@@ -295,6 +295,10 @@ export const jobRoutes = (ctx: AppContext) => {
             .string()
             .optional()
             .describe("A report page's short id: the job that report is for."),
+          subject: z
+            .string()
+            .optional()
+            .describe("A page's short id: only the jobs asked about that page."),
         }),
       },
       responses: {
@@ -318,6 +322,13 @@ export const jobRoutes = (ctx: AppContext) => {
         if (!art || art.org_id !== org) return c.json({ jobs: [] })
         reportArtifactId = art.id
       }
+      // A subject is stored as the asker named it: by short id, or (leniently) by artifact id.
+      let subjectJson: string[] | undefined
+      if (q.subject) {
+        const art = await meta.getByShortId(q.subject).catch(() => null)
+        if (!art || art.org_id !== org) return c.json({ jobs: [] })
+        subjectJson = [art.short_id, art.id].map((id) => JSON.stringify({ kind: "artifact", id }))
+      }
       // `mine`: jobs you asked, or on agents you manage (canManageAgent's rule, read with one
       // membership lookup). A workspace owner manages every agent, so every job is theirs.
       let askedByOrAgent: { askedBy: string; agentIds: string[] } | undefined
@@ -335,6 +346,7 @@ export const jobRoutes = (ctx: AppContext) => {
         kind: split(q.kind, KINDS),
         parentId: q.parent || undefined,
         reportArtifactId,
+        subjectJson,
         askedByOrAgent,
         viewer: (await actingHuman(c))?.id ?? "",
         before: q.before || undefined,
