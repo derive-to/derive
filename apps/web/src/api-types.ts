@@ -531,6 +531,8 @@ export interface paths {
                     content: {
                         "application/json": components["schemas"]["Workspace"] & {
                             multi: boolean;
+                            /** @description Whether the built-in Derive can answer in this workspace: this deploy has a model and does not exclude the workspace. Budget and rate limits are checked per ask. */
+                            assistant: boolean;
                         };
                     };
                 };

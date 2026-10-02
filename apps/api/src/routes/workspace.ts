@@ -147,7 +147,18 @@ export const workspaceRoutes = (ctx: AppContext) => {
       responses: {
         200: {
           description: "The workspace + its members.",
-          content: { "application/json": { schema: Workspace.extend({ multi: z.boolean() }) } },
+          content: {
+            "application/json": {
+              schema: Workspace.extend({
+                multi: z.boolean(),
+                assistant: z
+                  .boolean()
+                  .describe(
+                    "Whether the built-in Derive can answer in this workspace: this deploy has a model and does not exclude the workspace. Budget and rate limits are checked per ask.",
+                  ),
+              }),
+            },
+          },
         },
       },
     }),
@@ -171,6 +182,11 @@ export const workspaceRoutes = (ctx: AppContext) => {
         name: ws?.name ?? DEFAULT_WORKSPACE_NAME,
         role,
         multi: true,
+        // The CONFIGURED catalog, not the live library: the library only ever adds ids to it,
+        // so this answers "can anything answer here" without a settings read on a hot path.
+        assistant:
+          !!ctx.models?.resolve(null) &&
+          (!ctx.chatAllowlist?.length || ctx.chatAllowlist.includes(org)),
         members: members.map((m) => memberJson(m, dir)),
       })
     },

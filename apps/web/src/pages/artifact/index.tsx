@@ -206,6 +206,11 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // payload (history hidden) the lookup runs anyway; it is one indexed read.
   const firstVersion = art?.versions.find((v) => v.n === 1)
   const couldBeReport = !firstVersion || !!firstVersion.agent
+  // The agent that published this page, which the margin Ask offers while its machine is on.
+  const publisherId =
+    art?.versions.find((v) => v.n === art.current_version)?.agent?.id ??
+    firstVersion?.agent?.id ??
+    null
 
   // A restored/in-memory detail can carry a raw capability that expired long before
   // this click. Refresh it before the iframe gets a src; otherwise the first token is
@@ -1870,8 +1875,8 @@ export function Artifact({ template = false }: { template?: boolean }) {
                 // Above the stream; members who can act only.
                 !isGuest && canComment ? (
                   <>
-                    {/* Ask one of the workspace's agents about this page; it opens a job. */}
-                    {inActiveWorkspace && <MarginAsk shortId={shortId} />}
+                    {/* Ask Derive, or an agent that can answer now, about this page. */}
+                    {inActiveWorkspace && <MarginAsk shortId={shortId} publisherId={publisherId} />}
                     {/* The one line that replaces the edit affordance for people who
                         cannot publish here: comments are the suggestion channel. */}
                     {!canPublish ? (

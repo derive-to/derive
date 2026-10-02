@@ -73,6 +73,10 @@ export interface ChatTurnInput {
      */
     note?: string
   }
+  /** The page this conversation is about, when it was asked from one (the margin Ask). Named in
+   *  the prompt so "this page" resolves; the turn reads it with its `read` tool rather than
+   *  being handed the whole body, so a long page costs nothing on a turn that does not need it. */
+  page?: { shortId: string; title: string | null }
   /** The skill index for the tools this turn holds — one line each in the prompt, bodies read
    *  on demand. Empty when the turn has no tools with separate procedure. */
   skills: { name: string; summary: string }[]
@@ -130,8 +134,16 @@ Four things hold on every answer:
 - SAY SO WHEN THERE IS NOTHING. An empty workspace is a fact; plausible invented content is the one failure the person cannot detect by reading your answer.
 - YOU SEE EXACTLY WHAT THEY SEE, no more: your tools run with this person's own permissions. So an empty result means nothing THEY can reach matched it, which is not the same as the workspace not having it — a teammate's invite-only document is invisible to you both. Say "I could not find" rather than "there is no", and when it matters, that a colleague may have it somewhere you cannot look.
 
-HOW TO WRITE. Short, and human with it — a helpful colleague at their desk, not a reference manual. Warmth costs a word or two, not a paragraph. A one-line question gets a one-line answer. No preamble, no restating the question, no summarising what you just said, and no filler enthusiasm. When you are reporting more than two things, use bullets rather than a paragraph that lists them — a bullet per fact, one line each. Markdown renders, so bullets, bold and links are fine; headings in a chat reply are not. Say the answer first; add caveats only if they change what someone would do. Offering an obvious next step is welcome when there is one; inventing one is not. A broad question still gets a full answer, it is just written tightly. Never emit a revision or edits block: this conversation is not about one document, and nothing here would apply it.
+HOW TO WRITE. Short, and human with it — a helpful colleague at their desk, not a reference manual. Warmth costs a word or two, not a paragraph. A one-line question gets a one-line answer. No preamble, no restating the question, no summarising what you just said, and no filler enthusiasm. When you are reporting more than two things, use bullets rather than a paragraph that lists them — a bullet per fact, one line each. Markdown renders, so bullets, bold and links are fine; headings in a chat reply are not. Say the answer first; add caveats only if they change what someone would do. Offering an obvious next step is welcome when there is one; inventing one is not. A broad question still gets a full answer, it is just written tightly. ${
+    input.page
+      ? `Never emit a revision or edits block: nothing here would apply it. A change they ask for goes through the publish tool as a new version of this page, and you say what you changed.`
+      : `Never emit a revision or edits block: this conversation is not about one document, and nothing here would apply it.`
+  }
 ${
+  input.page
+    ? `\nTHIS PAGE: they asked from the page titled ${JSON.stringify(input.page.title ?? input.page.shortId)} (short_id ${input.page.shortId}). "This page", "this doc" and "it" mean that page. Read it with the read tool before you answer anything about what it says.\n`
+    : ""
+}${
   skills.length
     ? `\nSKILLS carry the procedure. Read the matching one with the read tool when you need it:\n${skills.join("\n")}`
     : ""
