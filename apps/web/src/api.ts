@@ -1375,12 +1375,15 @@ export const api = {
       mine?: boolean
       /** The job whose report page has this short id. */
       report?: string
+      /** Only the jobs you asked about this page (its short id). */
+      subject?: string
     } = {},
   ): Promise<{ jobs: Job[] }> => {
     const qs = new URLSearchParams()
     if (q.agent) qs.set("agent", q.agent)
     if (q.mine) qs.set("mine", "1")
     if (q.report) qs.set("report", q.report)
+    if (q.subject) qs.set("subject", q.subject)
     if (q.status?.length) qs.set("status", q.status.join(","))
     if (q.before) qs.set("before", q.before)
     if (q.limit) qs.set("limit", String(q.limit))

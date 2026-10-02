@@ -1,9 +1,9 @@
-// THE BUILT-IN DERIVE, ASKED FROM A PAGE (the margin Ask).
+// THE BUILT-IN DERIVE, ASKED FROM A PAGE (the Ask panel).
 //
 // Its sibling is slack-mention.ts: same job shape (one attended job on DERIVE_AGENT_ID, private
 // to its asker), same turn (chat-turn.ts with Derive's own MCP tools acting as the asker at their
 // seat), same lease. What differs is where the question comes from and where the answer goes: a
-// person on a page asks about THAT page, and the reply is a job message the margin follows, so
+// person on a page asks about THAT page, and the reply is a job message the Ask panel follows, so
 // there is nothing to deliver beyond the job itself.
 //
 // Unlike an agent on someone's machine, nothing has to pick this job up: the request that opened
@@ -12,7 +12,9 @@
 import {
   type ArtifactRecord,
   DERIVE_AGENT_ID,
+  type JobEffect,
   type JobRecord,
+  jobResult,
   newId,
   type OrgSettings,
   type Role,
@@ -24,7 +26,7 @@ import { runChatTurn } from "./chat-turn"
 import { isServerNote, type JobDeps, wakeSettled } from "./jobs"
 import type { ResolvedChatModel } from "./model-catalog"
 
-/** How much of the job's transcript a turn is given. A margin conversation is short; past this
+/** How much of the job's transcript a turn is given. A page conversation is short; past this
  *  the oldest turns fall away rather than growing every call. */
 const TRANSCRIPT_CONTEXT = 12
 
@@ -50,6 +52,28 @@ export const isPageAsk = (job: JobRecord): boolean => {
     return (JSON.parse(job.subject_json) as { kind?: string }).kind === "artifact"
   } catch {
     return false
+  }
+}
+
+/** A version the turn's publish tool landed, read off the tool's own result (an object, or
+ *  its JSON text), so the panel can link it. Anything else is not a publish that landed. */
+const publishedBy = (result: unknown, page: ArtifactRecord): JobEffect | null => {
+  let r = result
+  if (typeof r === "string") {
+    try {
+      r = JSON.parse(r)
+    } catch {
+      return null
+    }
+  }
+  const o = r as { published?: unknown; short_id?: unknown; version?: unknown } | null
+  if (o?.published !== true || typeof o.short_id !== "string") return null
+  if (typeof o.version !== "number") return null
+  return {
+    kind: "page",
+    label: o.short_id === page.short_id ? (page.title ?? "This page") : "A new page",
+    ref: o.short_id,
+    version: o.version,
   }
 }
 
@@ -157,12 +181,23 @@ export const servePageTurn = async (
   const { meta } = ctx
   const deps: JobDeps = { meta, bus: ctx.backplane }
   const fence = { status: "running" as const, started_at: job.started_at }
+  // What this turn published, kept on the job with what earlier turns published.
+  const effects: JobEffect[] = []
   const settle = async (status: "succeeded" | "failed", costMicroUsd: number | null) => {
     if (costMicroUsd) await meta.addJobCost(job.id, costMicroUsd).catch(() => null)
+    const before = jobResult(job)
+    const result = effects.length
+      ? {
+          result_json: JSON.stringify({
+            ...before,
+            effects: [...(before.effects ?? []), ...effects],
+          }),
+        }
+      : {}
     const done = await meta
       .updateJob(
         job.id,
-        { status, finished_at: new Date().toISOString(), lease_until: null },
+        { status, finished_at: new Date().toISOString(), lease_until: null, ...result },
         fence,
       )
       .catch((e) => {
@@ -186,6 +221,16 @@ export const servePageTurn = async (
       },
       PAGE_TOOLS,
     )
+    // The same tools, noting each version a publish lands so the job can link it.
+    const watched = {
+      ...tools,
+      execute: async (name: string, args: unknown) => {
+        const out = await tools.execute(name, args)
+        const landed = name === "publish" ? publishedBy(out, page) : null
+        if (landed) effects.push(landed)
+        return out
+      },
+    }
     const res = await runChatTurn(
       { model: grant.model, budgetMs: ctx.attendedTurnBudgetMs },
       {
@@ -193,7 +238,7 @@ export const servePageTurn = async (
         transcript: (await meta.listJobMessages(job.id))
           .filter((m) => !isServerNote(m))
           .slice(-TRANSCRIPT_CONTEXT),
-        tools,
+        tools: watched,
         workspaceName:
           (await meta.getWorkspace(job.org_id).catch(() => null))?.name ?? "this workspace",
         asker: { name: asker.name, role: grant.seatRole },

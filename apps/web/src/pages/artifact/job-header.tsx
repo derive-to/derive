@@ -22,7 +22,7 @@ const STATUS_WORD: Record<JobStatus, string> = {
 // who asked, when, and how long it took. Every other page reads nothing here. A failed read
 // hides the line; the page underneath is the same page either way.
 export function JobHeader({ shortId }: { shortId: string }) {
-  // A follow-up from the margin reopens the job: its events keep this line current.
+  // A follow-up from the Ask panel reopens the job: its events keep this line current.
   useJobEvents()
   const job = useQuery(reportJobQuery(shortId))
   const agents = useQuery(agentsQuery())

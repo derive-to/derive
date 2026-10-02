@@ -53,11 +53,13 @@ export function MobileComments({
   dataEnabled,
   referencesEnabled,
   inspectEnabled,
+  askPanel,
+  askEnabled,
   openCount,
   editing = false,
   hints,
 }: {
-  /** Above the stream (the margin Ask, suggestion hints), as on the desktop panel. */
+  /** Above the stream (the suggestion / locked one-liners), as on the desktop panel. */
   hints?: ReactNode
   open: boolean
   /** The open threads in stream order — the stepper and the peek preview walk these. */
@@ -81,7 +83,8 @@ export function MobileComments({
    *  is left below it. */
   onHeightChange?: (px: number) => void
   /** THE RAIL on a phone. The peek bar carries Activity (and Data or References where the
-   *  page has them), then Inspect only during an eligible HTML edit session. */
+   *  page has them), then Inspect only during an eligible HTML edit session, then Ask when
+   *  there is someone to ask. */
   rail?: RailTab
   onRail?: (r: RailTab) => void
   dataPanel?: ReactNode
@@ -90,6 +93,9 @@ export function MobileComments({
   dataEnabled?: boolean
   referencesEnabled?: boolean
   inspectEnabled?: boolean
+  /** The private Ask conversation (ask-panel.tsx), its own tab and never in the stream. */
+  askPanel?: ReactNode
+  askEnabled?: boolean
   openCount?: number
 }) {
   // The sheet is ALWAYS docked on a phone (peek is the floor — there is no hidden
@@ -290,7 +296,12 @@ export function MobileComments({
                 dataEnabled={dataEnabled}
                 referencesEnabled={referencesEnabled}
                 inspectEnabled={inspectEnabled}
-                onTab={onRail}
+                askEnabled={askEnabled}
+                onTab={(t) => {
+                  // The conversation needs the room: a peek bar would hide all but its header.
+                  if (t === "ask") setSize("full")
+                  onRail(t)
+                }}
               />
             </div>
           ) : (
@@ -321,7 +332,8 @@ export function MobileComments({
               </Button>
             </div>
           )}
-          {rail === "comments" && canComment && (
+          {/* No strip means Activity is the only view, so New belongs there too. */}
+          {(rail ?? "comments") === "comments" && canComment && (
             <Button
               variant="outline"
               size="sm"
@@ -346,7 +358,9 @@ export function MobileComments({
           </Button>
         </div>
       </div>
-      {rail === "data" && dataEnabled ? (
+      {rail === "ask" && askEnabled ? (
+        askPanel
+      ) : rail === "data" && dataEnabled ? (
         dataPanel
       ) : rail === "references" && referencesEnabled ? (
         referencesPanel

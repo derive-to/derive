@@ -47,6 +47,7 @@ import {
   ArtifactWrongWorkspace,
 } from "./artifact-states"
 import { ArtifactTopBar } from "./artifact-top-bar"
+import { AskPanel, useAskOptions } from "./ask-panel"
 import { BundleBar } from "./bundle-bar"
 import { ActionsCtx } from "./comment-actions"
 import { DeckOrganizer, DeckOrganizerDiscardDialog, useDeckOrganizer } from "./deck-organizer"
@@ -61,7 +62,6 @@ import { canCommentWithRole } from "./lib/comment-access"
 import { bucketThreads } from "./lib/layout"
 import { artifactLoginSearch } from "./lib/login-return"
 import { takeUseIntent } from "./lib/use-intent"
-import { MarginAsk } from "./margin-ask"
 import { PaperLink } from "./paper-link"
 import { parseRef, refFor } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
@@ -198,7 +198,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // List rows do not carry caller membership. Defer guest-only behavior until
   // the detail response resolves rather than briefly rendering the wrong controls.
   const isGuest = !!me && !seeded && art?.is_workspace_member === false
-  // The agent surfaces (margin Ask, a report's job line) act in the ACTIVE workspace, so they
+  // The agent surfaces (the Ask panel, a report's job line) act in the ACTIVE workspace, so they
   // show only on that workspace's own pages: is_workspace_member is false for a page from
   // another workspace, even one the reader has a seat in.
   const inActiveWorkspace = !!me && art?.is_workspace_member === true
@@ -206,7 +206,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // payload (history hidden) the lookup runs anyway; it is one indexed read.
   const firstVersion = art?.versions.find((v) => v.n === 1)
   const couldBeReport = !firstVersion || !!firstVersion.agent
-  // The agent that published this page, which the margin Ask offers while its machine is on.
+  // The agent that published this page, which the Ask panel offers while its machine is on.
   const publisherId =
     art?.versions.find((v) => v.n === art.current_version)?.agent?.id ??
     firstVersion?.agent?.id ??
@@ -387,12 +387,34 @@ export function Artifact({ template = false }: { template?: boolean }) {
   const [activeThread, setActiveThread] = useState<string | null>(null)
   const [hoverThread, setHoverThread] = useState<string | null>(null)
   // The open/hidden comments panel, with its persistence + `c`/Esc hotkeys.
-  const { panel, setPanel } = useCommentsPanel(() => setComposer(null))
+  // `c` is the Activity toggle's twin (toggleActivity, below, once the rail is resolved).
+  const { panel, setPanel } = useCommentsPanel(
+    () => setComposer(null),
+    () => toggleActivity(),
+  )
+  // Who can be asked about this page; with nobody to ask and no conversation to come back to,
+  // Ask is hidden everywhere.
+  const ask = useAskOptions(shortId, publisherId, inActiveWorkspace)
+  const askEnabled = ask.available
+  // The top bar's two rail buttons: each opens the rail on its view, or closes the rail when
+  // its view is already showing.
+  const onAsk = rail === "ask" && askEnabled
+  const toggleActivity = () => {
+    if (panel === "open" && !onAsk) return setPanel("hidden")
+    if (onAsk) setRail("comments")
+    setPanel("open")
+  }
+  const toggleAsk = () => {
+    if (panel === "open" && onAsk) return setPanel("hidden")
+    setRail("ask")
+    setPanel("open")
+  }
   // The reader's position in this artifact's activity — the rail's "New" marker and the
   // header toggle's unread dot measure against it; it advances after a visible dwell with
-  // the rail open, on each arrival while it stays open, and when the rail closes.
+  // the rail open on Activity (not on Ask, which hides it), on each arrival while it stays
+  // open, and when the rail closes.
   const seen = useSeenCursor(`artifact:${shortId}`, {
-    open: panel === "open",
+    open: panel === "open" && !onAsk,
     enabled: !!me,
     arrivals: (art?.versions.length ?? 0) + comments.length + (review?.rounds.length ?? 0),
   })
@@ -1609,9 +1631,12 @@ export function Artifact({ template = false }: { template?: boolean }) {
               collections={art.collections ?? []}
               collectionAccess={art.collection_access ?? []}
               isMobile={isMobile}
-              panelOpen={panel === "open"}
+              panelOpen={panel === "open" && !onAsk}
+              askAvailable={askEnabled}
+              askOpen={panel === "open" && onAsk}
+              onToggleAsk={toggleAsk}
               openCount={openCount}
-              unread={panel === "open" ? 0 : unread}
+              unread={panel === "open" && !onAsk ? 0 : unread}
               isGuest={isGuest}
               isCopying={copyMut.isPending}
               commentsAvailable={commentsAvailable}
@@ -1666,7 +1691,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
               onInsights={() => setSurface("insights")}
               onHistory={() => setSurface("history")}
               onStartEdit={() => startEdit()}
-              onToggleComments={() => setPanel((pn) => (pn === "open" ? "hidden" : "open"))}
+              onToggleComments={toggleActivity}
               onFocus={() => setFocus(true)}
               onCopy={() => copyMut.mutate()}
             />
@@ -1812,7 +1837,9 @@ export function Artifact({ template = false }: { template?: boolean }) {
           {!focus && commentsAvailable && (
             <ArtifactComments
               rail={
-                (dataEnabled || rail !== "data") && (referencesEnabled || rail !== "references")
+                (dataEnabled || rail !== "data") &&
+                (referencesEnabled || rail !== "references") &&
+                (askEnabled || rail !== "ask")
                   ? rail
                   : "comments"
               }
@@ -1827,6 +1854,21 @@ export function Artifact({ template = false }: { template?: boolean }) {
                     error={dynamicQ.isError}
                     // Data is edited on the current version only, like the document.
                     canPublish={effectiveCanPublish && shown === art.current_version}
+                  />
+                ) : undefined
+              }
+              askEnabled={askEnabled}
+              askPanel={
+                askEnabled ? (
+                  <AskPanel
+                    shortId={shortId}
+                    options={ask.options}
+                    agentsError={ask.agentsError}
+                    onRetryAgents={ask.retryAgents}
+                    currentVersion={art.current_version}
+                    onGoToVersion={goToVersion}
+                    onUndo={effectiveCanPublish ? (n) => restore(n) : undefined}
+                    onClose={isMobile ? undefined : () => setPanel("hidden")}
                   />
                 ) : undefined
               }
@@ -1875,8 +1917,6 @@ export function Artifact({ template = false }: { template?: boolean }) {
                 // Above the stream; members who can act only.
                 !isGuest && canComment ? (
                   <>
-                    {/* Ask Derive, or an agent that can answer now, about this page. */}
-                    {inActiveWorkspace && <MarginAsk shortId={shortId} publisherId={publisherId} />}
                     {/* The one line that replaces the edit affordance for people who
                         cannot publish here: comments are the suggestion channel. */}
                     {!canPublish ? (

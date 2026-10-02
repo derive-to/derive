@@ -40,7 +40,13 @@ export function ArtifactTopBar(props: {
   /** Collections whose sharing reaches this artifact — the share dialog's disclosure rows. */
   collectionAccess: CollectionGrant[]
   isMobile: boolean
+  /** The rail is open on Activity (or one of its tabs), not on Ask. */
   panelOpen: boolean
+  /** Someone can be asked about this page: show the Ask button. */
+  askAvailable: boolean
+  /** The rail is open on the Ask conversation. */
+  askOpen: boolean
+  onToggleAsk: () => void
   openCount: number
   /** Activity since the reader's last visit — the ink dot on the closed toggle. */
   unread: number
@@ -251,13 +257,32 @@ export function ArtifactTopBar(props: {
         </DropdownMenu>
       </div>
 
+      {/* Ask and Activity switch the one rail between a private conversation and the page's
+          shared history; the pressed one is showing. Phones reach both from the sheet. */}
+      {!props.isMobile && props.commentsAvailable && props.askAvailable && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className={cn("ml-1", props.askOpen && "bg-accent text-foreground")}
+          data-testid="artifact-ask"
+          onClick={props.onToggleAsk}
+          aria-pressed={props.askOpen}
+        >
+          <Icon name="sparkles" size={16} className="text-muted-foreground" />
+          Ask
+        </Button>
+      )}
       {/* Comments — the discussion panel toggle, terminal (hugs the panel it opens);
           held apart by spacing. On phones the bottom-right FAB owns this. */}
       {!props.isMobile && props.commentsAvailable && (
         <Button
           variant="ghost"
           size="sm"
-          className={cn("relative ml-1", props.panelOpen && "bg-accent text-foreground")}
+          className={cn(
+            "relative",
+            !props.askAvailable && "ml-1",
+            props.panelOpen && "bg-accent text-foreground",
+          )}
           data-testid="artifact-show-comments"
           onClick={props.onToggleComments}
           aria-label={[
@@ -299,14 +324,12 @@ export function ArtifactTopBar(props: {
       )}
       <ReportDialog shortId={shortId} open={reportOpen} onOpenChange={setReportOpen} />
       {!isGuest && (
-        <>
-          <MoveToWorkspaceDialog
-            shortId={shortId}
-            currentOrgId={props.orgId}
-            open={moveOpen}
-            onOpenChange={setMoveOpen}
-          />
-        </>
+        <MoveToWorkspaceDialog
+          shortId={shortId}
+          currentOrgId={props.orgId}
+          open={moveOpen}
+          onOpenChange={setMoveOpen}
+        />
       )}
     </>
   )

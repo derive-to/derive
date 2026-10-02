@@ -11,7 +11,7 @@ import { log } from "../log"
 import type { AgentLoopInput } from "./agent-loop"
 import type { ChatToolSurface } from "./chat-tools"
 import type { ResolvedChatModel } from "./model-catalog"
-import { asTurns, proseContract, runTurn } from "./turn-core"
+import { asTurns, proseContract, runTurn, TURN_TOO_LONG } from "./turn-core"
 
 export interface ChatTurnDeps {
   /** The model this turn runs on — resolved from the catalog by the route, so the person's
@@ -27,10 +27,6 @@ export interface ChatTurnDeps {
    */
   budgetMs?: number
 }
-
-/** What the person reads when a turn ran out of time. */
-export const TURN_TOO_LONG =
-  "That question took too long to answer in one go, so I stopped. Try asking something narrower."
 
 /** What a chat turn produced, for the transcript and the ledger. */
 export interface ChatTurnResult {
@@ -86,7 +82,7 @@ export interface ChatTurnInput {
      */
     note?: string
   }
-  /** The page this conversation is about, when it was asked from one (the margin Ask). Named in
+  /** The page this conversation is about, when it was asked from one (the Ask panel). Named in
    *  the prompt so "this page" resolves; the turn reads it with its `read` tool rather than
    *  being handed the whole body, so a long page costs nothing on a turn that does not need it. */
   page?: { shortId: string; title: string | null }

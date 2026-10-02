@@ -1587,6 +1587,8 @@ export interface paths {
                     mine?: string;
                     /** @description A report page's short id: the job that report is for. */
                     report?: string;
+                    /** @description A page's short id: only the jobs you asked about that page. */
+                    subject?: string;
                 };
                 header?: never;
                 path?: never;

@@ -24,7 +24,7 @@ const loadPanel = (): Panel => {
  * start open, and the page clamps with `effectivePanel` against a persisted
  * desktop "hidden" leaking across a resize. Desktop restores the saved state.
  */
-export function useCommentsPanel(onEscape: () => void) {
+export function useCommentsPanel(onEscape: () => void, onToggleKey?: () => void) {
   const [panel, setPanel] = useState<Panel>(() =>
     typeof window !== "undefined" && window.matchMedia("(max-width:640px)").matches
       ? "open"
@@ -46,6 +46,9 @@ export function useCommentsPanel(onEscape: () => void) {
   // Keep the latest onEscape without resubscribing the listener every render.
   const escRef = useRef(onEscape)
   escRef.current = onEscape
+  // The page may say what `c` means (it toggles Activity, so it never opens the rail on Ask).
+  const toggleRef = useRef(onToggleKey)
+  toggleRef.current = onToggleKey
   // Keyboard: 'c' toggles the panel open/closed; Escape cancels a composer.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -54,7 +57,10 @@ export function useCommentsPanel(onEscape: () => void) {
         return
       }
       if (!bareHotkey(e)) return
-      if (e.key === "c" || e.key === "C") setPanel((p) => (p === "open" ? "hidden" : "open"))
+      if (e.key === "c" || e.key === "C") {
+        if (toggleRef.current) toggleRef.current()
+        else setPanel((p) => (p === "open" ? "hidden" : "open"))
+      }
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)

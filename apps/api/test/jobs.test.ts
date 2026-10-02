@@ -739,6 +739,83 @@ describe("jobs: the built-in Derive, asked from a page", () => {
     expect(after.messages.map((m) => m.author_kind)).toEqual(["asker", "agent", "asker", "agent"])
   })
 
+  it("a page ask that publishes links the version it made, and a page's asks list by subject", async () => {
+    // Revises the page the prompt names, then says so.
+    const reviser = catalogOf([
+      {
+        id: "m1",
+        label: "M1",
+        isDefault: true,
+        build:
+          () =>
+          async (input: { system: string; messages: unknown[] }): Promise<ModelTurn> => {
+            if (input.messages.length > 1)
+              return { text: "Added an owner.", toolUses: [], costUsd: 0.001, done: true }
+            const shortId = /short_id (\w+)\)/.exec(input.system)?.[1] ?? ""
+            return {
+              text: "",
+              toolUses: [
+                {
+                  id: "t1",
+                  name: "publish",
+                  input: { short_id: shortId, content: "# Plan\n\nOwner: Ed." },
+                },
+              ],
+              costUsd: 0.001,
+              done: false,
+            }
+          },
+      },
+    ])
+    const { app } = await setup("jobs-derive-publish", { models: reviser })
+    const page = (await (await publishAs(app, "# Plan", {}, as(ed.email))).json()) as {
+      short_id: string
+    }
+    const other = (await (await publishAs(app, "# Other", {}, as(ed.email))).json()) as {
+      short_id: string
+    }
+    const job = (await (
+      await ask(app, ed.email, "derive", "Give it an owner", {
+        subject: { kind: "artifact", id: page.short_id },
+      })
+    ).json()) as { id: string }
+    const done = (await (
+      await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
+    ).json()) as { status: string; result: { effects?: unknown[] } }
+    expect(done.status).toBe("succeeded")
+    expect(done.result.effects).toEqual([
+      expect.objectContaining({ kind: "page", ref: page.short_id, version: 2 }),
+    ])
+
+    // The asker finds the page's conversation by its subject; nobody else does.
+    const about = async (who: string, shortId: string, limit = 50) =>
+      (
+        (await (
+          await app.request(`/v1/jobs?subject=${shortId}&limit=${limit}`, { headers: as(who) })
+        ).json()) as { jobs: { id: string; asked_by: string }[] }
+      ).jobs
+    expect((await about(ed.email, page.short_id)).map((j) => j.id)).toEqual([job.id])
+    expect(await about(ed.email, other.short_id)).toEqual([])
+    expect(await about(owner.email, page.short_id)).toEqual([])
+
+    // The subject lists the caller's own asks only, so a busy page cannot crowd yours out:
+    // the owner (who manages every agent) asks a workspace agent about it many times, and the
+    // newest of Ed's own is still the one he gets back, while the owner never gets Ed's.
+    const agent = await createAgent(app)
+    for (let i = 0; i < 21; i++)
+      expect(
+        (
+          await ask(app, owner.email, agent.id, `Check ${i}`, {
+            subject: { kind: "artifact", id: page.short_id },
+          })
+        ).status,
+      ).toBe(201)
+    expect((await about(ed.email, page.short_id, 1)).map((j) => j.id)).toEqual([job.id])
+    const owners = await about(owner.email, page.short_id)
+    expect(owners).toHaveLength(21)
+    expect(owners.every((j) => j.asked_by === owner.id)).toBe(true)
+  })
+
   it("is not found for a page the asker cannot read, and refuses plainly with no model", async () => {
     const { app } = await setup("jobs-derive-private", { models: pageReader() })
     const privatePage = (await (

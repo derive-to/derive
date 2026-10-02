@@ -15,6 +15,7 @@ import {
   type ArtifactRecord,
   type BlobStore,
   type CommentRecord,
+  DERIVE_AGENT_ID,
   MAX_ARTIFACT_CHARS,
   type MetaStore,
   NUDGE_LIMIT,
@@ -37,6 +38,7 @@ import {
   documentName,
   runTurn,
   suggestionText,
+  TURN_TOO_LONG,
 } from "./turn-core"
 
 /** Exactly what this lane needs: the comment fan-out's deps (its settle IS a comment) plus a
@@ -45,6 +47,19 @@ import {
 export interface CommentTurnDeps extends CommentActionDeps {
   blobs: BlobStore
   model: ResolvedChatModel
+  /** How long the turn may take before it gives up and says so in the thread
+   *  (attendedTurnBudgetMs). This lane runs after the response, and on Workers that work is
+   *  cut off about 30s later with nothing written; giving up first keeps a reply in the
+   *  thread. Absent = no limit. */
+  budgetMs?: number
+}
+
+/** What a comment turn spent and how it ended, for the job that carries its cost. */
+export interface CommentTurnResult {
+  outcome: "answered" | "failed"
+  costMicroUsd: number | null
+  /** What was posted in the thread. */
+  reply: string
 }
 
 export interface CommentTurnInput {
@@ -73,11 +88,11 @@ const suggestionComment = (revision: Revision): string =>
 export const runCommentTurn = async (
   deps: CommentTurnDeps,
   input: CommentTurnInput,
-): Promise<void> => {
+): Promise<CommentTurnResult> => {
   const { meta, blobs } = deps
   const { artifact, comment, thread, asker } = input
 
-  const reply = async (body: string) => {
+  const reply = async (body: string): Promise<string> => {
     // This is a model protocol, not a heuristic: a normal question mark must never turn every
     // later thread reply into an expensive model call. The marker is stripped before anyone sees
     // the comment, leaving a natural question in the thread.
@@ -97,6 +112,10 @@ export const runCommentTurn = async (
       author_id: DERIVE_AUTHOR_ID,
       ...(awaiting ? { meta: JSON.stringify({ awaiting_reply: true }) } : {}),
     })
+    // Signal-only, like the comment route's own: open pages refetch and the answer appears
+    // in the thread without a reload. This runs after that route's response, so its signal
+    // went out before this reply existed.
+    deps.bus.publish(artifact.id, { type: "comment.created" })
     // The SAME fan-out any other comment runs — which is what puts this answer in the Slack
     // channel, the bells and the webhooks for free. Recursion is not a risk:
     // this comment mentions nobody, and the branch that calls us skips a Derive-authored one.
@@ -105,13 +124,16 @@ export const runCommentTurn = async (
       actorId: DERIVE_AUTHOR_ID,
       onBehalfOf: asker.id,
     })
+    return visible
   }
 
   const version = await meta.getVersion(artifact.id, artifact.current_version)
   const bytes = version ? await blobs.get(version.blob_key) : null
   if (!bytes) {
-    await reply("I could not read this document's current contents, so I have not answered.")
-    return
+    const said = await reply(
+      "I could not read this document's current contents, so I have not answered.",
+    )
+    return { outcome: "failed", costMicroUsd: null, reply: said }
   }
   const source = new TextDecoder().decode(bytes).slice(0, MAX_ARTIFACT_CHARS)
 
@@ -138,7 +160,12 @@ ${contract.text}
 
 ${documentBlock(source, documentName(artifact.short_id, artifact.current_content_type))}`
 
-  const out = await runTurn({
+  // The budget: what the calls that came back cost is charged either way, and once time is
+  // up the abandoned turn may not call the model again.
+  let spentUsd = 0
+  let expired = false
+  const callModel = deps.model.callModel as AgentLoopInput["callModel"]
+  const turn = runTurn({
     system,
     messages: asTurns(thread, (c) => ({
       fromAgent: c.author_id === DERIVE_AUTHOR_ID,
@@ -148,7 +175,12 @@ ${documentBlock(source, documentName(artifact.short_id, artifact.current_content
       speaker: names.get(c.author_id ?? "") ?? c.author,
     })),
     contract,
-    callModel: deps.model.callModel as AgentLoopInput["callModel"],
+    callModel: async (call) => {
+      if (expired) throw new Error("turn budget spent")
+      const res = await callModel(call)
+      spentUsd += res.costUsd ?? 0
+      return res
+    },
     // No tools on this lane yet: the document IS the ground, and the thread is about it.
     maxTurns: NUDGE_LIMIT + 1,
     // A COMMENT MENTION NEVER WRITES THE DOCUMENT, whatever the model drafted: the person
@@ -163,6 +195,26 @@ ${documentBlock(source, documentName(artifact.short_id, artifact.current_content
     }),
   })
 
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const out = deps.budgetMs
+    ? await Promise.race([
+        turn,
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), deps.budgetMs)
+        }),
+      ]).finally(() => clearTimeout(timer))
+    : await turn
+  if (!out) {
+    expired = true
+    turn.catch(() => {})
+    log.warn("comment turn ran out of time", { artifact: artifact.id, thread: comment.thread_id })
+    return {
+      outcome: "failed",
+      costMicroUsd: toMicroUsd(spentUsd),
+      reply: await reply(TURN_TOO_LONG),
+    }
+  }
+
   if (out.failure) {
     log.warn("comment turn produced nothing", {
       artifact: artifact.id,
@@ -170,13 +222,13 @@ ${documentBlock(source, documentName(artifact.short_id, artifact.current_content
       reason: out.failure.reason,
       error: out.failure.error,
     })
-    await reply(
+    const said = await reply(
       out.failure.reply ??
         (out.failure.reason === "model"
           ? "I could not reach the model just now — mention me again and I will retry."
           : "I could not answer that, and I have not changed anything."),
     )
-    return
+    return { outcome: "failed", costMicroUsd: toMicroUsd(out.costUsd), reply: said }
   }
   log.info("comment_turn", {
     artifact: artifact.id,
@@ -185,7 +237,8 @@ ${documentBlock(source, documentName(artifact.short_id, artifact.current_content
     cost_micro_usd: toMicroUsd(out.costUsd),
     model: deps.model.id,
   })
-  await reply(out.reply || "(no reply)")
+  const said = await reply(out.reply || "(no reply)")
+  return { outcome: "answered", costMicroUsd: toMicroUsd(out.costUsd), reply: said }
 }
 
 /**
@@ -209,6 +262,11 @@ export const answerDeriveMention =
     /** The operator allowlist, when the deploy pays. Same meaning as DERIVE_CHAT_ALLOWLIST. */
     chatAllowlist?: string[]
     pokeWebhooks?: () => void
+    /** The page ask's limiter, keyed the way that route keys a signed-in person, so asking
+     *  Derive in a comment and in the Ask panel draw on one rate. Absent = no limit. */
+    askLimiter?: ((key: string) => Promise<{ ok: boolean; retryAfter?: number }>) | null
+    /** The turn's time budget (attendedTurnBudgetMs). */
+    budgetMs?: number
   }) =>
   async (
     artifact: ArtifactRecord,
@@ -222,15 +280,17 @@ export const answerDeriveMention =
     // An anonymous or agent author has no seat to act through, and this lane acts AS the asker.
     if (!asker) return quiet("no human asker")
 
-    // EVERY RUNG, ONCE (lib/chat-gate.ts). No rate key: this arrival rides the comment route's
-    // own limiter, so a second one here would charge the same person twice for one action.
+    // EVERY RUNG, ONCE (lib/chat-gate.ts). The comment route's limiter counted the comment;
+    // this one counts the model turn, on the same key a page ask uses, because a mention
+    // spends what an ask spends.
     const gate = await liveChatArrival(
       {
         meta,
         models: deps.models,
         chatAllowlist: deps.chatAllowlist,
+        askLimiter: deps.askLimiter,
       },
-      { org: artifact.org_id, userId: asker.id },
+      { org: artifact.org_id, userId: asker.id, rateKey: `id:${asker.id}` },
     )
     // Silence (logged), not a message: unlike Slack, nobody is waiting on a reply that never
     // existed — the comment they wrote posted fine.
@@ -242,7 +302,62 @@ export const answerDeriveMention =
       .listComments(artifact.id, { threadId: comment.thread_id })
       .catch(() => [comment])
 
-    await runCommentTurn(
+    // THE LEDGER. The monthly budget is read from job costs, so a turn with no job would
+    // spend without counting. One attended job per mention on the built-in Derive, private to
+    // its asker like every other Derive job. No subject: the thread is the conversation, and
+    // a page subject would make it a page ask that the Ask panel continues.
+    const job = await meta
+      .createJob({
+        id: newId("job"),
+        org_id: artifact.org_id,
+        agent_id: DERIVE_AGENT_ID,
+        kind: "ask",
+        instruction: comment.body_md,
+        asked_by: asker.id,
+        payer_id: asker.id,
+        attended: 1,
+        subject_json: null,
+        meta_json: JSON.stringify({
+          via: "comment",
+          artifact: artifact.short_id,
+          thread: comment.thread_id,
+        }),
+      })
+      .catch((e) => {
+        log.warn("derive mention job not opened", { comment: comment.id, error: String(e) })
+        return null
+      })
+    if (!job) return quiet("job not opened")
+    const startedAt = new Date().toISOString()
+    await meta
+      .addJobMessage({
+        id: newId("jm"),
+        job_id: job.id,
+        author_kind: "asker",
+        author_id: asker.id,
+        body_md: comment.body_md,
+      })
+      .catch(() => null)
+    const running = await meta
+      .updateJob(job.id, {
+        status: "running",
+        started_at: startedAt,
+        // Past the budget where there is one, so only a turn whose isolate died lapses.
+        lease_until: new Date(
+          Date.now() + (deps.budgetMs ? 2 * 60_000 : 10 * 60_000),
+        ).toISOString(),
+      })
+      .catch(() => null)
+    // Not running means no turn: settle it now, so an attended job (which nothing claims)
+    // never waits as queued for ever.
+    if (!running) {
+      await meta
+        .updateJob(job.id, { status: "failed", finished_at: new Date().toISOString() })
+        .catch((e) => log.warn("derive mention job not settled", { job: job.id, error: String(e) }))
+      return quiet("job not started")
+    }
+
+    const result = await runCommentTurn(
       {
         meta,
         blobs: deps.blobs,
@@ -251,6 +366,7 @@ export const answerDeriveMention =
         notify: deps.notify,
         pokeWebhooks: deps.pokeWebhooks,
         model,
+        budgetMs: deps.budgetMs,
       },
       {
         artifact,
@@ -258,5 +374,32 @@ export const answerDeriveMention =
         thread: thread.length ? thread : [comment],
         asker,
       },
-    )
+    ).catch((e) => {
+      log.error("comment turn failed", { comment: comment.id, error: String(e) })
+      return null
+    })
+    // Settle best effort: the reply in the thread matters more than the row.
+    if (result?.costMicroUsd) await meta.addJobCost(job.id, result.costMicroUsd).catch(() => null)
+    if (result)
+      await meta
+        .addJobMessage({
+          id: newId("jm"),
+          job_id: job.id,
+          author_kind: "agent",
+          author_id: DERIVE_AGENT_ID,
+          body_md: result.reply,
+          meta_json: JSON.stringify({ via: "comment", outcome: result.outcome }),
+        })
+        .catch(() => null)
+    await meta
+      .updateJob(
+        job.id,
+        {
+          status: result?.outcome === "answered" ? "succeeded" : "failed",
+          finished_at: new Date().toISOString(),
+          lease_until: null,
+        },
+        { status: "running", started_at: startedAt },
+      )
+      .catch((e) => log.warn("derive mention job settle failed", { job: job.id, error: String(e) }))
   }

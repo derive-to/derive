@@ -261,6 +261,8 @@ export interface JobQuery {
   askedBy?: string
   /** Only the job whose report page is this artifact. */
   reportArtifactId?: string
+  /** Only jobs whose subject_json is one of these (a page's selector, by short id or id). */
+  subjectJson?: readonly string[]
   /** Only jobs this person asked, or on one of these agents (the inbox's "mine"). */
   askedByOrAgent?: { askedBy: string; agentIds: readonly string[] }
   /** The person listing. When set (even to ""), the built-in Derive's jobs are kept only
