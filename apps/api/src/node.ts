@@ -31,7 +31,13 @@ import { sharpShrinker } from "./lib/image-shrink-node"
 import { graphAware, graphPass } from "./lib/job-graph"
 import { machineDepsFrom, machinePass } from "./lib/job-machine"
 import { jobTick } from "./lib/jobs"
-import { catalogFromGateway, type GatewayConfig, gatewayModel } from "./lib/model-catalog"
+import {
+  catalogFromGateway,
+  type GatewayConfig,
+  gatewayModel,
+  libraryGateway,
+  openAiGateway,
+} from "./lib/model-catalog"
 import { modelSource, readLibrary } from "./lib/model-library"
 import { jobAnnouncer } from "./lib/notify-job"
 import { NODE_REPO_CAPS } from "./lib/repo-fetch"
@@ -353,6 +359,8 @@ const backplane = createInProcessBackplane()
  *  are silent-at-boot, loud-at-3am failures, so an incomplete set is treated as unset and warned
  *  about once here. */
 const modelGateway = (): GatewayConfig | null => {
+  const direct = openAiGateway(process.env.OPENAI_API_KEY)
+  if (direct) return direct
   const baseUrl = process.env.DERIVE_MODEL_BASE_URL
   const apiKey = process.env.DERIVE_MODEL_API_KEY
   const model = gatewayModel(baseUrl, process.env.DERIVE_MODEL_NAME)
@@ -382,7 +390,9 @@ const gatewayModels = catalogFromGateway(modelGateway())
 // …and the LIVE view of it: the configured catalog widened, per turn, by the operator's model
 // library. This sender is built once at boot and outlives every settings change, so it takes
 // the source rather than the catalog — see lib/model-library.ts.
-const gatewayModelSource = modelSource(gatewayModels, modelGateway(), () => readLibrary(meta))
+const gatewayModelSource = modelSource(gatewayModels, libraryGateway(modelGateway()), () =>
+  readLibrary(meta),
+)
 
 const channelSenders: ChannelSenders = {
   email: emailDeliverySender(
@@ -495,7 +505,7 @@ const app = createApp({
   // The gateway that catalog was built from, so the operator's model library can reach an id
   // the environment never named — same endpoint, same key, no new secret. Without it the
   // library can still relabel and pin a lane, but not ADD. See lib/model-library.ts.
-  modelGateway: gateway ?? undefined,
+  modelGateway: libraryGateway(gateway),
   chatAllowlist: (process.env.DERIVE_CHAT_ALLOWLIST ?? "")
     .split(",")
     .map((x) => x.trim())

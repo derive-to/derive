@@ -352,6 +352,11 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "true",
   },
   {
+    name: "OPENAI_API_KEY",
+    group: "advanced",
+    doc: "Direct OpenAI key for Luna chat. Uses gpt-6-luna through Responses with medium reasoning. Takes precedence over legacy gateway configuration and offers only Luna. Never store this key in a tracked file.",
+  },
+  {
     name: "DERIVE_MODEL_BASE_URL",
     group: "advanced",
     doc: "Root of an OPENAI-COMPATIBLE model endpoint (Fireworks, OpenRouter, Together, a\nself-hosted gateway); `/chat/completions` is appended. It is the model Derive calls itself:\nthe one that writes @Derive replies in comments and Slack. Managed agent jobs never use it; each job\nruns on its agent's model account, or on an owner machine's own Claude Code or Codex login.\n\nAn `openrouter.ai` endpoint also receives Derive's bounded public read tool belt: web search,\nURL fetch, and current date/time. OpenRouter executes those server tools inside the model\nrequest; other compatible gateways receive only Derive's ordinary function tools.\n\nThis deployment holds the key and spends it for every workspace on it, metered against each\nworkspace's allowance. That is the hosted posture (derive.to sets all three), and it is\nequally right for a single-tenant box, where the operator is the only user. On a shared host,\nDERIVE_CHAT_ALLOWLIST limits which workspaces may spend it.\n\nRequires DERIVE_MODEL_API_KEY. OpenRouter defaults to openai/gpt-6-luna when DERIVE_MODEL_NAME is unset. Other gateways require an explicit model name.",

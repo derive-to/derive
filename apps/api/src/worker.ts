@@ -38,7 +38,13 @@ import {
 import { graphAware, graphPass } from "./lib/job-graph"
 import { machineDepsFrom, machinePass } from "./lib/job-machine"
 import { jobTick } from "./lib/jobs"
-import { catalogFromGateway, type GatewayConfig, gatewayModel } from "./lib/model-catalog"
+import {
+  catalogFromGateway,
+  type GatewayConfig,
+  gatewayModel,
+  libraryGateway,
+  openAiGateway,
+} from "./lib/model-catalog"
 import { jobAnnouncer } from "./lib/notify-job"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
@@ -149,6 +155,7 @@ export interface Env {
   /** OpenAI-compatible model gateway for ATTENDED chat. All three or none — an incomplete
    *  set is treated as unset, so chat stays honestly off rather than 401ing every turn. */
   DERIVE_MODEL_BASE_URL?: string
+  OPENAI_API_KEY?: string
   DERIVE_MODEL_API_KEY?: string
   DERIVE_MODEL_NAME?: string
   /** Comma-separated ADDITIONAL model ids the same gateway serves, offered to chat as a
@@ -339,7 +346,7 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // The gateway that catalog was built from, so the operator's model library can reach an
         // id the environment never named — same endpoint, same key, no new secret. Without it
         // the library can still relabel and pin a lane, but not ADD. See lib/model-library.ts.
-        modelGateway: workerGateway(env),
+        modelGateway: libraryGateway(workerGateway(env)),
         // Code Mode stays read-only in mcp-tools/code.ts. The dynamic Worker receives no parent
         // bindings or network access; its find/read calls return through Workers RPC to this host.
         codeSandbox: cloudflareSandbox(env.LOADER, () => {
@@ -580,6 +587,8 @@ export default {
  *  base URL with no key 401s every call and a key with no model id sends an empty model, so an
  *  incomplete set is treated as unset. The Node twin is node.ts's `modelGateway`. */
 function workerGateway(env: Env): GatewayConfig | undefined {
+  const direct = openAiGateway(env.OPENAI_API_KEY)
+  if (direct) return direct
   const {
     DERIVE_MODEL_BASE_URL: baseUrl,
     DERIVE_MODEL_API_KEY: apiKey,

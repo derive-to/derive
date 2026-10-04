@@ -1,3 +1,4 @@
+import { createOpenAI } from "@ai-sdk/openai"
 import { createOpenAICompatible, type MetadataExtractor } from "@ai-sdk/openai-compatible"
 import type { AgentLoopInput } from "./agent-loop"
 import { type PriceTurn, turnFor } from "./model-turn"
@@ -107,7 +108,42 @@ const withExtraBody = (base: typeof fetch, extra: Record<string, unknown>): type
     return base(input, { ...init, body: merged })
   }) as typeof fetch
 
+// Standard US Luna rates per million tokens, including the long-context premium.
+// https://developers.openai.com/api/docs/models/gpt-6-luna (2026-10-04)
+const priceLuna: PriceTurn = ({ usage }) => {
+  const input = usage?.inputTokens
+  const output = usage?.outputTokens
+  if (input === undefined || output === undefined) return null
+  const read = Math.min(input, usage?.inputTokenDetails?.cacheReadTokens ?? 0)
+  const write = Math.min(input - read, usage?.inputTokenDetails?.cacheWriteTokens ?? 0)
+  const long = input > 272_000
+  return (
+    ((input - read - write) * 0.1 * (long ? 2 : 1) +
+      read * 0.01 * (long ? 2 : 1) +
+      write * 0.125 * (long ? 2 : 1) +
+      output * 0.5 * (long ? 1.5 : 1)) /
+    1_000_000
+  )
+}
+
 export const openAiCompatModel = (opts: OpenAiCompatOptions): AgentLoopInput["callModel"] => {
+  // Direct OpenAI uses Responses so Luna can reason while requesting function tools.
+  if (new URL(opts.baseUrl).hostname === "api.openai.com") {
+    const provider = createOpenAI({
+      apiKey: opts.apiKey,
+      baseURL: opts.baseUrl,
+      ...(opts.fetchImpl ? { fetch: opts.fetchImpl } : {}),
+    })
+    return turnFor({
+      model: provider.responses(opts.model.replace(/^openai\//, "")),
+      maxTokens: opts.maxTokens,
+      providerOptions: {
+        openai: { reasoningEffort: "medium", store: false, strictJsonSchema: false },
+      },
+      // Estimate standard token cost so the existing run budget still applies.
+      price: opts.model.replace(/^openai\//, "") === "gpt-6-luna" ? priceLuna : () => null,
+    })
+  }
   const baseFetch = opts.fetchImpl ?? globalThis.fetch.bind(globalThis)
   const doFetch =
     opts.extraBody && Object.keys(opts.extraBody).length
