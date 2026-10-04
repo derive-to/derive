@@ -2,6 +2,8 @@
 
 Luna is the built-in agent. Its stable agent id remains `derive`.
 The native chat lives at `/chat`. Artifact Ask uses the same runtime.
+Both entry points use Luna directly. The previous agent picker is removed.
+Their history includes only private Luna chats. Custom agents remain in Agents.
 The Derive shell, artifact URLs, access checks, reviews, and versions remain in use.
 
 ## Scope

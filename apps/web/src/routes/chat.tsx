@@ -17,13 +17,7 @@ function WorkspaceChat() {
         </p>
       </header>
       <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col">
-        <AskPanel
-          options={[{ id: "derive", name: "Luna", note: "Built into Derive" }]}
-          agentsError={false}
-          onRetryAgents={() => {}}
-          currentVersion={0}
-          onGoToVersion={() => {}}
-        />
+        <AskPanel currentVersion={0} onGoToVersion={() => {}} />
       </div>
     </div>
   )

@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { ArrowUp } from "lucide-react"
 import { useEffect, useId, useRef, useState } from "react"
-import { type Agent, ApiError, api, type JobDetail } from "@/api"
+import { ApiError, api, type JobDetail } from "@/api"
 import { Icon } from "@/components/icons"
 import { LoadError } from "@/components/shared/load-error"
 import { Spinner } from "@/components/shared/spinner"
@@ -17,73 +17,31 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useAuth } from "@/ctx"
-import { agentsQuery, artifactQuery, jobQuery, pageAsksQuery, workspaceQuery } from "@/lib/queries"
+import { artifactQuery, jobQuery, pageAsksQuery, workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useJobEvents } from "@/lib/use-job-events"
 import { cn } from "@/lib/utils"
-import { AnswerBox, useCanSteer, warningFor } from "@/pages/agents/agent-jobs"
-import { machineOf, OPEN_STATUSES, rosterOf } from "@/pages/agents/format"
-import { useMemberNames } from "@/pages/agents/use-member-names"
+import { AnswerBox } from "@/pages/agents/agent-jobs"
+import { OPEN_STATUSES } from "@/pages/agents/format"
 import { ActorGlyph } from "./activity-rows"
 import { mdToHtml } from "./lib/markdown"
 
-/** Mirrors the server's canAskAgent: anyone in the workspace, or for an invited-only agent,
- *  its creator and workspace owners. The server still decides. */
-const canAsk = (a: Agent, meId: string, isOwner: boolean) =>
-  !a.paused && (a.ask_policy === "workspace" || a.created_by === meId || isOwner)
-
-/** The built-in Derive's agent id (DERIVE_AGENT_ID on the server). No agent row has it. */
+/** Luna keeps the existing built-in agent id for saved conversations. */
 const DERIVE = "derive"
 
-/** One answerer the panel offers, and the line that says why it is offered. */
-export type AskOption = { id: string; name: string; note: string }
-
-/**
- * Who the page offers to ask, in order: the built-in Derive (it answers at once, when this
- * deploy has a model), then the agent that published this page while its machine is on, then the
- * agents that run on Derive's own machines. An agent on someone's laptop that is off, or that has
- * nothing to do with this page, would leave the question waiting, so it is not offered.
- *
- * The page reads this once: the top bar shows its Ask button when there is someone to ask, or
- * a conversation of yours about this page to come back to (its agent may since have paused),
- * and the panel's picker lists the same options.
- */
-export function useAskOptions(shortId: string, publisherId: string | null, enabled: boolean) {
-  const { me } = useAuth()
-  const agents = useQuery({ ...agentsQuery(), enabled })
+/** Offer Luna when a model is configured or a private conversation already exists. */
+export function useLunaAsk(shortId: string, enabled: boolean) {
   const workspace = useQuery({ ...workspaceQuery(), enabled })
   const asks = useQuery({ ...pageAsksQuery(shortId), enabled })
-  const names = useMemberNames()
-  const isOwner = workspace.data?.role === "owner"
-  const askable = rosterOf(agents.data ?? []).filter((a) => me && canAsk(a, me.id, isOwner))
-  const publisher = askable.find((a) => a.id === publisherId)
-  const all: AskOption[] = enabled
-    ? [
-        ...(workspace.data?.assistant ? [{ id: DERIVE, name: "Luna", note: "answers now" }] : []),
-        ...(publisher && machineOf(publisher, names).on
-          ? [{ id: publisher.id, name: publisher.name, note: "made this page · connected" }]
-          : []),
-        ...askable
-          .filter((a) => a.machine === "derive")
-          .map((a) => ({ id: a.id, name: a.name, note: "on a Derive machine" })),
-      ]
-    : []
-  const options = all.filter((o, i) => all.findIndex((x) => x.id === o.id) === i)
-  const returning = (asks.data?.length ?? 0) > 0
-  return {
-    options,
-    available: options.length > 0 || returning,
-    agentsError: agents.isError,
-    retryAgents: () => void agents.refetch(),
-  }
+  return { available: enabled && (!!workspace.data?.assistant || !!asks.data?.length) }
 }
 
 const WORD: Record<string, string> = {
-  queued: "Waiting for its machine",
+  queued: "Waiting",
   running: "Working on it",
   needs_you: "Needs your answer",
   failed: "Failed",
-  lost: "Its machine stopped answering",
+  lost: "The run was interrupted",
   cancelled: "Cancelled",
 }
 
@@ -96,9 +54,6 @@ const WORD: Record<string, string> = {
 export function AskPanel({
   shortId = "",
   selection,
-  options,
-  agentsError,
-  onRetryAgents,
   currentVersion,
   onGoToVersion,
   onUndo,
@@ -106,9 +61,6 @@ export function AskPanel({
 }: {
   shortId?: string
   selection?: string
-  options: AskOption[]
-  agentsError: boolean
-  onRetryAgents: () => void
   currentVersion: number
   onGoToVersion: (n: number) => void
   /** Restore this version as the newest (the page's own restore). Absent: this reader cannot
@@ -121,10 +73,10 @@ export function AskPanel({
   const client = useQueryClient()
   useJobEvents()
   const asks = useQuery({
-    queryKey: shortId ? ["jobs", "page", shortId] : ["jobs", "chats"],
+    queryKey: shortId ? ["jobs", "luna", "page", shortId] : ["jobs", "luna", "chats"],
     queryFn: () =>
       shortId
-        ? api.listJobs({ subject: shortId, limit: 30 }).then((r) => r.jobs)
+        ? api.listJobs({ agent: DERIVE, subject: shortId, limit: 30 }).then((r) => r.jobs)
         : api
             .listJobs({ agent: DERIVE, limit: 100 })
             .then((r) => r.jobs.filter((j) => j.chat_context)),
@@ -165,23 +117,13 @@ export function AskPanel({
     if (gone) setChosen(null)
   }, [gone])
 
-  const agents = useQuery(agentsQuery())
-  const [picked, setPicked] = useState<string | null>(null)
-  const option = options.find((o) => o.id === picked) ?? options[0]
-  const builtIn = job?.agent_id === DERIVE
-  const jobAgent = builtIn ? "Luna" : agents.data?.find((a) => a.id === job?.agent_id)?.name
-  const name = job ? (jobAgent ?? "Agent") : (option?.name ?? "Luna")
-  // A reply continues the job you asked, unless it can no longer take one: then the next
-  // message starts a new conversation with whoever the picker names.
+  const workspace = useQuery(workspaceQuery())
+  const name = "Luna"
   const continuing =
     !!job &&
     job.asked_by === me?.id &&
-    !["cancelled", "lost", "needs_you"].includes(job.status) &&
-    !(builtIn && job.status === "running")
-  const waiting = !!job && builtIn && job.status === "running"
-  // Only the built-in Derive's jobs are the asker's alone (it reads with their permissions);
-  // any other agent's job is the workspace's to see, like the pages it publishes.
-  const privateToMe = job ? builtIn : (option?.id ?? DERIVE) === DERIVE
+    !["cancelled", "lost", "needs_you", "running", "queued"].includes(job.status)
+  const waiting = !!job && ["running", "queued"].includes(job.status)
 
   const stop = useApiMutation({
     mutationFn: (id: string) => api.cancelJob(id),
@@ -211,14 +153,8 @@ export function AskPanel({
             data-testid="ask-panel-audience"
             className="flex items-center gap-1 text-2xs text-muted-foreground"
           >
-            {privateToMe ? (
-              <>
-                <Icon name="lock" size={10} />
-                Only you see this conversation
-              </>
-            ) : (
-              "Your workspace can see this conversation"
-            )}
+            <Icon name="lock" size={10} />
+            Only you see this conversation
           </span>
         </div>
         {(asks.data?.length ?? 0) > 0 && (
@@ -311,12 +247,12 @@ export function AskPanel({
         )}
       </div>
       <div ref={list} className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto px-3 py-3">
-        {agentsError && (
+        {workspace.isError && (
           <LoadError
             layout="inline"
-            title="Couldn’t load agents to ask."
-            testId="ask-agents-retry"
-            onRetry={onRetryAgents}
+            title="Couldn’t load Luna settings."
+            testId="ask-settings-retry"
+            onRetry={() => void workspace.refetch()}
           />
         )}
         {followId && q.isError && !gone ? (
@@ -347,20 +283,21 @@ export function AskPanel({
         )}
       </div>
 
+      {!workspace.isPending && !workspace.isError && !workspace.data?.assistant && (
+        <p role="status" className="px-4 py-2 text-xs text-muted-foreground">
+          Luna needs a configured model before it can answer.
+        </p>
+      )}
       {/* Keyed on the conversation, so a draft never carries over into a different one. */}
       <AskComposer
         key={followId ?? "new"}
         shortId={shortId}
         selection={job?.chat_context?.selection ?? selection}
         currentVersion={currentVersion}
-        options={continuing ? [] : options}
-        option={option}
-        onPick={setPicked}
-        name={continuing ? name : (option?.name ?? name)}
+        name={name}
         continueJob={continuing ? job?.id : undefined}
-        disabled={waiting || job?.status === "needs_you" || (!continuing && !option)}
+        disabled={waiting || job?.status === "needs_you" || !workspace.data?.assistant}
         onAsked={(id) => setChosen(id)}
-        privateToMe={privateToMe}
         // A desktop opening (the top bar's Ask) puts the caret in the box; a phone's tab does
         // not, so the keyboard does not cover the sheet before anyone asked for it.
         focusOnOpen={!!onClose}
@@ -386,12 +323,7 @@ function Conversation({
   onUndo?: (n: number) => void
 }) {
   const { me } = useAuth()
-  const agents = useQuery(agentsQuery())
-  const names = useMemberNames()
-  const canSteer = useCanSteer(job, me?.id)
-  const asked = agents.data?.find((a) => a.id === job.agent_id)
-  // While it waits, say why it might keep waiting (paused, or its machine is off).
-  const warning = job.status === "queued" && asked ? warningFor(asked, names) : null
+  const canSteer = job.asked_by === me?.id
   const open = OPEN_STATUSES.includes(job.status)
   const published = (job.result.effects ?? []).filter(
     (e): e is typeof e & { ref: string; version: number } =>
@@ -497,55 +429,29 @@ function Conversation({
       {!open && job.status !== "succeeded" && (
         <p className="text-xs text-muted-foreground">{WORD[job.status]}</p>
       )}
-      {warning && (
-        <p data-testid="ask-warning" className="text-xs text-warning">
-          {warning}
-        </p>
-      )}
       {job.status === "needs_you" && canSteer && <AnswerBox job={job} />}
-      {job.report_short_id && (
-        <Link
-          to="/artifacts/$ref"
-          params={{ ref: job.report_short_id }}
-          data-testid="ask-report"
-          className="self-start text-xs font-medium hover:underline"
-        >
-          Report
-        </Link>
-      )}
     </div>
   )
 }
 
-/** The composer pinned at the bottom: a new question (to whoever the chip names), or the next
- *  message on the conversation it continues. */
+/** A new Luna question or the next message in the current conversation. */
 function AskComposer({
   shortId,
   selection,
   currentVersion,
-  options,
-  option,
-  onPick,
   name,
   continueJob,
   disabled,
   onAsked,
-  privateToMe,
   focusOnOpen,
 }: {
   shortId: string
   selection?: string | null
   currentVersion: number
-  /** The picker's options; empty while continuing a conversation (its agent is fixed). */
-  options: AskOption[]
-  option: AskOption | undefined
-  onPick: (id: string) => void
   name: string
   continueJob?: string
   disabled: boolean
   onAsked: (jobId: string) => void
-  /** Derive's conversations are the asker's alone; another agent's job the workspace sees. */
-  privateToMe: boolean
   focusOnOpen: boolean
 }) {
   const [text, setText] = useState("")
@@ -560,16 +466,11 @@ function AskComposer({
     mutationFn: (body: string) =>
       continueJob
         ? api.writeJob(continueJob, body)
-        : api.askAgent(
-            option?.id ?? DERIVE,
-            body,
-            shortId ? { kind: "artifact", id: shortId } : undefined,
-            {
-              ...(shortId ? { base_version: currentVersion } : {}),
-              ...(selection ? { selection } : {}),
-              model_id: modelId,
-            },
-          ),
+        : api.askAgent(DERIVE, body, shortId ? { kind: "artifact", id: shortId } : undefined, {
+            ...(shortId ? { base_version: currentVersion } : {}),
+            ...(selection ? { selection } : {}),
+            model_id: modelId,
+          }),
     invalidate: [["jobs"]],
     onSuccess: (job) => {
       setText("")
@@ -609,37 +510,8 @@ function AskComposer({
         className="field-sizing-content max-h-40 min-h-14"
       />
       <div className="flex items-center gap-2">
-        {options.length > 1 && option ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="xs"
-                data-testid="ask-agent"
-                aria-label={`Asking ${option.name}`}
-                className="text-muted-foreground"
-              >
-                {option.name}
-                <Icon name="caret" size={12} />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              <DropdownMenuRadioGroup value={option.id} onValueChange={onPick}>
-                {options.map((o) => (
-                  <DropdownMenuRadioItem key={o.id} value={o.id} data-testid={`ask-agent-${o.id}`}>
-                    <span className="flex flex-col">
-                      <span>{o.name}</span>
-                      <span className="text-2xs text-muted-foreground">{o.note}</span>
-                    </span>
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        ) : (
-          <span className="pl-2 text-xs text-muted-foreground">{name}</span>
-        )}
-        {!continueJob && (option?.id ?? DERIVE) === DERIVE && (
+        <span className="pl-2 text-xs text-muted-foreground">Luna</span>
+        {!continueJob && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="xs" data-testid="chat-model">
@@ -675,9 +547,7 @@ function AskComposer({
         </Button>
       </div>
       <p data-testid="ask-footnote" className="text-2xs text-muted-foreground">
-        {privateToMe
-          ? `Private to you. If ${name} changes an artifact, the new version shows in Activity.`
-          : "Your team can see this job and its answer."}
+        Private to you. If Luna changes an artifact, the new version shows in Activity.
       </p>
     </form>
   )

@@ -9,33 +9,9 @@ import {
 import type { AgentLoopInput, LoopTool, ModelTurn } from "./agent-loop"
 import { asMessages } from "./model-messages"
 
-export { asMessages } from "./model-messages"
-
-/**
- * ONE TURN, for every provider.
- *
- * There are two ways to reach a model from here — an operator's OpenAI-compatible gateway
- * (model-openai.ts) and a workspace's own Claude plan (model-anthropic.ts) — and they used to be
- * two hand-written HTTP clients with two SSE readers, two message mappings and two ideas about
- * what a truncated reply meant. The wire formats genuinely differ, so the duplication looked
- * forced; what actually differed was only ever the wire, and the AI SDK already owns that.
- *
- * So this file is everything that is NOT the wire: how the loop's vocabulary maps onto a model
- * call, and what our contract says about the answer. The provider files below it now say only
- * which endpoint, which credential, and how a turn is priced.
- *
- * WHAT THIS FILE IS NOT is an HTTP client, an SSE parser or a tool-call reassembler. Those were
- * ~600 lines across the two adapters, every one of them a place a production bug had already
- * lived: frames split at arbitrary boundaries, `data:` lines that are not the first line of an
- * event, tool-call fragments addressed by an index some gateways omit, readers left uncancelled
- * on workerd. None of it is ours to be right about. The SDK runs unchanged on Node and inside a
- * Worker — proved in test/worker/model-openai-workerd.test.ts, because Derive ships both.
- *
- * WHAT WE STILL DECIDE, because it is judgement about OUR contract rather than about the wire:
- * truncation is a failure and not a short answer; a malformed tool call costs one tool call and
- * not the run; cost is reported when it is known and never guessed; and a gateway that rejects
- * streaming still gets to answer.
- */
+/** Shared provider transport. The SDK handles wire formats and streams.
+ * Truncation fails the turn. Malformed calls become tool errors. Costs are never guessed.
+ * Gateways that reject streaming receive one buffered retry. */
 
 /** The reply hit the token ceiling. Its own type because the CALLER has to tell it apart from a
  *  network failure: one is "try again", the other is "this will never fit", and telling a person
@@ -80,18 +56,9 @@ const withDeadline = <T>(p: Promise<T>, ms: number): Promise<T> =>
     )
   })
 
-/**
- * The tools this turn may call, as the SDK's tool set.
- *
- * NO `execute`. That is the load-bearing detail: a tool with no executor makes the SDK return the
- * call and stop, which is precisely the loop we already have — `agent-loop.ts` owns the turn
- * budget, the tool-output ceiling, the nudge, the announced last turn and tool withdrawal.
- * Handing that to the SDK's own multi-step loop would trade a policy we test for one we configure.
- *
- * VALIDATION IS A PASS-THROUGH, for the same reason neither adapter ever validated: the model's
- * arguments are the TOOL's problem, and a tool that receives nonsense fails with a message the
- * model can act on, whereas a rejected call fails the turn with a message only we can read.
- */
+/** Provider calls return tool requests without execution.
+ * The shared runtime registers executors and bounds SDK steps.
+ * Tool handlers validate arguments and return errors the model can act on. */
 const passThrough = (value: unknown) => ({ success: true as const, value })
 
 type JsonSchemaArg = Parameters<typeof jsonSchema>[0]
@@ -101,7 +68,7 @@ const schemaOf = (params: Record<string, unknown> | undefined): JsonSchemaArg =>
     ? params
     : { type: "object", properties: params ?? {} }) as JsonSchemaArg
 
-export const asTools = (tools: LoopTool[]): ToolSet =>
+const asTools = (tools: LoopTool[]): ToolSet =>
   Object.fromEntries(
     tools.map((t) => [
       t.name,
