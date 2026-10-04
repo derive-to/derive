@@ -35,13 +35,14 @@ export function registerShowTool(tc: ToolContext): void {
       inputSchema: {
         short_id: z.string(),
         version: num("version", { int: true, min: 1 }).optional().describe("Default current."),
+        slide: num("slide", { int: true, min: 1 }).optional().describe("Deck: open on this slide."),
         workspace: wsArg,
       },
       // The MCP Apps key only. ChatGPT's legacy `openai/outputTemplate` alias names a
       // text/html+skybridge resource, which this view is not.
       _meta: { ui: { resourceUri: ARTIFACT_VIEW_URI } },
     },
-    async ({ short_id, version, workspace }) => {
+    async ({ short_id, version, slide, workspace }) => {
       const r = await reach(short_id, workspace, { public: true })
       if (r && "error" in r) return err(r.error)
       if (!r) return notFound(short_id)
@@ -63,7 +64,7 @@ export function registerShowTool(tc: ToolContext): void {
         content: [
           {
             type: "text" as const,
-            text: `Showing "${title}" v${n} to the person: ${url}. When they select a slide or section, it arrives as context; act on that version.`,
+            text: `Showing "${title}" v${n}${slide ? ` at slide ${slide}` : ""} to the person: ${url}. When they select a slide or section, it arrives as context; act on that version.`,
           },
         ],
         structuredContent: {
@@ -71,6 +72,8 @@ export function registerShowTool(tc: ToolContext): void {
           title,
           version: n,
           current_version: a.current_version,
+          // 1-based, as the person counts; the view opens a deck there once it reports in.
+          slide: slide ?? null,
           url,
           workspace: r.org,
         },

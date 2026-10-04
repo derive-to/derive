@@ -61,6 +61,7 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
   let deck = null
   let outline = []
   let picked = ""
+  let startSlide = 0
 
   // One line of artifact text, safe to quote to the model: whitespace collapsed, capped.
   const clean = (s, max) => String(s).replace(/\s+/g, " ").trim().slice(0, max)
@@ -155,9 +156,18 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
             frameUrl = f.url
             scheduleRefresh(f.expires_at)
           }
+          showLatest(r && r.structuredContent)
         })
         .catch(() => {})
     }, ms)
+  }
+
+  // An older card learns of a newer version whenever it renews its token.
+  const showLatest = (sc) => {
+    if (!sc || typeof sc.current_version !== "number" || !art) return
+    art.current_version = sc.current_version
+    $("latest").hidden = !(art.version < art.current_version)
+    $("latest").textContent = "Show v" + art.current_version
   }
 
   const mountFrame = (url, title) => {
@@ -198,6 +208,7 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
     $("open").hidden = !host.openLinks
     if (!frame || frameUrl !== f.url) {
       frameUrl = f.url
+      startSlide = typeof sc.slide === "number" && sc.slide > 1 ? sc.slide : 0
       mountFrame(f.url, sc.title)
     }
     scheduleRefresh(f.expires_at)
@@ -226,6 +237,13 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
       return
     } else return
     if (deck && deck.i >= deck.total) deck.i = Math.max(0, deck.total - 1)
+    // Asked to open on a slide: move there once, as soon as the deck says it is ready.
+    if (deck && startSlide && deck.total >= startSlide) {
+      const n = startSlide - 1
+      startSlide = 0
+      if (deck.i !== n)
+        frame.contentWindow.postMessage({ source: "derive-host", type: deck.sniffed ? "deck-drive" : "deck", action: "goto", n }, "*")
+    }
     showDeck()
     tellModel()
   }

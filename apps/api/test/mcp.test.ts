@@ -4007,6 +4007,34 @@ describe("the show view (MCP App) protocol", () => {
     expect(v.els.get("latest")?.hidden).toBe(true)
   })
 
+  it("opens a deck on the slide it was shown at, once, and learns of newer versions", async () => {
+    const v = boot()
+    v.reply("ui/initialize", { hostCapabilities: caps, hostContext: {} })
+    await settle()
+    const at2 = result()
+    at2.structuredContent = { ...at2.structuredContent, slide: 2 } as typeof at2.structuredContent
+    v.fromHost({ method: "ui/notifications/tool-result", params: at2 })
+    v.fromFrame({ source: "derive-deck", type: "state", i: 0, total: 3 })
+    expect(v.frames[0]?.sent.at(-1)).toEqual({
+      source: "derive-host",
+      type: "deck",
+      action: "goto",
+      n: 1,
+    })
+    // Only once: the person's own navigation afterwards is theirs.
+    const sentBefore = v.frames[0]?.sent.length
+    v.fromFrame({ source: "derive-deck", type: "state", i: 2, total: 3 })
+    expect(v.frames[0]?.sent.length).toBe(sentBefore)
+    // The token renewal reports the artifact moved on: the card offers the newer version.
+    await vi.advanceTimersByTimeAsync(4 * 60_000 + 1_000)
+    const moved = result()
+    moved.structuredContent = { ...moved.structuredContent, current_version: 3 }
+    v.reply("tools/call", moved)
+    await settle()
+    expect(v.els.get("latest")?.hidden).toBe(false)
+    expect(v.els.get("latest")?.textContent).toBe("Show v3")
+  })
+
   it("serves the script inside the view document", () => {
     expect(ARTIFACT_VIEW_HTML).toContain(ARTIFACT_VIEW_SCRIPT)
   })
