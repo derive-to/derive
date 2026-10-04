@@ -3,7 +3,7 @@
   "info": {
     "title": "Derive API",
     "version": "1.0.0",
-    "description": "Derive's HTTP API. Every response shape here is the single source of truth for the web client \u2014 generated from the same Zod schemas that back this reference, so the docs never drift from the running API.\n\n**Auth:** a session cookie (browser) or a bearer token (agents and the CLI). Most write routes are scoped to the caller's active workspace. The `/v1` paths are the stable product surface; `/openapi.json` serves this spec and `/docs` renders it."
+    "description": "Derive's HTTP API. Every response shape here is the single source of truth for the web client — generated from the same Zod schemas that back this reference, so the docs never drift from the running API.\n\n**Auth:** a session cookie (browser) or a bearer token (agents and the CLI). Most write routes are scoped to the caller's active workspace. The `/v1` paths are the stable product surface; `/openapi.json` serves this spec and `/docs` renders it."
   },
   "tags": [
     {
@@ -167,7 +167,7 @@
         "properties": {
           "short_id": {
             "type": "string",
-            "description": "Stable public id \u2014 the /a/<short_id> URL slug."
+            "description": "Stable public id — the /a/<short_id> URL slug."
           },
           "url": {
             "type": "string",
@@ -193,7 +193,7 @@
           },
           "locked": {
             "type": "boolean",
-            "description": "When true, direct publishes are blocked \u2014 changes go through review."
+            "description": "When true, direct publishes are blocked — changes go through review."
           },
           "import_source": {
             "type": "string",
@@ -225,7 +225,7 @@
               "workspace",
               "public"
             ],
-            "description": "v2 access: where it surfaces for discovery \u2014 nowhere, the workspace, or public."
+            "description": "v2 access: where it surfaces for discovery — nowhere, the workspace, or public."
           },
           "password_protected": {
             "type": "boolean",
@@ -403,7 +403,7 @@
             "items": {
               "$ref": "#/components/schemas/CollectionGrant"
             },
-            "description": "Collections whose sharing ADDS reach to this artifact \u2014 the share dialog's disclosure rows, renderable verbatim (the caller's own solo invite-only collection is already excluded). Detail responses only; scoped to collections the caller can see, except the artifact's managers (explicit or seat standing \u2014 never mere link-holders), who see every granting collection."
+            "description": "Collections whose sharing ADDS reach to this artifact — the share dialog's disclosure rows, renderable verbatim (the caller's own solo invite-only collection is already excluded). Detail responses only; scoped to collections the caller can see, except the artifact's managers (explicit or seat standing — never mere link-holders), who see every granting collection."
           },
           "removed": {
             "type": "boolean",
@@ -861,7 +861,7 @@
               "owner",
               null
             ],
-            "description": "Caller's role on the COLLECTION (owner \u21d2 can manage its sharing); null if none."
+            "description": "Caller's role on the COLLECTION (owner ⇒ can manage its sharing); null if none."
           },
           "member_count": {
             "type": "number",
@@ -869,12 +869,12 @@
           },
           "created_by": {
             "type": "string",
-            "description": "Creator's user id \u2014 permanently owner of the collection."
+            "description": "Creator's user id — permanently owner of the collection."
           },
           "owner_name": {
             "type": "string",
             "nullable": true,
-            "description": "Creator's display name for attribution (\"Managed by \u2026\"); null when unknown."
+            "description": "Creator's display name for attribution (\"Managed by …\"); null when unknown."
           }
         },
         "required": [
@@ -1208,7 +1208,7 @@
                 "enum": [
                   "invite"
                 ],
-                "description": "No account yet \u2014 a pending invite was created instead."
+                "description": "No account yet — a pending invite was created instead."
               },
               "invite": {
                 "$ref": "#/components/schemas/Invite"
@@ -1699,7 +1699,7 @@
           "created_by": {
             "type": "string",
             "nullable": true,
-            "description": "The user who registered the agent \u2014 who it publishes and bills on behalf of."
+            "description": "The user who registered the agent — who it publishes and bills on behalf of."
           },
           "created_at": {
             "type": "string"
@@ -2321,7 +2321,7 @@
           },
           "skipped": {
             "type": "number",
-            "description": "Not found, or the caller may not do this to it \u2014 not an error."
+            "description": "Not found, or the caller may not do this to it — not an error."
           },
           "failed": {
             "type": "number",
@@ -2343,7 +2343,7 @@
           },
           "url": {
             "type": "string",
-            "description": "A permanent public URL for these bytes \u2014 embed it in any artifact's content"
+            "description": "A permanent public URL for these bytes — embed it in any artifact's content"
           },
           "ref": {
             "type": "string",
@@ -2420,7 +2420,7 @@
                 "enum": [
                   "member"
                 ],
-                "description": "The person already had an account \u2014 shared directly."
+                "description": "The person already had an account — shared directly."
               },
               "member": {
                 "$ref": "#/components/schemas/ArtifactMember"
@@ -2439,7 +2439,7 @@
                 "enum": [
                   "invite"
                 ],
-                "description": "No account with that email \u2014 a pending invite was created and emailed."
+                "description": "No account with that email — a pending invite was created and emailed."
               },
               "invite": {
                 "$ref": "#/components/schemas/ArtifactInvite"
@@ -2664,7 +2664,7 @@
           },
           "starred": {
             "type": "boolean",
-            "description": "Whether the caller starred this collection \u2014 it pins to their sidebar."
+            "description": "Whether the caller starred this collection — it pins to their sidebar."
           },
           "last_activity": {
             "type": "string"
@@ -2721,7 +2721,7 @@
           },
           "active": {
             "type": "boolean",
-            "description": "Whether the caller has worked in this collection recently \u2014 published, commented, or been added. Derived from acts that leave a row; reading is not recorded."
+            "description": "Whether the caller has worked in this collection recently — published, commented, or been added. Derived from acts that leave a row; reading is not recorded."
           }
         },
         "required": [
@@ -2741,7 +2741,7 @@
           },
           "score": {
             "type": "number",
-            "description": "Summed neighbor-similarity votes \u2014 an ordering signal, not a probability."
+            "description": "Summed neighbor-similarity votes — an ordering signal, not a probability."
           }
         },
         "required": [
@@ -2893,7 +2893,7 @@
           },
           "needs_reauth": {
             "type": "boolean",
-            "description": "Whether the stored bot token needs a re-auth \u2014 a failed auth/scope call, or Slack reporting the app uninstalled or its token revoked"
+            "description": "Whether the stored bot token needs a re-auth — a failed auth/scope call, or Slack reporting the app uninstalled or its token revoked"
           },
           "slack_dm": {
             "type": "boolean",
@@ -2948,7 +2948,7 @@
           "scope_title": {
             "type": "string",
             "nullable": true,
-            "description": "The scoped collection's title, resolved for display. Null for a workspace scope, and also when the collection has been deleted \u2014 the subscription then matches nothing, and saying so is more useful than a bare id."
+            "description": "The scoped collection's title, resolved for display. Null for a workspace scope, and also when the collection has been deleted — the subscription then matches nothing, and saying so is more useful than a bare id."
           },
           "events": {
             "type": "string",
@@ -3009,7 +3009,7 @@
           },
           "actor": {
             "type": "string",
-            "description": "Who triggered it \u2014 a person's display name (their handle when they have none)"
+            "description": "Who triggered it — a person's display name (their handle when they have none)"
           },
           "kind": {
             "type": "string",
@@ -3227,7 +3227,7 @@
               "pending",
               "sent_back"
             ],
-            "description": "Round state: pending, or sent_back (the answers came back \u2014 a note saying go IS the go-signal)."
+            "description": "Round state: pending, or sent_back (the answers came back — a note saying go IS the go-signal)."
           },
           "note": {
             "type": "string",
@@ -3291,7 +3291,7 @@
                 "title"
               ]
             },
-            "description": "The artifacts the rows below belong to \u2014 only those the viewer can read."
+            "description": "The artifacts the rows below belong to — only those the viewer can read."
           },
           "versions": {
             "type": "array",
@@ -3492,7 +3492,7 @@
                 "type": "string"
               }
             },
-            "description": "Emoji \u2192 list of reactor display names."
+            "description": "Emoji → list of reactor display names."
           },
           "edited": {
             "type": "boolean",
@@ -3587,12 +3587,12 @@
             "items": {
               "type": "string"
             },
-            "description": "Connections this context may use \u2014 its tools, in every lane it runs in."
+            "description": "Connections this context may use — its tools, in every lane it runs in."
           },
           "description": {
             "type": "string",
             "nullable": true,
-            "description": "The manifest's own first paragraph \u2014 frontmatter and a single leading heading stripped, capped. Null when the manifest has none or can't be read."
+            "description": "The manifest's own first paragraph — frontmatter and a single leading heading stripped, capped. Null when the manifest has none or can't be read."
           },
           "skills_count": {
             "type": "number",
@@ -3730,7 +3730,7 @@
           "profile_short_id": {
             "type": "string",
             "nullable": true,
-            "description": "The workspace brand-profile artifact (an HTML page carrying theme tokens), when set; null otherwise. Not in `members` \u2014 it is the headline read, not a note."
+            "description": "The workspace brand-profile artifact (an HTML page carrying theme tokens), when set; null otherwise. Not in `members` — it is the headline read, not a note."
           },
           "members": {
             "type": "array",
@@ -5472,7 +5472,7 @@
         "tags": [
           "Workspace"
         ],
-        "summary": "Invite by email \u2014 adds an existing account directly, else a pending invite.",
+        "summary": "Invite by email — adds an existing account directly, else a pending invite.",
         "responses": {
           "201": {
             "description": "Either the member added directly, or the pending invite + accept link.",
@@ -6718,7 +6718,7 @@
         "summary": "Browse summary for the sidebar (totals + tag counts).",
         "responses": {
           "200": {
-            "description": "Total artifacts, the caller's favorite/owned counts, tag\u2192count, and workspace name.",
+            "description": "Total artifacts, the caller's favorite/owned counts, tag→count, and workspace name.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6818,7 +6818,7 @@
         "tags": [
           "Artifacts"
         ],
-        "summary": "Rename an artifact (metadata only \u2014 no new version).",
+        "summary": "Rename an artifact (metadata only — no new version).",
         "parameters": [
           {
             "schema": {
@@ -6956,7 +6956,7 @@
         "tags": [
           "Artifacts"
         ],
-        "summary": "Lock or unlock an artifact (locked \u21d2 nothing publishes until unlocked).",
+        "summary": "Lock or unlock an artifact (locked ⇒ nothing publishes until unlocked).",
         "parameters": [
           {
             "schema": {
@@ -7448,7 +7448,7 @@
           "Sharing"
         ],
         "summary": "Ask the people who can share an artifact to grant you access.",
-        "description": "202 for every outcome once the caller is authenticated and the body validates \u2014 missing artifact, no access, already readable, or already asked. The response deliberately does not reveal which.",
+        "description": "202 for every outcome once the caller is authenticated and the body validates — missing artifact, no access, already readable, or already asked. The response deliberately does not reveal which.",
         "parameters": [
           {
             "schema": {
@@ -7556,7 +7556,7 @@
                       "items": {
                         "$ref": "#/components/schemas/ArtifactInvite"
                       },
-                      "description": "Pending emailed invites \u2014 share-capable callers (editor+) only; empty otherwise (invitee emails stay need-to-know)."
+                      "description": "Pending emailed invites — share-capable callers (editor+) only; empty otherwise (invitee emails stay need-to-know)."
                     }
                   },
                   "required": [
@@ -7574,7 +7574,7 @@
         "tags": [
           "Sharing"
         ],
-        "summary": "Share an artifact with a person at a role \u2014 or email an invite.",
+        "summary": "Share an artifact with a person at a role — or email an invite.",
         "parameters": [
           {
             "schema": {
@@ -8779,7 +8779,7 @@
         "tags": [
           "Folders"
         ],
-        "summary": "A collection's folders + its item\u2192folder assignments (any collection role).",
+        "summary": "A collection's folders + its item→folder assignments (any collection role).",
         "parameters": [
           {
             "schema": {
@@ -8792,7 +8792,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Folders (name order) and the artifact\u2192folder map for grouping.",
+            "description": "Folders (name order) and the artifact→folder map for grouping.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8809,7 +8809,7 @@
                       "additionalProperties": {
                         "type": "string"
                       },
-                      "description": "artifact short_id \u2192 folder id (filed items only)."
+                      "description": "artifact short_id → folder id (filed items only)."
                     }
                   },
                   "required": [
@@ -9015,7 +9015,7 @@
         "summary": "List the workspace's Slack channel subscriptions (Admin only).",
         "responses": {
           "200": {
-            "description": "The workspace's subscriptions, plus the event types one can carry \u2014 the server is the source of that list so the client can't drift from it.",
+            "description": "The workspace's subscriptions, plus the event types one can carry — the server is the source of that list so the client can't drift from it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9549,7 +9549,7 @@
                   "note": {
                     "type": "string",
                     "maxLength": 10000,
-                    "description": "The human's note to the agent \u2014 answers, asks, or the go-signal (\"good to go\"). Carried on the round and surfaced in the agent's catch_up."
+                    "description": "The human's note to the agent — answers, asks, or the go-signal (\"good to go\"). Carried on the round and surfaced in the agent's catch_up."
                   }
                 }
               }
@@ -10516,7 +10516,7 @@
                         "manifest_md": {
                           "type": "string",
                           "nullable": true,
-                          "description": "The manifest's raw source \u2014 the runner's system prompt. Agent branch only."
+                          "description": "The manifest's raw source — the runner's system prompt. Agent branch only."
                         },
                         "brandprint": {
                           "$ref": "#/components/schemas/BrandprintConfig"
@@ -10986,7 +10986,7 @@
         "tags": [
           "Realtime"
         ],
-        "summary": "Presence heartbeat \u2014 keep this viewer on the artifact's roster.",
+        "summary": "Presence heartbeat — keep this viewer on the artifact's roster.",
         "parameters": [
           {
             "schema": {
@@ -11189,7 +11189,7 @@
         "summary": "List the workspace's webhooks (Admin only).",
         "responses": {
           "200": {
-            "description": "The workspace's webhooks, without their signing secrets, plus every event one can subscribe to \u2014 the server owns that list so the picker can't drift from it.",
+            "description": "The workspace's webhooks, without their signing secrets, plus every event one can subscribe to — the server owns that list so the picker can't drift from it.",
             "content": {
               "application/json": {
                 "schema": {
