@@ -545,3 +545,9 @@ Sentences and standalone descriptions end with a period; list items don't. Never
   semantics in Safari/VoiceOver, which is why Biome's `noRedundantRoles` is off in
   biome.json; container queries for width-responsive widgets; every layout adapts mobile →
   desktop.
+
+## Shared UI utilities
+
+`apps/web/src/styles/shadcn.css` vendors the shadcn 4.12.0 stylesheet and its MIT license.
+The app uses the stylesheet without installing the generator CLI and its dependencies.
+Keep the stylesheet when updating vendored UI components.

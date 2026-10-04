@@ -1,6 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "shadcn/tailwind.css";
+@import "./shadcn.css";
 /* Geist — Vercel's neo-grotesque family — self-hosted so the app makes no
    third-party requests. Both cuts are weight-only (no optical-size axis); each
    variable file carries every subset across the full 100–900 range. Geist Sans

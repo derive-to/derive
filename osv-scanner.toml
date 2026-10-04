@@ -9,3 +9,8 @@ reason = "Derive's accepted audience strings are URL variants of one Derive MCP 
 id = "GHSA-vwc7-r8mq-g2x9"
 ignoreUntil = 2026-10-10
 reason = "Re-audited 2026-09-18 after upgrading adm-zip to 0.6.1 for GHSA-7q85-xj36-vmfc. It is still used only by onnxruntime-node 1.24.3's postinstall script, not its inference runtime. Derive disables all dependency lifecycle scripts with pnpm.onlyBuiltDependencies = [], so ZIP extraction never runs in our installs or images. lint:dependency-exceptions pins this disabled-script policy and the sole locked consumer; re-audit before enabling that installer or changing its version. The separate symlink-extraction advisory still lists no upstream fix."
+
+[[IgnoredVulns]]
+id = "GHSA-ch52-4w7c-c8xp"
+ignoreUntil = 2026-11-01
+reason = "The locked 4.2.0 package has a committed pnpm security patch. Zero-freshness cache entries always miss, so client max-stale cannot bypass cookie, private, no-cache, or no-store restrictions. lint:dependency-exceptions checks the exact patch digest, its lockfile application, and the installed behavior. Re-audit when upstream publishes a verified fix."

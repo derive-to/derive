@@ -2,7 +2,9 @@
 // An OSV applicability exception is valid only while its audited boundary holds.
 // adm-zip is loaded by ONNX's disabled installer, never its inference runtime.
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import { readFileSync } from "node:fs"
+import { createRequire } from "node:module"
 import { parse as parseToml } from "smol-toml"
 import { parse } from "yaml"
 
@@ -44,4 +46,51 @@ if (exceptions.some((exception) => exception.id === "GHSA-vwc7-r8mq-g2x9")) {
   )
 }
 
-console.log("dependency exceptions: audited install boundary holds")
+if (exceptions.some((exception) => exception.id === "GHSA-ch52-4w7c-c8xp")) {
+  const patch = "patches/http-cache-semantics@4.2.0.patch"
+  const manifest = JSON.parse(read("package.json"))
+  assert.equal(manifest.pnpm?.patchedDependencies?.["http-cache-semantics@4.2.0"], patch)
+  const digest = createHash("sha256").update(read(patch)).digest("hex")
+  assert.equal(
+    digest,
+    "aafc7d070db0dfe96ba7d9d9983e7bcb475f114c12dee3921e60c0a728cd2858",
+    "Re-audit the cache security patch before changing it",
+  )
+  const lock = parse(read("pnpm-lock.yaml"))
+  assert.equal(lock.patchedDependencies?.["http-cache-semantics@4.2.0"]?.hash, digest)
+  const docsRequire = createRequire(new URL("../apps/docs/package.json", import.meta.url))
+  const astroRequire = createRequire(docsRequire.resolve("astro/package.json"))
+  const CachePolicy = astroRequire("http-cache-semantics")
+  const request = { url: "https://cache.test/page", method: "GET", headers: { host: "cache.test" } }
+  const staleRequest = {
+    ...request,
+    headers: { ...request.headers, "cache-control": "max-stale=1000000000" },
+  }
+  for (const headers of [
+    { "cache-control": "max-age=60", "set-cookie": "session=fixture" },
+    { "cache-control": "private, max-age=60" },
+    { "cache-control": "no-cache, max-age=60" },
+    { "cache-control": "no-store, max-age=60" },
+    { "cache-control": "max-age=0" },
+    { "cache-control": "max-age=60", vary: "*" },
+  ]) {
+    const policy = new CachePolicy(request, { status: 200, headers })
+    policy.now = () => Date.now() + 10_000
+    assert.equal(
+      policy.evaluateRequest(staleRequest).response,
+      undefined,
+      "A client max-stale must not bypass a zero-freshness restriction",
+    )
+  }
+  const publicPolicy = new CachePolicy(request, {
+    status: 200,
+    headers: { "cache-control": "public, max-age=1" },
+  })
+  publicPolicy.now = () => Date.now() + 10_000
+  assert.ok(
+    publicPolicy.evaluateRequest(staleRequest).response,
+    "A valid public response still honors max-stale",
+  )
+}
+
+console.log("dependency exceptions: audited boundaries and patched cache behavior hold")
