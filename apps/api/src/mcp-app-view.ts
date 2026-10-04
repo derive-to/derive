@@ -191,7 +191,7 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
     loadTimer = setTimeout(() => note("The artifact is taking a while. Open it in Derive if it does not appear."), LOAD_TIMEOUT_MS)
   }
 
-  const render = (result) => {
+  const render = (result, renewed) => {
     if (!result) return
     const text = result.content && result.content[0] && result.content[0].text
     if (result.isError) return note(text || "Derive could not show this artifact.")
@@ -206,6 +206,17 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
     $("latest").hidden = !(sc.version < sc.current_version)
     $("latest").textContent = "Show v" + sc.current_version
     $("open").hidden = !host.openLinks
+    // A host replays a saved result when the conversation reopens, long after its token
+    // lapsed: mounting it would frame a 404. Renew first, once; without server tools, say so.
+    if (!(Date.parse(f.expires_at) - Date.now() > 15000)) {
+      const expired = "This view has expired. Open it in Derive to see the latest."
+      if (renewed || !host.serverTools) return note(expired)
+      note("Refreshing the view…")
+      const args = { short_id: sc.short_id, version: sc.version }
+      if (typeof sc.slide === "number") args.slide = sc.slide
+      callShow(args).then((r) => render(r, true)).catch(() => note(expired))
+      return
+    }
     if (!frame || frameUrl !== f.url) {
       frameUrl = f.url
       startSlide = typeof sc.slide === "number" && sc.slide > 1 ? sc.slide : 0

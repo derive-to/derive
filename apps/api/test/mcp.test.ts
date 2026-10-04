@@ -4043,6 +4043,36 @@ describe("the show view (MCP App) protocol", () => {
     expect(v.els.get("latest")?.textContent).toBe("Show v3")
   })
 
+  it("renews a replayed result whose token already lapsed instead of framing a 404", async () => {
+    const v = boot()
+    v.reply("ui/initialize", { hostCapabilities: caps, hostContext: {} })
+    await settle()
+    // The conversation reopened an hour later: the saved result carries a dead token.
+    const stale = result()
+    stale._meta["derive/frame"] = {
+      url: "https://sandbox.test/raw/abc12345/v/2/t/old/",
+      expires_at: new Date(Date.now() - 60 * 60_000).toISOString(),
+    }
+    v.fromHost({ method: "ui/notifications/tool-result", params: stale })
+    expect(v.frames).toHaveLength(0)
+    expect(v.sent("tools/call").at(-1)?.params).toEqual({
+      name: "show",
+      arguments: { short_id: "abc12345", version: 2 },
+    })
+    v.reply("tools/call", result())
+    await settle()
+    expect(v.frames).toHaveLength(1)
+    expect(v.frames[0]?.src).toBe("https://sandbox.test/raw/abc12345/v/2/t/tok/")
+
+    // A host that cannot call tools says so, and frames nothing.
+    const bare = boot()
+    bare.reply("ui/initialize", { hostCapabilities: {}, hostContext: {} })
+    await settle()
+    bare.fromHost({ method: "ui/notifications/tool-result", params: stale })
+    expect(bare.frames).toHaveLength(0)
+    expect(bare.els.get("note")?.textContent).toContain("expired")
+  })
+
   it("serves the script inside the view document", () => {
     expect(ARTIFACT_VIEW_HTML).toContain(ARTIFACT_VIEW_SCRIPT)
   })
