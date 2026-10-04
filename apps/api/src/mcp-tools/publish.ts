@@ -1201,6 +1201,13 @@ export function registerPublishTool(tc: ToolContext): void {
             : {}),
           version: version.n,
           url,
+          // The next step a person usually wants, taught where it is decided: hosts that render
+          // MCP Apps open the live view, others get the link. Response text costs no surface budget.
+          ...(artifact.kind === "file"
+            ? {
+                show_next: `To put it in front of the person here: show({short_id:"${artifact.short_id}"}), with slide:N after a slide edit.`,
+              }
+            : {}),
           ...(analysis
             ? {
                 implementation_analysis: {

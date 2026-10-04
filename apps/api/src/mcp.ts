@@ -84,13 +84,21 @@ import {
 } from "@derive/core"
 import { StreamableHTTPTransport } from "@hono/mcp"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
+import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/sdk/types.js"
 import type { Hono } from "hono"
+import { HTTPException } from "hono/http-exception"
 import { BRANDPRINT_REFERENCE, BRANDPRINT_TEMPLATE } from "./brandprint-reference"
 import type { AppContext } from "./context"
 import { resolveActorBrandprint, resolveBrandprintContext } from "./lib/brandprint"
 import type { Sandbox } from "./lib/code-sandbox"
 import { latexTemplateBundle } from "./lib/latex-templates"
 import { clientIp } from "./lib/rate-limit"
+import {
+  ARTIFACT_VIEW_HTML,
+  ARTIFACT_VIEW_URI,
+  artifactViewMeta,
+  MCP_APP_MIME,
+} from "./mcp-app-view"
 import { makeToolContext, type ToolContext, type ToolContextBase } from "./mcp-tool-context"
 import {
   registerAgentsTool,
@@ -113,6 +121,7 @@ import {
 } from "./mcp-tools/organize"
 import { registerPublishTool } from "./mcp-tools/publish"
 import { registerReadTool } from "./mcp-tools/read"
+import { registerShowTool } from "./mcp-tools/show"
 import { registerStageTool } from "./mcp-tools/stage"
 import { skillFilesFooter, skillReading, skillsCatalog } from "./mcp-util"
 import { CORE_SKILLS } from "./skills-reference.gen"
@@ -518,6 +527,24 @@ async function buildServer(
       ],
     }),
   )
+  // The view `show` opens in hosts that render MCP Apps: a frame around the sandboxed
+  // artifact page (mcp-app-view.ts). Static HTML, so registering it costs no round trip.
+  const viewMeta = artifactViewMeta(ctx.deps.sandboxOrigin ?? ctx.deps.baseUrl)
+  server.registerResource(
+    "app:artifact",
+    ARTIFACT_VIEW_URI,
+    {
+      title: "Derive artifact view",
+      description: "The in-conversation view the show tool opens.",
+      mimeType: MCP_APP_MIME,
+      _meta: viewMeta,
+    },
+    async (uri) => ({
+      contents: [
+        { uri: uri.href, mimeType: MCP_APP_MIME, text: ARTIFACT_VIEW_HTML, _meta: viewMeta },
+      ],
+    }),
+  )
   const defaultOrg = agent.org_id
   const defaultRole = agent.role
 
@@ -624,6 +651,7 @@ export function registerToolSurface(
   if (wanted("list_workspaces")) registerListWorkspacesTool(tc, () => [...names].sort())
   if (wanted("find")) registerFindTool(tc)
   if (wanted("read")) registerReadTool(tc)
+  if (wanted("show")) registerShowTool(tc)
   // A read/write pair is gated as ONE name, so a caller naming it gets a coherent set
   // rather than a write with no read (or the reverse).
   if (wanted("organize")) {
@@ -743,6 +771,21 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
     )
     const transport = new StreamableHTTPTransport()
     await server.connect(transport)
-    return transport.handleRequest(c)
+    try {
+      return await transport.handleRequest(c)
+    } catch (err) {
+      // The transport rejects a request by THROWING an HTTPException that carries its
+      // response. Left to app.onError it becomes a bare 500, which tells a client nothing.
+      if (!(err instanceof HTTPException)) throw err
+      const res = err.getResponse()
+      // A modern client (MCP 2026-07-28+: per-request versions, `server/discover`) opens with
+      // a version this server does not speak. The spec's HTTP fallback reads that era off a
+      // 400 whose body is not a modern error, then retries with `initialize`; the transport
+      // answers 404, and a 500 stopped ChatGPT outright. Same body, the status it looks for.
+      const version = c.req.header("mcp-protocol-version")
+      return res.status === 404 && version && !SUPPORTED_PROTOCOL_VERSIONS.includes(version)
+        ? new Response(res.body, { status: 400, headers: res.headers })
+        : res
+    }
   })
 }
