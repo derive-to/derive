@@ -1335,6 +1335,14 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(page.status).toBe(200)
     expect(await page.text()).toContain("Launch deck")
 
+    // A publish teaches the step after it, where the agent decides it.
+    const made = JSON.parse(
+      toolText(
+        await call(app, token, "publish", { title: "Next", content: "# Next\n", filename: "n.md" }),
+      ),
+    )
+    expect(made.show_next).toContain(`show({short_id:"${made.short_id}"})`)
+
     // Showing reaches no further than reading: another workspace gets nothing.
     const other = appWithGrant(dir, "show-other", "openid derive:read")
     expect(toolIsError(await call(other.app, other.token, "show", { short_id: shortId }))).toBe(
