@@ -336,7 +336,7 @@ describe("MCP surface budget (thin tools, thick skills)", () => {
     // The routing claim against the host's own artifact tool — the steer that stops
     // "make me an HTML page" from landing in a chat-local artifact. Must stay in the
     // always-loaded instructions: a skill body loads after the routing decision.
-    expect(instructions).toContain("not with a built-in artifact/canvas tool")
+    expect(instructions).toContain("rather than in a chat-local artifact or canvas")
     // The core-skills index is still ADVERTISED in the always-loaded instructions —
     // thinning must not drop the pointer that makes the lazy skills discoverable.
     for (const skill of CORE_SKILLS) expect(instructions).toContain(`derive://skills/${skill.name}`)
