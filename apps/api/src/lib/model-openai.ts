@@ -34,8 +34,6 @@ export interface OpenAiCompatOptions {
   fetchImpl?: typeof fetch
 }
 
-export { TruncatedReplyError } from "./model-turn"
-
 const withoutTrailingSlashes = (value: string): string => {
   let end = value.length
   while (end > 0 && value.charCodeAt(end - 1) === 47) end--
@@ -54,7 +52,7 @@ const withoutTrailingSlashes = (value: string): string => {
  * it is there. Absent or unparseable, null means UNKNOWN, which the budget skips — and this is
  * the GATEWAY lane, where one ambient key means the operator pays for the whole instance and the
  * payer chain is bypassed by design, so an unpriced turn matters far less here than on the
- * per-run credential path (which is priced — see model-anthropic.ts).
+ * per-run credential path (which is priced — see the workspace provider).
  *
  * `usage.cost` is not part of the OpenAI schema, so the SDK drops it unless it is lifted out by a
  * metadata extractor, which is exactly what one is for.

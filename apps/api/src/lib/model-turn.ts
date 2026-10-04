@@ -7,7 +7,6 @@ import {
   type ToolSet,
 } from "ai"
 import type { AgentLoopInput, LoopTool, ModelTurn } from "./agent-loop"
-import { asMessages } from "./model-messages"
 
 /** Shared provider transport. The SDK handles wire formats and streams.
  * Truncation fails the turn. Malformed calls become tool errors. Costs are never guessed.
@@ -79,22 +78,6 @@ const asTools = (tools: LoopTool[]): ToolSet =>
     ]),
   )
 
-/**
- * One turn of tool use, translated for the SDK.
- *
- * THE LOOP SPEAKS ANTHROPIC. After a tool call it appends the assistant's `toolUses`
- * (`{id, name, input}`) as one message, then the results (`{tool_use_id, content}`) as the next.
- * Both need naming and re-shaping here, and the failure when they are not is not loud: an earlier
- * version flattened both to the empty string, so the model's own tool call vanished from the
- * history along with its answer. It asked again, saw nothing, asked again, and the run died of
- * turn exhaustion — reading as a confused model, and really a conversation with its middle
- * deleted. It broke every tool-using run on a gateway, and no loop test caught it because those
- * inject `callModel` and never reach an adapter.
- *
- * A tool RESULT must also carry the tool's NAME, which the loop's result block does not have, so
- * the assistant turn that requested it is what supplies it — hence one pass with a running map
- * rather than a per-message translation.
- */
 /**
  * A tool call's input, as the TOOL will receive it.
  *
@@ -178,7 +161,7 @@ export const turnFor = (opts: TurnOptions): AgentLoopInput["callModel"] => {
   return async ({ system, messages, tools, onDelta, abortSignal }): Promise<ModelTurn> => {
     const req = {
       model: opts.model,
-      messages: asMessages(system, messages),
+      messages: [{ role: "system" as const, content: system }, ...messages],
       allowSystemInMessages: true,
       maxOutputTokens: opts.maxTokens ?? 8_000,
       ...(tools.length ? { tools: asTools(tools) } : {}),
@@ -212,7 +195,6 @@ export const turnFor = (opts: TurnOptions): AgentLoopInput["callModel"] => {
           input: inputOf(c.input),
         })),
         costUsd: opts.price({ usage: r.usage, providerMetadata: r.providerMetadata }),
-        done: r.finishReason !== "tool-calls" && r.toolCalls.length === 0,
       }
     }
 

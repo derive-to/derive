@@ -22,7 +22,7 @@ const turn = (over: Partial<ModelTurn> = {}): ModelTurn => ({
   text: "",
   toolUses: [],
   costUsd: null,
-  done: true,
+
   ...over,
 })
 
@@ -135,7 +135,7 @@ describe("agent loop: tools", () => {
   it("executes tool calls and feeds results back until the model finishes", async () => {
     const executed: { name: string; input: unknown }[] = []
     const model = scripted([
-      turn({ toolUses: [{ id: "t1", name: "docs.search", input: { q: "roadmap" } }], done: false }),
+      turn({ toolUses: [{ id: "t1", name: "docs.search", input: { q: "roadmap" } }] }),
       turn({ text: revisionText("# With data") }),
     ])
     const out = await runAgentLoop(
@@ -160,7 +160,7 @@ describe("agent loop: tools", () => {
     // A failing source is information the model should react to ("that feed is down, note it"),
     // not a reason to discard work the run has already paid for.
     const model = scripted([
-      turn({ toolUses: [{ id: "t1", name: "docs.search", input: {} }], done: false }),
+      turn({ toolUses: [{ id: "t1", name: "docs.search", input: {} }] }),
       turn({ text: revisionText("# Degraded") }),
     ])
     const out = await runAgentLoop(
@@ -186,7 +186,6 @@ describe("agent loop: tools", () => {
           { id: "a", name: "one", input: {} },
           { id: "b", name: "two", input: {} },
         ],
-        done: false,
       }),
       turn({ text: revisionText() }),
     ])
@@ -219,24 +218,54 @@ describe("agent loop: transcript recovery", () => {
             role: "assistant",
             content: [
               { type: "text", text: "I will read it first." },
-              { id: "old-call", name: "read", input: { ref: "roadmap" } },
+              {
+                type: "tool-call",
+                toolCallId: "old-call",
+                toolName: "read",
+                input: { ref: "roadmap" },
+              },
             ],
           },
-          { role: "user", content: [{ tool_use_id: "old-call", content: "Launch on Friday." }] },
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "old-call",
+                toolName: "read",
+                output: { type: "text", value: "Launch on Friday." },
+              },
+            ],
+          },
         ],
       }),
     )
     expect(out.ok).toBe(true)
     expect(model.seen[0]?.messages).toEqual([
-      { role: "user", content: "Read the roadmap." },
+      { role: "user", content: [{ type: "text", text: "Read the roadmap." }] },
       {
         role: "assistant",
         content: [
           { type: "text", text: "I will read it first." },
-          { id: "old-call", name: "read", input: { ref: "roadmap" } },
+          {
+            type: "tool-call",
+            toolCallId: "old-call",
+            toolName: "read",
+            input: { ref: "roadmap" },
+          },
         ],
       },
-      { role: "user", content: [{ tool_use_id: "old-call", content: "Launch on Friday." }] },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "old-call",
+            toolName: "read",
+            output: { type: "text", value: "Launch on Friday." },
+          },
+        ],
+      },
     ])
   })
 })
@@ -283,7 +312,7 @@ describe("agent loop: failure paths", () => {
   it("bounds a model that loops calling tools forever", async () => {
     // Without a ceiling a stuck run bills until the lease expires. Not retryable: a loop that
     // could not converge in maxTurns will not converge in another maxTurns.
-    const model = scripted([turn({ toolUses: [{ id: "t", name: "x", input: {} }], done: false })])
+    const model = scripted([turn({ toolUses: [{ id: "t", name: "x", input: {} }] })])
     const out = await runAgentLoop(
       base({
         callModel: model.callModel,
@@ -306,9 +335,9 @@ describe("agent loop: cost", () => {
     // still cost money. Reporting only the last turn would undercount exactly the runs that
     // went wrong — the same undercount the retry path had.
     const model = scripted([
-      turn({ toolUses: [{ id: "t", name: "x", input: {} }], costUsd: 0.01, done: false }),
-      turn({ toolUses: [{ id: "t", name: "x", input: {} }], costUsd: 0.02, done: false }),
-      turn({ toolUses: [{ id: "t", name: "x", input: {} }], costUsd: 0.03, done: false }),
+      turn({ toolUses: [{ id: "t", name: "x", input: {} }], costUsd: 0.01 }),
+      turn({ toolUses: [{ id: "t", name: "x", input: {} }], costUsd: 0.02 }),
+      turn({ toolUses: [{ id: "t", name: "x", input: {} }], costUsd: 0.03 }),
     ])
     const out = await runAgentLoop(base({ callModel: model.callModel, maxTurns: 3 }))
     expect(out.ok).toBe(false)

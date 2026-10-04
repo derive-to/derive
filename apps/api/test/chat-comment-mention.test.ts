@@ -34,7 +34,7 @@ const setup = async (
           isDefault: true,
           build: () => async () => {
             if (opts.hang) await new Promise(() => {})
-            return { text: reply, toolUses: [], costUsd: opts.costUsd ?? null, done: true }
+            return { text: reply, toolUses: [], costUsd: opts.costUsd ?? null }
           },
         },
       ]),

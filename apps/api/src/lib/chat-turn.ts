@@ -1,10 +1,4 @@
-// ONE TURN of @Derive answering about the WORKSPACE rather than one document: the Slack lane
-// (slack-mention.ts). Its sibling is comment-turn.ts, which has a document in front of it. This
-// lane has no document. What it has instead is TOOLS, so everything it does (find, read, and
-// later write) happens inside the loop, and the reply is only prose.
-//
-// The parts that must never drift (the model call, the tool loop, the turn ceiling, cost
-// accounting) are turn-core's.
+// Luna chat turns share permissions, tools, and budgets across native chat and Slack.
 
 import {
   type JobEffect,

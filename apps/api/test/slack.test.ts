@@ -362,7 +362,6 @@ describe("@Derive in a Slack thread is one attended job", () => {
       text,
       toolUses: [],
       costUsd: 0.002,
-      done: true,
     })
     let hold: Promise<void> | null = null
     let onModel = () => {}

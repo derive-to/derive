@@ -1,15 +1,7 @@
 import { type AskFields, addCostUsd, NUDGE_LIMIT, type Revision } from "@derive/core"
-import {
-  generateText,
-  jsonSchema,
-  type LanguageModel,
-  type ModelMessage as SdkMessage,
-  stepCountIs,
-} from "ai"
+import { generateText, jsonSchema, type LanguageModel, type ModelMessage, stepCountIs } from "ai"
 
-import { asMessages, type ModelMessage } from "./model-messages"
-
-export type { ModelMessage } from "./model-messages"
+export type { ModelMessage } from "ai"
 
 /** The SDK owns tool orchestration. Derive owns permissions, budgets, and landing. */
 
@@ -30,8 +22,6 @@ export interface ModelTurn {
   toolUses: { id: string; name: string; input: unknown }[]
   /** Reported spend for this turn in USD, when the provider tells us. Null = unknown. */
   costUsd: number | null
-  /** True when the model finished its turn rather than pausing for tools. */
-  done: boolean
 }
 
 /** What one finished turn PRODUCED. The single shape every lane's landing port reads, so the
@@ -187,7 +177,7 @@ const clipToBudget = (text: string, remaining: number): { text: string; used: nu
   }
 }
 
-/** A truncated reply, duck-typed. TruncatedReplyError (lib/model-openai) carries `truncated`;
+/** A truncated reply, duck-typed. TruncatedReplyError (lib/model-turn) carries `truncated`;
  *  matching on the property rather than importing the class keeps this file free of the
  *  provider adapters that depend on IT. */
 const wasTruncated = (e: unknown): boolean =>
@@ -214,28 +204,7 @@ export const runAgentLoop = async (input: AgentLoopInput): Promise<AgentLoopResu
           system += `${m.content}\n`
           continue
         }
-        if (m.role === "tool") {
-          messages.push({
-            role: "user",
-            content: m.content
-              .filter((p) => p.type === "tool-result")
-              .map((p) => ({
-                tool_use_id: p.toolCallId,
-                content: "value" in p.output ? p.output.value : JSON.stringify(p.output),
-              })),
-          })
-        } else {
-          const prose = m.content.flatMap((p) => (p.type === "text" ? [p.text] : []))
-          const calls = m.content.flatMap((p) =>
-            p.type === "tool-call" ? [{ id: p.toolCallId, name: p.toolName, input: p.input }] : [],
-          )
-          messages.push({
-            role: m.role,
-            content: calls.length
-              ? [...prose.map((text) => ({ type: "text", text })), ...calls]
-              : prose.join("\n"),
-          })
-        }
+        messages.push(m)
       }
       turns += 1
       const r = await input.callModel({
@@ -313,7 +282,7 @@ export const runAgentLoop = async (input: AgentLoopInput): Promise<AgentLoopResu
       },
     ]),
   )
-  let messages: SdkMessage[] = asMessages("", input.messages).slice(1)
+  let messages = input.messages
   try {
     for (let nudge = 0; nudge <= NUDGE_LIMIT && turns < maxTurns; nudge += 1) {
       const r = await generateText({

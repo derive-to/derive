@@ -688,24 +688,22 @@ describe("jobs: the built-in Derive, asked from a page", () => {
           () =>
           async (input: {
             system: string
-            messages: { content: unknown }[]
+            messages: { role: string; content: unknown }[]
           }): Promise<ModelTurn> => {
             const last = input.messages.at(-1)?.content
-            if (Array.isArray(last))
+            if (input.messages.at(-1)?.role === "tool")
               return {
                 text: JSON.stringify(last).includes("billed annually")
                   ? "It says seats are billed annually."
                   : "I could not read it.",
                 toolUses: [],
                 costUsd: 0.001,
-                done: true,
               }
             const shortId = /Scope: artifact (\w+),/.exec(input.system)?.[1] ?? ""
             return {
               text: "",
               toolUses: [{ id: "t1", name: "read", input: { short_id: shortId } }],
               costUsd: 0.001,
-              done: false,
             }
           },
       },
@@ -772,7 +770,7 @@ describe("jobs: the built-in Derive, asked from a page", () => {
           () =>
           async (input: { system: string; messages: unknown[] }): Promise<ModelTurn> => {
             if (input.messages.length > 1)
-              return { text: "Added an owner.", toolUses: [], costUsd: 0.001, done: true }
+              return { text: "Added an owner.", toolUses: [], costUsd: 0.001 }
             const shortId = /Scope: artifact (\w+),/.exec(input.system)?.[1] ?? ""
             return {
               text: "",
@@ -784,7 +782,6 @@ describe("jobs: the built-in Derive, asked from a page", () => {
                 },
               ],
               costUsd: 0.001,
-              done: false,
             }
           },
       },
@@ -925,7 +922,7 @@ describe("jobs: the built-in Derive, asked from a page", () => {
         isDefault: true,
         build: () => async (): Promise<ModelTurn> => {
           await held
-          return { text: "Done.", toolUses: [], costUsd: 0.001, done: true }
+          return { text: "Done.", toolUses: [], costUsd: 0.001 }
         },
       },
     ])
@@ -968,7 +965,6 @@ describe("jobs: the built-in Derive, asked from a page", () => {
               text: "",
               toolUses: [{ id: "t1", name: "read", input: { short_id: shortId } }],
               costUsd: 0.002,
-              done: false,
             }
           },
       },
@@ -1968,9 +1964,6 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
     const job = (await (await ask(app, ed.email, agent.id, "What is MRR?")).json()) as {
       id: string
     }
-    const other = (await (await ask(app, ed.email, agent.id, "And churn?")).json()) as {
-      id: string
-    }
     // The shim runs as its own process, as the model would run it, so the app needs a real
     // address for it to reach.
     const bridge = createServer((req, res) => {
@@ -1994,6 +1987,11 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
       const [pulled] = (await client.pull(1)).jobs
       if (!pulled) throw new Error("nothing pulled")
       expect(pulled.id).toBe(job.id)
+      // Claim the target before creating the other job. This check tests token isolation,
+      // so it must not depend on queue order when both jobs share a creation timestamp.
+      const other = (await (await ask(app, ed.email, agent.id, "And churn?")).json()) as {
+        id: string
+      }
       // The model's token is a tool token, never the runner's own kind.
       const token = pulled.tool_token ?? ""
       expect(token).toMatch(/^dkjtool_/)

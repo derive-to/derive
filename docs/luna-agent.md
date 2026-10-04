@@ -17,7 +17,9 @@ Chat text stays private unless the human asks Luna to publish it.
 
 ## Runtime
 
-The AI SDK orchestrates bounded model steps. The provider adapters retain their transport and pricing rules.
+The AI SDK orchestrates bounded model steps.
+The runtime and provider transport use SDK messages directly.
+The old message format, conversion helpers, and unused completion flag are removed. The provider adapters retain their transport and pricing rules.
 Derive validates registered tool schemas before execution. Optional empty values become absent only when the schema allows absence.
 Tools run serially. The run shares one output budget. The final model step has no tools.
 Output contracts and landing ports still serve comments and background runs.

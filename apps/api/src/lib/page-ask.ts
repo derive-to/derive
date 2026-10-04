@@ -1,13 +1,4 @@
-// THE BUILT-IN DERIVE, ASKED FROM A PAGE (the Ask panel).
-//
-// Its sibling is slack-mention.ts: same job shape (one attended job on DERIVE_AGENT_ID, private
-// to its asker), same turn (chat-turn.ts with Derive's own MCP tools acting as the asker at their
-// seat), same lease. What differs is where the question comes from and where the answer goes: a
-// person on a page asks about THAT page, and the reply is a job message the Ask panel follows, so
-// there is nothing to deliver beyond the job itself.
-//
-// Unlike an agent on someone's machine, nothing has to pick this job up: the request that opened
-// it serves it, after the response (ctx.afterResponse), so the asker sees an answer in seconds.
+// Native Luna chat jobs. Workspace chat and artifact Ask share this lifecycle.
 
 import {
   type ArtifactRecord,
@@ -46,7 +37,7 @@ const leaseMsFor = (ctx: AppContext) => (ctx.attendedTurnBudgetMs ? 2 * 60_000 :
  *  asker's own words, and a source call is the one tool that reaches outside Derive. */
 const PAGE_TOOLS: ReadonlySet<string> = new Set(["find", "read", "catch_up", "publish"])
 
-/** Is this one of the built-in Derive's page jobs (as opposed to its Slack threads)? */
+/** Is this one of the native Luna jobs (as opposed to its Slack threads)? */
 export const isPageAsk = (job: JobRecord): boolean => {
   if (job.agent_id !== DERIVE_AGENT_ID) return false
   if (!job.subject_json) return JSON.parse(job.meta_json ?? "{}").via === "chat"
