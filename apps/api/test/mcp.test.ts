@@ -4438,6 +4438,18 @@ describe("the show view (MCP App) protocol", () => {
     expect(w.els.get("ask-form")?.hidden).toBe(false)
     expect(w.sent("ui/message")).toHaveLength(0)
 
+    // A host that doesn't advertise ui/message still gets the turn back: it is tried anyway.
+    const quiet = boot()
+    quiet.reply("ui/initialize", { hostCapabilities: caps, hostContext: {} })
+    await settle()
+    quiet.fromHost({ method: "ui/notifications/tool-result", params: asked })
+    quiet.made[0]?.onclick?.()
+    quiet.reply("tools/call", asked)
+    await settle()
+    quiet.reply("tools/call", { content: [{ type: "text", text: "{}" }] })
+    await settle()
+    expect(quiet.sent("ui/message")).toHaveLength(1)
+
     // Someone answered since this card was rendered: show that, and don't reply twice.
     const x = boot()
     x.reply("ui/initialize", { hostCapabilities: caps, hostContext: {} })

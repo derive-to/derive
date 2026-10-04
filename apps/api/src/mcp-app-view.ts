@@ -339,10 +339,21 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
     // Saved on the thread first; only then hand the turn back to the chat, so a host that
     // can't continue still has the answer on the page.
     renderQuestion(Object.assign({}, q, { answer: text }))
-    if (host.message) {
-      say("Answer saved.")
-      request("ui/message", { role: "user", content: { type: "text", text: "My answer to \"" + clean(q.text, 200) + "\": " + text } }).catch(() => say("Answer saved. Continue in the chat."))
-    } else say("Answer saved. Continue in the chat.")
+    say("Answer saved.")
+    const prompt = "My answer to \"" + clean(q.text, 200) + "\": " + text
+    const viaStandard = () =>
+      request("ui/message", { role: "user", content: { type: "text", text: prompt } })
+    // ChatGPT's own follow-up call, for a host that doesn't advertise ui/message.
+    const openai = typeof window.openai === "object" && window.openai
+    const viaOpenAI =
+      openai && typeof openai.sendFollowUpMessage === "function"
+        ? () => Promise.resolve(openai.sendFollowUpMessage({ prompt }))
+        : null
+    const first = host.message || !viaOpenAI ? viaStandard : viaOpenAI
+    const second = first === viaStandard ? viaOpenAI : viaStandard
+    first()
+      .catch(() => (second ? second() : Promise.reject()))
+      .catch(() => say("Answer saved. Continue in the chat."))
   }
 
   const mountFrame = (url, title) => {
