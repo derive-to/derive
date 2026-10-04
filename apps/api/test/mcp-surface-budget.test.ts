@@ -204,9 +204,17 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // the raise, and params and the surface drop to ~2% over what is left (the three carried most of
 // the parameter prose). The `contexts` skill became `papers`, and four summaries were trimmed to
 // keep the index inside 2,950.
-const TOOL_DESCRIPTIONS_BUDGET = 3_800
-const PARAM_DESCRIPTIONS_BUDGET = 8_300
-const SURFACE_BUDGET = 12_150
+// DESCRIPTIONS RAISED 3,800 -> 3,950 (2026-10-03) for `show`, the tool that opens an artifact
+// as an MCP App view inside the host's conversation. It cannot be a `read` parameter: MCP Apps
+// binds a view to a TOOL (`_meta.ui.resourceUri`), so a host would open a card on every read.
+// That is the same per-tool carve-out the read/write splits rest on. The description was cut
+// to one sentence plus the fallback (116 chars). PARAMS 8,300 -> 8,450 in the same change:
+// `short_id` carries no description and `version` says only its default, so what remains is
+// the shared `workspace` text every artifact tool repeats. SURFACE 12,150 -> 12,450 to match.
+// Measured 3,887 / 8,339 / 12,226, so the caps keep the ~2% headroom earlier raises settled on.
+const TOOL_DESCRIPTIONS_BUDGET = 3_950
+const PARAM_DESCRIPTIONS_BUDGET = 8_450
+const SURFACE_BUDGET = 12_450
 const INSTRUCTIONS_BUDGET = 2_950
 
 /** No single tool may sprawl: one sentence of routing, the one thing that silently breaks,

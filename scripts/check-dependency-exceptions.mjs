@@ -44,4 +44,27 @@ if (exceptions.some((exception) => exception.id === "GHSA-vwc7-r8mq-g2x9")) {
   )
 }
 
+// Build-time-only advisories: each holds only while its one locked consumer is the audited one.
+const lockfile = parse(read("pnpm-lock.yaml"))
+const consumersOf = (pkg) => {
+  const found = []
+  for (const [parent, entry] of Object.entries({ ...lockfile.importers, ...lockfile.snapshots })) {
+    for (const kind of ["dependencies", "devDependencies", "optionalDependencies"]) {
+      if (entry[kind]?.[pkg] !== undefined) found.push(parent.replace(/\(.*$/, ""))
+    }
+  }
+  return found
+}
+const buildOnly = {
+  "GHSA-vfj7-8cjw-p6xm": { pkg: "braces", consumers: ["micromatch@4.0.8"] },
+  "GHSA-ch52-4w7c-c8xp": { pkg: "http-cache-semantics", consumers: ["astro@7.2.8"] },
+}
+for (const [id, { pkg, consumers }] of Object.entries(buildOnly)) {
+  if (exceptions.some((exception) => exception.id === id))
+    assert.deepEqual(
+      consumersOf(pkg),
+      consumers,
+      `Re-audit the ${pkg} exception (${id}): its locked consumers changed`,
+    )
+}
 console.log("dependency exceptions: audited install boundary holds")
