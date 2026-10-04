@@ -34,6 +34,7 @@
     "gen:openapi": "vitest run test/openapi.test.ts -u"
   },
   "dependencies": {
+    "@ai-sdk/openai": "4.0.25",
     "@ai-sdk/openai-compatible": "3.0.18",
     "@better-auth/oauth-provider": "1.6.19",
     "@better-auth/passkey": "1.6.19",

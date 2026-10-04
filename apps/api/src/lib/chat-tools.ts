@@ -53,7 +53,42 @@ import { AGENT_WRITES_OFF } from "./agent-writes"
  * Absent tools are NOT REGISTERED, so there is no handler to reach — the subset is enforced by
  * construction rather than by a check that could be skipped.
  */
-export const CHAT_TOOLS: ReadonlySet<string> = new Set(["find", "read", "publish", "call"])
+export const CHAT_TOOLS: ReadonlySet<string> = new Set([
+  "find",
+  "read",
+  "catch_up",
+  "publish",
+  "call",
+])
+
+// Chat offers the ordinary artifact workflow. Rich MCP transport and sharing controls
+// stay on MCP. The same schemas and handlers still validate and authorize each call.
+const CHAT_FIELDS: Record<string, readonly string[]> = {
+  find: ["query", "short_id", "tag", "in", "context", "max_matches", "templates", "skills"],
+  read: ["short_id", "format", "section", "focus", "lines", "map", "node", "version"],
+  catch_up: ["short_id", "since_version", "comments", "response_format"],
+  publish: [
+    "short_id",
+    "base_version",
+    "title",
+    "content",
+    "filename",
+    "files",
+    "edits",
+    "message",
+    "request_review",
+    "derived_from",
+  ],
+}
+
+const CHAT_DESCRIPTIONS: Record<string, string> = {
+  find: "Find accessible artifacts in this chat workspace. Search by query or short_id. Read each likely match before answering. Omit unused optional fields.",
+  read: "Read an artifact by short_id, or a derive://skills URI. Use format markdown for text. Omit section to get the normal document; section * reads all. Use focus only for a real phrase. Omit unused optional fields.",
+  catch_up:
+    "Read current versions and comments for one artifact. Use short_id and optionally since_version. Read before editing an existing artifact.",
+  publish:
+    "Create or revise an artifact in this workspace. Create with title, filename, and content. Revise with short_id, base_version, and focused edits or content. An edit has old_str and new_str, or a quote with exact text. Use a base version you read. An existing edit requests review. Omit unused optional fields. A result confirms what actually saved.",
+}
 
 export interface ChatToolSurface {
   /** The tools as the model is told about them. Empty when the subset is empty. */
@@ -172,7 +207,7 @@ export const jsonSchemaOf = (schema: z.ZodType): Record<string, unknown> => {
 
 /** The synthetic principal a chat turn acts as: the asker's seat, wearing Derive's name. */
 const chatAgent = (org: string, role: Role): AgentRecord =>
-  syntheticAgent({ id: "derive", org_id: org, name: "Derive", role })
+  syntheticAgent({ id: "derive", org_id: org, name: "Luna", role })
 
 export interface ChatPrincipal {
   /** The workspace this conversation lives in. */
@@ -227,12 +262,19 @@ export const buildChatTools = (
     profileArt: null,
   }
   const surface = registerToolSurface(makeToolContext(base), undefined, only)
+  const shapeFor = (name: string) => {
+    const full = surface.defs.get(name)?.inputSchema as Record<string, z.ZodType> | undefined
+    const fields = CHAT_FIELDS[name]
+    return full
+      ? Object.fromEntries(Object.entries(full).filter(([key]) => !fields || fields.includes(key)))
+      : {}
+  }
   const tools: LoopTool[] = [...surface.defs]
     .filter(([name]) => surface.registry.has(name))
     .map(([name, def]) => ({
       name,
-      description: def.description,
-      params: jsonSchemaOf(z.object(def.inputSchema as Record<string, z.ZodType>)),
+      description: CHAT_DESCRIPTIONS[name] ?? def.description,
+      params: jsonSchemaOf(z.object(shapeFor(name))),
     }))
   return {
     tools,
@@ -251,7 +293,40 @@ export const buildChatTools = (
       // after a bad run is asking for NOTHING to land without them. The drafted change still
       // surfaces — in the reply the person is reading — so work is never hidden.
       if (name === "publish" && who.flags?.agentWrites === false) return { error: AGENT_WRITES_OFF }
-      return unwrap(await handler(chatPolicy(name, (input ?? {}) as Record<string, unknown>)))
+      const shape = shapeFor(name)
+      const args = chatPolicy(
+        name,
+        input && typeof input === "object" ? (input as Record<string, unknown>) : {},
+      )
+      // Some compatible models send null for optional arguments. Omit only optional,
+      // non-nullable fields. Required and intentionally nullable inputs still validate.
+      const normalized = Object.fromEntries(
+        Object.entries(args).filter(
+          ([key, value]) =>
+            !shape[key]?.isOptional() ||
+            (value !== null &&
+              value !== "" &&
+              !(Array.isArray(value) && value.length === 0) &&
+              !(
+                typeof value === "object" &&
+                value !== null &&
+                !Array.isArray(value) &&
+                Object.keys(value).length === 0
+              )) ||
+            (value === null && shape[key].isNullable()),
+        ),
+      )
+      const parsed = z.object(shape ?? {}).safeParse(normalized)
+      if (!parsed.success)
+        return {
+          error: `Invalid ${name} arguments: ${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`,
+        }
+      if (name === "publish" && parsed.data.short_id && parsed.data.base_version === undefined)
+        return {
+          error:
+            "An existing artifact edit requires base_version. Read the current artifact and use the version you read.",
+        }
+      return unwrap(await handler(parsed.data))
     },
   }
 }

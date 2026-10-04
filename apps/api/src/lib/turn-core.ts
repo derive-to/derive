@@ -235,6 +235,8 @@ export interface TurnInput {
   callModel: AgentLoopInput["callModel"]
   executeTool?: AgentLoopInput["executeTool"]
   maxTurns?: number
+  abortSignal?: AbortSignal
+  shouldStop?: () => boolean
   land: LandingPort
 }
 
@@ -283,6 +285,8 @@ export const runTurn = async (input: TurnInput): Promise<TurnOutcome> => {
     callModel: input.callModel,
     executeTool: input.executeTool ?? (async () => ({ error: "this turn has no tools" })),
     maxTurns: input.maxTurns,
+    abortSignal: input.abortSignal,
+    shouldStop: input.shouldStop,
   })
   if (!res.ok)
     return {

@@ -1,5 +1,6 @@
 import {
   type AgentRecord,
+  DERIVE_AGENT_ID,
   isJobOpen,
   type JobNeeds,
   type JobRecord,
@@ -362,10 +363,16 @@ export const cancelJob = async (
   actorId: string | null = null,
 ): Promise<JobRecord | null> => {
   if (!isJobOpen(job.status)) return job
+  if (job.agent_id === DERIVE_AGENT_ID && JSON.parse(job.meta_json ?? "{}").saving) return null
   const done = await deps.meta.updateJob(
     job.id,
     { status: "cancelled", finished_at: iso(), lease_until: null, dedupe_key: null },
-    { status: ["queued", "running", "needs_you"] },
+    {
+      status: ["queued", "running", "needs_you"],
+      ...(job.agent_id === DERIVE_AGENT_ID
+        ? { updated_at: job.updated_at, meta_json: job.meta_json }
+        : {}),
+    },
   )
   if (done) {
     wake(deps, done.asked_by, "job.settled", done)
@@ -684,7 +691,24 @@ export const jobTick = async (
 // ---- The wire shape ----------------------------------------------------------------------------
 
 /** A job as the API returns it: JSON columns parsed, nothing internal. */
+export const chatContext = (j: JobRecord) => {
+  if (j.agent_id !== DERIVE_AGENT_ID) return null
+  const m = JSON.parse(j.meta_json ?? "{}") as {
+    via?: string
+    selection?: string | null
+    model_id?: string | null
+  }
+  return m.via === "page" || m.via === "chat"
+    ? {
+        selection: m.selection ?? null,
+        model_id: m.model_id ?? null,
+        saving: (m as { saving?: boolean }).saving === true,
+      }
+    : null
+}
+
 export const jobJson = (j: JobRecord) => ({
+  chat_context: chatContext(j),
   id: j.id,
   agent_id: j.agent_id,
   kind: j.kind,

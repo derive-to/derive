@@ -13,6 +13,7 @@ import {
   type ArtifactRecord,
   artifactUrl,
   DERIVE_AGENT_ID,
+  type JobNeeds,
   type JobRecord,
   type MetaStore,
   newId,
@@ -410,7 +411,16 @@ export const handleSlackMention = async (
     }
   }
 
+  const renderReply = (reply: string) =>
+    mrkdwnBody(
+      reply.replace(
+        /\]\((\/[A-Za-z0-9][\w\-./?=&#%]*)\)/g,
+        (_match, path: string) => `](${deps.baseUrl}${path})`,
+      ),
+    )
+  let savedReply: { body_md: string; meta_json: string | null } | undefined
   let job: JobRecord | null
+  let already = false
   if (existing) {
     // SLACK DELIVERS AT LEAST ONCE. A redelivery (30s/1min/5min later, routinely on another
     // isolate) lands here, finds the thread's job, and would append the same question again:
@@ -421,43 +431,90 @@ export const handleSlackMention = async (
     // ingest path uses, slack-comments.ts). It is DB state, which is what makes it survive the
     // retry landing somewhere else. The marker is written IN THE SAME insert as the message:
     // written afterwards, a retry racing the first attempt would not see it.
-    const already = (await meta.listJobMessages(existing.id).catch(() => [])).some(
-      (m) => parseSlackTs(m.meta_json) === p.ts,
+    const messages = await meta.listJobMessages(existing.id)
+    const inbound = messages.findIndex((m) => parseSlackTs(m.meta_json) === p.ts)
+    already = inbound >= 0
+    const latest = messages.reduce(
+      (latest, m, index) => (m.author_kind === "asker" ? index : latest),
+      -1,
     )
-    if (already) return quiet("duplicate slack delivery")
+    if (already && inbound === latest)
+      savedReply = messages.slice(inbound + 1).find((m) => m.author_kind === "agent")
+    if (already && existing.status !== "lost") {
+      const pending = (
+        JSON.parse(existing.meta_json ?? "{}") as {
+          slack_pending?: { channel: string; ts: string }
+        }
+      ).slack_pending
+      if (savedReply && pending && existing.status !== "running")
+        await updateSlackMessage(bot.token, {
+          ...pending,
+          text: renderReply(savedReply.body_md),
+        }).catch(() => {})
+      return quiet("duplicate slack delivery")
+    }
     job = existing
   } else if (created) {
     job = created
   } else {
     return quiet("job not opened")
   }
-  await meta.addJobMessage({
-    id: newId("jm"),
-    job_id: job.id,
-    author_kind: "asker",
-    author_id: asker.id,
-    body_md: question,
-    meta_json: JSON.stringify({ slack: { ts: p.ts } }),
-  })
+  if (job.status === "running") {
+    await say("I am still answering this thread. Send the follow-up after this turn finishes.")
+    return quiet("thread already running")
+  }
+  const recovering = already && job.status === "lost"
+  const priorPending =
+    job.status === "lost"
+      ? (JSON.parse(job.meta_json ?? "{}") as { slack_pending?: { channel: string; ts: string } })
+          .slack_pending
+      : undefined
   // Running under a lease while this request serves it: a crash mid-turn leaves the job to
   // lapse to `lost` (the reaper's rule for attended jobs) rather than read as running for ever.
   const startedAt = new Date().toISOString()
-  job = await meta.updateJob(job.id, {
-    status: "running",
-    started_at: startedAt,
-    finished_at: null,
-    needs_json: null,
-    lease_until: lease(),
-  })
-  if (!job) return quiet("job vanished")
+  job = await meta.updateJob(
+    job.id,
+    {
+      status: "running",
+      started_at: startedAt,
+      finished_at: null,
+      needs_json: null,
+      lease_until: lease(),
+    },
+    { status: job.status, updated_at: job.updated_at },
+  )
+  if (!job) {
+    await say("I am still answering this thread. Send the follow-up after this turn finishes.")
+    return quiet("thread claim changed")
+  }
+  // Only the claim winner inserts the inbound message. Duplicate webhook deliveries
+  // and distinct concurrent follow-ups cannot append to a turn they do not own.
+  if (!already)
+    await meta.addJobMessage({
+      id: newId("jm"),
+      job_id: job.id,
+      author_kind: "asker",
+      author_id: asker.id,
+      body_md: question,
+      meta_json: JSON.stringify({ slack: { ts: p.ts } }),
+    })
   const jobId = job.id
   /** Settle the thread's job. Best effort: the answer in Slack matters more than the row. */
-  const settleJob = async (status: "succeeded" | "failed", costMicroUsd: number | null) => {
+  const settleJob = async (
+    status: "succeeded" | "failed" | "needs_you",
+    costMicroUsd: number | null,
+    needs?: JobNeeds,
+  ) => {
     if (costMicroUsd) await meta.addJobCost(jobId, costMicroUsd).catch(() => null)
     await meta
       .updateJob(
         jobId,
-        { status, finished_at: new Date().toISOString(), lease_until: null },
+        {
+          status,
+          needs_json: needs ? JSON.stringify(needs) : null,
+          finished_at: status === "needs_you" ? null : new Date().toISOString(),
+          lease_until: null,
+        },
         { status: "running", started_at: startedAt },
       )
       .catch((e) => log.warn("slack mention job settle failed", { job: jobId, error: String(e) }))
@@ -474,7 +531,8 @@ export const handleSlackMention = async (
       ? `${question}\n\n(The person linked this document: ${named.title ?? named.short_id} — short_id ${named.short_id}.)`
       : question
 
-  // SAY SOMETHING IMMEDIATELY, because a turn takes seconds and Slack gives no other signal.
+  // Acknowledge receipt immediately. This remains true if Slack accepts the post
+  // before a process crash prevents its timestamp from reaching the database.
   //
   // There is no bot "typing" API on the Events API — the RTM typing event is not available to
   // apps, and assistant.threads.setStatus only exists inside Assistant threads. So the honest
@@ -485,13 +543,30 @@ export const handleSlackMention = async (
   // Best-effort on purpose. If this post fails the turn still runs and answers with a fresh
   // message — losing the progress hint costs nothing, whereas failing the question costs the
   // answer. `pending` therefore stays null on any error and the tail falls back to posting.
-  const pending = await postWithRecovery(meta, install.org_id, bot.token, {
-    channel: p.channel,
-    threadTs: p.threadTs ?? p.ts,
-    text: "_Derive is thinking…_",
-  })
-    .then((r) => (r.ok && r.ts ? { channel: r.channel ?? p.channel, ts: r.ts } : null))
-    .catch(() => null)
+  const pending =
+    priorPending ??
+    (await postWithRecovery(meta, install.org_id, bot.token, {
+      channel: p.channel,
+      threadTs: p.threadTs ?? p.ts,
+      text: "_Request received. If no reply follows, send a new request. Interrupted work does not repeat automatically._",
+    })
+      .then((r) => (r.ok && r.ts ? { channel: r.channel ?? p.channel, ts: r.ts } : null))
+      .catch(() => null))
+
+  if (pending) {
+    const held = await meta.getJob(jobId)
+    if (held)
+      await meta.updateJob(
+        jobId,
+        {
+          meta_json: JSON.stringify({
+            ...JSON.parse(held.meta_json ?? "{}"),
+            slack_pending: pending,
+          }),
+        },
+        { status: "running", started_at: startedAt },
+      )
+  }
 
   /** Replace the placeholder with the real text, or post it if there is no placeholder to
    *  replace. Every exit below goes through this, so no thread is left reading "thinking…". */
@@ -503,6 +578,18 @@ export const handleSlackMention = async (
         await say(text)
       },
     )
+  }
+
+  if (recovering) {
+    // The crashed turn may have saved an artifact. Do not repeat it on redelivery.
+    await settle(
+      savedReply
+        ? renderReply(savedReply.body_md)
+        : "The previous turn was interrupted. Check Derive Activity for completed changes, then send a new request. I have not repeated the interrupted request.",
+    )
+    const outcome = savedReply ? JSON.parse(savedReply.meta_json ?? "{}").outcome : "failed"
+    await settleJob(outcome === "answered" ? "succeeded" : "failed", null)
+    return quiet("interrupted delivery recovered without replay")
   }
 
   // FROM HERE ON, SOMEONE IS WAITING IN A THREAD. runChatTurn does not throw, but the writes
@@ -543,9 +630,19 @@ export const handleSlackMention = async (
           ...(resolved.verified ? {} : { note: CHAT_UNVERIFIED_NOTE }),
         },
         skills: tools.skills,
+        canAskUser: false,
+        stillHeld: async () => {
+          const held = await meta.getJob(jobId)
+          return held?.status === "running" && held.started_at === startedAt
+        },
       },
     )
 
+    const held = await meta.getJob(jobId)
+    if (held?.status !== "running" || held.started_at !== startedAt) {
+      if (res.costMicroUsd) await meta.addJobCost(jobId, res.costMicroUsd).catch(() => null)
+      return quiet("thread claim ended")
+    }
     // The transcript is the record: the Slack message is a rendering of the answer, not the
     // answer itself. `model` and `model_ms` feed the operator's model timings.
     await meta.addJobMessage({
@@ -561,7 +658,11 @@ export const handleSlackMention = async (
         via: "slack",
       }),
     })
-    await settleJob(res.outcome === "failed" ? "failed" : "succeeded", res.costMicroUsd)
+    await settleJob(
+      res.outcome === "failed" ? "failed" : res.needs ? "needs_you" : "succeeded",
+      res.costMicroUsd,
+      res.needs,
+    )
 
     // AN ANSWER IS PROSE, not a label, so it goes through mrkdwnBody rather than escapeMrkdwn:
     // the model writes markdown, and escaping alone left `**bold**` as asterisks and every

@@ -1,26 +1,9 @@
 import { type AskFields, addCostUsd, NUDGE_LIMIT, type Revision } from "@derive/core"
+import { generateText, jsonSchema, type LanguageModel, type ModelMessage, stepCountIs } from "ai"
 
-/**
- * The MODEL TURN — call the model, let it use its tools, hold it to the output contract, and
- * hand back what it produced. Everything above the landing port (see lib/turn-core.ts).
- *
- * Most of what people automate is "read something, think about it, write an artifact". That
- * needs a model and fetch, both of which a Worker does natively, with millisecond cold starts
- * against container-minutes. The container exists because the other executor is a coding-agent
- * CLI that wants a filesystem, a shell and subprocesses — none of which that work requires.
- *
- * Deliberately dependency-free: plain fetch against the Messages API, no Mastra and no AI SDK.
- * That is what lets it run in a Worker at all (a heavy agent framework is exactly the thing that
- * blows a Worker bundle), and it keeps the loop small enough to read in one sitting.
- *
- * The CONTRACT is injected rather than hardcoded, because the lanes that run a model turn ask
- * for different things and must not fork the loop to get them: an edit of a large document wants
- * search and replace; a question about a document wants a revision OR a prose answer; a Slack
- * reply wants prose and nothing else. The block contracts live in @derive/core.
- *
- * The loop does NOT land the write. It returns what the model produced; the caller's landing
- * port writes it, exactly as the container path does.
- */
+export type { ModelMessage } from "ai"
+
+/** The SDK owns tool orchestration. Derive owns permissions, budgets, and landing. */
 
 /** One tool the model may call, as the run's least-privilege list already describes it. */
 export interface LoopTool {
@@ -39,13 +22,6 @@ export interface ModelTurn {
   toolUses: { id: string; name: string; input: unknown }[]
   /** Reported spend for this turn in USD, when the provider tells us. Null = unknown. */
   costUsd: number | null
-  /** True when the model finished its turn rather than pausing for tools. */
-  done: boolean
-}
-
-export interface ModelMessage {
-  role: "user" | "assistant"
-  content: unknown
 }
 
 /** What one finished turn PRODUCED. The single shape every lane's landing port reads, so the
@@ -110,6 +86,7 @@ export interface AgentLoopInput {
      *  provider without streaming simply never calls this. NEVER accumulate them into the answer
      *  you persist — use the returned `ModelTurn.text`, which is always the complete reply. */
     onDelta?: (text: string) => void
+    abortSignal?: AbortSignal
   }) => Promise<ModelTurn>
   /** Execute one tool server-side. Errors are RETURNED as text, never thrown — a failing tool
    *  is information the model should react to, not a reason to lose the whole run. */
@@ -117,6 +94,9 @@ export interface AgentLoopInput {
   /** Hard ceiling on model turns. Bounds spend and wall-clock on a model that loops calling
    *  tools forever; without it a stuck run costs money until the lease expires. */
   maxTurns?: number
+  abortSignal?: AbortSignal
+  /** A durable question stops the run before another model call or effect. */
+  shouldStop?: () => boolean
 }
 
 /** WHY a turn produced nothing. The lanes word their apologies differently — a person in chat
@@ -197,134 +177,163 @@ const clipToBudget = (text: string, remaining: number): { text: string; used: nu
   }
 }
 
-/** A truncated reply, duck-typed. TruncatedReplyError (lib/model-openai) carries `truncated`;
+/** A truncated reply, duck-typed. TruncatedReplyError (lib/model-turn) carries `truncated`;
  *  matching on the property rather than importing the class keeps this file free of the
  *  provider adapters that depend on IT. */
 const wasTruncated = (e: unknown): boolean =>
   !!e && typeof e === "object" && (e as { truncated?: unknown }).truncated === true
 
+/** Adapt the existing provider seam to the SDK. No transport or tool loop lives here. */
 export const runAgentLoop = async (input: AgentLoopInput): Promise<AgentLoopResult> => {
   const maxTurns = input.maxTurns ?? DEFAULT_MAX_TURNS
-  const messages: ModelMessage[] = [...input.messages]
-  // Accumulated across EVERY turn, including the ones that end in failure — a run that burned
-  // eight turns and produced nothing still cost money, and the budget sums what is reported.
-  // Shared with the container executor via @derive/core/run-policy: null means UNKNOWN, never
-  // zero, and attempts ACCUMULATE — a run that burned three turns for nothing still cost money.
   let costUsd: number | null = null
-  const spend = (c: number | null) => {
-    costUsd = addCostUsd(costUsd, c)
-  }
   let turns = 0
-  // NUDGE_LIMIT is the shared policy (one re-ask), not a local choice.
-  let nudges = 0
-  // Tool output already spent, across every turn. See TOOL_OUTPUT_BUDGET_CHARS.
   let toolChars = 0
-
-  while (turns < maxTurns) {
-    turns += 1
-    let turn: ModelTurn
-    // ON THE FINAL TURN, OFFER NO TOOLS. The warning below asks the model to stop calling them;
-    // a model that ignores it spends the last turn on a call whose result is discarded, and the
-    // run fails having paid for everything. Withdrawing the tools makes that structurally
-    // impossible: the only move left is to answer. Watched on a scheduled run against a live
-    // cloud MCP, where a polite request alone converged some runs and not others.
-    const finalTurn = turns === maxTurns
-    try {
-      turn = await input.callModel({
-        system: input.system,
-        messages,
-        tools: finalTurn ? [] : input.tools,
-      })
-    } catch (e) {
-      // The model call itself failed (429, 5xx, a network blip). Retryable: the expensive part
-      // has not happened yet and a second attempt may well succeed — the same judgement the
-      // container executor makes, with the server owning the retry policy either way.
-      //
-      // Except truncation, which is not a connectivity problem and where "try again" is advice
-      // that cannot work: the reply did not fit and will not fit next time either.
-      const truncated = wasTruncated(e)
-      return {
-        ok: false,
-        reason: truncated ? "truncated" : "model",
-        error: (e as Error).message,
-        retryable: !truncated,
-        costUsd,
-        turns,
-      }
-    }
-    spend(turn.costUsd)
-
-    if (turn.toolUses.length > 0) {
-      messages.push({ role: "assistant", content: turn.toolUses })
-      // Sequential, not parallel: tools here are brokered calls into other people's systems, and
-      // a model that asks for six at once should not become six concurrent writes to someone's
-      // Gmail. Latency is the right thing to trade for that.
-      const results: { tool_use_id: string; content: string }[] = []
-      for (const use of turn.toolUses) {
-        let text: string
-        try {
-          text = resultText(await input.executeTool(use.name, use.input))
-        } catch (e) {
-          // An error is a diagnosis, not payload: it is short, and it must never be squeezed out
-          // by a budget the successful calls spent.
-          results.push({ tool_use_id: use.id, content: resultText(e) })
+  let serial = Promise.resolve()
+  const model: LanguageModel = {
+    specificationVersion: "v3",
+    provider: "derive",
+    modelId: "resolved",
+    supportedUrls: {},
+    async doGenerate(request) {
+      input.abortSignal?.throwIfAborted()
+      const messages: ModelMessage[] = []
+      let system = ""
+      for (const m of request.prompt) {
+        if (m.role === "system") {
+          system += `${m.content}\n`
           continue
         }
-        const clipped = clipToBudget(text, TOOL_OUTPUT_BUDGET_CHARS - toolChars)
-        toolChars += clipped.used
-        results.push({ tool_use_id: use.id, content: clipped.text })
+        messages.push(m)
       }
-      messages.push({ role: "user", content: results })
-
-      // THE LAST TURN IS ANNOUNCED, not sprung. Without this a run exploring one turn too long is
-      // guillotined at the cap having paid for every turn and produced nothing — which is the
-      // most expensive way for a run to fail and the easiest to avoid. Said once, on the turn
-      // where it changes what the model should do.
-      if (turns === maxTurns - 1) {
-        messages.push({
-          role: "user",
-          content:
-            "This is your final turn: any further tool call is discarded. Produce the revision now, using what you already have.",
-        })
+      turns += 1
+      const r = await input.callModel({
+        system,
+        messages,
+        abortSignal: input.abortSignal,
+        tools: (request.tools ?? [])
+          .filter((t) => t.type === "function")
+          .map((t) => ({
+            name: t.name,
+            description: t.description ?? "",
+            params: { ...t.inputSchema },
+          })),
+      })
+      costUsd = addCostUsd(costUsd, r.costUsd)
+      return {
+        content: [
+          ...(r.text ? [{ type: "text" as const, text: r.text }] : []),
+          ...r.toolUses.map((t) => ({
+            type: "tool-call" as const,
+            toolCallId: t.id,
+            toolName: t.name,
+            input: JSON.stringify(t.input ?? {}),
+          })),
+        ],
+        finishReason: { unified: r.toolUses.length ? "tool-calls" : "stop", raw: undefined },
+        usage: {
+          inputTokens: {
+            total: undefined,
+            noCache: undefined,
+            cacheRead: undefined,
+            cacheWrite: undefined,
+          },
+          outputTokens: { total: undefined, text: undefined, reasoning: undefined },
+        },
+        warnings: [],
       }
-      continue
+    },
+    async doStream() {
+      throw new Error("Derive uses buffered model steps")
+    },
+  }
+  const tools = Object.fromEntries(
+    input.tools.map((t) => [
+      t.name,
+      {
+        description: t.description,
+        inputSchema: jsonSchema(t.params as Parameters<typeof jsonSchema>[0], {
+          validate: (value: unknown) => ({ success: true as const, value }),
+        }),
+        execute: async (args: unknown) => {
+          const prior = serial
+          let release: () => void = () => {}
+          serial = new Promise<void>((resolve) => {
+            release = resolve
+          })
+          await prior
+          try {
+            input.abortSignal?.throwIfAborted()
+            if (input.shouldStop?.())
+              return { error: "The run is paused for your answer. No further tools ran." }
+            let text: string
+            try {
+              text = resultText(await input.executeTool(t.name, args))
+            } catch (e) {
+              return resultText(e)
+            }
+            const clipped = clipToBudget(text, TOOL_OUTPUT_BUDGET_CHARS - toolChars)
+            toolChars += clipped.used
+            return clipped.text
+          } finally {
+            release()
+          }
+        },
+      },
+    ]),
+  )
+  let messages = input.messages
+  try {
+    for (let nudge = 0; nudge <= NUDGE_LIMIT && turns < maxTurns; nudge += 1) {
+      const r = await generateText({
+        model,
+        system: input.system,
+        messages,
+        tools,
+        maxRetries: 0,
+        abortSignal: input.abortSignal,
+        stopWhen: [stepCountIs(maxTurns - turns), () => input.shouldStop?.() === true],
+        prepareStep: () => (turns >= maxTurns - 1 ? { activeTools: [], toolChoice: "none" } : {}),
+      })
+      const read = input.contract.read(r.text)
+      if (read.product) return { ok: true, product: read.product, costUsd, turns }
+      if (turns >= maxTurns && r.steps.some((step) => step.toolCalls.length > 0))
+        return {
+          ok: false,
+          reason: "turns",
+          error: `agent did not finish within ${maxTurns} turns`,
+          retryable: false,
+          costUsd,
+          turns,
+        }
+      if (nudge === NUDGE_LIMIT || turns >= maxTurns)
+        return {
+          ok: false,
+          reason: "contract",
+          error: read.miss.detail,
+          ...(read.miss.reply ? { reply: read.miss.reply } : {}),
+          retryable: false,
+          costUsd,
+          turns,
+        }
+      messages = [...messages, ...r.response.messages, { role: "user", content: read.miss.nudge }]
     }
-
-    const read = input.contract.read(turn.text)
-    if (read.product) return { ok: true, product: read.product, costUsd, turns }
-
-    // A finished turn the contract could not use. Nudge ONCE — models routinely describe the
-    // change instead of emitting it, or miss an anchor by a space, and one reminder recovers the
-    // work rather than discarding a completed run. Twice would just pay again for the same
-    // failure. The nudge is the CONTRACT'S, so an edit that missed carries the diagnostic
-    // explaining WHY, which is what makes the second attempt likely to work.
-    if (nudges < NUDGE_LIMIT) {
-      nudges += 1
-      messages.push({ role: "assistant", content: turn.text })
-      messages.push({ role: "user", content: read.miss.nudge })
-      continue
-    }
-    // Deterministic: a model that ignored the contract twice will ignore it a third time, so
-    // this must not look retryable or the run pays for the same answer again.
     return {
       ok: false,
-      reason: "contract",
-      error: read.miss.detail,
-      ...(read.miss.reply ? { reply: read.miss.reply } : {}),
+      reason: "turns",
+      error: `agent exceeded ${maxTurns} steps`,
       retryable: false,
       costUsd,
       turns,
     }
-  }
-
-  // Ran out of turns still calling tools. Not retryable for the same reason: a loop that could
-  // not converge in maxTurns will not converge in another maxTurns.
-  return {
-    ok: false,
-    reason: "turns",
-    error: `agent did not produce a revision within ${maxTurns} turns`,
-    retryable: false,
-    costUsd,
-    turns,
+  } catch (e) {
+    return {
+      ok: false,
+      reason: wasTruncated(e) ? "truncated" : "model",
+      error: e instanceof Error ? e.message : String(e),
+      retryable: !wasTruncated(e),
+      costUsd,
+      turns,
+    }
   }
 }

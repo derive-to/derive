@@ -83,19 +83,12 @@ export interface GatewayConfig {
   autoProviders?: string
 }
 
-/**
- * NO THINKING BEFORE AN ANSWER.
- *
- * A reasoning model spends most of a short answer's budget thinking, and an attended turn makes
- * several model calls — so it is the difference between a reply that arrives and one that is
- * waited for. Measured locally across both the SDK and a raw request: roughly 1.7x faster with
- * it off, and a capped thinking budget was slower than off while an effort level was slower than
- * the default.
- *
- * A constant rather than configuration: chat is interactive, and there is no deployment that
- * wants its interactive turns slower. Hosts that do not understand the field ignore it.
- */
+const LUNA_MODEL = "openai/gpt-6-luna"
+const lunaModel = (id: string): boolean => id === LUNA_MODEL || id === "gpt-6-luna"
+
+// Luna uses medium reasoning. Other models keep their existing interactive policy.
 const NO_THINKING = { reasoning: { enabled: false } } as const
+const LUNA_REASONING = { reasoning: { enabled: true, effort: "medium" } } as const
 
 /** Keep interactive replies from winning on time-to-first-token only to then dribble output.
  *  This is a PREFERENCE, not a gate: OpenRouter moves slower endpoints behind the preferred
@@ -179,19 +172,24 @@ export const callModelFromGateway = (
   // Low latency is what an attended turn feels; the throughput floor prevents a quick first
   // token from masking a slow completion. Fallbacks stay on so a provider 429 becomes another
   // route attempt, not a failed Derive turn.
-  const provider = automatic.length
-    ? {
-        only: automatic,
-        sort: "latency",
-        preferred_min_throughput: AUTO_MIN_THROUGHPUT,
-        allow_fallbacks: true,
-      }
-    : order.length
-      ? { order, allow_fallbacks: true }
-      : undefined
+  const hostedLuna = openRouterGateway(gw.baseUrl) && lunaModel(id)
+  // Luna runs on OpenAI. The legacy DeepSeek backend allowlist cannot serve it.
+  // Keep this exception model-specific; every other model retains the operator policy.
+  const provider = hostedLuna
+    ? { only: ["OpenAI"], allow_fallbacks: false }
+    : automatic.length
+      ? {
+          only: automatic,
+          sort: "latency",
+          preferred_min_throughput: AUTO_MIN_THROUGHPUT,
+          allow_fallbacks: true,
+        }
+      : order.length
+        ? { order, allow_fallbacks: true }
+        : undefined
   const extraBody = {
     ...(provider ? { provider } : {}),
-    ...NO_THINKING,
+    ...(hostedLuna ? LUNA_REASONING : NO_THINKING),
   }
   const serverTools = openRouterGateway(gw.baseUrl) ? OPENROUTER_SERVER_TOOLS : []
   return openAiCompatModel({
@@ -210,7 +208,15 @@ export const callModelFromGateway = (
  * mapping table of pretty names would be one more thing to keep in step with a provider's
  * catalog, and would be wrong the first time a model was renamed upstream.
  */
-export const labelFor = (id: string): string => id.split("/").filter(Boolean).pop() ?? id
+/** Explicit choices win. Only the known gateway gets an inherited model id. */
+export const gatewayModel = (
+  baseUrl: string | undefined,
+  configured: string | undefined,
+): string | undefined =>
+  configured?.trim() || (baseUrl && openRouterGateway(baseUrl) ? "openai/gpt-6-luna" : undefined)
+
+export const labelFor = (id: string): string =>
+  lunaModel(id) ? "Luna" : (id.split("/").filter(Boolean).pop() ?? id)
 
 const parseAlso = (raw: string | undefined, defaultModel: string): string[] => {
   const seen = new Set([defaultModel])
@@ -226,6 +232,16 @@ const parseAlso = (raw: string | undefined, defaultModel: string): string[] => {
   return out
 }
 
+/** A direct key makes hosted chat Luna-only, independent of legacy gateway settings. */
+export const openAiGateway = (apiKey: string | undefined): GatewayConfig | undefined =>
+  apiKey?.trim() ? { baseUrl: "https://api.openai.com/v1", apiKey, model: LUNA_MODEL } : undefined
+
+/** Direct Luna cannot inherit gateway-only models from the instance library. */
+export const libraryGateway = (
+  gateway: GatewayConfig | null | undefined,
+): GatewayConfig | undefined =>
+  gateway && new URL(gateway.baseUrl).hostname !== "api.openai.com" ? gateway : undefined
+
 /**
  * Build the catalog from an operator gateway. Null in, null out: a deploy with no model
  * configured has no catalog, which is the same "chat cannot answer here" state the single
@@ -234,6 +250,8 @@ const parseAlso = (raw: string | undefined, defaultModel: string): string[] => {
 export const catalogFromGateway = (gw: GatewayConfig | null | undefined): ModelCatalog | null => {
   if (!gw) return null
   const ids = [gw.model, ...parseAlso(gw.alsoModels, gw.model)]
+  // Hosted Luna stays selectable even when an older deploy pins DeepSeek as default.
+  if (openRouterGateway(gw.baseUrl) && !ids.includes(LUNA_MODEL)) ids.push(LUNA_MODEL)
   return catalogOf(
     ids.map((id, i) => ({
       id,

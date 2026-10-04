@@ -47,7 +47,7 @@ import {
   ArtifactWrongWorkspace,
 } from "./artifact-states"
 import { ArtifactTopBar } from "./artifact-top-bar"
-import { AskPanel, useAskOptions } from "./ask-panel"
+import { AskPanel, useLunaAsk } from "./ask-panel"
 import { BundleBar } from "./bundle-bar"
 import { ActionsCtx } from "./comment-actions"
 import { DeckOrganizer, DeckOrganizerDiscardDialog, useDeckOrganizer } from "./deck-organizer"
@@ -206,11 +206,6 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // payload (history hidden) the lookup runs anyway; it is one indexed read.
   const firstVersion = art?.versions.find((v) => v.n === 1)
   const couldBeReport = !firstVersion || !!firstVersion.agent
-  // The agent that published this page, which the Ask panel offers while its machine is on.
-  const publisherId =
-    art?.versions.find((v) => v.n === art.current_version)?.agent?.id ??
-    firstVersion?.agent?.id ??
-    null
 
   // A restored/in-memory detail can carry a raw capability that expired long before
   // this click. Refresh it before the iframe gets a src; otherwise the first token is
@@ -394,7 +389,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
   )
   // Who can be asked about this page; with nobody to ask and no conversation to come back to,
   // Ask is hidden everywhere.
-  const ask = useAskOptions(shortId, publisherId, inActiveWorkspace)
+  const ask = useLunaAsk(shortId, inActiveWorkspace)
   const askEnabled = ask.available
   // The top bar's two rail buttons: each opens the rail on its view, or closes the rail when
   // its view is already showing.
@@ -1861,10 +1856,8 @@ export function Artifact({ template = false }: { template?: boolean }) {
               askPanel={
                 askEnabled ? (
                   <AskPanel
+                    selection={shown === art.current_version ? sel?.selector.exact : undefined}
                     shortId={shortId}
-                    options={ask.options}
-                    agentsError={ask.agentsError}
-                    onRetryAgents={ask.retryAgents}
                     currentVersion={art.current_version}
                     onGoToVersion={goToVersion}
                     onUndo={effectiveCanPublish ? (n) => restore(n) : undefined}

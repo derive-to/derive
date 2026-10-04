@@ -7373,6 +7373,11 @@ export interface components {
         };
         Job: {
             id: string;
+            chat_context: {
+                selection: string | null;
+                model_id: string | null;
+                saving: boolean;
+            } | null;
             agent_id: string;
             /** @enum {string} */
             kind: "ask" | "scheduled" | "graph" | "node";
@@ -7400,6 +7405,9 @@ export interface components {
             needs: {
                 /** @enum {string} */
                 kind: "review" | "decision" | "escalation" | "effect";
+                question_id?: string;
+                target_id?: string;
+                target_version?: number;
                 question: string;
                 options?: string[];
                 review_round_id?: string;
@@ -7451,6 +7459,11 @@ export interface components {
             author_id: string;
             body_md: string;
             progress: boolean;
+            model: {
+                id: string;
+                label: string;
+            } | null;
+            tools: string[];
             created_at: string;
         };
         ModelAccount: {

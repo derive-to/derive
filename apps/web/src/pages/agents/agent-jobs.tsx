@@ -264,7 +264,11 @@ function JobRow({
 /** Whether this person may answer, cancel, or retry a job: the agent's manager, or its asker
  *  while they may still ask it (canSteerJob). Reads the agent once (shared with its page). */
 export function useCanSteer(job: Job | undefined, meId: string | undefined): boolean {
-  const agent = useQuery({ ...agentQuery(job?.agent_id ?? ""), enabled: !!job && !!meId })
+  const agent = useQuery({
+    ...agentQuery(job?.agent_id ?? ""),
+    enabled: !!job && !!meId && job.agent_id !== "derive",
+  })
+  if (job?.agent_id === "derive") return job.asked_by === meId
   if (!job || !meId || !agent.data) return false
   return agent.data.can_manage || (job.asked_by === meId && agent.data.can_ask)
 }
@@ -273,7 +277,11 @@ export function useCanSteer(job: Job | undefined, meId: string | undefined): boo
 export function AnswerBox({ job }: { job: Job }) {
   const [text, setText] = useState("")
   const answer = useApiMutation({
-    mutationFn: (a: { text?: string; option?: string }) => api.answerJob(job.id, a),
+    mutationFn: (a: { text?: string; option?: string }) =>
+      api.answerJob(job.id, {
+        ...a,
+        ...(job.needs?.question_id ? { question_id: job.needs.question_id } : {}),
+      }),
     invalidate: [["jobs"]],
     onSuccess: () => setText(""),
   })
@@ -310,7 +318,7 @@ export function AnswerBox({ job }: { job: Job }) {
         type="submit"
         size="sm"
         data-testid={`job-answer-send-${job.id}`}
-        disabled={!text.trim()}
+        disabled={!text.trim() || answer.isPending}
         loading={answer.isPending}
       >
         Send

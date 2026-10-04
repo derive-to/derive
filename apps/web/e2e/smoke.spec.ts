@@ -879,101 +879,39 @@ test("a job's report page says which job it is, and the job links to it", async 
   await expect(owner.getByTestId("job-header")).toHaveCount(0)
 })
 
-test("asking from a page's Ask panel opens a private job about that page and shows the reply", async ({
-  owner,
-}, testInfo) => {
+test("artifact Ask uses Luna and excludes custom agent jobs", async ({ owner }, testInfo) => {
   const agent = await makeAgent(owner, { name: "Helper", role: "editor" })
-  // An agent on a machine that never checked in, with nothing to do with the page: a question
-  // to it would wait for ever, so the panel does not offer it.
-  await makeAgent(owner, { name: "Elsewhere", role: "editor" })
-  // The page's own agent published it, and its runner is on (it just checked in).
   const page = await publishAsAgent(owner, agent, "The plan")
-  expect(await pullAs(owner, agent)).toEqual([])
+  const custom = await owner.request.post("/v1/jobs", {
+    data: {
+      agent_id: agent.id,
+      instruction: "Custom agent conversation",
+      subject: { kind: "artifact", id: page },
+    },
+  })
+  expect(custom.ok()).toBeTruthy()
+  // Configure the visible model state without calling a live model.
+  await owner.route("**/v1/workspace", async (route) => {
+    const response = await route.fetch()
+    await route.fulfill({ json: { ...(await response.json()), assistant: true } })
+  })
   await openArtifact(owner, page)
-  // Activity is the page's shared history: the private conversation is not in it.
-  await expect(owner.getByTestId("activity-stream")).toBeVisible()
-  await expect(owner.getByTestId("ask-panel")).toHaveCount(0)
-  await expect(owner.getByTestId("ask-input")).toHaveCount(0)
-
-  // The top bar's Ask switches the rail to the conversation, and says which view is showing.
-  const askButton = owner.getByTestId("artifact-ask")
-  await askButton.click()
-  await expect(askButton).toHaveAttribute("aria-pressed", "true")
-  await expect(owner.getByTestId("artifact-show-comments")).toHaveAttribute("aria-pressed", "false")
-  await expect(owner.getByTestId("activity-stream")).toHaveCount(0)
-  // Opening Ask puts the caret in its box.
-  await expect(owner.getByTestId("ask-input")).toBeFocused()
-
-  // Derive itself comes first where this deploy has a model; either way the only agent offered
-  // is Helper.
-  const { assistant } = (await (await owner.request.get("/v1/workspace")).json()) as {
-    assistant: boolean
-  }
-  if (assistant) {
-    // Derive's conversations are the asker's alone.
-    await expect(owner.getByTestId("ask-panel-title")).toHaveText("Ask Derive")
-    await expect(owner.getByTestId("ask-panel-audience")).toHaveText(
-      "Only you see this conversation",
-    )
-    await expect(owner.getByTestId("ask-footnote")).toContainText("Private to you.")
-    await owner.getByTestId("ask-agent").click()
-    const offered = owner.getByRole("menuitemradio")
-    await expect(offered).toHaveCount(2)
-    await expect(offered.nth(0)).toContainText("Derive")
-    await expect(offered.nth(0)).toContainText("answers now")
-    await expect(offered.nth(1)).toContainText("Helper")
-    await expect(offered.nth(1)).toContainText("made this page · connected")
-    await offered.nth(1).click()
-  } else {
-    await expect(owner.getByTestId("ask-agent")).toHaveCount(0)
-  }
-  // Another agent's job is the workspace's to see, and the panel says so.
-  await expect(owner.getByRole("region", { name: "Ask Helper" })).toBeVisible()
-  await expect(owner.getByTestId("ask-panel-audience")).toHaveText(
-    "Your workspace can see this conversation",
-  )
-  await expect(owner.getByTestId("ask-footnote")).toHaveText(
-    "Your team can see this job and its answer.",
-  )
-  await owner.getByTestId("ask-input").fill("What is missing from this plan?")
-  await owner.getByTestId("ask-send").click()
-  const follow = owner.getByTestId("ask-job")
-  await expect(follow).toHaveAttribute("data-status", "queued")
-  await expect(follow).toContainText("What is missing from this plan?")
-
-  // Paused after it was asked: the panel says why the job waits. A reload opens on Activity,
-  // and Ask resumes the latest conversation about this page from the server.
-  const pause = (paused: boolean) =>
-    owner.request.patch(`/v1/agents/${agent.id}`, { data: { paused } })
-  expect((await pause(true)).ok()).toBeTruthy()
-  await owner.reload()
   await expect(owner.getByTestId("activity-stream")).toBeVisible()
   await owner.getByTestId("artifact-ask").click()
-  await expect(owner.getByTestId("ask-warning")).toContainText("Paused")
-  expect((await pause(false)).ok()).toBeTruthy()
-
-  // The job is about this page; its runner picks it up and answers.
-  const [held] = await pullAs(owner, agent)
-  expect(held).toBeTruthy()
-  const job = await (await owner.request.get(`/v1/jobs/${held?.id}`)).json()
-  expect(job.subject).toEqual({ kind: "artifact", id: page })
-  if (held)
-    await reportAs(owner, agent, held, {
-      status: "succeeded",
-      body_md: "It has no owner for the rollout.",
-    })
-  // The settle reaches the asker's open tab as an event; no poll interval to wait out.
-  await expect(follow).toHaveAttribute("data-status", "succeeded", { timeout: 10_000 })
-  await expect(follow).toContainText("It has no owner for the rollout.")
-  await owner.screenshot({ path: testInfo.outputPath("ask-panel.png") })
-
-  // New starts a fresh conversation; Activity takes the rail back.
-  await owner.getByTestId("ask-panel-new").click()
+  await expect(owner.getByTestId("ask-panel-title")).toHaveText("Ask Luna")
+  await expect(owner.getByTestId("ask-panel-audience")).toHaveText("Only you see this conversation")
+  await expect(owner.getByTestId("ask-agent")).toHaveCount(0)
   await expect(owner.getByTestId("ask-job")).toHaveCount(0)
+  await expect(owner.getByTestId("chat-history")).toHaveCount(0)
+  await expect(owner.getByTestId("ask-input")).toBeFocused()
   await expect(owner.getByTestId("ask-input")).toHaveAttribute(
     "placeholder",
-    "Ask about this page…",
+    "Ask about this artifact…",
   )
+  await expect(owner.getByTestId("chat-scope")).toContainText("The plan")
+  await expect(owner.getByTestId("chat-model")).toBeVisible()
+  await expect(owner.getByTestId("ask-footnote")).toContainText("Private to you.")
+  await owner.screenshot({ path: testInfo.outputPath("luna-only-ask.png") })
   await owner.getByTestId("artifact-show-comments").click()
   await expect(owner.getByTestId("activity-stream")).toBeVisible()
   await expect(owner.getByTestId("ask-panel")).toHaveCount(0)
