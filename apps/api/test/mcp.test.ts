@@ -1294,7 +1294,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("show opens the artifact view: a framed private page, served as an MCP App", async () => {
-    const { app, token, meta } = appWithGrant(dir, "show", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(dir, "show", "openid derive:read derive:publish")
     const pub = await publish(app, token, "Launch deck")
     const shortId = (await pub.json()).short_id
 
@@ -1406,22 +1406,12 @@ describe("remote MCP endpoint (/mcp)", () => {
       "Product teams",
       "Agencies",
     ])
-    // The asker adding context in its own thread is not an answer; a teammate's reply is.
+    // The first reply answers it, whoever sends it: in a chat host the person's answer from the
+    // view arrives through the same grant that asked.
     await call(app, token, "comment", {
       short_id: shortId,
       reply_to: asked.thread,
-      body: "Pick one.",
-    })
-    expect((await askView()).answer).toBe(null)
-    const shownRow = await meta.getByShortId(shortId)
-    await meta.createComment({
-      id: "c_show_answer",
-      artifact_id: shownRow?.id ?? "",
-      thread_id: asked.thread,
-      base_version: 1,
-      body_md: "Agencies",
-      author: "Teammate",
-      author_id: "u_show_mate",
+      body: "Agencies",
     })
     expect((await askView()).answer).toBe("Agencies")
     expect(

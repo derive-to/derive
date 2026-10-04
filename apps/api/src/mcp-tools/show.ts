@@ -85,9 +85,10 @@ export function registerShowTool(tc: ToolContext): void {
           ? (parseMeta(root.meta) as { question?: { options?: unknown } }).question
           : undefined
         if (!root || !asked) return err(`No question thread "${thread}" on "${short_id}".`)
-        // The answer is the first reply from someone other than the asker: the agent that
-        // asked may add context in its own thread without answering itself.
-        const reply = inThread.find((c) => c.id !== root.id && c.author_id !== root.author_id)
+        // The first reply answers it. Not "the first reply from someone else": in a chat host
+        // the question and the person's answer from the view arrive through the same grant,
+        // so they carry the same author.
+        const reply = inThread.find((c) => c.id !== root.id)
         question = {
           thread,
           text: root.body_md,

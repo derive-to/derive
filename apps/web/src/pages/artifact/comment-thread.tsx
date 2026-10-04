@@ -217,10 +217,10 @@ export function CommentCard({
   const elBand = isEl ? anchorConf?.[root.thread_id]?.band : undefined
   const relocated = isEl && textPresent && (elBand === "low" || elBand === "medium")
   const replies = thread.length - 1
-  // A question (asked by an agent with choices): until someone other than the asker replies,
-  // its choices are one-click answers. Any other reply answers it too.
-  const answered = thread.slice(1).some((c) => c.author_id !== root.author_id)
-  const choices = canComment && !resolved && !answered && root.options?.length ? root.options : null
+  // A question (asked by an agent with choices): until the first reply, its choices are
+  // one-click answers. Any reply answers it, a choice or other words.
+  const choices =
+    canComment && !resolved && replies === 0 && root.options?.length ? root.options : null
   // Deck context (from CommentScope): the slide this comment belongs to — where its
   // text resolved (landed), else the slide it was written on — and whether the text
   // has since moved to a different slide than it was anchored on.
