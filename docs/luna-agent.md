@@ -72,6 +72,8 @@ This prevents an automatic retry from repeating a save after a process crash.
 Set `OPENAI_API_KEY` to run chat directly through OpenAI Responses.
 This mode offers only Luna and uses medium reasoning.
 It ignores legacy DeepSeek gateway settings and library model entries.
+Token costs use OpenAI standard Luna rates, including cache and long-context rates.
+The direct path keeps Derive workspace tools. OpenRouter server tools stay gateway-only.
 Old explicit unavailable choices fail instead of silently changing models.
 
 Explicit model ids win. A native chat stores an explicit choice for all its later turns.

@@ -144,7 +144,14 @@ const wrap = (err: unknown): unknown => {
  *  some state a price, some state tokens and leave the arithmetic to us — and none of them should
  *  guess. Null means UNKNOWN, which the budget skips. */
 export type PriceTurn = (r: {
-  usage: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number } | undefined
+  usage:
+    | {
+        inputTokens?: number
+        outputTokens?: number
+        cachedInputTokens?: number
+        inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number }
+      }
+    | undefined
   providerMetadata: Record<string, Record<string, unknown>> | undefined
 }) => number | null
 

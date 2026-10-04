@@ -129,6 +129,7 @@ describe("direct OpenAI Luna", () => {
         },
       ],
     })
+    expect(result.costUsd).toBeCloseTo(0.0000052)
     expect(urls).toEqual(["https://api.openai.com/v1/responses"])
     expect(seen[0]?.model).toBe("gpt-6-luna")
     expect(seen[0]?.reasoning).toMatchObject({ effort: "medium" })
