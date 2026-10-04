@@ -62,6 +62,11 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
   let outline = []
   let picked = ""
   let startSlide = 0
+  let jumpedTo = -1
+  // Whether this card may speak for the person. A fresh show may; a card the host replays
+  // when the conversation reopens may not until someone uses it, or every old card in the
+  // thread would claim to be what the person is looking at.
+  let speak = false
 
   // One line of artifact text, safe to quote to the model: whitespace collapsed, capped.
   const clean = (s, max) => String(s).replace(/\s+/g, " ").trim().slice(0, max)
@@ -103,7 +108,7 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
   // Where the person is, for the model's next turn. Never a turn of its own; sent only when
   // it changed. Artifact text is quoted as data, never as an instruction.
   const tellModel = () => {
-    if (!art || !host.updateModelContext) return
+    if (!art || !speak || !host.updateModelContext) return
     clearTimeout(ctxTimer)
     ctxTimer = setTimeout(() => {
       let slide = null
@@ -137,6 +142,7 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
   }
   const drive = (action) => {
     if (!frame || !frame.contentWindow || !deck) return
+    speak = true
     frame.contentWindow.postMessage({ source: "derive-host", type: deck.sniffed ? "deck-drive" : "deck", action }, "*")
   }
 
@@ -217,6 +223,7 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
       callShow(args).then((r) => render(r, true)).catch(() => note(expired))
       return
     }
+    if (!renewed) speak = true
     if (!frame || frameUrl !== f.url) {
       frameUrl = f.url
       startSlide = typeof sc.slide === "number" && sc.slide > 1 ? sc.slide : 0
@@ -230,6 +237,7 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
   // untrusted, so every field is shape-checked and clamped before it is shown or quoted.
   const fromFrame = (d) => {
     const total = (n) => Math.max(0, Math.min(500, n | 0))
+    const was = deck ? deck.i : -1
     if (d.source === "derive-deck" && d.type === "state") deck = { i: total(d.i), total: total(d.total), sniffed: false }
     else if (d.source === "derive" && d.type === "deck-sniff") {
       if (deck && !deck.sniffed) return
@@ -242,6 +250,7 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
       if (deck) deck.total = Math.max(deck.total, outline.length)
     } else if (d.source === "derive" && d.type === "select") {
       picked = d.selector && typeof d.selector.exact === "string" ? clean(d.selector.exact, QUOTE_MAX) : ""
+      if (picked) speak = true
       $("foot").textContent = picked ? "Selected text. Ask about it in the chat." : "Select a slide or some text, then ask about it."
     } else if (d.source === "derive" && d.type === "open-external" && typeof d.href === "string") {
       if (host.openLinks && /^https?:\/\//.test(d.href)) request("ui/open-link", { url: d.href }).catch(() => {})
@@ -249,9 +258,15 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
     } else return
     if (deck && deck.i >= deck.total) deck.i = Math.max(0, deck.total - 1)
     // Asked to open on a slide: move there once, as soon as the deck says it is ready.
+    // The person moving the deck themselves (not our own opening jump) is using this card.
+    if (deck && was !== -1 && deck.i !== was) {
+      if (deck.i === jumpedTo) jumpedTo = -1
+      else speak = true
+    }
     if (deck && startSlide && deck.total >= startSlide) {
       const n = startSlide - 1
       startSlide = 0
+      jumpedTo = n
       if (deck.i !== n)
         frame.contentWindow.postMessage({ source: "derive-host", type: deck.sniffed ? "deck-drive" : "deck", action: "goto", n }, "*")
     }

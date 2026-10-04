@@ -4063,6 +4063,15 @@ describe("the show view (MCP App) protocol", () => {
     await settle()
     expect(v.frames).toHaveLength(1)
     expect(v.frames[0]?.src).toBe("https://sandbox.test/raw/abc12345/v/2/t/tok/")
+    // A replayed card is not what the person is looking at: it stays quiet on load...
+    v.fromFrame({ source: "derive-deck", type: "state", i: 0, total: 3 })
+    await settle()
+    expect(v.sent("ui/update-model-context")).toHaveLength(0)
+    // ...until they use it.
+    v.els.get("next")?.onclick?.()
+    v.fromFrame({ source: "derive-deck", type: "state", i: 1, total: 3 })
+    await settle()
+    expect(v.sent("ui/update-model-context")).toHaveLength(1)
 
     // A host that cannot call tools says so, and frames nothing.
     const bare = boot()
