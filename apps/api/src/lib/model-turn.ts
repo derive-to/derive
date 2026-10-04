@@ -151,6 +151,7 @@ export type PriceTurn = (r: {
 export interface TurnOptions {
   model: LanguageModel
   maxTokens?: number
+  providerOptions?: Parameters<typeof generateText>[0]["providerOptions"]
   price: PriceTurn
   /** Anthropic's Messages API has a different SSE shape and no watcher on the lanes it serves, so
    *  that provider opts out and answers whole — which the `callModel` contract explicitly allows. */
@@ -161,6 +162,7 @@ export const turnFor = (opts: TurnOptions): AgentLoopInput["callModel"] => {
   return async ({ system, messages, tools, onDelta, abortSignal }): Promise<ModelTurn> => {
     const req = {
       model: opts.model,
+      ...(opts.providerOptions ? { providerOptions: opts.providerOptions } : {}),
       messages: [{ role: "system" as const, content: system }, ...messages],
       allowSystemInMessages: true,
       maxOutputTokens: opts.maxTokens ?? 8_000,

@@ -69,6 +69,11 @@ This prevents an automatic retry from repeating a save after a process crash.
 
 ## Models
 
+Set `OPENAI_API_KEY` to run chat directly through OpenAI Responses.
+This mode offers only Luna and uses medium reasoning.
+It ignores legacy DeepSeek gateway settings and library model entries.
+Old explicit unavailable choices fail instead of silently changing models.
+
 Explicit model ids win. A native chat stores an explicit choice for all its later turns.
 An inherited choice reads the live instance default on each turn.
 An OpenRouter gateway inherits `openai/gpt-6-luna` when `DERIVE_MODEL_NAME` is absent.

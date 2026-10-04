@@ -1,3 +1,4 @@
+import { createOpenAI } from "@ai-sdk/openai"
 import { createOpenAICompatible, type MetadataExtractor } from "@ai-sdk/openai-compatible"
 import type { AgentLoopInput } from "./agent-loop"
 import { type PriceTurn, turnFor } from "./model-turn"
@@ -108,6 +109,23 @@ const withExtraBody = (base: typeof fetch, extra: Record<string, unknown>): type
   }) as typeof fetch
 
 export const openAiCompatModel = (opts: OpenAiCompatOptions): AgentLoopInput["callModel"] => {
+  // Direct OpenAI uses Responses so Luna can reason while requesting function tools.
+  if (new URL(opts.baseUrl).hostname === "api.openai.com") {
+    const provider = createOpenAI({
+      apiKey: opts.apiKey,
+      baseURL: opts.baseUrl,
+      ...(opts.fetchImpl ? { fetch: opts.fetchImpl } : {}),
+    })
+    return turnFor({
+      model: provider.responses(opts.model.replace(/^openai\//, "")),
+      maxTokens: opts.maxTokens,
+      providerOptions: {
+        openai: { reasoningEffort: "medium", store: false, strictJsonSchema: false },
+      },
+      // The direct API reports tokens, not a billed cost. Do not invent a cost.
+      price: () => null,
+    })
+  }
   const baseFetch = opts.fetchImpl ?? globalThis.fetch.bind(globalThis)
   const doFetch =
     opts.extraBody && Object.keys(opts.extraBody).length

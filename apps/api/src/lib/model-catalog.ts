@@ -232,6 +232,16 @@ const parseAlso = (raw: string | undefined, defaultModel: string): string[] => {
   return out
 }
 
+/** A direct key makes hosted chat Luna-only, independent of legacy gateway settings. */
+export const openAiGateway = (apiKey: string | undefined): GatewayConfig | undefined =>
+  apiKey?.trim() ? { baseUrl: "https://api.openai.com/v1", apiKey, model: LUNA_MODEL } : undefined
+
+/** Direct Luna cannot inherit gateway-only models from the instance library. */
+export const libraryGateway = (
+  gateway: GatewayConfig | null | undefined,
+): GatewayConfig | undefined =>
+  gateway && new URL(gateway.baseUrl).hostname !== "api.openai.com" ? gateway : undefined
+
 /**
  * Build the catalog from an operator gateway. Null in, null out: a deploy with no model
  * configured has no catalog, which is the same "chat cannot answer here" state the single

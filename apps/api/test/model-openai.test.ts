@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest"
-import { callModelFromGateway, catalogFromGateway } from "../src/lib/model-catalog"
+import {
+  callModelFromGateway,
+  catalogFromGateway,
+  libraryGateway,
+  openAiGateway,
+} from "../src/lib/model-catalog"
 import { openAiCompatModel } from "../src/lib/model-openai"
 
 // The OPENAI-COMPATIBLE adapter. Everything here is the mapping between the two wire formats,
@@ -72,6 +77,73 @@ describe("the request it builds", () => {
         function: { name: "svc.read", description: "read", parameters: { type: "object" } },
       },
     ])
+  })
+})
+
+describe("direct OpenAI Luna", () => {
+  it("uses Responses with medium reasoning, function tools, and no response storage", async () => {
+    const seen: Record<string, unknown>[] = []
+    const urls: string[] = []
+    const impl = (async (url: string, init: RequestInit) => {
+      urls.push(String(url))
+      seen.push(JSON.parse(String(init.body)))
+      return new Response(
+        JSON.stringify({
+          id: "resp_local",
+          object: "response",
+          created_at: 1,
+          model: "gpt-6-luna",
+          status: "completed",
+          output: [
+            {
+              type: "function_call",
+              id: "fc_local",
+              call_id: "call_local",
+              name: "find",
+              arguments: '{"query":"Atlas"}',
+              status: "completed",
+            },
+          ],
+          usage: { input_tokens: 12, output_tokens: 8, total_tokens: 20 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      )
+    }) as unknown as typeof fetch
+    const result = await openAiCompatModel({
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "k",
+      model: "openai/gpt-6-luna",
+      fetchImpl: impl,
+    })({
+      system: "Read only",
+      messages: [{ role: "user", content: "Find Atlas" }],
+      tools: [
+        {
+          name: "find",
+          description: "Find an artifact",
+          params: {
+            type: "object",
+            properties: { query: { type: "string" } },
+            required: ["query"],
+          },
+        },
+      ],
+    })
+    expect(urls).toEqual(["https://api.openai.com/v1/responses"])
+    expect(seen[0]?.model).toBe("gpt-6-luna")
+    expect(seen[0]?.reasoning).toMatchObject({ effort: "medium" })
+    expect(seen[0]?.store).toBe(false)
+    expect(seen[0]?.provider).toBeUndefined()
+    expect(result.toolUses).toEqual([{ id: "call_local", name: "find", input: { query: "Atlas" } }])
+  })
+
+  it("offers only Luna and does not expose gateway library additions", () => {
+    const gateway = openAiGateway("k")
+    const catalog = catalogFromGateway(gateway)
+    expect(catalog?.options).toEqual([{ id: "openai/gpt-6-luna", label: "Luna", isDefault: true }])
+    expect(libraryGateway(gateway)).toBeUndefined()
+    expect(catalog?.resolve("deepseek/deepseek-v4-flash-0731")).toBeNull()
+    expect(openAiGateway(" ")).toBeUndefined()
   })
 })
 
