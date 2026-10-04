@@ -28,7 +28,7 @@ unavailable, or project policy forbids publishing.
    <!-- tools:start -->
    `agents`, `ask`, `browse_library`, `catch_up`, `checkpoint`, `clear_queue`, `comment`,
    `derive_code`, `find`, `jobs`, `list_workspaces`, `organize`, `publish`, `pull`, `read`,
-   `shelve`, `stage`.
+   `shelve`, `show`, `stage`.
    <!-- tools:end -->
    An installed copy of this file goes stale. `list_workspaces` reports what the server
    serves right now, and is the answer when the two disagree.
@@ -43,7 +43,7 @@ unavailable, or project policy forbids publishing.
 | Intent | Read first | Main tools |
 |---|---|---|
 | Create, revise, or upload a large doc | `derive://skills/publishing` | `publish`, `stage`, `read` |
-| Build a slide deck or presentation | `derive://skills/decks` | `publish`, `read` |
+| Build a slide deck or presentation | `derive://skills/decks` | `publish`, `read`, `show` |
 | Upload or embed an image/font asset | `derive://skills/assets` | `stage`, `publish`, `read` |
 | Review, feedback, requests, or waiting | `derive://skills/loop` | `catch_up`, `read`, `comment`, `publish` |
 | Make, ask, or run a workspace agent | `derive://skills/agents` | `agents`, `ask`, `jobs`, `pull` |

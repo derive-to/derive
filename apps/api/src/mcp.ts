@@ -91,6 +91,12 @@ import { resolveActorBrandprint, resolveBrandprintContext } from "./lib/brandpri
 import type { Sandbox } from "./lib/code-sandbox"
 import { latexTemplateBundle } from "./lib/latex-templates"
 import { clientIp } from "./lib/rate-limit"
+import {
+  ARTIFACT_VIEW_HTML,
+  ARTIFACT_VIEW_URI,
+  artifactViewMeta,
+  MCP_APP_MIME,
+} from "./mcp-app-view"
 import { makeToolContext, type ToolContext, type ToolContextBase } from "./mcp-tool-context"
 import {
   registerAgentsTool,
@@ -113,6 +119,7 @@ import {
 } from "./mcp-tools/organize"
 import { registerPublishTool } from "./mcp-tools/publish"
 import { registerReadTool } from "./mcp-tools/read"
+import { registerShowTool } from "./mcp-tools/show"
 import { registerStageTool } from "./mcp-tools/stage"
 import { skillFilesFooter, skillReading, skillsCatalog } from "./mcp-util"
 import { CORE_SKILLS } from "./skills-reference.gen"
@@ -518,6 +525,24 @@ async function buildServer(
       ],
     }),
   )
+  // The view `show` opens in hosts that render MCP Apps: a frame around the sandboxed
+  // artifact page (mcp-app-view.ts). Static HTML, so registering it costs no round trip.
+  const viewMeta = artifactViewMeta(ctx.deps.sandboxOrigin ?? ctx.deps.baseUrl)
+  server.registerResource(
+    "app:artifact",
+    ARTIFACT_VIEW_URI,
+    {
+      title: "Derive artifact view",
+      description: "The in-conversation view the show tool opens.",
+      mimeType: MCP_APP_MIME,
+      _meta: viewMeta,
+    },
+    async (uri) => ({
+      contents: [
+        { uri: uri.href, mimeType: MCP_APP_MIME, text: ARTIFACT_VIEW_HTML, _meta: viewMeta },
+      ],
+    }),
+  )
   const defaultOrg = agent.org_id
   const defaultRole = agent.role
 
@@ -624,6 +649,7 @@ export function registerToolSurface(
   if (wanted("list_workspaces")) registerListWorkspacesTool(tc, () => [...names].sort())
   if (wanted("find")) registerFindTool(tc)
   if (wanted("read")) registerReadTool(tc)
+  if (wanted("show")) registerShowTool(tc)
   // A read/write pair is gated as ONE name, so a caller naming it gets a coherent set
   // rather than a write with no read (or the reverse).
   if (wanted("organize")) {
