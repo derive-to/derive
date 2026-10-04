@@ -72,6 +72,9 @@ This prevents an automatic retry from repeating a save after a process crash.
 Explicit model ids win. A native chat stores an explicit choice for all its later turns.
 An inherited choice reads the live instance default on each turn.
 An OpenRouter gateway inherits `openai/gpt-6-luna` when `DERIVE_MODEL_NAME` is absent.
+OpenRouter always includes Luna in the picker, even when the configured default is another model.
+Hosted Luna uses medium reasoning and routes only to OpenAI.
+Other models keep the configured provider policy and disabled reasoning.
 Other compatible gateways still require their own model id.
 The Codex runner inherits `gpt-6-luna`. Explicit runner, job, and agent models take precedence.
 Claude accounts keep their Claude provider and model settings.

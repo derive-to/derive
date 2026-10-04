@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import { callModelFromGateway } from "../src/lib/model-catalog"
+import { callModelFromGateway, catalogFromGateway } from "../src/lib/model-catalog"
 import { openAiCompatModel } from "../src/lib/model-openai"
 
 // The OPENAI-COMPATIBLE adapter. Everything here is the mapping between the two wire formats,
@@ -94,6 +94,56 @@ describe("gateway provider routing", () => {
     }
   }
 
+  it("offers hosted Luna without replacing the configured default or duplicating it", () => {
+    const catalog = catalogFromGateway({
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKey: "k",
+      model: "deepseek/deepseek-v4-flash-0731",
+      alsoModels: "other,openai/gpt-6-luna,openai/gpt-6-luna",
+    })
+    expect(catalog?.options.map((option) => option.id)).toEqual([
+      "deepseek/deepseek-v4-flash-0731",
+      "other",
+      "openai/gpt-6-luna",
+    ])
+    expect(catalog?.resolve()?.id).toBe("deepseek/deepseek-v4-flash-0731")
+    expect(catalog?.resolve("openai/gpt-6-luna")?.label).toBe("Luna")
+    expect(catalog?.resolve("missing")).toBeNull()
+    expect(
+      catalogFromGateway({
+        baseUrl: "https://gateway.test/v1",
+        apiKey: "k",
+        model: "custom",
+      })?.options.map((option) => option.id),
+    ).toEqual(["custom"])
+  })
+
+  it("adds Luna to an older hosted deployment and keeps one inherited Luna default", () => {
+    for (const model of ["deepseek/deepseek-v4-flash-0731", "openai/gpt-6-luna"]) {
+      const catalog = catalogFromGateway({
+        baseUrl: "https://openrouter.ai/api/v1",
+        apiKey: "k",
+        model,
+      })
+      expect(catalog?.options.filter((option) => option.id === "openai/gpt-6-luna")).toHaveLength(1)
+      expect(catalog?.options.filter((option) => option.isDefault)).toHaveLength(1)
+      expect(catalog?.resolve()?.id).toBe(model)
+    }
+  })
+
+  it("sends Luna medium to OpenAI rather than the legacy DeepSeek provider pool", async () => {
+    const body = await routedBody({
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKey: "k",
+      model: "openai/gpt-6-luna",
+      autoProviders: "DeepInfra,DigitalOcean,BaseTen,CoreWeave,Together,Cloudflare",
+      providers: "DeepInfra,Novita,GMICloud",
+    })
+    expect(body?.model).toBe("openai/gpt-6-luna")
+    expect(body?.reasoning).toEqual({ enabled: true, effort: "medium" })
+    expect(body?.provider).toEqual({ only: ["OpenAI"], allow_fallbacks: false })
+  })
+
   it("auto-routes inside an allowlist using latency plus a throughput floor", async () => {
     const body = await routedBody({
       baseUrl: "https://openrouter.ai/api/v1",
@@ -103,6 +153,7 @@ describe("gateway provider routing", () => {
       // Automatic routing takes precedence over the old fixed order during migration.
       providers: "Novita,GMICloud",
     })
+    expect(body?.reasoning).toEqual({ enabled: false })
     expect(body?.provider).toEqual({
       only: ["DeepInfra", "DigitalOcean", "BaseTen"],
       sort: "latency",
