@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { ArrowUp } from "lucide-react"
 import { useEffect, useId, useRef, useState } from "react"
-import { type Agent, ApiError, api, type JobDetail } from "@/api"
+import { type Agent, ApiError, api, type Job, type JobDetail } from "@/api"
 import { Icon } from "@/components/icons"
 import { LoadError } from "@/components/shared/load-error"
 import { Spinner } from "@/components/shared/spinner"
@@ -120,7 +120,7 @@ export function AskPanel({
   const { me } = useAuth()
   const client = useQueryClient()
   useJobEvents()
-  const asks = useQuery(
+  const asks = useQuery<Job[]>(
     shortId
       ? pageAsksQuery(shortId)
       : {
@@ -151,7 +151,9 @@ export function AskPanel({
     },
   })
   const job = followId ? q.data : undefined
-  const scopeId = job?.subject?.kind === "artifact" ? job.subject.id : shortId
+  const subject = job?.subject as { kind?: unknown; id?: unknown } | null | undefined
+  const scopeId =
+    subject?.kind === "artifact" && typeof subject.id === "string" ? subject.id : shortId
   const scope = useQuery({ ...artifactQuery(scopeId), enabled: !!scopeId })
   const landedVersion = job?.result?.effects
     ?.filter((e) => e.kind === "page" && e.ref === shortId)
