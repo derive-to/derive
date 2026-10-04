@@ -1279,7 +1279,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     const tools = (list.parsed?.result as { tools?: { name: string; _meta?: unknown }[] })?.tools
     expect(tools?.find((t) => t.name === "show")?._meta).toEqual({
       ui: { resourceUri: "ui://derive/artifact-v1" },
-      "openai/outputTemplate": "ui://derive/artifact-v1",
     })
     const view = await rpc(app, token, {
       jsonrpc: "2.0",

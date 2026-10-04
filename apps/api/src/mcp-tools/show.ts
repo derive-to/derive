@@ -37,9 +37,9 @@ export function registerShowTool(tc: ToolContext): void {
         version: num("version", { int: true, min: 1 }).optional().describe("Default current."),
         workspace: wsArg,
       },
-      // The MCP Apps key, plus ChatGPT's older alias for the same thing: hosts read one or
-      // the other, and both name the one view.
-      _meta: { ui: { resourceUri: ARTIFACT_VIEW_URI }, "openai/outputTemplate": ARTIFACT_VIEW_URI },
+      // The MCP Apps key only. ChatGPT's legacy `openai/outputTemplate` alias names a
+      // text/html+skybridge resource, which this view is not.
+      _meta: { ui: { resourceUri: ARTIFACT_VIEW_URI } },
     },
     async ({ short_id, version, workspace }) => {
       const r = await reach(short_id, workspace, { public: true })
