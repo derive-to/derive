@@ -27,7 +27,8 @@ They remain inside the chat workspace. Native chat has no connected-source call 
 Slack retains its existing connected-source tools and identity restrictions.
 Durable questions apply to native chat. Slack uses normal thread replies for clarification.
 Slack reserves the thread before it records an inbound message. Concurrent follow-ups receive a busy reply.
-Slack stores its progress message. A lost redelivery updates that message and does not replay model work.
+Slack stores its receipt message. A lost redelivery updates that message and does not replay model work.
+The receipt includes recovery guidance. It does not promise that an interrupted process still runs.
 Comments retain their suggestion behavior. They do not silently publish edits.
 Artifact content cannot authorize tools or change the chat scope.
 

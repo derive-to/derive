@@ -427,7 +427,7 @@ describe("@Derive in a Slack thread is one attended job", () => {
 
     expect(await mention("100.1", "<@UBOT> what changed?")).toEqual({ status: "answered" })
     // The Slack side is unchanged: a placeholder, rewritten in place with the answer.
-    expect(said[0]).toMatch(/thinking/i)
+    expect(said[0]).toMatch(/request received/i)
     expect(said.at(-1)).toContain("Here it is.")
 
     const jobsOf = () => meta.listJobs({ orgId: "default", askedBy: asker.id })

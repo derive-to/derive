@@ -528,7 +528,8 @@ export const handleSlackMention = async (
       ? `${question}\n\n(The person linked this document: ${named.title ?? named.short_id} — short_id ${named.short_id}.)`
       : question
 
-  // SAY SOMETHING IMMEDIATELY, because a turn takes seconds and Slack gives no other signal.
+  // Acknowledge receipt immediately. This remains true if Slack accepts the post
+  // before a process crash prevents its timestamp from reaching the database.
   //
   // There is no bot "typing" API on the Events API — the RTM typing event is not available to
   // apps, and assistant.threads.setStatus only exists inside Assistant threads. So the honest
@@ -544,7 +545,7 @@ export const handleSlackMention = async (
     (await postWithRecovery(meta, install.org_id, bot.token, {
       channel: p.channel,
       threadTs: p.threadTs ?? p.ts,
-      text: "_Derive is thinking…_",
+      text: "_Request received. If no reply follows, send a new request. Interrupted work does not repeat automatically._",
     })
       .then((r) => (r.ok && r.ts ? { channel: r.channel ?? p.channel, ts: r.ts } : null))
       .catch(() => null))
