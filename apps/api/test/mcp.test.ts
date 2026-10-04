@@ -4445,7 +4445,8 @@ describe("the show view (MCP App) protocol", () => {
     x.fromHost({ method: "ui/notifications/tool-result", params: asked })
     x.made[1]?.onclick?.()
     const answered = structuredClone(asked)
-    ;(answered.structuredContent as { question: { answer: string } }).question.answer = "Agencies"
+    ;(answered.structuredContent as unknown as { question: { answer: string } }).question.answer =
+      "Agencies"
     x.reply("tools/call", answered)
     await settle()
     expect(x.sent("tools/call").map((m) => (m.params as { name: string }).name)).toEqual(["show"])
