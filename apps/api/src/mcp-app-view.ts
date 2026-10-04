@@ -340,7 +340,7 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
     // can't continue still has the answer on the page.
     renderQuestion(Object.assign({}, q, { answer: text }))
     say("Answer saved.")
-    const prompt = "My answer to \"" + clean(q.text, 200) + "\": " + text
+    const prompt = "My answer to \"" + clean(q.text, 200) + "\": " + text + ". Go ahead."
     const viaStandard = () =>
       request("ui/message", { role: "user", content: { type: "text", text: prompt } })
     // ChatGPT's own follow-up call, for a host that doesn't advertise ui/message.
@@ -349,8 +349,10 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
       openai && typeof openai.sendFollowUpMessage === "function"
         ? () => Promise.resolve(openai.sendFollowUpMessage({ prompt }))
         : null
-    const first = host.message || !viaOpenAI ? viaStandard : viaOpenAI
-    const second = first === viaStandard ? viaOpenAI : viaStandard
+    // The standard message first: in ChatGPT, a turn its own follow-up call starts ran without
+    // the app's tools, so the model could not act on the answer.
+    const first = viaStandard
+    const second = viaOpenAI
     first()
       .catch(() => (second ? second() : Promise.reject()))
       .catch(() => say("Answer saved. Continue in the chat."))
