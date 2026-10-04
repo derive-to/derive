@@ -62,6 +62,12 @@ export function registerCommentTool(tc: ToolContext): void {
           .describe(
             "People or registered workspace agents to notify. Use a human @handle/email, an agent id/name, or @derive to ask the built-in Derive assistant.",
           ),
+        options: z
+          .array(z.string().min(1).max(80))
+          .min(2)
+          .max(6)
+          .optional()
+          .describe("Choices: a NEW thread becomes a question (see show)."),
         workspace: wsArg,
       },
     },
@@ -74,6 +80,7 @@ export function registerCommentTool(tc: ToolContext): void {
       react,
       set_state,
       mentions: mentionRefs,
+      options,
       workspace,
     }) => {
       const r = await reach(short_id, workspace)
@@ -89,6 +96,10 @@ export function registerCommentTool(tc: ToolContext): void {
           "Provide `body` (to comment), `react` (to acknowledge), or `set_state` (to resolve/reopen).",
         )
       if (quote && visual_target) return err("Use either `quote` or `visual_target`, not both.")
+      if (options && (reply_to || !body))
+        return err(
+          "`options` asks a question in a NEW thread: give `body` (the question) and no `reply_to`.",
+        )
       let thread = reply_to
       let commentId: string | undefined
       if (body) {
@@ -159,7 +170,16 @@ export function registerCommentTool(tc: ToolContext): void {
           body_md: body,
           author: agent.name,
           author_id: agent.id,
-          ...(mentions.length ? { meta: JSON.stringify({ mentions }) } : {}),
+          // A question is an ordinary thread whose root carries its choices: people answer by
+          // replying (a choice or their own words), on the page or in a show view.
+          ...(mentions.length || options
+            ? {
+                meta: JSON.stringify({
+                  ...(mentions.length ? { mentions } : {}),
+                  ...(options ? { question: { options } } : {}),
+                }),
+              }
+            : {}),
         })
         ctx.bus.publish(a.id, { type: "comment.created" })
         // The SAME fan-out the HTTP route runs (lib/comment-actions.ts): bells for thread
@@ -243,6 +263,11 @@ export function registerCommentTool(tc: ToolContext): void {
           : {}),
         ...(reactedTo ? { reacted: react, reacted_to: reactedTo } : {}),
         ...(set_state ? { state: set_state } : {}),
+        ...(options
+          ? {
+              show_next: `Ask it where the person is: show({short_id:"${short_id}", thread:"${thread}"}). Their answer arrives as a reply in this thread.`,
+            }
+          : {}),
         note: body
           ? reply_to
             ? "Replied in the thread."

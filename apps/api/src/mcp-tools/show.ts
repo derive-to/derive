@@ -1,5 +1,6 @@
 import { artifactUrl, roleAllows } from "@derive/core"
 import { z } from "zod"
+import { parseMeta } from "../lib/comments"
 import { signRawToken } from "../lib/crypto"
 import { RAW_TOKEN_MAX_AGE_MS } from "../lib/http"
 import { isWebOrigin } from "../lib/serve-content"
@@ -37,14 +38,15 @@ export function registerShowTool(tc: ToolContext): void {
         short_id: z.string(),
         version: num("version", { int: true, min: 1 }).optional().describe("Default current."),
         slide: num("slide", { int: true, min: 1 }).optional().describe("Deck: open on this slide."),
-        editor: z.string().optional().describe("Set by Derive's view; omit."),
+        editor: z.string().optional().describe("Set by the view; omit."),
+        thread: z.string().optional().describe("A question thread to ask."),
         workspace: wsArg,
       },
       // The MCP Apps key only. ChatGPT's legacy `openai/outputTemplate` alias names a
       // text/html+skybridge resource, which this view is not.
       _meta: { ui: { resourceUri: ARTIFACT_VIEW_URI } },
     },
-    async ({ short_id, version, slide, editor, workspace }) => {
+    async ({ short_id, version, slide, editor, thread, workspace }) => {
       const r = await reach(short_id, workspace, { public: true })
       if (r && "error" in r) return err(r.error)
       if (!r) return notFound(short_id)
@@ -70,6 +72,29 @@ export function registerShowTool(tc: ToolContext): void {
         ...(host ? { host } : {}),
       })
       const rawBase = ctx.deps.sandboxOrigin ?? ctx.deps.baseUrl
+      // A question (comment({options})) asked in the view: its words, its choices, and the
+      // first reply if someone already answered. Read with the same reach as the page.
+      let question: Record<string, unknown> | null = null
+      if (thread) {
+        const inThread = (await ctx.meta.listComments(a.id, { threadId: thread })).filter(
+          (c) => !parseMeta(c.meta).deleted,
+        )
+        const root = inThread.find((c) => c.id === thread) ?? inThread[0]
+        const asked = root
+          ? (parseMeta(root.meta) as { question?: { options?: unknown } }).question
+          : undefined
+        if (!root || !asked) return err(`No question thread "${thread}" on "${short_id}".`)
+        const reply = inThread.find((c) => c.id !== root.id)
+        question = {
+          thread,
+          text: root.body_md,
+          options: Array.isArray(asked.options)
+            ? asked.options.filter((o) => typeof o === "string")
+            : [],
+          answer: reply ? reply.body_md : null,
+          can_answer: !r.public && roleAllows(r.role, "comment"),
+        }
+      }
       return {
         content: [
           {
@@ -86,6 +111,7 @@ export function registerShowTool(tc: ToolContext): void {
           slide: slide ?? null,
           can_edit: canEdit,
           editing: !!host,
+          question,
           url,
           workspace: r.org,
         },

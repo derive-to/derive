@@ -263,7 +263,7 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
         saved = JSON.parse(text)
       } catch {}
       const v = saved && typeof saved.version === "number" ? saved.version : art.version + 1
-      savedNote = "They just edited it here and saved v" + v + "; read that version before changing it."
+      savedNote = "They just edited it here and saved v" + v + "."
       dirty = 0
       await reshow(v, false)
       say("Saved as v" + v + ".")
@@ -273,6 +273,60 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
       saving = false
       editUi()
     }
+  }
+
+  // A question asked on this artifact (comment({options}), shown with show({thread})).
+  // Its words come from a comment, so they are set as text, never markup.
+  let question = null
+  let askButtons = []
+  const renderQuestion = (q) => {
+    question = q && typeof q.thread === "string" ? q : null
+    $("ask").hidden = !question
+    if (!question) return size()
+    $("ask-text").textContent = String(question.text || "")
+    const box = $("ask-options")
+    box.textContent = ""
+    askButtons = []
+    const open = !question.answer && question.can_answer === true && !!host.serverTools
+    for (const option of (Array.isArray(question.options) ? question.options : []).slice(0, 6)) {
+      const b = document.createElement("button")
+      b.textContent = String(option)
+      b.disabled = !open
+      b.onclick = () => void answer(String(option))
+      box.appendChild(b)
+      askButtons.push(b)
+    }
+    $("ask-form").hidden = !open
+    $("ask-done").hidden = !question.answer && open
+    $("ask-done").textContent = question.answer
+      ? "Answered: " + String(question.answer)
+      : "Answer this on the page in Derive."
+    size()
+  }
+  const answer = async (text) => {
+    const q = question
+    text = String(text || "").trim()
+    if (!q || q.answer || !text) return
+    speak = true
+    for (const b of askButtons) b.disabled = true
+    $("ask-form").hidden = true
+    say("Sending your answer…")
+    const args = { short_id: art.short_id, reply_to: q.thread, body: text }
+    if (art.workspace) args.workspace = art.workspace
+    try {
+      const r = await request("tools/call", { name: "comment", arguments: args })
+      if (!r || r.isError) throw new Error((r && r.content && r.content[0] && r.content[0].text) || "")
+    } catch (e) {
+      renderQuestion(q)
+      return say("Your answer wasn't saved. Try again.")
+    }
+    // Saved on the thread first; only then hand the turn back to the chat, so a host that
+    // can't continue still has the answer on the page.
+    renderQuestion(Object.assign({}, q, { answer: text }))
+    if (host.message) {
+      say("Answer saved.")
+      request("ui/message", { role: "user", content: { type: "text", text: "My answer to \"" + clean(q.text, 200) + "\": " + text } }).catch(() => say("Answer saved. Continue in the chat."))
+    } else say("Answer saved. Continue in the chat.")
   }
 
   const mountFrame = (url, title) => {
@@ -320,6 +374,8 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
     editing = sc.editing === true
     dirty = 0
     editUi()
+    renderQuestion(sc.question)
+    if (editing) say("Editing: click any text to change it. Save makes a new version.")
     // A host replays a saved result when the conversation reopens, long after its token
     // lapsed: mounting it would frame a 404. Renew first, once; without server tools, say so.
     if (!(Date.parse(f.expires_at) - Date.now() > 15000)) {
@@ -433,6 +489,10 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
   $("edit").onclick = startEdit
   $("save").onclick = () => void save()
   $("discard").onclick = discard
+  $("ask-form").onsubmit = (e) => {
+    if (e && e.preventDefault) e.preventDefault()
+    void answer($("ask-input").value)
+  }
   $("latest").onclick = () => art && callShow({ short_id: art.short_id }).then(render).catch(() => {})
   $("full").onclick = () =>
     request("ui/request-display-mode", { mode: root.dataset.mode === "fullscreen" ? "inline" : "fullscreen" })
@@ -456,6 +516,7 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
         openLinks: !!caps.openLinks,
         serverTools: !!caps.serverTools,
         updateModelContext: !!caps.updateModelContext,
+        message: !!caps.message,
         displayModes: [],
       }
       applyContext((r && r.hostContext) || {})
@@ -481,6 +542,10 @@ header{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1p
 button{font:inherit;color:var(--ink);background:transparent;border:1px solid var(--line);border-radius:6px;padding:3px 9px;cursor:pointer;white-space:nowrap}
 button:hover{background:var(--chip)}button:disabled{opacity:.4;cursor:default}
 button.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+#ask{padding:10px;border-bottom:1px solid var(--line);display:grid;gap:8px}
+#ask p{margin:0}#ask-text{font-weight:600}#ask-done{color:var(--muted)}
+#ask-options{display:flex;flex-wrap:wrap;gap:6px}#ask-options button{border-radius:999px;padding:4px 12px}
+#ask-form{display:flex;gap:6px}#ask-input{flex:1;min-width:0;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:4px 8px}
 [hidden]{display:none!important}
 #deck{display:flex;align-items:center;gap:4px}
 #stage{flex:1;position:relative;background:var(--chip);min-height:0}
@@ -494,6 +559,9 @@ footer{padding:5px 10px;color:var(--muted);border-top:1px solid var(--line);whit
 <span id="deck" hidden><button id="prev" aria-label="Previous slide">&#8249;</button><span id="pos" class="chip" aria-live="polite">1 / 1</span><button id="next" aria-label="Next slide">&#8250;</button></span>
 <button id="edit" hidden>Edit</button><span id="dirty" class="chip" hidden>Unsaved</span><button id="discard" hidden>Discard</button><button id="save" class="primary" hidden>Save</button>
 <button id="full" hidden>Expand</button><button id="open" hidden>Open</button></header>
+<section id="ask" hidden aria-label="Question"><p id="ask-text"></p><div id="ask-options"></div>
+<form id="ask-form"><input id="ask-input" maxlength="2000" placeholder="Or answer in your own words" aria-label="Your answer"><button type="submit" class="primary">Send</button></form>
+<p id="ask-done" hidden></p></section>
 <div id="stage"><div id="note" role="status">Loading the artifact&hellip;</div></div>
 <footer id="foot" aria-live="polite">Select a slide or some text, then ask about it.</footer>
 </div>

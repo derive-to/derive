@@ -1371,6 +1371,55 @@ describe("remote MCP endpoint (/mcp)", () => {
         ?.editing,
     ).toBe(false)
 
+    // A question: a new thread carrying choices, shown in the view, answered by a reply.
+    const asked = JSON.parse(
+      toolText(
+        await call(app, token, "comment", {
+          short_id: shortId,
+          body: "Who is this for?",
+          options: ["Product teams", "Agencies"],
+        }),
+      ),
+    )
+    const askView = async () =>
+      (
+        (await call(app, token, "show", { short_id: shortId, thread: asked.thread })).parsed
+          ?.result as {
+          structuredContent: { question: Record<string, unknown> }
+        }
+      ).structuredContent.question
+    expect(asked.show_next).toContain(`thread:"${asked.thread}"`)
+    expect(await askView()).toMatchObject({
+      thread: asked.thread,
+      text: "Who is this for?",
+      options: ["Product teams", "Agencies"],
+      answer: null,
+      can_answer: true,
+    })
+    await call(app, token, "comment", {
+      short_id: shortId,
+      reply_to: asked.thread,
+      body: "Agencies",
+    })
+    expect((await askView()).answer).toBe("Agencies")
+    // Choices belong to a new question, not a reply; an ordinary thread is not a question.
+    expect(
+      toolIsError(
+        await call(app, token, "comment", {
+          short_id: shortId,
+          reply_to: asked.thread,
+          body: "x",
+          options: ["a", "b"],
+        }),
+      ),
+    ).toBe(true)
+    const plain = JSON.parse(
+      toolText(await call(app, token, "comment", { short_id: shortId, body: "Nice" })),
+    )
+    expect(
+      toolIsError(await call(app, token, "show", { short_id: shortId, thread: plain.thread })),
+    ).toBe(true)
+
     // Showing reaches no further than reading: another workspace gets nothing.
     const other = appWithGrant(dir, "show-other", "openid derive:read")
     expect(toolIsError(await call(other.app, other.token, "show", { short_id: shortId }))).toBe(
@@ -3808,6 +3857,8 @@ describe("the show view (MCP App) protocol", () => {
     hidden = false
     disabled = false
     onclick: (() => void) | null = null
+    onsubmit: ((e?: { preventDefault(): void }) => void) | null = null
+    value = ""
     style: Record<string, string> = {}
     attrs: Record<string, string> = {}
     src = ""
@@ -3834,12 +3885,15 @@ describe("the show view (MCP App) protocol", () => {
   }
 
   const boot = () => {
-    const ids =
-      "app title ver latest deck prev pos next edit dirty discard save full open stage note foot".split(
+    const ids = [
+      ..."app title ver latest deck prev pos next edit dirty discard save full open stage note foot".split(
         " ",
-      )
+      ),
+      ..."ask ask-text ask-options ask-form ask-input ask-done".split(" "),
+    ]
     const els = new Map(ids.map((id) => [id, new El()]))
     const frames: El[] = []
+    const made: El[] = []
     const toHost: Msg[] = []
     const parent = { postMessage: (m: Msg) => toHost.push(m) }
     const listeners: ((e: { data: unknown; source: unknown }) => void)[] = []
@@ -3852,9 +3906,10 @@ describe("the show view (MCP App) protocol", () => {
     const document = {
       getElementById: (id: string) => els.get(id),
       documentElement: { dataset: {} as Record<string, string>, style: { setProperty() {} } },
-      createElement: () => {
+      createElement: (tag: string) => {
         const f = new El()
-        frames.push(f)
+        if (tag === "iframe") frames.push(f)
+        else made.push(f)
         return f
       },
     }
@@ -3883,6 +3938,7 @@ describe("the show view (MCP App) protocol", () => {
     return {
       els,
       frames,
+      made,
       toHost,
       fromHost,
       reply,
@@ -4287,6 +4343,66 @@ describe("the show view (MCP App) protocol", () => {
       params: { ...result(), structuredContent: { ...result().structuredContent, can_edit: true } },
     })
     expect(blind.els.get("edit")?.hidden).toBe(true)
+  })
+
+  it("asks a question on the thread, saves the answer there first, then hands the turn back", async () => {
+    const v = boot()
+    v.reply("ui/initialize", {
+      hostCapabilities: { ...caps, message: { text: {} } },
+      hostContext: {},
+    })
+    await settle()
+    const asked = result()
+    asked.structuredContent = {
+      ...asked.structuredContent,
+      question: {
+        thread: "c_q1",
+        text: "Who is this page for? <b>not markup</b>",
+        options: ["Product teams", "Agencies"],
+        answer: null,
+        can_answer: true,
+      },
+    } as typeof asked.structuredContent
+    v.fromHost({ method: "ui/notifications/tool-result", params: asked })
+    expect(v.els.get("ask")?.hidden).toBe(false)
+    // Comment text is set as text, never parsed.
+    expect(v.els.get("ask-text")?.textContent).toBe("Who is this page for? <b>not markup</b>")
+    expect(v.made.map((b) => b.textContent)).toEqual(["Product teams", "Agencies"])
+
+    v.made[0]?.onclick?.()
+    expect(v.sent("tools/call").at(-1)?.params).toEqual({
+      name: "comment",
+      arguments: { short_id: "abc12345", reply_to: "c_q1", body: "Product teams" },
+    })
+    // The answer is not handed to the chat until the thread has it.
+    expect(v.sent("ui/message")).toHaveLength(0)
+    v.reply("tools/call", { content: [{ type: "text", text: "{}" }] })
+    await settle()
+    expect(v.sent("ui/message").at(-1)?.params).toMatchObject({
+      role: "user",
+      content: { type: "text" },
+    })
+    expect(
+      (v.sent("ui/message").at(-1)?.params as { content: { text: string } }).content.text,
+    ).toContain(": Product teams")
+    expect(v.els.get("ask-done")?.textContent).toBe("Answered: Product teams")
+    expect(v.made.every((b) => b.disabled)).toBe(true)
+
+    // A free-text answer goes the same way; a failed save keeps the question open.
+    const w = boot()
+    w.reply("ui/initialize", { hostCapabilities: caps, hostContext: {} })
+    await settle()
+    w.fromHost({ method: "ui/notifications/tool-result", params: asked })
+    const input = w.els.get("ask-input")
+    if (input) input.value = "  Both, honestly  "
+    w.els.get("ask-form")?.onsubmit?.({ preventDefault() {} })
+    expect(
+      (w.sent("tools/call").at(-1)?.params as { arguments: { body: string } }).arguments.body,
+    ).toBe("Both, honestly")
+    w.reply("tools/call", { isError: true, content: [{ type: "text", text: "nope" }] })
+    await settle()
+    expect(w.els.get("ask-form")?.hidden).toBe(false)
+    expect(w.sent("ui/message")).toHaveLength(0)
   })
 
   it("serves the script inside the view document", () => {
