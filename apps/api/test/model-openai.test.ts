@@ -55,25 +55,6 @@ describe("the request it builds", () => {
     ])
   })
 
-  it("flattens Anthropic-style content blocks into strings", async () => {
-    // The loop builds assistant/tool turns as block arrays. Passed through unflattened they
-    // arrive as objects the gateway rejects — or worse, as "[object Object]".
-    const { seen, impl } = capture()
-    await model(impl)({
-      system: "s",
-      messages: [
-        { role: "assistant", content: [{ type: "text", text: "one" }] },
-        { role: "user", content: [{ type: "tool_result", content: "rows: 3" }] },
-      ],
-      tools: [],
-    })
-    expect(seen[0]?.body.messages).toEqual([
-      { role: "system", content: "s" },
-      { role: "assistant", content: "one" },
-      { role: "user", content: "rows: 3" },
-    ])
-  })
-
   it("maps tools to the function shape, and omits them entirely when there are none", async () => {
     const { seen, impl } = capture()
     await model(impl)({ system: "s", messages: [], tools: [] })
@@ -225,7 +206,6 @@ describe("the response it reads", () => {
       reply({ choices: [{ message: { content: "the answer" }, finish_reason: "stop" }] }),
     )({ system: "s", messages: [], tools: [] })
     expect(res.text).toBe("the answer")
-    expect(res.done).toBe(true)
     expect(res.toolUses).toEqual([])
   })
 
@@ -246,7 +226,6 @@ describe("the response it reads", () => {
       }),
     )({ system: "s", messages: [], tools: [] })
     expect(res.toolUses).toEqual([{ id: "c1", name: "svc.read", input: { q: "x" } }])
-    expect(res.done).toBe(false)
     expect(res.text).toBe("")
   })
 
@@ -292,18 +271,7 @@ describe("the response it reads", () => {
   })
 })
 
-// A TOOL CALL AND ITS RESULT MUST SURVIVE THE TRIP TO THE GATEWAY.
-//
-// The loop speaks Anthropic: after a tool call it appends the assistant's `toolUses`
-// (`{id, name, input}`) as one message and the results (`{tool_use_id, content}`) as the next.
-// Chat-completions wants `tool_calls` on the assistant turn and a separate `role: "tool"` message
-// per result. Both blocks used to go through `flatten`, which matches on `type` — and neither
-// carries one — so BOTH became "".
-//
-// The model therefore never saw that it had called a tool, nor what came back. It asked again,
-// saw nothing, asked again, and the run died at the turn cap reporting "the agent did not produce
-// a revision" — a conversation with its middle deleted, wearing the costume of a confused model.
-// It broke every tool-using hosted run on any gateway deployment, for every kind of source.
+// SDK tool calls and results reach the gateway without a legacy message format.
 describe("a tool call survives translation to chat-completions", () => {
   const capture = async () => {
     let sent: { messages: Record<string, unknown>[] } | undefined
@@ -323,9 +291,24 @@ describe("a tool call survives translation to chat-completions", () => {
       system: "s",
       messages: [
         { role: "user", content: "read the weather" },
-        { role: "assistant", content: [{ id: "t1", name: "wx_get", input: { city: "London" } }] },
-        { role: "user", content: [{ tool_use_id: "t1", content: '{"temperature_c":19.8}' }] },
-      ] as never,
+        {
+          role: "assistant",
+          content: [
+            { type: "tool-call", toolCallId: "t1", toolName: "wx_get", input: { city: "London" } },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "t1",
+              toolName: "wx_get",
+              output: { type: "text", value: '{"temperature_c":19.8}' },
+            },
+          ],
+        },
+      ],
       tools: [{ name: "wx_get", description: "d", params: {} }],
     })
     return sent?.messages ?? []
@@ -419,7 +402,6 @@ describe("streaming", () => {
     // The deltas are a view; the RETURN VALUE is the answer, and it is whole.
     expect(turn.text).toBe("Hello, world")
     expect(got.join("")).toBe(turn.text)
-    expect(turn.done).toBe(true)
     expect(turn.costUsd).toBe(0.002)
   })
 
@@ -452,7 +434,6 @@ describe("streaming", () => {
     // Only prose was streamed — a half-written JSON argument is not showable and never emitted.
     expect(got).toEqual(["checking"])
     expect(turn.toolUses).toEqual([{ id: "t1", name: "wx_get", input: { city: "London" } }])
-    expect(turn.done).toBe(false)
   })
 
   it("still detects truncation, which streaming must not hide", async () => {

@@ -170,8 +170,8 @@ function spawnCodex({ bin, cwd, args, timeoutMs, env }) {
 
 export const codex = {
   name: "codex",
-  // Let the verified CLI/account choose its current default unless a deployment pins RUNNER_MODEL.
-  defaultModel: null,
+  // Explicit runner and job models win. An unavailable Luna fails through this account.
+  defaultModel: "gpt-6-luna",
   defaultBin: "codex",
 
   binFrom(flags, env) {

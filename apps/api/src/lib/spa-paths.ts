@@ -13,6 +13,7 @@ const SPA_EXACT = new Set([
   "/activity",
   "/agents",
   "/brandprint",
+  "/chat",
   "/favorites",
   "/feedback",
   "/following",

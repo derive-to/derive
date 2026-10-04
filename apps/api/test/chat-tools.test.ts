@@ -288,7 +288,11 @@ describe("writing from chat", () => {
         user: { id: "u-w", name: "Writer" },
         seatRole: "owner",
       })
-      await tools.execute("publish", { short_id: doc.short_id, content: "# Rewritten" })
+      await tools.execute("publish", {
+        short_id: doc.short_id,
+        base_version: 1,
+        content: "# Rewritten",
+      })
       const art = await meta.getByShortId(doc.short_id)
       // The edit lands as a version — and the posture asked the person to look at it.
       expect(art?.current_version).toBe(2)

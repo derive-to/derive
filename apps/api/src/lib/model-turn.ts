@@ -3,37 +3,14 @@ import {
   generateText,
   jsonSchema,
   type LanguageModel,
-  type ModelMessage as SdkMessage,
   streamText,
   type ToolSet,
 } from "ai"
-import type { AgentLoopInput, LoopTool, ModelMessage, ModelTurn } from "./agent-loop"
+import type { AgentLoopInput, LoopTool, ModelTurn } from "./agent-loop"
 
-/**
- * ONE TURN, for every provider.
- *
- * There are two ways to reach a model from here — an operator's OpenAI-compatible gateway
- * (model-openai.ts) and a workspace's own Claude plan (model-anthropic.ts) — and they used to be
- * two hand-written HTTP clients with two SSE readers, two message mappings and two ideas about
- * what a truncated reply meant. The wire formats genuinely differ, so the duplication looked
- * forced; what actually differed was only ever the wire, and the AI SDK already owns that.
- *
- * So this file is everything that is NOT the wire: how the loop's vocabulary maps onto a model
- * call, and what our contract says about the answer. The provider files below it now say only
- * which endpoint, which credential, and how a turn is priced.
- *
- * WHAT THIS FILE IS NOT is an HTTP client, an SSE parser or a tool-call reassembler. Those were
- * ~600 lines across the two adapters, every one of them a place a production bug had already
- * lived: frames split at arbitrary boundaries, `data:` lines that are not the first line of an
- * event, tool-call fragments addressed by an index some gateways omit, readers left uncancelled
- * on workerd. None of it is ours to be right about. The SDK runs unchanged on Node and inside a
- * Worker — proved in test/worker/model-openai-workerd.test.ts, because Derive ships both.
- *
- * WHAT WE STILL DECIDE, because it is judgement about OUR contract rather than about the wire:
- * truncation is a failure and not a short answer; a malformed tool call costs one tool call and
- * not the run; cost is reported when it is known and never guessed; and a gateway that rejects
- * streaming still gets to answer.
- */
+/** Shared provider transport. The SDK handles wire formats and streams.
+ * Truncation fails the turn. Malformed calls become tool errors. Costs are never guessed.
+ * Gateways that reject streaming receive one buffered retry. */
 
 /** The reply hit the token ceiling. Its own type because the CALLER has to tell it apart from a
  *  network failure: one is "try again", the other is "this will never fit", and telling a person
@@ -78,18 +55,9 @@ const withDeadline = <T>(p: Promise<T>, ms: number): Promise<T> =>
     )
   })
 
-/**
- * The tools this turn may call, as the SDK's tool set.
- *
- * NO `execute`. That is the load-bearing detail: a tool with no executor makes the SDK return the
- * call and stop, which is precisely the loop we already have — `agent-loop.ts` owns the turn
- * budget, the tool-output ceiling, the nudge, the announced last turn and tool withdrawal.
- * Handing that to the SDK's own multi-step loop would trade a policy we test for one we configure.
- *
- * VALIDATION IS A PASS-THROUGH, for the same reason neither adapter ever validated: the model's
- * arguments are the TOOL's problem, and a tool that receives nonsense fails with a message the
- * model can act on, whereas a rejected call fails the turn with a message only we can read.
- */
+/** Provider calls return tool requests without execution.
+ * The shared runtime registers executors and bounds SDK steps.
+ * Tool handlers validate arguments and return errors the model can act on. */
 const passThrough = (value: unknown) => ({ success: true as const, value })
 
 type JsonSchemaArg = Parameters<typeof jsonSchema>[0]
@@ -99,7 +67,7 @@ const schemaOf = (params: Record<string, unknown> | undefined): JsonSchemaArg =>
     ? params
     : { type: "object", properties: params ?? {} }) as JsonSchemaArg
 
-export const asTools = (tools: LoopTool[]): ToolSet =>
+const asTools = (tools: LoopTool[]): ToolSet =>
   Object.fromEntries(
     tools.map((t) => [
       t.name,
@@ -109,111 +77,6 @@ export const asTools = (tools: LoopTool[]): ToolSet =>
       },
     ]),
   )
-
-/**
- * One turn of tool use, translated for the SDK.
- *
- * THE LOOP SPEAKS ANTHROPIC. After a tool call it appends the assistant's `toolUses`
- * (`{id, name, input}`) as one message, then the results (`{tool_use_id, content}`) as the next.
- * Both need naming and re-shaping here, and the failure when they are not is not loud: an earlier
- * version flattened both to the empty string, so the model's own tool call vanished from the
- * history along with its answer. It asked again, saw nothing, asked again, and the run died of
- * turn exhaustion — reading as a confused model, and really a conversation with its middle
- * deleted. It broke every tool-using run on a gateway, and no loop test caught it because those
- * inject `callModel` and never reach an adapter.
- *
- * A tool RESULT must also carry the tool's NAME, which the loop's result block does not have, so
- * the assistant turn that requested it is what supplies it — hence one pass with a running map
- * rather than a per-message translation.
- */
-interface ToolUseBlock {
-  id: string
-  name: string
-  input?: unknown
-}
-interface ToolResultBlock {
-  tool_use_id: string
-  content?: unknown
-}
-
-const isToolUse = (b: unknown): b is ToolUseBlock =>
-  !!b && typeof b === "object" && "id" in b && "name" in b
-const isToolResult = (b: unknown): b is ToolResultBlock =>
-  !!b && typeof b === "object" && "tool_use_id" in b
-
-export const asMessages = (system: string, messages: ModelMessage[]): SdkMessage[] => {
-  // THE SYSTEM PROMPT RIDES IN THE ARRAY rather than in the SDK's `system` option, for two
-  // reasons that both matter. Each provider then puts it where its own API wants it (a
-  // `role: "system"` message for chat-completions, a top-level field for Anthropic) without this
-  // file knowing which. And it means the array is NEVER empty — the SDK rejects an empty prompt
-  // outright, while a system-only call is an ordinary thing for a caller to make.
-  const out: SdkMessage[] = [{ role: "system", content: system }]
-  const nameById = new Map<string, string>()
-  for (const m of messages) {
-    const blocks = Array.isArray(m.content) ? (m.content as unknown[]) : null
-    const results = blocks?.filter(isToolResult) ?? []
-    if (results.length) {
-      out.push({
-        role: "tool",
-        content: results.map((r) => ({
-          type: "tool-result",
-          toolCallId: r.tool_use_id,
-          // Falls back rather than throwing: a result whose call we never saw is still the
-          // model's own answer coming back, and dropping it is the failure described above.
-          toolName: nameById.get(r.tool_use_id) ?? "tool",
-          output: {
-            type: "text",
-            value: typeof r.content === "string" ? r.content : JSON.stringify(r.content ?? ""),
-          },
-        })),
-      })
-      continue
-    }
-    const uses = blocks?.filter(isToolUse) ?? []
-    if (uses.length && blocks) {
-      for (const u of uses) nameById.set(u.id, u.name)
-      // Any prose the same turn produced rides along, which is how a model that narrates before
-      // calling a tool keeps its narration.
-      const prose = flatten(blocks.filter((b) => !isToolUse(b)))
-      out.push({
-        role: "assistant",
-        content: [
-          ...(prose ? [{ type: "text" as const, text: prose }] : []),
-          ...uses.map((u) => ({
-            type: "tool-call" as const,
-            toolCallId: u.id,
-            toolName: u.name,
-            input: u.input ?? {},
-          })),
-        ],
-      })
-      continue
-    }
-    out.push({ role: m.role, content: flatten(m.content) })
-  }
-  return out
-}
-
-/** Anthropic accepts a bare string OR an array of content blocks; a plain turn wants a string.
- *  Flatten text blocks and drop the rest, so a conversation built for one provider does not
- *  arrive at the other as "[object Object]". */
-const flatten = (content: unknown): string => {
-  if (typeof content === "string") return content
-  if (!Array.isArray(content)) return content == null ? "" : JSON.stringify(content)
-  return content
-    .map((b) => {
-      if (typeof b === "string") return b
-      const o = b as { type?: string; text?: string; content?: unknown }
-      if (o.type === "text" && typeof o.text === "string") return o.text
-      // A properly-typed tool RESULT carrying no `tool_use_id` never reaches the fan-out above,
-      // so it would otherwise be dropped here — losing the payload the model needs to keep
-      // going, silently, rather than failing loudly.
-      if (o.type === "tool_result") return typeof o.content === "string" ? o.content : ""
-      return ""
-    })
-    .filter(Boolean)
-    .join("\n")
-}
 
 /**
  * A tool call's input, as the TOOL will receive it.
@@ -295,10 +158,10 @@ export interface TurnOptions {
 }
 
 export const turnFor = (opts: TurnOptions): AgentLoopInput["callModel"] => {
-  return async ({ system, messages, tools, onDelta }): Promise<ModelTurn> => {
+  return async ({ system, messages, tools, onDelta, abortSignal }): Promise<ModelTurn> => {
     const req = {
       model: opts.model,
-      messages: asMessages(system, messages),
+      messages: [{ role: "system" as const, content: system }, ...messages],
       allowSystemInMessages: true,
       maxOutputTokens: opts.maxTokens ?? 8_000,
       ...(tools.length ? { tools: asTools(tools) } : {}),
@@ -306,7 +169,9 @@ export const turnFor = (opts: TurnOptions): AgentLoopInput["callModel"] => {
       // The loop owns retries and failure classification, so the SDK must not silently re-ask
       // and turn one 429 into three.
       maxRetries: 0,
-      abortSignal: AbortSignal.timeout(120_000),
+      abortSignal: abortSignal
+        ? AbortSignal.any([abortSignal, AbortSignal.timeout(120_000)])
+        : AbortSignal.timeout(120_000),
     }
 
     const settle = (r: {
@@ -330,7 +195,6 @@ export const turnFor = (opts: TurnOptions): AgentLoopInput["callModel"] => {
           input: inputOf(c.input),
         })),
         costUsd: opts.price({ usage: r.usage, providerMetadata: r.providerMetadata }),
-        done: r.finishReason !== "tool-calls" && r.toolCalls.length === 0,
       }
     }
 

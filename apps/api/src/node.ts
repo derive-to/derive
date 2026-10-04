@@ -31,7 +31,7 @@ import { sharpShrinker } from "./lib/image-shrink-node"
 import { graphAware, graphPass } from "./lib/job-graph"
 import { machineDepsFrom, machinePass } from "./lib/job-machine"
 import { jobTick } from "./lib/jobs"
-import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
+import { catalogFromGateway, type GatewayConfig, gatewayModel } from "./lib/model-catalog"
 import { modelSource, readLibrary } from "./lib/model-library"
 import { jobAnnouncer } from "./lib/notify-job"
 import { NODE_REPO_CAPS } from "./lib/repo-fetch"
@@ -355,7 +355,7 @@ const backplane = createInProcessBackplane()
 const modelGateway = (): GatewayConfig | null => {
   const baseUrl = process.env.DERIVE_MODEL_BASE_URL
   const apiKey = process.env.DERIVE_MODEL_API_KEY
-  const model = process.env.DERIVE_MODEL_NAME
+  const model = gatewayModel(baseUrl, process.env.DERIVE_MODEL_NAME)
   // DERIVE_MODEL_NAMES is optional and additive: more model ids the SAME gateway serves, which
   // is how every one of these hosts works. Unset ⇒ a one-model catalog, exactly as before.
   if (baseUrl && apiKey && model)

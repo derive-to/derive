@@ -23,6 +23,7 @@ import { Route as InboxRouteImport } from './routes/inbox'
 import { Route as FollowingRouteImport } from './routes/following'
 import { Route as FeedbackRouteImport } from './routes/feedback'
 import { Route as FavoritesRouteImport } from './routes/favorites'
+import { Route as ChatRouteImport } from './routes/chat'
 import { Route as BrandprintRouteImport } from './routes/brandprint'
 import { Route as ArchivedRouteImport } from './routes/archived'
 import { Route as ActivityRouteImport } from './routes/activity'
@@ -116,6 +117,11 @@ const FeedbackRoute = FeedbackRouteImport.update({
 const FavoritesRoute = FavoritesRouteImport.update({
   id: '/favorites',
   path: '/favorites',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ChatRoute = ChatRouteImport.update({
+  id: '/chat',
+  path: '/chat',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BrandprintRoute = BrandprintRouteImport.update({
@@ -244,6 +250,7 @@ export interface FileRoutesByFullPath {
   '/activity': typeof ActivityRoute
   '/archived': typeof ArchivedRoute
   '/brandprint': typeof BrandprintRoute
+  '/chat': typeof ChatRoute
   '/favorites': typeof FavoritesRoute
   '/feedback': typeof FeedbackRoute
   '/following': typeof FollowingRoute
@@ -284,6 +291,7 @@ export interface FileRoutesByTo {
   '/activity': typeof ActivityRoute
   '/archived': typeof ArchivedRoute
   '/brandprint': typeof BrandprintRoute
+  '/chat': typeof ChatRoute
   '/favorites': typeof FavoritesRoute
   '/feedback': typeof FeedbackRoute
   '/following': typeof FollowingRoute
@@ -324,6 +332,7 @@ export interface FileRoutesById {
   '/activity': typeof ActivityRoute
   '/archived': typeof ArchivedRoute
   '/brandprint': typeof BrandprintRoute
+  '/chat': typeof ChatRoute
   '/favorites': typeof FavoritesRoute
   '/feedback': typeof FeedbackRoute
   '/following': typeof FollowingRoute
@@ -366,6 +375,7 @@ export interface FileRouteTypes {
     | '/activity'
     | '/archived'
     | '/brandprint'
+    | '/chat'
     | '/favorites'
     | '/feedback'
     | '/following'
@@ -406,6 +416,7 @@ export interface FileRouteTypes {
     | '/activity'
     | '/archived'
     | '/brandprint'
+    | '/chat'
     | '/favorites'
     | '/feedback'
     | '/following'
@@ -445,6 +456,7 @@ export interface FileRouteTypes {
     | '/activity'
     | '/archived'
     | '/brandprint'
+    | '/chat'
     | '/favorites'
     | '/feedback'
     | '/following'
@@ -486,6 +498,7 @@ export interface RootRouteChildren {
   ActivityRoute: typeof ActivityRoute
   ArchivedRoute: typeof ArchivedRoute
   BrandprintRoute: typeof BrandprintRoute
+  ChatRoute: typeof ChatRoute
   FavoritesRoute: typeof FavoritesRoute
   FeedbackRoute: typeof FeedbackRoute
   FollowingRoute: typeof FollowingRoute
@@ -618,6 +631,13 @@ declare module '@tanstack/react-router' {
       path: '/favorites'
       fullPath: '/favorites'
       preLoaderRoute: typeof FavoritesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/chat': {
+      id: '/chat'
+      path: '/chat'
+      fullPath: '/chat'
+      preLoaderRoute: typeof ChatRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/brandprint': {
@@ -810,6 +830,7 @@ const rootRouteChildren: RootRouteChildren = {
   ActivityRoute: ActivityRoute,
   ArchivedRoute: ArchivedRoute,
   BrandprintRoute: BrandprintRoute,
+  ChatRoute: ChatRoute,
   FavoritesRoute: FavoritesRoute,
   FeedbackRoute: FeedbackRoute,
   FollowingRoute: FollowingRoute,

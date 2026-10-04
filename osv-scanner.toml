@@ -11,11 +11,6 @@ ignoreUntil = 2026-10-10
 reason = "Re-audited 2026-09-18 after upgrading adm-zip to 0.6.1 for GHSA-7q85-xj36-vmfc. It is still used only by onnxruntime-node 1.24.3's postinstall script, not its inference runtime. Derive disables all dependency lifecycle scripts with pnpm.onlyBuiltDependencies = [], so ZIP extraction never runs in our installs or images. lint:dependency-exceptions pins this disabled-script policy and the sole locked consumer; re-audit before enabling that installer or changing its version. The separate symlink-extraction advisory still lists no upstream fix."
 
 [[IgnoredVulns]]
-id = "GHSA-vfj7-8cjw-p6xm"
-ignoreUntil = 2026-11-01
-reason = "braces 3.0.3 is reached only through micromatch -> fast-glob in the shadcn CLI, a devDependency of apps/web that runs on a developer's machine against globs the developer writes. Nothing in the API, the web bundle, or the runner image calls it, so no attacker controls a pattern. No upstream fix is published; re-audit when one ships. lint:dependency-exceptions pins the sole locked consumer."
-
-[[IgnoredVulns]]
 id = "GHSA-ch52-4w7c-c8xp"
 ignoreUntil = 2026-11-01
-reason = "http-cache-semantics 4.2.0 is reached only through astro in apps/docs, which builds docs.derive.to into static files served as immutable Worker assets: no runtime, no cookies, no shared cache holding per-user responses. The cross-user stale-response disclosure needs a shared cache in front of authenticated traffic, which the docs build never is. No upstream fix is published; re-audit when one ships. lint:dependency-exceptions pins the sole locked consumer."
+reason = "The locked 4.2.0 package has a committed pnpm security patch. Zero-freshness cache entries always miss, so client max-stale cannot bypass cookie, private, no-cache, or no-store restrictions. lint:dependency-exceptions checks the exact patch digest, its lockfile application, and the installed behavior. Re-audit when upstream publishes a verified fix."

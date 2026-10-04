@@ -49,7 +49,7 @@ describe("the gateway adapter runs in workerd", () => {
       )) as unknown as typeof fetch
     const turn = await model(impl)({ system: "s", messages: [], tools: [] })
     expect(turn.text).toBe("hello from the edge")
-    expect(turn.done).toBe(true)
+    expect(turn.toolUses).toEqual([])
   })
 
   it("streams deltas through Web Streams, and returns the same reply", async () => {
@@ -98,6 +98,5 @@ describe("the gateway adapter runs in workerd", () => {
       tools: [{ name: "find", description: "find things", params: { type: "object" } }],
     })
     expect(turn.toolUses).toEqual([{ id: "c1", name: "find", input: { q: "x" } }])
-    expect(turn.done).toBe(false)
   })
 })

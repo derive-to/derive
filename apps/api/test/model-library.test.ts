@@ -15,7 +15,7 @@ import { as, countingStore, makeAuthedApp } from "./helpers"
 // deliberately only the provider: what is under test is who may do this, what a pin actually
 // moves, and whether a bad id can ever reach a turn.
 
-const turn = (text: string): ModelTurn => ({ text, toolUses: [], costUsd: null, done: true })
+const turn = (text: string): ModelTurn => ({ text, toolUses: [], costUsd: null })
 
 const GATEWAY: GatewayConfig = { baseUrl: "https://gw.test/v1", apiKey: "k", model: "configured" }
 
@@ -447,7 +447,7 @@ describe("what a turn costs to route", () => {
 
 describe("the operator's deploy-wide model", () => {
   /** A settled turn — these tests are about routing and access, never about what a model says. */
-  const THE_TURN = { text: "ok", toolUses: [], costUsd: null, done: true }
+  const THE_TURN = { text: "ok", toolUses: [], costUsd: null }
 
   const setup = () =>
     makeAuthedApp(

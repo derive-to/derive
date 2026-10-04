@@ -1840,6 +1840,28 @@
           "id": {
             "type": "string"
           },
+          "chat_context": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "selection": {
+                "type": "string",
+                "nullable": true
+              },
+              "model_id": {
+                "type": "string",
+                "nullable": true
+              },
+              "saving": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "selection",
+              "model_id",
+              "saving"
+            ]
+          },
           "agent_id": {
             "type": "string"
           },
@@ -1959,6 +1981,15 @@
                   "escalation",
                   "effect"
                 ]
+              },
+              "question_id": {
+                "type": "string"
+              },
+              "target_id": {
+                "type": "string"
+              },
+              "target_version": {
+                "type": "number"
               },
               "question": {
                 "type": "string"
@@ -2120,6 +2151,7 @@
         },
         "required": [
           "id",
+          "chat_context",
           "agent_id",
           "kind",
           "status",
@@ -2187,6 +2219,28 @@
           "progress": {
             "type": "boolean"
           },
+          "model": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "label"
+            ]
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "created_at": {
             "type": "string"
           }
@@ -2197,6 +2251,8 @@
           "author_id",
           "body_md",
           "progress",
+          "model",
+          "tools",
           "created_at"
         ]
       },

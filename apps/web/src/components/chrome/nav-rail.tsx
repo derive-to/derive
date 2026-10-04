@@ -151,7 +151,7 @@ function NavItem({
   icon: IconName
   label: string
   count?: number
-  to: "/agents" | "/inbox" | "/skills"
+  to: "/agents" | "/inbox" | "/skills" | "/chat"
   active: boolean
   testId?: string
 }) {
@@ -417,6 +417,13 @@ export function NavRail() {
             <SidebarMenu>
               {/* Agents, Inbox, Artifacts, Skills; Search is the launcher above and Settings
                   sits at the foot. Templates stays reachable by URL and from the palette. */}
+              <NavItem
+                icon="agent"
+                label="Luna"
+                to="/chat"
+                active={loc.pathname === "/chat"}
+                testId="nav-chat"
+              />
               <NavItem
                 icon="agent"
                 label="Agents"

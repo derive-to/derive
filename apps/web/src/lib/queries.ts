@@ -577,12 +577,13 @@ export const agentQuery = (id: string) =>
     queryFn: () => api.getAgent(id),
   })
 
-// The jobs you asked about one page (the server lists only the caller's), newest first: the
+// Private Luna chats about one page, newest first: the
 // Ask panel resumes the latest.
 export const pageAsksQuery = (shortId: string) =>
   queryOptions({
-    queryKey: ["jobs", "page", shortId] as const,
-    queryFn: () => api.listJobs({ subject: shortId, limit: 1 }).then((r) => r.jobs),
+    queryKey: ["jobs", "luna", "page", shortId] as const,
+    queryFn: () =>
+      api.listJobs({ agent: "derive", subject: shortId, limit: 30 }).then((r) => r.jobs),
     // A reload restores the persisted list, which may predate the last ask (persistence
     // writes lag a moment behind): read it fresh on each page open.
     refetchOnMount: "always",

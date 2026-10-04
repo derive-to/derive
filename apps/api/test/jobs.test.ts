@@ -654,6 +654,28 @@ describe("jobs: what a teammate cannot do with someone else's agent or job", () 
   })
 })
 
+describe("jobs: interrupted native saves", () => {
+  it("refuses retry when the commit result is unknown", async () => {
+    const { app, meta } = await setup("jobs-unknown-save")
+    const job = await meta.createJob({
+      id: newId("job"),
+      org_id: "default",
+      agent_id: "derive",
+      kind: "ask",
+      instruction: "Save a plan",
+      asked_by: ed.id,
+      attended: 1,
+      meta_json: JSON.stringify({ via: "chat", saving: true }),
+    })
+    await meta.updateJob(job.id, { status: "lost" })
+    const response = await app.request(`/v1/jobs/${job.id}/retry`, jsonAs(as(ed.email), {}))
+    expect(response.status).toBe(400)
+    expect(await response.text()).toContain("save was interrupted")
+    expect((await meta.getJob(job.id))?.status).toBe("lost")
+    expect(await meta.listJobMessages(job.id)).toHaveLength(0)
+  })
+})
+
 describe("jobs: the built-in Derive, asked from a page", () => {
   /** A model that reads the page the prompt names, then answers from what the read returned. */
   const pageReader = () =>
@@ -666,24 +688,22 @@ describe("jobs: the built-in Derive, asked from a page", () => {
           () =>
           async (input: {
             system: string
-            messages: { content: unknown }[]
+            messages: { role: string; content: unknown }[]
           }): Promise<ModelTurn> => {
             const last = input.messages.at(-1)?.content
-            if (Array.isArray(last))
+            if (input.messages.at(-1)?.role === "tool")
               return {
                 text: JSON.stringify(last).includes("billed annually")
                   ? "It says seats are billed annually."
                   : "I could not read it.",
                 toolUses: [],
                 costUsd: 0.001,
-                done: true,
               }
-            const shortId = /short_id (\w+)\)/.exec(input.system)?.[1] ?? ""
+            const shortId = /Scope: artifact (\w+),/.exec(input.system)?.[1] ?? ""
             return {
               text: "",
               toolUses: [{ id: "t1", name: "read", input: { short_id: shortId } }],
               costUsd: 0.001,
-              done: false,
             }
           },
       },
@@ -750,19 +770,18 @@ describe("jobs: the built-in Derive, asked from a page", () => {
           () =>
           async (input: { system: string; messages: unknown[] }): Promise<ModelTurn> => {
             if (input.messages.length > 1)
-              return { text: "Added an owner.", toolUses: [], costUsd: 0.001, done: true }
-            const shortId = /short_id (\w+)\)/.exec(input.system)?.[1] ?? ""
+              return { text: "Added an owner.", toolUses: [], costUsd: 0.001 }
+            const shortId = /Scope: artifact (\w+),/.exec(input.system)?.[1] ?? ""
             return {
               text: "",
               toolUses: [
                 {
                   id: "t1",
                   name: "publish",
-                  input: { short_id: shortId, content: "# Plan\n\nOwner: Ed." },
+                  input: { short_id: shortId, base_version: 1, content: "# Plan\n\nOwner: Ed." },
                 },
               ],
               costUsd: 0.001,
-              done: false,
             }
           },
       },
@@ -830,11 +849,11 @@ describe("jobs: the built-in Derive, asked from a page", () => {
       ask(app, ed.email, "derive", "Summarize it", { subject: { kind: "artifact", id } })
     expect((await about(privatePage.short_id)).status).toBe(404)
     expect((await about("nosuchpage")).status).toBe(404)
-    expect((await ask(app, ed.email, "derive", "Summarize it")).status).toBe(400)
+    expect((await ask(app, ed.email, "derive", "Summarize it")).status).toBe(201)
     const jobs = (await (await app.request("/v1/jobs", { headers: as(ed.email) })).json()) as {
       jobs: unknown[]
     }
-    expect(jobs.jobs).toEqual([])
+    expect(jobs.jobs).toHaveLength(1)
 
     const bare = await setup("jobs-derive-no-model")
     const edsPage = (await (await publishAs(bare.app, "# Ed's", {}, as(ed.email))).json()) as {
@@ -903,7 +922,7 @@ describe("jobs: the built-in Derive, asked from a page", () => {
         isDefault: true,
         build: () => async (): Promise<ModelTurn> => {
           await held
-          return { text: "Done.", toolUses: [], costUsd: 0.001, done: true }
+          return { text: "Done.", toolUses: [], costUsd: 0.001 }
         },
       },
     ])
@@ -941,12 +960,11 @@ describe("jobs: the built-in Derive, asked from a page", () => {
           () =>
           async (input: { system: string; messages: unknown[] }): Promise<ModelTurn> => {
             if (input.messages.length > 1) return new Promise<ModelTurn>(() => {})
-            const shortId = /short_id (\w+)\)/.exec(input.system)?.[1] ?? ""
+            const shortId = /Scope: artifact (\w+),/.exec(input.system)?.[1] ?? ""
             return {
               text: "",
               toolUses: [{ id: "t1", name: "read", input: { short_id: shortId } }],
               costUsd: 0.002,
-              done: false,
             }
           },
       },
@@ -1946,9 +1964,6 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
     const job = (await (await ask(app, ed.email, agent.id, "What is MRR?")).json()) as {
       id: string
     }
-    const other = (await (await ask(app, ed.email, agent.id, "And churn?")).json()) as {
-      id: string
-    }
     // The shim runs as its own process, as the model would run it, so the app needs a real
     // address for it to reach.
     const bridge = createServer((req, res) => {
@@ -1972,6 +1987,11 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
       const [pulled] = (await client.pull(1)).jobs
       if (!pulled) throw new Error("nothing pulled")
       expect(pulled.id).toBe(job.id)
+      // Claim the target before creating the other job. This check tests token isolation,
+      // so it must not depend on queue order when both jobs share a creation timestamp.
+      const other = (await (await ask(app, ed.email, agent.id, "And churn?")).json()) as {
+        id: string
+      }
       // The model's token is a tool token, never the runner's own kind.
       const token = pulled.tool_token ?? ""
       expect(token).toMatch(/^dkjtool_/)
