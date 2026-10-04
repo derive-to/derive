@@ -1333,7 +1333,8 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(Date.parse(frame?.expires_at ?? "")).toBeGreaterThan(Date.now())
     const page = await app.request(new URL(frame?.url ?? "").pathname)
     expect(page.status).toBe(200)
-    expect(await page.text()).toContain("Launch deck")
+    const readerPage = await page.text()
+    expect(readerPage).toContain("Launch deck")
 
     // A publish teaches the step after it, where the agent decides it.
     const made = JSON.parse(
@@ -1342,6 +1343,33 @@ describe("remote MCP endpoint (/mcp)", () => {
       ),
     )
     expect(made.show_next).toContain(`show({short_id:"${made.short_id}"})`)
+
+    // Asked by the view for an editable frame: the page names that origin as one that may
+    // drive its editor, and stays unstamped (quote edits, which publish resolves).
+    const editable = await call(app, token, "show", {
+      short_id: shortId,
+      editor: "https://view.test",
+    })
+    const ed = editable.parsed?.result as {
+      structuredContent?: { can_edit: boolean; editing: boolean }
+      _meta?: { "derive/frame"?: { url: string } }
+    }
+    expect(ed.structuredContent).toMatchObject({ can_edit: true, editing: true })
+    const edPage = await (
+      await app.request(new URL(ed._meta?.["derive/frame"]?.url ?? "").pathname)
+    ).text()
+    expect(edPage).toContain('data-derive-host="https://view.test"')
+    expect(edPage).not.toContain("data-derive-src-version")
+    // A reader's frame names no editor host; neither does a value that isn't an origin.
+    expect(readerPage).not.toContain("data-derive-host")
+    const junk = await call(app, token, "show", {
+      short_id: shortId,
+      editor: "javascript:alert(1)",
+    })
+    expect(
+      (junk.parsed?.result as { structuredContent?: { editing: boolean } }).structuredContent
+        ?.editing,
+    ).toBe(false)
 
     // Showing reaches no further than reading: another workspace gets nothing.
     const other = appWithGrant(dir, "show-other", "openid derive:read")
@@ -1391,6 +1419,17 @@ describe("remote MCP endpoint (/mcp)", () => {
       ._meta?.["derive/frame"]
     const path = new URL(frame?.url ?? "").pathname
     expect(await (await app.request(path)).text()).toContain("Far v2")
+    // The world link reads; it never edits, whatever the view asks for.
+    const asEditor = await call(app, token, "show", {
+      short_id: art.short_id,
+      editor: "https://view.test",
+    })
+    expect(
+      (asEditor.parsed?.result as { structuredContent?: unknown }).structuredContent,
+    ).toMatchObject({
+      can_edit: false,
+      editing: false,
+    })
     // The same token, pointed at the older version, opens nothing.
     const old = await app.request(path.replace(`/v/2/`, `/v/1/`))
     expect(old.status).toBe(404)
@@ -3795,7 +3834,10 @@ describe("the show view (MCP App) protocol", () => {
   }
 
   const boot = () => {
-    const ids = "app title ver latest deck prev pos next full open stage note foot".split(" ")
+    const ids =
+      "app title ver latest deck prev pos next edit dirty discard save full open stage note foot".split(
+        " ",
+      )
     const els = new Map(ids.map((id) => [id, new El()]))
     const frames: El[] = []
     const toHost: Msg[] = []
@@ -3818,7 +3860,17 @@ describe("the show view (MCP App) protocol", () => {
     }
     runInContext(
       ARTIFACT_VIEW_SCRIPT,
-      createContext({ window, document, setTimeout, clearTimeout, Date, Promise, Map, JSON }),
+      createContext({
+        window,
+        document,
+        location: { origin: "https://view.test" },
+        setTimeout,
+        clearTimeout,
+        Date,
+        Promise,
+        Map,
+        JSON,
+      }),
     )
     const deliver = (data: unknown, source: unknown) => {
       for (const f of listeners) f({ data, source })
@@ -4080,6 +4132,161 @@ describe("the show view (MCP App) protocol", () => {
     bare.fromHost({ method: "ui/notifications/tool-result", params: stale })
     expect(bare.frames).toHaveLength(0)
     expect(bare.els.get("note")?.textContent).toContain("expired")
+  })
+
+  it("edits in place: opens the editor, saves quote edits through publish, shows the new version", async () => {
+    const v = boot()
+    v.reply("ui/initialize", { hostCapabilities: caps, hostContext: {} })
+    await settle()
+    const editableResult = (
+      over: Record<string, unknown> = {},
+      url = "https://sandbox.test/raw/abc12345/v/2/t/tok/",
+    ) => {
+      const r = result()
+      r.structuredContent = {
+        ...r.structuredContent,
+        can_edit: true,
+        ...over,
+      } as typeof r.structuredContent
+      r._meta["derive/frame"].url = url
+      return r
+    }
+    v.fromHost({ method: "ui/notifications/tool-result", params: editableResult() })
+    expect(v.els.get("edit")?.hidden).toBe(false)
+    expect(v.els.get("save")?.hidden).toBe(true)
+
+    // Edit asks the server for an editable frame, naming the view's own origin.
+    v.els.get("edit")?.onclick?.()
+    expect(v.sent("tools/call").at(-1)?.params).toEqual({
+      name: "show",
+      arguments: { short_id: "abc12345", version: 2, editor: "https://view.test" },
+    })
+    v.reply(
+      "tools/call",
+      editableResult({ editing: true }, "https://sandbox.test/raw/abc12345/v/2/t/edit/"),
+    )
+    await settle()
+    const editor = v.frames.at(-1)
+    expect(editor?.src).toBe("https://sandbox.test/raw/abc12345/v/2/t/edit/")
+    editor?.fire("load")
+    expect(editor?.sent).toContainEqual({ source: "derive-host", type: "edit-mode", on: true })
+    expect(v.els.get("save")?.hidden).toBe(false)
+    expect(v.els.get("save")?.disabled).toBe(true)
+
+    // Typing makes it dirty; Save collects the frame's quote edits and publishes them
+    // against the version the person was editing.
+    v.fromFrame({ source: "derive", type: "edit-state", dirty: 1 })
+    expect(v.els.get("dirty")?.hidden).toBe(false)
+    expect(v.els.get("save")?.disabled).toBe(false)
+    v.els.get("save")?.onclick?.()
+    const ask = editor?.sent.find((m) => m.type === "edit-collect") as { nonce: number }
+    const edit = {
+      quote: { exact: "Why live views", prefix: "", suffix: "" },
+      new_text: "Why live cards",
+    }
+    v.fromFrame({
+      source: "derive",
+      type: "edit-edits",
+      nonce: ask.nonce,
+      edits: [edit],
+      uncaptured: 0,
+    })
+    await settle()
+    expect(v.sent("tools/call").at(-1)?.params).toEqual({
+      name: "publish",
+      arguments: {
+        short_id: "abc12345",
+        base_version: 2,
+        edits: [edit],
+        message: "Edited in the conversation",
+      },
+    })
+    v.reply("tools/call", {
+      content: [{ type: "text", text: JSON.stringify({ published: true, version: 3 }) }],
+    })
+    await settle()
+    // Then it shows the saved version, out of edit mode.
+    expect(v.sent("tools/call").at(-1)?.params).toEqual({
+      name: "show",
+      arguments: { short_id: "abc12345", version: 3 },
+    })
+    const v3 = editableResult(
+      { version: 3, current_version: 3 },
+      "https://sandbox.test/raw/abc12345/v/3/t/tok/",
+    )
+    v.reply("tools/call", v3)
+    await settle()
+    expect(v.frames.at(-1)?.src).toBe("https://sandbox.test/raw/abc12345/v/3/t/tok/")
+    expect(v.els.get("save")?.hidden).toBe(true)
+    expect(v.els.get("foot")?.textContent).toBe("Saved as v3.")
+    const told = (
+      v.sent("ui/update-model-context").at(-1)?.params as { content: { text: string }[] }
+    ).content[0]?.text
+    expect(told).toContain("saved v3")
+  })
+
+  it("keeps the draft when a save is refused, and never publishes what it can't capture", async () => {
+    const v = boot()
+    v.reply("ui/initialize", { hostCapabilities: caps, hostContext: {} })
+    await settle()
+    const r = result()
+    r.structuredContent = {
+      ...r.structuredContent,
+      can_edit: true,
+      editing: true,
+    } as typeof r.structuredContent
+    v.fromHost({ method: "ui/notifications/tool-result", params: r })
+    v.fromFrame({ source: "derive", type: "edit-state", dirty: 1 })
+    const framesBefore = v.frames.length
+    const collectNext = () =>
+      v.frames
+        .at(-1)
+        ?.sent.filter((m) => m.type === "edit-collect")
+        .at(-1) as { nonce: number }
+
+    // A change that crosses structure: say so, publish nothing.
+    v.els.get("save")?.onclick?.()
+    v.fromFrame({
+      source: "derive",
+      type: "edit-edits",
+      nonce: collectNext().nonce,
+      edits: [],
+      uncaptured: 1,
+    })
+    await settle()
+    expect(
+      v.sent("tools/call").filter((m) => (m.params as { name: string }).name === "publish"),
+    ).toHaveLength(0)
+    expect(v.els.get("foot")?.textContent).toContain("can't be saved here")
+
+    // Someone published in between: the refusal keeps the draft on screen.
+    v.els.get("save")?.onclick?.()
+    v.fromFrame({
+      source: "derive",
+      type: "edit-edits",
+      nonce: collectNext().nonce,
+      edits: [{ quote: { exact: "a", prefix: "", suffix: "" }, new_text: "b" }],
+      uncaptured: 0,
+    })
+    await settle()
+    v.reply("tools/call", {
+      isError: true,
+      content: [{ type: "text", text: "The artifact has moved to v3 since base_version 2." }],
+    })
+    await settle()
+    expect(v.frames).toHaveLength(framesBefore)
+    expect(v.els.get("save")?.hidden).toBe(false)
+    expect(v.els.get("foot")?.textContent).toContain("changed since you opened it")
+
+    // Without a real origin (a sandbox with none), editing is not offered at all.
+    const blind = boot()
+    blind.reply("ui/initialize", { hostCapabilities: {}, hostContext: {} })
+    await settle()
+    blind.fromHost({
+      method: "ui/notifications/tool-result",
+      params: { ...result(), structuredContent: { ...result().structuredContent, can_edit: true } },
+    })
+    expect(blind.els.get("edit")?.hidden).toBe(true)
   })
 
   it("serves the script inside the view document", () => {

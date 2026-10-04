@@ -1,7 +1,8 @@
-import { artifactUrl } from "@derive/core"
+import { artifactUrl, roleAllows } from "@derive/core"
 import { z } from "zod"
 import { signRawToken } from "../lib/crypto"
 import { RAW_TOKEN_MAX_AGE_MS } from "../lib/http"
+import { isWebOrigin } from "../lib/serve-content"
 import { ARTIFACT_VIEW_URI } from "../mcp-app-view"
 import type { ToolContext } from "../mcp-tool-context"
 import { err, historyNotPublic, versionOpenToWorld } from "../mcp-util"
@@ -36,13 +37,14 @@ export function registerShowTool(tc: ToolContext): void {
         short_id: z.string(),
         version: num("version", { int: true, min: 1 }).optional().describe("Default current."),
         slide: num("slide", { int: true, min: 1 }).optional().describe("Deck: open on this slide."),
+        editor: z.string().optional().describe("Set by Derive's view; omit."),
         workspace: wsArg,
       },
       // The MCP Apps key only. ChatGPT's legacy `openai/outputTemplate` alias names a
       // text/html+skybridge resource, which this view is not.
       _meta: { ui: { resourceUri: ARTIFACT_VIEW_URI } },
     },
-    async ({ short_id, version, slide, workspace }) => {
+    async ({ short_id, version, slide, editor, workspace }) => {
       const r = await reach(short_id, workspace, { public: true })
       if (r && "error" in r) return err(r.error)
       if (!r) return notFound(short_id)
@@ -53,11 +55,19 @@ export function registerShowTool(tc: ToolContext): void {
       if (r.public && !versionOpenToWorld(a, n)) return historyNotPublic(short_id, a)
       const url = artifactUrl(ctx.deps.baseUrl, a)
       const title = a.title ?? a.short_id
+      // Editing in the view saves through `publish`, so it is offered exactly where a
+      // publish would succeed: a seat that may publish, never the world link.
+      const canEdit = !r.public && roleAllows(r.role, "publish")
+      // The view asks for an editable frame by naming its own origin. That origin may then
+      // drive the inline editor on THIS caller's page (unstamped: it collects quote edits,
+      // which `publish` resolves). The token is the secret; the origin only scopes it.
+      const host = canEdit && editor && isWebOrigin(editor) ? editor : undefined
       const raw = signRawToken(ctx.deps.encryptionKey ?? "", {
         rid: a.id,
         // A seat reaches the history it can read anyway; the world link reaches only what
         // the artifact made public. The version check above already refused the rest.
         history: !r.public || !!a.public_history,
+        ...(host ? { host } : {}),
       })
       const rawBase = ctx.deps.sandboxOrigin ?? ctx.deps.baseUrl
       return {
@@ -74,6 +84,8 @@ export function registerShowTool(tc: ToolContext): void {
           current_version: a.current_version,
           // 1-based, as the person counts; the view opens a deck there once it reports in.
           slide: slide ?? null,
+          can_edit: canEdit,
+          editing: !!host,
           url,
           workspace: r.org,
         },
