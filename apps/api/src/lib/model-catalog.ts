@@ -210,7 +210,17 @@ export const callModelFromGateway = (
  * mapping table of pretty names would be one more thing to keep in step with a provider's
  * catalog, and would be wrong the first time a model was renamed upstream.
  */
-export const labelFor = (id: string): string => id.split("/").filter(Boolean).pop() ?? id
+/** Explicit choices win. Only the known gateway gets an inherited model id. */
+export const gatewayModel = (
+  baseUrl: string | undefined,
+  configured: string | undefined,
+): string | undefined =>
+  configured?.trim() || (baseUrl && openRouterGateway(baseUrl) ? "openai/gpt-6-luna" : undefined)
+
+export const labelFor = (id: string): string =>
+  id === "openai/gpt-6-luna" || id === "gpt-6-luna"
+    ? "Luna"
+    : (id.split("/").filter(Boolean).pop() ?? id)
 
 const parseAlso = (raw: string | undefined, defaultModel: string): string[] => {
   const seen = new Set([defaultModel])

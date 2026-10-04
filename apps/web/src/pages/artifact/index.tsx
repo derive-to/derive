@@ -1861,6 +1861,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
               askPanel={
                 askEnabled ? (
                   <AskPanel
+                    selection={shown === art.current_version ? sel?.selector.exact : undefined}
                     shortId={shortId}
                     options={ask.options}
                     agentsError={ask.agentsError}

@@ -314,6 +314,7 @@ function PageLabel({ pathname, newSkill }: { pathname: string; newSkill: boolean
   if (pathname === "/new") return newSkill ? "New skill" : "New artifact"
   if (pathname.startsWith("/templates")) return "Templates"
   if (pathname.startsWith("/template-libraries")) return "Template library"
+  if (pathname === "/chat") return "Luna"
   if (pathname === "/inbox") return "Inbox"
   if (pathname === "/agents/new") return "New agent"
   if (pathname.startsWith("/agents")) return "Agents"

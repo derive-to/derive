@@ -36,6 +36,9 @@ export const JOB_TERMINAL_STATUSES: readonly JobStatus[] = [
  *  `decision` = a graph node with authored options; `escalation` = the agent declined or asked
  *  for permission; `effect` = a gated effect it will not perform without a person. */
 export interface JobNeeds {
+  question_id?: string
+  target_id?: string
+  target_version?: number
   kind: "review" | "decision" | "escalation" | "effect"
   question: string
   options?: string[]
@@ -148,6 +151,8 @@ export interface JobPatch {
 }
 /** Compare-and-set guard for updateJob: every named field must still equal this value. */
 export interface JobExpect {
+  meta_json?: string | null
+  needs_json?: string | null
   status?: JobStatus | readonly JobStatus[]
   started_at?: string | null
   updated_at?: string

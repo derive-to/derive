@@ -2,6 +2,7 @@ import { refRouter } from "@derive/broker"
 import {
   type AgentRecord,
   DERIVE_AGENT_ID,
+  type JobNeeds,
   type JobRecord,
   normalizeSelectors,
   type Selector,
@@ -20,7 +21,7 @@ import {
   toolsForRun,
 } from "../lib/broker"
 import { OVER_BUDGET } from "../lib/budget"
-import { liveChatArrival, refusalMessage } from "../lib/chat-gate"
+import { chatArrival, refusalMessage } from "../lib/chat-gate"
 import { readEnvironmentBindings } from "../lib/context-environment"
 import { decryptSecret } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
@@ -78,6 +79,9 @@ const SubjectSchema = z.union([
 
 const JobNeedsSchema = z.object({
   kind: z.enum(["review", "decision", "escalation", "effect"]),
+  question_id: z.string().optional(),
+  target_id: z.string().optional(),
+  target_version: z.number().optional(),
   question: z.string(),
   options: z.array(z.string()).optional(),
   review_round_id: z.string().optional(),
@@ -112,6 +116,13 @@ const JobResultSchema = z.object({
 const Job = z
   .object({
     id: z.string(),
+    chat_context: z
+      .object({
+        selection: z.string().nullable(),
+        model_id: z.string().nullable(),
+        saving: z.boolean(),
+      })
+      .nullable(),
     agent_id: z.string(),
     kind: z.enum(["ask", "scheduled", "graph", "node"]),
     status: z.enum(["queued", "running", "needs_you", "succeeded", "failed", "cancelled", "lost"]),
@@ -144,6 +155,8 @@ const JobMessage = z
     author_id: z.string(),
     body_md: z.string(),
     progress: z.boolean(),
+    model: z.object({ id: z.string(), label: z.string() }).nullable(),
+    tools: z.array(z.string()),
     created_at: z.string(),
   })
   .openapi("JobMessage")
@@ -183,6 +196,9 @@ export const jobRoutes = (ctx: AppContext) => {
     author_kind: m.author_kind,
     author_id: m.author_id,
     body_md: m.body_md,
+    model:
+      (JSON.parse(m.meta_json ?? "{}") as { model?: { id: string; label: string } }).model ?? null,
+    tools: (JSON.parse(m.meta_json ?? "{}") as { tools?: string[] }).tools ?? [],
     progress:
       !!m.meta_json && (JSON.parse(m.meta_json) as { progress?: boolean }).progress === true,
     created_at: m.created_at,
@@ -248,12 +264,14 @@ export const jobRoutes = (ctx: AppContext) => {
     c: Context,
     org: string,
     userId: string,
+    modelId?: string | null,
   ): Promise<PageTurnGrant | Response> => {
     const rl = await ctx.limited(c, ctx.askLimiter)
     if (rl) return rl
-    const gate = await liveChatArrival(
-      { meta, models: ctx.modelsFor, chatAllowlist: ctx.chatAllowlist },
-      { org, userId },
+    const { catalog, slots } = await ctx.modelsFor(c)
+    const gate = await chatArrival(
+      { meta, models: catalog ?? undefined, chatAllowlist: ctx.chatAllowlist },
+      { org, userId, modelId: modelId ?? slots.chat ?? null },
     )
     if (gate.ok) return gate
     return gate.reason === "not_member"
@@ -363,6 +381,18 @@ export const jobRoutes = (ctx: AppContext) => {
     },
   )
 
+  app.get("/v1/chat/models", async (c) => {
+    const org = await ctx.requireWorkspace(c, "read")
+    if (org instanceof Response) return org
+    const who = await actingHuman(c)
+    if (!who || !(await meta.getMembership(org, who.id))) return fail(c, 404, "not found")
+    const { catalog, slots } = await ctx.modelsFor(c)
+    return c.json({
+      options: catalog?.options ?? [],
+      default_id: slots.chat ?? catalog?.resolve(null)?.id ?? null,
+    })
+  })
+
   app.openapi(
     createRoute({
       method: "post",
@@ -391,6 +421,9 @@ export const jobRoutes = (ctx: AppContext) => {
           instruction: z.string().trim().min(1).max(20_000),
           subject: SelectorSchema.nullish(),
           dedupe_key: z.string().min(1).max(200).nullish(),
+          model_id: z.string().trim().min(1).max(200).nullish(),
+          selection: z.string().trim().min(1).max(8000).optional(),
+          base_version: z.number().int().positive().optional(),
         }),
       )
       if (b instanceof Response) return bail(b)
@@ -399,19 +432,24 @@ export const jobRoutes = (ctx: AppContext) => {
       if (b.agent_id === DERIVE_AGENT_ID) {
         if (await agentFor(c)) return bail(fail(c, 404, "no such agent you can ask"))
         const about = b.subject ? normalizeSelectors([b.subject])[0] : null
-        if (about?.kind !== "artifact")
-          return bail(fail(c, 400, "the built-in Derive is asked about a page"))
+        if (about && about.kind !== "artifact")
+          return bail(fail(c, 400, "Chat can scope to this workspace or one artifact"))
+        if (b.selection && !about) return bail(fail(c, 400, "A selection needs an artifact"))
         const org = await ctx.requireWorkspace(c, "read")
         if (org instanceof Response) return bail(org)
-        const page = await readablePage(c, org, about.id)
+        const page = about?.kind === "artifact" ? await readablePage(c, org, about.id) : null
         if (page instanceof Response) return bail(page)
-        const grant = await deriveGate(c, org, who.id)
+        if (page && b.base_version && page.current_version !== b.base_version)
+          return bail(fail(c, 409, "This artifact changed. Refresh before asking."))
+        const grant = await deriveGate(c, org, who.id, b.model_id)
         if (grant instanceof Response) return bail(grant)
         const job = await openPageAsk(ctx, {
           org,
           askerId: who.id,
           page,
           question: b.instruction,
+          selection: b.selection,
+          modelId: b.model_id,
         })
         const asker = await askerOf(who.id)
         await ctx.afterResponse(c, () => servePageTurn(ctx, job, asker, page, grant))
@@ -501,14 +539,19 @@ export const jobRoutes = (ctx: AppContext) => {
         // Asked by a person on the page, never driven by an agent's token: the same refusal
         // the opening ask gives.
         if (await agentFor(c)) return bail(fail(c, 404, "not found"))
-        if (job.status === "running")
+        if (["running", "cancelled", "lost", "needs_you"].includes(job.status))
           return bail(fail(c, 409, "Derive is still answering; wait for it to finish"))
         const b = await readJson(c, z.object({ body_md: z.string().trim().min(1).max(20_000) }))
         if (b instanceof Response) return bail(b)
         const about = JSON.parse(job.subject_json ?? "{}") as { id?: string }
-        const page = await readablePage(c, job.org_id, about.id ?? "")
+        const page = about.id ? await readablePage(c, job.org_id, about.id) : null
         if (page instanceof Response) return bail(page)
-        const grant = await deriveGate(c, job.org_id, who.id)
+        const grant = await deriveGate(
+          c,
+          job.org_id,
+          who.id,
+          (JSON.parse(job.meta_json ?? "{}") as { model_id?: string }).model_id,
+        )
         if (grant instanceof Response) return bail(grant)
         const next = await continuePageAsk(ctx, job, who.id, b.body_md)
         if (!next) return bail(fail(c, 409, "Derive is already answering; wait for it to finish"))
@@ -568,7 +611,11 @@ export const jobRoutes = (ctx: AppContext) => {
         const who = await personFor(c)
         if (who instanceof Response) return bail(who)
         const agent = await meta.getAgent(job.agent_id)
-        if (!agent || !(await canSteerJob(meta, agent, job, who.id)))
+        if (
+          isPageAsk(job)
+            ? job.asked_by !== who.id
+            : !agent || !(await canSteerJob(meta, agent, job, who.id))
+        )
           return bail(
             fail(c, 403, "only the person who asked, or the agent's manager, can do that"),
           )
@@ -585,7 +632,37 @@ export const jobRoutes = (ctx: AppContext) => {
   personAction(
     "/v1/jobs/{id}/retry",
     "Run a failed or lost job again.",
-    (job) => retryJob(jobDeps, job),
+    async (job, c, whoId) => {
+      if (!isPageAsk(job)) return retryJob(jobDeps, job)
+      if (job.status !== "failed" && job.status !== "lost") return null
+      if (JSON.parse(job.meta_json ?? "{}").saving === true)
+        return {
+          error:
+            "A save was interrupted. Check Activity and artifact versions before starting a new chat. This run cannot safely retry.",
+        }
+      const about = JSON.parse(job.subject_json ?? "{}") as { id?: string }
+      const page = about.id ? await readablePage(c, job.org_id, about.id) : null
+      if (page instanceof Response) return { error: "The scoped artifact is no longer accessible." }
+      const grant = await deriveGate(
+        c,
+        job.org_id,
+        whoId,
+        (JSON.parse(job.meta_json ?? "{}") as { model_id?: string }).model_id,
+      )
+      if (grant instanceof Response)
+        return { error: "The chat cannot run. Check access, budget, and model availability." }
+      const next = await continuePageAsk(
+        ctx,
+        job,
+        whoId,
+        "Retry the last request. Re-read the artifact. Do not repeat any successful writes recorded in this chat.",
+      )
+      if (next)
+        await ctx.afterResponse(c, () =>
+          servePageTurn(ctx, next, { id: whoId, name: null }, page, grant),
+        )
+      return next
+    },
     true,
   )
   personAction(
@@ -597,9 +674,48 @@ export const jobRoutes = (ctx: AppContext) => {
         z.object({
           text: z.string().max(20_000).optional(),
           option: z.string().max(200).optional(),
+          question_id: z.string().min(1).optional(),
         }),
       )
       if (b instanceof Response) return { error: "answer needs text or an option" }
+      if (isPageAsk(job)) {
+        if (job.status !== "needs_you")
+          return { error: "This question is no longer waiting for an answer." }
+        const needs = JSON.parse(job.needs_json ?? "{}") as JobNeeds
+        if (!b.question_id || needs.question_id !== b.question_id)
+          return { error: "This question changed. Refresh before answering." }
+        if (b.option && !needs.options?.includes(b.option))
+          return { error: "Choose one of the displayed options." }
+        const text = [b.option ? `Decision: ${b.option}` : "", b.text?.trim() ?? ""]
+          .filter(Boolean)
+          .join("\n\n")
+        if (!text) return { error: "Answer needs text or an option." }
+        const about = JSON.parse(job.subject_json ?? "{}") as { id?: string }
+        const page = about.id ? await readablePage(c, job.org_id, about.id) : null
+        if (page instanceof Response)
+          return { error: "You can no longer read the scoped artifact." }
+        if (page && needs.target_version !== page.current_version)
+          return {
+            error:
+              "The artifact changed while you answered. Start a new chat from the current version.",
+          }
+        const grant = await deriveGate(
+          c,
+          job.org_id,
+          whoId,
+          (JSON.parse(job.meta_json ?? "{}") as { model_id?: string }).model_id,
+        )
+        if (grant instanceof Response)
+          return {
+            error: "This chat cannot continue. Check access, model availability, and budget.",
+          }
+        const next = await continuePageAsk(ctx, job, whoId, text)
+        if (!next) return { error: "An answer was already accepted. Refresh this chat." }
+        await ctx.afterResponse(c, () =>
+          servePageTurn(ctx, next, { id: whoId, name: null }, page, grant),
+        )
+        return next
+      }
       return answerJob(jobDeps, job, whoId, b)
     },
     true,

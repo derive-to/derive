@@ -1390,22 +1390,30 @@ export const api = {
     const s = qs.toString()
     return f(`/v1/jobs${s ? `?${s}` : ""}`, opts()).then(j)
   },
+  chatModels: (): Promise<{
+    options: { id: string; label: string; isDefault: boolean }[]
+    default_id: string | null
+  }> => f("/v1/chat/models", opts()).then(j),
   getJob: (id: string): Promise<JobDetail> => f(`/v1/jobs/${id}`, opts()).then(j),
   askAgent: (
     agentId: string,
     instruction: string,
     subject?: { kind: "artifact"; id: string },
+    context?: { selection?: string; base_version?: number; model_id?: string | null },
   ): Promise<JobDetail> =>
-    f("/v1/jobs", opts({ agent_id: agentId, instruction, ...(subject ? { subject } : {}) })).then(
-      j,
-    ),
+    f(
+      "/v1/jobs",
+      opts({ agent_id: agentId, instruction, ...(subject ? { subject } : {}), ...context }),
+    ).then(j),
   cancelJob: (id: string): Promise<Job> => f(`/v1/jobs/${id}/cancel`, opts({})).then(j),
   retryJob: (id: string): Promise<Job> => f(`/v1/jobs/${id}/retry`, opts({})).then(j),
   /** Write to a job: a follow-up. A settled built-in Derive page ask answers it as another turn. */
   writeJob: (id: string, body_md: string): Promise<JobDetail> =>
     f(`/v1/jobs/${id}/messages`, opts({ body_md })).then(j),
-  answerJob: (id: string, answer: { text?: string; option?: string }): Promise<Job> =>
-    f(`/v1/jobs/${id}/answer`, opts(answer)).then(j),
+  answerJob: (
+    id: string,
+    answer: { text?: string; option?: string; question_id?: string },
+  ): Promise<Job> => f(`/v1/jobs/${id}/answer`, opts(answer)).then(j),
 
   // Model accounts (routes/accounts.ts): yours, and the workspace's shared ones.
   listAccounts: (): Promise<{ accounts: ModelAccount[] }> => f("/v1/accounts", opts()).then(j),

@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { ArrowUp } from "lucide-react"
 import { useEffect, useId, useRef, useState } from "react"
@@ -17,7 +17,7 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useAuth } from "@/ctx"
-import { agentsQuery, jobQuery, pageAsksQuery, workspaceQuery } from "@/lib/queries"
+import { agentsQuery, artifactQuery, jobQuery, pageAsksQuery, workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useJobEvents } from "@/lib/use-job-events"
 import { cn } from "@/lib/utils"
@@ -25,6 +25,7 @@ import { AnswerBox, useCanSteer, warningFor } from "@/pages/agents/agent-jobs"
 import { machineOf, OPEN_STATUSES, rosterOf } from "@/pages/agents/format"
 import { useMemberNames } from "@/pages/agents/use-member-names"
 import { ActorGlyph } from "./activity-rows"
+import { mdToHtml } from "./lib/markdown"
 
 /** Mirrors the server's canAskAgent: anyone in the workspace, or for an invited-only agent,
  *  its creator and workspace owners. The server still decides. */
@@ -58,7 +59,7 @@ export function useAskOptions(shortId: string, publisherId: string | null, enabl
   const publisher = askable.find((a) => a.id === publisherId)
   const all: AskOption[] = enabled
     ? [
-        ...(workspace.data?.assistant ? [{ id: DERIVE, name: "Derive", note: "answers now" }] : []),
+        ...(workspace.data?.assistant ? [{ id: DERIVE, name: "Luna", note: "answers now" }] : []),
         ...(publisher && machineOf(publisher, names).on
           ? [{ id: publisher.id, name: publisher.name, note: "made this page · connected" }]
           : []),
@@ -93,7 +94,8 @@ const WORD: Record<string, string> = {
  * (the server lists them by subject); New starts a fresh one.
  */
 export function AskPanel({
-  shortId,
+  shortId = "",
+  selection,
   options,
   agentsError,
   onRetryAgents,
@@ -102,7 +104,8 @@ export function AskPanel({
   onUndo,
   onClose,
 }: {
-  shortId: string
+  shortId?: string
+  selection?: string
   options: AskOption[]
   agentsError: boolean
   onRetryAgents: () => void
@@ -115,8 +118,20 @@ export function AskPanel({
   onClose?: () => void
 }) {
   const { me } = useAuth()
+  const client = useQueryClient()
   useJobEvents()
-  const asks = useQuery(pageAsksQuery(shortId))
+  const asks = useQuery(
+    shortId
+      ? pageAsksQuery(shortId)
+      : {
+          queryKey: ["jobs", "chats"],
+          queryFn: () =>
+            api
+              .listJobs({ agent: DERIVE, limit: 100 })
+              .then((r) => r.jobs.filter((j) => j.chat_context)),
+          refetchOnMount: "always" as const,
+        },
+  )
   // undefined: resume the latest conversation; null: a fresh one (New); else that job.
   const [chosen, setChosen] = useState<string | null | undefined>(undefined)
   const latest = asks.data?.[0]?.id ?? null
@@ -129,12 +144,21 @@ export function AskPanel({
     refetchOnMount: "always",
     // The events say what changes from here on; the slow poll is only the fallback for a
     // stream that dropped.
+    refetchIntervalInBackground: true,
     refetchInterval: (query) => {
       const status = query.state.data?.status
-      return !status || OPEN_STATUSES.includes(status) ? 60_000 : false
+      return !status || OPEN_STATUSES.includes(status) ? 3_000 : false
     },
   })
   const job = followId ? q.data : undefined
+  const scopeId = job?.subject?.kind === "artifact" ? job.subject.id : shortId
+  const scope = useQuery({ ...artifactQuery(scopeId), enabled: !!scopeId })
+  const landedVersion = job?.result?.effects
+    ?.filter((e) => e.kind === "page" && e.ref === shortId)
+    .at(-1)?.version
+  useEffect(() => {
+    if (shortId && landedVersion) void client.invalidateQueries({ queryKey: ["artifact", shortId] })
+  }, [client, shortId, landedVersion])
   // A job that is gone (or in another workspace now) is let go, not retried.
   const gone = q.error instanceof ApiError && q.error.status === 404
   useEffect(() => {
@@ -145,8 +169,8 @@ export function AskPanel({
   const [picked, setPicked] = useState<string | null>(null)
   const option = options.find((o) => o.id === picked) ?? options[0]
   const builtIn = job?.agent_id === DERIVE
-  const jobAgent = builtIn ? "Derive" : agents.data?.find((a) => a.id === job?.agent_id)?.name
-  const name = job ? (jobAgent ?? "Agent") : (option?.name ?? "Derive")
+  const jobAgent = builtIn ? "Luna" : agents.data?.find((a) => a.id === job?.agent_id)?.name
+  const name = job ? (jobAgent ?? "Agent") : (option?.name ?? "Luna")
   // A reply continues the job you asked, unless it can no longer take one: then the next
   // message starts a new conversation with whoever the picker names.
   const continuing =
@@ -159,6 +183,10 @@ export function AskPanel({
   // any other agent's job is the workspace's to see, like the pages it publishes.
   const privateToMe = job ? builtIn : (option?.id ?? DERIVE) === DERIVE
 
+  const stop = useApiMutation({
+    mutationFn: (id: string) => api.cancelJob(id),
+    invalidate: [["jobs"]],
+  })
   const titleId = useId()
   const list = useRef<HTMLDivElement>(null)
   const count = job?.messages.length ?? 0
@@ -177,7 +205,7 @@ export function AskPanel({
       <div className="flex items-center gap-1 border-b border-border-soft py-1.5 pl-2.5 pr-2">
         <div className="flex min-w-0 flex-1 flex-col pl-1.5">
           <h2 id={titleId} data-testid="ask-panel-title" className="truncate text-sm font-medium">
-            Ask {name}
+            {shortId ? `Ask ${name}` : `Chat with ${name}`}
           </h2>
           <span
             data-testid="ask-panel-audience"
@@ -193,6 +221,35 @@ export function AskPanel({
             )}
           </span>
         </div>
+        {(asks.data?.length ?? 0) > 0 && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="xs" data-testid="chat-history">
+                History
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="max-h-80 max-w-xs overflow-auto">
+              <DropdownMenuRadioGroup value={followId ?? ""} onValueChange={setChosen}>
+                {asks.data?.map((j) => (
+                  <DropdownMenuRadioItem key={j.id} value={j.id}>
+                    <span className="truncate">{j.instruction.slice(0, 70)}</span>
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+        {waiting && (
+          <Button
+            variant="ghost"
+            size="xs"
+            data-testid="chat-stop"
+            disabled={stop.isPending || job?.chat_context?.saving}
+            onClick={() => job && stop.mutate(job.id)}
+          >
+            {job?.chat_context?.saving ? "Saving…" : "Stop"}
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="xs"
@@ -221,6 +278,38 @@ export function AskPanel({
         )}
       </div>
 
+      <div
+        data-testid="chat-scope"
+        className="flex flex-col gap-1 border-b border-border-soft px-4 py-2 text-xs text-muted-foreground"
+      >
+        <span>
+          Workspace access · Private chat ·{" "}
+          {scopeId ? (
+            <Link
+              to="/artifacts/$ref"
+              params={{ ref: scopeId }}
+              className="underline underline-offset-2"
+            >
+              {scope.data?.title ?? "Artifact scope"} · v
+              {job?.needs?.target_version ?? scope.data?.current_version ?? currentVersion}
+            </Link>
+          ) : (
+            "Workspace scope"
+          )}
+        </span>
+        {(job?.chat_context?.selection || (!job && selection)) && (
+          <span className="line-clamp-2">
+            Selection: “{job?.chat_context?.selection ?? selection}”
+          </span>
+        )}
+        {job && !job.chat_context?.model_id && <span>Uses the workspace default model</span>}
+        {job?.chat_context?.saving && job.status !== "running" && (
+          <span role="alert">
+            A save was interrupted. Check Activity and artifact versions before starting a new chat.
+            This run cannot safely retry.
+          </span>
+        )}
+      </div>
       <div ref={list} className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto px-3 py-3">
         {agentsError && (
           <LoadError
@@ -250,7 +339,10 @@ export function AskPanel({
           <Spinner size="sm" className="self-center" />
         ) : (
           <p className="text-sm text-muted-foreground">
-            Ask {name} about this page. It reads what you can read.
+            {shortId
+              ? `Ask ${name} about this artifact.`
+              : "Find an artifact, ask about your workspace, or create something new."}{" "}
+            It reads what you can read.
           </p>
         )}
       </div>
@@ -259,6 +351,8 @@ export function AskPanel({
       <AskComposer
         key={followId ?? "new"}
         shortId={shortId}
+        selection={job?.chat_context?.selection ?? selection}
+        currentVersion={currentVersion}
         options={continuing ? [] : options}
         option={option}
         onPick={setPicked}
@@ -324,11 +418,29 @@ function Conversation({
             <ActorGlyph by={name} agent />
             <p
               className={cn(
-                "min-w-0 flex-1 text-sm whitespace-pre-wrap",
+                "min-w-0 flex-1 text-sm whitespace-pre-wrap break-words [&_a]:underline [&_a]:underline-offset-2",
                 m.progress ? "text-muted-foreground" : "text-foreground",
               )}
             >
-              {m.body_md}
+              {m.body_md.split(/(```[\s\S]*?```)/g).map((part, i) =>
+                part.startsWith("```") ? (
+                  <code
+                    key={i}
+                    className="my-2 block overflow-x-auto rounded-md bg-muted p-3 font-mono text-xs"
+                  >
+                    {part.replace(/^```[^\n]*\n?/, "").replace(/```$/, "")}
+                  </code>
+                ) : (
+                  // biome-ignore lint/security/noDangerouslySetInnerHtml: mdToHtml escapes text and permits only HTTP or app-relative links.
+                  <span key={i} dangerouslySetInnerHTML={{ __html: mdToHtml(part) }} />
+                ),
+              )}
+              {m.model && (
+                <span className="mt-1 block text-2xs text-muted-foreground">
+                  {m.model.label}
+                  {m.tools.length ? ` · ${m.tools.join(" → ")}` : ""}
+                </span>
+              )}
             </p>
           </div>
         ),
@@ -353,7 +465,7 @@ function Conversation({
           ) : (
             <Link
               to="/artifacts/$ref"
-              params={{ ref: e.ref }}
+              params={{ ref: `${e.ref}@v${e.version}` }}
               data-testid="ask-published-page"
               className="min-w-0 flex-1 truncate hover:underline"
             >
@@ -409,6 +521,8 @@ function Conversation({
  *  message on the conversation it continues. */
 function AskComposer({
   shortId,
+  selection,
+  currentVersion,
   options,
   option,
   onPick,
@@ -420,6 +534,8 @@ function AskComposer({
   focusOnOpen,
 }: {
   shortId: string
+  selection?: string | null
+  currentVersion: number
   /** The picker's options; empty while continuing a conversation (its agent is fixed). */
   options: AskOption[]
   option: AskOption | undefined
@@ -433,6 +549,8 @@ function AskComposer({
   focusOnOpen: boolean
 }) {
   const [text, setText] = useState("")
+  const [modelId, setModelId] = useState<string | null>(null)
+  const models = useQuery({ queryKey: ["chat-models"], queryFn: api.chatModels })
   const field = useRef<HTMLTextAreaElement>(null)
   // biome-ignore lint/correctness/useExhaustiveDependencies: once, when the panel opens.
   useEffect(() => {
@@ -442,7 +560,16 @@ function AskComposer({
     mutationFn: (body: string) =>
       continueJob
         ? api.writeJob(continueJob, body)
-        : api.askAgent(option?.id ?? DERIVE, body, { kind: "artifact", id: shortId }),
+        : api.askAgent(
+            option?.id ?? DERIVE,
+            body,
+            shortId ? { kind: "artifact", id: shortId } : undefined,
+            {
+              ...(shortId ? { base_version: currentVersion } : {}),
+              ...(selection ? { selection } : {}),
+              model_id: modelId,
+            },
+          ),
     invalidate: [["jobs"]],
     onSuccess: (job) => {
       setText("")
@@ -470,7 +597,13 @@ function AskComposer({
             submit()
           }
         }}
-        placeholder={continueJob ? `Reply to ${name}…` : "Ask about this page…"}
+        placeholder={
+          continueJob
+            ? `Reply to ${name}…`
+            : shortId
+              ? "Ask about this artifact…"
+              : "Find, ask, or create…"
+        }
         aria-label={continueJob ? `Reply to ${name}` : `Ask ${name}`}
         data-testid="ask-input"
         className="field-sizing-content max-h-40 min-h-14"
@@ -506,13 +639,36 @@ function AskComposer({
         ) : (
           <span className="pl-2 text-xs text-muted-foreground">{name}</span>
         )}
+        {!continueJob && (option?.id ?? DERIVE) === DERIVE && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="xs" data-testid="chat-model">
+                {models.data?.options.find((m) => m.id === modelId)?.label ?? "Default model"}
+                <Icon name="caret" size={12} />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuRadioGroup
+                value={modelId ?? "default"}
+                onValueChange={(id) => setModelId(id === "default" ? null : id)}
+              >
+                <DropdownMenuRadioItem value="default">Default model</DropdownMenuRadioItem>
+                {models.data?.options.map((m) => (
+                  <DropdownMenuRadioItem key={m.id} value={m.id}>
+                    {m.label}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
         <span className="flex-1" />
         <Button
           type="submit"
           size="icon-xs"
           aria-label="Send"
           data-testid="ask-send"
-          disabled={!text.trim() || disabled}
+          disabled={!text.trim() || disabled || send.isPending}
           loading={send.isPending}
         >
           <ArrowUp />
@@ -520,7 +676,7 @@ function AskComposer({
       </div>
       <p data-testid="ask-footnote" className="text-2xs text-muted-foreground">
         {privateToMe
-          ? `Private to you. If ${name} changes the page, the new version shows in Activity.`
+          ? `Private to you. If ${name} changes an artifact, the new version shows in Activity.`
           : "Your team can see this job and its answer."}
       </p>
     </form>

@@ -364,6 +364,9 @@ describe("@Derive in a Slack thread is one attended job", () => {
       costUsd: 0.002,
       done: true,
     })
+    let hold: Promise<void> | null = null
+    let onModel = () => {}
+    let modelCalls = 0
     const { app, ctx, meta } = makeAuthedApp("slack-mention-job", [asker, teammate], "editor", {
       deps: {
         encryptionKey: KEY,
@@ -372,7 +375,12 @@ describe("@Derive in a Slack thread is one attended job", () => {
             id: "m1",
             label: "M1",
             isDefault: true,
-            build: () => async () => answer("Here it is."),
+            build: () => async () => {
+              modelCalls += 1
+              onModel()
+              await hold
+              return answer("Here it is.")
+            },
           },
         ]),
       },
@@ -452,6 +460,53 @@ describe("@Derive in a Slack thread is one attended job", () => {
     ])
     // The monthly budget reads job spend, so the Slack turns count against it.
     expect(await meta.sumJobCostSince("default", "2000-01-01T00:00:00.000Z")).toBe(4000)
+
+    // A concurrent follow-up receives a busy reply and never enters the transcript.
+    let release = () => {}
+    hold = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const entered = new Promise<void>((resolve) => {
+      onModel = resolve
+    })
+    const active = mention("100.6", "<@UBOT> one more question")
+    await entered
+    expect(await mention("100.7", "<@UBOT> concurrent question")).toEqual({
+      status: "thread already running",
+    })
+    expect(said.at(-1)).toContain("still answering")
+    expect(await mention("100.6", "<@UBOT> one more question")).toEqual({
+      status: "duplicate slack delivery",
+    })
+    release()
+    await active
+    hold = null
+    expect(
+      (await meta.listJobMessages(job?.id ?? "")).filter(
+        (m) => parseSlackTs(m.meta_json) === "100.6",
+      ),
+    ).toHaveLength(1)
+    expect(
+      (await meta.listJobMessages(job?.id ?? "")).some(
+        (m) => parseSlackTs(m.meta_json) === "100.7",
+      ),
+    ).toBe(false)
+
+    // A crash after the reply was saved repairs the placeholder without another model call.
+    const callsBeforeRecovery = modelCalls
+    await meta.updateJob(job?.id ?? "", { status: "lost" })
+    expect(await mention("100.6", "<@UBOT> one more question")).toEqual({
+      status: "interrupted delivery recovered without replay",
+    })
+    expect(modelCalls).toBe(callsBeforeRecovery)
+    expect(said.at(-1)).toContain("Here it is.")
+    expect((await meta.getJob(job?.id ?? ""))?.status).toBe("succeeded")
+    // A settled redelivery also repairs a post-settlement delivery interruption.
+    expect(await mention("100.6", "<@UBOT> one more question")).toEqual({
+      status: "duplicate slack delivery",
+    })
+    expect(said.at(-1)).toContain("Here it is.")
+    expect(modelCalls).toBe(callsBeforeRecovery)
 
     // The answer was read with the asker's own permissions: a teammate cannot open it.
     const own = await app.request(`/v1/jobs/${job?.id}`, { headers: as(asker.email) })

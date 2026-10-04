@@ -225,6 +225,16 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
             : sql`started_at = ${expect.started_at}`,
         )
       if (expect?.updated_at !== undefined) where.push(sql`updated_at = ${expect.updated_at}`)
+      if (expect && "meta_json" in expect)
+        where.push(
+          expect.meta_json === null ? sql`meta_json IS NULL` : sql`meta_json = ${expect.meta_json}`,
+        )
+      if (expect && "needs_json" in expect)
+        where.push(
+          expect.needs_json === null
+            ? sql`needs_json IS NULL`
+            : sql`needs_json = ${expect.needs_json}`,
+        )
       return first<JobRecord>(sql`
         UPDATE job SET ${sql.join(set, sql`, `)}
         WHERE ${sql.join(where, sql` AND `)} RETURNING *`)

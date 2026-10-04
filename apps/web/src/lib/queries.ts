@@ -582,7 +582,7 @@ export const agentQuery = (id: string) =>
 export const pageAsksQuery = (shortId: string) =>
   queryOptions({
     queryKey: ["jobs", "page", shortId] as const,
-    queryFn: () => api.listJobs({ subject: shortId, limit: 1 }).then((r) => r.jobs),
+    queryFn: () => api.listJobs({ subject: shortId, limit: 30 }).then((r) => r.jobs),
     // A reload restores the persisted list, which may predate the last ask (persistence
     // writes lag a moment behind): read it fresh on each page open.
     refetchOnMount: "always",

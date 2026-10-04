@@ -38,7 +38,7 @@ import {
 import { graphAware, graphPass } from "./lib/job-graph"
 import { machineDepsFrom, machinePass } from "./lib/job-machine"
 import { jobTick } from "./lib/jobs"
-import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
+import { catalogFromGateway, type GatewayConfig, gatewayModel } from "./lib/model-catalog"
 import { jobAnnouncer } from "./lib/notify-job"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
@@ -583,7 +583,7 @@ function workerGateway(env: Env): GatewayConfig | undefined {
   const {
     DERIVE_MODEL_BASE_URL: baseUrl,
     DERIVE_MODEL_API_KEY: apiKey,
-    DERIVE_MODEL_NAME: model,
+    DERIVE_MODEL_NAME: configuredModel,
     // Optional and additive: more model ids the SAME gateway serves. Unset ⇒ one model, as before.
     DERIVE_MODEL_NAMES: alsoModels,
     // Preferred upstream backends on a gateway that routes; meaningless on one that does not.
@@ -591,6 +591,7 @@ function workerGateway(env: Env): GatewayConfig | undefined {
     // Eligible backends for live latency/throughput routing; wins over the fixed order above.
     DERIVE_MODEL_AUTO_PROVIDERS: autoProviders,
   } = env
+  const model = gatewayModel(baseUrl, configuredModel)
   return baseUrl && apiKey && model
     ? { baseUrl, apiKey, model, alsoModels, providers, autoProviders }
     : undefined

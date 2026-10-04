@@ -166,6 +166,7 @@ describe("agent loop: tools", () => {
     const out = await runAgentLoop(
       base({
         callModel: model.callModel,
+        tools: [{ name: "docs.search", description: "Search", params: {} }],
         executeTool: async () => {
           throw new Error("upstream 503")
         },
@@ -192,6 +193,7 @@ describe("agent loop: tools", () => {
     await runAgentLoop(
       base({
         callModel: model.callModel,
+        tools: ["one", "two"].map((name) => ({ name, description: name, params: {} })),
         executeTool: async (name) => {
           order.push(`start:${name}`)
           await new Promise((r) => setTimeout(r, name === "one" ? 20 : 0))
@@ -202,6 +204,40 @@ describe("agent loop: tools", () => {
     )
     // Interleaving would put start:two before end:one.
     expect(order).toEqual(["start:one", "end:one", "start:two", "end:two"])
+  })
+})
+
+describe("agent loop: transcript recovery", () => {
+  it("preserves prior tool calls, results, and narration", async () => {
+    const model = scripted([turn({ text: revisionText() })])
+    const out = await runAgentLoop(
+      base({
+        callModel: model.callModel,
+        messages: [
+          { role: "user", content: "Read the roadmap." },
+          {
+            role: "assistant",
+            content: [
+              { type: "text", text: "I will read it first." },
+              { id: "old-call", name: "read", input: { ref: "roadmap" } },
+            ],
+          },
+          { role: "user", content: [{ tool_use_id: "old-call", content: "Launch on Friday." }] },
+        ],
+      }),
+    )
+    expect(out.ok).toBe(true)
+    expect(model.seen[0]?.messages).toEqual([
+      { role: "user", content: "Read the roadmap." },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "I will read it first." },
+          { id: "old-call", name: "read", input: { ref: "roadmap" } },
+        ],
+      },
+      { role: "user", content: [{ tool_use_id: "old-call", content: "Launch on Friday." }] },
+    ])
   })
 })
 
@@ -248,7 +284,13 @@ describe("agent loop: failure paths", () => {
     // Without a ceiling a stuck run bills until the lease expires. Not retryable: a loop that
     // could not converge in maxTurns will not converge in another maxTurns.
     const model = scripted([turn({ toolUses: [{ id: "t", name: "x", input: {} }], done: false })])
-    const out = await runAgentLoop(base({ callModel: model.callModel, maxTurns: 4 }))
+    const out = await runAgentLoop(
+      base({
+        callModel: model.callModel,
+        maxTurns: 4,
+        tools: [{ name: "x", description: "X", params: {} }],
+      }),
+    )
     expect(out.ok).toBe(false)
     if (out.ok) return
     expect(out.turns).toBe(4)
