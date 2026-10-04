@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { ArrowUp } from "lucide-react"
 import { useEffect, useId, useRef, useState } from "react"
-import { type Agent, ApiError, api, type Job, type JobDetail } from "@/api"
+import { type Agent, ApiError, api, type JobDetail } from "@/api"
 import { Icon } from "@/components/icons"
 import { LoadError } from "@/components/shared/load-error"
 import { Spinner } from "@/components/shared/spinner"
@@ -120,18 +120,16 @@ export function AskPanel({
   const { me } = useAuth()
   const client = useQueryClient()
   useJobEvents()
-  const asks = useQuery<Job[]>(
-    shortId
-      ? pageAsksQuery(shortId)
-      : {
-          queryKey: ["jobs", "chats"],
-          queryFn: () =>
-            api
-              .listJobs({ agent: DERIVE, limit: 100 })
-              .then((r) => r.jobs.filter((j) => j.chat_context)),
-          refetchOnMount: "always" as const,
-        },
-  )
+  const asks = useQuery({
+    queryKey: shortId ? ["jobs", "page", shortId] : ["jobs", "chats"],
+    queryFn: () =>
+      shortId
+        ? api.listJobs({ subject: shortId, limit: 30 }).then((r) => r.jobs)
+        : api
+            .listJobs({ agent: DERIVE, limit: 100 })
+            .then((r) => r.jobs.filter((j) => j.chat_context)),
+    refetchOnMount: "always",
+  })
   // undefined: resume the latest conversation; null: a fresh one (New); else that job.
   const [chosen, setChosen] = useState<string | null | undefined>(undefined)
   const latest = asks.data?.[0]?.id ?? null
