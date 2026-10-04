@@ -1294,7 +1294,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("show opens the artifact view: a framed private page, served as an MCP App", async () => {
-    const { app, token } = appWithGrant(dir, "show", "openid derive:read derive:publish")
+    const { app, token, meta } = appWithGrant(dir, "show", "openid derive:read derive:publish")
     const pub = await publish(app, token, "Launch deck")
     const shortId = (await pub.json()).short_id
 
@@ -1396,12 +1396,37 @@ describe("remote MCP endpoint (/mcp)", () => {
       answer: null,
       can_answer: true,
     })
+    // The page reads the same choices off the comment, to offer them as one-click replies.
+    const onPage = (await (
+      await app.request(`/v1/artifacts/${shortId}/comments`, {
+        headers: { "x-test-user": "owner@x.test" },
+      })
+    ).json()) as { comments?: { id: string; options?: string[] | null }[] }
+    expect(onPage.comments?.find((c) => c.id === asked.thread)?.options).toEqual([
+      "Product teams",
+      "Agencies",
+    ])
+    // The asker adding context in its own thread is not an answer; a teammate's reply is.
     await call(app, token, "comment", {
       short_id: shortId,
       reply_to: asked.thread,
-      body: "Agencies",
+      body: "Pick one.",
+    })
+    expect((await askView()).answer).toBe(null)
+    const shownRow = await meta.getByShortId(shortId)
+    await meta.createComment({
+      id: "c_show_answer",
+      artifact_id: shownRow?.id ?? "",
+      thread_id: asked.thread,
+      base_version: 1,
+      body_md: "Agencies",
+      author: "Teammate",
+      author_id: "u_show_mate",
     })
     expect((await askView()).answer).toBe("Agencies")
+    expect(
+      toolText(await call(app, token, "show", { short_id: shortId, thread: asked.thread })),
+    ).toContain('already answered: "Agencies"')
     // Choices belong to a new question, not a reply; an ordinary thread is not a question.
     expect(
       toolIsError(
@@ -4370,6 +4395,13 @@ describe("the show view (MCP App) protocol", () => {
     expect(v.made.map((b) => b.textContent)).toEqual(["Product teams", "Agencies"])
 
     v.made[0]?.onclick?.()
+    // It looks first: a replayed card may show a question that was answered since.
+    expect(v.sent("tools/call").at(-1)?.params).toEqual({
+      name: "show",
+      arguments: { thread: "c_q1", short_id: "abc12345", version: 2 },
+    })
+    v.reply("tools/call", asked)
+    await settle()
     expect(v.sent("tools/call").at(-1)?.params).toEqual({
       name: "comment",
       arguments: { short_id: "abc12345", reply_to: "c_q1", body: "Product teams" },
@@ -4396,6 +4428,8 @@ describe("the show view (MCP App) protocol", () => {
     const input = w.els.get("ask-input")
     if (input) input.value = "  Both, honestly  "
     w.els.get("ask-form")?.onsubmit?.({ preventDefault() {} })
+    w.reply("tools/call", asked)
+    await settle()
     expect(
       (w.sent("tools/call").at(-1)?.params as { arguments: { body: string } }).arguments.body,
     ).toBe("Both, honestly")
@@ -4403,6 +4437,19 @@ describe("the show view (MCP App) protocol", () => {
     await settle()
     expect(w.els.get("ask-form")?.hidden).toBe(false)
     expect(w.sent("ui/message")).toHaveLength(0)
+
+    // Someone answered since this card was rendered: show that, and don't reply twice.
+    const x = boot()
+    x.reply("ui/initialize", { hostCapabilities: caps, hostContext: {} })
+    await settle()
+    x.fromHost({ method: "ui/notifications/tool-result", params: asked })
+    x.made[1]?.onclick?.()
+    const answered = structuredClone(asked)
+    ;(answered.structuredContent as { question: { answer: string } }).question.answer = "Agencies"
+    x.reply("tools/call", answered)
+    await settle()
+    expect(x.sent("tools/call").map((m) => (m.params as { name: string }).name)).toEqual(["show"])
+    expect(x.els.get("ask-done")?.textContent).toBe("Answered: Agencies")
   })
 
   it("serves the script inside the view document", () => {

@@ -154,7 +154,11 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
     frame.contentWindow.postMessage({ source: "derive-host", type: deck.sniffed ? "deck-drive" : "deck", action }, "*")
   }
 
-  const callShow = (args) => request("tools/call", { name: "show", arguments: args })
+  const callShow = (args) => {
+    // Every re-show (renewal, edit, save) keeps the question this card is asking.
+    if (question && question.thread && !args.thread) args = Object.assign({ thread: question.thread }, args)
+    return request("tools/call", { name: "show", arguments: args })
+  }
 
   // The token is minutes long. The page already loaded keeps working; a reload, a version
   // switch, or a deck's late asset requests need a live one, so ask for a fresh frame.
@@ -189,6 +193,8 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
     !!art && art.can_edit === true && !!host.serverTools && typeof location !== "undefined" && /^https?:\/\//.test(location.origin)
   const editUi = () => {
     $("edit").hidden = !editable() || editing
+    // Showing another version mid-edit would throw the draft away.
+    if (editing) $("latest").hidden = true
     $("save").hidden = !editing
     $("discard").hidden = !editing
     $("dirty").hidden = !(editing && dirty > 0)
@@ -311,6 +317,16 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
     for (const b of askButtons) b.disabled = true
     $("ask-form").hidden = true
     say("Sending your answer…")
+    // A card replayed from earlier in the conversation may be showing a question someone has
+    // since answered: look before replying twice.
+    try {
+      const now = await callShow({ short_id: art.short_id, version: art.version, thread: q.thread })
+      const fresh = now && now.structuredContent && now.structuredContent.question
+      if (fresh && fresh.answer) {
+        renderQuestion(fresh)
+        return say("This was already answered.")
+      }
+    } catch {}
     const args = { short_id: art.short_id, reply_to: q.thread, body: text }
     if (art.workspace) args.workspace = art.workspace
     try {

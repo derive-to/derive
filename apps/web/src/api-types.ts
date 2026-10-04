@@ -7840,6 +7840,8 @@ export interface components {
              * @enum {string}
              */
             author_kind: "user" | "agent" | "anonymous";
+            /** @description On a question's root comment: the choices it offers. A reply (a choice or other words) answers it. */
+            options?: string[] | null;
             /** @description On a resolved thread's root: who settled it, when, and by which version. */
             resolution?: {
                 at: string;

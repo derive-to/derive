@@ -59,7 +59,8 @@ export function registerShowTool(tc: ToolContext): void {
       const title = a.title ?? a.short_id
       // Editing in the view saves through `publish`, so it is offered exactly where a
       // publish would succeed: a seat that may publish, never the world link.
-      const canEdit = !r.public && roleAllows(r.role, "publish")
+      // Single documents only: a bundle's pages don't take quote edits through `publish`.
+      const canEdit = !r.public && roleAllows(r.role, "publish") && a.kind === "file"
       // The view asks for an editable frame by naming its own origin. That origin may then
       // drive the inline editor on THIS caller's page (unstamped: it collects quote edits,
       // which `publish` resolves). The token is the secret; the origin only scopes it.
@@ -84,7 +85,9 @@ export function registerShowTool(tc: ToolContext): void {
           ? (parseMeta(root.meta) as { question?: { options?: unknown } }).question
           : undefined
         if (!root || !asked) return err(`No question thread "${thread}" on "${short_id}".`)
-        const reply = inThread.find((c) => c.id !== root.id)
+        // The answer is the first reply from someone other than the asker: the agent that
+        // asked may add context in its own thread without answering itself.
+        const reply = inThread.find((c) => c.id !== root.id && c.author_id !== root.author_id)
         question = {
           thread,
           text: root.body_md,
@@ -99,7 +102,13 @@ export function registerShowTool(tc: ToolContext): void {
         content: [
           {
             type: "text" as const,
-            text: `Showing "${title}" v${n}${slide ? ` at slide ${slide}` : ""} to the person: ${url}. When they select a slide or section, it arrives as context; act on that version.`,
+            text:
+              `Showing "${title}" v${n}${slide ? ` at slide ${slide}` : ""} to the person: ${url}. When they select a slide or section, it arrives as context; act on that version.` +
+              (question
+                ? question.answer
+                  ? ` The question in thread ${thread} is already answered: ${JSON.stringify(question.answer)}.`
+                  : ` Asking them the question in thread ${thread}; their answer is saved as a reply there and usually arrives as their next message.`
+                : ""),
           },
         ],
         structuredContent: {
