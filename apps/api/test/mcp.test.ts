@@ -106,6 +106,30 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(r.wwwAuth).toContain("oauth-protected-resource")
   })
 
+  it("answers a newer-era client with a 400 it can fall back from, not a 500", async () => {
+    const { app, token } = appWithGrant(dir, "modern", "openid derive:read")
+    // ChatGPT's opening request, as it arrives: MCP 2026-07-28 drops the handshake and
+    // probes with server/discover, its version in the header.
+    const modern = await rpc(
+      app,
+      token,
+      { jsonrpc: "2.0", id: 1, method: "server/discover", params: {} },
+      { "mcp-protocol-version": "2026-07-28", "mcp-method": "server/discover" },
+    )
+    // The spec's HTTP fallback reads the era off a 400 whose body is NOT a modern error
+    // (-32022 would mean "retry with a modern version"), then retries with initialize.
+    expect(modern.status).toBe(400)
+    const error = (modern.parsed as { error?: { code: number; message: string } }).error
+    expect(error?.code).not.toBe(-32022)
+    expect(error?.message).toContain("2025-11-25")
+    // ...and the fallback it takes then works.
+    const init = await rpc(app, token, initBody)
+    expect(init.status).toBe(200)
+    expect((init.parsed?.result as { serverInfo?: { name: string } }).serverInfo?.name).toBe(
+      "derive",
+    )
+  })
+
   it("initializes (identity in instructions) and lists the consolidated tools", async () => {
     const { app, token } = appWithGrant(dir, "init", "openid derive:read derive:publish")
     const init = await rpc(app, token, initBody)
