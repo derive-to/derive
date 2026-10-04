@@ -434,7 +434,10 @@ export const handleSlackMention = async (
     const messages = await meta.listJobMessages(existing.id)
     const inbound = messages.findIndex((m) => parseSlackTs(m.meta_json) === p.ts)
     already = inbound >= 0
-    const latest = messages.findLastIndex((m) => m.author_kind === "asker")
+    const latest = messages.reduce(
+      (latest, m, index) => (m.author_kind === "asker" ? index : latest),
+      -1,
+    )
     if (already && inbound === latest)
       savedReply = messages.slice(inbound + 1).find((m) => m.author_kind === "agent")
     if (already && existing.status !== "lost") {

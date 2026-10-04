@@ -225,20 +225,15 @@ export const runAgentLoop = async (input: AgentLoopInput): Promise<AgentLoopResu
               })),
           })
         } else {
-          const calls = m.content.filter((p) => p.type === "tool-call")
+          const prose = m.content.flatMap((p) => (p.type === "text" ? [p.text] : []))
+          const calls = m.content.flatMap((p) =>
+            p.type === "tool-call" ? [{ id: p.toolCallId, name: p.toolName, input: p.input }] : [],
+          )
           messages.push({
             role: m.role,
             content: calls.length
-              ? [
-                  ...m.content
-                    .filter((p) => p.type === "text")
-                    .map((p) => ({ type: "text", text: p.text })),
-                  ...calls.map((p) => ({ id: p.toolCallId, name: p.toolName, input: p.input })),
-                ]
-              : m.content
-                  .filter((p) => p.type === "text")
-                  .map((p) => p.text)
-                  .join("\n"),
+              ? [...prose.map((text) => ({ type: "text", text })), ...calls]
+              : prose.join("\n"),
           })
         }
       }
@@ -252,7 +247,7 @@ export const runAgentLoop = async (input: AgentLoopInput): Promise<AgentLoopResu
           .map((t) => ({
             name: t.name,
             description: t.description ?? "",
-            params: t.inputSchema,
+            params: { ...t.inputSchema },
           })),
       })
       costUsd = addCostUsd(costUsd, r.costUsd)
