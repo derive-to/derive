@@ -4662,12 +4662,20 @@ describe("the show view (MCP App) protocol", () => {
       { op: "move", from: 2, to: 1 },
     ])
     // A refused save (someone published in between) keeps the arrangement on screen.
-    v.reply("tools/call", {
-      isError: true,
-      content: [{ type: "text", text: "base_version 2 is stale; current is 3" }],
+    // Some hosts deliver a refused tool call as a rejected request, not an error result.
+    v.fromHost({
+      id: v.sent("tools/call").at(-1)?.id,
+      error: {
+        code: -32000,
+        message:
+          '"abc12345" moved to v3 while you were editing (you read v2). Re-read, then retry.',
+      },
     })
     await settle()
-    expect(v.els.get("foot")?.textContent).toContain("The deck changed since you opened it")
+    expect(v.els.get("foot")?.textContent).toBe(
+      "The deck changed since you opened it, so nothing was saved. Discard, then Show v3.",
+    )
+    expect(v.els.get("latest")?.hidden).toBe(false)
     expect(labels()).toEqual(["1  Copy of B", "2  A", "3  C"])
     v.els.get("rail-discard")?.onclick?.()
     expect(labels()).toEqual(["1  A", "2  B", "3  C"])

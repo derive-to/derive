@@ -247,6 +247,21 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
   const say = (text) => {
     $("foot").textContent = text
   }
+  // A refused publish reaches the view as an error result or, in some hosts, as a rejected
+  // call; read both the same way. Someone publishing in between is the usual reason: say so,
+  // and offer the newer version.
+  const refusal = (r, what) => {
+    const e = r && r.error ? r.error : r
+    const text = String(
+      (e && e.content && e.content[0] && e.content[0].text) || (e && (e.message || (e.data && e.data.message))) || "",
+    )
+    const moved = /moved to v(\d+)/.exec(text)
+    if (moved && art) {
+      showLatest({ current_version: Number(moved[1]) })
+      return say(what + " changed since you opened it, so nothing was saved. Discard, then Show v" + moved[1] + ".")
+    }
+    say(text ? text.slice(0, 200) : "Save failed. Try again.")
+  }
   const save = async () => {
     if (!editing || saving) return
     saving = true
@@ -267,11 +282,11 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
       }
       const args = { short_id: art.short_id, base_version: art.version, edits, message: "Edited in the conversation" }
       if (art.workspace) args.workspace = art.workspace
-      const r = await request("tools/call", { name: "publish", arguments: args })
+      const r = await request("tools/call", { name: "publish", arguments: args }).catch((error) => ({ isError: true, error }))
       const text = (r && r.content && r.content[0] && r.content[0].text) || ""
       if (!r || r.isError) {
         // The usual refusal: someone published in between. Keep the person's draft on screen.
-        return say(/moved|base_version|version/i.test(text) ? "This changed since you opened it. Copy your edit, then show the latest version." : text.slice(0, 200) || "Save failed.")
+        return refusal(r, "This page")
       }
       let saved = null
       try {
@@ -507,10 +522,10 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
     try {
       const args = { short_id: art.short_id, base_version: art.version, slide_ops: ops, message: "Rearranged slides in the conversation" }
       if (art.workspace) args.workspace = art.workspace
-      const r = await request("tools/call", { name: "publish", arguments: args })
+      const r = await request("tools/call", { name: "publish", arguments: args }).catch((error) => ({ isError: true, error }))
       const text = (r && r.content && r.content[0] && r.content[0].text) || ""
       if (!r || r.isError)
-        return say(/moved|base_version|version/i.test(text) ? "The deck changed since you opened it. Discard, then show the latest version." : text.slice(0, 200) || "Save failed.")
+        return refusal(r, "The deck")
       let saved = null
       try {
         saved = JSON.parse(text)
