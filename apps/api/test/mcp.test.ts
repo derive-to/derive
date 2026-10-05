@@ -3967,6 +3967,10 @@ describe("the show view (MCP App) protocol", () => {
     appendChild(c: El) {
       this.children.push(c)
     }
+    focused = false
+    focus() {
+      this.focused = true
+    }
     replaceChildren() {
       this.children = []
     }
@@ -4605,6 +4609,8 @@ describe("the show view (MCP App) protocol", () => {
     list.button("Delete slide 2")?.onclick?.()
     key(2, "ArrowUp")
     expect(labels()).toEqual(["1  C", "2  A"])
+    // The rows are rebuilt; the grip that moved keeps the keyboard, at its new place.
+    expect(list.children[0]?.children[0]?.focused).toBe(true)
     expect(v.els.get("rail-changes")?.textContent).toBe("2 changes")
     // Staged slide changes and text editing don't mix.
     expect(v.els.get("edit")?.hidden).toBe(true)

@@ -1925,14 +1925,32 @@ interface ElReg {
   const MEDIA = "img,svg,video,canvas,iframe,embed,object,picture,input,textarea,select"
   /** The stamped elements hit testing passes through (no words of their own). */
   const textlessEls = new Set<Element>()
+  /* An unstamped page (quote edits, as an MCP App view drives it) has no stamps to key the
+     CSS above on, so a deck's invisible prev/next zones kept every click on the words
+     beneath them: the heading of a slide sits under the left zone. There, the wordless
+     buttons alone step aside, inline and restored on exit, as the slide mask does. */
+  let zoneMask: { el: HTMLElement; prev: string }[] = []
+  const unmaskZones = () => {
+    for (const m of zoneMask) m.el.style.pointerEvents = m.prev
+    zoneMask = []
+  }
+  const maskZones = () => {
+    for (const el of Array.from(document.body.querySelectorAll("button,[role=button]"))) {
+      if (!(el instanceof HTMLElement) || el.closest(".derive-edit-ui")) continue
+      if ((el.textContent ?? "").trim() || el.querySelector(MEDIA)) continue
+      zoneMask.push({ el, prev: el.style.pointerEvents })
+      el.style.pointerEvents = "none"
+    }
+  }
   const setEditHitTesting = (on: boolean) => {
     editStyle.remove()
+    unmaskZones()
     if (!on) return
     // Our own boxes move as they paint; the browser must never scroll to follow them.
     editStyle.textContent = "html{overflow-anchor:none}"
     ;(document.head || document.documentElement).appendChild(editStyle)
     textlessEls.clear()
-    if (!stamped()) return
+    if (!stamped()) return maskZones()
     const textless: string[] = []
     // Which elements hold words, children before parents: one visit per node, where asking
     // each element for its textContent reads a long page once per level of nesting.

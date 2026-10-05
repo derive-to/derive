@@ -70,6 +70,7 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
   let org = null
   let railOpen = false
   let orgSeq = 0
+  let gripFocus = -1
   // Whether this card may speak for the person. A fresh show may; a card the host replays
   // when the conversation reopens may not until someone uses it, or every old card in the
   // thread would claim to be what the person is looking at.
@@ -548,6 +549,10 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
   // Drag by the grip: pointer events, so it works the same in every host's iframe.
   const startDrag = (e, from) => {
     if (e.button !== undefined && e.button !== 0) return
+    // preventDefault below would keep the grip from taking focus, and focus is what lets
+    // the arrow keys move the row after a click.
+    if (e.currentTarget && e.currentTarget.focus) e.currentTarget.focus()
+    gripFocus = from
     const rows = Array.from($("rail-list").children || [])
     let to = from
     const onMove = (ev) => {
@@ -570,6 +575,7 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
         r.classList.remove("drop")
         r.classList.remove("drop-end")
       })
+      gripFocus = to
       moveSlide(from, to)
     }
     window.addEventListener("pointermove", onMove)
@@ -600,10 +606,16 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
       if (can) {
         const grip = control("Move slide " + (i + 1) + " (drag, or arrow keys)", "⠿", null, "grip")
         grip.onpointerdown = (e) => startDrag(e, i)
+        grip.onblur = () => {
+          if (gripFocus === i) gripFocus = -1
+        }
         grip.onkeydown = (e) => {
           if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return
           if (e.preventDefault) e.preventDefault()
-          moveSlide(i, e.key === "ArrowUp" ? i - 1 : i + 1)
+          const to = e.key === "ArrowUp" ? i - 1 : i + 1
+          if (to < 0 || to >= org.slides.length) return
+          gripFocus = to
+          moveSlide(i, to)
         }
         li.appendChild(grip)
       }
@@ -623,6 +635,10 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
     } catch {
       n = 1
     }
+    // The rows were rebuilt: the grip being used keeps the focus at its row's new place.
+    const held = gripFocus >= 0 && list.children[gripFocus]
+    const grip = held && held.children && held.children[0]
+    if (grip && grip.focus) grip.focus()
     $("rail-add").hidden = !can
     $("rail-changes").hidden = !n
     $("rail-changes").textContent = n + (n === 1 ? " change" : " changes")
@@ -736,7 +752,15 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
     } else if (d.source === "derive" && d.type === "edit-save") {
       return void save()
     } else if (d.source === "derive" && d.type === "edit-blocked") {
-      return say(d.reason === "layout" ? "Layout can't be changed here, only text." : "That part can't be edited here.")
+      return say(
+        {
+          layout: "Layout can't be changed here, only text.",
+          dynamic: "The page's own script writes that text, so it can't be saved from here.",
+          offscreen: "That's on another slide. Go to it first.",
+          readonly: "That part of the page is locked.",
+          "embedded-image": "Images can't be changed here.",
+        }[d.reason] || "That part can't be edited here.",
+      )
     } else if (d.source === "derive" && d.type === "open-external" && typeof d.href === "string") {
       if (host.openLinks && /^https?:\/\//.test(d.href)) request("ui/open-link", { url: d.href }).catch(() => {})
       return
