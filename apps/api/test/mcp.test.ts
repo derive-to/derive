@@ -4512,12 +4512,16 @@ describe("the show view (MCP App) protocol", () => {
       slides: ["a", "b", "c"].map((id) => ({ id, label: id.toUpperCase() })),
     })
     const list = v.els.get("rail-list") as El
-    const labels = () => list.children.map((li) => li.children.find((b) => b.className === "pick")?.textContent)
+    const labels = () =>
+      list.children.map((li) => li.children.find((b) => b.className === "pick")?.textContent)
     const key = (row: number, k: string) =>
-      list.button(`Move slide ${row} (drag, or arrow keys)`)?.onkeydown?.({ key: k, preventDefault() {} })
+      list
+        .button(`Move slide ${row} (drag, or arrow keys)`)
+        ?.onkeydown?.({ key: k, preventDefault() {} })
     const save = () => {
       v.els.get("rail-save")?.onclick?.()
-      return (v.sent("tools/call").at(-1)?.params as { arguments: { slide_ops: unknown } }).arguments
+      return (v.sent("tools/call").at(-1)?.params as { arguments: { slide_ops: unknown } })
+        .arguments
     }
     return { v, list, labels, key, save }
   }
@@ -4528,7 +4532,12 @@ describe("the show view (MCP App) protocol", () => {
     expect(v.els.get("slides")?.textContent).toBe("Hide slides")
     expect(labels()).toEqual(["1  A", "2  B", "3  C"])
     list.button("Slide 3: C")?.onclick?.()
-    expect(v.frames[0]?.sent.at(-1)).toEqual({ source: "derive-host", type: "deck", action: "goto", n: 2 })
+    expect(v.frames[0]?.sent.at(-1)).toEqual({
+      source: "derive-host",
+      type: "deck",
+      action: "goto",
+      n: 2,
+    })
     // Nothing staged: no save bar, and text editing stays available.
     expect(v.els.get("rail-save")?.hidden).toBe(true)
     expect(v.els.get("edit")?.hidden).toBe(false)
@@ -4583,8 +4592,10 @@ describe("the show view (MCP App) protocol", () => {
     key(2, "ArrowUp")
     // Dragging a grip is the same move: row 3 dropped above row 2.
     const rows = list.children
-    rows.forEach((r, k) => (r.top = k * 20))
-    list.button("Move slide 3 (drag, or arrow keys)")?.onpointerdown?.({ button: 0, preventDefault() {} })
+    for (const [k, r] of rows.entries()) r.top = k * 20
+    list
+      .button("Move slide 3 (drag, or arrow keys)")
+      ?.onpointerdown?.({ button: 0, preventDefault() {} })
     v.pointer("pointermove", 25)
     expect(rows[1]?.classes.has("drop")).toBe(true)
     v.pointer("pointerup", 25)
@@ -4596,7 +4607,10 @@ describe("the show view (MCP App) protocol", () => {
       { op: "move", from: 2, to: 1 },
     ])
     // A refused save (someone published in between) keeps the arrangement on screen.
-    v.reply("tools/call", { isError: true, content: [{ type: "text", text: "base_version 2 is stale; current is 3" }] })
+    v.reply("tools/call", {
+      isError: true,
+      content: [{ type: "text", text: "base_version 2 is stale; current is 3" }],
+    })
     await settle()
     expect(v.els.get("foot")?.textContent).toContain("The deck changed since you opened it")
     expect(labels()).toEqual(["1  B (copy) · new", "2  A", "3  C"])
