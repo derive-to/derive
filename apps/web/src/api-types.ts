@@ -7359,6 +7359,10 @@ export interface components {
             max_concurrency: number;
             /** @description Sources it can reach. */
             connection_ids: string[];
+            /** @description Environment variables its jobs get: NAME → the id of a saved secret. Never values. */
+            environment: {
+                [key: string]: string;
+            };
             /** @description Environment variable names bound to credentials. Never values. */
             environment_names: string[];
             account_id: string | null;
