@@ -4,7 +4,7 @@ import { parseMeta } from "../lib/comments"
 import { signRawToken } from "../lib/crypto"
 import { RAW_TOKEN_MAX_AGE_MS } from "../lib/http"
 import { isWebOrigin } from "../lib/serve-content"
-import { ARTIFACT_VIEW_URI } from "../mcp-app-view"
+import { ARTIFACT_VIEW_DEV_URI, ARTIFACT_VIEW_URI } from "../mcp-app-view"
 import type { ToolContext } from "../mcp-tool-context"
 import { err, historyNotPublic, versionOpenToWorld } from "../mcp-util"
 
@@ -44,7 +44,11 @@ export function registerShowTool(tc: ToolContext): void {
       },
       // The MCP Apps key only. ChatGPT's legacy `openai/outputTemplate` alias names a
       // text/html+skybridge resource, which this view is not.
-      _meta: { ui: { resourceUri: ARTIFACT_VIEW_URI } },
+      _meta: {
+        ui: {
+          resourceUri: ctx.deps.mcpAppDevView === true ? ARTIFACT_VIEW_DEV_URI : ARTIFACT_VIEW_URI,
+        },
+      },
     },
     async ({ short_id, version, slide, editor, thread, workspace }) => {
       const r = await reach(short_id, workspace, { public: true })

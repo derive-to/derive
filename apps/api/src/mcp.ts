@@ -94,10 +94,13 @@ import type { Sandbox } from "./lib/code-sandbox"
 import { latexTemplateBundle } from "./lib/latex-templates"
 import { clientIp } from "./lib/rate-limit"
 import {
+  ARTIFACT_VIEW_DEV_URI,
   ARTIFACT_VIEW_HTML,
   ARTIFACT_VIEW_LEGACY_URI,
   ARTIFACT_VIEW_URI,
   artifactViewMeta,
+  DEV_VIEW_PATH,
+  devViewStub,
   MCP_APP_MIME,
 } from "./mcp-app-view"
 import { makeToolContext, type ToolContext, type ToolContextBase } from "./mcp-tool-context"
@@ -530,7 +533,11 @@ async function buildServer(
   )
   // The view `show` opens in hosts that render MCP Apps: a frame around the sandboxed
   // artifact page (mcp-app-view.ts). Static HTML, so registering it costs no round trip.
-  const viewMeta = artifactViewMeta(ctx.deps.sandboxOrigin ?? ctx.deps.baseUrl)
+  const devView = ctx.deps.mcpAppDevView === true
+  const viewMeta = artifactViewMeta(
+    ctx.deps.sandboxOrigin ?? ctx.deps.baseUrl,
+    devView ? ctx.deps.baseUrl : undefined,
+  )
   const readView = async (uri: URL) => ({
     contents: [
       { uri: uri.href, mimeType: MCP_APP_MIME, text: ARTIFACT_VIEW_HTML, _meta: viewMeta },
@@ -543,6 +550,17 @@ async function buildServer(
     _meta: viewMeta,
   }
   server.registerResource("app:artifact", ARTIFACT_VIEW_URI, viewInfo, readView)
+  if (devView)
+    server.registerResource("app:artifact-dev", ARTIFACT_VIEW_DEV_URI, viewInfo, async (uri) => ({
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: MCP_APP_MIME,
+          text: devViewStub(ctx.deps.baseUrl),
+          _meta: viewMeta,
+        },
+      ],
+    }))
   server.registerResource("app:artifact-v1", ARTIFACT_VIEW_LEGACY_URI, viewInfo, readView)
   const defaultOrg = agent.org_id
   const defaultRole = agent.role
@@ -692,6 +710,19 @@ export function registerToolSurface(
  * which is how claude.ai auto-starts the OAuth handshake.
  */
 export function mountMcp(app: Hono, ctx: AppContext): void {
+  // The current view, for the dev stub (devViewStub) to load. Dev servers only.
+  if (ctx.deps.mcpAppDevView === true)
+    app.get(
+      DEV_VIEW_PATH,
+      () =>
+        new Response(ARTIFACT_VIEW_HTML, {
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+            "cache-control": "no-store",
+            "access-control-allow-origin": "*",
+          },
+        }),
+    )
   app.all("/mcp", async (c) => {
     const agent = await ctx.agentFor(c)
     if (!agent) {

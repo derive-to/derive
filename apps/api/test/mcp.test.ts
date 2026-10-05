@@ -1484,6 +1484,33 @@ describe("remote MCP endpoint (/mcp)", () => {
     )
   })
 
+  it("a dev server's show opens a stub that loads the current view, and only a dev server serves it", async () => {
+    const dev = appWithGrant(dir, "showdev", "openid derive:read", { mcpAppDevView: true })
+    const list = await rpc(dev.app, dev.token, { jsonrpc: "2.0", id: 1, method: "tools/list" })
+    const tools = (list.parsed?.result as { tools?: { name: string; _meta?: unknown }[] })?.tools
+    // A URI that never changes, so a host connected to a dev server never needs a refresh.
+    expect(tools?.find((t) => t.name === "show")?._meta).toEqual({
+      ui: { resourceUri: "ui://derive/artifact-dev" },
+    })
+    const stub = await rpc(dev.app, dev.token, {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "resources/read",
+      params: { uri: "ui://derive/artifact-dev" },
+    })
+    const content = (
+      stub.parsed?.result as { contents?: { text: string; _meta?: { ui?: { csp?: unknown } } }[] }
+    )?.contents?.[0]
+    expect(content?.text).toContain("http://derive.test/dev/mcp-app-view.html")
+    expect(content?._meta?.ui?.csp).toMatchObject({ connectDomains: ["http://derive.test"] })
+    const live = await dev.app.request("/dev/mcp-app-view.html")
+    expect(await live.text()).toBe(ARTIFACT_VIEW_HTML)
+    expect(live.headers.get("access-control-allow-origin")).toBe("*")
+    // Anywhere else, none of it exists.
+    const prod = appWithGrant(dir, "showprod", "openid derive:read")
+    expect((await prod.app.request("/dev/mcp-app-view.html")).status).toBe(404)
+  })
+
   it("show through a world link frames the current version only, and its token says so", async () => {
     const { app, token, meta, blobs } = appWithGrant(
       dir,

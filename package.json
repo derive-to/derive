@@ -56,6 +56,8 @@
     "dev:web": "pnpm --filter @derive/web dev",
     "dev:all": "pnpm --parallel --filter \"./apps/*\" dev",
     "dev:remote": "bash scripts/dev-remote-db.sh",
+    "dev:app-host": "pnpm --filter @derive/api exec tsx watch --clear-screen=false scripts/dev-app-host.ts",
+    "dev:tunnel": "node scripts/dev-tunnel.mjs",
     "start": "pnpm --filter @derive/api start",
     "typecheck": "pnpm -r typecheck",
     "typecheck:tsc": "pnpm -r typecheck:tsc",

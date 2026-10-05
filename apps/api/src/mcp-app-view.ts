@@ -22,12 +22,33 @@ export const MCP_APP_MIME = "text/html;profile=mcp-app"
 /** The resource's `_meta.ui`: the only origin it may frame is the sandbox that serves
  *  artifact bytes. No fetches of its own (connectDomains stays empty): everything it learns
  *  arrives from the host. */
-export const artifactViewMeta = (sandboxOrigin: string) => ({
+export const artifactViewMeta = (sandboxOrigin: string, devFrom?: string) => ({
   ui: {
-    csp: { frameDomains: [new URL(sandboxOrigin).origin] },
+    csp: {
+      frameDomains: [new URL(sandboxOrigin).origin],
+      ...(devFrom ? { connectDomains: [new URL(devFrom).origin] } : {}),
+    },
     prefersBorder: true,
   },
 })
+
+/** Local development (DERIVE_MCP_APP_DEV=1). A host keeps the view it fetched for as long
+ *  as it likes, so a real host pointed at a dev server would show the view as it was when
+ *  the connector was added. In dev the resource is instead this stub, at a URI that never
+ *  changes, which loads the CURRENT view from the dev server on every open: edit the view,
+ *  open a card, see the edit. Never served outside dev. */
+export const ARTIFACT_VIEW_DEV_URI = "ui://derive/artifact-dev"
+export const DEV_VIEW_PATH = "/dev/mcp-app-view.html"
+export const devViewStub = (baseUrl: string) =>
+  `<!doctype html><html><head><meta charset="utf-8"></head><body><script>
+window.__deriveEarly = []
+const hold = (e) => window.__deriveEarly.push({ data: e.data, source: e.source })
+window.addEventListener("message", hold)
+fetch(${JSON.stringify(new URL(DEV_VIEW_PATH, baseUrl).toString())}, { cache: "no-store" })
+  .then((r) => r.text())
+  .then((html) => { window.removeEventListener("message", hold); document.open(); document.write(html); document.close() })
+  .catch((e) => { document.body.textContent = "The dev view could not load: " + e })
+</script></body></html>`
 
 /** The view's whole behavior. Plain ES2020 in a string: it runs in the host's sandboxed
  *  iframe as-is, and under node:vm in the tests. */
@@ -790,7 +811,7 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
     clearTimeout(ctxTimer)
   }
 
-  window.addEventListener("message", (e) => {
+  const onMessage = (e) => {
     const d = e.data
     if (!d || typeof d !== "object") return
     if (frame && e.source === frame.contentWindow) return fromFrame(d)
@@ -813,7 +834,11 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
       teardown()
       if (d.id != null) send({ id: d.id, result: {} })
     } else if (d.method === "ping" && d.id != null) send({ id: d.id, result: {} })
-  })
+  }
+  window.addEventListener("message", onMessage)
+  // The dev loader (devViewStub) fetched this page while the host was already talking:
+  // what arrived in between waited on the window, so hear it now, in order.
+  if (Array.isArray(window.__deriveEarly)) for (const e of window.__deriveEarly.splice(0)) onMessage(e)
 
   $("prev").onclick = () => drive("prev")
   $("next").onclick = () => drive("next")

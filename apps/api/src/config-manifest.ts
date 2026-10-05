@@ -212,6 +212,12 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "https://usercontent.example.com",
   },
   {
+    name: "DERIVE_MCP_APP_DEV",
+    group: "hosting",
+    doc: "Local development of the MCP App view only (`pnpm dev:tunnel` sets it): `show` opens a\nstub that loads the current view from this server on every open, so a chat host connected\nto a dev server never shows a stale view. Never set it on a real deployment.",
+    example: "1",
+  },
+  {
     name: "DERIVE_SITE_ORIGIN",
     group: "hosting",
     doc: "Origin of the public site (marketing pages, blog) for a HOSTED deployment on the\nNode tier: navigations the app does not own are proxied there, and `/` serves its\nlanding page to signed-out visitors. derive.to itself runs on Workers and binds the\nsite Worker directly (wrangler.toml [[services]] SITE). Unset = the application owns\nthe front door, which is right for every self-host.",
