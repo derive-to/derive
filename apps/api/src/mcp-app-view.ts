@@ -897,7 +897,7 @@ button.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 #rail{width:min(240px,40%);flex:none;display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line);background:var(--bg)}
 #rail-list{list-style:none;margin:0;padding:6px;overflow:auto;flex:1;display:grid;grid-template-columns:minmax(0,1fr);gap:2px;align-content:start}
 #rail-list li{display:flex;align-items:center;gap:2px;border-radius:6px;padding:1px 2px;min-width:0}#rail-list li:hover{background:var(--chip)}
-#rail-list li.sel{background:var(--chip)}
+#rail-list li.sel{background:var(--chip);box-shadow:inset 2px 0 0 var(--ink)}#rail-list li.sel .pick{font-weight:600}
 #rail-list li.drop{box-shadow:inset 0 2px 0 var(--ink)}#rail-list li.drop-end{box-shadow:inset 0 -2px 0 var(--ink)}
 #rail-list button{border:0;padding:3px 5px}
 #rail-list .pick{flex:1 1 auto;min-width:0;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:none}
