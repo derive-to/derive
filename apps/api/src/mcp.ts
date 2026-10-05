@@ -95,6 +95,7 @@ import { latexTemplateBundle } from "./lib/latex-templates"
 import { clientIp } from "./lib/rate-limit"
 import {
   ARTIFACT_VIEW_HTML,
+  ARTIFACT_VIEW_LEGACY_URI,
   ARTIFACT_VIEW_URI,
   artifactViewMeta,
   MCP_APP_MIME,
@@ -530,21 +531,19 @@ async function buildServer(
   // The view `show` opens in hosts that render MCP Apps: a frame around the sandboxed
   // artifact page (mcp-app-view.ts). Static HTML, so registering it costs no round trip.
   const viewMeta = artifactViewMeta(ctx.deps.sandboxOrigin ?? ctx.deps.baseUrl)
-  server.registerResource(
-    "app:artifact",
-    ARTIFACT_VIEW_URI,
-    {
-      title: "Derive artifact view",
-      description: "The in-conversation view the show tool opens.",
-      mimeType: MCP_APP_MIME,
-      _meta: viewMeta,
-    },
-    async (uri) => ({
-      contents: [
-        { uri: uri.href, mimeType: MCP_APP_MIME, text: ARTIFACT_VIEW_HTML, _meta: viewMeta },
-      ],
-    }),
-  )
+  const readView = async (uri: URL) => ({
+    contents: [
+      { uri: uri.href, mimeType: MCP_APP_MIME, text: ARTIFACT_VIEW_HTML, _meta: viewMeta },
+    ],
+  })
+  const viewInfo = {
+    title: "Derive artifact view",
+    description: "The in-conversation view the show tool opens.",
+    mimeType: MCP_APP_MIME,
+    _meta: viewMeta,
+  }
+  server.registerResource("app:artifact", ARTIFACT_VIEW_URI, viewInfo, readView)
+  server.registerResource("app:artifact-v1", ARTIFACT_VIEW_LEGACY_URI, viewInfo, readView)
   const defaultOrg = agent.org_id
   const defaultRole = agent.role
 

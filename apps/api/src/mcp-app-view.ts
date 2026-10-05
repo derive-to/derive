@@ -14,7 +14,9 @@
 // from inside the artifact is quoted and labelled as artifact content, because the artifact is
 // untrusted and can post messages that look like the viewer's own. What it never does: write.
 
-export const ARTIFACT_VIEW_URI = "ui://derive/artifact-v1"
+/** The first URI the view shipped at. Cards a host saved before the view changed still name
+ *  it, so it stays registered and serves the current view. */
+export const ARTIFACT_VIEW_LEGACY_URI = "ui://derive/artifact-v1"
 export const MCP_APP_MIME = "text/html;profile=mcp-app"
 
 /** The resource's `_meta.ui`: the only origin it may frame is the sandbox that serves
@@ -882,3 +884,12 @@ footer{padding:5px 10px;color:var(--muted);border-top:1px solid var(--line);whit
 <footer id="foot" aria-live="polite">Select a slide or some text, then ask about it.</footer>
 </div>
 <script>${ARTIFACT_VIEW_SCRIPT}</script></body></html>`
+
+// Hosts cache a view by its URI (ChatGPT keeps the HTML it fetched when the app was added, even
+// across a tools refresh), so the URI changes whenever the view does: a hash of its bytes.
+const fnv1a = (text: string) => {
+  let h = 0x811c9dc5
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193)
+  return (h >>> 0).toString(36)
+}
+export const ARTIFACT_VIEW_URI = `ui://derive/artifact-${fnv1a(ARTIFACT_VIEW_HTML)}`

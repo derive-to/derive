@@ -17,7 +17,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vites
 import { createApp } from "../src/app"
 import { sha256 } from "../src/lib/crypto"
 import { searchMatcher, searchWorkspace } from "../src/lib/search"
-import { ARTIFACT_VIEW_HTML, ARTIFACT_VIEW_SCRIPT } from "../src/mcp-app-view"
+import { ARTIFACT_VIEW_HTML, ARTIFACT_VIEW_SCRIPT, ARTIFACT_VIEW_URI } from "../src/mcp-app-view"
 import { PNG_BYTES } from "./fixtures"
 import {
   appWithGrant,
@@ -1302,13 +1302,24 @@ describe("remote MCP endpoint (/mcp)", () => {
     const list = await rpc(app, token, { jsonrpc: "2.0", id: 2, method: "tools/list" })
     const tools = (list.parsed?.result as { tools?: { name: string; _meta?: unknown }[] })?.tools
     expect(tools?.find((t) => t.name === "show")?._meta).toEqual({
-      ui: { resourceUri: "ui://derive/artifact-v1" },
+      ui: { resourceUri: ARTIFACT_VIEW_URI },
     })
+    // A new view is a new URI (hosts cache by URI); the first one still serves it for old cards.
+    expect(ARTIFACT_VIEW_URI).toMatch(/^ui:\/\/derive\/artifact-[0-9a-z]+$/)
+    const legacy = await rpc(app, token, {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "resources/read",
+      params: { uri: "ui://derive/artifact-v1" },
+    })
+    expect((legacy.parsed?.result as { contents?: { text: string }[] })?.contents?.[0]?.text).toBe(
+      ARTIFACT_VIEW_HTML,
+    )
     const view = await rpc(app, token, {
       jsonrpc: "2.0",
       id: 3,
       method: "resources/read",
-      params: { uri: "ui://derive/artifact-v1" },
+      params: { uri: ARTIFACT_VIEW_URI },
     })
     const content = (
       view.parsed?.result as {
