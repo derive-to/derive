@@ -526,8 +526,8 @@ describe("jobs: what a teammate cannot do with someone else's agent or job", () 
       expect(res.status).toBe(201)
       return ((await res.json()) as { id: string }).id
     }
-    const edsKey = await secret(ed.email, "eds-own-fixture") // gitleaks:allow test fixture
-    const ownersKey = await secret(owner.email, "reporting-db-fixture") // gitleaks:allow test fixture
+    const edsKey = await secret(ed.email, "eds-own-fixture")
+    const ownersKey = await secret(owner.email, "reporting-db-fixture")
     // A teammate's personal secret is refused on create and on edit.
     const made = await app.request(
       "/v1/agents",
@@ -542,10 +542,10 @@ describe("jobs: what a teammate cannot do with someone else's agent or job", () 
     expect(edit.status).toBe(400)
     const shown = (await (
       await app.request(`/v1/agents/${agent.id}`, { headers: as(owner.email) })
-    ).json()) as { environment: Record<string, string>; environment_names: string[] }
+    ).json()) as { environment: Record<string, string> }
     expect(shown.environment).toEqual({ DB_URL: ownersKey })
     expect(JSON.stringify(shown)).not.toContain("reporting-db-fixture")
-    // A running job reads the value through its claim, and only there.
+    // The value only ever leaves through a running job's claim.
     expect((await ask(app, owner.email, agent.id, "report")).status).toBe(201)
     const [job] = await pull(app, agent)
     if (!job) throw new Error("no job pulled")
@@ -553,13 +553,12 @@ describe("jobs: what a teammate cannot do with someone else's agent or job", () 
       headers: { ...bearer(agent.token), "x-derive-claim": job.started_at },
     })
     expect(await env.json()).toEqual({ environment: { DB_URL: "reporting-db-fixture" } })
-    // {} clears it.
     const cleared = await app.request(`/v1/agents/${agent.id}`, {
       ...jsonAs(as(owner.email), { environment: {} }),
       method: "PATCH",
     })
-    expect(((await cleared.json()) as { environment_names: string[] }).environment_names).toEqual(
-      [],
+    expect(((await cleared.json()) as { environment: Record<string, string> }).environment).toEqual(
+      {},
     )
   })
 

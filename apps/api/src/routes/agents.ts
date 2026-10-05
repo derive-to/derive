@@ -35,29 +35,32 @@ export const agentRoutes = (ctx: AppContext) => {
       return []
     }
   }
-  const agentJson = (a: AgentRecord, extra: { instructions_short_id?: string | null } = {}) => ({
-    id: a.id,
-    name: a.name,
-    role: a.role,
-    managed: a.managed === 1,
-    created_by: a.created_by,
-    created_at: a.created_at,
-    description: a.description,
-    instructions_short_id: extra.instructions_short_id ?? null,
-    machine: a.machine,
-    provider: a.provider,
-    model: a.model,
-    ask_policy: a.ask_policy,
-    write_policy: a.write_policy,
-    paused: a.paused_at !== null,
-    seen_at: a.seen_at,
-    max_run_ms: a.max_run_ms,
-    max_concurrency: a.max_concurrency,
-    connection_ids: parseIds(a.connection_ids_json),
-    environment: readEnvironmentBindings(a.environment_json),
-    environment_names: Object.keys(readEnvironmentBindings(a.environment_json)),
-    account_id: a.account_id,
-  })
+  const agentJson = (a: AgentRecord, extra: { instructions_short_id?: string | null } = {}) => {
+    const environment = readEnvironmentBindings(a.environment_json)
+    return {
+      id: a.id,
+      name: a.name,
+      role: a.role,
+      managed: a.managed === 1,
+      created_by: a.created_by,
+      created_at: a.created_at,
+      description: a.description,
+      instructions_short_id: extra.instructions_short_id ?? null,
+      machine: a.machine,
+      provider: a.provider,
+      model: a.model,
+      ask_policy: a.ask_policy,
+      write_policy: a.write_policy,
+      paused: a.paused_at !== null,
+      seen_at: a.seen_at,
+      max_run_ms: a.max_run_ms,
+      max_concurrency: a.max_concurrency,
+      connection_ids: parseIds(a.connection_ids_json),
+      environment,
+      environment_names: Object.keys(environment),
+      account_id: a.account_id,
+    }
+  }
 
   const triggerJson = (t: TriggerRecord) => ({
     id: t.id,
@@ -260,26 +263,21 @@ export const agentRoutes = (ctx: AppContext) => {
       if (!seat || capRole(b.role as Role, seat) !== b.role)
         return "an agent's role cannot be above your own"
     }
-    const canManage = await ctx.workspaceCan(c, "manage")
-    if (b.connection_ids?.length) {
-      const refused = await connectionBindError(
-        meta,
-        org,
-        { userId: manager, canManage },
-        b.connection_ids,
-      )
-      if (refused) return refused
-    }
-    // An environment variable reads a saved secret, under the same rule as attaching a source:
-    // your own personal secret, or a workspace one if you manage the workspace.
+    // Environment variables bind saved secrets, under the same ownership rule as sources.
     const secretIds = [...new Set(Object.values(b.environment ?? {}))]
     if (secretIds.length) {
       const found = await meta.getConnectionsByIds(secretIds)
       if (found.length !== secretIds.length || found.some((cn) => cn.kind !== "secret"))
         return "environment variables must name saved secrets"
-      return connectionBindError(meta, org, { userId: manager, canManage }, secretIds)
     }
-    return null
+    const bound = [...(b.connection_ids ?? []), ...secretIds]
+    if (!bound.length) return null
+    return connectionBindError(
+      meta,
+      org,
+      { userId: manager, canManage: await ctx.workspaceCan(c, "manage") },
+      bound,
+    )
   }
 
   const openJobs = (orgId: string, agentId: string) =>

@@ -645,8 +645,8 @@ function SourcesField({
   )
 }
 
-/** Saved secrets its jobs read as environment variables (Settings › Sources › Secrets holds the
- *  values). Only names and which secret are shown; a value never comes back. */
+/** Variable name → saved secret. Values live in Settings › Sources › Secrets and are never
+ *  sent back to the client. */
 function EnvironmentField({
   agent,
   edit,
@@ -658,8 +658,9 @@ function EnvironmentField({
 }) {
   const bound = Object.entries(agent.environment)
   const conns = useQuery({ ...agentConnectionsQuery(), enabled: bound.length > 0 || edit })
-  const secrets = (conns.data ?? []).filter((c) => c.kind === "secret" && c.status === "active")
+  const secrets = (conns.data ?? []).filter((c) => c.kind === "secret")
   const byId = new Map(secrets.map((c) => [c.id, c]))
+  const addable = secrets.filter((c) => c.status === "active")
   const [name, setName] = useState("")
   const [secretId, setSecretId] = useState("")
   const set = (env: Record<string, string>) => onSave({ environment: env })
@@ -708,7 +709,7 @@ function EnvironmentField({
           </div>
         )
       })}
-      {edit && secrets.length > 0 && (
+      {edit && addable.length > 0 && (
         <form onSubmit={add} className="mt-1 flex flex-wrap items-center gap-2">
           <Input
             data-testid="agent-env-name"
@@ -716,14 +717,14 @@ function EnvironmentField({
             placeholder="DATABASE_URL"
             className="w-48 font-mono"
             value={name}
-            onChange={(e) => setName(e.target.value.toUpperCase())}
+            onChange={(e) => setName(e.target.value)}
           />
           <Select value={secretId} onValueChange={setSecretId}>
             <SelectTrigger data-testid="agent-env-secret" aria-label="Secret" className="w-56">
               <SelectValue placeholder="Choose a secret" />
             </SelectTrigger>
             <SelectContent>
-              {secrets.map((c) => (
+              {addable.map((c) => (
                 <SelectItem key={c.id} value={c.id}>
                   {connectionName(c)}
                 </SelectItem>
@@ -741,7 +742,7 @@ function EnvironmentField({
           </Button>
         </form>
       )}
-      {edit && conns.data && secrets.length === 0 && (
+      {edit && conns.data && addable.length === 0 && (
         <Sub>
           Save a secret in{" "}
           <Link

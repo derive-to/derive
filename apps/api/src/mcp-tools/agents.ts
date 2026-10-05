@@ -113,8 +113,8 @@ export function registerAgentsTool(tc: ToolContext): void {
         return json({ agents })
       }
       if (a.action === "sources") {
-        // What this person may attach: their own personal connections and secrets, and the
-        // workspace's. The save still enforces that workspace ones need manage.
+        // Personal and workspace rows are disjoint. Listing a workspace row is not permission
+        // to attach it; the save checks manage.
         const [mine, shared] = await Promise.all([
           call(tc, org, "/v1/connections?mine=1"),
           call(tc, org, "/v1/connections?scope=workspace"),
@@ -136,7 +136,6 @@ export function registerAgentsTool(tc: ToolContext): void {
           id: cn.id,
           name: cn.scopes_label ?? cn.toolkit,
           toolkit: cn.toolkit,
-          // a secret goes in `environment`; everything else in `sources`
           use_as: cn.kind === "secret" ? "environment" : "sources",
           scope: cn.scope,
           status: cn.status,
