@@ -19,6 +19,15 @@ agents that take jobs. See [Run agents](apps/docs/content/run-agents.md) and the
 note in the [self-hosting quickstart](apps/docs/content/self-hosting/quickstart.md).
 
 ### Added
+- **Artifacts in the conversation (MCP App).** `show` puts an artifact in front of the
+  person inside ChatGPT, Claude or any host that renders MCP Apps: a live card on Derive's
+  own sandboxed page, with the deck bar, and the slide or text they select reaching the
+  model as context. On a seat that may publish, the card edits text in place and organizes
+  a deck (reorder by drag or arrow keys, duplicate, delete, add, undo), saving one new
+  version; a version conflict says so and offers the newer one. A comment with `options`
+  becomes a question asked in the card (`options: []` takes a typed answer). Hosts cache
+  the card, so a connector added before this needs its tools refreshed once. Local testing:
+  `pnpm dev:app-host` and `pnpm dev:tunnel` (CONTRIBUTING.md).
 - **Agents.** A named worker in a workspace: an instructions page, the sources it may use, a
   model account, a machine, who may ask it, and whether its writes publish directly or ask
   for review first. Made over MCP (`agents`, action `create`), which returns the agent's key
