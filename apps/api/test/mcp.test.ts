@@ -2929,6 +2929,25 @@ describe("remote MCP endpoint (/mcp)", () => {
     )
   })
 
+  it("publish: a hand-rolled deck of data-slide sections is told about the deck protocol", async () => {
+    // What a chat model wrote when asked for "a 5-slide deck": stacked full-height sections,
+    // numbered, no class and no protocol. It renders as one long page with no deck controls,
+    // so the receipt has to say so.
+    const { app, token } = appWithGrant(dir, "handdeck", "openid derive:publish")
+    const sections = ["Intro", "Problem", "Plan", "Budget", "Ask"]
+      .map((h, i) => `<section data-slide="${i + 1}"><h1>${h}</h1></section>`)
+      .join("")
+    const receipt = toolText(
+      await call(app, token, "publish", {
+        title: "Hand deck",
+        filename: "deck.html",
+        content: `<!doctype html><html><head><meta name="viewport" content="width=device-width"></head><body><div class="deck">${sections}</div></body></html>`,
+      }),
+    )
+    expect(receipt).toContain("5 slide elements but never posts the derive-deck message")
+    expect(receipt).toContain("derive://decks/template")
+  })
+
   it("read: format:text on a deck artifact returns flat visible text, not raw markup (regression)", async () => {
     const { app, token } = appWithGrant(dir, "readdeck", "openid derive:read derive:publish")
     // A deck fragment: the protocol name AND real slide elements. Both are required to
