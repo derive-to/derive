@@ -64,10 +64,9 @@ export function registerCommentTool(tc: ToolContext): void {
           ),
         options: z
           .array(z.string().min(1).max(80))
-          .min(2)
           .max(6)
           .optional()
-          .describe("Choices: a NEW thread becomes a question (see show)."),
+          .describe("Choices: a NEW thread becomes a question (see show). [] = free text."),
         workspace: wsArg,
       },
     },
@@ -96,6 +95,8 @@ export function registerCommentTool(tc: ToolContext): void {
           "Provide `body` (to comment), `react` (to acknowledge), or `set_state` (to resolve/reopen).",
         )
       if (quote && visual_target) return err("Use either `quote` or `visual_target`, not both.")
+      if (options?.length === 1)
+        return err("A question takes 2–6 `options`, or [] for a free-text answer.")
       if (options && (reply_to || !body))
         return err(
           "`options` asks a question in a NEW thread: give `body` (the question) and no `reply_to`.",

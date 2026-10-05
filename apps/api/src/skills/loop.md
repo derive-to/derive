@@ -62,7 +62,8 @@ in one tool. Thread ids come from `catch_up`.
 - **Resolve / reopen.** Pass `set_state` (`resolved` or `open`) along with the thread's id
   in `reply_to`.
 - **Ask a choice.** When one decision changes the work, ask it on the artifact: a new
-  comment with `body` (the question) and 2–6 `options`. Then `show({short_id, thread})` puts
+  comment with `body` (the question) and 2–6 `options`, or `options: []` when the
+  answer is their own words. Then `show({short_id, thread})` puts
   it in front of the person where the host renders apps; elsewhere they answer on the page.
   Their answer is a reply in that thread: a choice or their own words. Ask only what the
   evidence can't settle.

@@ -1439,6 +1439,29 @@ describe("remote MCP endpoint (/mcp)", () => {
         }),
       ),
     ).toBe(true)
+    // No choices ([]) asks for words: still a question the view can show and take an answer to.
+    const open = JSON.parse(
+      toolText(
+        await call(app, token, "comment", { short_id: shortId, body: "Deadline?", options: [] }),
+      ),
+    )
+    const openView = (
+      (await call(app, token, "show", { short_id: shortId, thread: open.thread })).parsed
+        ?.result as {
+        structuredContent: { question: Record<string, unknown> }
+      }
+    ).structuredContent.question
+    expect(openView).toMatchObject({
+      text: "Deadline?",
+      options: [],
+      answer: null,
+      can_answer: true,
+    })
+    expect(
+      toolIsError(
+        await call(app, token, "comment", { short_id: shortId, body: "x", options: ["only"] }),
+      ),
+    ).toBe(true)
     const plain = JSON.parse(
       toolText(await call(app, token, "comment", { short_id: shortId, body: "Nice" })),
     )
