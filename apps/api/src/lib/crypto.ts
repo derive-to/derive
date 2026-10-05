@@ -71,7 +71,9 @@ export const signState = (
  *  bucketed stamp the token carries, for callers that state its expiry. */
 export const signRawToken = (
   secret: string,
-  claim: { rid: string; history: boolean; edit?: true },
+  /** `host`: an origin outside this deployment (an MCP App view in a chat host) that may
+   *  drive the editor on a quote-edit page, unstamped. Minted only for a publisher. */
+  claim: { rid: string; history: boolean; edit?: true; host?: string },
 ): { token: string; issuedAt: number } => {
   const issuedAt = bucketedNow(RAW_TOKEN_WINDOW_MS)
   return { token: signState(claim, secret, issuedAt), issuedAt }

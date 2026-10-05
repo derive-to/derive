@@ -3428,6 +3428,14 @@
             ],
             "description": "What kind of principal wrote it, from the recorded id."
           },
+          "options": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string"
+            },
+            "description": "On a question's root comment: the choices it offers. A reply (a choice or other words) answers it."
+          },
           "resolution": {
             "type": "object",
             "nullable": true,

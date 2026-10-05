@@ -549,6 +549,7 @@ const app = createApp({
   // Origin isolation: serve artifact bytes from a separate registrable domain
   // pointed at this same container. Keeps user HTML off the app's cookie origin.
   sandboxOrigin: cfg.sandboxOrigin,
+  mcpAppDevView: process.env.DERIVE_MCP_APP_DEV === "1",
   crossSite: cfg.crossSite,
   // Vanity subdomains (domain mode): when set, name.<base> serves its artifact.
   subdomainBase: cfg.subdomainBase,

@@ -26,7 +26,7 @@ import {
   toBody,
 } from "../lib/http"
 import { verifyPreviewToken } from "../lib/preview-token"
-import { editorHost, serveContent } from "../lib/serve-content"
+import { editorHost, isWebOrigin, serveContent } from "../lib/serve-content"
 import { mutableCacheFor, versionCacheControl } from "../lib/version-cache"
 import { log } from "../log"
 import { safeJson } from "../mcp-util"
@@ -319,8 +319,10 @@ export const rawRoutes = (ctx: AppContext) => {
     n: number,
     prefix: string,
     cacheControl?: string,
-    /** The capability was minted for someone who may publish: stamp source ids. */
-    editor = false,
+    /** The capability was minted for someone who may publish: stamp source ids. An
+     *  origin instead names a view outside this deployment that may drive a quote-edit
+     *  page, served unstamped. */
+    editor: boolean | string = false,
   ) => {
     if (artifact.removed_at) return c.text(TOMBSTONE, 410)
     const version = await meta.getVersion(artifact.id, n)
@@ -355,7 +357,11 @@ export const rawRoutes = (ctx: AppContext) => {
       // window (or after its last slot was deleted) is never cached as immutable bytes.
       mutableCacheFor(artifact),
       await sourceHiddenFrom(c, artifact),
-      editor ? { version: n, host: editorHost(deps) } : undefined,
+      typeof editor === "string"
+        ? { version: n, host: editor, stamp: false }
+        : editor
+          ? { version: n, host: editorHost(deps) }
+          : undefined,
     )
   }
 
@@ -376,7 +382,7 @@ export const rawRoutes = (ctx: AppContext) => {
     const n = Number(c.req.param("n"))
     const artifact = await meta.getByShortId(shortId)
     if (!artifact || !Number.isInteger(n)) return c.text("not found", 404)
-    const claim = verifyState<{ rid: string; history?: boolean; edit?: boolean }>(
+    const claim = verifyState<{ rid: string; history?: boolean; edit?: boolean; host?: string }>(
       c.req.param("token"),
       deps.encryptionKey ?? "",
       RAW_TOKEN_MAX_AGE_MS,
@@ -395,7 +401,13 @@ export const rawRoutes = (ctx: AppContext) => {
       n,
       `/raw/${shortId}/v/${c.req.param("n")}/t/${c.req.param("token")}/`,
       tokenRouteCache(artifact),
-      claim?.rid === artifact.id && claim.edit === true,
+      claim?.rid !== artifact.id
+        ? false
+        : claim.edit === true
+          ? true
+          : typeof claim.host === "string" && isWebOrigin(claim.host)
+            ? claim.host
+            : false,
     )
   })
 

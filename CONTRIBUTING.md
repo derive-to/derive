@@ -37,6 +37,28 @@ services. Postgres + S3/R2 are opt-in via env: copy `.env.example` to `.env`
 (git-ignored, auto-loaded in dev) and fill in what you need. See the
 [deployment guide](apps/docs/content/self-hosting/configuration.md).
 
+### The `show` card (MCP App) without deploying
+
+Two ways to test the in-conversation card that `show` opens, neither of which needs a
+deploy:
+
+```bash
+pnpm dev:app-host   # a local chat host → http://127.0.0.1:8791
+pnpm dev:tunnel     # the local server behind a public HTTPS tunnel, for ChatGPT or Claude
+```
+
+`dev:app-host` boots Derive in-process with a seeded grant and three artifacts (data in
+`data/app-host`; delete it to reseed) and plays the host's half of the protocol around the
+real view. Its switches cover display modes, theme, a host that rejects refused tool calls,
+and the model acting in between (a new version, a question, an older version). Edits restart
+it; **Reload card** fetches the view again.
+
+`dev:tunnel` runs `pnpm dev` behind a cloudflared tunnel with `DERIVE_MCP_APP_DEV=1`, so
+`show` loads the current view from your machine on every open: add the printed connector URL
+to ChatGPT (developer mode) or Claude once, create an account on the tunnel URL, and edits
+show up in the next card. Refresh the connector's tools only when a tool's definition changes.
+For a URL that survives restarts, use a named tunnel (see `scripts/dev-tunnel.mjs`).
+
 Public documentation runs independently at `docs.derive.to`. To edit it locally:
 
 ```bash

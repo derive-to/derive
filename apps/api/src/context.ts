@@ -350,6 +350,9 @@ export interface AppDeps {
    * single-origin self-host, where the iframe `sandbox` attribute is the wall.
    */
   sandboxOrigin?: string
+  /** Local development: `show` opens a stub that loads the current view from this server
+   *  on every open (mcp-app-view.ts devViewStub), so a real host never shows a stale view. */
+  mcpAppDevView?: boolean
   /**
    * Base domain for vanity subdomains (e.g. "derived.app"). When set, a request to
    * `<label>.<base>` whose host is in the `domain` table serves that artifact at

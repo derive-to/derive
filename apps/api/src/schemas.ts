@@ -178,6 +178,13 @@ export const Comment = z
     author_kind: z
       .enum(["user", "agent", "anonymous"])
       .describe("What kind of principal wrote it, from the recorded id."),
+    options: z
+      .array(z.string())
+      .nullable()
+      .optional()
+      .describe(
+        "On a question's root comment: the choices it offers. A reply (a choice or other words) answers it.",
+      ),
     resolution: z
       .object({
         at: z.string(),

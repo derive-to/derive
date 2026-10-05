@@ -1,8 +1,10 @@
-import { artifactUrl } from "@derive/core"
+import { artifactUrl, roleAllows } from "@derive/core"
 import { z } from "zod"
+import { parseMeta } from "../lib/comments"
 import { signRawToken } from "../lib/crypto"
 import { RAW_TOKEN_MAX_AGE_MS } from "../lib/http"
-import { ARTIFACT_VIEW_URI } from "../mcp-app-view"
+import { isWebOrigin } from "../lib/serve-content"
+import { ARTIFACT_VIEW_DEV_URI, ARTIFACT_VIEW_URI } from "../mcp-app-view"
 import type { ToolContext } from "../mcp-tool-context"
 import { err, historyNotPublic, versionOpenToWorld } from "../mcp-util"
 
@@ -36,13 +38,19 @@ export function registerShowTool(tc: ToolContext): void {
         short_id: z.string(),
         version: num("version", { int: true, min: 1 }).optional().describe("Default current."),
         slide: num("slide", { int: true, min: 1 }).optional().describe("Deck: open on this slide."),
+        editor: z.string().optional().describe("Set by the view; omit."),
+        thread: z.string().optional().describe("A question thread to ask."),
         workspace: wsArg,
       },
       // The MCP Apps key only. ChatGPT's legacy `openai/outputTemplate` alias names a
       // text/html+skybridge resource, which this view is not.
-      _meta: { ui: { resourceUri: ARTIFACT_VIEW_URI } },
+      _meta: {
+        ui: {
+          resourceUri: ctx.deps.mcpAppDevView === true ? ARTIFACT_VIEW_DEV_URI : ARTIFACT_VIEW_URI,
+        },
+      },
     },
-    async ({ short_id, version, slide, workspace }) => {
+    async ({ short_id, version, slide, editor, thread, workspace }) => {
       const r = await reach(short_id, workspace, { public: true })
       if (r && "error" in r) return err(r.error)
       if (!r) return notFound(short_id)
@@ -53,18 +61,63 @@ export function registerShowTool(tc: ToolContext): void {
       if (r.public && !versionOpenToWorld(a, n)) return historyNotPublic(short_id, a)
       const url = artifactUrl(ctx.deps.baseUrl, a)
       const title = a.title ?? a.short_id
+      // Editing in the view saves through `publish`, so it is offered exactly where a
+      // publish would succeed: a seat that may publish, never the world link.
+      // Single documents only: a bundle's pages don't take quote edits through `publish`.
+      const canEdit = !r.public && roleAllows(r.role, "publish") && a.kind === "file"
+      // The view asks for an editable frame by naming its own origin. That origin may then
+      // drive the inline editor on THIS caller's page (unstamped: it collects quote edits,
+      // which `publish` resolves). The token is the secret; the origin only scopes it.
+      const host = canEdit && editor && isWebOrigin(editor) ? editor : undefined
       const raw = signRawToken(ctx.deps.encryptionKey ?? "", {
         rid: a.id,
         // A seat reaches the history it can read anyway; the world link reaches only what
         // the artifact made public. The version check above already refused the rest.
         history: !r.public || !!a.public_history,
+        ...(host ? { host } : {}),
       })
       const rawBase = ctx.deps.sandboxOrigin ?? ctx.deps.baseUrl
+      // A question (comment({options})) asked in the view: its words, its choices, and the
+      // first reply if someone already answered. Read with the same reach as the page.
+      let question: Record<string, unknown> | null = null
+      if (thread) {
+        const inThread = (await ctx.meta.listComments(a.id, { threadId: thread })).filter(
+          (c) => !parseMeta(c.meta).deleted,
+        )
+        const root = inThread.find((c) => c.id === thread) ?? inThread[0]
+        const asked = root
+          ? (parseMeta(root.meta) as { question?: { options?: unknown } }).question
+          : undefined
+        if (!root || !asked) return err(`No question thread "${thread}" on "${short_id}".`)
+        // The first reply answers it. Not "the first reply from someone else": in a chat host
+        // the question and the person's answer from the view arrive through the same grant,
+        // so they carry the same author.
+        const reply = inThread.find((c) => c.id !== root.id)
+        question = {
+          thread,
+          text: root.body_md,
+          options: Array.isArray(asked.options)
+            ? asked.options.filter((o) => typeof o === "string")
+            : [],
+          answer: reply ? reply.body_md : null,
+          can_answer: !r.public && roleAllows(r.role, "comment"),
+        }
+      }
       return {
         content: [
           {
             type: "text" as const,
-            text: `Showing "${title}" v${n}${slide ? ` at slide ${slide}` : ""} to the person: ${url}. When they select a slide or section, it arrives as context; act on that version.`,
+            text:
+              `Showing "${title}" v${n}${slide ? ` at slide ${slide}` : ""} to the person: ${url}. When they select a slide or section, it arrives as context; act on that version.` +
+              // A model that carried a version number over from earlier keeps re-showing it.
+              (n < a.current_version
+                ? ` v${a.current_version} is newer; omit version to show the latest.`
+                : "") +
+              (question
+                ? question.answer
+                  ? ` The question in thread ${thread} is already answered: ${JSON.stringify(question.answer)}.`
+                  : ` Asking them the question in thread ${thread}; their answer is saved as a reply there and usually arrives as their next message.`
+                : ""),
           },
         ],
         structuredContent: {
@@ -74,6 +127,9 @@ export function registerShowTool(tc: ToolContext): void {
           current_version: a.current_version,
           // 1-based, as the person counts; the view opens a deck there once it reports in.
           slide: slide ?? null,
+          can_edit: canEdit,
+          editing: !!host,
+          question,
           url,
           workspace: r.org,
         },

@@ -76,7 +76,20 @@ const servedHtml = (doc: string, contentType: string, slots: Map<string, Dynamic
 export interface EditorStamp {
   version: number
   host?: string
+  /** false: name the host but keep the page unstamped, so its editor collects quote edits
+   *  (what a caller without the source map, like an MCP App view, can save). */
+  stamp?: boolean
 }
+/** A bare http(s) origin (scheme, host, port; nothing else), as a host marker needs. */
+export const isWebOrigin = (s: string): boolean => {
+  try {
+    const u = new URL(s)
+    return (u.protocol === "https:" || u.protocol === "http:") && u.origin === s
+  } catch {
+    return false
+  }
+}
+
 /** This deployment's app origins: where the workbench that frames an editor runs. */
 export const editorHost = (deps: { baseUrl: string; webOrigins?: string[] }): string =>
   [
@@ -381,9 +394,10 @@ export const serveContent = async (
       })
     }
     // An editor gets the same page with source ids (markdown-source.ts), for exact saves.
-    const rendered = editor
-      ? ((await editorPage(text, content.content_type, title, editor, slots)) as string)
-      : await renderMarkdown(text, title, { dynamic: slots })
+    const rendered =
+      editor && editor.stamp !== false
+        ? ((await editorPage(text, content.content_type, title, editor, slots)) as string)
+        : forEditor(await renderMarkdown(text, title, { dynamic: slots }))
     const isBound = bound(rendered)
     const html = withSharedState(rendered, isBound) + append
     return c.body(html, 200, {
@@ -414,13 +428,13 @@ export const serveContent = async (
     const text = new TextDecoder().decode(data)
     // Stamp the STORED source before any serve-time transform, so every id and hash
     // names bytes a save can find again.
-    const stamp = !!editor && isSourceEditable(content.content_type)
+    const stamp = !!editor && editor.stamp !== false && isSourceEditable(content.content_type)
     const doc = stamp
       ? ((await editorPage(text, content.content_type, title, editor, slots)) as string)
       : servedHtml(text, content.content_type, slots)
     const isBound = bound(doc)
     return c.body(htmlBody(forEditor(doc), isBound), 200, {
-      ...hdrs(isBound, stamp),
+      ...hdrs(isBound, !!editor),
       "Content-Type": ct,
     })
   }

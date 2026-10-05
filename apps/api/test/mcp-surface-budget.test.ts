@@ -212,8 +212,12 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // `short_id` carries no description and `version` says only its default, so what remains is
 // the shared `workspace` text every artifact tool repeats. SURFACE 12,150 -> 12,450 to match.
 // Measured 3,887 / 8,339 / 12,226, so the caps keep the ~2% headroom earlier raises settled on.
+// PARAMS 8,450 -> 8,650 (2026-10-04) for editing and questions in the show view: `show` gains
+// `editor` (set by the view, never the model) and `thread` (the question to ask), and `comment`
+// gains `options` (a new thread becomes a question). Three params, each one short line, all
+// trimmed first; no tool or description was added. Measured 8,463 of 8,650.
 const TOOL_DESCRIPTIONS_BUDGET = 3_950
-const PARAM_DESCRIPTIONS_BUDGET = 8_450
+const PARAM_DESCRIPTIONS_BUDGET = 8_650
 const SURFACE_BUDGET = 12_450
 const INSTRUCTIONS_BUDGET = 2_950
 
@@ -332,7 +336,7 @@ describe("MCP surface budget (thin tools, thick skills)", () => {
     // The routing claim against the host's own artifact tool — the steer that stops
     // "make me an HTML page" from landing in a chat-local artifact. Must stay in the
     // always-loaded instructions: a skill body loads after the routing decision.
-    expect(instructions).toContain("not with a built-in artifact/canvas tool")
+    expect(instructions).toContain("rather than in a chat-local artifact or canvas")
     // The core-skills index is still ADVERTISED in the always-loaded instructions —
     // thinning must not drop the pointer that makes the lazy skills discoverable.
     for (const skill of CORE_SKILLS) expect(instructions).toContain(`derive://skills/${skill.name}`)

@@ -74,6 +74,9 @@ const withoutComments = (html: string): string => {
  *  running this over real published decks rather than fixtures. */
 export const isSlideAttrs = (attrs: string): boolean =>
   attrValues(attrs, "data-derive-slide").length > 0 ||
+  // The other common hand-rolled marker: models writing a deck from scratch number their
+  // sections with data-slide="N" and no class at all.
+  attrValues(attrs, "data-slide").length > 0 ||
   classTokens(attrs).some((t) => t.toLowerCase() === "slide")
 
 /** How many slide elements this HTML actually contains. */

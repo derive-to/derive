@@ -217,6 +217,10 @@ export function CommentCard({
   const elBand = isEl ? anchorConf?.[root.thread_id]?.band : undefined
   const relocated = isEl && textPresent && (elBand === "low" || elBand === "medium")
   const replies = thread.length - 1
+  // A question (asked by an agent with choices): until the first reply, its choices are
+  // one-click answers. Any reply answers it, a choice or other words.
+  const choices =
+    canComment && !resolved && replies === 0 && root.options?.length ? root.options : null
   // Deck context (from CommentScope): the slide this comment belongs to — where its
   // text resolved (landed), else the slide it was written on — and whether the text
   // has since moved to a different slide than it was anchored on.
@@ -435,6 +439,28 @@ export function CommentCard({
               <CommentRow key={c.id} c={c} grouped={i > 0 && thread[i - 1]?.author === c.author} />
             ))}
           </div>
+          {choices && (
+            // In the text column, under the question. Answering is replying, so a choice
+            // sends exactly what typing it would.
+            // biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation wrapper, not an interactive control
+            // biome-ignore lint/a11y/useKeyWithClickEvents: stopPropagation wrapper, not an interactive control
+            <div
+              className="flex flex-wrap gap-1.5 px-3 pb-2 pl-10"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {choices.map((choice) => (
+                <Button
+                  key={choice}
+                  variant="outline"
+                  size="xs"
+                  data-testid="comment-question-choice"
+                  onClick={() => onReply(choice, root.thread_id, [])}
+                >
+                  {choice}
+                </Button>
+              ))}
+            </div>
+          )}
           {/* The reply line: BARE — the card is the container, so the field draws
               no box of its own (a bordered well under a divider inside a bordered
               card stacked three edges in twenty pixels). It sits in the text

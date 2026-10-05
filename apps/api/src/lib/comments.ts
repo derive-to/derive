@@ -76,6 +76,9 @@ export type CommentMeta = {
    *  did it (`resolves`). Cleared on reopen. The record the activity stream reads
    *  "Claude Code resolved Ada's thread" from. */
   resolved?: ThreadResolution
+  /** On the ROOT comment of a question (MCP `comment({options})`): the choices offered. A
+   *  reply answers it, with a choice or in other words. */
+  question?: { options?: string[] }
 }
 
 export interface ThreadResolution {
@@ -149,6 +152,10 @@ export function commentJson(
     edited_at: md.edited_at ?? null,
     deleted,
     mentions: deleted ? [] : (md.mentions ?? []),
+    options:
+      !deleted && Array.isArray(md.question?.options)
+        ? md.question.options.filter((o): o is string => typeof o === "string")
+        : null,
     ...(anchored !== undefined ? { anchored } : {}),
   }
 }

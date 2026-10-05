@@ -17,7 +17,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vites
 import { createApp } from "../src/app"
 import { sha256 } from "../src/lib/crypto"
 import { searchMatcher, searchWorkspace } from "../src/lib/search"
-import { ARTIFACT_VIEW_HTML, ARTIFACT_VIEW_SCRIPT } from "../src/mcp-app-view"
+import { ARTIFACT_VIEW_HTML, ARTIFACT_VIEW_SCRIPT, ARTIFACT_VIEW_URI } from "../src/mcp-app-view"
 import { PNG_BYTES } from "./fixtures"
 import {
   appWithGrant,
@@ -1302,13 +1302,24 @@ describe("remote MCP endpoint (/mcp)", () => {
     const list = await rpc(app, token, { jsonrpc: "2.0", id: 2, method: "tools/list" })
     const tools = (list.parsed?.result as { tools?: { name: string; _meta?: unknown }[] })?.tools
     expect(tools?.find((t) => t.name === "show")?._meta).toEqual({
-      ui: { resourceUri: "ui://derive/artifact-v1" },
+      ui: { resourceUri: ARTIFACT_VIEW_URI },
     })
+    // A new view is a new URI (hosts cache by URI); the first one still serves it for old cards.
+    expect(ARTIFACT_VIEW_URI).toMatch(/^ui:\/\/derive\/artifact-[0-9a-z]+$/)
+    const legacy = await rpc(app, token, {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "resources/read",
+      params: { uri: "ui://derive/artifact-v1" },
+    })
+    expect((legacy.parsed?.result as { contents?: { text: string }[] })?.contents?.[0]?.text).toBe(
+      ARTIFACT_VIEW_HTML,
+    )
     const view = await rpc(app, token, {
       jsonrpc: "2.0",
       id: 3,
       method: "resources/read",
-      params: { uri: "ui://derive/artifact-v1" },
+      params: { uri: ARTIFACT_VIEW_URI },
     })
     const content = (
       view.parsed?.result as {
@@ -1333,7 +1344,8 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(Date.parse(frame?.expires_at ?? "")).toBeGreaterThan(Date.now())
     const page = await app.request(new URL(frame?.url ?? "").pathname)
     expect(page.status).toBe(200)
-    expect(await page.text()).toContain("Launch deck")
+    const readerPage = await page.text()
+    expect(readerPage).toContain("Launch deck")
 
     // A publish teaches the step after it, where the agent decides it.
     const made = JSON.parse(
@@ -1343,11 +1355,160 @@ describe("remote MCP endpoint (/mcp)", () => {
     )
     expect(made.show_next).toContain(`show({short_id:"${made.short_id}"})`)
 
+    // Asked by the view for an editable frame: the page names that origin as one that may
+    // drive its editor, and stays unstamped (quote edits, which publish resolves).
+    const editable = await call(app, token, "show", {
+      short_id: shortId,
+      editor: "https://view.test",
+    })
+    const ed = editable.parsed?.result as {
+      structuredContent?: { can_edit: boolean; editing: boolean }
+      _meta?: { "derive/frame"?: { url: string } }
+    }
+    expect(ed.structuredContent).toMatchObject({ can_edit: true, editing: true })
+    const edPage = await (
+      await app.request(new URL(ed._meta?.["derive/frame"]?.url ?? "").pathname)
+    ).text()
+    expect(edPage).toContain('data-derive-host="https://view.test"')
+    expect(edPage).not.toContain("data-derive-src-version")
+    // A reader's frame names no editor host; neither does a value that isn't an origin.
+    expect(readerPage).not.toContain("data-derive-host")
+    const junk = await call(app, token, "show", {
+      short_id: shortId,
+      editor: "javascript:alert(1)",
+    })
+    expect(
+      (junk.parsed?.result as { structuredContent?: { editing: boolean } }).structuredContent
+        ?.editing,
+    ).toBe(false)
+
+    // A question: a new thread carrying choices, shown in the view, answered by a reply.
+    const asked = JSON.parse(
+      toolText(
+        await call(app, token, "comment", {
+          short_id: shortId,
+          body: "Who is this for?",
+          options: ["Product teams", "Agencies"],
+        }),
+      ),
+    )
+    const askView = async () =>
+      (
+        (await call(app, token, "show", { short_id: shortId, thread: asked.thread })).parsed
+          ?.result as {
+          structuredContent: { question: Record<string, unknown> }
+        }
+      ).structuredContent.question
+    expect(asked.show_next).toContain(`thread:"${asked.thread}"`)
+    expect(await askView()).toMatchObject({
+      thread: asked.thread,
+      text: "Who is this for?",
+      options: ["Product teams", "Agencies"],
+      answer: null,
+      can_answer: true,
+    })
+    // The page reads the same choices off the comment, to offer them as one-click replies.
+    const onPage = (await (
+      await app.request(`/v1/artifacts/${shortId}/comments`, {
+        headers: { "x-test-user": "owner@x.test" },
+      })
+    ).json()) as { comments?: { id: string; options?: string[] | null }[] }
+    expect(onPage.comments?.find((c) => c.id === asked.thread)?.options).toEqual([
+      "Product teams",
+      "Agencies",
+    ])
+    // The first reply answers it, whoever sends it: in a chat host the person's answer from the
+    // view arrives through the same grant that asked.
+    await call(app, token, "comment", {
+      short_id: shortId,
+      reply_to: asked.thread,
+      body: "Agencies",
+    })
+    expect((await askView()).answer).toBe("Agencies")
+    expect(
+      toolText(await call(app, token, "show", { short_id: shortId, thread: asked.thread })),
+    ).toContain('already answered: "Agencies"')
+    // Choices belong to a new question, not a reply; an ordinary thread is not a question.
+    expect(
+      toolIsError(
+        await call(app, token, "comment", {
+          short_id: shortId,
+          reply_to: asked.thread,
+          body: "x",
+          options: ["a", "b"],
+        }),
+      ),
+    ).toBe(true)
+    // No choices ([]) asks for words: still a question the view can show and take an answer to.
+    const open = JSON.parse(
+      toolText(
+        await call(app, token, "comment", { short_id: shortId, body: "Deadline?", options: [] }),
+      ),
+    )
+    const openView = (
+      (await call(app, token, "show", { short_id: shortId, thread: open.thread })).parsed
+        ?.result as {
+        structuredContent: { question: Record<string, unknown> }
+      }
+    ).structuredContent.question
+    expect(openView).toMatchObject({
+      text: "Deadline?",
+      options: [],
+      answer: null,
+      can_answer: true,
+    })
+    expect(
+      toolIsError(
+        await call(app, token, "comment", { short_id: shortId, body: "x", options: ["only"] }),
+      ),
+    ).toBe(true)
+    const plain = JSON.parse(
+      toolText(await call(app, token, "comment", { short_id: shortId, body: "Nice" })),
+    )
+    expect(
+      toolIsError(await call(app, token, "show", { short_id: shortId, thread: plain.thread })),
+    ).toBe(true)
+
+    // An old version still shows, and says which is newer, so a model stops pinning it.
+    await call(app, token, "publish", { short_id: made.short_id, content: "# Next, again\n" })
+    const old = toolText(await call(app, token, "show", { short_id: made.short_id, version: 1 }))
+    expect(old).toContain("v2 is newer; omit version to show the latest.")
+    expect(toolText(await call(app, token, "show", { short_id: made.short_id }))).not.toContain(
+      "is newer",
+    )
+
     // Showing reaches no further than reading: another workspace gets nothing.
     const other = appWithGrant(dir, "show-other", "openid derive:read")
     expect(toolIsError(await call(other.app, other.token, "show", { short_id: shortId }))).toBe(
       true,
     )
+  })
+
+  it("a dev server's show opens a stub that loads the current view, and only a dev server serves it", async () => {
+    const dev = appWithGrant(dir, "showdev", "openid derive:read", { mcpAppDevView: true })
+    const list = await rpc(dev.app, dev.token, { jsonrpc: "2.0", id: 1, method: "tools/list" })
+    const tools = (list.parsed?.result as { tools?: { name: string; _meta?: unknown }[] })?.tools
+    // A URI that never changes, so a host connected to a dev server never needs a refresh.
+    expect(tools?.find((t) => t.name === "show")?._meta).toEqual({
+      ui: { resourceUri: "ui://derive/artifact-dev" },
+    })
+    const stub = await rpc(dev.app, dev.token, {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "resources/read",
+      params: { uri: "ui://derive/artifact-dev" },
+    })
+    const content = (
+      stub.parsed?.result as { contents?: { text: string; _meta?: { ui?: { csp?: unknown } } }[] }
+    )?.contents?.[0]
+    expect(content?.text).toContain("http://derive.test/dev/mcp-app-view.html")
+    expect(content?._meta?.ui?.csp).toMatchObject({ connectDomains: ["http://derive.test"] })
+    const live = await dev.app.request("/dev/mcp-app-view.html")
+    expect(await live.text()).toBe(ARTIFACT_VIEW_HTML)
+    expect(live.headers.get("access-control-allow-origin")).toBe("*")
+    // Anywhere else, none of it exists.
+    const prod = appWithGrant(dir, "showprod", "openid derive:read")
+    expect((await prod.app.request("/dev/mcp-app-view.html")).status).toBe(404)
   })
 
   it("show through a world link frames the current version only, and its token says so", async () => {
@@ -1391,6 +1552,17 @@ describe("remote MCP endpoint (/mcp)", () => {
       ._meta?.["derive/frame"]
     const path = new URL(frame?.url ?? "").pathname
     expect(await (await app.request(path)).text()).toContain("Far v2")
+    // The world link reads; it never edits, whatever the view asks for.
+    const asEditor = await call(app, token, "show", {
+      short_id: art.short_id,
+      editor: "https://view.test",
+    })
+    expect(
+      (asEditor.parsed?.result as { structuredContent?: unknown }).structuredContent,
+    ).toMatchObject({
+      can_edit: false,
+      editing: false,
+    })
     // The same token, pointed at the older version, opens nothing.
     const old = await app.request(path.replace(`/v/2/`, `/v/1/`))
     expect(old.status).toBe(404)
@@ -2784,6 +2956,25 @@ describe("remote MCP endpoint (/mcp)", () => {
     )
   })
 
+  it("publish: a hand-rolled deck of data-slide sections is told about the deck protocol", async () => {
+    // What a chat model wrote when asked for "a 5-slide deck": stacked full-height sections,
+    // numbered, no class and no protocol. It renders as one long page with no deck controls,
+    // so the receipt has to say so.
+    const { app, token } = appWithGrant(dir, "handdeck", "openid derive:publish")
+    const sections = ["Intro", "Problem", "Plan", "Budget", "Ask"]
+      .map((h, i) => `<section data-slide="${i + 1}"><h1>${h}</h1></section>`)
+      .join("")
+    const receipt = toolText(
+      await call(app, token, "publish", {
+        title: "Hand deck",
+        filename: "deck.html",
+        content: `<!doctype html><html><head><meta name="viewport" content="width=device-width"></head><body><div class="deck">${sections}</div></body></html>`,
+      }),
+    )
+    expect(receipt).toContain("5 slide elements but never posts the derive-deck message")
+    expect(receipt).toContain("derive://decks/template")
+  })
+
   it("read: format:text on a deck artifact returns flat visible text, not raw markup (regression)", async () => {
     const { app, token } = appWithGrant(dir, "readdeck", "openid derive:read derive:publish")
     // A deck fragment: the protocol name AND real slide elements. Both are required to
@@ -3769,6 +3960,18 @@ describe("the show view (MCP App) protocol", () => {
     hidden = false
     disabled = false
     onclick: (() => void) | null = null
+    onsubmit: ((e?: { preventDefault(): void }) => void) | null = null
+    onkeydown: ((e: { key: string; preventDefault(): void }) => void) | null = null
+    onpointerdown: ((e: { button: number; preventDefault(): void }) => void) | null = null
+    value = ""
+    className = ""
+    children: El[] = []
+    top = 0
+    classes = new Set<string>()
+    classList = {
+      toggle: (c: string, on: boolean) => (on ? this.classes.add(c) : this.classes.delete(c)),
+      remove: (c: string) => this.classes.delete(c),
+    }
     style: Record<string, string> = {}
     attrs: Record<string, string> = {}
     src = ""
@@ -3788,37 +3991,79 @@ describe("the show view (MCP App) protocol", () => {
     fire(t: string) {
       for (const f of this.on[t] ?? []) f()
     }
-    appendChild() {}
+    appendChild(c: El) {
+      this.children.push(c)
+    }
+    focused = false
+    focus() {
+      this.focused = true
+    }
+    replaceChildren() {
+      this.children = []
+    }
+    getBoundingClientRect() {
+      return { top: this.top, height: 20 }
+    }
+    // A rail row's control by its accessible name.
+    button(label: string) {
+      for (const c of this.children) {
+        if (c.attrs["aria-label"] === label) return c
+        const inner = c.children.find((b) => b.attrs["aria-label"] === label)
+        if (inner) return inner
+      }
+      return undefined
+    }
     remove() {
       this.removed = true
     }
   }
 
   const boot = () => {
-    const ids = "app title ver latest deck prev pos next full open stage note foot".split(" ")
+    const ids = [
+      ..."app title ver latest deck prev pos next edit dirty discard save full open stage note foot".split(
+        " ",
+      ),
+      ..."ask ask-text ask-options ask-form ask-input ask-done".split(" "),
+      ..."slides rail rail-list rail-add rail-changes rail-undo rail-discard rail-save".split(" "),
+    ]
     const els = new Map(ids.map((id) => [id, new El()]))
     const frames: El[] = []
+    const made: El[] = []
     const toHost: Msg[] = []
     const parent = { postMessage: (m: Msg) => toHost.push(m) }
     const listeners: ((e: { data: unknown; source: unknown }) => void)[] = []
+    const pointer = new Map<string, (e: { clientY: number }) => void>()
     const window = {
       parent,
       addEventListener: (t: string, f: (e: { data: unknown; source: unknown }) => void) => {
         if (t === "message") listeners.push(f)
+        else pointer.set(t, f as unknown as (e: { clientY: number }) => void)
       },
+      removeEventListener: (t: string) => pointer.delete(t),
     }
     const document = {
       getElementById: (id: string) => els.get(id),
       documentElement: { dataset: {} as Record<string, string>, style: { setProperty() {} } },
-      createElement: () => {
+      createElement: (tag: string) => {
         const f = new El()
-        frames.push(f)
+        if (tag === "iframe") frames.push(f)
+        else made.push(f)
         return f
       },
     }
     runInContext(
       ARTIFACT_VIEW_SCRIPT,
-      createContext({ window, document, setTimeout, clearTimeout, Date, Promise, Map, JSON }),
+      createContext({
+        window,
+        document,
+        location: { origin: "https://view.test" },
+        setTimeout,
+        clearTimeout,
+        Date,
+        Promise,
+        Map,
+        JSON,
+      }),
     )
     const deliver = (data: unknown, source: unknown) => {
       for (const f of listeners) f({ data, source })
@@ -3831,10 +4076,12 @@ describe("the show view (MCP App) protocol", () => {
     return {
       els,
       frames,
+      made,
       toHost,
       fromHost,
       reply,
       fromFrame: (data: unknown, f = frames.at(-1)) => deliver(data, f?.contentWindow),
+      pointer: (t: string, clientY: number) => pointer.get(t)?.({ clientY }),
       sent: (method: string) => toHost.filter((m) => m.method === method),
     }
   }
@@ -4080,6 +4327,391 @@ describe("the show view (MCP App) protocol", () => {
     bare.fromHost({ method: "ui/notifications/tool-result", params: stale })
     expect(bare.frames).toHaveLength(0)
     expect(bare.els.get("note")?.textContent).toContain("expired")
+  })
+
+  it("edits in place: opens the editor, saves quote edits through publish, shows the new version", async () => {
+    const v = boot()
+    v.reply("ui/initialize", { hostCapabilities: caps, hostContext: {} })
+    await settle()
+    const editableResult = (
+      over: Record<string, unknown> = {},
+      url = "https://sandbox.test/raw/abc12345/v/2/t/tok/",
+    ) => {
+      const r = result()
+      r.structuredContent = {
+        ...r.structuredContent,
+        can_edit: true,
+        ...over,
+      } as typeof r.structuredContent
+      r._meta["derive/frame"].url = url
+      return r
+    }
+    v.fromHost({ method: "ui/notifications/tool-result", params: editableResult() })
+    expect(v.els.get("edit")?.hidden).toBe(false)
+    expect(v.els.get("save")?.hidden).toBe(true)
+
+    // Edit asks the server for an editable frame, naming the view's own origin.
+    v.els.get("edit")?.onclick?.()
+    expect(v.sent("tools/call").at(-1)?.params).toEqual({
+      name: "show",
+      arguments: { short_id: "abc12345", version: 2, editor: "https://view.test" },
+    })
+    v.reply(
+      "tools/call",
+      editableResult({ editing: true }, "https://sandbox.test/raw/abc12345/v/2/t/edit/"),
+    )
+    await settle()
+    const editor = v.frames.at(-1)
+    expect(editor?.src).toBe("https://sandbox.test/raw/abc12345/v/2/t/edit/")
+    editor?.fire("load")
+    expect(editor?.sent).toContainEqual({ source: "derive-host", type: "edit-mode", on: true })
+    expect(v.els.get("save")?.hidden).toBe(false)
+    expect(v.els.get("save")?.disabled).toBe(true)
+
+    // Typing makes it dirty; Save collects the frame's quote edits and publishes them
+    // against the version the person was editing.
+    v.fromFrame({ source: "derive", type: "edit-state", dirty: 1 })
+    expect(v.els.get("dirty")?.hidden).toBe(false)
+    expect(v.els.get("save")?.disabled).toBe(false)
+    v.els.get("save")?.onclick?.()
+    const ask = editor?.sent.find((m) => m.type === "edit-collect") as { nonce: number }
+    const edit = {
+      quote: { exact: "Why live views", prefix: "", suffix: "" },
+      new_text: "Why live cards",
+    }
+    v.fromFrame({
+      source: "derive",
+      type: "edit-edits",
+      nonce: ask.nonce,
+      edits: [edit],
+      uncaptured: 0,
+    })
+    await settle()
+    expect(v.sent("tools/call").at(-1)?.params).toEqual({
+      name: "publish",
+      arguments: {
+        short_id: "abc12345",
+        base_version: 2,
+        edits: [edit],
+        message: "Edited in the conversation",
+      },
+    })
+    v.reply("tools/call", {
+      content: [{ type: "text", text: JSON.stringify({ published: true, version: 3 }) }],
+    })
+    await settle()
+    // Then it shows the saved version, out of edit mode.
+    expect(v.sent("tools/call").at(-1)?.params).toEqual({
+      name: "show",
+      arguments: { short_id: "abc12345", version: 3 },
+    })
+    const v3 = editableResult(
+      { version: 3, current_version: 3 },
+      "https://sandbox.test/raw/abc12345/v/3/t/tok/",
+    )
+    v.reply("tools/call", v3)
+    await settle()
+    expect(v.frames.at(-1)?.src).toBe("https://sandbox.test/raw/abc12345/v/3/t/tok/")
+    expect(v.els.get("save")?.hidden).toBe(true)
+    expect(v.els.get("foot")?.textContent).toBe("Saved as v3.")
+    const told = (
+      v.sent("ui/update-model-context").at(-1)?.params as { content: { text: string }[] }
+    ).content[0]?.text
+    expect(told).toContain("saved v3")
+  })
+
+  it("keeps the draft when a save is refused, and never publishes what it can't capture", async () => {
+    const v = boot()
+    v.reply("ui/initialize", { hostCapabilities: caps, hostContext: {} })
+    await settle()
+    const r = result()
+    r.structuredContent = {
+      ...r.structuredContent,
+      can_edit: true,
+      editing: true,
+    } as typeof r.structuredContent
+    v.fromHost({ method: "ui/notifications/tool-result", params: r })
+    v.fromFrame({ source: "derive", type: "edit-state", dirty: 1 })
+    const framesBefore = v.frames.length
+    const collectNext = () =>
+      v.frames
+        .at(-1)
+        ?.sent.filter((m) => m.type === "edit-collect")
+        .at(-1) as { nonce: number }
+
+    // A change that crosses structure: say so, publish nothing.
+    v.els.get("save")?.onclick?.()
+    v.fromFrame({
+      source: "derive",
+      type: "edit-edits",
+      nonce: collectNext().nonce,
+      edits: [],
+      uncaptured: 1,
+    })
+    await settle()
+    expect(
+      v.sent("tools/call").filter((m) => (m.params as { name: string }).name === "publish"),
+    ).toHaveLength(0)
+    expect(v.els.get("foot")?.textContent).toContain("can't be saved here")
+
+    // Someone published in between: the refusal keeps the draft on screen.
+    v.els.get("save")?.onclick?.()
+    v.fromFrame({
+      source: "derive",
+      type: "edit-edits",
+      nonce: collectNext().nonce,
+      edits: [{ quote: { exact: "a", prefix: "", suffix: "" }, new_text: "b" }],
+      uncaptured: 0,
+    })
+    await settle()
+    v.reply("tools/call", {
+      isError: true,
+      content: [{ type: "text", text: "The artifact has moved to v3 since base_version 2." }],
+    })
+    await settle()
+    expect(v.frames).toHaveLength(framesBefore)
+    expect(v.els.get("save")?.hidden).toBe(false)
+    expect(v.els.get("foot")?.textContent).toContain("changed since you opened it")
+
+    // Without a real origin (a sandbox with none), editing is not offered at all.
+    const blind = boot()
+    blind.reply("ui/initialize", { hostCapabilities: {}, hostContext: {} })
+    await settle()
+    blind.fromHost({
+      method: "ui/notifications/tool-result",
+      params: { ...result(), structuredContent: { ...result().structuredContent, can_edit: true } },
+    })
+    expect(blind.els.get("edit")?.hidden).toBe(true)
+  })
+
+  it("asks a question on the thread, saves the answer there first, then hands the turn back", async () => {
+    const v = boot()
+    v.reply("ui/initialize", {
+      hostCapabilities: { ...caps, message: { text: {} } },
+      hostContext: {},
+    })
+    await settle()
+    const asked = result()
+    asked.structuredContent = {
+      ...asked.structuredContent,
+      question: {
+        thread: "c_q1",
+        text: "Who is this page for? <b>not markup</b>",
+        options: ["Product teams", "Agencies"],
+        answer: null,
+        can_answer: true,
+      },
+    } as typeof asked.structuredContent
+    v.fromHost({ method: "ui/notifications/tool-result", params: asked })
+    expect(v.els.get("ask")?.hidden).toBe(false)
+    // Comment text is set as text, never parsed.
+    expect(v.els.get("ask-text")?.textContent).toBe("Who is this page for? <b>not markup</b>")
+    expect(v.made.map((b) => b.textContent)).toEqual(["Product teams", "Agencies"])
+
+    v.made[0]?.onclick?.()
+    // It looks first: a replayed card may show a question that was answered since.
+    expect(v.sent("tools/call").at(-1)?.params).toEqual({
+      name: "show",
+      arguments: { thread: "c_q1", short_id: "abc12345", version: 2 },
+    })
+    v.reply("tools/call", asked)
+    await settle()
+    expect(v.sent("tools/call").at(-1)?.params).toEqual({
+      name: "comment",
+      arguments: { short_id: "abc12345", reply_to: "c_q1", body: "Product teams" },
+    })
+    // The answer is not handed to the chat until the thread has it.
+    expect(v.sent("ui/message")).toHaveLength(0)
+    v.reply("tools/call", { content: [{ type: "text", text: "{}" }] })
+    await settle()
+    expect(v.sent("ui/message").at(-1)?.params).toMatchObject({
+      role: "user",
+      content: { type: "text" },
+    })
+    expect(
+      (v.sent("ui/message").at(-1)?.params as { content: { text: string } }).content.text,
+    ).toContain(": Product teams")
+    expect(v.els.get("ask-done")?.textContent).toBe("Answered: Product teams")
+    expect(v.made.every((b) => b.disabled)).toBe(true)
+
+    // A free-text answer goes the same way; a failed save keeps the question open.
+    const w = boot()
+    w.reply("ui/initialize", { hostCapabilities: caps, hostContext: {} })
+    await settle()
+    w.fromHost({ method: "ui/notifications/tool-result", params: asked })
+    const input = w.els.get("ask-input")
+    if (input) input.value = "  Both, honestly  "
+    w.els.get("ask-form")?.onsubmit?.({ preventDefault() {} })
+    w.reply("tools/call", asked)
+    await settle()
+    expect(
+      (w.sent("tools/call").at(-1)?.params as { arguments: { body: string } }).arguments.body,
+    ).toBe("Both, honestly")
+    w.reply("tools/call", { isError: true, content: [{ type: "text", text: "nope" }] })
+    await settle()
+    expect(w.els.get("ask-form")?.hidden).toBe(false)
+    expect(w.sent("ui/message")).toHaveLength(0)
+
+    // A host that doesn't advertise ui/message still gets the turn back: it is tried anyway.
+    const quiet = boot()
+    quiet.reply("ui/initialize", { hostCapabilities: caps, hostContext: {} })
+    await settle()
+    quiet.fromHost({ method: "ui/notifications/tool-result", params: asked })
+    quiet.made[0]?.onclick?.()
+    quiet.reply("tools/call", asked)
+    await settle()
+    quiet.reply("tools/call", { content: [{ type: "text", text: "{}" }] })
+    await settle()
+    expect(quiet.sent("ui/message")).toHaveLength(1)
+
+    // Someone answered since this card was rendered: show that, and don't reply twice.
+    const x = boot()
+    x.reply("ui/initialize", { hostCapabilities: caps, hostContext: {} })
+    await settle()
+    x.fromHost({ method: "ui/notifications/tool-result", params: asked })
+    x.made[1]?.onclick?.()
+    const answered = structuredClone(asked)
+    ;(answered.structuredContent as unknown as { question: { answer: string } }).question.answer =
+      "Agencies"
+    x.reply("tools/call", answered)
+    await settle()
+    expect(x.sent("tools/call").map((m) => (m.params as { name: string }).name)).toEqual(["show"])
+    expect(x.els.get("ask-done")?.textContent).toBe("Answered: Agencies")
+  })
+
+  // The slide rail stages changes like the web organizer and saves them as one slide_ops batch.
+  // These are the web organizer's compileSlideOps cases, made through the rail's own controls.
+  const deckCard = async () => {
+    const v = boot()
+    v.reply("ui/initialize", { hostCapabilities: caps, hostContext: { displayMode: "fullscreen" } })
+    await settle()
+    const r = result()
+    r.structuredContent = { ...r.structuredContent, can_edit: true } as typeof r.structuredContent
+    v.fromHost({ method: "ui/notifications/tool-result", params: r })
+    await settle()
+    v.fromFrame({ source: "derive-deck", type: "state", i: 0, total: 3 })
+    v.fromFrame({
+      source: "derive",
+      type: "deck-outline",
+      slides: ["a", "b", "c"].map((id) => ({ id, label: id.toUpperCase() })),
+    })
+    const list = v.els.get("rail-list") as El
+    const labels = () =>
+      list.children.map(
+        (li) => li.children.find((b) => b.className.startsWith("pick"))?.textContent,
+      )
+    const key = (row: number, k: string) =>
+      list
+        .button(`Move slide ${row} (drag, or arrow keys)`)
+        ?.onkeydown?.({ key: k, preventDefault() {} })
+    const save = () => {
+      v.els.get("rail-save")?.onclick?.()
+      return (v.sent("tools/call").at(-1)?.params as { arguments: { slide_ops: unknown } })
+        .arguments
+    }
+    return { v, list, labels, key, save }
+  }
+
+  it("opens the slide rail in fullscreen and jumps to a slide", async () => {
+    const { v, list, labels } = await deckCard()
+    expect(v.els.get("rail")?.hidden).toBe(false)
+    expect(v.els.get("slides")?.textContent).toBe("Hide slides")
+    expect(labels()).toEqual(["1  A", "2  B", "3  C"])
+    list.button("Slide 3: C")?.onclick?.()
+    expect(v.frames[0]?.sent.at(-1)).toEqual({
+      source: "derive-host",
+      type: "deck",
+      action: "goto",
+      n: 2,
+    })
+    // Nothing staged: no save bar, and text editing stays available.
+    expect(v.els.get("rail-save")?.hidden).toBe(true)
+    expect(v.els.get("edit")?.hidden).toBe(false)
+    v.els.get("slides")?.onclick?.()
+    expect(v.els.get("rail")?.hidden).toBe(true)
+  })
+
+  it("removes and reorders against the same starting positions", async () => {
+    const { v, list, labels, key, save } = await deckCard()
+    list.button("Delete slide 2")?.onclick?.()
+    key(2, "ArrowUp")
+    expect(labels()).toEqual(["1  C", "2  A"])
+    // The rows are rebuilt; the grip that moved keeps the keyboard, at its new place.
+    expect(list.children[0]?.children[0]?.focused).toBe(true)
+    expect(v.els.get("rail-changes")?.textContent).toBe("2 changes")
+    // Staged slide changes and text editing don't mix.
+    expect(v.els.get("edit")?.hidden).toBe(true)
+    expect(save()).toEqual({
+      short_id: "abc12345",
+      base_version: 2,
+      slide_ops: [
+        { op: "delete", at: 2 },
+        { op: "move", from: 2, to: 1 },
+      ],
+      message: "Rearranged slides in the conversation",
+    })
+    v.reply("tools/call", { content: [{ type: "text", text: JSON.stringify({ version: 3 }) }] })
+    await settle()
+    // Then it shows the saved version, on the slide that was selected (A, now second).
+    expect(v.sent("tools/call").at(-1)?.params).toEqual({
+      name: "show",
+      arguments: { short_id: "abc12345", version: 3, slide: 2 },
+    })
+  })
+
+  it("materializes a new blank slide before moving it into place", async () => {
+    const { v, labels, save } = await deckCard()
+    v.els.get("rail-add")?.onclick?.()
+    expect(labels()).toEqual(["1  A", "2  New slide", "3  B", "4  C"])
+    expect(save().slide_ops).toEqual([
+      { op: "insert", at: 4 },
+      { op: "move", from: 4, to: 2 },
+    ])
+  })
+
+  it("keeps a copy even when its source is deleted, and undoes step by step", async () => {
+    const { v, list, labels, key, save } = await deckCard()
+    list.button("Duplicate slide 2")?.onclick?.()
+    list.button("Delete slide 2")?.onclick?.()
+    key(2, "ArrowUp")
+    expect(labels()).toEqual(["1  Copy of B", "2  A", "3  C"])
+    v.els.get("rail-undo")?.onclick?.()
+    expect(labels()).toEqual(["1  A", "2  Copy of B", "3  C"])
+    key(2, "ArrowUp")
+    // Dragging a grip is the same move: row 3 dropped above row 2.
+    const rows = list.children
+    for (const [k, r] of rows.entries()) r.top = k * 20
+    list
+      .button("Move slide 3 (drag, or arrow keys)")
+      ?.onpointerdown?.({ button: 0, preventDefault() {} })
+    v.pointer("pointermove", 25)
+    expect(rows[1]?.classes.has("drop")).toBe(true)
+    v.pointer("pointerup", 25)
+    expect(labels()).toEqual(["1  Copy of B", "2  C", "3  A"])
+    v.els.get("rail-undo")?.onclick?.()
+    expect(save().slide_ops).toEqual([
+      { op: "duplicate", at: 2 },
+      { op: "delete", at: 2 },
+      { op: "move", from: 2, to: 1 },
+    ])
+    // A refused save (someone published in between) keeps the arrangement on screen.
+    // Some hosts deliver a refused tool call as a rejected request, not an error result.
+    v.fromHost({
+      id: v.sent("tools/call").at(-1)?.id,
+      error: {
+        code: -32000,
+        message:
+          '"abc12345" moved to v3 while you were editing (you read v2). Re-read, then retry.',
+      },
+    })
+    await settle()
+    expect(v.els.get("foot")?.textContent).toBe(
+      "The deck changed since you opened it, so nothing was saved. Discard, then Show v3.",
+    )
+    expect(v.els.get("latest")?.hidden).toBe(false)
+    expect(labels()).toEqual(["1  Copy of B", "2  A", "3  C"])
+    v.els.get("rail-discard")?.onclick?.()
+    expect(labels()).toEqual(["1  A", "2  B", "3  C"])
   })
 
   it("serves the script inside the view document", () => {
