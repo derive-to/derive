@@ -4,7 +4,7 @@ import { PageShell } from "@/components/shared/page-shell"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Badge } from "@/components/ui/badge"
 import { useAuth } from "@/ctx"
-import { modelLibraryQuery, reportsQuery } from "@/lib/queries"
+import { billingQuery, modelLibraryQuery, reportsQuery } from "@/lib/queries"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { AccountsSection } from "./accounts-section"
 import { AppearanceSection } from "./appearance-section"
@@ -31,7 +31,7 @@ const route = getRouteApi("/settings/$section")
 
 // THE section list — the nav rail's groups and the document-title map are both
 // derived from it, so an id or label can't drift between the two. Order here is
-// display order. Two sections are data-gated at render (`models`, `reports`); they
+// display order. Billing, models, and reports are data-gated at render; they
 // stay in this list unconditionally so a hidden tab keeps its title.
 //
 // Groups are SCOPE, and only scope: You (your account, follows you across
@@ -81,6 +81,7 @@ export function Settings() {
   // than one model to choose between — which, once an operator can ADD models, hid the only
   // surface that could ever create the second one.
   const { data: library } = useQuery({ ...modelLibraryQuery(), enabled: !!me })
+  const { data: billing } = useQuery({ ...billingQuery(), enabled: !!me })
   const isOperator = !!library
   const { section } = route.useParams()
   const nav = route.useNavigate()
@@ -96,9 +97,15 @@ export function Settings() {
 
   // The data-gated sections: Models appears only once the operator-only query confirms that the
   // caller runs this deployment; Reports is surfaced only while open
-  // ones exist. Everything else is always shown.
+  // ones exist. Billing appears only when explicitly enabled by the deployment.
   const shown = (id: string) =>
-    id === "models" ? isOperator : id === "reports" ? hasReports : true
+    id === "billing"
+      ? billing?.enabled === true
+      : id === "models"
+        ? isOperator
+        : id === "reports"
+          ? hasReports
+          : true
 
   const groups: SettingsNavGroup[] = GROUP_ORDER.map((label) => ({
     label,

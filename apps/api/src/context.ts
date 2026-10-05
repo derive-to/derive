@@ -83,7 +83,7 @@ import { enqueueForEvent, type WebhookEvent } from "./webhooks"
  *  hands the human the direct upgrade link. Lives here (not lib/http.ts) because the
  *  MCP surfaces need it too, and both import from context.ts already. No em dashes
  *  (support copy convention). */
-const billingBlockCopy = (baseUrl: string) => {
+const billingBlockCopy = (baseUrl: string, enabled: boolean) => {
   const billingUrl = `${baseUrl.replace(/\/$/, "")}/settings/billing`
   return {
     needs_team: {
@@ -107,8 +107,10 @@ const billingBlockCopy = (baseUrl: string) => {
       message: `A workspace subdomain is a Team-plan feature, so shared pages stay on the default address until this workspace upgrades. An owner can upgrade at ${billingUrl}.`,
     },
     storage: {
-      code: "storage_exceeded",
-      message: `This workspace is out of storage, so this save was refused. Upgrade for more at ${billingUrl}.`,
+      code: enabled ? "storage_exceeded" : "storage_capacity_exceeded",
+      message: enabled
+        ? `This workspace is out of storage, so this save was refused. Upgrade for more at ${billingUrl}.`
+        : "This workspace is out of storage, so this save was refused. Contact the instance operator to increase its storage capacity.",
     },
   } as const
 }
@@ -283,6 +285,8 @@ export interface AppDeps {
    */
   maxArtifacts?: number
   maxBytes?: number
+  /** Explicit opt-in for billing. Off by default, even with stored subscriptions. */
+  billingEnabled?: boolean
   /** Stripe access, injected so tests fake it and self-host omits it. */
   billing?: BillingDriver
   /** ISO instant when free-tier boundaries enforce; unset = beta grace. */
@@ -410,7 +414,10 @@ export interface AppDeps {
  */
 export type AppContext = ReturnType<typeof buildContext>
 
-export function buildContext(deps: AppDeps) {
+export function buildContext(input: AppDeps) {
+  // Strip the driver at the shared boundary so every route and seat-sync path
+  // respects the switch, including callers that inject a driver directly.
+  const deps = input.billingEnabled === true ? input : { ...input, billing: undefined }
   const { meta, blobs } = deps
   const { sourceText, rememberSource } = sourceTexts(blobs)
   // Realtime relay + presence. In-process by default (self-host stays zero-config);
@@ -953,7 +960,7 @@ export function buildContext(deps: AppDeps) {
   // Built once per app, from this deployment's baseUrl — every blocked-billing surface
   // (HTTP bodies, MCP tool errors, storage refusals, @Derive apologies) reads from
   // this single record so the copy and the link can never drift between them.
-  const blockCopy = billingBlockCopy(deps.baseUrl)
+  const blockCopy = billingBlockCopy(deps.baseUrl, deps.billingEnabled === true)
   // The whole billing decision from local state only: the webhook-fed subscription row
   // plus a live editor-seat count. Never calls Stripe — resolveBillingState is pure and
   // DB-free, this just feeds it. `pre` skips the fetches when the caller already
@@ -962,6 +969,13 @@ export function buildContext(deps: AppDeps) {
     orgId: string,
     pre?: { sub: SubscriptionRecord | null; seatCount: number },
   ): Promise<BillingState> => {
+    if (!deps.billingEnabled)
+      return resolveBillingState({
+        subscription: null,
+        seatCount: 0,
+        now: new Date(),
+        fallbackMaxBytes: deps.maxBytes,
+      })
     const [sub, seats] = pre
       ? [pre.sub, pre.seatCount]
       : await Promise.all([meta.getSubscription(orgId), billableSeatCount(meta, orgId)])
@@ -1000,6 +1014,7 @@ export function buildContext(deps: AppDeps) {
     role: Role,
     existingRole?: Role | null,
   ): Promise<Response | null> => {
+    if (!deps.billingEnabled) return null
     if (!isBillableRole(role) || (existingRole && isBillableRole(existingRole))) return null
     const [sub, seats] = await Promise.all([
       meta.getSubscription(orgId),

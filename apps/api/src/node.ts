@@ -226,7 +226,9 @@ const emailEnabled = !!(cfg.resendApiKey && cfg.emailFrom)
 // Hoisted above makeAuth (rather than built inline down at createApp's `billing:` dep,
 // where it lived before) so the account-deletion hook below and the billing routes
 // share the exact same driver instance instead of constructing two.
-const billing = makeBillingDriver(cfg.stripeSecretKey, cfg.stripeWebhookSecret)
+const billing = cfg.billingEnabled
+  ? makeBillingDriver(cfg.stripeSecretKey, cfg.stripeWebhookSecret)
+  : undefined
 const auth = makeAuth(authDb, cfg.baseUrl, authSecret, {
   signupAllowed: signupPolicy(cfg.signupMode, authSecret, meta),
   usernameTaken: (u) => meta.getUserByUsername(u).then(Boolean),
@@ -557,6 +559,7 @@ const app = createApp({
   maxArtifacts: cfg.maxArtifacts,
   maxBytes: cfg.maxBytes,
   billing,
+  billingEnabled: cfg.billingEnabled,
   billingEnforceAt: cfg.billingEnforceAt,
   // Per-actor write rate limits (per minute); unset = built-in defaults.
   publishRate: cfg.publishRate,

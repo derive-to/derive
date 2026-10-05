@@ -193,7 +193,8 @@ export interface Env {
   SLACK_CLIENT_ID?: string
   SLACK_CLIENT_SECRET?: string
   SLACK_SIGNING_SECRET?: string
-  // Stripe (billing rail). STRIPE_SECRET_KEY set ⇒ the billing routes light up;
+  // Stripe (billing rail). Explicit opt-in plus a key enables billing.
+  DERIVE_BILLING_ENABLED?: string
   // STRIPE_WEBHOOK_SECRET is required for /v1/billing/webhook to accept events.
   STRIPE_SECRET_KEY?: string
   STRIPE_WEBHOOK_SECRET?: string
@@ -307,7 +308,10 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
       // Hoisted above makeAuth (rather than built inline down at createApp's `billing:`
       // dep, where it lived before) so the account-deletion hook below and the billing
       // routes share the exact same driver instance instead of constructing two.
-      const billing = makeBillingDriver(env.STRIPE_SECRET_KEY, env.STRIPE_WEBHOOK_SECRET)
+      const billing =
+        env.DERIVE_BILLING_ENABLED === "true"
+          ? makeBillingDriver(env.STRIPE_SECRET_KEY, env.STRIPE_WEBHOOK_SECRET)
+          : undefined
       const auth = makeAuth(authDb, baseUrl, secret, {
         signupAllowed: signupPolicy(parseSignupMode(env.DERIVE_SIGNUP_MODE), secret, meta),
         usernameTaken: (u) => meta.getUserByUsername(u).then(Boolean),
@@ -385,6 +389,7 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         encryptionKey: secret,
         slack: slackFromEnv(env),
         billing,
+        billingEnabled: env.DERIVE_BILLING_ENABLED === "true",
         billingEnforceAt: env.DERIVE_BILLING_ENFORCE_AT,
         superAdmins: superAdminsFromEnv(env),
         defaultOrgId: "default",

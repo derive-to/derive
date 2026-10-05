@@ -102,10 +102,10 @@ const isBillableRole = (r: Role): boolean => r === "editor" || r === "owner"
  *  return false. Unsubscribed or unknown billing (`undefined`) always returns
  *  false — that path keeps its existing free-tier note + server gate. */
 export function needsSeatConfirm(
-  billing: { subscribed: boolean } | undefined,
+  billing: { enabled: boolean; subscribed: boolean } | undefined,
   newRole: Role,
   existingRole?: Role | null,
 ): boolean {
   const existingIsBillable = existingRole != null && isBillableRole(existingRole)
-  return !!billing?.subscribed && isBillableRole(newRole) && !existingIsBillable
+  return !!billing?.enabled && billing.subscribed && isBillableRole(newRole) && !existingIsBillable
 }

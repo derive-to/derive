@@ -396,6 +396,7 @@ export type SlackSubscription = components["schemas"]["SlackSubscription"]
  *  surface, not the documented public API), matching this file's other
  *  hand-declared shapes (e.g. DraftClaimPreview above). */
 export type BillingInfo = {
+  enabled: boolean
   tier: "free" | "team" | "business"
   status: string | null
   interval: "month" | "year" | null

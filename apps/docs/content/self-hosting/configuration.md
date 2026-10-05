@@ -206,9 +206,10 @@ specialized deployments, but are intentionally not covered by the built-in backu
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | (none) | Google sign-in |
 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_PROVIDER_ID` | (none) | Enterprise SSO |
 | `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` / `SLACK_SIGNING_SECRET` | (none) | Optional Slack app (all three required). Create it from **Settings → Integrations → Set up Slack app**; connect from Settings → Integrations. Bot tokens are encrypted at rest with `DERIVE_AUTH_SECRET`. |
-| `STRIPE_SECRET_KEY` | (none) | Stripe secret key (`sk_test_`/`sk_live_`). Unset disables the billing routes entirely; self-host never needs it. |
+| `DERIVE_BILLING_ENABLED` | `false` | Explicit opt-in for billing UI, Stripe operations, and paid-plan restrictions. Off even with Stripe keys or stored subscriptions; operator storage and abuse limits still apply. |
+| `STRIPE_SECRET_KEY` | (none) | Stripe secret key (`sk_test_`/`sk_live_`). Required for Stripe operations when billing is enabled; self-host never needs it. |
 | `STRIPE_WEBHOOK_SECRET` | (none) | Signing secret for the Stripe webhook endpoint (`whsec_...`). Required for `/v1/billing/webhook` to accept events. |
-| `DERIVE_BILLING_ENFORCE_AT` | (none) | ISO instant after which free-tier boundaries enforce (3 editor seats, 1 GB). Unset means beta grace: nothing is blocked and white-label stays free. |
+| `DERIVE_BILLING_ENFORCE_AT` | (none) | ISO instant after which free-tier boundaries enforce (3 editor seats, 1 GB), when billing is enabled. Unset means beta grace: nothing is blocked and white-label stays free. |
 
 ### Preview screenshots (optional)
 
@@ -679,7 +680,7 @@ scripts already tolerate it.
 
 ### Billing (Stripe)
 
-This is the tier the hosted product runs, so it is the one that turns billing on. Set
+Billing is off by default. To turn it on, set `DERIVE_BILLING_ENABLED=true` and configure
 `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` as Worker secrets, same as the other
 secrets above:
 
@@ -688,8 +689,14 @@ wrangler secret put STRIPE_SECRET_KEY
 wrangler secret put STRIPE_WEBHOOK_SECRET
 ```
 
-Leave both unset on a self-hosted deploy: the billing routes are disabled entirely
-without `STRIPE_SECRET_KEY`, so nothing here is required outside the hosted tier.
+Leave billing disabled on a self-hosted deploy. While disabled, billing navigation and
+upgrade prompts are hidden, checkout and portal requests are rejected, webhooks are not
+processed, seat changes do not reach Stripe, and stored subscriptions do not restrict
+access. Operator storage and abuse limits still apply.
+
+This switch does not pause recurring subscriptions already running in Stripe. Handle
+those separately in Stripe before switching billing off. Subscription records are
+retained; reconcile them with Stripe before enabling billing again.
 
 1. **Seed the prices once per Stripe account** (test or live), idempotent to re-run:
    ```bash

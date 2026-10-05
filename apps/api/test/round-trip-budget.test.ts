@@ -592,12 +592,12 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     expect(editCalls).not.toContain("getVersion")
     expect(editCalls).not.toContain("getVersionData")
     expect(editCalls).not.toContain("getByShortId")
-    expect(editCalls.filter((call) => call === "getSubscription")).toHaveLength(1)
-    expect(editCalls.filter((call) => call === "listMemberships")).toHaveLength(1)
-    // 12 → 11 when the push's service check stopped listing the workspace's contexts: a
-    // person's own session (an OAuth grant) is never a service, so it reads nothing for it.
+    // Billing is off by default: publishing does not fetch a subscription or seat count.
+    expect(editCalls).not.toContain("getSubscription")
+    expect(editCalls).not.toContain("listMemberships")
+    // A person's own session is never a service, so its check reads no contexts.
     expect(editCalls).not.toContain("listContexts")
-    expect(editCalls).toHaveLength(11)
+    expect(editCalls).toHaveLength(9)
     // A cold edit reads the previous immutable source once. This fixture already read the
     // active version, so the source cache may make it zero. The new version must never be
     // read back for search, facts, anchors, mentions, or the completion summary.

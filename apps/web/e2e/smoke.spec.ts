@@ -210,7 +210,11 @@ test("brandprint panel flips from the hand-off brief to live when the build land
 })
 
 test("settings save and theme switch persist", async ({ owner }) => {
-  await owner.goto("/settings")
+  // Billing is disabled by default, including direct bookmarks to its old page.
+  await owner.goto("/settings/billing")
+  await expect(owner.getByTestId("settings-tab-profile")).toHaveAttribute("aria-current", "page")
+  await expect(owner.getByTestId("settings-tab-billing")).toHaveCount(0)
+  await expect(owner.getByTestId("billing-plan-card-team")).toHaveCount(0)
   await owner.getByTestId("settings-tab-general").click()
   await owner.getByTestId("workspace-name").fill("Acme HQ")
   await owner.getByTestId("workspace-save").click()
@@ -535,6 +539,7 @@ test("a join link brings a new person into the workspace as a Creator", async ({
 }) => {
   await owner.goto("/settings/members")
   await owner.getByTestId("join-link-create").click()
+  await expect(owner.getByTestId("join-link-seat-line")).toHaveCount(0)
   const url = await owner.getByTestId("join-link-url").inputValue()
   expect(url).toContain("/join/dkj_")
   await expect(owner.getByTestId("join-link-meta")).toContainText("0 joined")
