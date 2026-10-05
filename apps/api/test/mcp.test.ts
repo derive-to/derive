@@ -4524,7 +4524,9 @@ describe("the show view (MCP App) protocol", () => {
     })
     const list = v.els.get("rail-list") as El
     const labels = () =>
-      list.children.map((li) => li.children.find((b) => b.className === "pick")?.textContent)
+      list.children.map(
+        (li) => li.children.find((b) => b.className.startsWith("pick"))?.textContent,
+      )
     const key = (row: number, k: string) =>
       list
         .button(`Move slide ${row} (drag, or arrow keys)`)
@@ -4585,7 +4587,7 @@ describe("the show view (MCP App) protocol", () => {
   it("materializes a new blank slide before moving it into place", async () => {
     const { v, labels, save } = await deckCard()
     v.els.get("rail-add")?.onclick?.()
-    expect(labels()).toEqual(["1  A", "2  New slide · new", "3  B", "4  C"])
+    expect(labels()).toEqual(["1  A", "2  New slide", "3  B", "4  C"])
     expect(save().slide_ops).toEqual([
       { op: "insert", at: 4 },
       { op: "move", from: 4, to: 2 },
@@ -4597,9 +4599,9 @@ describe("the show view (MCP App) protocol", () => {
     list.button("Duplicate slide 2")?.onclick?.()
     list.button("Delete slide 2")?.onclick?.()
     key(2, "ArrowUp")
-    expect(labels()).toEqual(["1  B (copy) · new", "2  A", "3  C"])
+    expect(labels()).toEqual(["1  Copy of B", "2  A", "3  C"])
     v.els.get("rail-undo")?.onclick?.()
-    expect(labels()).toEqual(["1  A", "2  B (copy) · new", "3  C"])
+    expect(labels()).toEqual(["1  A", "2  Copy of B", "3  C"])
     key(2, "ArrowUp")
     // Dragging a grip is the same move: row 3 dropped above row 2.
     const rows = list.children
@@ -4610,7 +4612,7 @@ describe("the show view (MCP App) protocol", () => {
     v.pointer("pointermove", 25)
     expect(rows[1]?.classes.has("drop")).toBe(true)
     v.pointer("pointerup", 25)
-    expect(labels()).toEqual(["1  B (copy) · new", "2  C", "3  A"])
+    expect(labels()).toEqual(["1  Copy of B", "2  C", "3  A"])
     v.els.get("rail-undo")?.onclick?.()
     expect(save().slide_ops).toEqual([
       { op: "duplicate", at: 2 },
@@ -4624,7 +4626,7 @@ describe("the show view (MCP App) protocol", () => {
     })
     await settle()
     expect(v.els.get("foot")?.textContent).toContain("The deck changed since you opened it")
-    expect(labels()).toEqual(["1  B (copy) · new", "2  A", "3  C"])
+    expect(labels()).toEqual(["1  Copy of B", "2  A", "3  C"])
     v.els.get("rail-discard")?.onclick?.()
     expect(labels()).toEqual(["1  A", "2  B", "3  C"])
   })

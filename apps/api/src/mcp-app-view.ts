@@ -455,7 +455,7 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
   const duplicateSlide = (i) =>
     orgDo(() => {
       const src = org.slides[i]
-      const copy = { key: "copy:" + ++orgSeq, label: src.label + " (copy)", kind: "duplicate", sourceKey: src.key, created: 1000 + orgSeq }
+      const copy = { key: "copy:" + ++orgSeq, label: "Copy of " + src.label, kind: "duplicate", sourceKey: src.key, created: 1000 + orgSeq }
       org.slides.splice(i + 1, 0, copy)
       org.sel = copy.key
     })
@@ -593,7 +593,7 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
         li.appendChild(grip)
       }
       li.appendChild(
-        control("Slide " + (i + 1) + ": " + s.label, i + 1 + "  " + s.label + (s.kind === "base" ? "" : " · new"), () => selectSlide(i), "pick"),
+        control("Slide " + (i + 1) + ": " + s.label, i + 1 + "  " + s.label, () => selectSlide(i), s.kind === "base" ? "pick" : "pick fresh"),
       )
       if (can) {
         li.appendChild(control("Duplicate slide " + (i + 1), "⧉", () => duplicateSlide(i), "act"))
@@ -856,15 +856,15 @@ button.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 #main{flex:1;display:flex;min-height:0}
 #stage{flex:1;position:relative;background:var(--chip);min-height:0;min-width:0}
 #rail{width:min(240px,40%);flex:none;display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line);background:var(--bg)}
-#rail-list{list-style:none;margin:0;padding:6px;overflow:auto;flex:1;display:grid;gap:2px;align-content:start}
-#rail-list li{display:flex;align-items:center;gap:2px;border-radius:6px;padding:1px 2px}
+#rail-list{list-style:none;margin:0;padding:6px;overflow:auto;flex:1;display:grid;grid-template-columns:minmax(0,1fr);gap:2px;align-content:start}
+#rail-list li{display:flex;align-items:center;gap:2px;border-radius:6px;padding:1px 2px;min-width:0}#rail-list li:hover{background:var(--chip)}
 #rail-list li.sel{background:var(--chip)}
 #rail-list li.drop{box-shadow:inset 0 2px 0 var(--ink)}#rail-list li.drop-end{box-shadow:inset 0 -2px 0 var(--ink)}
 #rail-list button{border:0;padding:3px 5px}
-#rail-list .pick{flex:1;min-width:0;text-align:left;overflow:hidden;text-overflow:ellipsis}
-#rail-list .grip{cursor:grab;color:var(--muted);touch-action:none}
-#rail-list .act{color:var(--muted)}
-#rail-foot{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px;border-top:1px solid var(--line)}
+#rail-list .pick{flex:1 1 auto;min-width:0;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:none}
+#rail-list .fresh{font-style:italic}#rail-list .grip{flex:none;cursor:grab;color:var(--muted);touch-action:none;background:none}
+#rail-list .act{flex:none;color:var(--muted);background:none}#rail-list .act:hover{color:var(--ink)}
+#rail-foot{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px;border-top:1px solid var(--line)}#rail-save{margin-left:auto}
 iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#fff}
 #note{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);padding:24px;text-align:center;background:var(--chip)}
 footer{padding:5px 10px;color:var(--muted);border-top:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
