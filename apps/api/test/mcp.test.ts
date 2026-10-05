@@ -1435,6 +1435,14 @@ describe("remote MCP endpoint (/mcp)", () => {
       toolIsError(await call(app, token, "show", { short_id: shortId, thread: plain.thread })),
     ).toBe(true)
 
+    // An old version still shows, and says which is newer, so a model stops pinning it.
+    await call(app, token, "publish", { short_id: made.short_id, content: "# Next, again\n" })
+    const old = toolText(await call(app, token, "show", { short_id: made.short_id, version: 1 }))
+    expect(old).toContain("v2 is newer; omit version to show the latest.")
+    expect(toolText(await call(app, token, "show", { short_id: made.short_id }))).not.toContain(
+      "is newer",
+    )
+
     // Showing reaches no further than reading: another workspace gets nothing.
     const other = appWithGrant(dir, "show-other", "openid derive:read")
     expect(toolIsError(await call(other.app, other.token, "show", { short_id: shortId }))).toBe(
@@ -3873,7 +3881,17 @@ describe("the show view (MCP App) protocol", () => {
     disabled = false
     onclick: (() => void) | null = null
     onsubmit: ((e?: { preventDefault(): void }) => void) | null = null
+    onkeydown: ((e: { key: string; preventDefault(): void }) => void) | null = null
+    onpointerdown: ((e: { button: number; preventDefault(): void }) => void) | null = null
     value = ""
+    className = ""
+    children: El[] = []
+    top = 0
+    classes = new Set<string>()
+    classList = {
+      toggle: (c: string, on: boolean) => (on ? this.classes.add(c) : this.classes.delete(c)),
+      remove: (c: string) => this.classes.delete(c),
+    }
     style: Record<string, string> = {}
     attrs: Record<string, string> = {}
     src = ""
@@ -3893,7 +3911,24 @@ describe("the show view (MCP App) protocol", () => {
     fire(t: string) {
       for (const f of this.on[t] ?? []) f()
     }
-    appendChild() {}
+    appendChild(c: El) {
+      this.children.push(c)
+    }
+    replaceChildren() {
+      this.children = []
+    }
+    getBoundingClientRect() {
+      return { top: this.top, height: 20 }
+    }
+    // A rail row's control by its accessible name.
+    button(label: string) {
+      for (const c of this.children) {
+        if (c.attrs["aria-label"] === label) return c
+        const inner = c.children.find((b) => b.attrs["aria-label"] === label)
+        if (inner) return inner
+      }
+      return undefined
+    }
     remove() {
       this.removed = true
     }
@@ -3905,6 +3940,7 @@ describe("the show view (MCP App) protocol", () => {
         " ",
       ),
       ..."ask ask-text ask-options ask-form ask-input ask-done".split(" "),
+      ..."slides rail rail-list rail-add rail-changes rail-undo rail-discard rail-save".split(" "),
     ]
     const els = new Map(ids.map((id) => [id, new El()]))
     const frames: El[] = []
@@ -3912,11 +3948,14 @@ describe("the show view (MCP App) protocol", () => {
     const toHost: Msg[] = []
     const parent = { postMessage: (m: Msg) => toHost.push(m) }
     const listeners: ((e: { data: unknown; source: unknown }) => void)[] = []
+    const pointer = new Map<string, (e: { clientY: number }) => void>()
     const window = {
       parent,
       addEventListener: (t: string, f: (e: { data: unknown; source: unknown }) => void) => {
         if (t === "message") listeners.push(f)
+        else pointer.set(t, f as unknown as (e: { clientY: number }) => void)
       },
+      removeEventListener: (t: string) => pointer.delete(t),
     }
     const document = {
       getElementById: (id: string) => els.get(id),
@@ -3958,6 +3997,7 @@ describe("the show view (MCP App) protocol", () => {
       fromHost,
       reply,
       fromFrame: (data: unknown, f = frames.at(-1)) => deliver(data, f?.contentWindow),
+      pointer: (t: string, clientY: number) => pointer.get(t)?.({ clientY }),
       sent: (method: string) => toHost.filter((m) => m.method === method),
     }
   }
@@ -4453,6 +4493,115 @@ describe("the show view (MCP App) protocol", () => {
     await settle()
     expect(x.sent("tools/call").map((m) => (m.params as { name: string }).name)).toEqual(["show"])
     expect(x.els.get("ask-done")?.textContent).toBe("Answered: Agencies")
+  })
+
+  // The slide rail stages changes like the web organizer and saves them as one slide_ops batch.
+  // These are the web organizer's compileSlideOps cases, made through the rail's own controls.
+  const deckCard = async () => {
+    const v = boot()
+    v.reply("ui/initialize", { hostCapabilities: caps, hostContext: { displayMode: "fullscreen" } })
+    await settle()
+    const r = result()
+    r.structuredContent = { ...r.structuredContent, can_edit: true } as typeof r.structuredContent
+    v.fromHost({ method: "ui/notifications/tool-result", params: r })
+    await settle()
+    v.fromFrame({ source: "derive-deck", type: "state", i: 0, total: 3 })
+    v.fromFrame({
+      source: "derive",
+      type: "deck-outline",
+      slides: ["a", "b", "c"].map((id) => ({ id, label: id.toUpperCase() })),
+    })
+    const list = v.els.get("rail-list") as El
+    const labels = () => list.children.map((li) => li.children.find((b) => b.className === "pick")?.textContent)
+    const key = (row: number, k: string) =>
+      list.button(`Move slide ${row} (drag, or arrow keys)`)?.onkeydown?.({ key: k, preventDefault() {} })
+    const save = () => {
+      v.els.get("rail-save")?.onclick?.()
+      return (v.sent("tools/call").at(-1)?.params as { arguments: { slide_ops: unknown } }).arguments
+    }
+    return { v, list, labels, key, save }
+  }
+
+  it("opens the slide rail in fullscreen and jumps to a slide", async () => {
+    const { v, list, labels } = await deckCard()
+    expect(v.els.get("rail")?.hidden).toBe(false)
+    expect(v.els.get("slides")?.textContent).toBe("Hide slides")
+    expect(labels()).toEqual(["1  A", "2  B", "3  C"])
+    list.button("Slide 3: C")?.onclick?.()
+    expect(v.frames[0]?.sent.at(-1)).toEqual({ source: "derive-host", type: "deck", action: "goto", n: 2 })
+    // Nothing staged: no save bar, and text editing stays available.
+    expect(v.els.get("rail-save")?.hidden).toBe(true)
+    expect(v.els.get("edit")?.hidden).toBe(false)
+    v.els.get("slides")?.onclick?.()
+    expect(v.els.get("rail")?.hidden).toBe(true)
+  })
+
+  it("removes and reorders against the same starting positions", async () => {
+    const { v, list, labels, key, save } = await deckCard()
+    list.button("Delete slide 2")?.onclick?.()
+    key(2, "ArrowUp")
+    expect(labels()).toEqual(["1  C", "2  A"])
+    expect(v.els.get("rail-changes")?.textContent).toBe("2 changes")
+    // Staged slide changes and text editing don't mix.
+    expect(v.els.get("edit")?.hidden).toBe(true)
+    expect(save()).toEqual({
+      short_id: "abc12345",
+      base_version: 2,
+      slide_ops: [
+        { op: "delete", at: 2 },
+        { op: "move", from: 2, to: 1 },
+      ],
+      message: "Rearranged slides in the conversation",
+    })
+    v.reply("tools/call", { content: [{ type: "text", text: JSON.stringify({ version: 3 }) }] })
+    await settle()
+    // Then it shows the saved version, on the slide that was selected (A, now second).
+    expect(v.sent("tools/call").at(-1)?.params).toEqual({
+      name: "show",
+      arguments: { short_id: "abc12345", version: 3, slide: 2 },
+    })
+  })
+
+  it("materializes a new blank slide before moving it into place", async () => {
+    const { v, labels, save } = await deckCard()
+    v.els.get("rail-add")?.onclick?.()
+    expect(labels()).toEqual(["1  A", "2  New slide · new", "3  B", "4  C"])
+    expect(save().slide_ops).toEqual([
+      { op: "insert", at: 4 },
+      { op: "move", from: 4, to: 2 },
+    ])
+  })
+
+  it("keeps a copy even when its source is deleted, and undoes step by step", async () => {
+    const { v, list, labels, key, save } = await deckCard()
+    list.button("Duplicate slide 2")?.onclick?.()
+    list.button("Delete slide 2")?.onclick?.()
+    key(2, "ArrowUp")
+    expect(labels()).toEqual(["1  B (copy) · new", "2  A", "3  C"])
+    v.els.get("rail-undo")?.onclick?.()
+    expect(labels()).toEqual(["1  A", "2  B (copy) · new", "3  C"])
+    key(2, "ArrowUp")
+    // Dragging a grip is the same move: row 3 dropped above row 2.
+    const rows = list.children
+    rows.forEach((r, k) => (r.top = k * 20))
+    list.button("Move slide 3 (drag, or arrow keys)")?.onpointerdown?.({ button: 0, preventDefault() {} })
+    v.pointer("pointermove", 25)
+    expect(rows[1]?.classes.has("drop")).toBe(true)
+    v.pointer("pointerup", 25)
+    expect(labels()).toEqual(["1  B (copy) · new", "2  C", "3  A"])
+    v.els.get("rail-undo")?.onclick?.()
+    expect(save().slide_ops).toEqual([
+      { op: "duplicate", at: 2 },
+      { op: "delete", at: 2 },
+      { op: "move", from: 2, to: 1 },
+    ])
+    // A refused save (someone published in between) keeps the arrangement on screen.
+    v.reply("tools/call", { isError: true, content: [{ type: "text", text: "base_version 2 is stale; current is 3" }] })
+    await settle()
+    expect(v.els.get("foot")?.textContent).toContain("The deck changed since you opened it")
+    expect(labels()).toEqual(["1  B (copy) · new", "2  A", "3  C"])
+    v.els.get("rail-discard")?.onclick?.()
+    expect(labels()).toEqual(["1  A", "2  B", "3  C"])
   })
 
   it("serves the script inside the view document", () => {

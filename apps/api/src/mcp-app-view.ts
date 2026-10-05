@@ -63,6 +63,11 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
   let picked = ""
   let startSlide = 0
   let jumpedTo = -1
+  // The slide rail: the deck organizer, as the web app's (deck-organizer.tsx). A session
+  // stages slides locally and saves them as one atomic batch of slide_ops.
+  let org = null
+  let railOpen = false
+  let orgSeq = 0
   // Whether this card may speak for the person. A fresh show may; a card the host replays
   // when the conversation reopens may not until someone uses it, or every old card in the
   // thread would claim to be what the person is looking at.
@@ -97,8 +102,10 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
     if (ctx.theme === "light" || ctx.theme === "dark") root.dataset.theme = ctx.theme
     if (Array.isArray(ctx.availableDisplayModes)) host.displayModes = ctx.availableDisplayModes
     if (ctx.displayMode) {
+      if (ctx.displayMode !== root.dataset.mode) railOpen = ctx.displayMode === "fullscreen"
       root.dataset.mode = ctx.displayMode
       $("full").textContent = ctx.displayMode === "fullscreen" ? "Exit" : "Expand"
+      renderRail()
     }
     const max = ctx.containerDimensions && ctx.containerDimensions.maxHeight
     $("app").style.height =
@@ -192,7 +199,7 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
   const editable = () =>
     !!art && art.can_edit === true && !!host.serverTools && typeof location !== "undefined" && /^https?:\/\//.test(location.origin)
   const editUi = () => {
-    $("edit").hidden = !editable() || editing
+    $("edit").hidden = !editable() || editing || orgDirty()
     // Showing another version mid-edit would throw the draft away.
     if (editing) $("latest").hidden = true
     $("save").hidden = !editing
@@ -358,6 +365,258 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
       .catch(() => say("Answer saved. Continue in the chat."))
   }
 
+  // Mirrors compileSlideOps in apps/web/src/pages/artifact/deck-organizer.tsx (the web app may
+  // not import it from here, nor this view from there); the view tests run its cases. New slides
+  // are materialized first, removals second, then the survivors are put in order.
+  const compileSlideOps = (initial, slides, trash) => {
+    const ops = []
+    const current = initial.map((s) => s.key)
+    const wanted = new Set(slides.map((s) => s.key))
+    const all = new Map(slides.concat(trash).map((s) => [s.key, s]))
+    const ensure = (key) => {
+      if (current.includes(key)) return
+      const slide = all.get(key)
+      if (!slide) throw new Error("A slide in this arrangement can no longer be found.")
+      if (slide.kind === "insert") {
+        ops.push({ op: "insert", at: current.length + 1 })
+        current.push(key)
+        return
+      }
+      if (slide.kind === "duplicate" && slide.sourceKey) {
+        ensure(slide.sourceKey)
+        const sourceAt = current.indexOf(slide.sourceKey)
+        ops.push({ op: "duplicate", at: sourceAt + 1 })
+        current.splice(sourceAt + 1, 0, key)
+        return
+      }
+      throw new Error("A copied slide lost its source.")
+    }
+    for (const slide of slides.slice().sort((a, b) => a.created - b.created)) ensure(slide.key)
+    for (let i = current.length - 1; i >= 0; i--)
+      if (!wanted.has(current[i])) {
+        ops.push({ op: "delete", at: i + 1 })
+        current.splice(i, 1)
+      }
+    for (let to = 0; to < slides.length; to++) {
+      const from = current.indexOf(slides[to].key)
+      if (from === to) continue
+      ops.push({ op: "move", from: from + 1, to: to + 1 })
+      const moved = current.splice(from, 1)[0]
+      current.splice(to, 0, moved)
+    }
+    return ops
+  }
+  const baseSlides = () => {
+    const n = Math.min(500, Math.max(outline.length, deck ? deck.total : 0))
+    const out = []
+    for (let i = 0; i < n; i++)
+      out.push({
+        key: "base:" + (outline[i] ? outline[i].id : i),
+        label: (outline[i] && outline[i].label) || "Slide " + (i + 1),
+        kind: "base",
+        created: i,
+        pos: i,
+      })
+    return out
+  }
+  const orgOps = () => (org ? compileSlideOps(org.base, org.slides, org.trash) : [])
+  const orgDirty = () => {
+    try {
+      return orgOps().length > 0
+    } catch {
+      return true
+    }
+  }
+  const orgReset = () => {
+    const base = baseSlides()
+    const on = base[deck ? deck.i : 0]
+    org = { base, slides: base.slice(), trash: [], history: [], sel: on ? on.key : null }
+  }
+  // Follow the deck while nothing is staged; staged work is never overwritten by it.
+  const orgSync = () => {
+    if (!org || !orgDirty()) orgReset()
+    renderRail()
+  }
+  const orgDo = (change) => {
+    org.history.push({ slides: org.slides.slice(), trash: org.trash.slice(), sel: org.sel })
+    change()
+    speak = true
+    renderRail()
+  }
+  const moveSlide = (from, to) => {
+    if (from === to || to < 0 || to >= org.slides.length) return
+    orgDo(() => {
+      const moved = org.slides.splice(from, 1)[0]
+      org.slides.splice(to, 0, moved)
+    })
+  }
+  const duplicateSlide = (i) =>
+    orgDo(() => {
+      const src = org.slides[i]
+      const copy = { key: "copy:" + ++orgSeq, label: src.label + " (copy)", kind: "duplicate", sourceKey: src.key, created: 1000 + orgSeq }
+      org.slides.splice(i + 1, 0, copy)
+      org.sel = copy.key
+    })
+  const removeSlide = (i) => {
+    if (org.slides.length <= 1) return say("A deck keeps at least one slide.")
+    orgDo(() => {
+      const gone = org.slides.splice(i, 1)[0]
+      org.trash.push(gone)
+      if (org.sel === gone.key) org.sel = (org.slides[Math.min(i, org.slides.length - 1)] || {}).key || null
+    })
+  }
+  const addSlide = () =>
+    orgDo(() => {
+      const at = org.slides.findIndex((s) => s.key === org.sel) + 1
+      const fresh = { key: "new:" + ++orgSeq, label: "New slide", kind: "insert", created: 1000 + orgSeq }
+      org.slides.splice(at > 0 ? at : org.slides.length, 0, fresh)
+      org.sel = fresh.key
+    })
+  const undoOrg = () => {
+    const prev = org && org.history.pop()
+    if (!prev) return
+    org.slides = prev.slides
+    org.trash = prev.trash
+    org.sel = prev.sel
+    renderRail()
+  }
+  const selectSlide = (i) => {
+    const s = org.slides[i]
+    if (!s) return
+    org.sel = s.key
+    speak = true
+    // The frame still shows the saved deck, so only a saved slide can be shown, at its saved place.
+    if (s.kind === "base" && deck && frame && frame.contentWindow)
+      frame.contentWindow.postMessage({ source: "derive-host", type: deck.sniffed ? "deck-drive" : "deck", action: "goto", n: s.pos }, "*")
+    renderRail()
+  }
+  const saveOrg = async () => {
+    let ops
+    try {
+      ops = orgOps()
+    } catch (e) {
+      return say(String((e && e.message) || "This arrangement can't be saved."))
+    }
+    if (!ops.length || saving || !art) return
+    saving = true
+    renderRail()
+    say("Saving the slides…")
+    const at = org.slides.findIndex((s) => s.key === org.sel)
+    try {
+      const args = { short_id: art.short_id, base_version: art.version, slide_ops: ops, message: "Rearranged slides in the conversation" }
+      if (art.workspace) args.workspace = art.workspace
+      const r = await request("tools/call", { name: "publish", arguments: args })
+      const text = (r && r.content && r.content[0] && r.content[0].text) || ""
+      if (!r || r.isError)
+        return say(/moved|base_version|version/i.test(text) ? "The deck changed since you opened it. Discard, then show the latest version." : text.slice(0, 200) || "Save failed.")
+      let saved = null
+      try {
+        saved = JSON.parse(text)
+      } catch {}
+      const v = saved && typeof saved.version === "number" ? saved.version : art.version + 1
+      savedNote = "They rearranged the slides here and saved v" + v + "."
+      org = null
+      const show = { short_id: art.short_id, version: v }
+      if (at > 0) show.slide = at + 1
+      if (art.workspace) show.workspace = art.workspace
+      render(await callShow(show))
+      say("Saved as v" + v + ".")
+    } catch {
+      say("Save failed. Try again.")
+    } finally {
+      saving = false
+      renderRail()
+    }
+  }
+  // Drag by the grip: pointer events, so it works the same in every host's iframe.
+  const startDrag = (e, from) => {
+    if (e.button !== undefined && e.button !== 0) return
+    const rows = Array.from($("rail-list").children || [])
+    let to = from
+    const onMove = (ev) => {
+      // The gap the pointer is over, among the rows as they stand; then where that leaves it.
+      let gap = rows.findIndex((r) => {
+        const b = r.getBoundingClientRect()
+        return ev.clientY < b.top + b.height / 2
+      })
+      if (gap < 0) gap = rows.length
+      to = gap > from ? gap - 1 : gap
+      rows.forEach((r, k) => {
+        r.classList.toggle("drop", to !== from && k === gap)
+        r.classList.toggle("drop-end", to !== from && gap === rows.length && k === rows.length - 1)
+      })
+    }
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove)
+      window.removeEventListener("pointerup", onUp)
+      rows.forEach((r) => {
+        r.classList.remove("drop")
+        r.classList.remove("drop-end")
+      })
+      moveSlide(from, to)
+    }
+    window.addEventListener("pointermove", onMove)
+    window.addEventListener("pointerup", onUp)
+    if (e.preventDefault) e.preventDefault()
+  }
+  const control = (label, text, onclick, cls) => {
+    const b = document.createElement("button")
+    b.textContent = text
+    b.setAttribute("aria-label", label)
+    b.setAttribute("type", "button")
+    if (cls) b.className = cls
+    b.onclick = onclick
+    return b
+  }
+  const renderRail = () => {
+    const isDeck = !!deck && deck.total > 0
+    $("slides").hidden = !isDeck
+    $("slides").textContent = railOpen ? "Hide slides" : "Slides"
+    $("rail").hidden = !(isDeck && railOpen)
+    if (!isDeck || !org) return size()
+    const list = $("rail-list")
+    list.replaceChildren()
+    const can = editable() && !editing && !saving
+    org.slides.forEach((s, i) => {
+      const li = document.createElement("li")
+      li.className = s.key === org.sel ? "sel" : ""
+      if (can) {
+        const grip = control("Move slide " + (i + 1) + " (drag, or arrow keys)", "⠿", null, "grip")
+        grip.onpointerdown = (e) => startDrag(e, i)
+        grip.onkeydown = (e) => {
+          if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return
+          if (e.preventDefault) e.preventDefault()
+          moveSlide(i, e.key === "ArrowUp" ? i - 1 : i + 1)
+        }
+        li.appendChild(grip)
+      }
+      li.appendChild(
+        control("Slide " + (i + 1) + ": " + s.label, i + 1 + "  " + s.label + (s.kind === "base" ? "" : " · new"), () => selectSlide(i), "pick"),
+      )
+      if (can) {
+        li.appendChild(control("Duplicate slide " + (i + 1), "⧉", () => duplicateSlide(i), "act"))
+        // Nothing is gone until Save, and Undo brings it back, so no confirmation.
+        li.appendChild(control("Delete slide " + (i + 1), "✕", () => removeSlide(i), "act"))
+      }
+      list.appendChild(li)
+    })
+    let n = 0
+    try {
+      n = orgOps().length
+    } catch {
+      n = 1
+    }
+    $("rail-add").hidden = !can
+    $("rail-changes").hidden = !n
+    $("rail-changes").textContent = n + (n === 1 ? " change" : " changes")
+    $("rail-undo").hidden = !org.history.length
+    $("rail-discard").hidden = !n
+    $("rail-save").hidden = !n
+    $("rail-save").disabled = saving
+    editUi()
+    size()
+  }
+
   const mountFrame = (url, title) => {
     if (frame) frame.remove()
     clearTimeout(loadTimer)
@@ -365,6 +624,7 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
     outline = []
     picked = ""
     lastCtx = ""
+    org = null
     showDeck()
     note("Loading the artifact…")
     frame = document.createElement("iframe")
@@ -403,6 +663,7 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
     editing = sc.editing === true
     dirty = 0
     editUi()
+    renderRail()
     renderQuestion(sc.question)
     if (editing) say("Editing: click any text to change it. Save makes a new version.")
     // A host replays a saved result when the conversation reopens, long after its token
@@ -478,6 +739,7 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
         frame.contentWindow.postMessage({ source: "derive-host", type: deck.sniffed ? "deck-drive" : "deck", action: "goto", n }, "*")
     }
     showDeck()
+    if (d.source === "derive-deck" || d.type === "deck-sniff" || d.type === "deck-outline") orgSync()
     tellModel()
   }
 
@@ -518,6 +780,18 @@ export const ARTIFACT_VIEW_SCRIPT = String.raw`(() => {
   $("edit").onclick = startEdit
   $("save").onclick = () => void save()
   $("discard").onclick = discard
+  $("slides").onclick = () => {
+    railOpen = !railOpen
+    if (railOpen && !org) orgReset()
+    renderRail()
+  }
+  $("rail-add").onclick = addSlide
+  $("rail-undo").onclick = undoOrg
+  $("rail-discard").onclick = () => {
+    orgReset()
+    renderRail()
+  }
+  $("rail-save").onclick = () => void saveOrg()
   $("ask-form").onsubmit = (e) => {
     if (e && e.preventDefault) e.preventDefault()
     void answer($("ask-input").value)
@@ -577,7 +851,18 @@ button.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 #ask-form{display:flex;gap:6px}#ask-input{flex:1;min-width:0;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:4px 8px}
 [hidden]{display:none!important}
 #deck{display:flex;align-items:center;gap:4px}
-#stage{flex:1;position:relative;background:var(--chip);min-height:0}
+#main{flex:1;display:flex;min-height:0}
+#stage{flex:1;position:relative;background:var(--chip);min-height:0;min-width:0}
+#rail{width:min(240px,40%);flex:none;display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line);background:var(--bg)}
+#rail-list{list-style:none;margin:0;padding:6px;overflow:auto;flex:1;display:grid;gap:2px;align-content:start}
+#rail-list li{display:flex;align-items:center;gap:2px;border-radius:6px;padding:1px 2px}
+#rail-list li.sel{background:var(--chip)}
+#rail-list li.drop{box-shadow:inset 0 2px 0 var(--ink)}#rail-list li.drop-end{box-shadow:inset 0 -2px 0 var(--ink)}
+#rail-list button{border:0;padding:3px 5px}
+#rail-list .pick{flex:1;min-width:0;text-align:left;overflow:hidden;text-overflow:ellipsis}
+#rail-list .grip{cursor:grab;color:var(--muted);touch-action:none}
+#rail-list .act{color:var(--muted)}
+#rail-foot{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px;border-top:1px solid var(--line)}
 iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#fff}
 #note{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);padding:24px;text-align:center;background:var(--chip)}
 footer{padding:5px 10px;color:var(--muted);border-top:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -586,12 +871,14 @@ footer{padding:5px 10px;color:var(--muted);border-top:1px solid var(--line);whit
 <body><div id="app">
 <header><span id="title">Derive</span><span id="ver" class="chip" hidden></span><button id="latest" hidden></button>
 <span id="deck" hidden><button id="prev" aria-label="Previous slide">&#8249;</button><span id="pos" class="chip" aria-live="polite">1 / 1</span><button id="next" aria-label="Next slide">&#8250;</button></span>
-<button id="edit" hidden>Edit</button><span id="dirty" class="chip" hidden>Unsaved</span><button id="discard" hidden>Discard</button><button id="save" class="primary" hidden>Save</button>
+<button id="slides" hidden>Slides</button><button id="edit" hidden>Edit</button><span id="dirty" class="chip" hidden>Unsaved</span><button id="discard" hidden>Discard</button><button id="save" class="primary" hidden>Save</button>
 <button id="full" hidden>Expand</button><button id="open" hidden>Open</button></header>
 <section id="ask" hidden aria-label="Question"><p id="ask-text"></p><div id="ask-options"></div>
 <form id="ask-form"><input id="ask-input" maxlength="2000" placeholder="Or answer in your own words" aria-label="Your answer"><button type="submit" class="primary">Send</button></form>
 <p id="ask-done" hidden></p></section>
-<div id="stage"><div id="note" role="status">Loading the artifact&hellip;</div></div>
+<div id="main"><aside id="rail" hidden aria-label="Slides"><ol id="rail-list"></ol>
+<div id="rail-foot"><button id="rail-add" type="button">Add slide</button><span id="rail-changes" class="chip" hidden></span><button id="rail-undo" type="button" hidden>Undo</button><button id="rail-discard" type="button" hidden>Discard</button><button id="rail-save" type="button" class="primary" hidden>Save</button></div></aside>
+<div id="stage"><div id="note" role="status">Loading the artifact&hellip;</div></div></div>
 <footer id="foot" aria-live="polite">Select a slide or some text, then ask about it.</footer>
 </div>
 <script>${ARTIFACT_VIEW_SCRIPT}</script></body></html>`

@@ -105,6 +105,10 @@ export function registerShowTool(tc: ToolContext): void {
             type: "text" as const,
             text:
               `Showing "${title}" v${n}${slide ? ` at slide ${slide}` : ""} to the person: ${url}. When they select a slide or section, it arrives as context; act on that version.` +
+              // A model that carried a version number over from earlier keeps re-showing it.
+              (n < a.current_version
+                ? ` v${a.current_version} is newer; omit version to show the latest.`
+                : "") +
               (question
                 ? question.answer
                   ? ` The question in thread ${thread} is already answered: ${JSON.stringify(question.answer)}.`
