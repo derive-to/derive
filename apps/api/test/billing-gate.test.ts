@@ -18,7 +18,7 @@ const seedSub = async (meta: MetaStore, status: string, orgId = "default") =>
 describe("billing gate", () => {
   it("beta: 4 editor seats publish freely", async () => {
     const { app } = makeAuthedApp("bg_beta", FOUR, "editor", {
-      deps: { billing: new FakeBilling() },
+      deps: { billingEnabled: true, billing: new FakeBilling() },
     })
     const r = await publishAs(app, "hello", {}, as("u2@x.test"))
     expect(r.status).toBe(201)
@@ -26,7 +26,7 @@ describe("billing gate", () => {
 
   it("enforced + 4 seats + no sub: publish 402 billing_required", async () => {
     const { app } = makeAuthedApp("bg_needs", FOUR, "editor", {
-      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
+      deps: { billingEnabled: true, billing: new FakeBilling(), billingEnforceAt: PAST },
     })
     const r = await publishAs(app, "hello", {}, as("u2@x.test"))
     expect(r.status).toBe(402)
@@ -35,14 +35,14 @@ describe("billing gate", () => {
 
   it("enforced + 3 seats: publish stays open", async () => {
     const { app } = makeAuthedApp("bg_three", THREE, "editor", {
-      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
+      deps: { billingEnabled: true, billing: new FakeBilling(), billingEnforceAt: PAST },
     })
     expect((await publishAs(app, "hello", {}, as("u2@x.test"))).status).toBe(201)
   })
 
   it("enforced + active sub: 4 seats publish", async () => {
     const { app, meta } = makeAuthedApp("bg_active", FOUR, "editor", {
-      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
+      deps: { billingEnabled: true, billing: new FakeBilling(), billingEnforceAt: PAST },
     })
     await seedSub(meta, "active")
     expect((await publishAs(app, "hello", {}, as("u2@x.test"))).status).toBe(201)
@@ -50,7 +50,7 @@ describe("billing gate", () => {
 
   it("enforced + canceled sub: read-only lapse, even at 3 seats", async () => {
     const { app, meta } = makeAuthedApp("bg_lapsed", THREE, "editor", {
-      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
+      deps: { billingEnabled: true, billing: new FakeBilling(), billingEnforceAt: PAST },
     })
     await seedSub(meta, "canceled")
     const r = await publishAs(app, "hello", {}, as("u2@x.test"))
@@ -60,7 +60,7 @@ describe("billing gate", () => {
 
   it("an active Team sub lifts a tiny fallback storage cap to the tier cap", async () => {
     const { app, meta } = makeAuthedApp("bg_cap", THREE, "editor", {
-      deps: { billing: new FakeBilling(), maxBytes: 10 },
+      deps: { billingEnabled: true, billing: new FakeBilling(), maxBytes: 10 },
     })
     const blocked = await publishAs(app, "x".repeat(100), {}, as("u2@x.test"))
     expect(blocked.status).toBe(413)
@@ -76,7 +76,7 @@ describe("billing gate", () => {
 
   it("blocked workspace: version restore refuses with 402 billing_lapsed", async () => {
     const { app, meta } = makeAuthedApp("bg_restore", THREE, "editor", {
-      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
+      deps: { billingEnabled: true, billing: new FakeBilling(), billingEnforceAt: PAST },
     })
     const pub = await publishAs(app, "v1", {}, as("u1@x.test"))
     expect(pub.status).toBe(201)
@@ -95,7 +95,11 @@ describe("billing gate", () => {
   it("white-label honors entitlement: beta yes, enforced-free no, subscribed yes", async () => {
     const boot = async (name: string, enforce: boolean) => {
       const made = makeAuthedApp(name, THREE, "editor", {
-        deps: { billing: new FakeBilling(), ...(enforce ? { billingEnforceAt: PAST } : {}) },
+        deps: {
+          billingEnabled: true,
+          billing: new FakeBilling(),
+          ...(enforce ? { billingEnforceAt: PAST } : {}),
+        },
       })
       const settings = await made.meta.getOrgSettings("default")
       await made.meta.setOrgSettings("default", { ...settings, whiteLabel: true })
@@ -129,7 +133,7 @@ describe("billing gate", () => {
     // Enforced, no subscription: turning white-label ON is refused with the upgrade code
     // and nothing is persisted; turning it OFF is always fine.
     const made = makeAuthedApp("wl_patch_enforced", THREE, "editor", {
-      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
+      deps: { billingEnabled: true, billing: new FakeBilling(), billingEnforceAt: PAST },
     })
     const refused = await patch(made.app, true)
     expect(refused.status).toBe(402)
@@ -143,7 +147,7 @@ describe("billing gate", () => {
     expect((await paid.json()).whiteLabel).toBe(true)
     // Beta grace: the toggle works without a subscription.
     const beta = makeAuthedApp("wl_patch_beta", THREE, "editor", {
-      deps: { billing: new FakeBilling() },
+      deps: { billingEnabled: true, billing: new FakeBilling() },
     })
     expect((await patch(beta.app, true)).status).toBe(200)
   })
@@ -153,6 +157,7 @@ describe("billing gate", () => {
       deps: {
         subdomainBase: "bg-claim.test",
         encryptionKey: "0".repeat(64),
+        billingEnabled: true,
         billing: new FakeBilling(),
         billingEnforceAt: PAST,
       },
@@ -241,7 +246,7 @@ describe("MCP brandprint scaffold billing gate", () => {
       mcpDir,
       "bp-billing",
       "openid derive:read derive:publish derive:manage",
-      { billing: new FakeBilling(), billingEnforceAt: PAST },
+      { billingEnabled: true, billing: new FakeBilling(), billingEnforceAt: PAST },
     )
     // Learn the grantor's default (personal) workspace, then lapse it — same
     // sequencing as the restore/claim tests above (block AFTER setup, isolating the
@@ -271,7 +276,12 @@ describe("billing gate: workspace subdomain", () => {
 
   it("enforced-free claim 402s, subscribed claims, beta grace claims", async () => {
     const made = makeAuthedApp("bg_subdomain_enforced", THREE, "editor", {
-      deps: { billing: new FakeBilling(), billingEnforceAt: PAST, subdomainBase: "derived.app" },
+      deps: {
+        billingEnabled: true,
+        billing: new FakeBilling(),
+        billingEnforceAt: PAST,
+        subdomainBase: "derived.app",
+      },
     })
     const refused = await claim(made.app, "gated-free")
     expect(refused.status).toBe(402)
@@ -281,7 +291,7 @@ describe("billing gate: workspace subdomain", () => {
     expect((await claim(made.app, "gated-free")).status).toBe(201)
 
     const beta = makeAuthedApp("bg_subdomain_beta", THREE, "editor", {
-      deps: { billing: new FakeBilling(), subdomainBase: "derived.app" },
+      deps: { billingEnabled: true, billing: new FakeBilling(), subdomainBase: "derived.app" },
     })
     expect((await claim(beta.app, "gated-beta")).status).toBe(201)
   })

@@ -43,6 +43,7 @@ function UpgradeDialogBody({ reason }: { reason: PaywallReason }) {
     .map((m) => m.name ?? (m.handle ? `@${m.handle}` : "a workspace admin"))
 
   const checkout = useCheckout()
+  if (!billing?.enabled) return null
 
   const heads: Record<PaywallReason, { title: string; sub: string }> = {
     seats: {

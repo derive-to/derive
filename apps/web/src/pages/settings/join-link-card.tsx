@@ -113,7 +113,7 @@ export function JoinLinkCard() {
             </span>
           }
           below={
-            link.role === "editor" ? (
+            link.role === "editor" && billing?.enabled ? (
               <p data-testid="join-link-seat-line" className="text-sm text-muted-foreground">
                 {joinLinkActiveLine(billing)}
               </p>

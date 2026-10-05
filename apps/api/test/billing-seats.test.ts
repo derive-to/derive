@@ -20,7 +20,7 @@ describe("seat sync", () => {
     // seedSqliteTeam/makePgStore's own team-seed shape.
     const { app, meta } = makeAuthedApp("ss_add", [u(1), u(2), u(3), u(4)], "editor", {
       isolated: true,
-      deps: { billing: fake },
+      deps: { billingEnabled: true, billing: fake },
     })
     await meta.setWorkspace("default", DEFAULT_WORKSPACE_NAME)
     await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })
@@ -51,7 +51,7 @@ describe("seat sync", () => {
   it("no subscription: membership changes never call Stripe", async () => {
     const fake = new FakeBilling()
     const { app } = makeAuthedApp("ss_nosub", [u(1), u(2)], "editor", {
-      deps: { billing: fake },
+      deps: { billingEnabled: true, billing: fake },
     })
     const r = await app.request("/v1/workspace/members", {
       ...jsonAs(as("u1@x.test"), { email: "u2@x.test", role: "commenter" }),
@@ -64,7 +64,7 @@ describe("seat sync", () => {
   it("GET /v1/billing heals drift", async () => {
     const fake = new FakeBilling()
     const { app, meta } = makeAuthedApp("ss_heal", [u(1), u(2), u(3)], "editor", {
-      deps: { billing: fake },
+      deps: { billingEnabled: true, billing: fake },
     })
     await meta.upsertSubscription(subscriptionRow({ quantity: 9 })) // drifted
     const r = await app.request("/v1/billing", { headers: as("u1@x.test") })
@@ -79,7 +79,7 @@ describe("seat sync", () => {
     // yet, so the invite's existing-account branch is a genuine direct-add.
     const { app, meta } = makeAuthedApp("ss_invite_add", [u(1), u(2), u(3), u(4)], "editor", {
       isolated: true,
-      deps: { billing: fake },
+      deps: { billingEnabled: true, billing: fake },
     })
     await meta.setWorkspace("default", DEFAULT_WORKSPACE_NAME)
     await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })
@@ -103,7 +103,7 @@ describe("seat sync", () => {
     const fake = new FakeBilling()
     const { app, meta } = makeAuthedApp("ss_invite_nobill", [u(1), u(2), u(3)], "editor", {
       isolated: true,
-      deps: { billing: fake },
+      deps: { billingEnabled: true, billing: fake },
     })
     await meta.setWorkspace("default", DEFAULT_WORKSPACE_NAME)
     await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })
@@ -205,7 +205,7 @@ describe("seat gate on granting a billable role", () => {
   it("beta: the 4th editor invite succeeds", async () => {
     const { app, meta } = makeAuthedApp("sg_beta_ok", [u(1), u(2), u(3), u(4)], "editor", {
       isolated: true,
-      deps: { billing: new FakeBilling() }, // no billingEnforceAt: beta grace
+      deps: { billingEnabled: true, billing: new FakeBilling() }, // no billingEnforceAt: beta grace
     })
     await meta.setWorkspace("default", DEFAULT_WORKSPACE_NAME)
     await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })
@@ -222,7 +222,7 @@ describe("seat gate on granting a billable role", () => {
   it("enforced: the 4th billable grant 402s with billing_required", async () => {
     const { app, meta } = makeAuthedApp("sg_enf_402", [u(1), u(2), u(3), u(4)], "editor", {
       isolated: true,
-      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
+      deps: { billingEnabled: true, billing: new FakeBilling(), billingEnforceAt: PAST },
     })
     await meta.setWorkspace("default", DEFAULT_WORKSPACE_NAME)
     await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })
@@ -242,7 +242,7 @@ describe("seat gate on granting a billable role", () => {
   it("enforced: a subscribed workspace adds a 4th editor freely", async () => {
     const { app, meta } = makeAuthedApp("sg_enf_subscribed", [u(1), u(2), u(3), u(4)], "editor", {
       isolated: true,
-      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
+      deps: { billingEnabled: true, billing: new FakeBilling(), billingEnforceAt: PAST },
     })
     await meta.setWorkspace("default", DEFAULT_WORKSPACE_NAME)
     await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })
@@ -260,7 +260,7 @@ describe("seat gate on granting a billable role", () => {
   it("enforced: promoting a commenter to editor at the limit 402s", async () => {
     const { app, meta } = makeAuthedApp("sg_enf_promote", [u(1), u(2), u(3), u(4)], "editor", {
       isolated: true,
-      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
+      deps: { billingEnabled: true, billing: new FakeBilling(), billingEnforceAt: PAST },
     })
     await meta.setWorkspace("default", DEFAULT_WORKSPACE_NAME)
     await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })
@@ -280,7 +280,7 @@ describe("seat gate on granting a billable role", () => {
   it("enforced: a 4th-editor invite for an existing account 402s through POST /v1/workspace/invites", async () => {
     const { app, meta } = makeAuthedApp("sg_invites_existing", [u(1), u(2), u(3), u(4)], "editor", {
       isolated: true,
-      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
+      deps: { billingEnabled: true, billing: new FakeBilling(), billingEnforceAt: PAST },
     })
     await meta.setWorkspace("default", DEFAULT_WORKSPACE_NAME)
     await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })
@@ -300,7 +300,7 @@ describe("seat gate on granting a billable role", () => {
   it("enforced: a 4th-editor invite to an unknown email 402s before creating a pending invite", async () => {
     const { app, meta } = makeAuthedApp("sg_invites_unknown", [u(1), u(2), u(3)], "editor", {
       isolated: true,
-      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
+      deps: { billingEnabled: true, billing: new FakeBilling(), billingEnforceAt: PAST },
     })
     await meta.setWorkspace("default", DEFAULT_WORKSPACE_NAME)
     await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })
@@ -320,7 +320,7 @@ describe("seat gate on granting a billable role", () => {
   it("enforced: a Creator join link 402s on the 4th billable seat; a Viewer link never gates", async () => {
     const { app, meta } = makeAuthedApp("sg_join_link", [u(1), u(2), u(3), u(4), u(5)], "editor", {
       isolated: true,
-      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
+      deps: { billingEnabled: true, billing: new FakeBilling(), billingEnforceAt: PAST },
     })
     await meta.setWorkspace("default", DEFAULT_WORKSPACE_NAME)
     await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })
@@ -364,7 +364,7 @@ describe("seat gate on granting a billable role", () => {
     const fake = new FakeBilling()
     const { app, meta } = makeAuthedApp("sg_join_link_sub", [u(1), u(2), u(3), u(4)], "editor", {
       isolated: true,
-      deps: { billing: fake, billingEnforceAt: PAST },
+      deps: { billingEnabled: true, billing: fake, billingEnforceAt: PAST },
     })
     await meta.setWorkspace("default", DEFAULT_WORKSPACE_NAME)
     await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })
@@ -394,7 +394,7 @@ describe("seat gate on granting a billable role", () => {
   it("enforced: a lapsed workspace under the limit can still fill its free seats", async () => {
     const { app, meta } = makeAuthedApp("sg_enf_lapsed_ok", [u(1), u(2), u(3)], "editor", {
       isolated: true,
-      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
+      deps: { billingEnabled: true, billing: new FakeBilling(), billingEnforceAt: PAST },
     })
     await meta.setWorkspace("default", DEFAULT_WORKSPACE_NAME)
     await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })
@@ -411,7 +411,7 @@ describe("seat gate on granting a billable role", () => {
   it("enforced: a lapsed workspace at the limit is still seat-gated", async () => {
     const { app, meta } = makeAuthedApp("sg_enf_lapsed_402", [u(1), u(2), u(3), u(4)], "editor", {
       isolated: true,
-      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
+      deps: { billingEnabled: true, billing: new FakeBilling(), billingEnforceAt: PAST },
     })
     await meta.setWorkspace("default", DEFAULT_WORKSPACE_NAME)
     await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })

@@ -205,7 +205,7 @@ export function MembersSection({ meId }: { meId: string }) {
         <AdminNote can="invite people" />
       )}
 
-      {billing &&
+      {billing?.enabled &&
         billing.tier === "free" &&
         !billing.subscribed &&
         billing.seats >= FREE_SEAT_LIMIT &&

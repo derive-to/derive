@@ -2,7 +2,7 @@ import type { SubscriptionRecord } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import { recordFromSnapshot } from "../src/lib/billing"
 import { FakeBilling, subscriptionRow, subscriptionSnapshot } from "./fake-billing"
-import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
+import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 const u = (n: number): TestUser => ({ id: `u${n}`, email: `u${n}@x.test`, name: `U${n}` })
 const USERS = [u(1), u(2), u(3), u(4)]
@@ -11,7 +11,7 @@ const PAST = "2000-01-01T00:00:00Z"
 const boot = (name: string, billingEnforceAt?: string) => {
   const fake = new FakeBilling()
   const made = makeAuthedApp(name, USERS, "editor", {
-    deps: { billing: fake, billingEnforceAt },
+    deps: { billingEnabled: true, billing: fake, billingEnforceAt },
   })
   return { ...made, fake }
 }
@@ -33,11 +33,88 @@ const SNAP = subscriptionSnapshot({
 })
 
 describe("billing routes", () => {
+  it.each([
+    undefined,
+    false,
+  ])("billing disabled (%s): ignores saved plans and enforcement without Stripe side effects", async (billingEnabled) => {
+    const fake = new FakeBilling()
+    const { app, meta } = makeAuthedApp(`br_disabled_${billingEnabled}`, USERS, "editor", {
+      deps: { billingEnabled, billing: fake, billingEnforceAt: PAST },
+    })
+    const original = subscriptionRow({ quantity: 1 })
+    await meta.upsertSubscription(original)
+    const info = await (await app.request("/v1/billing", { headers: as("u1@x.test") })).json()
+    expect(info).toMatchObject({
+      enabled: false,
+      tier: "free",
+      subscribed: false,
+      beta: true,
+      white_label: true,
+      custom_domain: true,
+      blocked: null,
+      enforce_at: null,
+      storage: { cap_bytes: null },
+    })
+    expect((await app.request("/v1/bootstrap", { headers: as("u1@x.test") })).status).toBe(200)
+    for (const path of ["checkout", "portal"]) {
+      const r = await app.request(
+        `/v1/billing/${path}`,
+        jsonAs(as("u1@x.test"), { tier: "team", interval: "month" }),
+      )
+      expect(r.status).toBe(503)
+    }
+    expect(
+      (await hook(app, { type: "customer.subscription.updated", snapshot: SNAP })).status,
+    ).toBe(503)
+    // Membership changes remain free even with a saved active subscription.
+    expect(
+      (
+        await app.request(
+          "/v1/workspace/members",
+          jsonAs(as("u1@x.test"), { email: "u4@x.test", role: "commenter" }, "PUT"),
+        )
+      ).status,
+    ).toBe(201)
+    expect(
+      (
+        await app.request(
+          "/v1/workspace/members",
+          jsonAs(as("u1@x.test"), { email: "u4@x.test", role: "editor" }, "PUT"),
+        )
+      ).status,
+    ).toBe(201)
+    expect(fake.quantityCalls).toHaveLength(0)
+    expect(fake.checkouts).toHaveLength(0)
+    expect(fake.customersCreated).toBe(0)
+    expect(await meta.getSubscription("default")).toEqual(original)
+    // Lapsed plans and more than three editors cannot prevent publishing or white-labeling.
+    await meta.upsertSubscription({ ...original, status: "canceled" })
+    expect((await publishAs(app, "billing is off", {}, as("u2@x.test"))).status).toBe(201)
+    expect(
+      (
+        await app.request(
+          "/v1/workspace/settings",
+          jsonAs(as("u1@x.test"), { whiteLabel: true }, "PATCH"),
+        )
+      ).status,
+    ).toBe(200)
+  })
+
+  it("billing disabled: operator storage limits return a normal error without an upgrade prompt", async () => {
+    const { app } = makeAuthedApp("br_off_storage", USERS, "editor", { deps: { maxBytes: 1 } })
+    const r = await publishAs(app, "too large", {}, as("u1@x.test"))
+    expect(r.status).toBe(413)
+    const body = await r.json()
+    expect(body.code).toBe("storage_capacity_exceeded")
+    expect(body.error).not.toContain("/settings/billing")
+  })
+
   it("GET /v1/billing: owner sees free-tier truth", async () => {
     const { app } = boot("br_get")
     const r = await app.request("/v1/billing", { headers: as("u1@x.test") })
     expect(r.status).toBe(200)
     const body = await r.json()
+    expect(body.enabled).toBe(true)
     expect(body.tier).toBe("free")
     expect(body.seats).toBe(4)
     expect(body.subscribed).toBe(false)
@@ -196,7 +273,7 @@ describe("GET /v1/billing blocked", () => {
 
   it("reports billing_required past enforcement with 4 seats", async () => {
     const { app } = makeAuthedApp("br_blocked_needs_team", USERS, "editor", {
-      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
+      deps: { billingEnabled: true, billing: new FakeBilling(), billingEnforceAt: PAST },
     })
     const r = await app.request("/v1/billing", { headers: as("u1@x.test") })
     const body = await r.json()
@@ -206,7 +283,7 @@ describe("GET /v1/billing blocked", () => {
 
   it("reports billing_lapsed for a canceled subscription past enforcement", async () => {
     const { app, meta } = makeAuthedApp("br_blocked_lapsed", USERS, "editor", {
-      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
+      deps: { billingEnabled: true, billing: new FakeBilling(), billingEnforceAt: PAST },
     })
     await meta.upsertSubscription(subscriptionRow({ status: "canceled" }))
     const r = await app.request("/v1/billing", { headers: as("u1@x.test") })

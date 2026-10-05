@@ -2,7 +2,9 @@ import type { BillingInfo, JoinLinkRole } from "@/api"
 import { unitPrice } from "./billing-plans"
 
 /** The slice of BillingInfo the copy depends on. `undefined` = not loaded yet. */
-type JoinLinkBilling = Pick<BillingInfo, "tier" | "interval" | "subscribed" | "beta"> | undefined
+type JoinLinkBilling =
+  | Pick<BillingInfo, "enabled" | "tier" | "interval" | "subscribed" | "beta">
+  | undefined
 
 // The per-editor monthly price this workspace pays, or would pay: the live plan's unit when
 // subscribed, else Team monthly (the plan a 4th Creator moves a free workspace onto).
@@ -14,7 +16,7 @@ const price = (b: JoinLinkBilling): string =>
  *  licensed on grant, so once on Team EVERY Creator and Admin bills, not only the ones past
  *  three; the Team line says so, the free line says what the 4th Creator does. */
 export function joinLinkSeatLine(billing: JoinLinkBilling, role: JoinLinkRole): string | null {
-  if (role !== "editor") return null
+  if (!billing?.enabled || role !== "editor") return null
   if (billing?.beta) return "Billing is off on this instance, so Creators stay free."
   if (billing?.subscribed)
     return `Every Creator and Admin is ${price(billing)}. Each join adds one.`

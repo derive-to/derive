@@ -42,7 +42,7 @@ export const billingRoutes = (ctx: AppContext) => {
     if (role === null) return fail(c, 401, "unauthenticated")
     const org = await activeWorkspace(c)
     const [sub, seats, stored, assets] = await Promise.all([
-      meta.getSubscription(org),
+      deps.billingEnabled ? meta.getSubscription(org) : Promise.resolve(null),
       billableSeatCount(meta, org),
       meta.storageBytes(org),
       meta.assetStorageBytes(org),
@@ -52,6 +52,7 @@ export const billingRoutes = (ctx: AppContext) => {
     const state = await billingState(org, { sub: subOut, seatCount: seats })
     const beta = state.betaGrace
     return c.json({
+      enabled: deps.billingEnabled === true,
       tier: state.tier,
       status: subOut?.status ?? null,
       interval: subOut?.billing_interval ?? null,
@@ -59,7 +60,7 @@ export const billingRoutes = (ctx: AppContext) => {
       seats,
       current_period_end: subOut?.current_period_end ?? null,
       storage: { used_bytes: stored + assets, cap_bytes: state.storageCapBytes ?? null },
-      enforce_at: deps.billingEnforceAt ?? null,
+      enforce_at: deps.billingEnabled ? (deps.billingEnforceAt ?? null) : null,
       beta,
       subscribed: state.subscriptionActive,
       // May this workspace hide the Made-with-Derive mark? The settings page swaps the

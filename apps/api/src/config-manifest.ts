@@ -314,9 +314,15 @@ const CONFIG_VARS: ConfigVar[] = [
 
   // -- billing --
   {
+    name: "DERIVE_BILLING_ENABLED",
+    group: "billing",
+    doc: "Explicit opt-in for billing UI, Stripe operations, and paid-plan restrictions.\nOff by default, even with Stripe keys or stored subscriptions. Does not pause\nrecurring subscriptions in Stripe. Operator storage and abuse limits still apply.",
+    example: "false",
+  },
+  {
     name: "STRIPE_SECRET_KEY",
     group: "billing",
-    doc: "Stripe secret key (sk_test_/sk_live_). Unset disables the billing routes\nentirely; self-host never needs it.",
+    doc: "Stripe secret key (sk_test_/sk_live_). Required for Stripe operations when\nDERIVE_BILLING_ENABLED=true; self-host never needs it.",
     example: "",
   },
   {
@@ -328,7 +334,7 @@ const CONFIG_VARS: ConfigVar[] = [
   {
     name: "DERIVE_BILLING_ENFORCE_AT",
     group: "billing",
-    doc: "ISO instant after which free-tier boundaries enforce (3 editor seats, 1 GB).\nUnset = beta grace: nothing is blocked and white-label stays free.",
+    doc: "ISO instant after which free-tier boundaries enforce (3 editor seats, 1 GB)\nwhen DERIVE_BILLING_ENABLED=true. Unset = beta grace: nothing is blocked and white-label stays free.",
     example: "2026-09-01T00:00:00Z",
   },
 
