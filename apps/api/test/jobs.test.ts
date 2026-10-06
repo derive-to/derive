@@ -2248,10 +2248,9 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
         if (key) byKey.set(key, v)
         return json(v)
       }
-      if (path === "/auth/token")
-        return json({
-          token: `h.${Buffer.from(JSON.stringify({ sub: "svc", organization_id: "o" })).toString("base64url")}.s`,
-        })
+      // Like Ortam: the integration key is the bearer on every call, with no token exchange.
+      if (new Headers(init?.headers).get("Authorization") !== `Bearer ${config.managed.apiKey}`)
+        return new Response(null, { status: 401 })
       if (path === "/integration") {
         const subject = new Headers(init?.headers).get("X-Ortam-Integration-Subject")
         return json({ organization_id: "o", user_id: `u:${subject}` })
@@ -2306,7 +2305,7 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
     return { fetcher, sandboxes, procs, launches, state }
   }
 
-  it("a sandbox that can't start says why in the log, by Ortam's status and endpoint", async () => {
+  it("a sandbox that can't start says why in the log, and its waiting job fails instead of waiting forever", async () => {
     const made = makeAuthedApp("jobs-machine-why", [owner, ed, outsider], "editor", {
       deps: { encryptionKey: "test-encryption-key", runtime: config },
     })
@@ -2317,20 +2316,32 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
       jsonAs(as(owner.email), { name: "Refused", machine: "derive" }),
     )
     const agent = (await created.json()) as { id: string }
-    expect((await ask(app, owner.email, agent.id, "go")).status).toBe(201)
+    const job = (await (await ask(app, owner.email, agent.id, "go")).json()) as { id: string }
     const warn = vi.spyOn(log, "warn").mockImplementation(() => {})
-    try {
-      await machinePass({
+    let clock = Date.now()
+    const pass = () =>
+      machinePass({
         meta,
         secret: "test-encryption-key",
         server: "http://derive.test",
         config,
         fetcher: async () => new Response(null, { status: 401 }),
+        now: () => new Date(clock),
       })
+    try {
+      await pass()
       expect(warn).toHaveBeenCalledWith(
         "machine step deferred",
-        expect.objectContaining({ what: "dispatch", reason: "ortam_http_401 /auth" }),
+        expect.objectContaining({ what: "dispatch", reason: "ortam_http_401 /integration" }),
       )
+      // Each refusal counts; past the backoffs the waiting job fails and says so, instead of
+      // retrying every minute for good.
+      for (let i = 0; i < 6; i++) {
+        clock += 60 * 60_000
+        await pass()
+      }
+      const settled = await meta.getJob(job.id)
+      expect(settled?.status).toBe("failed")
     } finally {
       warn.mockRestore()
     }
