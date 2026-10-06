@@ -182,6 +182,8 @@ export function useArtifactFrame(p: {
   // re-subscribes), so selection-capture and cursor-tagging see the CURRENT slide
   // rather than the stale value `deck` would be frozen at. Kept in sync below.
   const deckRef = useRef<Deck | null>(null)
+  // Older decks name the message type instead of carrying a source field.
+  const legacyDeckRef = useRef(false)
   const deckOutlineRef = useRef<Deck["slides"]>([])
   const deckState = useCallback((rawI: unknown, rawTotal: unknown, sniffed: boolean): Deck => {
     const reported =
@@ -223,7 +225,15 @@ export function useArtifactFrame(p: {
       if (!d) return
       // A slide deck reporting its position (any HTML that speaks the protocol).
       if (d.source === "derive-deck" && d.type === "state") {
+        legacyDeckRef.current = false
         const next = deckState(d.i, d.total, false)
+        deckRef.current = next
+        setDeck(next)
+        return
+      }
+      if (d.type === "derive-deck-state" || d.type === "derive-deck-ready") {
+        const next = deckState(d.i ?? deckRef.current?.i, d.n, false)
+        legacyDeckRef.current = true
         deckRef.current = next
         setDeck(next)
         return
@@ -506,7 +516,11 @@ export function useArtifactFrame(p: {
         // page's own idea of where it is stays true).
         {
           source: "derive-host",
-          type: deckRef.current?.sniffed ? "deck-drive" : "deck",
+          type: legacyDeckRef.current
+            ? "derive-deck"
+            : deckRef.current?.sniffed
+              ? "deck-drive"
+              : "deck",
           action,
           n,
         },
@@ -546,6 +560,7 @@ export function useArtifactFrame(p: {
   useEffect(() => {
     setDeck(null)
     deckRef.current = null
+    legacyDeckRef.current = false
     deckOutlineRef.current = []
     setVideo(null)
     videoRef.current = null

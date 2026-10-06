@@ -141,7 +141,7 @@ describe("direct OpenAI Luna", () => {
   it("offers only Luna and does not expose gateway library additions", () => {
     const gateway = openAiGateway("k")
     const catalog = catalogFromGateway(gateway)
-    expect(catalog?.options).toEqual([{ id: "openai/gpt-6-luna", label: "Luna", isDefault: true }])
+    expect(catalog?.options).toEqual([{ id: "openai/gpt-6-luna", label: "Chat", isDefault: true }])
     expect(libraryGateway(gateway)).toBeUndefined()
     expect(catalog?.resolve("deepseek/deepseek-v4-flash-0731")).toBeNull()
     expect(openAiGateway(" ")).toBeUndefined()
@@ -180,7 +180,7 @@ describe("gateway provider routing", () => {
       "openai/gpt-6-luna",
     ])
     expect(catalog?.resolve()?.id).toBe("deepseek/deepseek-v4-flash-0731")
-    expect(catalog?.resolve("openai/gpt-6-luna")?.label).toBe("Luna")
+    expect(catalog?.resolve("openai/gpt-6-luna")?.label).toBe("Chat")
     expect(catalog?.resolve("missing")).toBeNull()
     expect(
       catalogFromGateway({

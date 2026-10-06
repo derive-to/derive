@@ -47,7 +47,7 @@ import {
   ArtifactWrongWorkspace,
 } from "./artifact-states"
 import { ArtifactTopBar } from "./artifact-top-bar"
-import { AskPanel, useLunaAsk } from "./ask-panel"
+import { AskPanel, useChatAsk } from "./ask-panel"
 import { BundleBar } from "./bundle-bar"
 import { ActionsCtx } from "./comment-actions"
 import { DeckOrganizer, DeckOrganizerDiscardDialog, useDeckOrganizer } from "./deck-organizer"
@@ -389,7 +389,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
   )
   // Who can be asked about this page; with nobody to ask and no conversation to come back to,
   // Ask is hidden everywhere.
-  const ask = useLunaAsk(shortId, inActiveWorkspace)
+  const ask = useChatAsk(shortId, inActiveWorkspace)
   const askEnabled = ask.available
   // The top bar's two rail buttons: each opens the rail on its view, or closes the rail when
   // its view is already showing.
