@@ -31,6 +31,10 @@
 //   derive doctor [--server url] [--token t]  report which optional features are configured
 //   derive runner serve|once --agent <id>  work an agent's jobs on this machine (npx-able anywhere)
 //   derive runner run <dkjob_ token>       run one job a Derive machine was handed, then exit
+//   derive secrets put <name> [--shared] [--new] [--agent <id> [--as VAR]]
+//                                          save a secret from stdin or a hidden prompt;
+//                                          reuses one you already saved with that value
+//   derive secrets list [--json]           saved secrets: names and ids, never values
 //   derive skill scan [setup|status]      scan local agent logs for installed Skill use
 //   derive scan [setup|status]            scan local logs for artifact and Skill activity
 import { spawn } from "node:child_process"
@@ -82,6 +86,7 @@ import { setupDeriveScan } from "../src/derive-scan-setup.js"
 import { readTarget, uploadArtifact } from "../src/publish.js"
 import { DeriveClient } from "../src/runner.js"
 import { lockScan } from "../src/scan-lock.js"
+import { attachSecret, ENV_NAME, listSecrets, putSecret, readSecretValue } from "../src/secrets.js"
 import {
   addToSkillScanSpool,
   commitSkillScanState,
@@ -197,6 +202,8 @@ for (let i = 0; i < args.length; i++) {
   // Boolean, so it must be listed here: the catch-all below would otherwise eat the next
   // argument as its value, and `derive delete abc --yes` would silently not be confirmed.
   else if (a === "--yes") flags.yes = "true"
+  else if (a === "--shared") flags.shared = "true"
+  else if (a === "--new") flags.new = "true"
   // Repeatable: `--env-file a --env-file b` stacks (equivalent to --env-file a,b).
   else if (a === "--env-file")
     flags["env-file"] = flags["env-file"] ? `${flags["env-file"]},${args[++i]}` : args[++i]
@@ -806,6 +813,86 @@ if (cmd === "logout") {
     process.exit(0)
   }
   await interactiveLogout(server)
+  process.exit(0)
+}
+
+// ---- secrets: save a value without pasting it anywhere, and bind it to an agent ----
+if (cmd === "secrets") {
+  const sub = positional[0]
+  const name = positional[1]
+  if ((sub !== "put" && sub !== "list") || (sub === "put" && !name)) {
+    console.error("usage: derive secrets put <name> [--shared] [--new] [--agent <id> [--as VAR]]")
+    console.error("       derive secrets list [--json]")
+    process.exit(1)
+  }
+  if (flags.as && !flags.agent) {
+    console.error("error: --as names the variable on an agent; pass --agent <id> too")
+    process.exit(1)
+  }
+  // An agent reads the secret under --as, or under the secret's own name when that is a
+  // valid variable name. Checked before reading the value so a typo costs nothing.
+  const variable = flags.agent ? (flags.as ?? name) : null
+  if (variable && !ENV_NAME.test(variable)) {
+    console.error(
+      `error: "${variable}" is not a variable name (uppercase letters, digits and _, starting with a letter); pass --as`,
+    )
+    process.exit(1)
+  }
+  let cfg = null
+  try {
+    cfg = loadConfig(".")
+  } catch {
+    // Not in a project: the account's default workspace applies.
+  }
+  const r = resolvePublish(flags, cfg)
+  requireNoTargetError(r)
+  r.token = flags.token ?? process.env.DERIVE_TOKEN ?? (await freshToken(r.server, r.accountId))
+  requireSignedIn(r)
+  const client = {
+    server: r.server,
+    fetch: globalThis.fetch,
+    headers: {
+      authorization: `Bearer ${r.token}`,
+      ...(r.workspaceId ? { "x-derive-workspace": r.workspaceId } : {}),
+    },
+  }
+  try {
+    if (sub === "list") {
+      const secrets = await listSecrets(client)
+      if (flags.json) console.log(JSON.stringify(secrets))
+      else if (!secrets.length) console.log("(no secrets saved)")
+      else
+        for (const s of secrets)
+          console.log(
+            `${s.name}  ${s.id}  ${s.scope}${s.status === "active" ? "" : `  (${s.status})`}`,
+          )
+      process.exit(0)
+    }
+    const value = await readSecretValue()
+    if (!value) throw new Error("the value is empty")
+    const saved = await putSecret(client, {
+      name,
+      value,
+      workspace: flags.shared === "true",
+      fresh: flags.new === "true",
+    })
+    console.log(
+      saved.reused
+        ? `✓ Already saved as "${saved.name}" (${saved.id}); using that one`
+        : `✓ Saved "${saved.name}" (${saved.id})`,
+    )
+    if (flags.agent) {
+      const { agent } = await attachSecret(client, {
+        agentId: flags.agent,
+        variable,
+        secretId: saved.id,
+      })
+      console.log(`✓ ${agent} reads it as ${variable}`)
+    }
+  } catch (e) {
+    console.error(`error: ${e.message}`)
+    process.exit(1)
+  }
   process.exit(0)
 }
 

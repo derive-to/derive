@@ -62,6 +62,26 @@ only available in workspaces where they are turned on; elsewhere, creating one i
 a message saying so. A Derive machine has no login of its own, so the agent needs a model
 account stored in Derive.
 
+## Give it secrets
+
+A job reads secrets, such as a database URL or an API key, as environment variables. Save the
+value once, then bind it to a variable name on the agent:
+
+```bash
+derive secrets put INTEGRITY_DB_URL --agent ag_... < db-url.txt
+```
+
+The value comes from stdin, or from a prompt that does not echo when you run it in a terminal,
+so it never lands in a chat, a transcript or shell history. If you already saved that exact
+value, Derive hands back the existing secret instead of storing a copy; pass `--new` to store
+another anyway. `--agent` binds it under the secret's name, or under `--as VAR` when the name
+is not a valid variable name; the agent's other variables are left alone. `--shared` saves it
+for the whole workspace (managers only). `derive secrets list` shows what is saved, never the
+values.
+
+You can do the same on the agent's **Settings** tab (Environment) after saving the value under
+Settings, Sources, Secrets.
+
 ## Run the runner
 
 For an `owner` agent, the agent's page and the `agents` tool give you the command to start it:

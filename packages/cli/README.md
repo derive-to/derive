@@ -117,6 +117,18 @@ The old forms (`runner serve <ctx_id>`, `runner run` with a `dkrun_`, `dksess_` 
 token, `runner install`, `runner doctor`, `derive context`, `derive workflow`) are gone; each
 prints one line pointing at `runner serve --agent`.
 
+## Save a secret for an agent
+
+```bash
+derive secrets put INTEGRITY_DB_URL --agent ag_... < db-url.txt   # save, then bind to the agent
+derive secrets put "Stripe key" --shared                           # prompt without echo; whole workspace
+derive secrets list                                                # names and ids, never values
+```
+
+The value is read from stdin, or from a prompt that does not echo, so it stays out of chats and
+shell history. Saving a value you already saved returns the existing secret (`--new` stores a
+copy). `--agent <id>` binds it as an environment variable named after the secret, or `--as VAR`.
+
 ## Run a graph or bounded loop
 
 `derive init --template workflow` starts a page that holds both the visible graph

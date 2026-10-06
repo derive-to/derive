@@ -4,7 +4,7 @@ import { z } from "@hono/zod-openapi"
 import { Hono } from "hono"
 import type { AppContext } from "../context"
 import { brokerFor, isDirect } from "../lib/broker"
-import { encryptSecret, sha256 } from "../lib/crypto"
+import { decryptSecret, encryptSecret, safeEqual, sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 
 // WO3 — connected external accounts (Sources). Connect once (OAuth via the broker), then
@@ -109,6 +109,9 @@ export const connectionRoutes = (ctx: AppContext) => {
         request_id: z.string().uuid().optional(),
         // kind "secret" only:
         secret: z.string().min(1).max(4096).optional(),
+        // Return a secret the caller already saved with this value (same scope and base_url)
+        // instead of storing a copy. Compares in memory; no derivative of a value is stored.
+        reuse: z.boolean().default(false),
         // nullish, not optional: GET /v1/connections renders an absent host as `base_url: null`,
         // and round-tripping that object straight back into this route is the obvious client
         // pattern — it should not 400 on the shape we just handed out.
@@ -185,6 +188,23 @@ export const connectionRoutes = (ctx: AppContext) => {
         return fail(c, 400, "base_url must be https (or http://localhost for dev)")
       if (!deps.encryptionKey) return fail(c, 502, "secret connections need an encryption key")
       if (b.secret.includes("\0")) return fail(c, 400, "Value cannot contain a null character")
+      const baseUrl = b.base_url ? b.base_url.replace(/\/+$/, "") : null
+      if (b.reuse) {
+        // Only secrets the caller could attach anyway (own personal ones, or workspace ones,
+        // which this scope already required manage for), so a match reveals nothing new.
+        const key = deps.encryptionKey
+        const same = (await meta.listConnections(org)).find(
+          (cn) =>
+            cn.kind === "secret" &&
+            cn.status === "active" &&
+            cn.scope === scope &&
+            (scope === "workspace" || cn.user_id === me.id) &&
+            cn.base_url === baseUrl &&
+            !!cn.secret_enc &&
+            safeEqual(decryptSecret(cn.secret_enc, key), b.secret),
+        )
+        if (same) return c.json({ ...present(same), reused: true })
+      }
       const id = b.request_id
         ? `conn_${sha256(JSON.stringify([org, me.id, b.request_id])).slice(0, 40)}`
         : newId("conn")
@@ -199,7 +219,7 @@ export const connectionRoutes = (ctx: AppContext) => {
           kind: "secret",
           secret_enc: encryptSecret(b.secret, deps.encryptionKey),
           // Stored without a trailing slash; executeHttpTool adds one when it resolves a path.
-          base_url: b.base_url ? b.base_url.replace(/\/+$/, "") : null,
+          base_url: baseUrl,
           broker: "none",
           toolkit: b.toolkit,
           // There is no vendor account behind this, but a run still identifies its tools by

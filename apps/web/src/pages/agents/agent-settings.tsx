@@ -717,7 +717,8 @@ function EnvironmentField({
             placeholder="DATABASE_URL"
             className="w-48 font-mono"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            // the server only accepts uppercase names, so typing `db_url` should just work
+            onChange={(e) => setName(e.target.value.toUpperCase())}
           />
           <Select value={secretId} onValueChange={setSecretId}>
             <SelectTrigger data-testid="agent-env-secret" aria-label="Secret" className="w-56">

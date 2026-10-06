@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { attachSecret, listSecrets, putSecret } from "../../../packages/cli/src/secrets.js"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
 // WO3 — per-user connected accounts (Sources). Connect once via the broker (the LocalBroker
@@ -277,6 +278,79 @@ describe("connections (Sources — per-user connected accounts)", () => {
     await app.request(`/v1/connections/${first.id}`, { method: "DELETE", headers: as(owner.email) })
     const retry = await app.request("/v1/connections", jsonAs(as(owner.email), body))
     expect(await retry.json()).toMatchObject({ id: first.id, status: "revoked" })
+  })
+
+  it("reuse returns the caller's own secret with that value, in the same scope, and never a teammate's", async () => {
+    const save = (email: string, body: Record<string, unknown>) =>
+      app.request(
+        "/v1/connections",
+        jsonAs(as(email), { kind: "secret", toolkit: "environment", ...body }),
+      )
+    const first = await save(owner.email, { secret: "reuse-fixture", scopes_label: "Reporting DB" })
+    expect(first.status).toBe(201)
+    const firstId = ((await first.json()) as { id: string }).id
+    const again = await save(owner.email, {
+      secret: "reuse-fixture",
+      scopes_label: "Another name",
+      reuse: true,
+    })
+    expect(again.status).toBe(200)
+    expect(await again.json()).toMatchObject({
+      id: firstId,
+      scopes_label: "Reporting DB",
+      reused: true,
+    })
+    // A different value is stored as new.
+    expect((await save(owner.email, { secret: "reuse-other", reuse: true })).status).toBe(201)
+    // A teammate holding the same value gets their own secret.
+    const theirs = await save(member.email, { secret: "reuse-fixture", reuse: true })
+    expect(theirs.status).toBe(201)
+    expect(((await theirs.json()) as { id: string }).id).not.toBe(firstId)
+    // A workspace secret is never satisfied by a personal one, and vice versa.
+    const shared = await save(owner.email, {
+      secret: "reuse-fixture",
+      scope: "workspace",
+      reuse: true,
+    })
+    expect(shared.status).toBe(201)
+    const sharedId = ((await shared.json()) as { id: string }).id
+    const sharedAgain = await save(owner.email, {
+      secret: "reuse-fixture",
+      scope: "workspace",
+      reuse: true,
+    })
+    expect(((await sharedAgain.json()) as { id: string }).id).toBe(sharedId)
+  })
+
+  it("derive secrets put saves once, reuses on repeat, and binds the agent without touching its other variables", async () => {
+    const client = {
+      server: "",
+      headers: as(owner.email),
+      fetch: (url: string, init?: RequestInit) => Promise.resolve(app.request(url, init)),
+    }
+    const other = await putSecret(client, { name: "Other key", value: "cli-other-fixture" })
+    const agent = await (
+      await app.request(
+        "/v1/agents",
+        jsonAs(as(owner.email), { name: "CLI target", environment: { OTHER_KEY: other.id } }),
+      )
+    ).json()
+    const saved = await putSecret(client, { name: "INTEGRITY_DB_URL", value: "cli-db-fixture" })
+    expect(saved.reused).toBe(false)
+    await attachSecret(client, {
+      agentId: agent.id,
+      variable: "INTEGRITY_DB_URL",
+      secretId: saved.id,
+    })
+    const repeat = await putSecret(client, { name: "INTEGRITY_DB_URL", value: "cli-db-fixture" })
+    expect(repeat).toMatchObject({ id: saved.id, reused: true })
+    const bound = (await (
+      await app.request(`/v1/agents/${agent.id}`, { headers: as(owner.email) })
+    ).json()) as { environment: Record<string, string> }
+    expect(bound.environment).toEqual({ OTHER_KEY: other.id, INTEGRITY_DB_URL: saved.id })
+    expect((await listSecrets(client)).map((x) => x.name)).toEqual(
+      expect.arrayContaining(["Other key", "INTEGRITY_DB_URL"]),
+    )
   })
 
   it("replacement keeps assignments, refuses stale versions and revocation, and names the agents that use it", async () => {
