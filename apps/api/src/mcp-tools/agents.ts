@@ -56,7 +56,7 @@ export function registerAgentsTool(tc: ToolContext): void {
     "agents",
     {
       description:
-        "List, create, update, or delete agents. create returns runner_command (owner machine) and needs_browser links for steps a person must do. See derive://skills/agents.",
+        "List, create, update, or delete agents; `sources` lists what you can attach. create returns runner_command (owner machine) and needs_browser links for steps a person must do. See derive://skills/agents.",
       annotations: {
         title: "Agents",
         readOnlyHint: false,
@@ -65,7 +65,7 @@ export function registerAgentsTool(tc: ToolContext): void {
         openWorldHint: false,
       },
       inputSchema: {
-        action: z.enum(["list", "get", "create", "update", "delete"]),
+        action: z.enum(["list", "get", "create", "update", "delete", "sources"]),
         agent: z.string().optional().describe("Agent id."),
         name: z.string().optional(),
         description: z.string().optional(),
@@ -79,6 +79,10 @@ export function registerAgentsTool(tc: ToolContext): void {
         model: z.string().nullable().optional(),
         schedule: ScheduleArg,
         sources: z.array(z.string()).optional().describe("Connection ids."),
+        environment: z
+          .record(z.string(), z.string())
+          .optional()
+          .describe("Env vars: NAME → secret id. {} clears."),
         role: z
           .enum(["viewer", "commenter", "editor"])
           .optional()
@@ -108,6 +112,36 @@ export function registerAgentsTool(tc: ToolContext): void {
         )
         return json({ agents })
       }
+      if (a.action === "sources") {
+        // Personal and workspace rows are disjoint. Listing a workspace row is not permission
+        // to attach it; the save checks manage.
+        const [mine, shared] = await Promise.all([
+          call(tc, org, "/v1/connections?mine=1"),
+          call(tc, org, "/v1/connections?scope=workspace"),
+        ])
+        if (!mine.ok) return err(mine.error)
+        if (!shared.ok) return err(shared.error)
+        type Conn = {
+          id: string
+          kind: string
+          toolkit: string
+          scope: string
+          scopes_label: string | null
+          status: string
+        }
+        const sources = [
+          ...(mine.body.connections as Conn[]),
+          ...(shared.body.connections as Conn[]),
+        ].map((cn) => ({
+          id: cn.id,
+          name: cn.scopes_label ?? cn.toolkit,
+          toolkit: cn.toolkit,
+          use_as: cn.kind === "secret" ? "environment" : "sources",
+          scope: cn.scope,
+          status: cn.status,
+        }))
+        return json({ sources })
+      }
       if (a.action === "create") {
         if (!a.name) return err("create needs a name.")
         const r = await call(tc, org, "/v1/agents", "POST", {
@@ -121,6 +155,7 @@ export function registerAgentsTool(tc: ToolContext): void {
           ask_policy: a.ask_policy,
           write_policy: a.write_policy,
           connection_ids: a.sources,
+          environment: a.environment,
           schedule: a.schedule ?? undefined,
         })
         if (!r.ok) return err(r.error)
@@ -165,6 +200,7 @@ export function registerAgentsTool(tc: ToolContext): void {
         ask_policy: a.ask_policy,
         write_policy: a.write_policy,
         connection_ids: a.sources,
+        environment: a.environment,
         account_id: a.account_id,
         paused: a.paused,
       }

@@ -470,6 +470,7 @@ export type AgentPatch = Partial<
     | "ask_policy"
     | "write_policy"
     | "connection_ids"
+    | "environment"
     | "account_id"
     | "paused"
     | "machine"

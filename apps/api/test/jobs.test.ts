@@ -516,6 +516,52 @@ describe("jobs: what a teammate cannot do with someone else's agent or job", () 
     expect(edsOwn.status).toBe(201)
   })
 
+  it("an agent's environment names only secrets its creator may give it, and its jobs get the values", async () => {
+    const { app } = await setup("jobs-env-bind")
+    const secret = async (email: string, value: string) => {
+      const res = await app.request(
+        "/v1/connections",
+        jsonAs(as(email), { kind: "secret", toolkit: "environment", secret: value }),
+      )
+      expect(res.status).toBe(201)
+      return ((await res.json()) as { id: string }).id
+    }
+    const edsKey = await secret(ed.email, "eds-own-fixture")
+    const ownersKey = await secret(owner.email, "reporting-db-fixture")
+    // A teammate's personal secret is refused on create and on edit.
+    const made = await app.request(
+      "/v1/agents",
+      jsonAs(as(owner.email), { name: "Reporter", environment: { DB_URL: edsKey } }),
+    )
+    expect(made.status).toBe(400)
+    const agent = await createAgent(app, { environment: { DB_URL: ownersKey } })
+    const edit = await app.request(`/v1/agents/${agent.id}`, {
+      ...jsonAs(as(owner.email), { environment: { DB_URL: edsKey } }),
+      method: "PATCH",
+    })
+    expect(edit.status).toBe(400)
+    const shown = (await (
+      await app.request(`/v1/agents/${agent.id}`, { headers: as(owner.email) })
+    ).json()) as { environment: Record<string, string> }
+    expect(shown.environment).toEqual({ DB_URL: ownersKey })
+    expect(JSON.stringify(shown)).not.toContain("reporting-db-fixture")
+    // The value only ever leaves through a running job's claim.
+    expect((await ask(app, owner.email, agent.id, "report")).status).toBe(201)
+    const [job] = await pull(app, agent)
+    if (!job) throw new Error("no job pulled")
+    const env = await app.request(`/v1/jobs/${job.id}/environment`, {
+      headers: { ...bearer(agent.token), "x-derive-claim": job.started_at },
+    })
+    expect(await env.json()).toEqual({ environment: { DB_URL: "reporting-db-fixture" } })
+    const cleared = await app.request(`/v1/agents/${agent.id}`, {
+      ...jsonAs(as(owner.email), { environment: {} }),
+      method: "PATCH",
+    })
+    expect(((await cleared.json()) as { environment: Record<string, string> }).environment).toEqual(
+      {},
+    )
+  })
+
   it("only the asker or the agent's manager steers a job; everyone else only sees it", async () => {
     const { app } = await setup("jobs-steer")
     const agent = await createAgent(app)

@@ -1771,6 +1771,13 @@
             },
             "description": "Sources it can reach."
           },
+          "environment": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Environment variables its jobs get: NAME → the id of a saved secret. Never values."
+          },
           "environment_names": {
             "type": "array",
             "items": {
@@ -1802,6 +1809,7 @@
           "max_run_ms",
           "max_concurrency",
           "connection_ids",
+          "environment",
           "environment_names",
           "account_id"
         ]

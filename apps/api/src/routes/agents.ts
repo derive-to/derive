@@ -12,7 +12,7 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { connectionBindError } from "../lib/broker"
-import { readEnvironmentBindings } from "../lib/context-environment"
+import { EnvironmentBindings, readEnvironmentBindings } from "../lib/context-environment"
 import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 import { machineWorkspaces, retireSandbox } from "../lib/job-machine"
@@ -35,28 +35,32 @@ export const agentRoutes = (ctx: AppContext) => {
       return []
     }
   }
-  const agentJson = (a: AgentRecord, extra: { instructions_short_id?: string | null } = {}) => ({
-    id: a.id,
-    name: a.name,
-    role: a.role,
-    managed: a.managed === 1,
-    created_by: a.created_by,
-    created_at: a.created_at,
-    description: a.description,
-    instructions_short_id: extra.instructions_short_id ?? null,
-    machine: a.machine,
-    provider: a.provider,
-    model: a.model,
-    ask_policy: a.ask_policy,
-    write_policy: a.write_policy,
-    paused: a.paused_at !== null,
-    seen_at: a.seen_at,
-    max_run_ms: a.max_run_ms,
-    max_concurrency: a.max_concurrency,
-    connection_ids: parseIds(a.connection_ids_json),
-    environment_names: Object.keys(readEnvironmentBindings(a.environment_json)),
-    account_id: a.account_id,
-  })
+  const agentJson = (a: AgentRecord, extra: { instructions_short_id?: string | null } = {}) => {
+    const environment = readEnvironmentBindings(a.environment_json)
+    return {
+      id: a.id,
+      name: a.name,
+      role: a.role,
+      managed: a.managed === 1,
+      created_by: a.created_by,
+      created_at: a.created_at,
+      description: a.description,
+      instructions_short_id: extra.instructions_short_id ?? null,
+      machine: a.machine,
+      provider: a.provider,
+      model: a.model,
+      ask_policy: a.ask_policy,
+      write_policy: a.write_policy,
+      paused: a.paused_at !== null,
+      seen_at: a.seen_at,
+      max_run_ms: a.max_run_ms,
+      max_concurrency: a.max_concurrency,
+      connection_ids: parseIds(a.connection_ids_json),
+      environment,
+      environment_names: Object.keys(environment),
+      account_id: a.account_id,
+    }
+  }
 
   const triggerJson = (t: TriggerRecord) => ({
     id: t.id,
@@ -120,6 +124,11 @@ export const agentRoutes = (ctx: AppContext) => {
       max_run_ms: z.number().nullable(),
       max_concurrency: z.number(),
       connection_ids: z.array(z.string()).describe("Sources it can reach."),
+      environment: z
+        .record(z.string(), z.string())
+        .describe(
+          "Environment variables its jobs get: NAME → the id of a saved secret. Never values.",
+        ),
       environment_names: z
         .array(z.string())
         .describe("Environment variable names bound to credentials. Never values."),
@@ -247,21 +256,28 @@ export const agentRoutes = (ctx: AppContext) => {
     c: Parameters<typeof requireUser>[0],
     org: string,
     manager: string | null,
-    b: { role?: unknown; connection_ids?: string[] },
+    b: { role?: unknown; connection_ids?: string[]; environment?: Record<string, string> },
   ): Promise<string | null> => {
     if (typeof b.role === "string" && manager) {
       const seat = (await meta.getMembership(org, manager).catch(() => null))?.role
       if (!seat || capRole(b.role as Role, seat) !== b.role)
         return "an agent's role cannot be above your own"
     }
-    if (b.connection_ids?.length)
-      return connectionBindError(
-        meta,
-        org,
-        { userId: manager, canManage: await ctx.workspaceCan(c, "manage") },
-        b.connection_ids,
-      )
-    return null
+    // Environment variables bind saved secrets, under the same ownership rule as sources.
+    const secretIds = [...new Set(Object.values(b.environment ?? {}))]
+    if (secretIds.length) {
+      const found = await meta.getConnectionsByIds(secretIds)
+      if (found.length !== secretIds.length || found.some((cn) => cn.kind !== "secret"))
+        return "environment variables must name saved secrets"
+    }
+    const bound = [...(b.connection_ids ?? []), ...secretIds]
+    if (!bound.length) return null
+    return connectionBindError(
+      meta,
+      org,
+      { userId: manager, canManage: await ctx.workspaceCan(c, "manage") },
+      bound,
+    )
   }
 
   const openJobs = (orgId: string, agentId: string) =>
@@ -279,6 +295,7 @@ export const agentRoutes = (ctx: AppContext) => {
     ask_policy: z.enum(["workspace", "invited"]),
     write_policy: z.enum(["publish", "review"]),
     connection_ids: z.array(z.string().min(1).max(64)).max(20),
+    environment: EnvironmentBindings,
     max_run_ms: z
       .number()
       .int()
@@ -398,6 +415,10 @@ export const agentRoutes = (ctx: AppContext) => {
           ask_policy: b.ask_policy ?? "workspace",
           write_policy: b.write_policy ?? "publish",
           connection_ids_json: b.connection_ids?.length ? JSON.stringify(b.connection_ids) : null,
+          environment_json:
+            b.environment && Object.keys(b.environment).length
+              ? JSON.stringify(b.environment)
+              : null,
           max_run_ms: b.max_run_ms ?? null,
           max_concurrency: b.max_concurrency ?? 1,
         })
@@ -548,6 +569,12 @@ export const agentRoutes = (ctx: AppContext) => {
               ? undefined
               : b.connection_ids.length
                 ? JSON.stringify(b.connection_ids)
+                : null,
+          environment_json:
+            b.environment === undefined
+              ? undefined
+              : Object.keys(b.environment).length
+                ? JSON.stringify(b.environment)
                 : null,
           max_run_ms: b.max_run_ms,
           max_concurrency: b.max_concurrency,

@@ -107,6 +107,7 @@ export function AgentSettings({ agent, names, workspaceName, isWorkspaceOwner }:
         </Field>
         <AccountField agent={agent} edit={edit} onSave={set} />
         <SourcesField agent={agent} edit={edit} onSave={set} />
+        <EnvironmentField agent={agent} edit={edit} onSave={set} />
         <Field label="Can write">
           <Segmented
             testId="agent-write-policy"
@@ -639,6 +640,122 @@ function SourcesField({
             ))}
           </SelectContent>
         </Select>
+      )}
+    </Field>
+  )
+}
+
+/** Variable name → saved secret. Values live in Settings › Sources › Secrets and are never
+ *  sent back to the client. */
+function EnvironmentField({
+  agent,
+  edit,
+  onSave,
+}: {
+  agent: AgentDetail
+  edit: boolean
+  onSave: (p: AgentPatch) => void
+}) {
+  const bound = Object.entries(agent.environment)
+  const conns = useQuery({ ...agentConnectionsQuery(), enabled: bound.length > 0 || edit })
+  const secrets = (conns.data ?? []).filter((c) => c.kind === "secret")
+  const byId = new Map(secrets.map((c) => [c.id, c]))
+  const addable = secrets.filter((c) => c.status === "active")
+  const [name, setName] = useState("")
+  const [secretId, setSecretId] = useState("")
+  const set = (env: Record<string, string>) => onSave({ environment: env })
+  const add = (e: FormEvent) => {
+    e.preventDefault()
+    const key = name.trim()
+    if (!key || !secretId) return
+    set({ ...agent.environment, [key]: secretId })
+    setName("")
+    setSecretId("")
+  }
+  return (
+    <Field label="Environment">
+      {conns.isError && (
+        <LoadError
+          layout="inline"
+          title="Couldn’t load secrets."
+          testId="agent-environment-retry"
+          onRetry={() => void conns.refetch()}
+        />
+      )}
+      {bound.length === 0 && <span className="text-muted-foreground">Nothing yet</span>}
+      {bound.map(([key, id]) => {
+        const c = byId.get(id)
+        return (
+          <div
+            key={key}
+            data-testid={`agent-env-${key}`}
+            className="flex items-center justify-between gap-3 border-b border-border py-1 last:border-b-0"
+          >
+            <span className="truncate font-mono">{key}</span>
+            <span className="flex items-center gap-1 text-sm text-muted-foreground">
+              {c ? connectionName(c) : "Secret not found"}
+              {edit && (
+                <Verb
+                  testId={`agent-env-remove-${key}`}
+                  onClick={() => {
+                    const { [key]: _gone, ...rest } = agent.environment
+                    set(rest)
+                  }}
+                >
+                  Remove
+                </Verb>
+              )}
+            </span>
+          </div>
+        )
+      })}
+      {edit && addable.length > 0 && (
+        <form onSubmit={add} className="mt-1 flex flex-wrap items-center gap-2">
+          <Input
+            data-testid="agent-env-name"
+            aria-label="Variable name"
+            placeholder="DATABASE_URL"
+            className="w-48 font-mono"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+          <Select value={secretId} onValueChange={setSecretId}>
+            <SelectTrigger data-testid="agent-env-secret" aria-label="Secret" className="w-56">
+              <SelectValue placeholder="Choose a secret" />
+            </SelectTrigger>
+            <SelectContent>
+              {addable.map((c) => (
+                <SelectItem key={c.id} value={c.id}>
+                  {connectionName(c)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            type="submit"
+            variant="ghost"
+            size="sm"
+            data-testid="agent-env-add"
+            disabled={!name.trim() || !secretId}
+          >
+            Add
+          </Button>
+        </form>
+      )}
+      {edit && conns.data && addable.length === 0 && (
+        <Sub>
+          Save a secret in{" "}
+          <Link
+            to="/settings/$section"
+            params={{ section: "sources" }}
+            hash="secrets"
+            data-testid="agent-env-secrets-link"
+            className="underline underline-offset-2 hover:text-foreground"
+          >
+            Settings › Sources
+          </Link>{" "}
+          first.
+        </Sub>
       )}
     </Field>
   )
