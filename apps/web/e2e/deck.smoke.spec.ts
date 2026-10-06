@@ -1,6 +1,6 @@
 import { countSlideElements, DECK_TEMPLATE } from "@derive/core"
 import type { Page } from "@playwright/test"
-import { expect, openArtifact, publishArtifact, saveEdits, test } from "./fixtures"
+import { expect, openArtifact, publishArtifact, saveEdits, signUp, test } from "./fixtures"
 
 /**
  * Decks: the host half of the derive-deck protocol, end to end.
@@ -44,6 +44,53 @@ const slideOnScreen = (page: Page) =>
     .getAttribute("data-derive-slide")
 
 test.describe("deck", () => {
+  test("legacy deck controls work with phone taps without a keyboard fallback", async ({
+    browser,
+  }) => {
+    const context = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      hasTouch: true,
+    })
+    const page = await context.newPage()
+    try {
+      await signUp(page)
+      const legacy = `<!doctype html><html><head>
+        <style>.slide{display:none}.slide.on{display:block}</style></head><body>
+        <section class="slide on" data-derive-slide="0"><h1>First slide</h1></section>
+        <section class="slide" data-derive-slide="1"><h1>Second slide</h1></section>
+        <output id="authored-position">1 / 2</output>
+        <script>
+          let at=0; const slides=[...document.querySelectorAll('.slide')];
+          function show(n){at=Math.max(0,Math.min(1,n));
+            slides.forEach((s,i)=>s.classList.toggle('on',i===at));
+            document.getElementById('authored-position').textContent=(at+1)+' / 2';
+            parent.postMessage({type:'derive-deck-state',i:at,n:2},'*')}
+          addEventListener('message',e=>{const d=e.data||{};
+            if(d.type!=='derive-deck')return;
+            if(d.action==='next')show(at+1);
+            else if(d.action==='prev')show(at-1);
+            else if(d.action==='goto')show(d.n)});
+          show(0); parent.postMessage({type:'derive-deck-ready',n:2},'*');
+        </script></body></html>`
+      const shortId = await publishArtifact(page, "legacy-deck.html", legacy, "text/html")
+      await openArtifact(page, shortId)
+      const position = page.getByTestId("deck-position")
+      const slide = page.frameLocator("iframe[title]:not([aria-hidden])").locator(".slide.on")
+      await expect(position).toHaveText("1 / 2")
+      await page.getByTestId("deck-next").tap()
+      await expect(position).toHaveText("2 / 2")
+      await expect(slide).toHaveText("Second slide")
+      await expect(
+        page.frameLocator("iframe[title]:not([aria-hidden])").locator("#authored-position"),
+      ).toHaveText("2 / 2")
+      await page.getByTestId("deck-prev").tap()
+      await expect(position).toHaveText("1 / 2")
+      await expect(slide).toHaveText("First slide")
+    } finally {
+      await context.close()
+    }
+  })
+
   test("the host bar reflects the deck's state and drives it both ways", async ({
     owner: page,
   }) => {
