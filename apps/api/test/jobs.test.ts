@@ -19,6 +19,7 @@ import type { AppDeps } from "../src/context"
 import { purgeUserDataAndSyncSeats } from "../src/lib/account"
 import type { ModelTurn } from "../src/lib/agent-loop"
 import { signCapabilityToken } from "../src/lib/capability-token"
+import { encryptSecret } from "../src/lib/crypto"
 import { advanceGraph, graphAware, graphPass } from "../src/lib/job-graph"
 import { machinePass, machineWorkspaces } from "../src/lib/job-machine"
 import { HELD_FOR_BUDGET, jobTick, OWNER_LEFT } from "../src/lib/jobs"
@@ -1634,6 +1635,46 @@ describe("jobs: which account a job runs with", () => {
     expect(
       (await app.request(`/v1/jobs/${job.id}/account`, { headers: as(owner.email) })).status,
     ).toBe(401)
+  })
+
+  it("a Claude token runs as what its prefix says it is, whichever kind was picked", async () => {
+    const { app, meta } = await setup("jobs-accounts-kind")
+    // A setup token pasted under "API key" is stored as the OAuth token it is.
+    const pasted = (await (
+      await app.request(
+        "/v1/accounts",
+        jsonAs(as(owner.email), {
+          provider: "claude",
+          kind: "api_key",
+          secret: "sk-ant-oat01-setup-fixture",
+        }),
+      )
+    ).json()) as { id: string; kind: string }
+    expect(pasted.kind).toBe("oauth")
+    await app.request(`/v1/accounts/${pasted.id}`, { method: "DELETE", headers: as(owner.email) })
+
+    // One saved before that, under the wrong kind, reaches the runner as OAuth and is fixed.
+    const stale = await meta.createAccount({
+      id: newId("acct"),
+      org_id: "default",
+      user_id: owner.id,
+      provider: "claude",
+      kind: "api_key",
+      secret_enc: encryptSecret("sk-ant-oat01-stale-fixture", "test-encryption-key"),
+    })
+    const a = await createAgent(app)
+    expect((await ask(app, owner.email, a.id, "run")).status).toBe(201)
+    const [job] = await pull(app, a)
+    if (!job) throw new Error("no job pulled")
+    const cred = await (
+      await app.request(`/v1/jobs/${job.id}/account?claim=${encodeURIComponent(job.started_at)}`, {
+        headers: bearer(a.token),
+      })
+    ).json()
+    expect(cred).toMatchObject({
+      credential: { kind: "oauth", value: "sk-ant-oat01-stale-fixture" },
+    })
+    expect((await meta.getAccount(stale.id))?.kind).toBe("oauth")
   })
 
   it("an account carries the name its owner gives it, and only they (or an owner, for a shared one) rename it", async () => {
