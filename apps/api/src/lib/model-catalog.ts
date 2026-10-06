@@ -216,7 +216,7 @@ export const gatewayModel = (
   configured?.trim() || (baseUrl && openRouterGateway(baseUrl) ? "openai/gpt-6-luna" : undefined)
 
 export const labelFor = (id: string): string =>
-  lunaModel(id) ? "Luna" : (id.split("/").filter(Boolean).pop() ?? id)
+  lunaModel(id) ? "Chat" : (id.split("/").filter(Boolean).pop() ?? id)
 
 const parseAlso = (raw: string | undefined, defaultModel: string): string[] => {
   const seen = new Set([defaultModel])

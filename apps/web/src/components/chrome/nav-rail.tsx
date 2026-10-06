@@ -274,12 +274,13 @@ function RailHeader({ showSearch }: { showSearch: boolean }) {
 }
 
 // Deterministic silhouette widths (no Math.random → no per-render jitter / SSR mismatch).
-// One per primary row: Agents, Inbox, Artifacts, Skills.
+// One per primary row: Agents, Inbox, Artifacts, Skills, Chat.
 const RAIL_SKELETON_ROWS = [
   { id: "r1", w: "58%" },
   { id: "r2", w: "50%" },
   { id: "r3", w: "64%" },
   { id: "r4", w: "48%" },
+  { id: "r5", w: "44%" },
 ]
 const RAIL_SKELETON_COLLECTIONS = [
   { id: "c1", w: "80%" },
@@ -415,15 +416,8 @@ export function NavRail() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              {/* Agents, Inbox, Artifacts, Skills; Search is the launcher above and Settings
+              {/* Agents, Inbox, Artifacts, Skills, Chat; Search is the launcher above and Settings
                   sits at the foot. Templates stays reachable by URL and from the palette. */}
-              <NavItem
-                icon="agent"
-                label="Luna"
-                to="/chat"
-                active={loc.pathname === "/chat"}
-                testId="nav-chat"
-              />
               <NavItem
                 icon="agent"
                 label="Agents"
@@ -453,6 +447,13 @@ export function NavRail() {
                 to="/skills"
                 active={onSkills}
                 testId="nav-skills"
+              />
+              <NavItem
+                icon="comments"
+                label="Chat"
+                to="/chat"
+                active={loc.pathname === "/chat"}
+                testId="nav-chat"
               />
             </SidebarMenu>
           </SidebarGroupContent>

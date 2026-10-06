@@ -207,7 +207,7 @@ export const jsonSchemaOf = (schema: z.ZodType): Record<string, unknown> => {
 
 /** The synthetic principal a chat turn acts as: the asker's seat, wearing Derive's name. */
 const chatAgent = (org: string, role: Role): AgentRecord =>
-  syntheticAgent({ id: "derive", org_id: org, name: "Luna", role })
+  syntheticAgent({ id: "derive", org_id: org, name: "Chat", role })
 
 export interface ChatPrincipal {
   /** The workspace this conversation lives in. */

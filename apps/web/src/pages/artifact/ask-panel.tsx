@@ -23,14 +23,13 @@ import { useJobEvents } from "@/lib/use-job-events"
 import { cn } from "@/lib/utils"
 import { AnswerBox } from "@/pages/agents/agent-jobs"
 import { OPEN_STATUSES } from "@/pages/agents/format"
-import { ActorGlyph } from "./activity-rows"
 import { mdToHtml } from "./lib/markdown"
 
-/** Luna keeps the existing built-in agent id for saved conversations. */
+/** Keep the existing built-in agent id for saved conversations. */
 const DERIVE = "derive"
 
-/** Offer Luna when a model is configured or a private conversation already exists. */
-export function useLunaAsk(shortId: string, enabled: boolean) {
+/** Offer Chat when a model is configured or a private conversation already exists. */
+export function useChatAsk(shortId: string, enabled: boolean) {
   const workspace = useQuery({ ...workspaceQuery(), enabled })
   const asks = useQuery({ ...pageAsksQuery(shortId), enabled })
   return { available: enabled && (!!workspace.data?.assistant || !!asks.data?.length) }
@@ -73,7 +72,7 @@ export function AskPanel({
   const client = useQueryClient()
   useJobEvents()
   const asks = useQuery({
-    queryKey: shortId ? ["jobs", "luna", "page", shortId] : ["jobs", "luna", "chats"],
+    queryKey: shortId ? ["jobs", "chat", "page", shortId] : ["jobs", "chat", "chats"],
     queryFn: () =>
       shortId
         ? api.listJobs({ agent: DERIVE, subject: shortId, limit: 30 }).then((r) => r.jobs)
@@ -117,8 +116,8 @@ export function AskPanel({
     if (gone) setChosen(null)
   }, [gone])
 
-  const workspace = useQuery(workspaceQuery())
-  const name = "Luna"
+  const workspace = useQuery({ ...workspaceQuery(), refetchOnMount: "always" })
+  const name = "Chat"
   const continuing =
     !!job &&
     job.asked_by === me?.id &&
@@ -130,6 +129,7 @@ export function AskPanel({
     invalidate: [["jobs"]],
   })
   const titleId = useId()
+  const Heading = shortId ? "h2" : "h1"
   const list = useRef<HTMLDivElement>(null)
   const count = job?.messages.length ?? 0
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on each new message.
@@ -144,30 +144,47 @@ export function AskPanel({
       aria-labelledby={titleId}
       className="flex min-h-0 flex-1 flex-col"
     >
-      <div className="flex items-center gap-1 border-b border-border-soft py-1.5 pl-2.5 pr-2">
+      <div
+        className={cn(
+          "flex items-center gap-1 border-b border-border-soft py-1.5 pl-2.5 pr-2",
+          !shortId && "px-3 py-3 sm:px-6 sm:py-4",
+        )}
+      >
         <div className="flex min-w-0 flex-1 flex-col pl-1.5">
-          <h2 id={titleId} data-testid="ask-panel-title" className="truncate text-sm font-medium">
-            {shortId ? `Ask ${name}` : `Chat with ${name}`}
-          </h2>
+          <Heading
+            id={titleId}
+            data-testid="ask-panel-title"
+            className={cn("truncate text-sm font-medium", !shortId && "sr-only sm:not-sr-only")}
+          >
+            Chat
+          </Heading>
           <span
             data-testid="ask-panel-audience"
             className="flex items-center gap-1 text-2xs text-muted-foreground"
           >
             <Icon name="lock" size={10} />
-            Only you see this conversation
+            Private to you
           </span>
         </div>
         {(asks.data?.length ?? 0) > 0 && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="xs" data-testid="chat-history">
+              <Button
+                variant="ghost"
+                size="xs"
+                className="min-h-11 sm:min-h-0"
+                data-testid="chat-history"
+              >
                 History
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="max-h-80 max-w-xs overflow-auto">
+            <DropdownMenuContent
+              align="end"
+              className="max-h-80 max-w-[calc(100vw-2rem)] overflow-auto sm:max-w-xs"
+            >
               <DropdownMenuRadioGroup value={followId ?? ""} onValueChange={setChosen}>
                 {asks.data?.map((j) => (
-                  <DropdownMenuRadioItem key={j.id} value={j.id}>
+                  <DropdownMenuRadioItem key={j.id} value={j.id} className="min-h-11 sm:min-h-0">
                     <span className="truncate">{j.instruction.slice(0, 70)}</span>
                   </DropdownMenuRadioItem>
                 ))}
@@ -180,6 +197,7 @@ export function AskPanel({
             variant="ghost"
             size="xs"
             data-testid="chat-stop"
+            className="min-h-11 sm:min-h-0"
             disabled={stop.isPending || job?.chat_context?.saving}
             onClick={() => job && stop.mutate(job.id)}
           >
@@ -190,6 +208,7 @@ export function AskPanel({
           variant="ghost"
           size="xs"
           data-testid="ask-panel-new"
+          className="min-h-11 sm:min-h-0"
           disabled={!followId}
           onClick={() => setChosen(null)}
         >
@@ -214,13 +233,12 @@ export function AskPanel({
         )}
       </div>
 
-      <div
-        data-testid="chat-scope"
-        className="flex flex-col gap-1 border-b border-border-soft px-4 py-2 text-xs text-muted-foreground"
-      >
-        <span>
-          Workspace access · Private chat ·{" "}
-          {scopeId ? (
+      {scopeId && (
+        <div
+          data-testid="chat-scope"
+          className="flex flex-col gap-1 border-b border-border-soft px-4 py-2 text-xs text-muted-foreground"
+        >
+          <span>
             <Link
               to="/artifacts/$ref"
               params={{ ref: scopeId }}
@@ -229,63 +247,86 @@ export function AskPanel({
               {scope.data?.title ?? "Artifact scope"} · v
               {job?.needs?.target_version ?? scope.data?.current_version ?? currentVersion}
             </Link>
-          ) : (
-            "Workspace scope"
+          </span>
+          {(job?.chat_context?.selection || (!job && selection)) && (
+            <span className="line-clamp-2">
+              Selection: “{job?.chat_context?.selection ?? selection}”
+            </span>
           )}
-        </span>
-        {(job?.chat_context?.selection || (!job && selection)) && (
-          <span className="line-clamp-2">
-            Selection: “{job?.chat_context?.selection ?? selection}”
-          </span>
-        )}
-        {job && !job.chat_context?.model_id && <span>Uses the workspace default model</span>}
-        {job?.chat_context?.saving && job.status !== "running" && (
-          <span role="alert">
-            A save was interrupted. Check Activity and artifact versions before starting a new chat.
-            This run cannot safely retry.
-          </span>
-        )}
-      </div>
-      <div ref={list} className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto px-3 py-3">
-        {workspace.isError && (
-          <LoadError
-            layout="inline"
-            title="Couldn’t load Luna settings."
-            testId="ask-settings-retry"
-            onRetry={() => void workspace.refetch()}
-          />
-        )}
-        {followId && q.isError && !gone ? (
-          <LoadError
-            layout="inline"
-            title="Couldn’t load this conversation."
-            testId="ask-follow-retry"
-            onRetry={() => void q.refetch()}
-          />
-        ) : job ? (
-          <Conversation
-            job={job}
-            name={name}
-            shortId={shortId}
-            currentVersion={currentVersion}
-            onGoToVersion={onGoToVersion}
-            onUndo={onUndo}
-          />
-        ) : followId || (chosen === undefined && asks.isPending) ? (
-          <Spinner size="sm" className="self-center" />
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            {shortId
-              ? `Ask ${name} about this artifact.`
-              : "Find an artifact, ask about your workspace, or create something new."}{" "}
-            It reads what you can read.
-          </p>
-        )}
+          {job && !job.chat_context?.model_id && <span>Uses the workspace default model</span>}
+        </div>
+      )}
+      {job?.chat_context?.saving && job.status !== "running" && (
+        <p role="alert" className="px-4 py-2 text-xs text-muted-foreground">
+          A save was interrupted. Check Activity and artifact versions before starting a new chat.
+          This run cannot safely retry.
+        </p>
+      )}
+      <div ref={list} className="flex min-h-0 flex-1 flex-col overflow-auto">
+        <div
+          className={cn(
+            "flex flex-1 flex-col gap-3 px-3 py-3",
+            !shortId && "mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-8",
+          )}
+        >
+          {workspace.isError && (
+            <LoadError
+              layout="inline"
+              title="Couldn’t load chat settings."
+              testId="ask-settings-retry"
+              onRetry={() => void workspace.refetch()}
+            />
+          )}
+          {asks.isError && (
+            <LoadError
+              layout="inline"
+              title="Couldn’t load chat history."
+              testId="ask-history-retry"
+              onRetry={() => void asks.refetch()}
+            />
+          )}
+          {followId && q.isError && !gone ? (
+            <LoadError
+              layout="inline"
+              title="Couldn’t load this conversation."
+              testId="ask-follow-retry"
+              onRetry={() => void q.refetch()}
+            />
+          ) : job ? (
+            <Conversation
+              job={job}
+              name={name}
+              shortId={shortId}
+              currentVersion={currentVersion}
+              onGoToVersion={onGoToVersion}
+              onUndo={onUndo}
+            />
+          ) : followId || (chosen === undefined && asks.isPending) ? (
+            <Spinner size="sm" className="self-center" />
+          ) : (
+            !asks.isError && (
+              <div
+                className={cn(
+                  "text-sm text-muted-foreground",
+                  !shortId && "flex flex-1 flex-col items-center justify-center gap-3 text-center",
+                )}
+              >
+                {!shortId && <Icon name="comments" size={24} />}
+                {!shortId && (
+                  <h3 className="text-lg font-medium text-foreground">Start a conversation</h3>
+                )}
+                <p>
+                  {shortId ? "Ask about this artifact." : "Ask about artifacts in this workspace."}
+                </p>
+              </div>
+            )
+          )}
+        </div>
       </div>
 
       {!workspace.isPending && !workspace.isError && !workspace.data?.assistant && (
         <p role="status" className="px-4 py-2 text-xs text-muted-foreground">
-          Luna needs a configured model before it can answer.
+          Chat is unavailable until a workspace model is configured.
         </p>
       )}
       {/* Keyed on the conversation, so a draft never carries over into a different one. */}
@@ -294,10 +335,20 @@ export function AskPanel({
         shortId={shortId}
         selection={job?.chat_context?.selection ?? selection}
         currentVersion={currentVersion}
-        name={name}
         continueJob={continuing ? job?.id : undefined}
-        disabled={waiting || job?.status === "needs_you" || !workspace.data?.assistant}
-        onAsked={(id) => setChosen(id)}
+        disabled={
+          waiting ||
+          job?.status === "needs_you" ||
+          !workspace.data?.assistant ||
+          workspace.isError ||
+          asks.isPending ||
+          asks.isError ||
+          (!!followId && !job)
+        }
+        onAsked={(job) => {
+          client.setQueryData(jobQuery(job.id).queryKey, job)
+          setChosen(job.id)
+        }}
         // A desktop opening (the top bar's Ask) puts the caret in the box; a phone's tab does
         // not, so the keyboard does not cover the sheet before anyone asked for it.
         focusOnOpen={!!onClose}
@@ -341,13 +392,13 @@ function Conversation({
         m.author_kind === "asker" ? (
           <p
             key={m.id}
-            className="max-w-[85%] self-end rounded-lg bg-muted px-2.5 py-1.5 text-sm whitespace-pre-wrap"
+            className="min-w-0 max-w-[85%] self-end break-words rounded-lg bg-muted px-2.5 py-1.5 text-sm whitespace-pre-wrap"
           >
             {m.body_md}
           </p>
         ) : (
           <div key={m.id} className="flex items-start gap-2">
-            <ActorGlyph by={name} agent />
+            <Icon name="comments" size={16} className="mt-0.5 shrink-0 text-muted-foreground" />
             <p
               className={cn(
                 "min-w-0 flex-1 text-sm whitespace-pre-wrap break-words [&_a]:underline [&_a]:underline-offset-2",
@@ -366,12 +417,6 @@ function Conversation({
                   // biome-ignore lint/security/noDangerouslySetInnerHtml: mdToHtml escapes text and permits only HTTP or app-relative links.
                   <span key={i} dangerouslySetInnerHTML={{ __html: mdToHtml(part) }} />
                 ),
-              )}
-              {m.model && (
-                <span className="mt-1 block text-2xs text-muted-foreground">
-                  {m.model.label}
-                  {m.tools.length ? ` · ${m.tools.join(" → ")}` : ""}
-                </span>
               )}
             </p>
           </div>
@@ -434,12 +479,11 @@ function Conversation({
   )
 }
 
-/** A new Luna question or the next message in the current conversation. */
+/** A new question or the next message in the current conversation. */
 function AskComposer({
   shortId,
   selection,
   currentVersion,
-  name,
   continueJob,
   disabled,
   onAsked,
@@ -448,10 +492,9 @@ function AskComposer({
   shortId: string
   selection?: string | null
   currentVersion: number
-  name: string
   continueJob?: string
   disabled: boolean
-  onAsked: (jobId: string) => void
+  onAsked: (job: JobDetail) => void
   focusOnOpen: boolean
 }) {
   const [text, setText] = useState("")
@@ -472,9 +515,11 @@ function AskComposer({
             model_id: modelId,
           }),
     invalidate: [["jobs"]],
+    errorToast: false,
+    paywall: false,
     onSuccess: (job) => {
       setText("")
-      if (!continueJob) onAsked(job.id)
+      onAsked(job)
     },
   })
   const submit = () => {
@@ -482,7 +527,11 @@ function AskComposer({
   }
   return (
     <form
-      className="flex shrink-0 flex-col gap-1.5 border-t border-border px-2.5 pt-2 pb-2.5"
+      className={cn(
+        "flex shrink-0 flex-col gap-1.5 border-t border-border px-2.5 pt-2 pb-2.5",
+        !shortId &&
+          "mx-auto mb-[max(0.75rem,env(safe-area-inset-bottom))] w-[calc(100%-1.5rem)] max-w-3xl rounded-xl border bg-card p-3 focus-within:border-ring sm:mb-6 sm:w-[calc(100%-3rem)]",
+      )}
       onSubmit={(e) => {
         e.preventDefault()
         submit()
@@ -490,6 +539,7 @@ function AskComposer({
     >
       <Textarea
         ref={field}
+        disabled={disabled || send.isPending}
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
@@ -498,24 +548,23 @@ function AskComposer({
             submit()
           }
         }}
-        placeholder={
-          continueJob
-            ? `Reply to ${name}…`
-            : shortId
-              ? "Ask about this artifact…"
-              : "Find, ask, or create…"
-        }
-        aria-label={continueJob ? `Reply to ${name}` : `Ask ${name}`}
+        placeholder={shortId ? "Ask about this artifact…" : "Message…"}
+        aria-label="Message Chat"
         data-testid="ask-input"
-        className="field-sizing-content max-h-40 min-h-14"
+        className={cn(
+          "field-sizing-content max-h-40 min-h-14 resize-none",
+          !shortId &&
+            "border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent",
+        )}
       />
       <div className="flex items-center gap-2">
-        <span className="pl-2 text-xs text-muted-foreground">Luna</span>
-        {!continueJob && (
+        {!continueJob && (models.data?.options.length ?? 0) > 1 && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="xs" data-testid="chat-model">
-                {models.data?.options.find((m) => m.id === modelId)?.label ?? "Default model"}
+                {models.data?.options
+                  .find((m) => m.id === (modelId ?? models.data.default_id))
+                  ?.label?.replace(/^Luna$/, "Chat") ?? "Chat"}
                 <Icon name="caret" size={12} />
               </Button>
             </DropdownMenuTrigger>
@@ -524,10 +573,10 @@ function AskComposer({
                 value={modelId ?? "default"}
                 onValueChange={(id) => setModelId(id === "default" ? null : id)}
               >
-                <DropdownMenuRadioItem value="default">Default model</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="default">Workspace default</DropdownMenuRadioItem>
                 {models.data?.options.map((m) => (
                   <DropdownMenuRadioItem key={m.id} value={m.id}>
-                    {m.label}
+                    {m.label === "Luna" ? "Chat" : m.label}
                   </DropdownMenuRadioItem>
                 ))}
               </DropdownMenuRadioGroup>
@@ -538,6 +587,7 @@ function AskComposer({
         <Button
           type="submit"
           size="icon-xs"
+          className="size-11 sm:size-7"
           aria-label="Send"
           data-testid="ask-send"
           disabled={!text.trim() || disabled || send.isPending}
@@ -546,9 +596,16 @@ function AskComposer({
           <ArrowUp />
         </Button>
       </div>
-      <p data-testid="ask-footnote" className="text-2xs text-muted-foreground">
-        Private to you. If Luna changes an artifact, the new version shows in Activity.
-      </p>
+      {send.error && (
+        <p role="alert" data-testid="ask-send-error" className="text-xs text-destructive">
+          {send.error.message}
+        </p>
+      )}
+      {shortId && (
+        <p data-testid="ask-footnote" className="text-2xs text-muted-foreground">
+          Artifact changes appear in Activity.
+        </p>
+      )}
     </form>
   )
 }
