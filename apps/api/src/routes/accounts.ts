@@ -14,6 +14,7 @@ const Account = z
     id: z.string(),
     provider: z.enum(["claude", "codex"]),
     kind: z.enum(["oauth", "api_key", "login"]),
+    name: z.string().nullable().describe("What its owner calls it; null shows the provider."),
     shared: z.boolean().describe("A workspace account every agent may fall back to."),
     mine: z.boolean(),
     hint: z.string().nullable(),
@@ -21,6 +22,13 @@ const Account = z
     created_at: z.string(),
   })
   .openapi("ModelAccount")
+
+// Blank clears the name, so the list falls back to the provider.
+const AccountName = z
+  .string()
+  .trim()
+  .max(80)
+  .transform((v) => v || null)
 
 export const accountRoutes = (ctx: AppContext) => {
   const { meta, deps } = ctx
@@ -30,6 +38,7 @@ export const accountRoutes = (ctx: AppContext) => {
     id: a.id,
     provider: a.provider,
     kind: a.kind,
+    name: a.name,
     shared: a.user_id === WORKSPACE_ACCOUNT_OWNER,
     mine: a.user_id === me,
     hint: a.hint,
@@ -81,6 +90,7 @@ export const accountRoutes = (ctx: AppContext) => {
           provider: z.enum(["claude", "codex"]),
           kind: z.enum(["oauth", "api_key", "login"]),
           secret: z.string().trim().min(8).max(20_000),
+          name: AccountName.optional(),
           shared: z.boolean().default(false),
         }),
       )
@@ -94,10 +104,52 @@ export const accountRoutes = (ctx: AppContext) => {
         user_id: b.shared ? WORKSPACE_ACCOUNT_OWNER : who,
         provider: b.provider,
         kind: b.kind,
+        name: b.name ?? null,
         secret_enc: encryptSecret(b.secret, deps.encryptionKey),
         hint: `…${b.secret.slice(-4)}`,
       })
       return c.json(accountJson(a, who), 201)
+    },
+  )
+
+  /** Yours, or a shared one if you own the workspace: the same rule as disconnecting. */
+  const manageable = async (
+    c: Parameters<typeof ctx.workspaceCan>[0],
+    org: string,
+    who: string,
+  ) => {
+    const a = await meta.getAccount(c.req.param("id") ?? "")
+    const allowed =
+      a &&
+      a.org_id === org &&
+      (a.user_id === who ||
+        (a.user_id === WORKSPACE_ACCOUNT_OWNER && (await ctx.workspaceCan(c, "manage"))))
+    return allowed ? a : null
+  }
+
+  app.openapi(
+    createRoute({
+      method: "patch",
+      path: "/v1/accounts/{id}",
+      tags: ["Accounts"],
+      summary: "Rename an account. Yours, or a shared one if you own the workspace.",
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        200: { description: "The account.", content: { "application/json": { schema: Account } } },
+      },
+    }),
+    async (c) => {
+      const org = await ctx.requireWorkspace(c, "read")
+      if (org instanceof Response) return bail(org)
+      const who = await ctx.managementPrincipal(c)
+      if (!who) return bail(fail(c, 403, "forbidden"))
+      const b = await readJson(c, z.object({ name: AccountName.nullable() }))
+      if (b instanceof Response) return bail(b)
+      const a = await manageable(c, org, who)
+      if (!a) return bail(fail(c, 404, "account not found"))
+      const updated = await meta.updateAccount(a.id, org, { name: b.name })
+      if (!updated) return bail(fail(c, 404, "account not found"))
+      return c.json(accountJson(updated, who))
     },
   )
 
@@ -115,13 +167,8 @@ export const accountRoutes = (ctx: AppContext) => {
       if (org instanceof Response) return bail(org)
       const who = await ctx.managementPrincipal(c)
       if (!who) return bail(fail(c, 403, "forbidden"))
-      const a = await meta.getAccount(c.req.param("id"))
-      const allowed =
-        a &&
-        a.org_id === org &&
-        (a.user_id === who ||
-          (a.user_id === WORKSPACE_ACCOUNT_OWNER && (await ctx.workspaceCan(c, "manage"))))
-      if (!a || !allowed) return bail(fail(c, 404, "account not found"))
+      const a = await manageable(c, org, who)
+      if (!a) return bail(fail(c, 404, "account not found"))
       await meta.deleteAccount(a.id, org)
       // An agent assigned this account falls back to the asker's and the pool's.
       for (const ag of await meta.listAgents(org))

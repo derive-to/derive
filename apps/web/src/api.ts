@@ -472,6 +472,7 @@ export type AgentPatch = Partial<
     | "connection_ids"
     | "environment"
     | "account_id"
+    | "model"
     | "paused"
     | "machine"
   >
@@ -487,6 +488,7 @@ export type NewModelAccount = {
   provider: ModelAccount["provider"]
   kind: "oauth" | "api_key" | "login"
   secret: string
+  name?: string
   shared: boolean
 }
 
@@ -1421,6 +1423,9 @@ export const api = {
   listAccounts: (): Promise<{ accounts: ModelAccount[] }> => f("/v1/accounts", opts()).then(j),
   addAccount: (body: NewModelAccount): Promise<ModelAccount> =>
     f("/v1/accounts", opts(body)).then(j),
+  /** Rename an account; null (or blank) goes back to the provider's name. */
+  renameAccount: (id: string, name: string | null): Promise<ModelAccount> =>
+    f(`/v1/accounts/${id}`, { ...opts({ name }), method: "PATCH" }).then(j),
   deleteAccount: (id: string): Promise<void> =>
     f(`/v1/accounts/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
 

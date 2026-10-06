@@ -90,10 +90,10 @@ const TRIGGER_FIELDS = [
 ] as const satisfies readonly (keyof TriggerPatch)[]
 
 const ACCOUNT_FIELDS = [
+  "name",
   "secret_enc",
   "hint",
   "status",
-  "ortam_connection_json",
 ] as const satisfies readonly (keyof AccountPatch)[]
 
 /** A Skill's runs: jobs of every agent whose instructions page is the Skill, bucketed by the
@@ -422,11 +422,10 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
     async createAccount(a) {
       const now = iso()
       const row = await first<AccountRecord>(sql`
-        INSERT INTO model_account (id, org_id, user_id, provider, kind, secret_enc, hint, status,
-          ortam_connection_json, created_at, updated_at)
-        VALUES (${a.id}, ${a.org_id}, ${a.user_id}, ${a.provider}, ${a.kind},
-          ${a.secret_enc ?? null}, ${a.hint ?? null}, ${a.status ?? "not_checked"},
-          ${a.ortam_connection_json ?? null}, ${now}, ${now})
+        INSERT INTO model_account (id, org_id, user_id, provider, kind, name, secret_enc, hint,
+          status, created_at, updated_at)
+        VALUES (${a.id}, ${a.org_id}, ${a.user_id}, ${a.provider}, ${a.kind}, ${a.name ?? null},
+          ${a.secret_enc ?? null}, ${a.hint ?? null}, ${a.status ?? "not_checked"}, ${now}, ${now})
         RETURNING *`)
       if (!row) throw new Error("account insert returned no row")
       return row

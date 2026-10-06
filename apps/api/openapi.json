@@ -2285,6 +2285,11 @@
               "login"
             ]
           },
+          "name": {
+            "type": "string",
+            "nullable": true,
+            "description": "What its owner calls it; null shows the provider."
+          },
           "shared": {
             "type": "boolean",
             "description": "A workspace account every agent may fall back to."
@@ -2311,6 +2316,7 @@
           "id",
           "provider",
           "kind",
+          "name",
           "shared",
           "mine",
           "hint",
@@ -6649,6 +6655,34 @@
       }
     },
     "/v1/accounts/{id}": {
+      "patch": {
+        "tags": [
+          "Accounts"
+        ],
+        "summary": "Rename an account. Yours, or a shared one if you own the workspace.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The account.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelAccount"
+                }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "tags": [
           "Accounts"
