@@ -54,7 +54,9 @@ secrets, and the workspace's. Each row says how to use it:
 - `use_as: "environment"`: a saved secret (a database URL, an API key). Bind it to a variable
   name with `environment: { DATABASE_URL: "<id>" }`; every job gets it as that environment
   variable. Only the name and the secret's id are ever shown back, never the value. `{}`
-  clears them. A person saves new secrets in Settings › Sources › Secrets.
+  clears them. Never ask a person to paste a value into the conversation: they run
+  `derive secrets put NAME --agent <id> < file` (stdin or a hidden prompt), or use
+  Settings › Sources › Secrets.
 
 The same rule covers both: your own personal ones, or the workspace's if you manage it.
 
