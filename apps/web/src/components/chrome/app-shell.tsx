@@ -294,7 +294,8 @@ function MobileTopBar({
       >
         <Icon name="sidebar" size={16} />
       </Button>
-      <span className="min-w-0 flex-1 truncate text-sm font-medium">
+      <span className="flex min-w-0 flex-1 items-center gap-2 truncate text-sm font-medium">
+        {pathname === "/chat" && <Icon name="comments" size={16} />}
         <PageLabel pathname={pathname} newSkill={newSkill} />
       </span>
       <Button variant="ghost" size="icon-sm" aria-label="Search" onClick={onOpenPalette}>
@@ -314,7 +315,7 @@ function PageLabel({ pathname, newSkill }: { pathname: string; newSkill: boolean
   if (pathname === "/new") return newSkill ? "New skill" : "New artifact"
   if (pathname.startsWith("/templates")) return "Templates"
   if (pathname.startsWith("/template-libraries")) return "Template library"
-  if (pathname === "/chat") return "Luna"
+  if (pathname === "/chat") return "Chat"
   if (pathname === "/inbox") return "Inbox"
   if (pathname === "/agents/new") return "New agent"
   if (pathname.startsWith("/agents")) return "Agents"

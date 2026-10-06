@@ -1,0 +1,294 @@
+{
+  "fetched_at": "2026-10-05T23:17:06.165Z",
+  "page_url": "http://localhost:3097/chat",
+  "workspace": {
+    "id": "ws_p_3iAKI7QaNGWHig6NuznjhWHokMD9b1EA",
+    "name": "Chat QA's Workspace",
+    "role": "owner",
+    "multi": true,
+    "assistant": true,
+    "members": [
+      {
+        "user_id": "3iAKI7QaNGWHig6NuznjhWHokMD9b1EA",
+        "handle": "chat-qa",
+        "name": "Chat QA",
+        "profession": null,
+        "role": "owner"
+      }
+    ]
+  },
+  "jobs": [
+    {
+      "status": 200,
+      "job": {
+        "chat_context": {
+          "selection": null,
+          "model_id": null,
+          "saving": false
+        },
+        "id": "job_981igfwjmkknb8iq",
+        "agent_id": "derive",
+        "kind": "ask",
+        "status": "succeeded",
+        "instruction": "Reply with exactly: Retry works.",
+        "asked_by": "3iAKI7QaNGWHig6NuznjhWHokMD9b1EA",
+        "attended": true,
+        "parent_id": null,
+        "node_id": null,
+        "trigger_id": null,
+        "subject": null,
+        "needs": null,
+        "result": {},
+        "scheduled_for": null,
+        "started_at": "2026-10-05T23:13:54.590Z",
+        "finished_at": "2026-10-05T23:13:55.883Z",
+        "lease_until": null,
+        "attempt": 0,
+        "cost_micro_usd": 27,
+        "report_artifact_id": null,
+        "created_at": "2026-10-05T23:13:54.590Z",
+        "updated_at": "2026-10-05T23:13:55.883Z",
+        "report_short_id": null,
+        "messages": [
+          {
+            "id": "jm_x4h1lgpnip8368kb",
+            "author_kind": "asker",
+            "author_id": "3iAKI7QaNGWHig6NuznjhWHokMD9b1EA",
+            "body_md": "Reply with exactly: Retry works.",
+            "model": null,
+            "tools": [],
+            "progress": false,
+            "created_at": "2026-10-05T23:13:54.590Z"
+          },
+          {
+            "id": "jm_p7k0gmggfflhluao",
+            "author_kind": "agent",
+            "author_id": "derive",
+            "body_md": "Retry works.",
+            "model": {
+              "id": "openai/gpt-6-luna",
+              "label": "Luna"
+            },
+            "tools": [],
+            "progress": false,
+            "created_at": "2026-10-05T23:13:55.883Z"
+          }
+        ]
+      }
+    },
+    {
+      "status": 200,
+      "job": {
+        "chat_context": {
+          "selection": null,
+          "model_id": null,
+          "saving": false
+        },
+        "id": "job_j2hiwz6hopcbeu5e",
+        "agent_id": "derive",
+        "kind": "ask",
+        "status": "succeeded",
+        "instruction": "What is the launch date in this artifact?",
+        "asked_by": "3iAKI7QaNGWHig6NuznjhWHokMD9b1EA",
+        "attended": true,
+        "parent_id": null,
+        "node_id": null,
+        "trigger_id": null,
+        "subject": {
+          "kind": "artifact",
+          "id": "dzjqeypn"
+        },
+        "needs": null,
+        "result": {},
+        "scheduled_for": null,
+        "started_at": "2026-10-05T23:13:02.336Z",
+        "finished_at": "2026-10-05T23:13:07.600Z",
+        "lease_until": null,
+        "attempt": 0,
+        "cost_micro_usd": 413,
+        "report_artifact_id": null,
+        "created_at": "2026-10-05T23:13:02.335Z",
+        "updated_at": "2026-10-05T23:13:07.600Z",
+        "report_short_id": null,
+        "messages": [
+          {
+            "id": "jm_8ws8quow9fq4bm4g",
+            "author_kind": "asker",
+            "author_id": "3iAKI7QaNGWHig6NuznjhWHokMD9b1EA",
+            "body_md": "What is the launch date in this artifact?",
+            "model": null,
+            "tools": [],
+            "progress": false,
+            "created_at": "2026-10-05T23:13:02.335Z"
+          },
+          {
+            "id": "jm_gzy6cg9hg82m3a75",
+            "author_kind": "agent",
+            "author_id": "derive",
+            "body_md": "The launch date is **October 12, 2026**. [Chat QA note](/artifacts/dzjqeypn)",
+            "model": {
+              "id": "openai/gpt-6-luna",
+              "label": "Luna"
+            },
+            "tools": [
+              "read"
+            ],
+            "progress": false,
+            "created_at": "2026-10-05T23:13:07.600Z"
+          }
+        ]
+      }
+    },
+    {
+      "status": 200,
+      "job": {
+        "chat_context": {
+          "selection": null,
+          "model_id": "openai/gpt-6-luna",
+          "saving": false
+        },
+        "id": "job_sth546twk6howt4n",
+        "agent_id": "derive",
+        "kind": "ask",
+        "status": "succeeded",
+        "instruction": "Create a Markdown artifact titled Chat QA note. Its body must be: The launch date is October 12, 2026.",
+        "asked_by": "3iAKI7QaNGWHig6NuznjhWHokMD9b1EA",
+        "attended": true,
+        "parent_id": null,
+        "node_id": null,
+        "trigger_id": null,
+        "subject": null,
+        "needs": null,
+        "result": {
+          "effects": [
+            {
+              "kind": "page",
+              "label": "Artifact",
+              "ref": "dzjqeypn",
+              "version": 1
+            }
+          ]
+        },
+        "scheduled_for": null,
+        "started_at": "2026-10-05T23:12:20.084Z",
+        "finished_at": "2026-10-05T23:12:23.809Z",
+        "lease_until": null,
+        "attempt": 0,
+        "cost_micro_usd": 768,
+        "report_artifact_id": null,
+        "created_at": "2026-10-05T23:12:20.084Z",
+        "updated_at": "2026-10-05T23:12:23.809Z",
+        "report_short_id": null,
+        "messages": [
+          {
+            "id": "jm_8s2x2vovjjeqgu65",
+            "author_kind": "asker",
+            "author_id": "3iAKI7QaNGWHig6NuznjhWHokMD9b1EA",
+            "body_md": "Create a Markdown artifact titled Chat QA note. Its body must be: The launch date is October 12, 2026.",
+            "model": null,
+            "tools": [],
+            "progress": false,
+            "created_at": "2026-10-05T23:12:20.084Z"
+          },
+          {
+            "id": "jm_4w4e036202x15y0k",
+            "author_kind": "agent",
+            "author_id": "derive",
+            "body_md": "Created [Chat QA note](/artifacts/dzjqeypn) with the requested body: “The launch date is October 12, 2026.”",
+            "model": {
+              "id": "openai/gpt-6-luna",
+              "label": "Luna"
+            },
+            "tools": [
+              "read",
+              "publish"
+            ],
+            "progress": false,
+            "created_at": "2026-10-05T23:12:23.808Z"
+          }
+        ]
+      }
+    },
+    {
+      "status": 200,
+      "job": {
+        "chat_context": {
+          "selection": null,
+          "model_id": null,
+          "saving": false
+        },
+        "id": "job_2ip2jzt8whntua5l",
+        "agent_id": "derive",
+        "kind": "ask",
+        "status": "succeeded",
+        "instruction": "Reply with exactly: Chat is working.",
+        "asked_by": "3iAKI7QaNGWHig6NuznjhWHokMD9b1EA",
+        "attended": true,
+        "parent_id": null,
+        "node_id": null,
+        "trigger_id": null,
+        "subject": null,
+        "needs": null,
+        "result": {},
+        "scheduled_for": null,
+        "started_at": "2026-10-05T23:11:22.448Z",
+        "finished_at": "2026-10-05T23:11:23.837Z",
+        "lease_until": null,
+        "attempt": 0,
+        "cost_micro_usd": 311,
+        "report_artifact_id": null,
+        "created_at": "2026-10-05T23:10:57.821Z",
+        "updated_at": "2026-10-05T23:11:23.837Z",
+        "report_short_id": null,
+        "messages": [
+          {
+            "id": "jm_cn41sq808zjwv43q",
+            "author_kind": "asker",
+            "author_id": "3iAKI7QaNGWHig6NuznjhWHokMD9b1EA",
+            "body_md": "Reply with exactly: Chat is working.",
+            "model": null,
+            "tools": [],
+            "progress": false,
+            "created_at": "2026-10-05T23:10:57.822Z"
+          },
+          {
+            "id": "jm_wq6i986wfb89pymt",
+            "author_kind": "agent",
+            "author_id": "derive",
+            "body_md": "Chat is working.",
+            "model": {
+              "id": "openai/gpt-6-luna",
+              "label": "Luna"
+            },
+            "tools": [],
+            "progress": false,
+            "created_at": "2026-10-05T23:10:59.412Z"
+          },
+          {
+            "id": "jm_6y6z4ptwhhpvqp6f",
+            "author_kind": "asker",
+            "author_id": "3iAKI7QaNGWHig6NuznjhWHokMD9b1EA",
+            "body_md": "What exact sentence did you just reply with?",
+            "model": null,
+            "tools": [],
+            "progress": false,
+            "created_at": "2026-10-05T23:11:22.448Z"
+          },
+          {
+            "id": "jm_90h2xmj1g93dhcon",
+            "author_kind": "agent",
+            "author_id": "derive",
+            "body_md": "Chat is working.",
+            "model": {
+              "id": "openai/gpt-6-luna",
+              "label": "Luna"
+            },
+            "tools": [],
+            "progress": false,
+            "created_at": "2026-10-05T23:11:23.836Z"
+          }
+        ]
+      }
+    }
+  ]
+}
