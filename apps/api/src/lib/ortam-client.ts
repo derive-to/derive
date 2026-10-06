@@ -2,12 +2,10 @@ import { unbound } from "@derive/broker"
 import { z } from "zod"
 
 const Sandbox = z.object({
-  version: z.number().int().nonnegative().optional(),
   id: z.string(),
   state: z.string(),
   current_operation_id: z.string().nullable(),
   auto_stop_after_seconds: z.number(),
-  agent_connections: z.object({ user_id: z.string() }).nullable().optional(),
 })
 const Operation = z.object({
   id: z.string(),
@@ -129,30 +127,6 @@ export class OrtamClient {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
   }
-  /** Completion returns a Connection in Ortam's public API, not an Attempt.
-   * Read the attempt to report its state; a retry after a lost success must not
-   * exchange the same authorization code again. */
-  async completeModelSignIn(
-    attemptId: string,
-    code: string,
-    identity: { organization_id: string; user_id: string },
-  ) {
-    const path = `/agent-sign-in-attempts/${encodeURIComponent(attemptId)}`
-    const prior = modelSignIn.parse(await this.request(path, identity))
-    if (prior.state === "complete") return prior
-    await this.request(`${path}/complete`, identity, "POST", { code })
-    return modelSignIn.parse(await this.request(path, identity))
-  }
-
-  async hasModelConnection(
-    provider: "codex" | "claude-code",
-    identity: { organization_id: string; user_id: string },
-  ) {
-    const connections = modelConnections.parse(await this.request("/agents", identity))
-    return connections.items.some(
-      (item) => item.status === "active" && item.harness === modelHarness(provider),
-    )
-  }
   async create(body: unknown, key: string, identity: { organization_id: string; user_id: string }) {
     const result = z
       .object({ sandbox: Sandbox, operation: Operation })
@@ -186,28 +160,6 @@ export class OrtamClient {
     if (sandbox.id !== id) throw new Error("Ortam sandbox mismatch")
     return sandbox
   }
-  /** Conditional updates fence delayed attachment requests across future runs. */
-  async setModelAttachment(
-    sandbox: z.infer<typeof Sandbox>,
-    attached: boolean,
-    identity: { organization_id: string; user_id: string },
-  ) {
-    if (sandbox.version === undefined) throw new Error("Ortam conditional settings are unavailable")
-    const updated = Sandbox.parse(
-      await this.request(`/sandboxes/${encodeURIComponent(sandbox.id)}`, identity, "PATCH", {
-        expected_version: sandbox.version,
-        agent_connections: attached,
-      }),
-    )
-    if (
-      updated.id !== sandbox.id ||
-      updated.version === undefined ||
-      updated.version <= sandbox.version
-    )
-      throw new Error("Ortam attachment receipt mismatch")
-    return updated
-  }
-
   async isSandboxDeleted(id: string, identity: { organization_id: string; user_id: string }) {
     try {
       return (await this.sandbox(id, identity)).state === "deleted"
@@ -278,31 +230,3 @@ export class OrtamClient {
     return process
   }
 }
-
-export const modelConnections = z.object({
-  items: z.array(
-    z.object({
-      harness: z.string(),
-      status: z.string(),
-      identity: z.object({ email: z.string().optional() }).nullable(),
-    }),
-  ),
-})
-
-export function modelHarness(provider: "codex" | "claude-code") {
-  return provider === "codex" ? "codex" : "claude_code"
-}
-
-const link = z
-  .string()
-  .url()
-  .refine((value) => new URL(value).protocol === "https:")
-  .nullable()
-export const modelSignIn = z.object({
-  id: z.string(),
-  state: z.enum(["pending", "complete", "failed", "expired", "cancelled"]),
-  user_code: z.string().nullable(),
-  verification_url: link,
-  authorize_url: link,
-  expires_at: z.string(),
-})

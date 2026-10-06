@@ -7475,13 +7475,13 @@ export interface components {
             /** @enum {string} */
             provider: "claude" | "codex";
             /** @enum {string} */
-            kind: "oauth" | "api_key" | "login" | "ortam_signin";
+            kind: "oauth" | "api_key" | "login";
             /** @description A workspace account every agent may fall back to. */
             shared: boolean;
             mine: boolean;
             hint: string | null;
             /** @enum {string} */
-            status: "ready" | "needs_signin" | "not_checked";
+            status: "ready" | "not_checked";
             created_at: string;
         };
         BulkSummary: {

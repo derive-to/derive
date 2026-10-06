@@ -2282,8 +2282,7 @@
             "enum": [
               "oauth",
               "api_key",
-              "login",
-              "ortam_signin"
+              "login"
             ]
           },
           "shared": {
@@ -2301,7 +2300,6 @@
             "type": "string",
             "enum": [
               "ready",
-              "needs_signin",
               "not_checked"
             ]
           },
