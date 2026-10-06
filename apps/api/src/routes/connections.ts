@@ -4,8 +4,9 @@ import { z } from "@hono/zod-openapi"
 import { Hono } from "hono"
 import type { AppContext } from "../context"
 import { brokerFor, isDirect } from "../lib/broker"
-import { decryptSecret, encryptSecret, safeEqual, sha256 } from "../lib/crypto"
+import { encryptSecret } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
+import { saveSecret } from "../lib/secrets"
 
 // WO3 — connected external accounts (Sources). Connect once (OAuth via the broker), then
 // instructions name the tool in plain language. Two scopes: "personal" (act-as-me — bound to
@@ -188,54 +189,19 @@ export const connectionRoutes = (ctx: AppContext) => {
         return fail(c, 400, "base_url must be https (or http://localhost for dev)")
       if (!deps.encryptionKey) return fail(c, 502, "secret connections need an encryption key")
       if (b.secret.includes("\0")) return fail(c, 400, "Value cannot contain a null character")
-      const baseUrl = b.base_url ? b.base_url.replace(/\/+$/, "") : null
-      if (b.reuse) {
-        // Only secrets the caller could attach anyway (own personal ones, or workspace ones,
-        // which this scope already required manage for), so a match reveals nothing new.
-        const key = deps.encryptionKey
-        const same = (await meta.listConnections(org)).find(
-          (cn) =>
-            cn.kind === "secret" &&
-            cn.status === "active" &&
-            cn.scope === scope &&
-            (scope === "workspace" || cn.user_id === me.id) &&
-            cn.base_url === baseUrl &&
-            !!cn.secret_enc &&
-            safeEqual(decryptSecret(cn.secret_enc, key), b.secret),
-        )
-        if (same) return c.json({ ...present(same), reused: true })
-      }
-      const id = b.request_id
-        ? `conn_${sha256(JSON.stringify([org, me.id, b.request_id])).slice(0, 40)}`
-        : newId("conn")
-      const existing = await meta.getConnection(id)
-      if (existing) return c.json(present(existing))
-      const rec = await meta
-        .createConnection({
-          id,
-          org_id: org,
-          user_id: me.id,
-          scope: b.scope,
-          kind: "secret",
-          secret_enc: encryptSecret(b.secret, deps.encryptionKey),
-          // Stored without a trailing slash; executeHttpTool adds one when it resolves a path.
-          base_url: baseUrl,
-          broker: "none",
-          toolkit: b.toolkit,
-          // There is no vendor account behind this, but a run still identifies its tools by
-          // ref, so mint a synthetic one. Nothing parses it — routing is on `kind`.
-          broker_ref: newId("sref"),
-          // Labels identify credentials without disclosing any portion of their value.
-          scopes_label: b.scopes_label?.trim() || "Stored secret",
-          // Nothing to authorize, so it is usable immediately.
-          status: "active",
-        })
-        .catch(async (error: unknown) => {
-          const winner = await meta.getConnection(id)
-          if (winner) return winner
-          throw error
-        })
-      return c.json(present(rec), 201)
+      const { secret, outcome } = await saveSecret(meta, deps.encryptionKey, {
+        orgId: org,
+        userId: me.id,
+        scope,
+        name: b.scopes_label,
+        value: b.secret,
+        toolkit: b.toolkit,
+        baseUrl: b.base_url,
+        reuse: b.reuse,
+        requestId: b.request_id,
+      })
+      if (outcome === "reused") return c.json({ ...present(secret), reused: true })
+      return c.json(present(secret), outcome === "created" ? 201 : 200)
     }
     // An MCP connection routes on its OWN URL rather than the workspace's broker plan, and is
     // built per request (it holds only a session map, no credential) so nothing is cached across

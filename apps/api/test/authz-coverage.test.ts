@@ -40,6 +40,7 @@ const AUTHZ = new Set([
   // (the tokened publish endpoints re-check live membership on top). Same role
   // as `isToken` — the credential is the gate.
   "verifyPublishToken",
+  "verifySecretUploadToken",
 ])
 
 const EXEMPT = "authz-exempt"

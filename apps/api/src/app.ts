@@ -473,6 +473,7 @@ export function createApp(deps: AppDeps): Hono {
     /^\/v1\/billing\/webhook$/, // Stripe webhook: the Stripe-Signature check is the gate
     /^\/v1\/(?:sync\/)?github\/webhook$/, // GitHub App webhook — the HMAC signature is the gate
     /^\/v1\/assets\/t\/[^/]+$/, // MCP-minted upload URL — the signed expiring token is the gate
+    /^\/v1\/secrets\/t\/[^/]+$/, // MCP-minted secret URL — the signed expiring token is the gate
     /^\/v1\/artifacts\/t\/[^/]+$/, // MCP-minted publish URL (create) — signed token is the gate
     /^\/v1\/drafts$/, // anonymous draft mint (the claim flow) — anonymous is the point; draftPublish IP cap + publish limiter are the gate
     /^\/v1\/artifacts\/[^/]+\/versions\/t\/[^/]+$/, // MCP-minted publish URL (revise) — signed token is the gate

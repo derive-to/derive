@@ -54,9 +54,17 @@ secrets, and the workspace's. Each row says how to use it:
 - `use_as: "environment"`: a saved secret (a database URL, an API key). Bind it to a variable
   name with `environment: { DATABASE_URL: "<id>" }`; every job gets it as that environment
   variable. Only the name and the secret's id are ever shown back, never the value. `{}`
-  clears them. Never ask a person to paste a value into the conversation: they run
-  `derive secrets put NAME --agent <id> < file` (stdin or a hidden prompt), or use
-  Settings › Sources › Secrets.
+  clears them.
+
+**Saving a secret without seeing it.** Never ask for a value in the conversation, and never
+read a file that holds one: a value in a tool call stays in the transcript. Instead call
+`stage({ target: "secret", name: "DATABASE_URL", agent: "ag_..." })` and spend the link from
+the shell: `curl -sS --data-binary @path/to/file "<upload_url>"`. The file goes straight to
+Derive. `agent` is optional; with it, the secret is bound under `name`, which must then be a
+valid variable name. A value the person already saved comes back as that secret instead of a
+copy. The link is theirs, lasts ten minutes, and can only save their own secret and set that
+one variable. Without MCP, the person can run `derive secrets put NAME --agent <id> < file`
+or use Settings › Sources › Secrets.
 
 The same rule covers both: your own personal ones, or the workspace's if you manage it.
 
