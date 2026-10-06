@@ -112,8 +112,8 @@ const clientFor = (deps: MachineDeps, agent: AgentRecord) => {
   return new OrtamClient(
     deps.config.apiUrl,
     deps.config.managed.apiKey,
-    deps.fetcher,
     sha256(JSON.stringify([agent.org_id, "agent", agent.id])),
+    deps.fetcher,
   )
 }
 
@@ -554,7 +554,19 @@ export async function machinePass(
             sandbox_id: null,
           })
         }
-        if (agent) await advanceSandbox(deps, agent)
+        if (agent) {
+          const starting = agent
+          await advanceSandbox(deps, starting).catch(async (error: unknown) => {
+            // Failing before a sandbox exists (Ortam refusing the key, say) counts like any
+            // failed sandbox, so the backoff and MAX_SANDBOX_FAILURES apply and the waiting
+            // work is eventually told, instead of retrying every minute with no end.
+            await meta.transitionAgentSandbox(starting.id, starting.org_id, starting.sandbox_rev, {
+              phase: "failed",
+              state_json: JSON.stringify({ failures: failures + 1, failed_at: iso(deps) }),
+            })
+            throw error
+          })
+        }
         room--
         count(job.org_id)
         return
@@ -611,8 +623,8 @@ export async function retireSandbox(
     const client = new OrtamClient(
       config.apiUrl,
       config.managed.apiKey,
-      fetcher,
       sha256(JSON.stringify([agent.org_id, "agent", agent.id])),
+      fetcher,
     )
     // A create whose answer never arrived still made a sandbox; its key finds it.
     const id =

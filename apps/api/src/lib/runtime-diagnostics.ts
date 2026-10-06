@@ -26,7 +26,7 @@ export function runtimeFailureReason(error: unknown): string {
       return "admission_conflict"
     // Ortam's answer, never its body: an HTTP status with the endpoint's first segment
     // (lib/ortam-client.ts OrtamHttpError), a response that failed its schema, or one of the
-    // client's own fixed messages ("Ortam returned an invalid token"). None carries a value.
+    // client's own fixed messages ("Ortam request outcome is unknown"). None carries a value.
     const path = (e as { path?: unknown }).path
     if (typeof (e as { status?: unknown }).status === "number" && typeof path === "string")
       return `ortam_http_${(e as { status: number }).status} /${path.split(/[/?]/)[1] ?? ""}`

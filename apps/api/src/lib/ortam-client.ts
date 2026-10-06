@@ -42,8 +42,9 @@ export class OrtamClient {
   constructor(
     readonly base: string,
     private key: string,
+    /** One integration subject per agent: its sandbox belongs to that identity. */
+    private subject: string,
     fetcher: typeof fetch = fetch,
-    private subject?: string,
   ) {
     this.fetcher = unbound(fetcher)
     const url = new URL(base)
@@ -80,29 +81,15 @@ export class OrtamClient {
       throw new Error("Ortam returned invalid JSON")
     }
   }
+  /** The integration identity this agent's subject acts as. Ortam takes the key as the bearer
+   *  on every call; it has no token exchange. */
   async authenticate() {
-    const response = z
-      .object({ token: z.string() })
-      .parse(await this.json("/auth/token", { headers: { "X-API-Key": this.key } }))
-    const encoded = response.token.split(".")[1]
-    if (!encoded) throw new Error("Ortam returned an invalid token")
-    const claims = z
-      .object({ organization_id: z.string(), sub: z.string() })
-      .parse(JSON.parse(atob(encoded.replace(/-/g, "+").replace(/_/g, "/"))))
-    if (this.subject) {
-      const identity = z.object({ organization_id: z.string(), user_id: z.string() }).parse(
-        await this.json("/integration", {
-          headers: {
-            Authorization: `Bearer ${response.token}`,
-            "X-Ortam-Integration-Subject": this.subject,
-          },
-        }),
-      )
-      if (identity.organization_id !== claims.organization_id)
-        throw new Error("Ortam integration ownership changed")
-      return { ...identity, token: response.token }
-    }
-    return { organization_id: claims.organization_id, user_id: claims.sub, token: response.token }
+    return z
+      .object({ organization_id: z.string(), user_id: z.string() })
+      .parse(await this.json("/integration", { headers: this.auth() }))
+  }
+  private auth() {
+    return { Authorization: `Bearer ${this.key}`, "X-Ortam-Integration-Subject": this.subject }
   }
   async request(
     path: string,
@@ -118,11 +105,10 @@ export class OrtamClient {
     return this.json(path, {
       method,
       headers: {
-        Authorization: `Bearer ${auth.token}`,
+        ...this.auth(),
         "Content-Type": "application/json",
         ...(key ? { "Idempotency-Key": key } : {}),
         ...headers,
-        ...(this.subject ? { "X-Ortam-Integration-Subject": this.subject } : {}),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
