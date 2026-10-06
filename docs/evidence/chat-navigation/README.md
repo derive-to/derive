@@ -96,6 +96,35 @@ Settings shows a retry control and disables sending. Retry enables the composer.
 
 ![Settings recovers](14-settings-recovered.png)
 
+## Dependency repair
+
+Latest main remains `181184fc`. Its unchanged lockfile reproduces the seven dependency findings.
+The updated lockfile passes OSV-Scanner 2.3.8. [Full scan output](dependency-scan.txt).
+The scan uses the existing exception file. This change adds no exception.
+
+| Package | Previous version | Current version |
+| --- | --- | --- |
+| katex | 0.16.47 | 0.18.5 |
+| proxy-addr | 2.0.7 | 2.0.8 |
+| seroval | 1.5.4 | 1.6.8 |
+| smol-toml | 1.8.0 | 1.9.0 |
+| source-map-js | 1.2.1 | 1.2.2 |
+| global-agent | 3.0.0 | 4.1.3 |
+| sprintf-js | 1.1.3 | Removed |
+
+The ONNX installer uses global-agent's `bootstrap` function.
+A direct check verifies that function still works after the update.
+Global-agent 4.1 removes the logger dependency that brings in sprintf-js.
+See the [upstream release](https://github.com/gajus/global-agent/releases/tag/v4.1.0).
+The regenerated lockfile also updates two related development tools to 0.9.16.
+
+Chat sends the real reply “Updated Chat works.” after the dependency update.
+A page reload restores that reply. The 390 × 500 mobile viewport also loads the conversation.
+
+![Chat after the dependency update](chat-updated-dependencies.png)
+
+![Mobile Chat after the dependency update](mobile-updated-dependencies.png)
+
 ## Limits
 
 A simple message also succeeds on derive.to before the change.
