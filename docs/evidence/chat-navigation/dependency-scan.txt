@@ -1,0 +1,11 @@
+Starting filesystem walk for root: /
+Scanned /Users/aniraga/Projects/derive-chat-fix/pnpm-lock.yaml file and found 1564 packages
+End status: 0 dirs visited, 1 inodes visited, 1 Extract calls, 22.302541ms elapsed, 22.303ms wall time
+Loaded filter from: /Users/aniraga/Projects/derive-chat-fix/osv-scanner.toml
+GHSA-p2fr-6hmx-4528 and 1 alias have been filtered out because: Derive's accepted audience strings are URL variants of one Derive MCP resource server, and every variant is checked against the same authorization boundary. There is no second allow-listed resource server to escalate into. Re-audit when Better Auth ships the fixed 1.7 stable line; its current fix is a schema-breaking prerelease.
+GHSA-ch52-4w7c-c8xp and 1 alias have been filtered out because: The locked 4.2.0 package has a committed pnpm security patch. Zero-freshness cache entries always miss, so client max-stale cannot bypass cookie, private, no-cache, or no-store restrictions. lint:dependency-exceptions checks the exact patch digest, its lockfile application, and the installed behavior. Re-audit when upstream publishes a verified fix.
+Filtered 2 vulnerabilities from output
+/Users/aniraga/Projects/derive-chat-fix/osv-scanner.toml has unused ignores:
+ - GHSA-vwc7-r8mq-g2x9
+
+No issues found

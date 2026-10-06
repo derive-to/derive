@@ -577,11 +577,11 @@ export const agentQuery = (id: string) =>
     queryFn: () => api.getAgent(id),
   })
 
-// Private Luna chats about one page, newest first: the
+// Private chats about one page, newest first: the
 // Ask panel resumes the latest.
 export const pageAsksQuery = (shortId: string) =>
   queryOptions({
-    queryKey: ["jobs", "luna", "page", shortId] as const,
+    queryKey: ["jobs", "chat", "page", shortId] as const,
     queryFn: () =>
       api.listJobs({ agent: "derive", subject: shortId, limit: 30 }).then((r) => r.jobs),
     // A reload restores the persisted list, which may predate the last ask (persistence

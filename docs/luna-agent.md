@@ -1,9 +1,15 @@
-# Luna inside Derive
+# Chat inside Derive
 
-Luna is the built-in agent. Its stable agent id remains `derive`.
-The native chat lives at `/chat`. Artifact Ask uses the same runtime.
-Both entry points use Luna directly. The previous agent picker is removed.
-Their history includes only private Luna chats. Custom agents remain in Agents.
+Chat is the built-in assistant. Its stable agent id remains `derive`.
+The native Chat page lives at `/chat`. Its navigation link sits directly below Skills in the sidebar.
+Artifact Ask uses the same runtime.
+The mobile page uses the space below its navigation bar.
+The composer uses smaller margins and honors the bottom safe area.
+The send button has a 44-pixel touch target.
+Chat refreshes model settings when it opens. History failures show a retry control.
+The composer waits for history to load. Accepted messages appear without a second loading screen.
+Both entry points use the same assistant. The previous agent picker is removed.
+Their history includes only private chats. Custom agents remain in Agents.
 The Derive shell, artifact URLs, access checks, reviews, and versions remain in use.
 
 ## Scope
@@ -13,7 +19,7 @@ Workspace chat can find, read, create, and revise accessible artifacts.
 Artifact chat treats “this” as its subject. It edits only that artifact.
 A text selection narrows edits to the selected text. Other text stays as context.
 History does not grant access. Each continuation checks membership and artifact access again.
-Chat text stays private unless the human asks Luna to publish it.
+Chat text stays private unless the human asks Chat to publish it.
 
 ## Runtime
 
@@ -56,7 +62,7 @@ The publish tool confirms each saved version. The job records those versions as 
 Each confirmed save records its effect before the save lock clears.
 Retries receive the completed effects and must not replay them.
 Artifact Ask rejects writes to another artifact. Selection chat accepts only focused edits inside its selection.
-Every existing edit requires the version Luna read.
+Every existing edit requires the version Chat reads.
 A newer artifact version stops an edit. Derive’s publish operation also enforces its normal base-version check.
 Existing artifact edits still open a Derive review. The agent adds no separate preview approval step.
 
@@ -70,17 +76,17 @@ This prevents an automatic retry from repeating a save after a process crash.
 ## Models
 
 Set `OPENAI_API_KEY` to run chat directly through OpenAI Responses.
-This mode offers only Luna and uses medium reasoning.
+This mode offers only the configured chat model and uses medium reasoning.
 It ignores legacy DeepSeek gateway settings and library model entries.
-Token costs use OpenAI standard Luna rates, including cache and long-context rates.
+Token costs use OpenAI standard rates for the configured model, including cache and long-context rates.
 The direct path keeps Derive workspace tools. OpenRouter server tools stay gateway-only.
 Old explicit unavailable choices fail instead of silently changing models.
 
 Explicit model ids win. A native chat stores an explicit choice for all its later turns.
 An inherited choice reads the live instance default on each turn.
 An OpenRouter gateway inherits `openai/gpt-6-luna` when `DERIVE_MODEL_NAME` is absent.
-OpenRouter always includes Luna in the picker, even when the configured default is another model.
-Hosted Luna uses medium reasoning and routes only to OpenAI.
+OpenRouter always includes Chat in the picker, even when the configured default is another model.
+Hosted Chat uses medium reasoning and routes only to OpenAI.
 Other models keep the configured provider policy and disabled reasoning.
 Other compatible gateways still require their own model id.
 The Codex runner inherits `gpt-6-luna`. Explicit runner, job, and agent models take precedence.
@@ -94,5 +100,5 @@ Run the Node API and Vite web app. Use Aside for browser work.
 Disable the preview worker. Use a separate artifact sandbox origin.
 Use synthetic local users and fixture artifacts. Do not use a shared database.
 Use a stable API process during model turns. A development watcher can interrupt an in-flight turn.
-Save screenshots and job evidence. Report which flows use real Luna and which use deterministic failure injection.
+Save screenshots and job evidence. Report which flows use real model calls and which use deterministic failure injection.
 Stop both servers when the walkthrough is complete.
