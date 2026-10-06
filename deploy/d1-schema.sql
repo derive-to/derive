@@ -345,10 +345,10 @@ CREATE TABLE IF NOT EXISTS model_account (
   user_id TEXT NOT NULL,
   provider TEXT NOT NULL,
   kind TEXT NOT NULL,
+  name TEXT,
   secret_enc TEXT,
   hint TEXT,
   status TEXT NOT NULL DEFAULT 'not_checked',
-  ortam_connection_json TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );

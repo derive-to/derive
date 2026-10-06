@@ -1636,6 +1636,34 @@ describe("jobs: which account a job runs with", () => {
     ).toBe(401)
   })
 
+  it("an account carries the name its owner gives it, and only they (or an owner, for a shared one) rename it", async () => {
+    const { app } = await setup("jobs-accounts-names")
+    const add = async (who: string, body: Record<string, unknown>) =>
+      (await (
+        await app.request(
+          "/v1/accounts",
+          jsonAs(as(who), { provider: "claude", kind: "oauth", ...body }),
+        )
+      ).json()) as { id: string; name: string | null }
+    const rename = (who: string, id: string, name: string | null) =>
+      app.request(`/v1/accounts/${id}`, { ...jsonAs(as(who), { name }), method: "PATCH" })
+    const work = await add(ed.email, { secret: "sk-ant-oat-work-1111", name: "  Work Max  " })
+    expect(work.name).toBe("Work Max")
+    const shared = await add(owner.email, { secret: "sk-shared-2222", shared: true })
+    expect(shared.name).toBeNull()
+
+    const renamed = await rename(ed.email, work.id, "Automations")
+    expect(((await renamed.json()) as { name: string }).name).toBe("Automations")
+    // Blank clears it back to the provider name.
+    expect(
+      ((await (await rename(ed.email, work.id, " ")).json()) as { name: null }).name,
+    ).toBeNull()
+    // Not a teammate's personal account, and a shared one needs a workspace owner.
+    expect((await rename(owner.email, work.id, "Mine now")).status).toBe(404)
+    expect((await rename(ed.email, shared.id, "Ed's")).status).toBe(404)
+    expect((await rename(owner.email, shared.id, "Team")).status).toBe(200)
+  })
+
   it("a removed member's key stops paying for their agent's jobs", async () => {
     const { app, meta } = await setup("jobs-accounts-leaver")
     const add = async (who: string, body: Record<string, unknown>) =>

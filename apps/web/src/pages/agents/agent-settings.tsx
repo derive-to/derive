@@ -106,6 +106,7 @@ export function AgentSettings({ agent, names, workspaceName, isWorkspaceOwner }:
           )}
         </Field>
         <AccountField agent={agent} edit={edit} onSave={set} />
+        <ModelField agent={agent} edit={edit} onSave={set} />
         <SourcesField agent={agent} edit={edit} onSave={set} />
         <EnvironmentField agent={agent} edit={edit} onSave={set} />
         <Field label="Can write">
@@ -565,6 +566,98 @@ function AccountField({
             : "The asker’s own account, then the workspace’s shared one."}
         </Sub>
       )}
+    </Field>
+  )
+}
+
+// Claude Code's model aliases: it maps each to the newest model of that family, so this list
+// stays current without a Derive release. An exact model id (a pinned version) goes in Custom.
+const CLAUDE_MODELS = [
+  { id: "opus", label: "Opus (newest)" },
+  { id: "sonnet", label: "Sonnet (newest)" },
+  { id: "haiku", label: "Haiku (newest)" },
+]
+const CUSTOM = "custom"
+
+function ModelField({
+  agent,
+  edit,
+  onSave,
+}: {
+  agent: AgentDetail
+  edit: boolean
+  onSave: (p: AgentPatch) => void
+}) {
+  const choices = agent.provider === "claude-code" ? CLAUDE_MODELS : []
+  const known = choices.find((m) => m.id === agent.model)
+  const [custom, setCustom] = useState<string | null>(null)
+  const selected = custom !== null ? CUSTOM : !agent.model ? DEFAULT : known ? known.id : CUSTOM
+  const shown = !agent.model ? "Default" : (known?.label ?? agent.model)
+  const saveCustom = (e: FormEvent) => {
+    e.preventDefault()
+    const id = custom?.trim()
+    if (!id) return
+    onSave({ model: id })
+    setCustom(null)
+  }
+  return (
+    <Field label="Model">
+      {edit ? (
+        <>
+          <Select
+            value={selected}
+            onValueChange={(v) => {
+              if (v === CUSTOM) return setCustom(known || !agent.model ? "" : agent.model)
+              setCustom(null)
+              onSave({ model: v === DEFAULT ? null : v })
+            }}
+          >
+            <SelectTrigger data-testid="agent-model" aria-label="Model" className="min-w-56">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={DEFAULT}>Default</SelectItem>
+              {choices.map((m) => (
+                <SelectItem key={m.id} value={m.id}>
+                  {m.label}
+                </SelectItem>
+              ))}
+              <SelectItem value={CUSTOM}>
+                {selected === CUSTOM && custom === null ? `Custom: ${agent.model}` : "Custom…"}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          {custom !== null && (
+            <form onSubmit={saveCustom} className="mt-1 flex items-center gap-2">
+              <Input
+                autoFocus
+                aria-label="Model id"
+                data-testid="agent-model-custom"
+                placeholder="exact model id"
+                value={custom}
+                onChange={(e) => setCustom(e.target.value)}
+                className="w-64 font-mono"
+              />
+              <Button
+                type="submit"
+                variant="ghost"
+                size="sm"
+                data-testid="agent-model-custom-save"
+                disabled={!custom.trim()}
+              >
+                Save
+              </Button>
+            </form>
+          )}
+        </>
+      ) : (
+        <span>{shown}</span>
+      )}
+      <Sub>
+        {agent.provider === "claude-code"
+          ? "Opus, Sonnet and Haiku always run the newest version. Custom pins an exact model id. Default is the runner’s choice."
+          : "Default is the runner’s choice. Custom pins an exact model id."}
+      </Sub>
     </Field>
   )
 }

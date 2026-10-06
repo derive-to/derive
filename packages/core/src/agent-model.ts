@@ -217,9 +217,10 @@ export interface AccountRecord {
   provider: AccountProvider
   kind: AccountKind
   secret_enc: string | null
+  /** What its owner calls it ("Work Max plan"); null shows the provider name. */
+  name: string | null
   hint: string | null
   status: AccountStatus
-  ortam_connection_json: string | null
   created_at: string
   updated_at: string
 }
@@ -230,9 +231,9 @@ export interface NewAccount {
   provider: AccountProvider
   kind: AccountKind
   secret_enc?: string | null
+  name?: string | null
   hint?: string | null
   status?: AccountStatus
-  ortam_connection_json?: string | null
 }
 
 /** Fields an owner may change on an agent. Undefined = untouched; null clears. */
@@ -292,10 +293,10 @@ export interface TriggerPatch {
 }
 
 export interface AccountPatch {
+  name?: string | null
   secret_enc?: string | null
   hint?: string | null
   status?: AccountStatus
-  ortam_connection_json?: string | null
 }
 
 /** The store half of the agent model. One method per operation; every write is org-scoped or

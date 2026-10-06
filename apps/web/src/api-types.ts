@@ -1927,7 +1927,29 @@ export interface paths {
         };
         options?: never;
         head?: never;
-        patch?: never;
+        /** Rename an account. Yours, or a shared one if you own the workspace. */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The account. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ModelAccount"];
+                    };
+                };
+            };
+        };
         trace?: never;
     };
     "/v1/artifacts": {
@@ -7476,6 +7498,8 @@ export interface components {
             provider: "claude" | "codex";
             /** @enum {string} */
             kind: "oauth" | "api_key" | "login";
+            /** @description What its owner calls it; null shows the provider. */
+            name: string | null;
             /** @description A workspace account every agent may fall back to. */
             shared: boolean;
             mine: boolean;

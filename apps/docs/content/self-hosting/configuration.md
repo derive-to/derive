@@ -495,6 +495,13 @@ first (see the upgrade note in the [quickstart](quickstart.md)), then run it onc
 wrangler d1 execute <db> --remote --file=deploy/drop-agents-retired-sqlite.sql
 ```
 
+Model accounts gained a name. On an existing D1 database, add the column once (Postgres and
+self-host SQLite add it at boot):
+
+```
+wrangler d1 execute <db> --remote --file=deploy/add-model-account-name-d1.sql
+```
+
 ### The model gateway for @Derive replies
 
 Mention @Derive in a comment, or in Slack where the workspace has connected it, and Derive

@@ -5,6 +5,7 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { LoadError } from "@/components/shared/load-error"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
   Select,
@@ -29,7 +30,9 @@ const KIND: Record<ModelAccount["kind"], string> = {
 
 /** "Your Claude", "Shared Codex": whose account and which provider. */
 export const accountLabel = (a: ModelAccount): string =>
-  `${a.shared ? "Shared" : a.mine ? "Your" : "A teammate's"} ${PROVIDER[a.provider]}`
+  a.name
+    ? `${a.name}${a.shared ? " (shared)" : ""}`
+    : `${a.shared ? "Shared" : a.mine ? "Your" : "A teammate's"} ${PROVIDER[a.provider]}`
 
 // Settings › Model accounts: the model accounts agents call a model with. Yours, and the
 // workspace's shared ones. A key is pasted once and never shown again; only its last four
@@ -43,6 +46,12 @@ export function AccountsSection() {
   const canAdd = workspace.data?.role === "owner" || workspace.data?.role === "editor"
   const [adding, setAdding] = useState(false)
   const [removing, setRemoving] = useState<ModelAccount | null>(null)
+  const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null)
+  const rename = useApiMutation({
+    mutationFn: (r: { id: string; name: string }) => api.renameAccount(r.id, r.name.trim() || null),
+    invalidate: [["accounts"], ["agents"]],
+    onSuccess: () => setRenaming(null),
+  })
   const disconnect = useApiMutation({
     mutationFn: (a: ModelAccount) => api.deleteAccount(a.id),
     invalidate: [["accounts"], ["agents"]],
@@ -66,12 +75,56 @@ export function AccountsSection() {
             <Group testId="accounts">
               {accounts.data.map((a) => {
                 const used = usedBy(a)
+                const canEdit = a.mine || (a.shared && isOwner)
+                if (renaming?.id === a.id)
+                  return (
+                    <form
+                      key={a.id}
+                      data-testid={`account-rename-form-${a.id}`}
+                      className={rowClass()}
+                      onSubmit={(e: FormEvent) => {
+                        e.preventDefault()
+                        rename.mutate(renaming)
+                      }}
+                    >
+                      <Input
+                        autoFocus
+                        aria-label="Account name"
+                        data-testid={`account-rename-input-${a.id}`}
+                        placeholder={`${PROVIDER[a.provider]} (blank uses this)`}
+                        value={renaming.name}
+                        onChange={(e) => setRenaming({ id: a.id, name: e.target.value })}
+                        className="max-w-xs"
+                      />
+                      <Meta>
+                        <Button
+                          type="submit"
+                          size="xs"
+                          data-testid={`account-rename-save-${a.id}`}
+                          loading={rename.isPending}
+                        >
+                          Save
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="xs"
+                          data-testid={`account-rename-cancel-${a.id}`}
+                          onClick={() => setRenaming(null)}
+                          className="text-muted-foreground"
+                        >
+                          Cancel
+                        </Button>
+                      </Meta>
+                    </form>
+                  )
                 return (
                   <div key={a.id} data-testid={`account-${a.id}`} className={rowClass()}>
                     <RowLine
                       icon={a.shared ? "workspace" : "user"}
                       title={accountLabel(a)}
                       detail={[
+                        a.name ? PROVIDER[a.provider] : null,
                         KIND[a.kind],
                         a.hint,
                         used.length ? `used by ${used.join(", ")}` : null,
@@ -80,7 +133,19 @@ export function AccountsSection() {
                         .join(" · ")}
                     />
                     <Meta>
-                      {(a.mine || (a.shared && isOwner)) && (
+                      {canEdit && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="xs"
+                          data-testid={`account-rename-${a.id}`}
+                          onClick={() => setRenaming({ id: a.id, name: a.name ?? "" })}
+                          className="text-muted-foreground"
+                        >
+                          Rename
+                        </Button>
+                      )}
+                      {canEdit && (
                         <Button
                           type="button"
                           variant="ghost"
@@ -145,9 +210,11 @@ function AddAccount({ canShare, onDone }: { canShare: boolean; onDone: () => voi
   const [provider, setProvider] = useState<NewModelAccount["provider"]>("claude")
   const [kind, setKind] = useState<NewModelAccount["kind"]>("api_key")
   const [secret, setSecret] = useState("")
+  const [name, setName] = useState("")
   const [shared, setShared] = useState(false)
   const add = useApiMutation({
-    mutationFn: () => api.addAccount({ provider, kind, secret: secret.trim(), shared }),
+    mutationFn: () =>
+      api.addAccount({ provider, kind, secret: secret.trim(), name: name.trim(), shared }),
     invalidate: [["accounts"]],
     success: "Account connected",
     onSuccess: onDone,
@@ -183,6 +250,14 @@ function AddAccount({ canShare, onDone }: { canShare: boolean; onDone: () => voi
           </SelectContent>
         </Select>
       </div>
+      <Input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="Name it (optional), e.g. Work Max plan"
+        aria-label="Name"
+        data-testid="account-name"
+        maxLength={80}
+      />
       <Textarea
         value={secret}
         onChange={(e) => setSecret(e.target.value)}
