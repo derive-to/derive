@@ -79,7 +79,13 @@ is not a valid variable name; the agent's other variables are left alone. `--sha
 for the whole workspace (managers only). `derive secrets list` shows what is saved, never the
 values.
 
-You can do the same on the agent's **Settings** tab (Environment) after saving the value under
+From a coding session connected over MCP, ask it to save the secret: it calls
+`stage({ target: "secret", name: "INTEGRITY_DB_URL", agent: "ag_..." })` and sends the file
+with `curl --data-binary @file` to the link it gets back. The value goes from the file to
+Derive without passing through the model. The link lasts ten minutes and can only save your
+own secret and set that one variable.
+
+You can also do it on the agent's **Settings** tab (Environment) after saving the value under
 Settings, Sources, Secrets.
 
 ## Run the runner

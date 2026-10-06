@@ -284,6 +284,49 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(new Uint8Array(await served.arrayBuffer())).toEqual(png)
   })
 
+  it("stage target:'secret' mints a link a shell spends with curl; the value reaches the agent and no response", async () => {
+    const { app, token, meta, teammate } = appWithGrant(
+      dir,
+      "stagesecret",
+      "openid derive:read derive:publish",
+      { encryptionKey: "mcp-secret-key" },
+    )
+    const mate = teammate("u_t", "tok_mate", "openid derive:read derive:publish")
+    const made = JSON.parse(
+      toolText(await call(app, token, "agents", { action: "create", name: "Integrity" })),
+    )
+    const staged = JSON.parse(
+      toolText(
+        await call(app, token, "stage", {
+          target: "secret",
+          name: "INTEGRITY_DB_URL",
+          agent: made.id,
+        }),
+      ),
+    )
+    expect(staged.binds).toEqual({ agent: "Integrity", variable: "INTEGRITY_DB_URL" })
+    // What `curl --data-binary @file` sends: the value and the file's trailing newline, no auth.
+    const link = new URL(staged.upload_url).pathname
+    const up = await app.request(link, { method: "POST", body: "postgres://fixture\n" })
+    expect(up.status).toBe(201)
+    const saved = await up.json()
+    expect(saved).toMatchObject({ reused: false, bound: { variable: "INTEGRITY_DB_URL" } })
+    expect(JSON.stringify(saved)).not.toContain("postgres://fixture")
+    const agent = await meta.getAgent(made.id)
+    expect(JSON.parse(agent?.environment_json ?? "{}")).toEqual({ INTEGRITY_DB_URL: saved.id })
+    // The same value again is the same secret.
+    const again = await app.request(link, { method: "POST", body: "postgres://fixture" })
+    expect(await again.json()).toMatchObject({ id: saved.id, reused: true })
+    // A forged link is refused, and so is a link for an agent the caller doesn't manage.
+    expect((await app.request(`${link}x`, { method: "POST", body: "x" })).status).toBe(403)
+    const notTheirs = await call(app, mate, "stage", {
+      target: "secret",
+      name: "INTEGRITY_DB_URL",
+      agent: made.id,
+    })
+    expect(toolIsError(notTheirs)).toBe(true)
+  })
+
   it("stage target:'doc' mints a URL an anonymous shell can publish a whole file through", async () => {
     const { app, token, meta } = appWithGrant(
       dir,

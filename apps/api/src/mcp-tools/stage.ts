@@ -1,4 +1,4 @@
-import { type Action, capRole, roleAllows } from "@derive/core"
+import { type Action, capRole, contextEnvironmentNameError, roleAllows } from "@derive/core"
 import { z } from "zod"
 import { AGENT_WRITES_OFF, agentWritesOff } from "../lib/agent-writes"
 import {
@@ -10,15 +10,17 @@ import {
 } from "../lib/api-token"
 import { MAX_UPLOAD_BYTES } from "../lib/http"
 import { MAX_ASSET_BYTES } from "../lib/image"
+import { canManageAgent } from "../lib/jobs"
 import { badChoice } from "../lib/open-choice"
 import { PUBLISH_TARGET_CREATE, PUBLISH_TOKEN_TTL_MS, signPublishToken } from "../lib/publish-token"
 import { scopeGapMessage } from "../lib/scope-gap"
+import { SECRET_UPLOAD_TTL_MS, signSecretUploadToken } from "../lib/secret-upload-token"
 import { signUploadToken, UPLOAD_TOKEN_TTL_MS } from "../lib/upload-token"
 import type { ToolContext } from "../mcp-tool-context"
 import { err, json } from "../mcp-util"
 
 /** The stage targets. A growth point — see lib/open-choice.ts for why it isn't an enum. */
-const STAGE_TARGETS = ["doc", "asset", "api"] as const
+const STAGE_TARGETS = ["doc", "asset", "api", "secret"] as const
 
 /** The capability each access level must actually pass to be mintable. */
 const ACCESS_ACTION: Record<ApiTokenAccess, Action> = {
@@ -43,9 +45,10 @@ export function registerStageTool(tc: ToolContext): void {
     wsArg,
   } = tc
 
-  // STAGE — one tool, two out-of-band upload URLs, each spent with curl so bytes never
+  // STAGE — one tool, short-lived capabilities each spent from the shell so bytes never
   // enter the model's context. target:'asset' = the former stage_asset (a binary a doc
-  // embeds); target:'doc' = the former stage_publish (a whole big document/bundle). The
+  // embeds); target:'doc' = the former stage_publish (a whole big document/bundle);
+  // target:'secret' = a credential value, which the model must never see at all. The
   // blessed paths are POST /v1/assets and POST /v1/artifacts, but a hosted-OAuth
   // connection's credential lives inside this transport — the shell has no bearer to curl
   // with — so these mint short-lived signed URLs that need none. The doc path is scoped
@@ -54,7 +57,7 @@ export function registerStageTool(tc: ToolContext): void {
     "stage",
     {
       description:
-        "Mint a SHORT-LIVED capability and curl with it — zero bytes through context. target:'doc' a document/bundle past ~a page, 'asset' an image or font (max 25MB), 'api' a REAL bearer for REST (15 min, capped at your role, live in this transcript). NEVER base64 a binary through a tool call. See derive://skills/publishing.",
+        "Mint a SHORT-LIVED capability and curl with it — zero bytes through context. target:'doc' a document/bundle past ~a page, 'asset' an image or font (max 25MB), 'api' a REAL bearer for REST (15 min, capped at your role, live in this transcript), 'secret' a credential. NEVER base64 a binary through a tool call. See derive://skills/publishing.",
       // Mints a short-lived credential (upload URL or bearer token) — a write in the
       // sense that it CAN be spent to publish later, but this call itself never touches
       // artifact content, so not destructive. Not idempotent: every call mints a distinct
@@ -71,11 +74,7 @@ export function registerStageTool(tc: ToolContext): void {
         // after doc/asset), and a cached client validates an enum locally — so a new
         // value would be unreachable until every connection reconnected. See
         // lib/open-choice.ts. Values live in the description and are checked below.
-        target: z
-          .string()
-          .describe(
-            "doc: a document/bundle too big to inline. asset: an image or font a doc embeds. api: a short-lived bearer for REST from your shell.",
-          ),
+        target: z.string().describe("doc, asset, api or secret (see the description)."),
         short_id: z
           .string()
           .optional()
@@ -86,10 +85,12 @@ export function registerStageTool(tc: ToolContext): void {
           .describe(
             "target:'api': narrow the minted token below what this connection holds (least privilege).",
           ),
+        name: z.string().optional().describe("secret: its name (= the variable)."),
+        agent: z.string().optional().describe("secret: bind to this agent."),
         workspace: wsArg,
       },
     },
-    async ({ target, short_id, access, workspace }) => {
+    async ({ target, short_id, access, name, agent: agentId, workspace }) => {
       const wrong = badChoice("target", target, STAGE_TARGETS)
       if (wrong) return err(wrong)
       const t = await resolveWs(workspace)
@@ -99,6 +100,51 @@ export function registerStageTool(tc: ToolContext): void {
       // hadn't — the same reason `short_id` is rejected rather than dropped.
       if (access && target !== "api")
         return err(`\`access\` applies only to target:'api'. Omit it for target:'${target}'.`)
+      if ((name || agentId) && target !== "secret")
+        return err(`\`name\` and \`agent\` apply only to target:'secret'.`)
+
+      if (target === "secret") {
+        // A coding session must never see a secret's value, so it gets a URL its shell spends
+        // with curl (lib/secret-upload-token.ts). The secret is the signed-in person's own.
+        if (short_id) return err("`short_id` applies only to target:'doc'.")
+        const label = name?.trim()
+        if (!label) return err("target:'secret' needs `name`.")
+        if (!ownerId)
+          return err(
+            "target:'secret' saves a secret as a signed-in person. With a dk_agt_ or DERIVE_TOKEN bearer, POST to /v1/connections with kind:'secret' instead.",
+          )
+        const secret = ctx.deps.encryptionKey
+        if (!secret) return err("This server has no encryption key, so it can't store secrets.")
+        let bind: { id: string; name: string } | null = null
+        if (agentId) {
+          const found = await ctx.meta.getAgent(agentId)
+          if (!found || found.org_id !== t.org || !(await canManageAgent(ctx.meta, found, ownerId)))
+            return err(`No agent "${agentId}" you manage in this workspace.`)
+          const badName = contextEnvironmentNameError(label)
+          if (badName) return err(`\`name\` is also the agent's variable name: ${badName}.`)
+          bind = { id: found.id, name: found.name }
+        }
+        const expiresAt = Date.now() + SECRET_UPLOAD_TTL_MS
+        const tok = await signSecretUploadToken(
+          secret,
+          {
+            orgId: t.org,
+            userId: ownerId,
+            name: label,
+            agentId: bind?.id ?? null,
+            variable: bind ? label : null,
+          },
+          expiresAt,
+        )
+        const uploadUrl = `${ctx.deps.baseUrl.replace(/\/$/, "")}/v1/secrets/t/${tok}`
+        return json({
+          target: "secret",
+          upload_url: uploadUrl,
+          expires_in_minutes: Math.round(SECRET_UPLOAD_TTL_MS / 60_000),
+          binds: bind ? { agent: bind.name, variable: label } : null,
+          how: `curl -sS --data-binary @<file> "${uploadUrl}" (or pipe the value: ... | curl -sS --data-binary @- "${uploadUrl}"). Never read the file or put the value in a tool call. A value this person already saved is reused, not copied.`,
+        })
+      }
 
       if (target === "api") {
         // The general case of what the other two targets do narrowly: this connection is
