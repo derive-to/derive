@@ -13,11 +13,11 @@ const Account = z
   .object({
     id: z.string(),
     provider: z.enum(["claude", "codex"]),
-    kind: z.enum(["oauth", "api_key", "login", "ortam_signin"]),
+    kind: z.enum(["oauth", "api_key", "login"]),
     shared: z.boolean().describe("A workspace account every agent may fall back to."),
     mine: z.boolean(),
     hint: z.string().nullable(),
-    status: z.enum(["ready", "needs_signin", "not_checked"]),
+    status: z.enum(["ready", "not_checked"]),
     created_at: z.string(),
   })
   .openapi("ModelAccount")

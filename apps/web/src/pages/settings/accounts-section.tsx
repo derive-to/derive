@@ -25,7 +25,6 @@ const KIND: Record<ModelAccount["kind"], string> = {
   api_key: "API key",
   oauth: "OAuth token",
   login: "login",
-  ortam_signin: "signed in on Derive",
 }
 
 /** "Your Claude", "Shared Codex": whose account and which provider. */
@@ -81,9 +80,6 @@ export function AccountsSection() {
                         .join(" · ")}
                     />
                     <Meta>
-                      {a.status === "needs_signin" && (
-                        <span className="text-warning">needs sign-in</span>
-                      )}
                       {(a.mine || (a.shared && isOwner)) && (
                         <Button
                           type="button"

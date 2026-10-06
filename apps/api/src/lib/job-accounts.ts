@@ -84,7 +84,7 @@ export const resolveJobCredential = async (
     a: AccountRecord | undefined,
     source: string,
   ): Promise<JobCredential | null> => {
-    if (!a || a.provider !== want || !a.secret_enc || a.kind === "ortam_signin") return null
+    if (!a || a.provider !== want || !a.secret_enc) return null
     if (!(await seated(a))) return null
     const value = readable(a.secret_enc, key)
     if (value === null) {

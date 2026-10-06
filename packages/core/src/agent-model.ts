@@ -207,8 +207,8 @@ export interface NewTrigger {
 }
 
 export type AccountProvider = "claude" | "codex"
-export type AccountKind = "oauth" | "api_key" | "login" | "ortam_signin"
-export type AccountStatus = "ready" | "needs_signin" | "not_checked"
+export type AccountKind = "oauth" | "api_key" | "login"
+export type AccountStatus = "ready" | "not_checked"
 export interface AccountRecord {
   id: string
   org_id: string
