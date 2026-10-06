@@ -293,6 +293,7 @@ export interface TriggerPatch {
 }
 
 export interface AccountPatch {
+  kind?: AccountKind
   name?: string | null
   secret_enc?: string | null
   hint?: string | null

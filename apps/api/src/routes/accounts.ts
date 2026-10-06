@@ -4,6 +4,7 @@ import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { encryptSecret } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
+import { credentialKind } from "../lib/job-accounts"
 
 // MODEL ACCOUNTS: the credential a machine uses to call a model. A person owns theirs; a
 // workspace owner may add a shared one for the whole workspace. Values are write-only: this API
@@ -103,7 +104,7 @@ export const accountRoutes = (ctx: AppContext) => {
         org_id: org,
         user_id: b.shared ? WORKSPACE_ACCOUNT_OWNER : who,
         provider: b.provider,
-        kind: b.kind,
+        kind: credentialKind(b.provider, b.kind, b.secret),
         name: b.name ?? null,
         secret_enc: encryptSecret(b.secret, deps.encryptionKey),
         hint: `…${b.secret.slice(-4)}`,

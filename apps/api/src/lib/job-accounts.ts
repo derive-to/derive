@@ -24,6 +24,22 @@ export type JobCredential =
 const accountProvider = (p: ExecutionProvider): AccountRecord["provider"] =>
   p === "codex" ? "codex" : "claude"
 
+/** What a Claude credential really is, read from its prefix: `claude setup-token` prints an
+ *  OAuth token (sk-ant-oat…), the Console issues API keys (sk-ant-api…). The kind decides how
+ *  the runner hands it to Claude Code (CLAUDE_CODE_OAUTH_TOKEN vs ANTHROPIC_API_KEY), and a
+ *  token under the wrong one fails to sign in, so the prefix wins over what was picked. */
+export const credentialKind = (
+  provider: AccountRecord["provider"],
+  kind: AccountRecord["kind"],
+  value: string,
+): AccountRecord["kind"] => {
+  if (provider !== "claude") return kind
+  const v = value.trim()
+  if (v.startsWith("sk-ant-oat")) return "oauth"
+  if (v.startsWith("sk-ant-api")) return "api_key"
+  return kind
+}
+
 /** A `v1.` secret that decrypts to itself never decrypted (decryptSecret fails open on a
  *  wrong key or a corrupt blob): unreadable, never handed to a runner as a token. */
 const readable = (secret: string, key: string): string | null => {
@@ -91,7 +107,11 @@ export const resolveJobCredential = async (
       sawUnreadable = true
       return null
     }
-    return { credential: { kind: a.kind, value }, source }
+    // Accounts saved before the kind was inferred: deliver the right kind, and fix the record
+    // so the Accounts page says what it is. A failed fix costs nothing; the next job retries.
+    const kind = credentialKind(a.provider, a.kind, value)
+    if (kind !== a.kind) await meta.updateAccount(a.id, a.org_id, { kind }).catch(() => null)
+    return { credential: { kind, value }, source }
   }
   const assigned = await tryAccount(
     accounts.find((a) => a.id === agent.account_id),
