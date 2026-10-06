@@ -24,6 +24,7 @@ import { advanceGraph, graphAware, graphPass } from "../src/lib/job-graph"
 import { machinePass, machineWorkspaces } from "../src/lib/job-machine"
 import { HELD_FOR_BUDGET, jobTick, OWNER_LEFT } from "../src/lib/jobs"
 import { catalogOf } from "../src/lib/model-catalog"
+import { log } from "../src/log"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // THE AGENT MODEL, through the surface people and runners use: an agent is created, asked,
@@ -2304,6 +2305,36 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
     }
     return { fetcher, sandboxes, procs, launches, state }
   }
+
+  it("a sandbox that can't start says why in the log, by Ortam's status and endpoint", async () => {
+    const made = makeAuthedApp("jobs-machine-why", [owner, ed, outsider], "editor", {
+      deps: { encryptionKey: "test-encryption-key", runtime: config },
+    })
+    const { app, meta } = made
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const created = await app.request(
+      "/v1/agents",
+      jsonAs(as(owner.email), { name: "Refused", machine: "derive" }),
+    )
+    const agent = (await created.json()) as { id: string }
+    expect((await ask(app, owner.email, agent.id, "go")).status).toBe(201)
+    const warn = vi.spyOn(log, "warn").mockImplementation(() => {})
+    try {
+      await machinePass({
+        meta,
+        secret: "test-encryption-key",
+        server: "http://derive.test",
+        config,
+        fetcher: async () => new Response(null, { status: 401 }),
+      })
+      expect(warn).toHaveBeenCalledWith(
+        "machine step deferred",
+        expect.objectContaining({ what: "dispatch", reason: "ortam_http_401 /auth" }),
+      )
+    } finally {
+      warn.mockRestore()
+    }
+  })
 
   it("brings up the agent's sandbox, runs the job with a job token, and stops it again", async () => {
     const made = makeAuthedApp("jobs-machine", [owner, ed, outsider], "editor", {
