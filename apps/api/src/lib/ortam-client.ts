@@ -195,10 +195,17 @@ export class OrtamClient {
   async launch(
     id: string,
     body: { argv: string[]; cwd: string; env: Record<string, string>; timeout_seconds: number },
+    key: string,
     identity: { organization_id: string; user_id: string },
   ) {
     return Process.parse(
-      await this.request(`/sandboxes/${encodeURIComponent(id)}/processes`, identity, "POST", body),
+      await this.request(
+        `/sandboxes/${encodeURIComponent(id)}/processes`,
+        identity,
+        "POST",
+        body,
+        key,
+      ),
     )
   }
   async process(

@@ -2287,11 +2287,13 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
       if (life) return keep(op(decodeURIComponent(life[1] ?? ""), life[2] ?? ""))
       const launch = path.match(/^\/sandboxes\/([^/]+)\/processes$/)
       if (launch && method === "POST") {
+        // Ortam refuses an unkeyed process start.
+        if (!key) return new Response(null, { status: 422 })
         const body = JSON.parse(String(init?.body)) as { env: Record<string, string> }
         launches.push(body.env)
         const p = { id: `proc_${++n}`, status: "running" }
         procs.set(p.id, p)
-        return json(p)
+        return keep(p)
       }
       const proc = path.match(/^\/sandboxes\/[^/]+\/processes\/([^/?]+)/)
       if (proc) return json(procs.get(decodeURIComponent(proc[1] ?? "")))

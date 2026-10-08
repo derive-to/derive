@@ -353,8 +353,9 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
         return
       }
       const launching = await move("launching")
-      // Exactly the transition's winner submits: a process request is not idempotent, and a
-      // lost response leaves `launching` until the deadline stops the machine.
+      // Exactly the transition's winner submits. The start is keyed to this turn, so Ortam
+      // answers a repeat with the same process; a lost response still leaves `launching` until
+      // the deadline stops the machine.
       if (!launching || !job.started_at) return
       // Bound to this claim, so a later claim of the same job (a retry) does not revive it.
       const token = await signWorkToken(
@@ -391,6 +392,7 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
             Math.ceil((Date.parse(m.deadline_at) - Date.parse(at)) / 1000),
           ),
         },
+        `derive-job-${m.turn}-launch`,
         state.identity,
       )
       await meta.transitionJobMachine(job.id, launching.machine_rev, {
