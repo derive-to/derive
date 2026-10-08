@@ -321,7 +321,9 @@ interface ElReg {
       },
     })
   }
-  on(document, "mouseup", () => setTimeout(emitSelection, 0))
+  on(document, "mouseup", (e) => {
+    if (e.button === 0) setTimeout(emitSelection, 0)
+  })
 
   /* Touch makes "select a phrase, then find a tiny floating button" miserable, and
      iOS pops its own Copy/Look-Up menu over wherever we'd place one. So on touch we
@@ -335,6 +337,7 @@ interface ElReg {
   // text selection: while on, a clean click/tap chooses one semantic visual target
   // and hands it to the existing durable ElementSelector comment path.
   let reviewOn = false
+  let imageCommentsOn = false
   let tx = 0
   let ty = 0
   let tMoved = false
@@ -1010,6 +1013,31 @@ interface ElReg {
       },
     }
   }
+
+  // The host opts in only where comments are available. Keep the browser's image
+  // actions reachable with Shift-right-click, including for linked images.
+  on(
+    document,
+    "contextmenu",
+    (e) => {
+      if (!imageCommentsOn || editOn || e.shiftKey) return
+      const el = asEl(e.target)?.closest("img,picture")
+      if (!el || el.closest(".derive-edit-ui,[data-derive-id]")) return
+      e.preventDefault()
+      e.stopPropagation()
+      tapGuard = Date.now()
+      window.getSelection()?.removeAllRanges()
+      const r = el.getBoundingClientRect()
+      post({
+        type: "select",
+        element: true,
+        contextPoint: { x: e.clientX, y: e.clientY },
+        rect: { top: r.top, bottom: r.bottom, left: r.left, right: r.right },
+        selector: buildElSelector(el),
+      })
+    },
+    true,
+  )
 
   let reviewHover: Element | null = null
   const setReviewHover = (el: Element | null) => {
@@ -7024,7 +7052,8 @@ interface ElReg {
       reportScroll()
       lastPosition = null
       post({ type: "mention-resolve", handles: mentionHandlesInDocument() })
-    } else if (d.type === "review-mode") setReviewMode(!!d.on)
+    } else if (d.type === "image-comments") imageCommentsOn = !!d.on
+    else if (d.type === "review-mode") setReviewMode(!!d.on)
     else if (d.type === "focus-review") {
       releaseHold()
       const target = typeof d.id === "string" ? document.getElementById(d.id) : null

@@ -366,6 +366,9 @@ export const commentsQuery = (shortId: string) =>
   queryOptions({
     queryKey: ["comments", shortId] as const,
     queryFn: () => api.listComments(shortId).then((r) => r.comments),
+    // A reload can beat the throttled cache write after posting a comment.
+    // Reconcile even a fresh persisted list so the saved thread reappears.
+    refetchOnMount: "always",
   })
 
 // The artifact's review rounds (the /derive loop): the pending one the reader should

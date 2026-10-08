@@ -121,6 +121,8 @@ export type Selection = {
   vBottom: number
   vLeft: number
   vRight: number
+  /** Host viewport point for an explicit image context action. */
+  contextPoint?: { x: number; y: number }
 } | null
 
 // A registered agent a canned request can be handed to (the Rework ⋯ item and the

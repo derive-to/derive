@@ -651,6 +651,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
     runtimeError,
     runtimeReady,
   } = useArtifactFrame({
+    canComment: commentsAvailable && !!art && canCommentWithRole(art.my_role) && !composer,
     // Paint the open thread anchors in the doc; a click focuses the thread.
     comments,
     shortId,

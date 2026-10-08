@@ -17,7 +17,7 @@ import { CommentScopeProvider } from "./lib/comment-scope"
 import { type CommentTree, CommentTreeProvider } from "./lib/comment-tree"
 import { quoteChipClass } from "./quote-chip"
 import { type RailTab, RailTabs } from "./rail-tabs"
-import { SelectionMenu } from "./selection-menu"
+import { ImageCommentMenu, SelectionMenu } from "./selection-menu"
 import {
   type AnchorConf,
   type ComposerState,
@@ -331,7 +331,19 @@ export function ArtifactComments(p: {
           reach it and there is no native callout in the way). On phones this
           would land under iOS's own selection menu, so mobile uses the bottom
           bar below instead. Choosing opens the panel and starts a pinned composer. */}
-        {!isMobile && canComment && p.docLive && sel && !p.composer && (
+        {canComment && p.docLive && sel?.contextPoint && !p.composer && (
+          <ImageCommentMenu
+            point={sel.contextPoint}
+            subscribeGeom={p.subscribeGeom}
+            onDismiss={() => p.setSel(null)}
+            onComment={() => {
+              p.onRail?.("comments")
+              p.setPanel("open")
+              p.startSelComment()
+            }}
+          />
+        )}
+        {!isMobile && canComment && p.docLive && sel && !sel.contextPoint && !p.composer && (
           <SelectionMenu
             sel={sel}
             frameRef={p.frameRef}
@@ -342,15 +354,15 @@ export function ArtifactComments(p: {
               if (panel !== "open") p.setPanel("open")
               p.startSelComment()
             }}
-            editLabel={p.editLabel}
-            onEdit={p.onEditSelection}
+            editLabel={sel.selector.type === "TextQuoteSelector" ? p.editLabel : undefined}
+            onEdit={sel.selector.type === "TextQuoteSelector" ? p.onEditSelection : undefined}
           />
         )}
         {/* Phones: a selection (drag) OR a tapped paragraph surfaces this bottom bar,
           pinned below iOS's own selection menu and big enough to thumb. It shows
           the quote so you know what you're attaching to; Comment opens the sheet
           composer, ✕ clears the selection. */}
-        {isMobile && canComment && p.docLive && sel && !p.composer && (
+        {isMobile && canComment && p.docLive && sel && !sel.contextPoint && !p.composer && (
           <div
             data-testid="mobile-comment-bar"
             className="fixed inset-x-0 bottom-0 z-62 flex items-center gap-2.5 border-t border-border bg-card px-3 pb-[max(16px,env(safe-area-inset-bottom))] pt-4 shadow-[var(--shadow-pop)]"
