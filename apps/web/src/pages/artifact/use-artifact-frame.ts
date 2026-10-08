@@ -67,6 +67,7 @@ export const askFrame = <T = Record<string, unknown>>(
  */
 export function useArtifactFrame(p: {
   comments: Comment[]
+  canComment: boolean
   shortId: string
   version: number | undefined
   hoverThread: string | null
@@ -428,6 +429,10 @@ export function useArtifactFrame(p: {
             // stale-cached client posting only top/bottom so we never get NaN.
             vLeft: fl + (d.rect.left ?? 0),
             vRight: fl + (d.rect.right ?? d.rect.left ?? 0),
+            contextPoint:
+              Number.isFinite(d.contextPoint?.x) && Number.isFinite(d.contextPoint?.y)
+                ? { x: fl + d.contextPoint.x, y: ft + d.contextPoint.y }
+                : undefined,
           }
           setSel(next)
           if (d.reviewPicked) onVisualPinRef.current?.(next)
@@ -641,6 +646,11 @@ export function useArtifactFrame(p: {
     sendAnchors()
   }, [sendAnchors, frameReady])
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resend permission after every iframe load, including live version swaps.
+  useEffect(() => {
+    post({ type: "image-comments", on: p.canComment && !present.presenting })
+  }, [post, p.canComment, present.presenting, frameReady])
+
   return {
     frame,
     presentWrap,
@@ -656,6 +666,7 @@ export function useArtifactFrame(p: {
       setRuntimeError(null)
       updateGeom({ scrollY: 0, docH: 0, viewH: 0 })
       setAnchorTops({})
+      setSel(null)
       setFrameReady((n) => n + 1)
       // The head-injected shared-state SDK queues requests until this handshake,
       // so a very fast iframe cannot post before the host listener exists.

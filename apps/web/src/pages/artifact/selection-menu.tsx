@@ -1,6 +1,7 @@
-import { type RefObject, useLayoutEffect, useRef } from "react"
+import { type RefObject, useEffect, useLayoutEffect, useRef } from "react"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
+import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover"
 import { clamp } from "./lib/layout"
 import type { FrameGeom, Selection } from "./types"
 
@@ -29,6 +30,61 @@ import type { FrameGeom, Selection } from "./types"
 const GAP = 10
 // The workbench top bar's reach — flipping below happens past this line.
 const TOP_LIMIT = 64
+
+/** An explicit image action stays at the pointer and dismisses when the view moves. */
+export function ImageCommentMenu({
+  point,
+  subscribeGeom,
+  onComment,
+  onDismiss,
+}: {
+  point: { x: number; y: number }
+  subscribeGeom: (cb: (g: FrameGeom) => void) => () => void
+  onComment: () => void
+  onDismiss: () => void
+}) {
+  useEffect(() => {
+    let scrollY: number | undefined
+    const unsubscribe = subscribeGeom((g) => {
+      if (scrollY !== undefined && g.scrollY !== scrollY) onDismiss()
+      scrollY = g.scrollY
+    })
+    window.addEventListener("resize", onDismiss)
+    return () => {
+      unsubscribe()
+      window.removeEventListener("resize", onDismiss)
+    }
+  }, [subscribeGeom, onDismiss])
+
+  return (
+    <Popover open onOpenChange={(open) => !open && onDismiss()}>
+      <PopoverAnchor
+        virtualRef={{
+          current: { getBoundingClientRect: () => new DOMRect(point.x, point.y, 0, 0) },
+        }}
+      />
+      <PopoverContent
+        data-testid="image-comment-menu"
+        aria-label="Image actions"
+        align="start"
+        sideOffset={2}
+        className="w-auto rounded-lg p-1"
+        onCloseAutoFocus={(e) => e.preventDefault()}
+      >
+        <Button
+          variant="ghost"
+          size="sm"
+          data-testid="comment-on-image"
+          title="Shift-right-click for browser image actions"
+          onClick={onComment}
+        >
+          <Icon name="comments" size={15} className="text-muted-foreground" />
+          Comment on image
+        </Button>
+      </PopoverContent>
+    </Popover>
+  )
+}
 
 export function SelectionMenu({
   sel,

@@ -44,6 +44,96 @@ test("publish, comment, resolve, and find it in the library", async ({ owner }) 
   await expect(owner.getByTestId(`artifact-card-open-${shortId}`)).toBeVisible()
 })
 
+test("right-click an image to comment, then reload its durable anchor", async ({
+  owner,
+  secondUser,
+}) => {
+  const shortId = await publishArtifact(
+    owner,
+    "image-comments.html",
+    `<body style="padding:40px;min-height:1800px">
+      <h1 data-testid="image-heading">Image review</h1>
+      <a href="https://example.com"><picture><img data-testid="review-image" id="landscape"
+        alt="Landscape study" width="320" height="180"
+        src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='180'%3E%3Crect width='320' height='180' fill='teal'/%3E%3C/svg%3E"></picture></a>
+    </body>`,
+    "text/html",
+  )
+  await openArtifact(owner, shortId)
+  const frame = owner.frameLocator("iframe[title]:not([aria-hidden])")
+  const image = frame.getByTestId("review-image")
+  const menu = owner.getByTestId("image-comment-menu")
+  await image.hover()
+  await expect(menu).toHaveCount(0)
+  await expect(owner.getByTestId("selection-menu")).toHaveCount(0)
+
+  await image.click({ button: "right" })
+  await expect(menu).toBeVisible()
+  await image.click({ button: "right", position: { x: 20, y: 20 } })
+  await expect(menu).toBeVisible()
+  await owner.keyboard.press("Escape")
+  await expect(menu).toHaveCount(0)
+
+  // Browser image actions remain available, and non-images keep their native menu.
+  const prevented = (target: typeof image, shiftKey = false) =>
+    target.evaluate((el, shift) => {
+      const event = new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        shiftKey: shift,
+      })
+      el.dispatchEvent(event)
+      return event.defaultPrevented
+    }, shiftKey)
+  expect(await prevented(image, true)).toBe(false)
+  expect(await prevented(frame.getByTestId("image-heading"))).toBe(false)
+
+  await image.click({ button: "right" })
+  await expect(menu).toBeVisible()
+  await frame.getByTestId("image-heading").click()
+  await expect(menu).toHaveCount(0)
+
+  await image.click({ button: "right" })
+  await expect(menu).toBeVisible()
+  await image.evaluate(() => window.scrollBy(0, 50))
+  await expect(menu).toHaveCount(0)
+
+  await image.click({ button: "right" })
+  await expect(menu).toBeVisible()
+  await expect(menu).toHaveCSS("opacity", "1")
+  await owner.screenshot({ path: test.info().outputPath("image-context-menu.png") })
+  await owner.getByTestId("comment-on-image").click()
+  await owner.getByTestId("composer-input").fill("Brighten this landscape.")
+  await owner.getByTestId("composer-submit").click()
+  await expect(owner.getByText("Brighten this landscape.")).toBeVisible()
+  const response = await owner.request.get(`/v1/artifacts/${shortId}/comments`)
+  const { comments } = (await response.json()) as { comments: { anchor: string }[] }
+  expect(comments).toHaveLength(1)
+  expect(JSON.parse(comments[0]?.anchor ?? "null")).toMatchObject({
+    type: "ElementSelector",
+    tag: "img",
+    id: "landscape",
+    snapshot: { alt: "Landscape study" },
+  })
+  // Reload immediately: the persisted query cache can still contain the empty
+  // pre-comment list, so reopening must reconcile against the saved thread.
+  await owner.reload()
+  await expect(owner.getByText("Brighten this landscape.")).toBeVisible()
+  await expect(frame.locator(".derive-el-badge")).toBeVisible()
+
+  await owner.getByTestId("artifact-inline-edit").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
+  expect(await prevented(image)).toBe(false)
+
+  // A viewer's right-click must not be swallowed by an unavailable comment action.
+  await secondUser.page.goto(`/artifacts/${shortId}`)
+  const guestImage = secondUser.page
+    .frameLocator("iframe[title]:not([aria-hidden])")
+    .getByTestId("review-image")
+  await expect(guestImage).toBeVisible()
+  expect(await prevented(guestImage)).toBe(false)
+})
+
 test("a cached screenshot still becomes a visible library thumbnail", async ({ owner }) => {
   const shortId = await publishArtifact(owner, "cached-thumb.md", "# Cached thumbnail")
 
