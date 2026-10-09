@@ -39,7 +39,7 @@ jobs:
         run: |
           version=$(node -p "require('./package.json').version")
           echo "value=$version" >> "$GITHUB_OUTPUT"
-          if npm view "@derive-to/cli@$version" version >/dev/null 2>&1; then
+          if npm view --prefer-online "@derive-to/cli@$version" version >/dev/null 2>&1; then
             echo "@derive-to/cli@$version is already published; nothing to do."
             echo "publish=false" >> "$GITHUB_OUTPUT"
           else
@@ -75,8 +75,8 @@ jobs:
       - name: Confirm it landed
         if: steps.version.outputs.publish == 'true'
         run: |
-          for i in 1 2 3 4 5 6; do
-            npm view "@derive-to/cli@${{ steps.version.outputs.value }}" version && exit 0
+          for i in $(seq 1 18); do
+            npm view --prefer-online "@derive-to/cli@${{ steps.version.outputs.value }}" version && exit 0
             sleep 10
           done
           echo "published, but npm does not list it yet" >&2

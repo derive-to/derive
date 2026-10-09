@@ -38,7 +38,7 @@ jobs:
         run: |
           version=$(node -p "require('./package.json').version")
           echo "value=$version" >> "$GITHUB_OUTPUT"
-          if npm view "@derive-to/mcp@$version" version >/dev/null 2>&1; then
+          if npm view --prefer-online "@derive-to/mcp@$version" version >/dev/null 2>&1; then
             echo "@derive-to/mcp@$version is already published; nothing to do."
             echo "publish=false" >> "$GITHUB_OUTPUT"
           else
@@ -72,7 +72,7 @@ jobs:
         run: |
           cli=$(tar -xzOf "${{ steps.pack.outputs.tarball }}" package/package.json | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).dependencies['@derive-to/cli']")
           for i in $(seq 1 60); do
-            npm view "@derive-to/cli@$cli" version >/dev/null 2>&1 && exit 0
+            npm view --prefer-online "@derive-to/cli@$cli" version >/dev/null 2>&1 && exit 0
             sleep 10
           done
           echo "@derive-to/cli@$cli is not on npm; publish the CLI first" >&2
@@ -85,8 +85,8 @@ jobs:
       - name: Confirm it landed
         if: steps.version.outputs.publish == 'true'
         run: |
-          for i in 1 2 3 4 5 6; do
-            npm view "@derive-to/mcp@${{ steps.version.outputs.value }}" version && exit 0
+          for i in $(seq 1 18); do
+            npm view --prefer-online "@derive-to/mcp@${{ steps.version.outputs.value }}" version && exit 0
             sleep 10
           done
           echo "published, but npm does not list it yet" >&2
