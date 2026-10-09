@@ -1,25 +1,24 @@
-name: Publish CLI
+name: Publish MCP server
 
-# Publishes @derive-to/cli to npm when main carries a version npm does not have yet. Bump
-# `version` in packages/cli/package.json in the PR; merging it publishes. Authentication is
-# npm trusted publishing (OIDC from this workflow), so no npm token is stored anywhere, and
-# every release carries a provenance attestation tying it to this commit.
+# Publishes @derive-to/mcp (the stdio MCP server) to npm when main carries a version npm does
+# not have yet. Bump `version` in packages/mcp/package.json in the PR; merging it publishes.
+# Authentication is npm trusted publishing (OIDC from this workflow), so no npm token is
+# stored anywhere, and every release carries a provenance attestation tying it to this commit.
 #
-# A Derive machine runs the CLI version pinned in apps/api/src/lib/runtime-setup.ts and
-# DERIVE_ORTAM_RUNNER_PATH; publishing does not move that pin. Move it in a separate PR once
-# the release is on npm.
+# It depends on @derive-to/cli at the exact version in the workspace. When one PR bumps both,
+# publish-cli.yml releases the CLI in parallel, so this waits for that version to be on npm.
 
 on:
   push:
     branches: [main]
-    paths: ["packages/cli/**"]
+    paths: ["packages/mcp/**"]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: publish-cli
+  group: publish-mcp
   cancel-in-progress: false
 
 jobs:
@@ -35,20 +34,20 @@ jobs:
 
       - name: Is this version already on npm?
         id: version
-        working-directory: packages/cli
+        working-directory: packages/mcp
         run: |
           version=$(node -p "require('./package.json').version")
           echo "value=$version" >> "$GITHUB_OUTPUT"
-          if npm view "@derive-to/cli@$version" version >/dev/null 2>&1; then
-            echo "@derive-to/cli@$version is already published; nothing to do."
+          if npm view "@derive-to/mcp@$version" version >/dev/null 2>&1; then
+            echo "@derive-to/mcp@$version is already published; nothing to do."
             echo "publish=false" >> "$GITHUB_OUTPUT"
           else
             echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Test the CLI
+      - name: Test the MCP server
         if: steps.version.outputs.publish == 'true'
-        run: pnpm --filter @derive-to/cli test
+        run: pnpm --filter @derive-to/mcp test
 
       # Trusted publishing needs npm 11.5.1 or later.
       - name: Use an npm that supports trusted publishing
@@ -63,10 +62,21 @@ jobs:
       - name: Pack
         id: pack
         if: steps.version.outputs.publish == 'true'
-        working-directory: packages/cli
+        working-directory: packages/mcp
         run: |
           pnpm pack --pack-destination "$RUNNER_TEMP"
-          echo "tarball=$RUNNER_TEMP/derive-to-cli-${{ steps.version.outputs.value }}.tgz" >> "$GITHUB_OUTPUT"
+          echo "tarball=$RUNNER_TEMP/derive-to-mcp-${{ steps.version.outputs.value }}.tgz" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the CLI version it depends on
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          cli=$(tar -xzOf "${{ steps.pack.outputs.tarball }}" package/package.json | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).dependencies['@derive-to/cli']")
+          for i in $(seq 1 60); do
+            npm view "@derive-to/cli@$cli" version >/dev/null 2>&1 && exit 0
+            sleep 10
+          done
+          echo "@derive-to/cli@$cli is not on npm; publish the CLI first" >&2
+          exit 1
 
       - name: Publish
         if: steps.version.outputs.publish == 'true'
@@ -76,7 +86,7 @@ jobs:
         if: steps.version.outputs.publish == 'true'
         run: |
           for i in 1 2 3 4 5 6; do
-            npm view "@derive-to/cli@${{ steps.version.outputs.value }}" version && exit 0
+            npm view "@derive-to/mcp@${{ steps.version.outputs.value }}" version && exit 0
             sleep 10
           done
           echo "published, but npm does not list it yet" >&2
