@@ -22,6 +22,7 @@ import {
 } from "../lib/broker"
 import { OVER_BUDGET } from "../lib/budget"
 import { chatArrival, refusalMessage } from "../lib/chat-gate"
+import { buildJobTools, JOB_TOOL_PREFIX } from "../lib/chat-tools"
 import { readEnvironmentBindings } from "../lib/context-environment"
 import { decryptSecret } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
@@ -804,6 +805,16 @@ export const jobRoutes = (ctx: AppContext) => {
         ref: t.ref,
       }))
     }
+    // A Derive machine's model has no Derive login, so Derive's own tools ride the same shim,
+    // run in-process as the agent (lib/chat-tools.ts buildJobTools).
+    if (agent.machine === "derive" && jobs.length) {
+      const own = await buildJobTools(ctx, agent)
+      for (const t of own?.tools ?? [])
+        tools.push({
+          def: { name: JOB_TOOL_PREFIX + t.name, description: t.description, params: t.params },
+          ref: "derive",
+        })
+    }
     // The model's credential for this claim's source tools. The runner keeps its own key out of
     // the model's environment, so the model calls a source with this instead: it reaches only
     // `POST /v1/jobs/<this job>/tool`, and dies when the job settles or is reclaimed. That
@@ -964,6 +975,12 @@ export const jobRoutes = (ctx: AppContext) => {
       }),
     )
     if (b instanceof Response) return b
+    if (agent.machine === "derive" && b.tool.startsWith(JOB_TOOL_PREFIX)) {
+      const own = await buildJobTools(ctx, agent)
+      if (!own) return fail(c, 403, "this agent's creator no longer has a seat here")
+      const result = await own.execute(b.tool.slice(JOB_TOOL_PREFIX.length), b.args ?? {})
+      return c.json({ result })
+    }
     const connIds = parseConnectionIds(agent.connection_ids_json)
     if (connIds.length === 0) return fail(c, 403, "this agent has no sources")
     const broker = await brokerFor(

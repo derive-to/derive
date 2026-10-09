@@ -1,5 +1,5 @@
 import type { AgentRecord, Role } from "@derive/core"
-import { syntheticAgent } from "@derive/core"
+import { capRole, syntheticAgent } from "@derive/core"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { AppContext } from "../context"
@@ -227,44 +227,140 @@ export interface ChatPrincipal {
   flags?: { agentWrites?: boolean }
 }
 
+/** Build the tool surface for one chat turn. */
+export const buildChatTools = (
+  ctx: AppContext,
+  who: ChatPrincipal,
+  only: ReadonlySet<string> = CHAT_TOOLS,
+): ChatToolSurface =>
+  surfaceFor(
+    {
+      server: new McpServer({ name: "derive-chat", version: "1.0.0" }),
+      ctx,
+      agent: chatAgent(who.org, who.seatRole),
+      actingFor: { id: who.user.id, name: who.user.name },
+      ownerId: who.user.id,
+      scopeForCap: who.seatRole,
+      // No inbox, no @mention identity: this principal exists for one turn.
+      registered: false,
+      // The hard clamp. One conversation, one workspace.
+      boundWorkspaces: [who.org],
+      clientId: "chat",
+      mintedToken: false,
+      defaultOrg: who.org,
+      defaultRole: who.seatRole,
+      pendingRequests: [],
+      // The Brandprint is resolved at MCP CONNECT because a connection is long-lived and the
+      // resources ride its handshake. A turn has no handshake and no resource list, so these
+      // stay unset rather than paying for reads whose only consumer is the transport.
+      bpProfile: undefined,
+      profileArt: null,
+    },
+    only,
+    {
+      fields: CHAT_FIELDS,
+      descriptions: CHAT_DESCRIPTIONS,
+      policy: chatPolicy,
+      writesOff: who.flags?.agentWrites === false,
+    },
+  )
+
 /**
- * Build the tool surface for one chat turn.
+ * THE DERIVE TOOLS A JOB'S MODEL CAN USE ON A DERIVE MACHINE.
+ *
+ * A Derive machine's model holds no Derive credential: the runner keeps its job key out of the
+ * model's environment, and the only thing the model gets is the job's tool token, which reaches
+ * this job's tool route and nothing else. So without these, an agent that keeps notes in a page
+ * cannot open that page. On an owner's machine the model has whatever Derive login that machine
+ * has; here, the tool route runs these in-process instead, as the agent itself.
+ *
+ * `agents`, `ask`, `jobs` and `pull` stay out (handing work on is a person's decision, and a job
+ * pulling work would be a runner), as do `stage` (an upload workflow for a shell holding a real
+ * bearer) and `derive_code`.
+ */
+export const JOB_TOOLS: ReadonlySet<string> = new Set([
+  "find",
+  "read",
+  "catch_up",
+  "comment",
+  "publish",
+])
+
+// The chat fields, plus what a standing agent keeps up with: tags on what it publishes, the
+// threads an edit answers, and the comment loop. Sharing controls stay on MCP.
+const JOB_FIELDS: Record<string, readonly string[]> = {
+  ...CHAT_FIELDS,
+  publish: [...(CHAT_FIELDS.publish ?? []), "tags", "addresses"],
+  comment: ["short_id", "body", "reply_to", "quote", "react", "set_state", "mentions"],
+}
+
+/** The prefix a job's Derive tools carry, so they can never be confused with a source's. */
+export const JOB_TOOL_PREFIX = "derive."
+
+/**
+ * Build the Derive tool surface for one job, acting as the agent: its own record and role,
+ * on behalf of the person who made it, clamped to its workspace. Null when that person no
+ * longer holds a seat there, the same rule that retires the agent's registered key.
+ */
+export const buildJobTools = async (
+  ctx: AppContext,
+  agent: AgentRecord,
+): Promise<ChatToolSurface | null> => {
+  if (!agent.created_by) return null
+  const [seat, [owner]] = await Promise.all([
+    ctx.meta.getMembership(agent.org_id, agent.created_by).catch(() => null),
+    ctx.meta.getUsers([agent.created_by]).catch(() => []),
+  ])
+  if (!seat) return null
+  const role = capRole(agent.role, seat.role)
+  return surfaceFor(
+    {
+      server: new McpServer({ name: "derive-job", version: "1.0.0" }),
+      ctx,
+      agent: { ...agent, role },
+      actingFor: { id: agent.created_by, name: owner?.name ?? null },
+      ownerId: agent.created_by,
+      scopeForCap: role,
+      // The agent's own identity, as its registered key would present it.
+      registered: true,
+      boundWorkspaces: [agent.org_id],
+      clientId: "",
+      mintedToken: false,
+      defaultOrg: agent.org_id,
+      defaultRole: role,
+      pendingRequests: [],
+      bpProfile: undefined,
+      profileArt: null,
+    },
+    JOB_TOOLS,
+    // The agent's own write policy governs its edits; the publish tool applies it.
+    { fields: JOB_FIELDS, descriptions: {}, policy: (_n, a) => a },
+  )
+}
+
+interface SurfaceOptions {
+  fields: Record<string, readonly string[]>
+  descriptions: Record<string, string>
+  policy: (name: string, args: Record<string, unknown>) => Record<string, unknown>
+  writesOff?: boolean
+}
+
+/**
+ * Register a tool surface for one in-process principal and wrap it for a model.
  *
  * The McpServer here is never transported: it exists because `registerTool` is how a tool
  * declares itself, and reusing that registration is the entire point. Cheap to construct (the
  * SDK object is a registry, not a connection), and thrown away with the turn.
  */
-export const buildChatTools = (
-  ctx: AppContext,
-  who: ChatPrincipal,
-  only: ReadonlySet<string> = CHAT_TOOLS,
+const surfaceFor = (
+  base: ToolContextBase,
+  only: ReadonlySet<string>,
+  opts: SurfaceOptions,
 ): ChatToolSurface => {
-  const base: ToolContextBase = {
-    server: new McpServer({ name: "derive-chat", version: "1.0.0" }),
-    ctx,
-    agent: chatAgent(who.org, who.seatRole),
-    actingFor: { id: who.user.id, name: who.user.name },
-    ownerId: who.user.id,
-    scopeForCap: who.seatRole,
-    // No inbox, no @mention identity: this principal exists for one turn.
-    registered: false,
-    // The hard clamp. One conversation, one workspace.
-    boundWorkspaces: [who.org],
-    clientId: "chat",
-    mintedToken: false,
-    defaultOrg: who.org,
-    defaultRole: who.seatRole,
-    pendingRequests: [],
-    // The Brandprint is resolved at MCP CONNECT because a connection is long-lived and the
-    // resources ride its handshake. A turn has no handshake and no resource list, so these
-    // stay unset rather than paying for reads whose only consumer is the transport.
-    bpProfile: undefined,
-    profileArt: null,
-  }
   const surface = registerToolSurface(makeToolContext(base), undefined, only)
   const shapeFor = (name: string) => {
     const full = surface.defs.get(name)?.inputSchema as Record<string, z.ZodType> | undefined
-    const fields = CHAT_FIELDS[name]
+    const fields = opts.fields[name]
     return full
       ? Object.fromEntries(Object.entries(full).filter(([key]) => !fields || fields.includes(key)))
       : {}
@@ -273,7 +369,7 @@ export const buildChatTools = (
     .filter(([name]) => surface.registry.has(name))
     .map(([name, def]) => ({
       name,
-      description: CHAT_DESCRIPTIONS[name] ?? def.description,
+      description: opts.descriptions[name] ?? def.description,
       params: jsonSchemaOf(z.object(shapeFor(name))),
     }))
   return {
@@ -292,9 +388,9 @@ export const buildChatTools = (
       // THE SWITCH REACHES CHAT TOO, as a refusal: an operator who turned agent writes off
       // after a bad run is asking for NOTHING to land without them. The drafted change still
       // surfaces — in the reply the person is reading — so work is never hidden.
-      if (name === "publish" && who.flags?.agentWrites === false) return { error: AGENT_WRITES_OFF }
+      if (name === "publish" && opts.writesOff) return { error: AGENT_WRITES_OFF }
       const shape = shapeFor(name)
-      const args = chatPolicy(
+      const args = opts.policy(
         name,
         input && typeof input === "object" ? (input as Record<string, unknown>) : {},
       )
