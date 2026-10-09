@@ -26,6 +26,26 @@ const Process = z.object({
   ]),
 })
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz"
+
+/**
+ * An Ortam ID as the API takes it now. Ortam's public IDs became `<kind>_<26 base32>` (the
+ * TypeID encoding of the UUID it stores), and it refuses the bare UUIDs it used to return. A
+ * sandbox or operation Derive saved before that change is the same resource under its old
+ * spelling, so it is re-encoded on the way out; an ID already in the new form passes through.
+ */
+export const ortamId = (kind: "sbx" | "op", id: string): string => {
+  if (!UUID.test(id)) return id
+  let n = BigInt(`0x${id.replaceAll("-", "")}`)
+  let out = ""
+  for (let i = 0; i < 26; i++) {
+    out = CROCKFORD[Number(n & 31n)] + out
+    n >>= 5n
+  }
+  return `${kind}_${out}`
+}
+
 class OrtamHttpError extends Error {
   constructor(
     readonly status: number,
@@ -126,6 +146,7 @@ export class OrtamClient {
     key: string,
     identity: { organization_id: string; user_id: string },
   ) {
+    id = ortamId("sbx", id)
     const op = Operation.parse(
       await this.request(
         `/sandboxes/${encodeURIComponent(id)}`,
@@ -140,6 +161,7 @@ export class OrtamClient {
     return op
   }
   async sandbox(id: string, identity: { organization_id: string; user_id: string }) {
+    id = ortamId("sbx", id)
     const sandbox = Sandbox.parse(
       await this.request(`/sandboxes/${encodeURIComponent(id)}`, identity),
     )
@@ -147,6 +169,7 @@ export class OrtamClient {
     return sandbox
   }
   async isSandboxDeleted(id: string, identity: { organization_id: string; user_id: string }) {
+    id = ortamId("sbx", id)
     try {
       return (await this.sandbox(id, identity)).state === "deleted"
     } catch (error) {
@@ -167,6 +190,8 @@ export class OrtamClient {
     kind: "create" | "resume" | "stop" | "delete",
     identity: { organization_id: string; user_id: string },
   ) {
+    id = ortamId("op", id)
+    sandboxId = ortamId("sbx", sandboxId)
     const op = Operation.parse(
       await this.request(`/operations/${encodeURIComponent(id)}`, identity),
     )
@@ -180,6 +205,7 @@ export class OrtamClient {
     key: string,
     identity: { organization_id: string; user_id: string },
   ) {
+    id = ortamId("sbx", id)
     const op = Operation.parse(
       await this.request(
         `/sandboxes/${encodeURIComponent(id)}/${action}`,
@@ -198,6 +224,7 @@ export class OrtamClient {
     key: string,
     identity: { organization_id: string; user_id: string },
   ) {
+    id = ortamId("sbx", id)
     return Process.parse(
       await this.request(
         `/sandboxes/${encodeURIComponent(id)}/processes`,
@@ -213,6 +240,7 @@ export class OrtamClient {
     id: string,
     identity: { organization_id: string; user_id: string },
   ) {
+    sandboxId = ortamId("sbx", sandboxId)
     const process = Process.parse(
       await this.request(
         `/sandboxes/${encodeURIComponent(sandboxId)}/processes/${encodeURIComponent(id)}?tail_bytes=1`,
