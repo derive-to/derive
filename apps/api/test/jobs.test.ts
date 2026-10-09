@@ -2411,6 +2411,80 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
     expect(after.status).toBe(401)
   })
 
+  it("lets a Derive machine's model read and edit workspace pages as the agent, through its tool token only", async () => {
+    const made = makeAuthedApp("jobs-machine-tools", [owner, ed, outsider], "editor", {
+      deps: { encryptionKey: "test-encryption-key", runtime: config },
+    })
+    const { app, meta } = made
+    await app.request("/v1/me", { headers: as(owner.email) })
+    await app.request("/v1/me", { headers: as(ed.email) })
+    const page = (await (
+      await publishAs(
+        app,
+        "<h1>Casebook</h1><p>Cleared: steven</p>",
+        { title: "Casebook" },
+        as(owner.email),
+      )
+    ).json()) as { short_id: string }
+    const agent = (await (
+      await app.request(
+        "/v1/agents",
+        jsonAs(as(owner.email), { name: "Sweeper", machine: "derive", role: "editor" }),
+      )
+    ).json()) as { id: string }
+    const job = (await (await ask(app, ed.email, agent.id, "Sweep")).json()) as { id: string }
+
+    const ortam = fakeOrtam()
+    const deps = {
+      meta,
+      secret: "test-encryption-key",
+      server: "http://derive.test",
+      config,
+      fetcher: ortam.fetcher,
+    }
+    for (let i = 0; i < 12 && ortam.launches.length === 0; i++) await machinePass(deps)
+    const env = ortam.launches[0] ?? {}
+    const work = (await (
+      await app.request(`/v1/jobs/${job.id}/work`, { headers: bearer(env.DERIVE_TOKEN ?? "") })
+    ).json()) as {
+      job: { started_at: string; tool_token: string; tools: { def: { name: string } }[] }
+    }
+    const names = work.job.tools.map((t) => t.def.name)
+    expect(names).toEqual(expect.arrayContaining(["derive.find", "derive.read", "derive.publish"]))
+    expect(names).not.toContain("derive.agents")
+
+    const tool = (name: string, args: unknown, token = work.job.tool_token) =>
+      app.request(`/v1/jobs/${job.id}/tool`, {
+        method: "POST",
+        headers: {
+          ...bearer(token),
+          "content-type": "application/json",
+          "x-derive-claim": work.job.started_at,
+        },
+        body: JSON.stringify({ tool: name, args }),
+      })
+    const read = await tool("derive.read", { short_id: page.short_id, format: "markdown" })
+    expect(read.status).toBe(200)
+    expect(JSON.stringify(await read.json())).toContain("Cleared: steven")
+
+    const edit = await tool("derive.publish", {
+      short_id: page.short_id,
+      base_version: 1,
+      edits: [{ old_str: "Cleared: steven", new_str: "Cleared: steven, ryan" }],
+    })
+    expect(edit.status).toBe(200)
+    const reread = await tool("derive.read", { short_id: page.short_id, format: "markdown" })
+    expect(JSON.stringify(await reread.json())).toContain("Cleared: steven, ryan")
+
+    // The tool token is still nobody outside its own tool route: not MCP, not REST.
+    const mcp = await app.request("/mcp", jsonAs(bearer(work.job.tool_token), {}))
+    expect(mcp.status).toBe(401)
+    const rest = await app.request(`/v1/artifacts/${page.short_id}`, {
+      headers: bearer(work.job.tool_token),
+    })
+    expect(rest.status).not.toBe(200)
+  })
+
   it("a runner that dies without reporting fails the job back into the queue", async () => {
     const made = makeAuthedApp("jobs-machine-dead", [owner, ed, outsider], "editor", {
       deps: { encryptionKey: "test-encryption-key", runtime: config },
