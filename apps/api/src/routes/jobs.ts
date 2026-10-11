@@ -55,6 +55,7 @@ import {
 } from "../lib/page-ask"
 import { MAX_RUN_CEILING_MS } from "../lib/run-lifecycle"
 import { signWorkToken } from "../lib/run-token"
+import { cloudEnabled } from "../lib/runtime-connection"
 import { runtimeFailureReason } from "../lib/runtime-diagnostics"
 import { log } from "../log"
 
@@ -507,6 +508,27 @@ export const jobRoutes = (ctx: AppContext) => {
       const open = b.dedupe_key
         ? await meta.findOpenJobByDedupe(agent.id, who.id, b.dedupe_key)
         : null
+      if (!open && agent.machine === "derive") {
+        if (!(await cloudEnabled(meta, deps.runtime, agent.org_id)))
+          return bail(fail(c, 409, "Connect a sandbox in Settings → Connections before starting."))
+        const account = await resolveJobCredential(
+          meta,
+          deps.encryptionKey,
+          agent,
+          { asked_by: who.id },
+          agent.provider,
+        )
+        if (!account.credential)
+          return bail(
+            fail(
+              c,
+              409,
+              account.reason === "unreadable"
+                ? "Your model account needs attention. Reconnect it in Settings before starting."
+                : "Connect your model account in Settings before starting.",
+            ),
+          )
+      }
       if (!open && (await overBudgetFor(meta, agent, who.id)))
         return bail(fail(c, 402, OVER_BUDGET))
       const subject: Selector | null = b.subject

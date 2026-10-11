@@ -93,7 +93,12 @@ Use JSON.stringify to encode multiline Markdown. After JSON parsing, body_md mus
 contain actual newline characters. Do not double-escape line breaks.
 
 Escalate (escalate: true, with a short reason) when the manifest's escalation
-rules say so — still produce your best draft in body_md.
+rules say so. Also escalate when missing access, credentials, tools, or user input
+prevents you from completing the requested work. A blocked check is not success.
+Set escalation_reason to the specific next step. Still return what you checked in
+body_md. Lead with a short answer. Keep routine results concise.
+Do not create a separate artifact unless the asker requests one or it contains
+useful work they need to inspect, keep, or share.
 
 When the asker wants a chart, visual, or report page, set "artifact" to ONE
 fully self-contained HTML document (inline CSS/JS/SVG, no external requests; it

@@ -283,10 +283,10 @@ everyone in the workspace or only the agent's maker and workspace owners.
 list. Cancel an open job with `action: "cancel"`, and run a failed or lost one again with
 `action: "retry"`.
 
-**Reports.** A job the CLI runner does leaves a report page: what was asked, what the agent did,
-what it flagged, what it made, and its evidence. The page is private to the workspace (members
-only, no link, not listed), and a follow-up rewrites the same page as a new version. A comment on
-a report page reopens its job, with the comment as the next message.
+**Results.** The CLI runner keeps the answer and usage receipt on the task. It publishes a
+separate artifact only when the agent produces useful work to inspect, keep, or share.
+Missing access, credentials, or tools stops the task at `needs_you`, with a specific next step.
+Existing report pages stay available. Comments on them still reopen their tasks.
 
 **When a job needs you.** An agent can stop a job at `needs_you` with a question, and maybe a
 few options. Answer it with `jobs({ job_id, action: "answer", option })` (or `text`), or in

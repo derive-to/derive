@@ -10,6 +10,7 @@ import { accountsQuery, agentJobsQuery, agentQuery, jobQuery } from "@/lib/queri
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useJobEvents } from "@/lib/use-job-events"
 import { cn } from "@/lib/utils"
+import { mdToHtml } from "../artifact/lib/markdown"
 import {
   cronLabel,
   failureOf,
@@ -244,7 +245,7 @@ export function JobRow({
       data-testid={`job-${job.id}`}
       data-status={job.status}
       className={cn(
-        "border-b border-border last:border-b-0",
+        "border-b border-border transition-colors motion-reduce:transition-none last:border-b-0",
         needs && "-mx-3 my-0.5 rounded-lg border-b-0 bg-warning/10 px-3",
       )}
     >
@@ -325,11 +326,7 @@ export function JobRow({
       {needs && canSteer && <AnswerBox job={job} />}
       {open && (
         <>
-          <p className="mb-4 rounded-lg bg-secondary/40 p-3 text-sm whitespace-pre-wrap">
-            {job.instruction}
-          </p>
-          <TaskReceipt job={job} />
-          <Transcript id={job.id} agentName={agent.name} names={names} />
+          <TaskResult id={job.id} agentName={agent.name} names={names} />
           {job.status === "succeeded" && (canAsk || canSchedule) && (
             <div className="flex flex-col gap-3 pb-4">
               <div className="flex flex-wrap items-center gap-2">
@@ -481,7 +478,7 @@ export function AnswerBox({ job }: { job: Job }) {
 }
 
 /** The job's transcript and what it made, read when its row is opened. */
-function Transcript({
+function TaskResult({
   id,
   agentName,
   names,
@@ -513,26 +510,51 @@ function Transcript({
       </div>
     )
   const effects = q.data.result.effects ?? []
+  const answer = [...q.data.messages]
+    .reverse()
+    .find((message) => message.author_kind === "agent" && !message.progress)
+  const history = q.data.messages.filter((message) => message.id !== answer?.id)
   return (
     <div data-testid={`job-transcript-${id}`} className="flex max-w-2xl flex-col gap-4 pb-5 pl-8">
-      {q.data.messages.map((m) => (
-        <div key={m.id} className="flex flex-col gap-1">
-          <div className="flex items-baseline gap-2 text-sm text-muted-foreground">
-            <span className="font-medium text-foreground">
-              {m.author_kind === "agent" ? agentName : (first(names.get(m.author_id)) ?? "Someone")}
-            </span>
-            <Time>{when(m.created_at)}</Time>
-          </div>
-          <p
-            className={cn(
-              "text-base leading-relaxed whitespace-pre-wrap",
-              m.progress ? "text-muted-foreground" : "text-foreground",
-            )}
-          >
-            {m.body_md}
-          </p>
+      {answer && (
+        <div
+          data-testid={`job-result-${id}`}
+          className="rounded-xl border border-border bg-card p-4"
+        >
+          <p className="mb-2 text-xs font-medium text-muted-foreground">Result</p>
+          <div
+            className="text-sm leading-relaxed [&_a]:underline"
+            // biome-ignore lint/security/noDangerouslySetInnerHtml: mdToHtml escapes text and permits only HTTP or app-relative links.
+            dangerouslySetInnerHTML={{ __html: mdToHtml(answer.body_md) }}
+          />
         </div>
-      ))}
+      )}
+      <details data-testid={`job-details-${id}`} className="text-sm">
+        <summary className="cursor-pointer text-muted-foreground">Usage and activity</summary>
+        <div className="mt-4 flex flex-col gap-4">
+          <TaskReceipt job={q.data} />
+          {history.map((m) => (
+            <div key={m.id} className="flex flex-col gap-1">
+              <div className="flex items-baseline gap-2 text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">
+                  {m.author_kind === "agent"
+                    ? agentName
+                    : (first(names.get(m.author_id)) ?? "Someone")}
+                </span>
+                <Time>{when(m.created_at)}</Time>
+              </div>
+              <p
+                className={cn(
+                  "text-base leading-relaxed whitespace-pre-wrap",
+                  m.progress ? "text-muted-foreground" : "text-foreground",
+                )}
+              >
+                {m.body_md}
+              </p>
+            </div>
+          ))}
+        </div>
+      </details>
       {(effects.length > 0 || q.data.report_short_id) && (
         <div className="flex flex-wrap gap-2">
           {q.data.report_short_id && (

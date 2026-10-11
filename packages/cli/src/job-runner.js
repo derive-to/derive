@@ -119,20 +119,6 @@ export class JobClient {
     return res.json()
   }
 
-  /** The job's report page: a new version of the one it already has, or its first. A first
-   *  report is private to the workspace (members can open it, no link, listed nowhere): it is
-   *  the job's record, found from the job, and sharing it further is a person's choice. */
-  publishReport(job, md) {
-    return this.publish({
-      title: reportTitle(job),
-      filename: "report.md",
-      type: "text/markdown",
-      body: md,
-      shortId: job.report_short_id ?? undefined,
-      access: REPORT_ACCESS,
-    })
-  }
-
   pull(limit = 10) {
     return this.req(`/v1/agents/${this.cfg.agentId}/pull`, { method: "POST", body: { limit } })
   }
@@ -179,42 +165,6 @@ const runnerFreeEnv = (env, { keepModelLogin = false } = {}) => {
   ])
     delete out[k]
   return out
-}
-
-/** How a job's report page is shared when it is first made. */
-const REPORT_ACCESS = { workspace_access: "member", link_role: "none", listed: "none" }
-
-const firstLine = (s) =>
-  (s ?? "")
-    .split("\n")
-    .find((l) => l.trim())
-    ?.trim() ?? ""
-const reportTitle = (job) =>
-  job.execution?.agent_name && job.started_at
-    ? `${job.execution.agent_name} · ${job.started_at.slice(0, 16).replace("T", " ")} UTC`
-    : firstLine(job.instruction).slice(0, 120) || `Task ${job.id}`
-
-/** The report every job leaves: what was asked, what was done, what to look at twice, what it
- *  made, and how it knows. Sections with nothing to say are left out. */
-export function reportMarkdown(job, answer, { made = [], flagged = [], cfg = {} } = {}) {
-  const asked = [...(job.messages ?? [])].reverse().find((m) => m.author_kind === "asker")?.body_md
-  const parts = [
-    `# ${reportTitle(job)}`,
-    "",
-    "## Asked",
-    "",
-    asked ?? job.instruction ?? "",
-    "",
-    "## Did",
-    "",
-    answer.body_md ?? "",
-  ]
-  if (flagged.length) parts.push("", "## Flagged", "", ...flagged.map((f) => `- ${f}`))
-  if (made.length) parts.push("", "## Made", "", ...made.map((m) => `- ${m.title} (${m.short_id})`))
-  if (answer.query) parts.push("", "## Evidence", "", "```", answer.query, "```")
-  const model = cfg.model ?? job.execution?.model ?? job.execution?.provider ?? ""
-  parts.push("", "---", "", `\`${[job.id, model].filter(Boolean).join(" · ")}\``)
-  return `${parts.join("\n")}\n`
 }
 
 /** The system prompt for one job: the agent's standing instructions, then what this job is,
@@ -490,8 +440,7 @@ export async function serveJob(client, job, cfg, deps = {}) {
       return "failed"
     }
     const a = result.answer
-    // What the answer made (a chart page), then the job's report page. Either failing demotes
-    // to a line in the reply: the answer itself still lands.
+    // Publish only a useful artifact. The task itself keeps its answer and receipt.
     const made = []
     const flagged = [...(a.caveats ?? [])]
     if (a.artifact && !cfg.mock) {
@@ -509,16 +458,24 @@ export async function serveJob(client, job, cfg, deps = {}) {
         flagged.push(`The page it made could not be published: ${e.message}`)
       }
     }
-    let report = null
-    try {
-      report = await client.publishReport(job, reportMarkdown(job, a, { made, flagged, cfg }))
-    } catch (e) {
-      console.error(`[runner] job ${job.id}: report not published: ${e.message}`)
-    }
     const common = {
-      result: receipt,
-      body_md: a.body_md,
-      ...(report?.short_id ? { report_short_id: report.short_id } : {}),
+      result: {
+        ...receipt,
+        ...(made.length
+          ? {
+              effects: made.map((page) => ({
+                kind: "page",
+                label: page.title,
+                ref: page.short_id,
+              })),
+            }
+          : {}),
+      },
+      body_md: [
+        a.body_md,
+        ...(a.query ? [`Evidence: ${a.query}`] : []),
+        ...flagged.map((note) => `Note: ${note}`),
+      ].join("\n\n"),
       ...(cost !== null ? { cost_micro_usd: cost } : {}),
     }
     if (a.escalate) {

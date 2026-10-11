@@ -51,7 +51,7 @@ const skillFor = (name: string, brief: string) =>
       .replace(/^-+|-+$/g, "")
       .slice(0, 64)
       .replace(/-+$/, "") || "agent"
-  }\ndescription: ${JSON.stringify((brief.trim().split("\n")[0] ?? "").slice(0, 1024))}\n---\n\n# ${name.trim()}\n\n${brief.trim()}\n\nUse live sources. Include results and source URLs in your final answer. The runner saves that answer as the task report.\nSave evidence and state what you could not verify.\nUse only the connections and secrets assigned to this agent.\nAsk before you send a message or make an irreversible change.\n`
+  }\ndescription: ${JSON.stringify((brief.trim().split("\n")[0] ?? "").slice(0, 1024))}\n---\n\n# ${name.trim()}\n\n${brief.trim()}\n\nUse live sources. Include results and source URLs in your final answer. The task keeps that answer inline. Create an artifact only when it is useful to inspect, keep, or share.\nSave evidence and state what you could not verify.\nUse only the connections and secrets assigned to this agent.\nAsk before you send a message or make an irreversible change.\n`
 
 /** The skill is a versioned page. AI authoring uses the existing Chat panel. */
 export function NewAgent() {
@@ -132,7 +132,7 @@ export function NewAgent() {
       const page = await saveSkill()
       await api.askAgent(
         "derive",
-        `Help me write this skill. Keep it short and clear. The agent should do this: ${brief.trim()}. Update the skill on this page. The task runner saves the final answer as a report artifact. Put simple results in the final answer. Create extra artifacts only when requested. Use sensible defaults. Ask only when missing details block the work.`,
+        `Help me write this skill. Keep it short and clear. The agent should do this: ${brief.trim()}. Update the skill on this page. Keep simple results in the final answer. Create an artifact only when it is useful to inspect, keep, or share. Use sensible defaults. Ask only when missing details block the work.`,
         { kind: "artifact", id: page.short_id },
       )
       setChat(true)

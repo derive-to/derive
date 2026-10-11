@@ -86,7 +86,7 @@ export const resolveJobCredential = async (
   meta: MetaStore,
   key: string | undefined,
   agent: AgentRecord,
-  job: JobRecord,
+  job: Pick<JobRecord, "asked_by">,
   provider: ExecutionProvider,
 ): Promise<JobCredential> => {
   if (!key) return { credential: null, reason: "not_configured" }

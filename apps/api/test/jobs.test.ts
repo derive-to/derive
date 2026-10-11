@@ -1879,17 +1879,10 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
     }
     expect(done.status).toBe("succeeded")
     expect(done.messages.at(-1)?.author_kind).toBe("agent")
-    // The job left a report page, as the agent, that the asker can read.
-    expect(done.report_short_id).toBeTruthy()
-    const source = async () =>
-      (
-        await app.request(`/v1/artifacts/${done.report_short_id}/content`, {
-          headers: as(ed.email),
-        })
-      ).text()
-    expect(await source()).toContain("## Asked\n\nCount the signups")
+    // Routine answers stay on the task, without an automatic report artifact.
+    expect(done.report_short_id).toBeNull()
 
-    // A follow-up reopens the job and rewrites the same page as a new version.
+    // A follow-up reopens the same task.
     await app.request(
       `/v1/jobs/${job.id}/messages`,
       jsonAs(as(ed.email), { body_md: "And last week?" }),
@@ -1898,69 +1891,7 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
     const again = (await (
       await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
     ).json()) as { report_short_id: string | null }
-    expect(again.report_short_id).toBe(done.report_short_id)
-    expect(await source()).toContain("## Asked\n\nAnd last week?")
-  })
-
-  it("makes the report private to the workspace, and a person's comment on it reopens the job", async () => {
-    const { app } = await setup("jobs-cli-report-private")
-    const agent = await createAgent(app)
-    const job = (await (await ask(app, ed.email, agent.id, "Count the signups")).json()) as {
-      id: string
-    }
-    const { cfg, client } = runnerFor(app, agent, { mock: "true" })
-    expect(await jobDrainPass(cfg, client)).toMatchObject({ served: 1 })
-    const done = (await (
-      await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
-    ).json()) as { status: string; report_short_id: string }
-    expect(done.status).toBe("succeeded")
-    const page = (await (
-      await app.request(`/v1/artifacts/${done.report_short_id}`, { headers: as(ed.email) })
-    ).json()) as { workspace_access: string; link_role: string; listed: string }
-    expect(page).toMatchObject({ workspace_access: "member", link_role: "none", listed: "none" })
-
-    // The asker comments in the report's margin: the job reopens with that as the next turn.
-    const commented = await app.request(
-      `/v1/artifacts/${done.report_short_id}/comments`,
-      jsonAs(as(ed.email), { body_md: "Split it by plan too." }),
-    )
-    expect(commented.status).toBe(201)
-    const reopened = (await (
-      await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
-    ).json()) as { status: string; messages: { author_kind: string; body_md: string }[] }
-    expect(reopened.status).toBe("queued")
-    expect(reopened.messages.at(-1)).toMatchObject({
-      author_kind: "asker",
-      body_md: "Split it by plan too.",
-    })
-    // The runner's next turn rewrites the same report.
-    expect(await jobDrainPass(cfg, client)).toMatchObject({ served: 1 })
-    const again = (await (
-      await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
-    ).json()) as { status: string; report_short_id: string }
-    expect(again).toMatchObject({ status: "succeeded", report_short_id: done.report_short_id })
-
-    // A reply rides its thread, and a comment that @mentions the agent reaches it through its
-    // inbox: neither also reopens the job, which would set the agent to the same work twice.
-    const thread = ((await commented.json()) as { thread_id: string }).thread_id
-    await app.request(
-      `/v1/artifacts/${done.report_short_id}/comments`,
-      jsonAs(as(ed.email), { body_md: "Thanks.", thread_id: thread }),
-    )
-    await app.request(
-      `/v1/artifacts/${done.report_short_id}/comments`,
-      jsonAs(as(ed.email), {
-        body_md: "@agent one more pass",
-        mentions: [{ id: agent.id, name: "agent" }],
-      }),
-    )
-    expect(
-      (
-        (await (await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })).json()) as {
-          status: string
-        }
-      ).status,
-    ).toBe("succeeded")
+    expect(again.report_short_id).toBeNull()
   })
 
   it("a report must be a page the agent made, not a teammate's", async () => {
