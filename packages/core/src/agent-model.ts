@@ -61,7 +61,7 @@ export interface JobResult {
   attempt_offset?: number
   compute?: {
     turn: string
-    provider: "ortam" | "box"
+    provider: "ortam" | "boat"
     sandbox_id: string
     started_at: string
     stopped_at: string

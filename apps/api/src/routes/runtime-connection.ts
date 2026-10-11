@@ -1,4 +1,5 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
+import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { BoatClient } from "../lib/boat-client"
 import { encryptSecret } from "../lib/crypto"
@@ -24,7 +25,7 @@ const response = {
 
 export const runtimeConnectionRoutes = (ctx: AppContext) => {
   const { meta, deps, requireWorkspace } = ctx
-  const app = new OpenAPIHono()
+  const app = new OpenAPIHono<BlankEnv>()
   const available = !!deps.encryptionKey && deps.runtime?.provider === "boat"
   const view = async (org: string, canManage: boolean) => {
     const cn = await boatConnection(meta, org)
