@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
-import { type FormEvent, useState } from "react"
-import { type Agent, type AgentDetail, api, type Job } from "@/api"
+import { type FormEvent, useRef, useState } from "react"
+import { type Agent, type AgentDetail, type AgentTrigger, api, type Job } from "@/api"
 import { LoadError } from "@/components/shared/load-error"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -100,6 +100,9 @@ export function AgentJobs({
               job={job}
               agent={agent}
               names={names}
+              canAsk={agent.can_ask}
+              canSchedule={agent.can_manage}
+              triggers={agent.triggers}
               canSteer={agent.can_manage || (job.asked_by === meId && agent.can_ask)}
             />
           ))}
@@ -178,16 +181,58 @@ export function JobRow({
   agent,
   names,
   canSteer,
+  canAsk = false,
+  canSchedule = false,
+  triggers = [],
 }: {
   job: Job
   agent: Agent
   names: Map<string, string>
   canSteer: boolean
+  canAsk?: boolean
+  canSchedule?: boolean
+  triggers?: AgentTrigger[]
 }) {
   const [open, setOpen] = useState(false)
   const invalidate = [["jobs"]]
   const cancel = useApiMutation({ mutationFn: () => api.cancelJob(job.id), invalidate })
   const retry = useApiMutation({ mutationFn: () => api.retryJob(job.id), invalidate })
+  const repeatKey = useRef(crypto.randomUUID())
+  const [repeated, setRepeated] = useState(false)
+  const [daily, setDaily] = useState(false)
+  const [time, setTime] = useState("09:00")
+  const repeat = useApiMutation({
+    errorToast: false,
+    mutationFn: () =>
+      api.askAgent(agent.id, job.instruction, undefined, { dedupe_key: repeatKey.current }),
+    invalidate,
+    onSuccess: () => {
+      setRepeated(true)
+    },
+  })
+  const schedule = useApiMutation({
+    errorToast: false,
+    mutationFn: async () => {
+      const [hour, minute] = time.split(":").map(Number)
+      const cron = `${minute} ${hour} * * *`
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+      // Reconcile a lost response before retrying so we do not add a second schedule.
+      const current = await api.getAgent(agent.id)
+      const saved = current.triggers.find(
+        (t) => t.cron === cron && t.tz === tz && t.instruction === job.instruction,
+      )
+      return saved
+        ? saved.enabled
+          ? saved
+          : api.updateTrigger(saved.id, { enabled: true })
+        : api.addTrigger(agent.id, { cron, tz, instruction: job.instruction })
+    },
+    invalidate: [["agents"]],
+    onSuccess: () => setDaily(false),
+  })
+  const scheduled = triggers.some(
+    (t) => t.kind === "schedule" && t.enabled && t.instruction === job.instruction,
+  )
   const needs = job.status === "needs_you"
   const failed = job.status === "failed" || job.status === "lost"
   const detail = detailOf(job, agent)
@@ -285,6 +330,84 @@ export function JobRow({
           </p>
           <TaskReceipt job={job} />
           <Transcript id={job.id} agentName={agent.name} names={names} />
+          {job.status === "succeeded" && (canAsk || canSchedule) && (
+            <div className="flex flex-col gap-3 pb-4">
+              <div className="flex flex-wrap items-center gap-2">
+                {canAsk && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-testid={`job-repeat-${job.id}`}
+                    loading={repeat.isPending}
+                    disabled={repeat.isPending || repeated}
+                    onClick={() => repeat.mutate()}
+                  >
+                    {repeated ? "Task started" : "Run again"}
+                  </Button>
+                )}
+                {canSchedule && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    data-testid={`job-daily-${job.id}`}
+                    disabled={scheduled || schedule.isPending}
+                    onClick={() => setDaily(!daily)}
+                  >
+                    {scheduled ? "Runs every day" : "Run every day"}
+                  </Button>
+                )}
+              </div>
+              {repeat.error && (
+                <p role="alert" className="text-sm text-destructive">
+                  {repeat.error.message}
+                </p>
+              )}
+              {daily && (
+                <form
+                  className="flex flex-wrap items-end gap-3"
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    if (time && !schedule.isPending) schedule.mutate()
+                  }}
+                >
+                  <label className="flex flex-col gap-2 text-sm">
+                    Every day · {Intl.DateTimeFormat().resolvedOptions().timeZone}
+                    <Input
+                      data-testid={`job-daily-time-${job.id}`}
+                      type="time"
+                      required
+                      value={time}
+                      onChange={(e) => setTime(e.target.value)}
+                    />
+                  </label>
+                  <Button
+                    type="submit"
+                    size="sm"
+                    data-testid={`job-daily-save-${job.id}`}
+                    loading={schedule.isPending}
+                  >
+                    Save schedule
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    data-testid={`job-daily-cancel-${job.id}`}
+                    onClick={() => setDaily(false)}
+                  >
+                    Cancel
+                  </Button>
+                  {schedule.error && (
+                    <p role="alert" className="w-full text-sm text-destructive">
+                      {schedule.error.message}
+                    </p>
+                  )}
+                </form>
+              )}
+            </div>
+          )}
         </>
       )}
     </div>

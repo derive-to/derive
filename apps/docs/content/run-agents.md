@@ -9,8 +9,8 @@ This page covers making an agent, running it, giving it work, and following that
 
 The quickest start is **Agents → New agent** in Derive.
 
-1. Give the agent a name and describe its work.
-2. Choose a connected model account.
+1. Describe its work. Derive suggests a name you can edit.
+2. Use the connected model account. If several accounts are ready, choose one.
 3. Choose **When I ask** or **Every day**.
 4. Select **Let’s go**. Derive saves the skill and can run the first task.
 
@@ -75,6 +75,16 @@ Model accounts remain separate. Choose the model account on the agent.
 The first sandbox can take a few minutes. Tasks show **Getting ready** during setup.
 After a task finishes, Derive stops compute and collects its receipt.
 A missing model charge stays **Unknown**. API estimates do not price a subscription plan.
+
+## Repeat a task
+
+Open a completed task and select **Run again** to start the same work.
+Select **Run every day**, choose a time, then select **Save schedule**.
+Derive uses your browser time zone. Manage the schedule on the agent’s **Settings** tab.
+
+The **Usage** tab shows **API estimate / success**. It includes failed tasks and retries.
+If any settled task lacks a complete estimate, cost per success stays **Unknown**.
+This measure helps compare AI use. It does not show the charge for a subscription plan.
 
 ## Give it secrets
 

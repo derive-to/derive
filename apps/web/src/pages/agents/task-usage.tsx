@@ -94,9 +94,10 @@ export function TaskUsage({ jobs, agents }: { jobs: Job[]; agents?: Agent[] }) {
     return cost === null ? [] : [{ job: j, cost }]
   })
   const estimatedCompleted = estimatedTasks.filter(({ job }) => job.status === "succeeded")
-  const estimatedPerTask = estimatedCompleted.length
-    ? estimatedCompleted.reduce((n, { cost }) => n + cost, 0) / estimatedCompleted.length
-    : null
+  const estimatedPerTask =
+    completed.length && estimatedTasks.length === settled.length
+      ? estimatedTasks.reduce((n, { cost }) => n + cost, 0) / completed.length
+      : null
   const groups = new Map<string, Run[]>()
   for (const run of runs) {
     const key = `${run.provider} · ${run.model}`
@@ -111,7 +112,7 @@ export function TaskUsage({ jobs, agents }: { jobs: Job[]; agents?: Agent[] }) {
           ["Completed tasks", `${completed.length}/${settled.length}`],
           ["Reported AI subtotal", known.length ? dollars(spend) : "Unknown"],
           [
-            "API estimate / task",
+            "API estimate / success",
             estimatedPerTask === null ? "Unknown" : dollars(estimatedPerTask),
           ],
           ["Cache reused", cacheShare(runs)],
@@ -123,7 +124,8 @@ export function TaskUsage({ jobs, agents }: { jobs: Job[]; agents?: Agent[] }) {
         ))}
       </div>
       <p className="text-sm text-muted-foreground">
-        Recent tasks · API estimates compare token usage. They do not price your plan.
+        Recent tasks · Cost per success includes failed tasks and retries. API estimates do not
+        price your plan.
         {known.length < settled.length &&
           " Plan charges can stay unknown. A missing charge does not mean free."}
       </p>
@@ -135,7 +137,7 @@ export function TaskUsage({ jobs, agents }: { jobs: Job[]; agents?: Agent[] }) {
           {known.length < settled.length && " Plans do not report dollar spend."}
           {" Missing attempt costs stay unknown."}
           {estimatedCompleted.length > 0 &&
-            ` API estimates cover ${estimatedCompleted.length} completed tasks, including their retries.`}
+            ` API estimates cover ${estimatedTasks.length}/${settled.length} tasks. Missing task costs keep cost per success unknown.`}
         </p>
       </details>
       {agents && (
@@ -168,7 +170,7 @@ export function TaskUsage({ jobs, agents }: { jobs: Job[]; agents?: Agent[] }) {
                   Reported AI
                 </th>
                 <th scope="col" className="py-2 text-right font-normal">
-                  API estimate / task
+                  API estimate / success
                 </th>
               </tr>
             </thead>
@@ -195,8 +197,11 @@ export function TaskUsage({ jobs, agents }: { jobs: Job[]; agents?: Agent[] }) {
                 )
                 const done = tasks.filter((j) => j.status === "succeeded")
                 const reported = tasks.filter((j) => j.cost_micro_usd !== null)
-                const estimates = done.map(taskEstimate).filter((n): n is number => n !== null)
-                const apiCost = average(estimates)
+                const estimates = tasks.map(taskEstimate).filter((n): n is number => n !== null)
+                const apiCost =
+                  done.length && estimates.length === tasks.length
+                    ? estimates.reduce((n, cost) => n + cost, 0) / done.length
+                    : null
                 return (
                   <tr key={id} className="border-t border-border">
                     <th scope="row" className="py-3 font-medium">
@@ -217,7 +222,7 @@ export function TaskUsage({ jobs, agents }: { jobs: Job[]; agents?: Agent[] }) {
                         <>
                           {dollars(apiCost)}
                           <span className="block font-sans text-sm text-muted-foreground">
-                            {estimates.length}/{done.length} tasks
+                            {estimates.length}/{tasks.length} tasks
                           </span>
                         </>
                       )}

@@ -247,6 +247,9 @@ export function AgentsHome() {
                         job={job}
                         agent={agent}
                         names={names}
+                        canAsk={agent.can_ask}
+                        canSchedule={agent.can_manage}
+                        triggers={agent.triggers}
                         canSteer={
                           !!(agent.can_manage || (job.asked_by === me?.id && agent.can_ask))
                         }

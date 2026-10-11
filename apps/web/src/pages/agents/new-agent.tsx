@@ -61,9 +61,24 @@ export function NewAgent() {
   const accounts = useQuery(accountsQuery())
   const connections = useQuery(agentConnectionsQuery())
   const agents = useQuery(agentsQuery())
-  const [name, setName] = useState("")
+  const [customName, setName] = useState<string | null>(null)
   const search = getRouteApi("/agents/new").useSearch()
   const [brief, setBrief] = useState(search.brief ?? "")
+  const title =
+    brief
+      .trim()
+      .split(/\n/)[0]
+      ?.replace(/https?:\/\//g, "")
+      .split(/[.!?](?:\s|$)/)[0]
+      ?.split(/\s+/)
+      .slice(0, 7)
+      .join(" ")
+      .slice(0, 80) || "New agent"
+  const usedNames = new Set((agents.data ?? []).map((a) => a.name.toLowerCase()))
+  let suggestedName = title
+  for (let suffix = 2; usedNames.has(suggestedName.toLowerCase()); suffix++)
+    suggestedName = `${title} ${suffix}`
+  const name = customName ?? suggestedName
   const [daily, setDaily] = useState(false)
   const [time, setTime] = useState("09:00")
   const [account, setAccount] = useState("")
@@ -88,6 +103,7 @@ export function NewAgent() {
     !created.current && agents.data?.some((a) => a.name.toLowerCase() === name.trim().toLowerCase())
   const ready =
     runtime.data?.enabled &&
+    !agents.isPending &&
     !!chosen &&
     name.trim() &&
     brief.trim() &&
@@ -198,7 +214,7 @@ export function NewAgent() {
           }}
         >
           <p className="text-base text-muted-foreground">
-            Give it a skill. Let it take care of the repeat work.
+            Tell it what you need. We’ll save the skill so you can run it again.
           </p>
           <div className="flex flex-wrap gap-2">
             {EXAMPLES.map((example) => (
@@ -220,18 +236,6 @@ export function NewAgent() {
             ))}
           </div>
           <label className="flex flex-col gap-2 text-sm">
-            Name
-            <Input
-              data-testid="new-agent-name"
-              value={name}
-              maxLength={160}
-              required
-              disabled={!!savedSkill || create.isPending}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Daily cloud health"
-            />
-          </label>
-          <label className="flex flex-col gap-2 text-sm">
             What should it do?
             <Textarea
               data-testid="new-agent-brief"
@@ -242,6 +246,17 @@ export function NewAgent() {
               onChange={(e) => setBrief(e.target.value)}
               placeholder="Tell it what a good result looks like…"
               className="min-h-32 text-base"
+            />
+          </label>
+          <label className="flex flex-col gap-2 text-sm">
+            Agent name
+            <Input
+              data-testid="new-agent-name"
+              value={name}
+              maxLength={160}
+              disabled={!!savedSkill || create.isPending}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Daily cloud health"
             />
           </label>
           <div className="flex flex-wrap items-center gap-3 text-sm">
@@ -270,26 +285,35 @@ export function NewAgent() {
             )}
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
-            <label className="flex flex-col gap-2 text-sm">
-              Model account
-              <select
-                data-testid="new-agent-account"
-                value={chosen?.id ?? ""}
-                onChange={(e) => {
-                  setAccount(e.target.value)
-                  setModel("")
-                }}
-                disabled={create.isPending}
-                className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-              >
-                {!readyAccounts.length && <option value="">Connect an account</option>}
-                {readyAccounts.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {accountLabel(a)}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {readyAccounts.length === 1 ? (
+              <div className="flex flex-col gap-2 text-sm">
+                <span>Model account</span>
+                <span className="flex h-9 items-center text-muted-foreground">
+                  {chosen && accountLabel(chosen)}
+                </span>
+              </div>
+            ) : (
+              <label className="flex flex-col gap-2 text-sm">
+                Model account
+                <select
+                  data-testid="new-agent-account"
+                  value={chosen?.id ?? ""}
+                  onChange={(e) => {
+                    setAccount(e.target.value)
+                    setModel("")
+                  }}
+                  disabled={create.isPending}
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                >
+                  {!readyAccounts.length && <option value="">Connect an account</option>}
+                  {readyAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {accountLabel(a)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label className="flex flex-col gap-2 text-sm">
               Run
               <select
@@ -315,7 +339,7 @@ export function NewAgent() {
                 void accounts.refetch()
               }}
             />
-          ) : (
+          ) : !readyAccounts.length ? (
             <Button
               type="button"
               variant="ghost"
@@ -326,7 +350,7 @@ export function NewAgent() {
             >
               Connect a plan
             </Button>
-          )}
+          ) : null}
           {daily && (
             <label className="flex flex-col gap-2 text-sm">
               Time · {Intl.DateTimeFormat().resolvedOptions().timeZone}
@@ -343,6 +367,18 @@ export function NewAgent() {
           <details className="text-sm" data-testid="new-agent-options">
             <summary className="cursor-pointer text-muted-foreground">Model and access</summary>
             <div className="mt-4 flex flex-col gap-4">
+              {readyAccounts.length > 0 && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  data-testid="new-agent-another-plan"
+                  className="self-start"
+                  onClick={() => setConnectingPlan(true)}
+                >
+                  Connect another plan
+                </Button>
+              )}
               <label className="flex flex-col gap-2">
                 Model
                 <select
