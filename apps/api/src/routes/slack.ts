@@ -63,7 +63,8 @@ import {
   threadStateBlocks,
 } from "../lib/slack-comments"
 import { flagSlackReauth, resolveBotToken } from "../lib/slack-delivery"
-import { enqueueSlackDm, wantsReviewEmail, wantsSlackDm } from "../lib/slack-dm"
+import { slackEmailFor, wantsReviewEmail, wantsSlackDm } from "../lib/slack-dm"
+import { sendSlackTestDms } from "../lib/slack-dm-test"
 import { isVerifiedLink, linkToActMessage } from "../lib/slack-identity"
 import { handleSlackMention } from "../lib/slack-mention"
 import {
@@ -572,6 +573,12 @@ export const slackRoutes = (ctx: AppContext) => {
       linked: z
         .boolean()
         .describe("Whether the caller has linked their Slack identity for the connected team"),
+      account_email: z.string().email().describe("The caller's Derive account email"),
+      slack_email: z
+        .string()
+        .email()
+        .nullable()
+        .describe("The caller's explicit Slack lookup email for this Derive workspace"),
     })
     .openapi("SlackStatus")
 
@@ -1643,6 +1650,8 @@ export const slackRoutes = (ctx: AppContext) => {
         slack_dm: wantsSlackDm(pref?.prefs),
         review_email: wantsReviewEmail(pref?.prefs),
         linked,
+        account_email: me.email,
+        slack_email: slackEmailFor(pref?.prefs),
       })
     },
   )
@@ -1655,8 +1664,17 @@ export const slackRoutes = (ctx: AppContext) => {
     const b = await readJson(
       c,
       z
-        .object({ slack_dm: z.boolean().optional(), review_email: z.boolean().optional() })
-        .refine((value) => value.slack_dm !== undefined || value.review_email !== undefined),
+        .object({
+          slack_dm: z.boolean().optional(),
+          review_email: z.boolean().optional(),
+          slack_email: z.string().trim().email().nullable().optional(),
+        })
+        .refine(
+          (value) =>
+            value.slack_dm !== undefined ||
+            value.review_email !== undefined ||
+            value.slack_email !== undefined,
+        ),
     )
     if (b instanceof Response) return b
     const org = await activeWorkspace(c)
@@ -1665,10 +1683,14 @@ export const slackRoutes = (ctx: AppContext) => {
     try {
       if (cur) existing = JSON.parse(cur.prefs) as Record<string, unknown>
     } catch {}
-    const prefs = {
+    const prefs: Record<string, unknown> = {
       ...existing,
       ...(b.slack_dm !== undefined ? { slackDm: b.slack_dm } : {}),
       ...(b.review_email !== undefined ? { reviewEmail: b.review_email } : {}),
+    }
+    if (b.slack_email !== undefined) {
+      if (b.slack_email === null) delete prefs.slackEmail
+      else prefs.slackEmail = b.slack_email.toLowerCase()
     }
     await meta.setUserNotificationPref({
       id: cur?.id ?? newId("unp"),
@@ -1680,24 +1702,25 @@ export const slackRoutes = (ctx: AppContext) => {
     return c.json({
       slack_dm: wantsSlackDm(JSON.stringify(prefs)),
       review_email: wantsReviewEmail(JSON.stringify(prefs)),
+      slack_email: slackEmailFor(JSON.stringify(prefs)),
     })
   })
 
-  // Send the caller a test DM (verifies their account email matches a Slack account +
-  // the bot's im:write scope).
+  // Send a fixed test DM to a bounded list through the active workspace's Slack install.
   app.post("/v1/slack/test-dm", async (c) => {
     const me = await requireUser(c)
     if (me instanceof Response) return me
     const org = await activeWorkspace(c)
     if (!(await meta.getSlackInstall(org))) return fail(c, 400, "Slack is not connected")
-    await enqueueSlackDm(meta, org, me.id, "Derive test DM — notifications are working.", [
-      {
-        type: "section",
-        text: { type: "mrkdwn", text: ":wave: This is a test DM from Derive. You're all set." },
-      },
-    ])
-    deps.pokeWebhooks?.()
-    return c.json({ ok: true })
+    const body = await readJson(
+      c,
+      z.object({ emails: z.array(z.string().trim().email()).min(1).max(10) }),
+    )
+    if (body instanceof Response) return body
+    const emails = [...new Set(body.emails.map((email) => email.toLowerCase()))]
+    const results = await sendSlackTestDms(meta, org, deps.encryptionKey, emails)
+    const sent = results.filter((result) => result.ok).length
+    return c.json({ ok: sent === results.length, sent, total: results.length, results })
   })
 
   // ---- Channel subscriptions -------------------------------------------------------------
