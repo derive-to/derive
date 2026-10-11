@@ -27,6 +27,34 @@ export const agentRoutes = (ctx: AppContext) => {
   const { meta, deps, agentFor, privateOwnerId, requireUser, requireWorkspace } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/agents/runtime",
+      tags: ["Agents"],
+      summary: "Cloud runtime available to this workspace.",
+      responses: {
+        200: {
+          description: "Runtime availability, without credentials.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                enabled: z.boolean(),
+                provider: z.enum(["ortam", "box"]).nullable(),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const org = await requireWorkspace(c, "read")
+      if (org instanceof Response) return bail(org)
+      const enabled = machineWorkspaces(deps.runtime).has(org)
+      return c.json({ enabled, provider: enabled ? (deps.runtime?.provider ?? "ortam") : null })
+    },
+  )
+
   const parseIds = (raw: string | null): string[] => {
     try {
       const v = raw ? (JSON.parse(raw) as unknown) : []
@@ -47,6 +75,13 @@ export const agentRoutes = (ctx: AppContext) => {
       description: a.description,
       instructions_short_id: extra.instructions_short_id ?? null,
       machine: a.machine,
+      runtime:
+        a.machine === "derive" && deps.runtime
+          ? {
+              provider: deps.runtime.provider ?? "ortam",
+              phase: a.sandbox_phase,
+            }
+          : null,
       provider: a.provider,
       model: a.model,
       ask_policy: a.ask_policy,
@@ -112,6 +147,16 @@ export const agentRoutes = (ctx: AppContext) => {
         .enum(["owner", "derive"])
         .describe("Where its jobs run: the owner's runner or MCP session, or a Derive sandbox."),
       provider: z.enum(["claude-code", "codex"]).describe("Which coding agent runs its jobs."),
+      runtime: z
+        .object({
+          provider: z.enum(["ortam", "box"]),
+          phase: z
+            .enum(["creating", "provisioning", "stopping", "ready", "busy", "deleting", "failed"])
+            .nullable(),
+        })
+        .nullable()
+        .optional()
+        .describe("Cloud sandbox availability and progress. No credentials."),
       model: z.string().nullable(),
       ask_policy: z.enum(["workspace", "invited"]),
       write_policy: z
@@ -331,6 +376,17 @@ export const agentRoutes = (ctx: AppContext) => {
     }
   }
 
+  const CreateAgentInput = AgentFields.partial().extend({
+    name: z
+      .string()
+      .min(1)
+      .max(160)
+      .refine((s) => s.trim() !== "", "name required"),
+    role: z.enum(["viewer", "commenter", "editor"]).optional(),
+    schedule: ScheduleInput.optional(),
+    account_id: z.string().min(1).max(64).nullable().optional(),
+  })
+
   // Create an agent. Its key is returned ONCE here; only its SHA-256 hash is stored, so a
   // database leak cannot expose usable credentials. An agent on the owner's machine also gets the
   // one command that starts its runner. Any publishing member may create an agent; it acts on
@@ -341,6 +397,9 @@ export const agentRoutes = (ctx: AppContext) => {
       path: "/v1/agents",
       tags: ["Agents"],
       summary: "Create an agent and mint its key (returned once).",
+      request: {
+        body: { required: true, content: { "application/json": { schema: CreateAgentInput } } },
+      },
       responses: {
         201: {
           description: "The created agent, its key (shown only here), and how to run it.",
@@ -359,14 +418,7 @@ export const agentRoutes = (ctx: AppContext) => {
     async (c) => {
       const org = await requireWorkspace(c, "publish")
       if (org instanceof Response) return bail(org)
-      const b = await readJson(
-        c,
-        AgentFields.partial().extend({
-          name: z.string().refine((s) => s.trim() !== "", "name required"),
-          role: z.unknown().optional(),
-          schedule: ScheduleInput.optional(),
-        }),
-      )
+      const b = await readJson(c, CreateAgentInput)
       if (b instanceof Response) return bail(b)
       const name = b.name.trim()
       const asked: Role | null =
@@ -394,6 +446,16 @@ export const agentRoutes = (ctx: AppContext) => {
         )
       if (b.schedule && !validCron(b.schedule.cron, b.schedule.tz))
         return bail(fail(c, 400, "schedule.cron is not a valid cron expression for that timezone"))
+      if (b.account_id) {
+        const account = await meta.getAccount(b.account_id)
+        if (
+          !account ||
+          account.org_id !== org ||
+          (account.user_id !== creator && account.user_id !== "__workspace__") ||
+          account.provider !== (b.provider === "codex" ? "codex" : "claude")
+        )
+          return bail(fail(c, 400, "Choose an available model account for this provider"))
+      }
       const token = `dk_agt_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`
       let agent: AgentRecord
       try {
@@ -421,6 +483,7 @@ export const agentRoutes = (ctx: AppContext) => {
               : null,
           max_run_ms: b.max_run_ms ?? null,
           max_concurrency: b.max_concurrency ?? 1,
+          account_id: b.account_id ?? null,
         })
       } catch {
         return bail(fail(c, 409, "an agent with that name already exists"))
@@ -652,7 +715,10 @@ export const agentRoutes = (ctx: AppContext) => {
       if (t instanceof Response) return bail(t)
       const b = await readJson(
         c,
-        ScheduleInput.partial().extend({ enabled: z.boolean().optional() }),
+        ScheduleInput.partial().extend({
+          tz: z.string().trim().min(1).max(64).optional(),
+          enabled: z.boolean().optional(),
+        }),
       )
       if (b instanceof Response) return bail(b)
       const cron = b.cron ?? t.cron ?? ""

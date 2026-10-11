@@ -42,7 +42,7 @@ export const accountRoutes = (ctx: AppContext) => {
     name: a.name,
     shared: a.user_id === WORKSPACE_ACCOUNT_OWNER,
     mine: a.user_id === me,
-    hint: a.hint,
+    hint: a.kind === "login" ? "Login saved" : a.hint,
     status: a.status,
     created_at: a.created_at,
   })
@@ -96,6 +96,19 @@ export const accountRoutes = (ctx: AppContext) => {
         }),
       )
       if (b instanceof Response) return bail(b)
+      if (b.provider === "codex" && b.kind === "oauth")
+        return bail(fail(c, 400, "Use a Codex login file or API key"))
+      if (b.provider === "claude" && b.kind === "login")
+        return bail(fail(c, 400, "Use a Claude OAuth token or API key"))
+      if (b.provider === "codex" && b.kind === "login") {
+        try {
+          z.object({ tokens: z.object({ access_token: z.string().min(8) }) }).parse(
+            JSON.parse(b.secret),
+          )
+        } catch {
+          return bail(fail(c, 400, "Choose the auth.json file from your Codex login"))
+        }
+      }
       if (b.shared && !(await ctx.workspaceCan(c, "manage")))
         return bail(fail(c, 403, "only a workspace owner adds a shared account"))
       if (!deps.encryptionKey) return bail(fail(c, 503, "Secret encryption is not configured"))
@@ -107,7 +120,7 @@ export const accountRoutes = (ctx: AppContext) => {
         kind: credentialKind(b.provider, b.kind, b.secret),
         name: b.name ?? null,
         secret_enc: encryptSecret(b.secret, deps.encryptionKey),
-        hint: `…${b.secret.slice(-4)}`,
+        hint: b.kind === "login" ? "Login saved" : `…${b.secret.slice(-4)}`,
       })
       return c.json(accountJson(a, who), 201)
     },

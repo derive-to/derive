@@ -283,7 +283,18 @@ async function runStructured(provider, opts) {
   const spend = (x) => {
     if (Number.isFinite(x?.costUsd)) meter.costUsd = (meter.costUsd ?? 0) + x.costUsd
     if (x?.threadId) meter.threadId = x.threadId
-    if (x?.usage) meter.usage = x.usage
+    if (x?.usage) {
+      const previous = meter.usage ?? {}
+      meter.usage = {
+        ...previous,
+        ...Object.fromEntries(
+          Object.entries(x.usage).map(([key, value]) => [
+            key,
+            Number.isFinite(value) ? (previous[key] ?? 0) + value : value,
+          ]),
+        ),
+      }
+    }
     if (Array.isArray(x?.actions) && x.actions.length) {
       const collected = meter.actions ?? []
       for (const action of x.actions) {

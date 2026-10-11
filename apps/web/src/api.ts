@@ -1350,6 +1350,13 @@ export const api = {
     f(`/v1/reports/${id}/dismiss`, opts({})).then(j),
 
   listAgents: (): Promise<{ agents: ListedAgent[] }> => f("/v1/agents", opts()).then(j),
+  agentRuntime: () =>
+    f("/v1/agents/runtime", opts()).then(j) as Promise<
+      paths["/v1/agents/runtime"]["get"]["responses"][200]["content"]["application/json"]
+    >,
+  createAgent: (
+    body: NonNullable<paths["/v1/agents"]["post"]["requestBody"]>["content"]["application/json"],
+  ): Promise<Agent> => f("/v1/agents", opts(body)).then(j),
   // Rotation is a credential event, never an identity event: the old bearer dies at
   // once; id, role, hosting, and attribution are untouched. Token shown only here.
   rotateAgent: (id: string): Promise<Agent & { token: string }> =>
@@ -1403,7 +1410,12 @@ export const api = {
     agentId: string,
     instruction: string,
     subject?: { kind: "artifact"; id: string },
-    context?: { selection?: string; base_version?: number; model_id?: string | null },
+    context?: {
+      selection?: string
+      base_version?: number
+      model_id?: string | null
+      dedupe_key?: string
+    },
   ): Promise<JobDetail> =>
     f(
       "/v1/jobs",

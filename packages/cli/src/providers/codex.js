@@ -136,7 +136,7 @@ function spawnCodex({ bin, cwd, args, timeoutMs, env }) {
         sessionId: null,
         threadId,
         stderr,
-        lastText,
+        lastText: lastText || clipped(stderr.trim().split("\n").at(-1), 200),
         isError: isError || code !== 0,
         // Codex plain-text mode surfaces no structured api status; the exit code
         // is the only signal, so retryable() falls back to "engine error".
@@ -193,6 +193,7 @@ export const codex = {
         ? ["--dangerously-bypass-approvals-and-sandbox"]
         : ["--sandbox", "workspace-write"]),
       ...(model ? ["--model", model] : []),
+      "--",
       `${systemPrompt}\n\n---\n\n${prompt}`,
     ]
     return spawnCodex({ bin, cwd, args, timeoutMs, env })
@@ -202,7 +203,7 @@ export const codex = {
    *  treated as an engine error worth one retry; a spawn failure (code -1) and a
    *  timeout are not. Mirrors the claude-code policy on the signals Codex gives. */
   retryable(r) {
-    if (r.timedOut || r.code === 0 || r.code === -1) return false
+    if (r.timedOut || r.code === 0 || r.code === -1 || r.code === 2) return false
     return true
   },
 

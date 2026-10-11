@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { getRouteApi, Link } from "@tanstack/react-router"
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { type AgentDetail, ApiError, api } from "@/api"
 import { LoadError } from "@/components/shared/load-error"
 import { PageHeader } from "@/components/shared/page-header"
@@ -92,7 +92,7 @@ export function AgentPage() {
       >
         <TabsList variant="line" aria-label="Agent views">
           <TabsTrigger value="jobs" data-testid="agent-tab-jobs">
-            Jobs
+            Tasks
           </TabsTrigger>
           <TabsTrigger value="settings" data-testid="agent-tab-settings">
             Settings
@@ -120,8 +120,10 @@ export function AgentPage() {
 function AskButton({ agent, onAsked }: { agent: AgentDetail; onAsked: () => void }) {
   const [open, setOpen] = useState(false)
   const [text, setText] = useState("")
+  const taskKey = useRef(crypto.randomUUID())
   const ask = useApiMutation({
-    mutationFn: () => api.askAgent(agent.id, text.trim()),
+    mutationFn: () =>
+      api.askAgent(agent.id, text.trim(), undefined, { dedupe_key: taskKey.current }),
     invalidate: [["jobs"]],
     onSuccess: () => {
       setOpen(false)
@@ -131,19 +133,27 @@ function AskButton({ agent, onAsked }: { agent: AgentDetail; onAsked: () => void
   })
   return (
     <>
-      <Button type="button" size="sm" data-testid="agent-ask" onClick={() => setOpen(true)}>
-        Ask
+      <Button
+        type="button"
+        size="sm"
+        data-testid="agent-ask"
+        onClick={() => {
+          taskKey.current = crypto.randomUUID()
+          setOpen(true)
+        }}
+      >
+        Let’s go
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent aria-describedby={undefined}>
           <DialogHeader>
-            <DialogTitle>Ask {agent.name}</DialogTitle>
+            <DialogTitle>What should {agent.name} do?</DialogTitle>
           </DialogHeader>
           <form
             className="flex flex-col gap-4"
             onSubmit={(e) => {
               e.preventDefault()
-              if (text.trim()) ask.mutate()
+              if (text.trim() && !ask.isPending) ask.mutate()
             }}
           >
             <Textarea
@@ -151,7 +161,8 @@ function AskButton({ agent, onAsked }: { agent: AgentDetail; onAsked: () => void
               value={text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && text.trim()) ask.mutate()
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && text.trim() && !ask.isPending)
+                  ask.mutate()
               }}
               aria-label="What to ask"
               data-testid="agent-ask-input"
@@ -165,7 +176,7 @@ function AskButton({ agent, onAsked }: { agent: AgentDetail; onAsked: () => void
                 disabled={!text.trim()}
                 loading={ask.isPending}
               >
-                Ask
+                Let’s go
               </Button>
             </DialogFooter>
           </form>

@@ -22,6 +22,7 @@ import {
 } from "./format"
 import { Group, Machine, Meta, RowLine, Time } from "./rows"
 import { AgentRowsSkeleton } from "./skeleton"
+import { TaskReceipt, TaskUsage } from "./task-usage"
 
 const first = (name: string | undefined) => name?.trim().split(/\s+/)[0] || undefined
 
@@ -57,7 +58,8 @@ export function AgentJobs({
 }) {
   // Job events keep this live; the slow poll catches teammates' asks, which send you nothing.
   useJobEvents()
-  const jobs = useInfiniteQuery({ ...agentJobsQuery(agent.id), refetchInterval: 60_000 })
+  const jobs = useInfiniteQuery({ ...agentJobsQuery(agent.id), refetchInterval: 10_000 })
+  useQuery({ ...agentQuery(agent.id), refetchInterval: 10_000 })
   const warning = warningFor(agent, names, useNoAccount(agent, meId))
   const schedules = schedulesOf(agent.triggers)
   const rows = jobs.data?.pages.flatMap((p) => p.jobs) ?? []
@@ -79,6 +81,11 @@ export function AgentJobs({
           <dt className="text-muted-foreground">On</dt>
           <dd className="font-medium text-foreground">
             <Machine mark={machineOf(agent, names)} />
+            {agent.runtime && (
+              <span className="ml-1.5 text-muted-foreground">
+                · {agent.runtime.provider === "box" ? "Box" : "Ortam"}
+              </span>
+            )}
           </dd>
           {schedules.length > 0 && (
             <>
@@ -103,6 +110,7 @@ export function AgentJobs({
         </dl>
       </div>
 
+      <TaskUsage jobs={rows} />
       {jobs.isError ? (
         <LoadError
           title="Couldn’t load its jobs."
@@ -113,10 +121,10 @@ export function AgentJobs({
         <AgentRowsSkeleton rows={3} />
       ) : rows.length === 0 ? (
         <p data-testid="agent-jobs-empty" className="text-base text-muted-foreground">
-          No jobs yet.
+          Ready for its first task.
         </p>
       ) : (
-        <Group label="Jobs" testId="agent-jobs">
+        <Group label="Tasks" testId="agent-jobs">
           {rows.map((job) => (
             <JobRow
               key={job.id}
@@ -147,17 +155,27 @@ export function AgentJobs({
  *  Only its creator can: the fallback is the creator's own account, then a shared one, and
  *  nobody else sees the creator's accounts. */
 function useNoAccount(agent: AgentDetail, meId: string): boolean {
-  const mine = agent.machine === "owner" && !agent.account_id && agent.created_by === meId
+  const mine = agent.machine === "derive" && !agent.account_id && agent.created_by === meId
   const accounts = useQuery({ ...accountsQuery(), enabled: mine })
   if (!mine || !accounts.data) return false
-  return !accounts.data.some((a) => a.mine || a.shared)
+  return !accounts.data.some(
+    (a) => a.provider === (agent.provider === "codex" ? "codex" : "claude") && (a.mine || a.shared),
+  )
 }
 
-function detailOf(job: Job): string | undefined {
+function detailOf(job: Job, agent: Agent): string | undefined {
   if (job.status === "needs_you") return job.needs?.question
   if (job.status === "failed" || job.status === "lost") return failureOf(job) ?? undefined
   if (job.status === "cancelled") return "cancelled"
-  if (job.status === "queued") return "waiting"
+  if (job.status === "queued" && agent.runtime?.phase === "creating")
+    return "Getting its sandbox ready…"
+  if (job.status === "queued" && agent.runtime?.phase === "provisioning")
+    return "Setting up its tools…"
+  if (job.status === "queued") return "Waiting for its turn"
+  if (job.status === "running" && job.machine_phase === "starting") return "Starting its sandbox…"
+  if (job.status === "running" && ["ready", "launching"].includes(job.machine_phase ?? ""))
+    return "Starting the task…"
+  if (job.status === "running" && job.machine_phase === "stopping") return "Saving its files…"
   if (job.status === "succeeded") return job.result.effects?.[0]?.label
   return undefined
 }
@@ -203,7 +221,7 @@ function JobRow({
             icon={JOB_ICON[job.status]}
             tone={needs ? "warning" : failed ? "destructive" : undefined}
             title={firstLine(job.instruction)}
-            detail={detailOf(job)}
+            detail={detailOf(job, agent)}
           />
         </button>
         <Meta>
@@ -256,7 +274,12 @@ function JobRow({
         </Meta>
       </div>
       {needs && canSteer && <AnswerBox job={job} />}
-      {open && <Transcript id={job.id} agentName={agent.name} names={names} />}
+      {open && (
+        <>
+          <TaskReceipt job={job} />
+          <Transcript id={job.id} agentName={agent.name} names={names} />
+        </>
+      )}
     </div>
   )
 }

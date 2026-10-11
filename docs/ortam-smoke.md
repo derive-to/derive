@@ -1,5 +1,7 @@
 # Check the Derive–Ortam lifecycle
 
+For the current agent setup and Box adapter, see [Agent home](agent-home.md).
+
 This is the first integration check for running Derive agents on Ortam. It uses
 Ortam's public API to create a Small sandbox, run a fixed `printf` command, save
 its exit status and output, stop the sandbox, and delete the disposable test

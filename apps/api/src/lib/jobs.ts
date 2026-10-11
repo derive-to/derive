@@ -538,7 +538,14 @@ export const reportJob = async (
   // Cost accumulates across attempts: a run that burned three attempts still cost money.
   const cost =
     r.cost_micro_usd == null ? job.cost_micro_usd : (job.cost_micro_usd ?? 0) + r.cost_micro_usd
-  const result: JobResult = { ...jobResult(job), ...(r.result ?? {}) }
+  const previous = jobResult(job)
+  const result: JobResult = { ...previous, ...(r.result ?? {}) }
+  if (r.result?.runs?.length)
+    result.runs = [
+      ...(previous.runs ?? []),
+      ...r.result.runs.map((run) => ({ ...run, attempt: job.attempt })),
+    ].slice(-30)
+  else if (previous.runs) result.runs = previous.runs
   const meta_json = r.meta ? JSON.stringify(r.meta) : job.meta_json
   const common = {
     cost_micro_usd: cost,
@@ -713,6 +720,7 @@ export const jobJson = (j: JobRecord) => ({
   agent_id: j.agent_id,
   kind: j.kind,
   status: j.status,
+  machine_phase: j.machine_phase,
   instruction: j.instruction,
   asked_by: j.asked_by,
   attended: j.attended === 1,

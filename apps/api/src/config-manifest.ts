@@ -417,6 +417,24 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "1",
   },
   {
+    name: "DERIVE_SANDBOX_PROVIDER",
+    group: "advanced",
+    doc: "The adapter for Derive machines: ortam (default) or box. Existing sandboxes stay pinned to their provider. Retire them before switching.",
+    example: "ortam",
+  },
+  {
+    name: "DERIVE_BOX_API_URL",
+    group: "advanced",
+    doc: "Box (Boat) public API URL. Used when DERIVE_SANDBOX_PROVIDER=box.",
+    example: "https://boat.dev/api/v1",
+  },
+  {
+    name: "DERIVE_BOX_API_KEY",
+    group: "advanced",
+    doc: "Operator-owned Box (Boat) service key. Used only on the server. The pilot bills the personal wallet and creates sandboxes with no inherited environment.",
+    active: true,
+  },
+  {
     name: "DERIVE_ORTAM_RUNNER_PATH",
     group: "advanced",
     doc: "Derive machines (Ortam sandboxes). Each sandbox installs this exact, pinned CLI. Unset =\nno Derive machines on this deploy.",

@@ -305,7 +305,7 @@ function InstructionsField({
   const short = agent.instructions_short_id
   return (
     <Field
-      label="Instructions"
+      label="Skill"
       action={
         edit &&
         !editing && (
@@ -346,7 +346,7 @@ function InstructionsField({
           data-testid="agent-instructions-link"
           className="font-mono text-foreground underline-offset-4 hover:underline"
         >
-          {short}
+          Open skill
         </Link>
       ) : (
         <span className="text-muted-foreground">No page</span>
@@ -588,7 +588,13 @@ function ModelField({
   edit: boolean
   onSave: (p: AgentPatch) => void
 }) {
-  const choices = agent.provider === "claude-code" ? CLAUDE_MODELS : []
+  const choices =
+    agent.provider === "claude-code"
+      ? CLAUDE_MODELS
+      : [
+          { id: "gpt-6-luna", label: "Luna · lower cost" },
+          { id: "gpt-6.1-sol", label: "Sol · complex work" },
+        ]
   const known = choices.find((m) => m.id === agent.model)
   const [custom, setCustom] = useState<string | null>(null)
   const selected = custom !== null ? CUSTOM : !agent.model ? DEFAULT : known ? known.id : CUSTOM

@@ -7,7 +7,15 @@
 // so a report from a claim the server already handed to another runner is refused. And a long
 // job reports `progress` at a third of its lease, which renews the lease; a runner that stops
 // ticking (a closed laptop) loses the job to the server's reclaim instead of holding it forever.
-import { mkdirSync, mkdtempSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs"
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmdirSync,
+  rmSync,
+  statfsSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { selectProvider } from "./providers/index.js"
@@ -173,7 +181,10 @@ const firstLine = (s) =>
     .split("\n")
     .find((l) => l.trim())
     ?.trim() ?? ""
-const reportTitle = (job) => firstLine(job.instruction).slice(0, 120) || `Job ${job.id}`
+const reportTitle = (job) =>
+  job.execution?.agent_name && job.started_at
+    ? `${job.execution.agent_name} · ${job.started_at.slice(0, 16).replace("T", " ")} UTC`
+    : firstLine(job.instruction).slice(0, 120) || `Task ${job.id}`
 
 /** The report every job leaves: what was asked, what was done, what to look at twice, what it
  *  made, and how it knows. Sections with nothing to say are left out. */
@@ -320,7 +331,20 @@ async function modelEnvFor(
     throw Object.assign(new Error(`can't use a ${res.credential.kind} credential here`), {
       retryable: false,
     })
-  const dir = mkdtempSync(join(tmpdir(), "derive-cred-"))
+  // A cloud stop can interrupt finally before the provider saves the disk. Keep the
+  // credential and all model-home files on tmpfs, which a saved disk cannot retain.
+  let credentialRoot = tmpdir()
+  if (process.env.DERIVE_RUNNER_ISOLATED === "1") {
+    try {
+      if (statfsSync("/dev/shm").type !== 0x01021994) throw new Error("not tmpfs")
+      credentialRoot = "/dev/shm"
+    } catch {
+      throw Object.assign(new Error("Cloud login files require memory-backed /dev/shm storage"), {
+        retryable: false,
+      })
+    }
+  }
+  const dir = mkdtempSync(join(credentialRoot, "derive-cred-"))
   for (const [name, content] of Object.entries(spec.files))
     writeFileSync(join(dir, name), content, { mode: 0o600 })
   return {
@@ -335,6 +359,8 @@ async function modelEnvFor(
 
 /** Do one claimed job and report it. Never throws: every failure becomes a report. */
 export async function serveJob(client, job, cfg, deps = {}) {
+  const began = Date.now()
+  const meter = deps.meter ?? { costUsd: null }
   const run = deps.runAgent ?? runAgent
   const providerName =
     cfg.providerName ?? (job.execution?.provider === "codex" ? "codex" : "claude-code")
@@ -394,7 +420,7 @@ export async function serveJob(client, job, cfg, deps = {}) {
           systemPrompt: jobSystemPrompt(job, { shim: shim?.rel }),
           prompt: buildPrompt(job.messages ?? []),
           env,
-          meter: deps.meter,
+          meter,
         })
     if (lost) {
       console.error(
@@ -402,12 +428,32 @@ export async function serveJob(client, job, cfg, deps = {}) {
       )
       return "lost"
     }
-    const cost = toMicroUsd(deps.meter?.costUsd)
+    const cost = toMicroUsd(meter.costUsd)
+    const count = (n) => (Number.isSafeInteger(n) && n >= 0 ? n : null)
+    const usage = meter.usage ?? {}
+    const receipt = {
+      runs: [
+        {
+          attempt: job.attempt ?? 0,
+          provider: providerName,
+          model: cfg.model ?? job.execution?.model ?? provider.defaultModel,
+          ...(job.instructions
+            ? { skill: { short_id: job.instructions.short_id, version: job.instructions.version } }
+            : {}),
+          input_tokens: count(usage.input_tokens),
+          cached_input_tokens: count(usage.cached_input_tokens ?? usage.cache_read_input_tokens),
+          output_tokens: count(usage.output_tokens),
+          duration_ms: Date.now() - began,
+          model_cost_micro_usd: cost,
+        },
+      ],
+    }
     if (!result.ok) {
       await client.report(job, {
         status: "failed",
         body_md: `The run failed: ${result.error}`,
         retryable: !!result.retryable,
+        result: receipt,
         ...(cost !== null ? { cost_micro_usd: cost } : {}),
       })
       return "failed"
@@ -439,6 +485,7 @@ export async function serveJob(client, job, cfg, deps = {}) {
       console.error(`[runner] job ${job.id}: report not published: ${e.message}`)
     }
     const common = {
+      result: receipt,
       body_md: a.body_md,
       ...(report?.short_id ? { report_short_id: report.short_id } : {}),
       ...(cost !== null ? { cost_micro_usd: cost } : {}),

@@ -1,14 +1,23 @@
-import { type AgentRecord, type JobRecord, type MetaStore, newId } from "@derive/core"
+import { type AgentRecord, type JobRecord, jobResult, type MetaStore, newId } from "@derive/core"
 import type { AppDeps } from "../context"
 import { log } from "../log"
 import { agentWritesOff } from "./agent-writes"
+import { BoxClient } from "./box-client"
 import { sha256 } from "./crypto"
-import { type JobDeps, jobOverBudget, noteHeldForBudget, reportJob, wakeClaimed } from "./jobs"
+import {
+  type JobDeps,
+  jobOverBudget,
+  noteHeldForBudget,
+  reportJob,
+  wakeClaimed,
+  wakeSettled,
+} from "./jobs"
 import { OrtamClient } from "./ortam-client"
 import { RUN_LEASE_MS, RUN_TIMEOUT_MS } from "./run-lifecycle"
 import { signWorkToken } from "./run-token"
 import { runtimeFailureReason } from "./runtime-diagnostics"
 import { INSTALL_RUNTIME_RUNNER, RUNNER_VERSION } from "./runtime-setup"
+import type { SandboxClient } from "./sandbox-client"
 
 // THE DERIVE MACHINE: one Ortam sandbox per agent, kept stopped between jobs so its files
 // persist. Two sagas, each a phase plus a revision that fences every transition, advanced a
@@ -50,6 +59,7 @@ interface Identity {
 }
 interface SandboxState {
   api_url: string
+  provider?: "ortam" | "box"
   identity: Identity
   /** One id per sandbox this agent ever has: the create and delete idempotency keys carry it,
    *  so a recreate after a failure never gets the old sandbox back. */
@@ -62,6 +72,7 @@ interface SandboxState {
   failed_at?: string
 }
 interface MachineState {
+  active_at?: string
   /** One id per turn on the machine: resume and stop keys carry it, so a reopened job's next
    *  turn never gets its previous turn's operations back. */
   turn: string
@@ -106,9 +117,14 @@ const sandboxRequest = (agent: AgentRecord) => ({
   setup_script: INSTALL_RUNTIME_RUNNER,
 })
 
-/** One integration subject per agent, so each agent's sandbox belongs to its own Ortam user. */
-const clientFor = (deps: MachineDeps, agent: AgentRecord) => {
+/** One provider selection for normal work and retirement. Ortam scopes identity per agent. */
+const clientFor = (
+  deps: Pick<MachineDeps, "config" | "fetcher">,
+  agent: AgentRecord,
+): SandboxClient => {
   if (!deps.config.managed?.apiKey) throw new Error("Derive machines are not configured")
+  if (deps.config.provider === "box")
+    return new BoxClient(deps.config.apiUrl, deps.config.managed.apiKey, deps.fetcher)
   return new OrtamClient(
     deps.config.apiUrl,
     deps.config.managed.apiKey,
@@ -157,6 +173,7 @@ export async function advanceSandbox(
       phase: "creating",
       state_json: JSON.stringify({
         api_url: deps.config.apiUrl,
+        provider: deps.config.provider ?? "ortam",
         identity: { organization_id: auth.organization_id, user_id: auth.user_id },
         generation: newId("sbg"),
         failures: prior?.failures ?? 0,
@@ -164,8 +181,11 @@ export async function advanceSandbox(
     })
   }
   if (!state) return move("failed")
-  if (state.api_url !== deps.config.apiUrl)
-    throw new Error("Sandbox belongs to a different Ortam API")
+  if (
+    state.api_url !== deps.config.apiUrl ||
+    (state.provider ?? "ortam") !== (deps.config.provider ?? "ortam")
+  )
+    throw new Error("Sandbox belongs to a different runtime")
   const client = clientFor(deps, agent)
   const id = agent.sandbox_id
   // `failed` ends a sandbox's life; only a failed operation counts toward the backoff, not a
@@ -276,6 +296,7 @@ async function borrow(
       phase: "starting",
       machine_json: JSON.stringify({
         turn: newId("mjt"),
+        active_at: now.toISOString(),
         deadline_at: deadline.toISOString(),
       } satisfies MachineState),
     })
@@ -315,11 +336,29 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
     await move("released")
     return
   }
+  if (
+    state.api_url !== deps.config.apiUrl ||
+    (state.provider ?? "ortam") !== (deps.config.provider ?? "ortam")
+  )
+    throw new Error("Sandbox belongs to a different runtime")
   const client = clientFor(deps, agent)
   const sandbox = agent.sandbox_id
   const at = iso(deps)
   const expired = at >= m.deadline_at
   const open = job.status === "running"
+  const environment = async () => ({
+    DERIVE_TOKEN: await signWorkToken(
+      "job",
+      deps.secret,
+      `${job.id}~${Date.parse(job.started_at ?? "")}`,
+      agent.id,
+      agent.org_id,
+      Date.parse(m.deadline_at) + 5 * 60_000,
+    ),
+    DERIVE_SERVER: deps.server,
+    DERIVE_JOB_ID: job.id,
+    DERIVE_RUNNER_ISOLATED: "1",
+  })
 
   if (job.machine_phase !== "stopping" && (expired || !open || !(await admitted(deps, agent)))) {
     await move("stopping")
@@ -333,8 +372,9 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
           "resume",
           `derive-job-${m.turn}-resume`,
           state.identity,
+          await environment(),
         )
-        await move("starting", { resume_op: op.id })
+        await move("starting", { resume_op: op.id, active_at: m.active_at ?? at })
         return
       }
       const op = await client.operation(m.resume_op, sandbox, "resume", state.identity)
@@ -358,14 +398,6 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
       // the deadline stops the machine.
       if (!launching || !job.started_at) return
       // Bound to this claim, so a later claim of the same job (a retry) does not revive it.
-      const token = await signWorkToken(
-        "job",
-        deps.secret,
-        `${job.id}~${Date.parse(job.started_at)}`,
-        agent.id,
-        agent.org_id,
-        Date.parse(m.deadline_at) + 5 * 60_000,
-      )
       const process = await client.launch(
         sandbox,
         {
@@ -381,12 +413,7 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
             WORKDIR,
           ],
           cwd: "/home/ortam",
-          env: {
-            DERIVE_TOKEN: token,
-            DERIVE_SERVER: deps.server,
-            DERIVE_JOB_ID: job.id,
-            DERIVE_RUNNER_ISOLATED: "1",
-          },
+          env: await environment(),
           timeout_seconds: Math.max(
             1,
             Math.ceil((Date.parse(m.deadline_at) - Date.parse(at)) / 1000),
@@ -431,6 +458,38 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
       }
       // Stopped, files saved. A runner that never reported fails the job so it can retry.
       await failIfOpen(deps, agent, job, "The machine stopped before the job reported back.")
+      const fresh = await meta.getJob(job.id)
+      if (fresh && m.active_at) {
+        const stopped = iso(deps)
+        const usage = await client
+          .usage?.(sandbox, m.active_at, stopped, state.identity)
+          .catch(() => null)
+        const result = jobResult(fresh)
+        if (!result.compute?.some((c) => c.turn === m.turn)) {
+          const updated = await meta.updateJob(
+            job.id,
+            {
+              result_json: JSON.stringify({
+                ...result,
+                compute: [
+                  ...(result.compute ?? []),
+                  {
+                    turn: m.turn,
+                    provider: deps.config.provider ?? "ortam",
+                    sandbox_id: sandbox,
+                    started_at: m.active_at,
+                    stopped_at: stopped,
+                    billable_seconds: usage?.billable_seconds ?? null,
+                    cost_micro_usd: usage?.cost_micro_usd ?? null,
+                  },
+                ],
+              }),
+            },
+            { status: fresh.status, started_at: fresh.started_at },
+          )
+          if (updated) wakeSettled(deps, updated)
+        }
+      }
       const released = await move("released")
       if (released)
         await meta.transitionAgentSandbox(agent.id, agent.org_id, agent.sandbox_rev, {
@@ -622,12 +681,12 @@ export async function retireSandbox(
   if (!state?.identity || !config?.managed?.apiKey) return
   if (agent.sandbox_phase === null || agent.sandbox_phase === "failed") return
   try {
-    const client = new OrtamClient(
-      config.apiUrl,
-      config.managed.apiKey,
-      sha256(JSON.stringify([agent.org_id, "agent", agent.id])),
-      fetcher,
+    if (
+      state.api_url !== config.apiUrl ||
+      (state.provider ?? "ortam") !== (config.provider ?? "ortam")
     )
+      throw new Error("Sandbox belongs to a different runtime")
+    const client = clientFor({ config, fetcher }, agent)
     // A create whose answer never arrived still made a sandbox; its key finds it.
     const id =
       agent.sandbox_id ??

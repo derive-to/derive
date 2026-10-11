@@ -57,6 +57,27 @@ export interface JobEffect {
 }
 
 export interface JobResult {
+  compute?: {
+    turn: string
+    provider: "ortam" | "box"
+    sandbox_id: string
+    started_at: string
+    stopped_at: string
+    billable_seconds: number | null
+    cost_micro_usd: number | null
+  }[]
+  /** One accepted runner report per attempt. Missing numbers stay unknown. */
+  runs?: {
+    attempt: number
+    provider: string
+    model: string
+    skill?: { short_id: string; version: number }
+    input_tokens: number | null
+    cached_input_tokens: number | null
+    output_tokens: number | null
+    duration_ms: number
+    model_cost_micro_usd: number | null
+  }[]
   effects?: JobEffect[]
   evidence?: { label: string; url?: string; ref?: string }[]
   failure?: { reason: string; retryable: boolean }

@@ -253,7 +253,9 @@ export function AskPanel({
               Selection: “{job?.chat_context?.selection ?? selection}”
             </span>
           )}
-          {job && !job.chat_context?.model_id && <span>Uses the workspace default model</span>}
+          {job && scope.data && !scope.data.bundle?.isSkill && !job.chat_context?.model_id && (
+            <span>Uses the workspace default model</span>
+          )}
         </div>
       )}
       {job?.chat_context?.saving && job.status !== "running" && (

@@ -25,7 +25,7 @@ const PROVIDER: Record<ModelAccount["provider"], string> = { claude: "Claude", c
 const KIND: Record<ModelAccount["kind"], string> = {
   api_key: "API key",
   oauth: "OAuth token",
-  login: "login",
+  login: "Codex plan",
 }
 
 /** "Your Claude", "Shared Codex": whose account and which provider. */
@@ -186,7 +186,7 @@ export function AccountsSection() {
               onClick={() => setAdding(true)}
               className="self-start"
             >
-              Connect Claude or Codex
+              Connect a plan or API key
             </Button>
           )}
         </div>
@@ -207,8 +207,9 @@ export function AccountsSection() {
 }
 
 function AddAccount({ canShare, onDone }: { canShare: boolean; onDone: () => void }) {
-  const [provider, setProvider] = useState<NewModelAccount["provider"]>("claude")
-  const [kind, setKind] = useState<NewModelAccount["kind"]>("api_key")
+  const [provider, setProvider] = useState<NewModelAccount["provider"]>("codex")
+  const [kind, setKind] = useState<NewModelAccount["kind"]>("login")
+  const [fileError, setFileError] = useState("")
   const [secret, setSecret] = useState("")
   const [name, setName] = useState("")
   const [shared, setShared] = useState(false)
@@ -230,7 +231,15 @@ function AddAccount({ canShare, onDone }: { canShare: boolean; onDone: () => voi
       className="flex max-w-xl flex-col gap-3 rounded-xl border border-border p-4"
     >
       <div className="flex flex-wrap gap-2">
-        <Select value={provider} onValueChange={(v) => setProvider(v as typeof provider)}>
+        <Select
+          value={provider}
+          onValueChange={(v) => {
+            setProvider(v as typeof provider)
+            setKind(v === "codex" ? "login" : "api_key")
+            setSecret("")
+            setFileError("")
+          }}
+        >
           <SelectTrigger data-testid="account-provider" aria-label="Provider" className="w-32">
             <SelectValue />
           </SelectTrigger>
@@ -239,14 +248,21 @@ function AddAccount({ canShare, onDone }: { canShare: boolean; onDone: () => voi
             <SelectItem value="codex">Codex</SelectItem>
           </SelectContent>
         </Select>
-        <Select value={kind} onValueChange={(v) => setKind(v as typeof kind)}>
+        <Select
+          value={kind}
+          onValueChange={(v) => {
+            setKind(v as typeof kind)
+            setSecret("")
+            setFileError("")
+          }}
+        >
           <SelectTrigger data-testid="account-kind" aria-label="Kind" className="w-40">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="api_key">API key</SelectItem>
-            <SelectItem value="oauth">OAuth token</SelectItem>
-            <SelectItem value="login">Login</SelectItem>
+            {provider === "claude" && <SelectItem value="oauth">OAuth token</SelectItem>}
+            {provider === "codex" && <SelectItem value="login">My Codex plan</SelectItem>}
           </SelectContent>
         </Select>
       </div>
@@ -258,16 +274,50 @@ function AddAccount({ canShare, onDone }: { canShare: boolean; onDone: () => voi
         data-testid="account-name"
         maxLength={80}
       />
-      <Textarea
-        value={secret}
-        onChange={(e) => setSecret(e.target.value)}
-        placeholder={kind === "login" ? "Paste the login file" : `Paste the ${KIND[kind]}`}
-        aria-label="Secret"
-        data-testid="account-secret"
-        className="font-mono"
-        autoComplete="off"
-        spellCheck={false}
-      />
+      {kind === "login" ? (
+        <label className="flex flex-col gap-3 text-sm">
+          <span>
+            Sign in with <code>codex login</code>, then choose <code>~/.codex/auth.json</code>.
+          </span>
+          <Input
+            type="file"
+            accept=".json,application/json"
+            aria-label="Codex login file"
+            data-testid="account-login-file"
+            onChange={async (e) => {
+              setSecret("")
+              setFileError("")
+              const file = e.target.files?.[0]
+              if (!file) return
+              if (file.size > 20_000) return setFileError("Choose your Codex auth.json file.")
+              try {
+                setSecret(await file.text())
+              } catch {
+                setFileError("Couldn’t read that file. Choose it again.")
+              }
+            }}
+          />
+          <span className="text-muted-foreground">
+            Saved encrypted. Only tasks that use this account can read it.
+          </span>
+          {fileError && (
+            <span role="alert" className="text-destructive">
+              {fileError}
+            </span>
+          )}
+        </label>
+      ) : (
+        <Textarea
+          value={secret}
+          onChange={(e) => setSecret(e.target.value)}
+          placeholder={`Paste the ${KIND[kind]}`}
+          aria-label="Secret"
+          data-testid="account-secret"
+          className="font-mono"
+          autoComplete="off"
+          spellCheck={false}
+        />
+      )}
       {canShare && (
         <Label className="flex items-center gap-2 text-sm font-normal">
           <Checkbox

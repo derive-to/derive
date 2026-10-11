@@ -22,6 +22,7 @@ import {
 } from "./format"
 import { Group, Machine, Meta, RowLine, rowClass, Time } from "./rows"
 import { AgentRowsSkeleton } from "./skeleton"
+import { TaskUsage } from "./task-usage"
 import { useMemberNames } from "./use-member-names"
 
 // Agents home: every agent in the workspace, grouped by what state it is in. What needs a
@@ -104,6 +105,7 @@ export function AgentsHome() {
   return (
     <PageShell width="wide" className="flex flex-col gap-9">
       {header}
+      <TaskUsage jobs={recent.data ?? []} />
       {recent.isError && (
         <LoadError
           layout="inline"

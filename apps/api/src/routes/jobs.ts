@@ -97,6 +97,37 @@ const JobEffectSchema = z.object({
 })
 
 const JobResultSchema = z.object({
+  compute: z
+    .array(
+      z.object({
+        turn: z.string(),
+        provider: z.enum(["ortam", "box"]),
+        sandbox_id: z.string(),
+        started_at: z.string(),
+        stopped_at: z.string(),
+        billable_seconds: z.number().nonnegative().nullable(),
+        cost_micro_usd: z.number().int().nonnegative().nullable(),
+      }),
+    )
+    .optional(),
+  runs: z
+    .array(
+      z.object({
+        attempt: z.number().int().nonnegative(),
+        provider: z.string().max(80),
+        model: z.string().max(200),
+        skill: z
+          .object({ short_id: z.string().max(64), version: z.number().int().positive() })
+          .optional(),
+        input_tokens: z.number().int().nonnegative().nullable(),
+        cached_input_tokens: z.number().int().nonnegative().nullable(),
+        output_tokens: z.number().int().nonnegative().nullable(),
+        duration_ms: z.number().int().nonnegative(),
+        model_cost_micro_usd: z.number().int().nonnegative().nullable(),
+      }),
+    )
+    .max(30)
+    .optional(),
   effects: z.array(JobEffectSchema).optional(),
   evidence: z
     .array(z.object({ label: z.string(), url: z.string().optional(), ref: z.string().optional() }))
@@ -127,6 +158,10 @@ const Job = z
     agent_id: z.string(),
     kind: z.enum(["ask", "scheduled", "graph", "node"]),
     status: z.enum(["queued", "running", "needs_you", "succeeded", "failed", "cancelled", "lost"]),
+    machine_phase: z
+      .enum(["starting", "ready", "launching", "running", "stopping", "released"])
+      .nullable()
+      .optional(),
     instruction: z.string(),
     asked_by: z.string().nullable(),
     attended: z.boolean(),
@@ -841,7 +876,7 @@ export const jobRoutes = (ctx: AppContext) => {
           .filter((m) => !isServerNote(m))
           .map(messageJson),
         instructions,
-        execution: { provider: agent.provider, model: agent.model },
+        execution: { provider: agent.provider, model: agent.model, agent_name: agent.name },
         tools,
         ...(quiet.length ? { sources_quiet: quiet } : {}),
       })),
@@ -871,7 +906,7 @@ export const jobRoutes = (ctx: AppContext) => {
         started_at: z.string().nullable(),
         status: z.enum(["succeeded", "failed", "needs_you", "progress"]),
         body_md: z.string().max(200_000).nullish(),
-        result: JobResultSchema.nullish(),
+        result: JobResultSchema.omit({ compute: true }).nullish(),
         needs: JobNeedsSchema.nullish(),
         cost_micro_usd: z.number().int().nonnegative().nullish(),
         retryable: z.boolean().optional(),

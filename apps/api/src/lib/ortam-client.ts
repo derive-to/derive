@@ -204,6 +204,7 @@ export class OrtamClient {
     action: "resume" | "stop",
     key: string,
     identity: { organization_id: string; user_id: string },
+    _env?: Record<string, string>,
   ) {
     id = ortamId("sbx", id)
     const op = Operation.parse(
