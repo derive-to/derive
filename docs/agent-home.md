@@ -22,6 +22,11 @@ The runner also removes the private directory after a normal task return.
 Owner runners use the operating system's temporary directory.
 Codex OAuth-token accounts are not supported. This build does not add a hosted device-login flow.
 
+Task code can read its assigned model credential and injected secrets during execution.
+Use trusted skills and repositories for this pilot. Tmpfs prevents disk persistence across stops;
+it does not hide the account from the active task. A credential proxy needs separate qualification
+before running untrusted code with a personal plan account.
+
 ## Select the sandbox provider
 
 The existing controller uses `SandboxClient`. Ortam and Box implement that interface.
