@@ -72,18 +72,16 @@ concurrency:
 # `gate` runs unconditionally (if: always()), reads every lane's result, and
 # accepts only success or skipped. It cannot be satisfied by absence.
 #
-# RUNNERS — Ubicloud x64, 8 vCPU for the four working lanes. `gate` is a few
-# seconds of shell, so it takes a GitHub-hosted runner rather than occupying
-# Ubicloud capacity. ARM was TRIED AND REJECTED ON A MEASUREMENT,
+# RUNNERS — Ubicloud x64. The four working lanes use 8 vCPU; the small gate
+# uses ubicloud-standard-4. ARM was TRIED AND REJECTED ON A MEASUREMENT,
 # so please do not re-litigate it without a new one: on ubicloud-standard-8-arm,
 # identical commit, lint 11s -> 24s, typecheck 6s -> 16s, sqlite suite 50s ->
 # 91s, pg suite 59s -> 94s, d1 4s -> 10s, WALL 94s -> 163s. 1.7x slower for the
 # same money, because this workload is per-core-bound and those cores are weaker.
 #
-# THE ESCAPE HATCH, which this repo has needed before: Ubicloud's integration
-# vanished on 2026-07-02 and every job sat queued forever. The runs-on label is
-# the ONLY coupling. If jobs queue, replace these labels with ubuntu-latest and
-# CI runs unchanged — slower, but green.
+# If Ubicloud has a service issue, repair or restore the Ubicloud integration
+# and runner capacity. Keep every job on Ubicloud so builds do not fall back to
+# GitHub-hosted runners.
 # ---------------------------------------------------------------------------
 
 jobs:
@@ -282,7 +280,7 @@ jobs:
   gate:
     if: always()
     needs: [check, tests, db, images]
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-4
     steps:
       # `contains(needs.*.result, ...)` is GitHub's own reduction over the needs
       # graph. An earlier version of this shelled out and grepped `toJSON(needs)`

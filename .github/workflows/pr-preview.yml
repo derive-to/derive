@@ -56,7 +56,7 @@ jobs:
     # PR could read and write real data by editing this workflow. GitHub does not expose secrets
     # to fork PRs by default; this makes the intent explicit rather than relying on that.
     if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-4
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -249,7 +249,7 @@ jobs:
   # A preview per PR is only affordable if it goes away again.
   teardown:
     if: github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-4
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
