@@ -20,7 +20,7 @@ import {
   took,
   when,
 } from "./format"
-import { Group, Machine, Meta, RowLine, Time } from "./rows"
+import { Group, Meta, RowLine, Time } from "./rows"
 import { AgentRowsSkeleton } from "./skeleton"
 import { TaskReceipt, TaskUsage } from "./task-usage"
 
@@ -33,16 +33,16 @@ export function warningFor(
   names: Map<string, string>,
   noAccount = false,
 ): string | null {
-  if (agent.paused) return "Paused. Jobs wait until it is resumed."
+  if (agent.paused) return "This agent is paused. New tasks wait until you resume it in Settings."
   // Only a Derive machine needs a stored account; a runner on someone's own machine falls back
   // to the login on that machine.
   if (noAccount && agent.machine === "derive")
-    return "No model account to run on. Its jobs fail until one is connected in Settings › Model accounts."
+    return "Connect a model account in Settings to start cloud tasks."
   if (agent.machine === "derive") return null
-  if (!agent.seen_at) return "Its runner has never checked in. Jobs wait until it does."
+  if (!agent.seen_at) return "Its runner has never checked in. Tasks wait until it does."
   const mark = machineOf(agent, names)
   if (mark.on) return null
-  return `${mark.label.replace(/, off$/, "")} was last seen ${when(agent.seen_at)}. Jobs wait while it is off.`
+  return `${mark.label.replace(/, off$/, "")} was last seen ${when(agent.seen_at)}. Tasks wait while it is off.`
 }
 
 // The Jobs tab: what the agent does, what would stop it, where it runs, then every job it has
@@ -51,10 +51,12 @@ export function AgentJobs({
   agent,
   names,
   meId,
+  usage = false,
 }: {
   agent: AgentDetail
   names: Map<string, string>
   meId: string
+  usage?: boolean
 }) {
   // Job events keep this live; the slow poll catches teammates' asks, which send you nothing.
   useJobEvents()
@@ -66,59 +68,26 @@ export function AgentJobs({
 
   return (
     <div className="flex flex-col gap-9">
-      <div className="grid gap-x-12 gap-y-6 md:grid-cols-[minmax(0,1fr)_17.5rem]">
-        <div className="flex flex-col gap-2.5">
-          {agent.description && (
-            <p className="text-base leading-relaxed text-foreground">{agent.description}</p>
-          )}
-          {warning && (
-            <p data-testid="agent-warning" className="text-sm text-warning">
-              {warning}
-            </p>
-          )}
-        </div>
-        <dl className="grid grid-cols-[5.5rem_minmax(0,1fr)] content-start gap-x-3 gap-y-2 text-sm">
-          <dt className="text-muted-foreground">On</dt>
-          <dd className="font-medium text-foreground">
-            <Machine mark={machineOf(agent, names)} />
-            {agent.runtime && (
-              <span className="ml-1.5 text-muted-foreground">
-                · {agent.runtime.provider === "box" ? "Box" : "Ortam"}
-              </span>
-            )}
-          </dd>
-          {schedules.length > 0 && (
-            <>
-              <dt className="text-muted-foreground">Runs</dt>
-              <dd className="font-medium text-foreground">
-                {schedules.map((t) => (t.cron ? cronLabel(t.cron) : "")).join(", ")}
-              </dd>
-            </>
-          )}
-          {agent.machine === "owner" && agent.seen_at && (
-            <>
-              <dt className="text-muted-foreground">Last seen</dt>
-              <dd className="font-mono text-foreground">{when(agent.seen_at)}</dd>
-            </>
-          )}
-          {agent.model && (
-            <>
-              <dt className="text-muted-foreground">Model</dt>
-              <dd className="font-mono text-foreground">{agent.model}</dd>
-            </>
-          )}
-        </dl>
-      </div>
-
-      <TaskUsage jobs={rows} />
+      {warning && (
+        <p data-testid="agent-warning" role="status" className="text-sm text-warning">
+          {warning}
+        </p>
+      )}
+      {schedules.length > 0 && (
+        <p className="text-sm text-muted-foreground">
+          {schedules.map((t) => `${cronLabel(t.cron ?? "")} · ${t.tz ?? "UTC"}`).join(", ")}
+        </p>
+      )}
       {jobs.isError ? (
         <LoadError
-          title="Couldn’t load its jobs."
+          title="Couldn’t load tasks."
           testId="agent-jobs-retry"
           onRetry={() => void jobs.refetch()}
         />
       ) : jobs.isPending ? (
         <AgentRowsSkeleton rows={3} />
+      ) : usage ? (
+        <TaskUsage jobs={rows} />
       ) : rows.length === 0 ? (
         <p data-testid="agent-jobs-empty" className="text-base text-muted-foreground">
           Ready for its first task.
@@ -142,7 +111,7 @@ export function AgentJobs({
               onClick={() => void jobs.fetchNextPage()}
               className="self-start pt-1.5 text-sm text-muted-foreground hover:text-foreground"
             >
-              Older jobs
+              Older tasks
             </button>
           )}
         </Group>
@@ -163,15 +132,26 @@ function useNoAccount(agent: AgentDetail, meId: string): boolean {
   )
 }
 
+function taskStatus(job: Job, agent: Agent): string {
+  if (job.status === "succeeded") return "Done"
+  if (job.status === "needs_you") return "Needs you"
+  if (job.status === "failed" || job.status === "lost") return "Failed"
+  if (job.status === "cancelled") return "Stopped"
+  if (job.status === "queued") return agent.paused ? "Paused" : "Queued"
+  if (job.machine_phase === "stopping") return "Saving files"
+  return "Running"
+}
+
 function detailOf(job: Job, agent: Agent): string | undefined {
   if (job.status === "needs_you") return job.needs?.question
   if (job.status === "failed" || job.status === "lost") return failureOf(job) ?? undefined
-  if (job.status === "cancelled") return "cancelled"
+  if (job.status === "cancelled") return "Stopped before completion"
   if (job.status === "queued" && agent.runtime?.phase === "creating")
     return "Getting its sandbox ready…"
   if (job.status === "queued" && agent.runtime?.phase === "provisioning")
     return "Setting up its tools…"
-  if (job.status === "queued") return "Waiting for its turn"
+  if (job.status === "queued")
+    return agent.paused ? "Resume this agent in Settings to start" : "Waiting for its turn"
   if (job.status === "running" && job.machine_phase === "starting") return "Starting its sandbox…"
   if (job.status === "running" && ["ready", "launching"].includes(job.machine_phase ?? ""))
     return "Starting the task…"
@@ -180,14 +160,14 @@ function detailOf(job: Job, agent: Agent): string | undefined {
   return undefined
 }
 
-function JobRow({
+export function JobRow({
   job,
   agent,
   names,
   canSteer,
 }: {
   job: Job
-  agent: AgentDetail
+  agent: Agent
   names: Map<string, string>
   canSteer: boolean
 }) {
@@ -209,13 +189,13 @@ function JobRow({
         needs && "-mx-3 my-0.5 rounded-lg border-b-0 bg-warning/10 px-3",
       )}
     >
-      <div className="flex h-13 items-center gap-3.5 text-base">
+      <div className="flex min-h-18 flex-wrap items-center gap-x-3.5 gap-y-2 py-3 text-base">
         <button
           type="button"
           data-testid={`job-row-${job.id}`}
           aria-expanded={open}
           onClick={() => setOpen((o) => !o)}
-          className="flex h-full min-w-0 flex-1 items-center gap-3.5 text-left"
+          className="flex min-h-10 min-w-0 flex-1 basis-56 items-center gap-3.5 text-left"
         >
           <RowLine
             icon={JOB_ICON[job.status]}
@@ -225,7 +205,17 @@ function JobRow({
           />
         </button>
         <Meta>
-          {asker && <span>{asker}</span>}
+          <span
+            className={cn(
+              "text-sm",
+              needs && "text-warning",
+              failed && "text-destructive",
+              job.status === "succeeded" && "text-success",
+            )}
+          >
+            {taskStatus(job, agent)}
+          </span>
+          {asker && <span className="max-sm:hidden">{asker}</span>}
           {job.report_short_id && (
             <Link
               to="/artifacts/$ref"
@@ -276,6 +266,9 @@ function JobRow({
       {needs && canSteer && <AnswerBox job={job} />}
       {open && (
         <>
+          <p className="mb-4 rounded-lg bg-secondary/40 p-3 text-sm whitespace-pre-wrap">
+            {job.instruction}
+          </p>
           <TaskReceipt job={job} />
           <Transcript id={job.id} agentName={agent.name} names={names} />
         </>
@@ -360,7 +353,11 @@ function Transcript({
   agentName: string
   names: Map<string, string>
 }) {
-  const q = useQuery(jobQuery(id))
+  const q = useQuery({
+    ...jobQuery(id),
+    refetchInterval: (query) =>
+      ["queued", "running", "needs_you"].includes(query.state.data?.status ?? "") ? 5_000 : false,
+  })
   if (q.isError)
     return (
       <LoadError

@@ -1,4 +1,5 @@
-import type { Job } from "@/api"
+import type { Agent, Job } from "@/api"
+import { SectionHeading } from "@/components/shared/section-title"
 
 type Run = NonNullable<Job["result"]["runs"]>[number]
 const dollars = (micro: number) =>
@@ -40,9 +41,11 @@ const sumKnown = (values: (number | null)[]) =>
     : null
 const taskEstimate = (job: Job) => {
   const runs = job.result.runs ?? []
+  // Older records cannot distinguish a fresh run from a manually reset retry cycle.
+  if (job.result.attempt_offset === undefined) return null
   // An unreported claim still consumed work. Never present a partial retry history
   // as the cost of the whole task.
-  for (let attempt = 0; attempt <= job.attempt; attempt++)
+  for (let attempt = 0; attempt <= job.result.attempt_offset + job.attempt; attempt++)
     if (!runs.some((run) => run.attempt === attempt)) return null
   return sumKnown(runs.map(estimate))
 }
@@ -60,13 +63,24 @@ const average = (values: (number | null)[]) => {
 
 /** Summaries cover the loaded tasks. Plan usage, reported spend, and API estimates
  * have separate labels. Failed attempts remain in every spend and token total. */
-export function TaskUsage({ jobs }: { jobs: Job[] }) {
+export function TaskUsage({ jobs, agents }: { jobs: Job[]; agents?: Agent[] }) {
   const settled = jobs.filter((j) =>
     ["succeeded", "failed", "cancelled", "lost"].includes(j.status),
   )
   const runs = settled.flatMap((j) => j.result.runs ?? [])
   const compute = settled.flatMap((j) => j.result.compute ?? [])
-  if (!runs.length && !compute.length) return null
+  if (!runs.length && !compute.length)
+    return (
+      <section data-testid="task-usage-empty" className="flex flex-col gap-2 py-5">
+        <SectionHeading>Costs start with your first run.</SectionHeading>
+        <p className="text-base text-muted-foreground">
+          Each task keeps its model, token usage, and available costs here.
+        </p>
+        <p className="text-sm text-muted-foreground">
+          Missing receipts stay unknown. A plan account does not report a dollar bill.
+        </p>
+      </section>
+    )
   const completed = settled.filter((j) => j.status === "succeeded")
   const known = settled.filter((j) => j.cost_micro_usd !== null)
   const spend = known.reduce((n, j) => n + (j.cost_micro_usd ?? 0), 0)
@@ -104,13 +118,83 @@ export function TaskUsage({ jobs }: { jobs: Job[] }) {
         ))}
       </div>
       <p className="text-sm text-muted-foreground">
-        {settled.length} loaded tasks · {measured.length}/{runs.length} model runs have token
-        receipts · {known.length}/{settled.length} tasks report at least one dollar cost.
-        {known.length < settled.length && " Plans do not report dollar spend."}
-        {" Missing attempt costs stay unknown."}
-        {estimatedCompleted.length > 0 &&
-          ` API estimates cover ${estimatedCompleted.length} completed tasks, including their retries.`}
+        Recent tasks · API estimates compare token usage. They do not price your plan.
       </p>
+      <details className="text-sm text-muted-foreground" data-testid="task-usage-coverage">
+        <summary>Receipt coverage</summary>
+        <p className="mt-2">
+          {settled.length} loaded tasks · {measured.length}/{runs.length} model runs have token
+          receipts · {known.length}/{settled.length} tasks report at least one dollar cost.
+          {known.length < settled.length && " Plans do not report dollar spend."}
+          {" Missing attempt costs stay unknown."}
+          {estimatedCompleted.length > 0 &&
+            ` API estimates cover ${estimatedCompleted.length} completed tasks, including their retries.`}
+        </p>
+      </details>
+      {agents && (
+        <div className="overflow-x-auto">
+          <SectionHeading className="mb-3">By agent</SectionHeading>
+          <table className="w-full text-left text-sm" data-testid="task-usage-by-agent">
+            <thead className="text-muted-foreground">
+              <tr>
+                <th scope="col" className="py-2 font-normal">
+                  Agent
+                </th>
+                <th scope="col" className="px-3 py-2 font-normal">
+                  Completed
+                </th>
+                <th scope="col" className="px-3 py-2 font-normal">
+                  Reported AI
+                </th>
+                <th scope="col" className="py-2 text-right font-normal">
+                  API estimate / task
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...new Set([...agents.map((a) => a.id), ...settled.map((j) => j.agent_id)])].map(
+                (id) => {
+                  const name =
+                    agents.find((a) => a.id === id)?.name ??
+                    (id === "derive" ? "Chat" : "Removed agent")
+                  const tasks = settled.filter((j) => j.agent_id === id)
+                  const done = tasks.filter((j) => j.status === "succeeded")
+                  const reported = tasks.filter((j) => j.cost_micro_usd !== null)
+                  const estimates = done.map(taskEstimate).filter((n): n is number => n !== null)
+                  const apiCost = average(estimates)
+                  return (
+                    <tr key={id} className="border-t border-border">
+                      <th scope="row" className="py-3 font-medium">
+                        {name}
+                      </th>
+                      <td className="px-3 font-mono">
+                        {done.length}/{tasks.length}
+                      </td>
+                      <td className="px-3 font-mono">
+                        {reported.length
+                          ? dollars(reported.reduce((n, j) => n + (j.cost_micro_usd ?? 0), 0))
+                          : "Unknown"}
+                      </td>
+                      <td className="text-right font-mono">
+                        {apiCost === null ? (
+                          "Unknown"
+                        ) : (
+                          <>
+                            {dollars(apiCost)}
+                            <span className="block font-sans text-sm text-muted-foreground">
+                              {estimates.length}/{done.length} tasks
+                            </span>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                },
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
       {groups.size > 0 && (
         <details open={groups.size > 1} data-testid="task-usage-compare">
           <summary className="cursor-pointer text-sm">Compare models</summary>

@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { Link, useNavigate } from "@tanstack/react-router"
-import { strToU8, zipSync } from "fflate"
+import { getRouteApi, Link, useNavigate } from "@tanstack/react-router"
 import { useRef, useState } from "react"
 import { type Agent, type Artifact, api } from "@/api"
 import { PageHeader } from "@/components/shared/page-header"
@@ -15,10 +14,12 @@ import {
   artifactQuery,
   pageAsksQuery,
 } from "@/lib/queries"
+import { skillBundleBytes } from "@/lib/skill-source"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { AskPanel } from "@/pages/artifact/ask-panel"
 import { accountLabel } from "../settings/accounts-section"
+import { modelChoices } from "./format"
 
 const EXAMPLES = [
   {
@@ -60,7 +61,8 @@ export function NewAgent() {
   const connections = useQuery(agentConnectionsQuery())
   const agents = useQuery(agentsQuery())
   const [name, setName] = useState("")
-  const [brief, setBrief] = useState("")
+  const search = getRouteApi("/agents/new").useSearch()
+  const [brief, setBrief] = useState(search.brief ?? "")
   const [daily, setDaily] = useState(false)
   const [time, setTime] = useState("09:00")
   const [account, setAccount] = useState("")
@@ -85,7 +87,7 @@ export function NewAgent() {
 
   const saveSkill = async () => {
     if (!skill.current) {
-      const bundle = zipSync({ "SKILL.md": strToU8(skillFor(name, brief)) })
+      const bundle = await skillBundleBytes(skillFor(name, brief))
       skill.current = await api.publish(
         new File([new Uint8Array(bundle)], "skill.zip", { type: "application/zip" }),
         {
@@ -263,7 +265,10 @@ export function NewAgent() {
               <select
                 data-testid="new-agent-account"
                 value={chosen?.id ?? ""}
-                onChange={(e) => setAccount(e.target.value)}
+                onChange={(e) => {
+                  setAccount(e.target.value)
+                  setModel("")
+                }}
                 disabled={create.isPending}
                 className="h-9 rounded-md border border-input bg-background px-3 text-sm"
               >
@@ -307,12 +312,19 @@ export function NewAgent() {
             <div className="mt-4 flex flex-col gap-4">
               <label className="flex flex-col gap-2">
                 Model
-                <Input
+                <select
                   data-testid="new-agent-model"
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
-                  placeholder="Use the account’s default"
-                />
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                >
+                  <option value="">Use the account’s default</option>
+                  {modelChoices(chosen?.provider === "codex" ? "codex" : "claude-code").map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
               </label>
               <p className="text-muted-foreground">
                 Connections give it access. The skill tells it how to use that access.

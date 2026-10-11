@@ -7,8 +7,10 @@ import {
   type JobResult,
   type JobStatus,
   jobResult,
+  type MembershipRecord,
   type MetaStore,
   newId,
+  roleAllows,
   type Selector,
   type TriggerRecord,
 } from "@derive/core"
@@ -180,6 +182,28 @@ export const standDownMember = async (
 
 // ---- Who may ask -------------------------------------------------------------------------
 
+/** One policy for detail reads and the roster's batched membership read. */
+export const agentAccess = (
+  agent: AgentRecord,
+  member: MembershipRecord | null,
+  caller?: Pick<AgentRecord, "id" | "role" | "org_id"> | null,
+) => {
+  if (!member || member.org_id !== agent.org_id) return { can_ask: false, can_manage: false }
+  const creator = agent.created_by === member.user_id
+  return {
+    can_ask:
+      (!caller || (caller.org_id === agent.org_id && roleAllows(caller.role, "publish"))) &&
+      agent.managed !== 1 &&
+      (agent.ask_policy === "workspace" || creator || member.role === "owner"),
+    can_manage:
+      (member.role === "owner" || (creator && member.role !== "viewer")) &&
+      (!caller ||
+        (caller.id.startsWith("oauth:") &&
+          caller.org_id === agent.org_id &&
+          (roleAllows(caller.role, "manage") || (roleAllows(caller.role, "publish") && creator)))),
+  }
+}
+
 /** A person may ask an agent when they are a member of its workspace and the agent's ask
  *  policy lets them: `workspace` lets every member ask; `invited` lets the agent's creator
  *  and workspace owners ask. */
@@ -187,14 +211,10 @@ export const canAskAgent = async (
   meta: MetaStore,
   agent: AgentRecord,
   userId: string,
+  caller?: Pick<AgentRecord, "id" | "role" | "org_id"> | null,
 ): Promise<boolean> => {
-  // A managed agent is a hidden principal minted for one imported paper: it runs nothing,
-  // so nobody asks it.
-  if (agent.managed === 1) return false
   const m = await meta.getMembership(agent.org_id, userId).catch(() => null)
-  if (!m) return false
-  if (agent.ask_policy === "workspace") return true
-  return agent.created_by === userId || m.role === "owner"
+  return agentAccess(agent, m, caller).can_ask
 }
 
 /** A person may manage an agent (edit, pause, triggers, delete) when they created it or own
@@ -206,8 +226,7 @@ export const canManageAgent = async (
 ): Promise<boolean> => {
   // Both doors need a live seat: a creator who has left the workspace manages nothing.
   const m = await meta.getMembership(agent.org_id, userId).catch(() => null)
-  if (!m) return false
-  return m.role === "owner" || (agent.created_by === userId && m.role !== "viewer")
+  return agentAccess(agent, m).can_manage
 }
 
 /** A person may act on a job (follow up, cancel, retry, answer) when they asked it or manage
@@ -217,9 +236,11 @@ export const canSteerJob = async (
   agent: AgentRecord,
   job: JobRecord,
   userId: string,
-): Promise<boolean> =>
-  (job.asked_by === userId && (await canAskAgent(meta, agent, userId))) ||
-  (await canManageAgent(meta, agent, userId))
+  caller?: Pick<AgentRecord, "id" | "role" | "org_id"> | null,
+): Promise<boolean> => {
+  const access = agentAccess(agent, await meta.getMembership(agent.org_id, userId), caller)
+  return (job.asked_by === userId && access.can_ask) || access.can_manage
+}
 
 /** Whose jobs are a person's to act on (the Inbox): the ones they asked, or on agents they
  *  manage (canManageAgent's rule, read with one membership lookup). `"all"` for a workspace
@@ -329,6 +350,10 @@ export const followUpJob = async (
       lease_until: null,
       started_at: null,
       attempt: 0,
+      result_json: JSON.stringify({
+        ...jobResult(job),
+        attempt_offset: (jobResult(job).attempt_offset ?? 0) + job.attempt + 1,
+      }),
     },
     { status: job.status },
   )
@@ -392,6 +417,7 @@ export const cancelJob = async (
 /** Run a failed or lost job again, as a fresh attempt with the same transcript. */
 export const retryJob = async (deps: JobDeps, job: JobRecord): Promise<JobRecord | null> => {
   if (job.status !== "failed" && job.status !== "lost") return null
+  const previous = jobResult(job)
   const again = await deps.meta.updateJob(
     job.id,
     {
@@ -401,6 +427,10 @@ export const retryJob = async (deps: JobDeps, job: JobRecord): Promise<JobRecord
       started_at: null,
       lease_until: null,
       needs_json: null,
+      result_json: JSON.stringify({
+        ...previous,
+        attempt_offset: (previous.attempt_offset ?? 0) + job.attempt + 1,
+      }),
     },
     { status: job.status },
   )
@@ -539,11 +569,18 @@ export const reportJob = async (
   const cost =
     r.cost_micro_usd == null ? job.cost_micro_usd : (job.cost_micro_usd ?? 0) + r.cost_micro_usd
   const previous = jobResult(job)
-  const result: JobResult = { ...previous, ...(r.result ?? {}) }
+  const result: JobResult = {
+    ...previous,
+    ...(r.result ?? {}),
+    attempt_offset: previous.attempt_offset ?? 0,
+  }
   if (r.result?.runs?.length)
     result.runs = [
       ...(previous.runs ?? []),
-      ...r.result.runs.map((run) => ({ ...run, attempt: job.attempt })),
+      ...r.result.runs.map((run) => ({
+        ...run,
+        attempt: (previous.attempt_offset ?? 0) + job.attempt,
+      })),
     ].slice(-30)
   else if (previous.runs) result.runs = previous.runs
   const meta_json = r.meta ? JSON.stringify(r.meta) : job.meta_json

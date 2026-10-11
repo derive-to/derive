@@ -27,7 +27,15 @@ import { accountsQuery, agentConnectionsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 import { accountLabel } from "../settings/accounts-section"
-import { cronLabel, firstLine, machineOf, ownerMachineName, runnerCommand, when } from "./format"
+import {
+  cronLabel,
+  firstLine,
+  machineOf,
+  modelChoices,
+  ownerMachineName,
+  runnerCommand,
+  when,
+} from "./format"
 
 // An agent's Settings tab (mock f9r5u1iq). Everything a coding session set when it made the
 // agent is changed here; nothing is created here. A person who cannot manage the agent sees
@@ -102,7 +110,7 @@ export function AgentSettings({ agent, names, workspaceName, isWorkspaceOwner }:
             </Sub>
           )}
           {agent.machine === "derive" && (
-            <Sub>A Derive sandbox that keeps its files between jobs.</Sub>
+            <Sub>A Derive sandbox that keeps its files between tasks.</Sub>
           )}
         </Field>
         <AccountField agent={agent} edit={edit} onSave={set} />
@@ -352,7 +360,7 @@ function InstructionsField({
         <span className="text-muted-foreground">No page</span>
       )}
       <Sub>
-        The page it reads before every job. Edit it like any page; the next job uses the new
+        The page it reads before every task. Edit it like any page; the next task uses the new
         version.
       </Sub>
     </Field>
@@ -570,13 +578,6 @@ function AccountField({
   )
 }
 
-// Claude Code's model aliases: it maps each to the newest model of that family, so this list
-// stays current without a Derive release. An exact model id (a pinned version) goes in Custom.
-const CLAUDE_MODELS = [
-  { id: "opus", label: "Opus (newest)" },
-  { id: "sonnet", label: "Sonnet (newest)" },
-  { id: "haiku", label: "Haiku (newest)" },
-]
 const CUSTOM = "custom"
 
 function ModelField({
@@ -588,13 +589,7 @@ function ModelField({
   edit: boolean
   onSave: (p: AgentPatch) => void
 }) {
-  const choices =
-    agent.provider === "claude-code"
-      ? CLAUDE_MODELS
-      : [
-          { id: "gpt-6-luna", label: "Luna · lower cost" },
-          { id: "gpt-6.1-sol", label: "Sol · complex work" },
-        ]
+  const choices = modelChoices(agent.provider)
   const known = choices.find((m) => m.id === agent.model)
   const [custom, setCustom] = useState<string | null>(null)
   const selected = custom !== null ? CUSTOM : !agent.model ? DEFAULT : known ? known.id : CUSTOM

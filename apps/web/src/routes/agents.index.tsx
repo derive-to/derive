@@ -6,6 +6,8 @@ import { AgentsPending } from "../pages/agents/skeleton"
 
 export const Route = createFileRoute("/agents/")({
   beforeLoad: requireOnboarded,
+  validateSearch: (search: Record<string, unknown>): { tab?: "tasks" | "usage" } =>
+    search.tab === "tasks" || search.tab === "usage" ? { tab: search.tab } : {},
   loader: ({ context }) =>
     Promise.all([
       context.queryClient.ensureQueryData(agentsQuery()).catch(() => {}),

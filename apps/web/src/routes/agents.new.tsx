@@ -6,6 +6,8 @@ import { NewAgentPending } from "../pages/agents/skeleton"
 
 export const Route = createFileRoute("/agents/new")({
   beforeLoad: requireOnboarded,
+  validateSearch: (search: Record<string, unknown>): { brief?: string } =>
+    typeof search.brief === "string" ? { brief: search.brief.slice(0, 20_000) } : {},
   loader: ({ context }) => context.queryClient.prefetchQuery(agentsQuery()),
   pendingComponent: NewAgentPending,
   component: NewAgent,

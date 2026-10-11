@@ -5,6 +5,7 @@ import {
   type JobNeeds,
   type JobRecord,
   normalizeSelectors,
+  roleAllows,
   type Selector,
 } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
@@ -97,6 +98,7 @@ const JobEffectSchema = z.object({
 })
 
 const JobResultSchema = z.object({
+  attempt_offset: z.number().int().nonnegative().optional(),
   compute: z
     .array(
       z.object({
@@ -302,6 +304,9 @@ export const jobRoutes = (ctx: AppContext) => {
     userId: string,
     modelId?: string | null,
   ): Promise<PageTurnGrant | Response> => {
+    const caller = await agentFor(c)
+    if (caller && (caller.org_id !== org || !roleAllows(caller.role, "publish")))
+      return fail(c, 403, "this grant cannot start work")
     const rl = await ctx.limited(c, ctx.askLimiter)
     if (rl) return rl
     const { catalog, slots } = await ctx.modelsFor(c)
@@ -493,11 +498,8 @@ export const jobRoutes = (ctx: AppContext) => {
         return c.json({ ...(await showOne((await meta.getJob(job.id)) ?? job)), messages }, 201)
       }
       const agent = await meta.getAgent(b.agent_id)
-      if (!agent || !(await canAskAgent(meta, agent, who.id)))
-        return bail(fail(c, 404, "no such agent you can ask"))
-      // A bearer agent may ask another agent in its own workspace only.
       const caller = await agentFor(c)
-      if (caller && caller.org_id !== agent.org_id)
+      if (!agent || !(await canAskAgent(meta, agent, who.id, caller)))
         return bail(fail(c, 404, "no such agent you can ask"))
       // A workspace past its monthly model budget takes no new work. Checked before anything
       // is written, so a refused ask leaves no job behind. A dedupe key naming an open job
@@ -597,7 +599,7 @@ export const jobRoutes = (ctx: AppContext) => {
         return c.json({ ...(await showOne((await meta.getJob(job.id)) ?? next)), messages })
       }
       const agent = await meta.getAgent(job.agent_id)
-      if (!agent || !(await canSteerJob(meta, agent, job, who.id)))
+      if (!agent || !(await canSteerJob(meta, agent, job, who.id, await agentFor(c))))
         return bail(
           fail(c, 403, "only the person who asked, or the agent's manager, can follow up"),
         )
@@ -647,10 +649,12 @@ export const jobRoutes = (ctx: AppContext) => {
         const who = await personFor(c)
         if (who instanceof Response) return bail(who)
         const agent = await meta.getAgent(job.agent_id)
+        const caller = await agentFor(c)
         if (
           isPageAsk(job)
-            ? job.asked_by !== who.id
-            : !agent || !(await canSteerJob(meta, agent, job, who.id))
+            ? job.asked_by !== who.id ||
+              (!!caller && (caller.org_id !== job.org_id || !roleAllows(caller.role, "publish")))
+            : !agent || !(await canSteerJob(meta, agent, job, who.id, caller))
         )
           return bail(
             fail(c, 403, "only the person who asked, or the agent's manager, can do that"),
@@ -906,7 +910,7 @@ export const jobRoutes = (ctx: AppContext) => {
         started_at: z.string().nullable(),
         status: z.enum(["succeeded", "failed", "needs_you", "progress"]),
         body_md: z.string().max(200_000).nullish(),
-        result: JobResultSchema.omit({ compute: true }).nullish(),
+        result: JobResultSchema.omit({ compute: true, attempt_offset: true }).nullish(),
         needs: JobNeedsSchema.nullish(),
         cost_micro_usd: z.number().int().nonnegative().nullish(),
         retryable: z.boolean().optional(),

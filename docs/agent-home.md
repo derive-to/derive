@@ -11,9 +11,22 @@ The skill is a versioned `SKILL.md` bundle. Connections grant access; instructio
 4. Choose an account. Add a daily schedule or run when asked.
 5. Select **Let’s go**. The first task starts in the cloud.
 
-The form waits while Chat writes the skill. Open the skill to edit it later.
-Each new task reads the current skill version. Settings changes the model and account.
-The first-task and task-dialog requests carry a deduplication key.
+The form waits while Chat writes the skill. The agent’s Skill tab reads and edits the same artifact.
+Use Write with AI for Chat, or Edit instructions for the existing source editor.
+Saving creates a version. A plain SKILL.md bundle needs no Derive sidecar.
+Unsaved instructions and version notes require a choice before leaving the editor.
+Saving checks the version atomically. A conflict keeps the draft and shows an inline error.
+Each new task records its skill version. Settings changes the model and account.
+
+Agents home has Your agents, Tasks, and Usage views. The shared composer starts a task on a saved agent.
+New agent carries the typed brief into setup. Paused agents accept tasks that wait for resume.
+Tasks supports search and status filters. Each task expands its instruction, receipt, and transcript.
+Usage separates reported spend from API estimates. It compares agents and models.
+The first-task and composer requests carry a deduplication key.
+
+The roster returns server-calculated ask and manage permissions from one membership read.
+Task submission checks the same policy and the caller’s scope.
+A read-only OAuth grant cannot start work. Narrow grants retain their existing management scope.
 
 Codex plan accounts use the official CLI's `auth.json` file. The account value stays encrypted.
 Cloud runners require memory-backed `/dev/shm` storage for login files and the model home.
@@ -77,6 +90,8 @@ Compare models on the same task and skill version. Read the report before choosi
 The summary covers loaded tasks. It does not claim all-time totals. It shows receipt coverage.
 The completed-task estimate includes every recorded attempt of each measured completed task.
 An attempt without a receipt makes the whole-task estimate unknown.
+Receipt indexes continue across manual retries and follow-ups. The retry budget resets separately.
+Older tasks without that baseline have an unknown whole-task estimate. Per-run estimates remain visible.
 Cancelled tasks with missing usage do not become free tasks.
 
 Box usage covers the task's sandbox turn, from claim to observed stop. Cold setup is separate.

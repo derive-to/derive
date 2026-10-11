@@ -1,0 +1,113 @@
+import { Link, useNavigate } from "@tanstack/react-router"
+import { useRef, useState } from "react"
+import { type Agent, api } from "@/api"
+import { Button } from "@/components/ui/button"
+import { Textarea } from "@/components/ui/textarea"
+import { useApiMutation } from "@/lib/use-api-mutation"
+
+/** The same task input on the home page and inside an agent. */
+export function TaskComposer({ agents }: { agents: (Agent & { can_ask: boolean })[] }) {
+  const navigate = useNavigate()
+  const available = agents.filter((a) => a.can_ask)
+  const [agentId, setAgentId] = useState("")
+  const [text, setText] = useState("")
+  const key = useRef(crypto.randomUUID())
+  const agent = available.find((a) => a.id === agentId) ?? available[0]
+  const ask = useApiMutation({
+    errorToast: false,
+    mutationFn: () => {
+      if (!agent) throw new Error("Choose an agent first")
+      return api.askAgent(agent.id, text.trim(), undefined, { dedupe_key: key.current })
+    },
+    invalidate: [["jobs"], ["agents"]],
+    onSuccess: (job) => {
+      setText("")
+      key.current = crypto.randomUUID()
+      void navigate({ to: "/agents/$id", params: { id: job.agent_id }, search: {} })
+    },
+  })
+  const submit = () => {
+    if (!text.trim() || ask.isPending) return
+    if (agent) ask.mutate()
+    else void navigate({ to: "/agents/new", search: { brief: text.trim() } })
+  }
+  return (
+    <form
+      data-testid="task-composer"
+      className="rounded-xl border border-input bg-card p-4 shadow-sm focus-within:ring-2 focus-within:ring-ring/40"
+      onSubmit={(event) => {
+        event.preventDefault()
+        submit()
+      }}
+    >
+      <Textarea
+        aria-label="What are we working on?"
+        data-testid="agent-ask-input"
+        placeholder="What are we working on?"
+        value={text}
+        maxLength={20_000}
+        disabled={ask.isPending}
+        onChange={(event) => setText(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+            event.preventDefault()
+            submit()
+          }
+        }}
+        className="min-h-24 resize-y border-0 bg-transparent p-0 text-base shadow-none focus-visible:ring-0 dark:bg-transparent"
+      />
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-muted-foreground">
+          {available.length > 1 ? (
+            <select
+              aria-label="Agent for this task"
+              data-testid="task-composer-agent"
+              className="h-8 max-w-64 rounded-lg border border-input bg-background px-2 text-foreground"
+              value={agent?.id ?? ""}
+              disabled={ask.isPending}
+              onChange={(event) => {
+                setAgentId(event.target.value)
+                key.current = crypto.randomUUID()
+              }}
+            >
+              {available.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          ) : agent ? (
+            <span>{agent.name}</span>
+          ) : (
+            <span>We’ll make an agent for this.</span>
+          )}
+          {agent?.paused && <span>Paused · this task will wait</span>}
+          {available.length > 0 && (
+            <Link
+              to="/agents/new"
+              search={{ brief: text.trim() || undefined }}
+              data-testid="task-composer-new-agent"
+              className="hover:text-foreground hover:underline"
+            >
+              New agent
+            </Link>
+          )}
+        </div>
+        <Button
+          type="submit"
+          size="sm"
+          data-testid="agent-ask-send"
+          disabled={!text.trim()}
+          loading={ask.isPending}
+        >
+          Let’s go
+        </Button>
+      </div>
+      {ask.error && (
+        <p role="alert" className="mt-3 text-sm text-destructive">
+          {ask.error.message}
+        </p>
+      )}
+    </form>
+  )
+}

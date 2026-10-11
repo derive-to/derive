@@ -1,34 +1,26 @@
 import { useQuery } from "@tanstack/react-query"
 import { getRouteApi, Link } from "@tanstack/react-router"
-import { useRef, useState } from "react"
-import { type AgentDetail, ApiError, api } from "@/api"
+import { ApiError } from "@/api"
 import { LoadError } from "@/components/shared/load-error"
 import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
 import { agentQuery, workspaceQuery } from "@/lib/queries"
-import { useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { AgentJobs } from "./agent-jobs"
 import { AgentSettings } from "./agent-settings"
+import { AgentSkill } from "./agent-skill"
+import { machineOf, modelChoices } from "./format"
 import { AgentPending } from "./skeleton"
+import { TaskComposer } from "./task-composer"
 import { useMemberNames } from "./use-member-names"
 
 const route = getRouteApi("/agents/$id")
 
-// One agent: Jobs (what it is doing and has done) and Settings (everything about it that
-// can be changed). The tab rides the URL so the MCP tool's `?tab=settings` link lands there.
+// Agent views ride the URL. Existing MCP links to Settings keep their destination.
 export function AgentPage() {
   const { id } = route.useParams()
   const { tab } = route.useSearch()
@@ -72,10 +64,24 @@ export function AgentPage() {
       <PageHeader
         title={agent.name}
         titleTestId="agent-title"
-        actions={
-          agent.can_ask && <AskButton agent={agent} onAsked={() => navigate({ search: {} })} />
+        eyebrow={
+          <Link to="/agents" search={{}} data-testid="agent-back" className="hover:underline">
+            All agents
+          </Link>
         }
+        subtitle={agent.description ?? undefined}
       />
+      <p data-testid="agent-run-config" className="text-sm text-muted-foreground">
+        {agent.machine === "derive"
+          ? `Cloud · ${agent.runtime?.provider === "box" ? "Box" : "Ortam"}`
+          : machineOf(agent, names).label}
+        {" · "}
+        {modelChoices(agent.provider).find((choice) => choice.id === agent.model)?.label ??
+          agent.model ??
+          "Account default"}
+        {" · "}
+        {Math.round(agent.max_run_ms / 60_000)} min maximum
+      </p>
       {workspace.isError && (
         <LoadError
           layout="inline"
@@ -87,19 +93,34 @@ export function AgentPage() {
       <Tabs
         value={tab ?? "jobs"}
         onValueChange={(v) =>
-          void navigate({ search: v === "settings" ? { tab: "settings" } : {} })
+          void navigate({
+            search: v === "settings" || v === "skill" || v === "usage" ? { tab: v } : {},
+          })
         }
       >
         <TabsList variant="line" aria-label="Agent views">
           <TabsTrigger value="jobs" data-testid="agent-tab-jobs">
             Tasks
           </TabsTrigger>
+          <TabsTrigger value="skill" data-testid="agent-tab-skill">
+            Skill
+          </TabsTrigger>
+          <TabsTrigger value="usage" data-testid="agent-tab-usage">
+            Usage
+          </TabsTrigger>
           <TabsTrigger value="settings" data-testid="agent-tab-settings">
             Settings
           </TabsTrigger>
         </TabsList>
-        <TabsContent value="jobs" className="pt-7">
+        <TabsContent value="jobs" className="flex flex-col gap-7 pt-5">
+          {agent.can_ask && <TaskComposer agents={[agent]} />}
           <AgentJobs agent={agent} names={names} meId={me.id} />
+        </TabsContent>
+        <TabsContent value="skill" className="pt-5">
+          <AgentSkill agent={agent} />
+        </TabsContent>
+        <TabsContent value="usage" className="pt-5">
+          <AgentJobs agent={agent} names={names} meId={me.id} usage />
         </TabsContent>
         <TabsContent value="settings" className="pt-7">
           <AgentSettings
@@ -113,75 +134,5 @@ export function AgentPage() {
         </TabsContent>
       </Tabs>
     </PageShell>
-  )
-}
-
-/** The screen's one primary button: ask the agent for something, which opens a job. */
-function AskButton({ agent, onAsked }: { agent: AgentDetail; onAsked: () => void }) {
-  const [open, setOpen] = useState(false)
-  const [text, setText] = useState("")
-  const taskKey = useRef(crypto.randomUUID())
-  const ask = useApiMutation({
-    mutationFn: () =>
-      api.askAgent(agent.id, text.trim(), undefined, { dedupe_key: taskKey.current }),
-    invalidate: [["jobs"]],
-    onSuccess: () => {
-      setOpen(false)
-      setText("")
-      onAsked()
-    },
-  })
-  return (
-    <>
-      <Button
-        type="button"
-        size="sm"
-        data-testid="agent-ask"
-        onClick={() => {
-          taskKey.current = crypto.randomUUID()
-          setOpen(true)
-        }}
-      >
-        Let’s go
-      </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent aria-describedby={undefined}>
-          <DialogHeader>
-            <DialogTitle>What should {agent.name} do?</DialogTitle>
-          </DialogHeader>
-          <form
-            className="flex flex-col gap-4"
-            onSubmit={(e) => {
-              e.preventDefault()
-              if (text.trim() && !ask.isPending) ask.mutate()
-            }}
-          >
-            <Textarea
-              autoFocus
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && text.trim() && !ask.isPending)
-                  ask.mutate()
-              }}
-              aria-label="What to ask"
-              data-testid="agent-ask-input"
-              className="min-h-28"
-            />
-            <DialogFooter>
-              <Button
-                type="submit"
-                size="sm"
-                data-testid="agent-ask-send"
-                disabled={!text.trim()}
-                loading={ask.isPending}
-              >
-                Let’s go
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-    </>
   )
 }

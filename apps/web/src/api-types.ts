@@ -1271,6 +1271,8 @@ export interface paths {
                                 triggers: components["schemas"]["AgentTrigger"][];
                                 /** @description When it last had work, among the workspace's recent jobs. */
                                 last_job_at: string | null;
+                                can_ask: boolean;
+                                can_manage: boolean;
                             })[];
                         };
                     };
@@ -7521,6 +7523,7 @@ export interface components {
                 review_round_id?: string;
             } | null;
             result: {
+                attempt_offset?: number;
                 compute?: {
                     turn: string;
                     /** @enum {string} */

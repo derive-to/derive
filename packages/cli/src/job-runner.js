@@ -352,7 +352,11 @@ async function modelEnvFor(
     cleanup: () => {
       try {
         rmSync(dir, { recursive: true, force: true })
-      } catch {}
+      } catch (error) {
+        process.stderr.write(
+          `[runner] Could not remove model credential files: ${error.code ?? "unknown error"}\n`,
+        )
+      }
     },
   }
 }

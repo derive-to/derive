@@ -57,6 +57,8 @@ export interface JobEffect {
 }
 
 export interface JobResult {
+  /** Server-owned baseline for receipt indexes across manual retry cycles. */
+  attempt_offset?: number
   compute?: {
     turn: string
     provider: "ortam" | "box"

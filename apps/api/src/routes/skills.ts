@@ -1,6 +1,7 @@
 import {
   type ArtifactSkillRole,
   newId,
+  PublishError,
   publish,
   SKILL_CONTENT_TYPE,
   SKILL_SIDECAR_PATH,
@@ -13,6 +14,7 @@ import {
 } from "@derive/core"
 import { OpenAPIHono } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
+import type { ContentfulStatusCode } from "hono/utils/http-status"
 import { z } from "zod"
 import type { AppContext } from "../context"
 import { afterPublish } from "../lib/after-publish"
@@ -199,7 +201,7 @@ export const skillRoutes = (ctx: AppContext) => {
     const manifest = version ? await manifestOf(blobs, version) : null
     const text = version ? await pageTextResolver(blobs, version) : null
     const sidecar = text ? await text(SKILL_SIDECAR_PATH) : null
-    if (!version || !manifest || sidecar === null) return fail(c, 404, "Skill bundle not found")
+    if (!version || !manifest) return fail(c, 404, "Skill bundle not found")
     const checked = validateSkillDefinition(body.source, sidecar)
     if (checked.errors.length) return fail(c, 400, checked.errors.join("; "))
 
@@ -221,9 +223,15 @@ export const skillRoutes = (ctx: AppContext) => {
         agentName: actor && actor.id !== human?.id ? actor.name : null,
         source: "web",
         existingArtifact: skill,
+        expectedCurrentVersion: body.base_version,
       },
       skill.short_id,
-    )
+    ).catch((error: unknown) => {
+      if (error instanceof PublishError)
+        return fail(c, error.statusCode as ContentfulStatusCode, error.message)
+      throw error
+    })
+    if (saved instanceof Response) return saved
     await afterPublish(
       {
         meta,

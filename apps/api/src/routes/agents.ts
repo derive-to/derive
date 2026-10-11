@@ -16,7 +16,7 @@ import { EnvironmentBindings, readEnvironmentBindings } from "../lib/context-env
 import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 import { machineWorkspaces, retireSandbox } from "../lib/job-machine"
-import { canAskAgent, cancelJob, canManageAgent } from "../lib/jobs"
+import { agentAccess, cancelJob } from "../lib/jobs"
 import { previousOccurrence } from "../lib/schedule"
 
 /** Agent registry (Admin-managed) + the agent's pull inbox of @mentions. The Agent +
@@ -234,6 +234,8 @@ export const agentRoutes = (ctx: AppContext) => {
                       .string()
                       .nullable()
                       .describe("When it last had work, among the workspace's recent jobs."),
+                    can_ask: z.boolean(),
+                    can_manage: z.boolean(),
                   }),
                 ),
               }),
@@ -246,6 +248,9 @@ export const agentRoutes = (ctx: AppContext) => {
       const org = await requireWorkspace(c, "read")
       if (org instanceof Response) return bail(org)
       const agents = await meta.listAgents(org)
+      const who = await ctx.actingHuman(c)
+      const member = who ? await meta.getMembership(org, who.id) : null
+      const caller = await ctx.agentFor(c)
       // What the Agents screen groups by, in two queries rather than one per agent: each
       // agent's schedules, and when it last had work.
       const triggers = await meta.listTriggers(org)
@@ -269,6 +274,7 @@ export const agentRoutes = (ctx: AppContext) => {
           }),
           triggers: triggers.filter((t) => t.agent_id === a.id).map(triggerJson),
           last_job_at: lastJob.get(a.id) ?? null,
+          ...agentAccess(a, member, caller),
         })),
       })
     },
@@ -283,13 +289,10 @@ export const agentRoutes = (ctx: AppContext) => {
     agent: AgentRecord | null | undefined,
   ): Promise<string | null> => {
     if (!agent) return null
-    const full = await ctx.managementPrincipal(c)
-    if (full) return (await canManageAgent(meta, agent, full)) ? full : null
     const who = await ctx.actingHuman(c)
-    const caller = await ctx.agentFor(c)
-    if (!who || !caller?.id.startsWith("oauth:") || caller.org_id !== agent.org_id) return null
-    if (!(await ctx.workspaceCan(c, "publish"))) return null
-    return (await canManageAgent(meta, agent, who.id)) && agent.created_by === who.id
+    if (!who) return null
+    return agentAccess(agent, await meta.getMembership(agent.org_id, who.id), await ctx.agentFor(c))
+      .can_manage
       ? who.id
       : null
   }
@@ -548,15 +551,14 @@ export const agentRoutes = (ctx: AppContext) => {
       const org = await requireWorkspace(c, "read")
       if (org instanceof Response) return bail(org)
       const agent = await meta.getAgent(c.req.param("id"))
-      if (!agent || agent.org_id !== org || !(await meta.getMembership(org, who.id)))
-        return bail(fail(c, 404, "agent not found"))
+      const member = await meta.getMembership(org, who.id)
+      if (!agent || agent.org_id !== org || !member) return bail(fail(c, 404, "agent not found"))
       return c.json({
         ...agentJson(agent, {
           instructions_short_id: await instructionsShortId(agent),
         }),
         triggers: (await meta.listTriggers(agent.org_id, agent.id)).map(triggerJson),
-        can_ask: await canAskAgent(meta, agent, who.id),
-        can_manage: (await managerOf(c, agent)) !== null,
+        ...agentAccess(agent, member, await ctx.agentFor(c)),
       })
     },
   )

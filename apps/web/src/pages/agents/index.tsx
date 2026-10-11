@@ -1,60 +1,54 @@
 import { useQuery } from "@tanstack/react-query"
-import { Link } from "@tanstack/react-router"
-import { type ReactNode, useMemo, useState } from "react"
-import type { Agent } from "@/api"
-import type { IconName } from "@/components/icons"
+import { getRouteApi, Link } from "@tanstack/react-router"
+import { useState } from "react"
+import type { ListedAgent } from "@/api"
 import { LoadError } from "@/components/shared/load-error"
 import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { useAuth } from "@/ctx"
 import { agentsQuery, openJobsQuery, recentJobsQuery } from "@/lib/queries"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { useJobEvents } from "@/lib/use-job-events"
-import {
-  cronLabel,
-  firstLine,
-  groupAgents,
-  machineOf,
-  rosterOf,
-  schedulesOf,
-  took,
-  when,
-} from "./format"
-import { Group, Machine, Meta, RowLine, rowClass, Time } from "./rows"
+import { JobRow } from "./agent-jobs"
+import { cronLabel, firstLine, groupAgents, rosterOf, schedulesOf, when } from "./format"
+import { Group, Meta, RowLine, rowClass, Time } from "./rows"
 import { AgentRowsSkeleton } from "./skeleton"
+import { TaskComposer } from "./task-composer"
 import { TaskUsage } from "./task-usage"
 import { useMemberNames } from "./use-member-names"
 
-// Agents home: every agent in the workspace, grouped by what state it is in. What needs a
-// person comes first, then what is working now, then what runs on its own, then the rest.
+const route = getRouteApi("/agents/")
+
 export function AgentsHome() {
   useDocumentTitle("Agents")
-  const agents = useQuery(agentsQuery())
-  // Job events keep this live for the jobs you asked or are told about; the slow poll catches
-  // teammates' jobs, which send you nothing.
+  const { tab } = route.useSearch()
+  const navigate = route.useNavigate()
+  const { me } = useAuth()
+  const agents = useQuery({ ...agentsQuery(), refetchInterval: 30_000 })
   useJobEvents()
-  const open = useQuery({ ...openJobsQuery(), refetchInterval: 60_000 })
-  const recent = useQuery(recentJobsQuery())
+  const open = useQuery({ ...openJobsQuery(), refetchInterval: 10_000 })
+  const recent = useQuery({ ...recentJobsQuery(), refetchInterval: 10_000 })
   const names = useMemberNames()
-  const roster = useMemo(() => rosterOf(agents.data ?? []), [agents.data])
-  // The list carries each agent's schedules, so grouping needs no read per agent.
-  const triggers = new Map(roster.map((a) => [a.id, a.triggers]))
-  const [showNever, setShowNever] = useState(false)
-
+  const roster = rosterOf(agents.data ?? [])
+  const [filter, setFilter] = useState("all")
+  const [search, setSearch] = useState("")
   const header = (
     <PageHeader
       title="Agents"
+      subtitle="Give it the work. Keep the results here."
       actions={
-        <Button asChild size="sm" data-testid="agents-new">
+        <Button asChild variant="outline" size="sm" data-testid="agents-new">
           <Link to="/agents/new">New agent</Link>
         </Button>
       }
     />
   )
-
   if (agents.isError || open.isError)
     return (
-      <PageShell width="wide" className="flex flex-col gap-9">
+      <PageShell width="wide" className="flex flex-col gap-7">
         {header}
         <LoadError
           title="Couldn’t load agents."
@@ -68,58 +62,96 @@ export function AgentsHome() {
     )
   if (agents.isPending || open.isPending)
     return (
-      <PageShell width="wide" className="flex flex-col gap-9">
+      <PageShell width="wide" className="flex flex-col gap-7">
         {header}
         <AgentRowsSkeleton />
       </PageShell>
     )
-
-  const { needs, groups, lastWorked, running } = groupAgents(
+  const { needs, running, lastWorked } = groupAgents(
     roster,
     open.data,
     recent.data ?? [],
-    (id) => triggers.get(id),
+    (id) => roster.find((a) => a.id === id)?.triggers,
   )
-
-  const agentRow = (a: Agent, right: ReactNode, icon: IconName = "job-succeeded") => (
-    <Link
-      key={a.id}
-      to="/agents/$id"
-      params={{ id: a.id }}
-      search={{}}
-      data-testid={`agent-row-${a.id}`}
-      className={rowClass()}
-    >
-      <RowLine
-        icon={a.paused ? "agent-paused" : icon}
-        title={a.name}
-        detail={a.description ?? undefined}
-      />
-      <Meta>
-        {a.paused && <span>Paused</span>}
-        {right}
-      </Meta>
-    </Link>
+  const allJobs = [
+    ...new Map([...(recent.data ?? []), ...open.data].map((job) => [job.id, job])).values(),
+  ].sort((a, b) => b.created_at.localeCompare(a.created_at))
+  const jobs = allJobs.filter((job) => roster.some((a) => a.id === job.agent_id))
+  const filtered = jobs.filter(
+    (job) =>
+      (filter === "all" ||
+        (filter === "attention"
+          ? ["needs_you", "failed", "lost"].includes(job.status)
+          : filter === "running"
+            ? ["running", "queued"].includes(job.status)
+            : job.status === "succeeded")) &&
+      `${job.instruction} ${roster.find((a) => a.id === job.agent_id)?.name}`
+        .toLowerCase()
+        .includes(search.toLowerCase()),
   )
-
-  return (
-    <PageShell width="wide" className="flex flex-col gap-9">
-      {header}
-      <TaskUsage jobs={recent.data ?? []} />
-      {recent.isError && (
-        <LoadError
-          layout="inline"
-          title="Couldn’t load recent jobs, so when each agent last worked is missing."
-          testId="agents-recent-retry"
-          onRetry={() => void recent.refetch()}
+  const agentRow = (agent: ListedAgent) => {
+    const active = running.get(agent.id)?.[0]
+    const schedule = schedulesOf(agent.triggers)[0]
+    const last = lastWorked.get(agent.id)
+    return (
+      <Link
+        key={agent.id}
+        to="/agents/$id"
+        params={{ id: agent.id }}
+        search={{}}
+        data-testid={`agent-row-${agent.id}`}
+        className={rowClass()}
+      >
+        <RowLine
+          icon={
+            agent.paused
+              ? "agent-paused"
+              : active
+                ? "job-running"
+                : schedule
+                  ? "agent-scheduled"
+                  : "agent"
+          }
+          title={agent.name}
+          detail={agent.description ?? "Ready when you are"}
         />
-      )}
-      {roster.length === 0 ? (
-        <p data-testid="agents-empty" className="text-base text-muted-foreground">
-          No agents in this workspace yet.
-        </p>
-      ) : (
-        <>
+        <Meta>
+          <span>
+            {agent.paused
+              ? "Paused"
+              : active
+                ? "Running"
+                : schedule?.cron
+                  ? cronLabel(schedule.cron)
+                  : "When asked"}
+          </span>
+          {last && <Time>{when(last)}</Time>}
+        </Meta>
+      </Link>
+    )
+  }
+  return (
+    <PageShell width="wide" className="flex flex-col gap-7">
+      {header}
+      <Tabs
+        value={tab ?? "agents"}
+        onValueChange={(value) =>
+          void navigate({ search: value === "tasks" || value === "usage" ? { tab: value } : {} })
+        }
+      >
+        <TabsList variant="line" aria-label="Agent home views">
+          <TabsTrigger value="agents" data-testid="agents-tab-agents">
+            Your agents
+          </TabsTrigger>
+          <TabsTrigger value="tasks" data-testid="agents-tab-tasks">
+            Tasks
+          </TabsTrigger>
+          <TabsTrigger value="usage" data-testid="agents-tab-usage">
+            Usage
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="agents" className="flex flex-col gap-8 pt-5">
+          <TaskComposer agents={roster} />
           {needs.length > 0 && (
             <Group label="Needs you" testId="agents-group-needs">
               {needs.map(({ job, agent }) => (
@@ -138,95 +170,113 @@ export function AgentsHome() {
                     detail={job.needs?.question ?? firstLine(job.instruction)}
                   />
                   <Meta>
-                    <span className="font-medium text-warning">Look</span>
+                    <span className="text-warning">Answer</span>
                     <Time>{when(job.updated_at)}</Time>
                   </Meta>
                 </Link>
               ))}
             </Group>
           )}
-          {groups.running.length > 0 && (
-            <Group label="Running" testId="agents-group-running">
-              {groups.running.map((a) => {
-                const jobs = running.get(a.id) ?? []
-                const now = jobs.find((j) => j.status === "running")
-                const job = now ?? jobs[0]
-                return (
-                  <Link
-                    key={a.id}
-                    to="/agents/$id"
-                    params={{ id: a.id }}
-                    search={{}}
-                    data-testid={`agent-row-${a.id}`}
-                    className={rowClass()}
-                  >
-                    <RowLine
-                      icon={now ? "job-running" : "job-queued"}
-                      title={a.name}
-                      detail={job ? firstLine(job.instruction) : undefined}
-                    />
-                    <Meta>
-                      {jobs.length > 1 && <span>{jobs.length} jobs</span>}
-                      <Machine mark={machineOf(a, names)} />
-                      {now?.started_at ? <Time>{took(now.started_at)}</Time> : <span>Waiting</span>}
-                    </Meta>
-                  </Link>
-                )
-              })}
-            </Group>
-          )}
-          {groups.scheduled.length > 0 && (
-            <Group label="Scheduled" testId="agents-group-scheduled">
-              {groups.scheduled.map((a) => {
-                const [first, ...more] = schedulesOf(triggers.get(a.id))
-                const last = lastWorked.get(a.id)
-                return agentRow(
-                  a,
-                  <>
-                    {first?.cron && (
-                      <span>
-                        {cronLabel(first.cron)}
-                        {more.length > 0 && ` +${more.length}`}
-                      </span>
-                    )}
-                    <Machine mark={machineOf(a, names)} />
-                    {last && <Time>{when(last)}</Time>}
-                  </>,
-                  "agent-scheduled",
-                )
-              })}
-            </Group>
-          )}
-          {(groups.asked.length > 0 || groups.never.length > 0) && (
-            <Group label="When asked" testId="agents-group-asked">
-              {groups.asked.map((a) => {
-                const last = lastWorked.get(a.id) ?? a.seen_at
-                return agentRow(
-                  a,
-                  <>
-                    <Machine mark={machineOf(a, names)} />
-                    {last && <Time>{when(last)}</Time>}
-                  </>,
-                )
-              })}
-              {showNever &&
-                groups.never.map((a) =>
-                  agentRow(a, <Machine mark={machineOf(a, names)} />, "job-cancelled"),
-                )}
-              {groups.never.length > 0 && !showNever && (
-                <button
-                  type="button"
-                  data-testid="agents-show-never"
-                  onClick={() => setShowNever(true)}
-                  className="self-start pt-1.5 text-sm text-muted-foreground hover:text-foreground"
+          <Group label="Your agents" testId="agents-roster">
+            {roster.length ? (
+              roster.map(agentRow)
+            ) : (
+              <p data-testid="agents-empty" className="py-3 text-base text-muted-foreground">
+                Your first agent starts with a skill. Tell it what you want to get done.
+              </p>
+            )}
+          </Group>
+        </TabsContent>
+        <TabsContent value="tasks" className="flex flex-col gap-5 pt-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <fieldset className="flex flex-wrap gap-1" aria-label="Filter tasks">
+              {[
+                ["all", "All tasks"],
+                ["running", "Running"],
+                ["attention", "Needs you"],
+                ["done", "Completed"],
+              ].map(([id, label]) => (
+                <Button
+                  key={id}
+                  variant={filter === id ? "secondary" : "ghost"}
+                  size="sm"
+                  aria-pressed={filter === id}
+                  data-testid={`tasks-filter-${id}`}
+                  onClick={() => setFilter(id)}
                 >
-                  {groups.never.length} never used
-                </button>
+                  {label}
+                </Button>
+              ))}
+            </fieldset>
+            <Input
+              aria-label="Find a task"
+              data-testid="tasks-search"
+              placeholder="Find a task"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              className="w-56"
+            />
+          </div>
+          {recent.isError ? (
+            <LoadError
+              title="Couldn’t load recent tasks."
+              testId="agents-recent-retry"
+              onRetry={() => void recent.refetch()}
+            />
+          ) : recent.isPending ? (
+            <AgentRowsSkeleton />
+          ) : (
+            <Group testId="agents-tasks">
+              {filtered.length ? (
+                filtered.map((job) => {
+                  const agent = roster.find((a) => a.id === job.agent_id)
+                  return agent ? (
+                    <div key={job.id}>
+                      <Link
+                        to="/agents/$id"
+                        params={{ id: agent.id }}
+                        search={{}}
+                        data-testid={`task-agent-${job.id}`}
+                        className="text-sm text-muted-foreground hover:underline"
+                      >
+                        {agent.name}
+                      </Link>
+                      <JobRow
+                        job={job}
+                        agent={agent}
+                        names={names}
+                        canSteer={
+                          !!(agent.can_manage || (job.asked_by === me?.id && agent.can_ask))
+                        }
+                      />
+                    </div>
+                  ) : null
+                })
+              ) : (
+                <p className="py-5 text-base text-muted-foreground">
+                  {jobs.length
+                    ? "No tasks match. Try another search or filter."
+                    : "All quiet here. Start a task when you’re ready."}
+                </p>
               )}
             </Group>
           )}
-        </>
-      )}
+          <p className="text-sm text-muted-foreground">
+            Recent tasks · Failed and stopped tasks keep their reports and usage.
+          </p>
+        </TabsContent>
+        <TabsContent value="usage" className="pt-5">
+          {recent.isError ? (
+            <LoadError
+              title="Couldn’t load usage."
+              testId="usage-retry"
+              onRetry={() => void recent.refetch()}
+            />
+          ) : (
+            <TaskUsage jobs={recent.data ?? []} agents={roster} />
+          )}
+        </TabsContent>
+      </Tabs>
     </PageShell>
   )
 }
