@@ -337,7 +337,8 @@ export function NewAgent() {
                   </label>
                 ))}
               <Link
-                to="/settings/sources"
+                to="/settings/$section"
+                params={{ section: "sources" }}
                 data-testid="new-agent-connect-source"
                 className="underline-offset-4 hover:underline"
               >
@@ -368,7 +369,8 @@ export function NewAgent() {
             <p className="text-sm text-muted-foreground">
               Connect your plan or provider to get going.{" "}
               <Link
-                to="/settings/accounts"
+                to="/settings/$section"
+                params={{ section: "accounts" }}
                 data-testid="new-agent-connect-account"
                 className="underline"
               >
