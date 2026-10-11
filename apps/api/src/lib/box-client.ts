@@ -92,7 +92,11 @@ export class BoxClient implements SandboxClient {
   async create(body: unknown, key: string, identity: Identity) {
     await this.owned(identity)
     const input = z
-      .object({ setup_script: z.string(), auto_stop_after_seconds: z.number() })
+      .object({
+        setup_script: z.string(),
+        auto_stop_after_seconds: z.number(),
+        env: z.record(z.string(), z.string()).optional(),
+      })
       .parse(body)
     const { sandbox } = z.object({ sandbox: Box }).parse(
       await this.request(
@@ -102,6 +106,7 @@ export class BoxClient implements SandboxClient {
           type: "small",
           ttlSeconds: input.auto_stop_after_seconds,
           noEnv: true,
+          ...(input.env ? { env: input.env } : {}),
           snapshots: true,
           setupScript: `sudo install -d -o "$(id -u)" -g "$(id -g)" /home/ortam\n${input.setup_script}`,
           org: "personal",

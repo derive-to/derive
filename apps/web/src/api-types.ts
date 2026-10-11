@@ -7614,7 +7614,7 @@ export interface components {
             mine: boolean;
             hint: string | null;
             /** @enum {string} */
-            status: "ready" | "not_checked";
+            status: "ready" | "not_checked" | "connecting" | "needs_attention";
             created_at: string;
         };
         BulkSummary: {

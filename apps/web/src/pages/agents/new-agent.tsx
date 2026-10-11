@@ -19,6 +19,7 @@ import { useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { AskPanel } from "@/pages/artifact/ask-panel"
 import { accountLabel } from "../settings/accounts-section"
+import { PlanConnection } from "../settings/plan-connection"
 import { modelChoices } from "./format"
 
 const EXAMPLES = [
@@ -50,7 +51,7 @@ const skillFor = (name: string, brief: string) =>
       .replace(/^-+|-+$/g, "")
       .slice(0, 64)
       .replace(/-+$/, "") || "agent"
-  }\ndescription: ${JSON.stringify((brief.trim().split("\n")[0] ?? "").slice(0, 1024))}\n---\n\n# ${name.trim()}\n\n${brief.trim()}\n\nUse live sources. Save evidence and state what you could not verify.\nUse only the connections and secrets assigned to this agent.\nAsk before you send a message or make an irreversible change.\n`
+  }\ndescription: ${JSON.stringify((brief.trim().split("\n")[0] ?? "").slice(0, 1024))}\n---\n\n# ${name.trim()}\n\n${brief.trim()}\n\nUse live sources. Include results and source URLs in your final answer. The runner saves that answer as the task report.\nSave evidence and state what you could not verify.\nUse only the connections and secrets assigned to this agent.\nAsk before you send a message or make an irreversible change.\n`
 
 /** The skill is a versioned page. AI authoring uses the existing Chat panel. */
 export function NewAgent() {
@@ -66,6 +67,7 @@ export function NewAgent() {
   const [daily, setDaily] = useState(false)
   const [time, setTime] = useState("09:00")
   const [account, setAccount] = useState("")
+  const [connectingPlan, setConnectingPlan] = useState(false)
   const [model, setModel] = useState("")
   const [sources, setSources] = useState<string[]>([])
   const [chat, setChat] = useState(false)
@@ -78,12 +80,20 @@ export function NewAgent() {
   const writing =
     skillChats.data?.some((job) => ["queued", "running", "needs_you"].includes(job.status)) ?? false
   const firstTaskKey = useRef(crypto.randomUUID())
-  const readyAccounts = accounts.data ?? []
+  const readyAccounts = (accounts.data ?? []).filter(
+    (a) => a.status !== "connecting" && a.status !== "needs_attention",
+  )
   const chosen = readyAccounts.find((a) => a.id === (account || readyAccounts[0]?.id))
   const duplicate =
     !created.current && agents.data?.some((a) => a.name.toLowerCase() === name.trim().toLowerCase())
   const ready =
-    runtime.data?.enabled && !!chosen && name.trim() && brief.trim() && !duplicate && !writing
+    runtime.data?.enabled &&
+    !!chosen &&
+    name.trim() &&
+    brief.trim() &&
+    !duplicate &&
+    !writing &&
+    !connectingPlan
 
   const saveSkill = async () => {
     if (!skill.current) {
@@ -294,6 +304,29 @@ export function NewAgent() {
               </select>
             </label>
           </div>
+          {connectingPlan ? (
+            <PlanConnection
+              onDone={(id) => {
+                setConnectingPlan(false)
+                if (id) {
+                  setAccount(id)
+                  setModel("")
+                }
+                void accounts.refetch()
+              }}
+            />
+          ) : (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              data-testid="new-agent-connect-plan"
+              className="self-start text-muted-foreground"
+              onClick={() => setConnectingPlan(true)}
+            >
+              Connect a plan
+            </Button>
+          )}
           {daily && (
             <label className="flex flex-col gap-2 text-sm">
               Time · {Intl.DateTimeFormat().resolvedOptions().timeZone}

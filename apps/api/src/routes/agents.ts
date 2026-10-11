@@ -453,6 +453,8 @@ export const agentRoutes = (ctx: AppContext) => {
         const account = await meta.getAccount(b.account_id)
         if (
           !account ||
+          account.status === "connecting" ||
+          account.status === "needs_attention" ||
           account.org_id !== org ||
           (account.user_id !== creator && account.user_id !== "__workspace__") ||
           account.provider !== (b.provider === "codex" ? "codex" : "claude")
@@ -612,6 +614,8 @@ export const agentRoutes = (ctx: AppContext) => {
         const acct = await meta.getAccount(b.account_id)
         if (
           !acct ||
+          acct.status === "connecting" ||
+          acct.status === "needs_attention" ||
           acct.org_id !== org ||
           (acct.user_id !== who && acct.user_id !== "__workspace__")
         )

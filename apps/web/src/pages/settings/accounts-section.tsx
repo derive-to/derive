@@ -19,13 +19,14 @@ import { accountsQuery, agentsQuery, workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { Group, Meta, RowLine, rowClass } from "@/pages/agents/rows"
 import { AgentRowsSkeleton } from "@/pages/agents/skeleton"
+import { PlanConnection } from "./plan-connection"
 import { SettingsSection } from "./settings-section"
 
 const PROVIDER: Record<ModelAccount["provider"], string> = { claude: "Claude", codex: "Codex" }
 const KIND: Record<ModelAccount["kind"], string> = {
   api_key: "API key",
   oauth: "OAuth token",
-  login: "Codex plan",
+  login: "Plan",
 }
 
 /** "Your Claude", "Shared Codex": whose account and which provider. */
@@ -45,6 +46,7 @@ export function AccountsSection() {
   // Adding an account needs publish rights (Admin or Creator); viewers and commenters can't.
   const canAdd = workspace.data?.role === "owner" || workspace.data?.role === "editor"
   const [adding, setAdding] = useState(false)
+  const [connecting, setConnecting] = useState<ModelAccount | null>(null)
   const [removing, setRemoving] = useState<ModelAccount | null>(null)
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null)
   const rename = useApiMutation({
@@ -119,53 +121,78 @@ export function AccountsSection() {
                     </form>
                   )
                 return (
-                  <div key={a.id} data-testid={`account-${a.id}`} className={rowClass()}>
+                  <div
+                    key={a.id}
+                    data-testid={`account-${a.id}`}
+                    className={`${rowClass()} max-sm:flex-wrap`}
+                  >
                     <RowLine
                       icon={a.shared ? "workspace" : "user"}
                       title={accountLabel(a)}
                       detail={[
                         a.name ? PROVIDER[a.provider] : null,
                         KIND[a.kind],
-                        a.hint,
+                        a.status === "connecting"
+                          ? "Connection in progress"
+                          : a.status === "needs_attention"
+                            ? "Reconnect to continue"
+                            : a.status === "not_checked"
+                              ? "Access not checked yet"
+                              : a.hint,
                         used.length ? `used by ${used.join(", ")}` : null,
                       ]
                         .filter(Boolean)
                         .join(" · ")}
                     />
-                    <Meta>
-                      {canEdit && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="xs"
-                          data-testid={`account-rename-${a.id}`}
-                          onClick={() => setRenaming({ id: a.id, name: a.name ?? "" })}
-                          className="text-muted-foreground"
-                        >
-                          Rename
-                        </Button>
-                      )}
-                      {canEdit && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="xs"
-                          data-testid={`account-disconnect-${a.id}`}
-                          onClick={() => setRemoving(a)}
-                          className="text-muted-foreground"
-                        >
-                          Disconnect
-                        </Button>
-                      )}
-                    </Meta>
+                    <div className="contents max-sm:block max-sm:w-full max-sm:pl-7">
+                      <Meta>
+                        {canEdit && a.provider === "codex" && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="xs"
+                            data-testid={`account-reconnect-${a.id}`}
+                            onClick={() => {
+                              setAdding(false)
+                              setConnecting(a)
+                            }}
+                          >
+                            {a.status === "connecting" ? "Continue" : "Reconnect"}
+                          </Button>
+                        )}
+                        {canEdit && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="xs"
+                            data-testid={`account-rename-${a.id}`}
+                            onClick={() => setRenaming({ id: a.id, name: a.name ?? "" })}
+                            className="text-muted-foreground"
+                          >
+                            Rename
+                          </Button>
+                        )}
+                        {canEdit && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="xs"
+                            data-testid={`account-disconnect-${a.id}`}
+                            onClick={() => setRemoving(a)}
+                            className="text-muted-foreground"
+                          >
+                            Disconnect
+                          </Button>
+                        )}
+                      </Meta>
+                    </div>
                   </div>
                 )
               })}
             </Group>
           )}
           <p className="text-sm text-muted-foreground">
-            An agent uses the account picked on its Settings tab. Without one it uses its creator’s
-            own account here, then a shared one. With none of those, its jobs fail.
+            Connect your plan or an API key. Choose an account in each agent’s settings.
           </p>
           {workspace.isError && (
             <LoadError
@@ -175,7 +202,18 @@ export function AccountsSection() {
               onRetry={() => void workspace.refetch()}
             />
           )}
-          {!canAdd ? null : adding ? (
+          {connecting ? (
+            <PlanConnection
+              accountId={connecting.id}
+              kind={connecting.kind === "api_key" ? "api_key" : "login"}
+              resumeId={
+                connecting.status === "connecting" || connecting.status === "needs_attention"
+                  ? connecting.id
+                  : undefined
+              }
+              onDone={() => setConnecting(null)}
+            />
+          ) : !canAdd ? null : adding ? (
             <AddAccount canShare={isOwner} onDone={() => setAdding(false)} />
           ) : (
             <Button
@@ -207,6 +245,12 @@ export function AccountsSection() {
 }
 
 function AddAccount({ canShare, onDone }: { canShare: boolean; onDone: () => void }) {
+  const [advanced, setAdvanced] = useState(false)
+  const [checking, setChecking] = useState<string | null>(null)
+  const options = useQuery({
+    queryKey: ["account-login-options"],
+    queryFn: api.accountLoginOptions,
+  })
   const [provider, setProvider] = useState<NewModelAccount["provider"]>("codex")
   const [kind, setKind] = useState<NewModelAccount["kind"]>("login")
   const [fileError, setFileError] = useState("")
@@ -214,16 +258,46 @@ function AddAccount({ canShare, onDone }: { canShare: boolean; onDone: () => voi
   const [name, setName] = useState("")
   const [shared, setShared] = useState(false)
   const add = useApiMutation({
-    mutationFn: () =>
-      api.addAccount({ provider, kind, secret: secret.trim(), name: name.trim(), shared }),
+    mutationFn: async () =>
+      provider === "codex" && options.data?.device_login
+        ? api.connectPlan({
+            kind: kind === "api_key" ? "api_key" : "login",
+            secret: secret.trim(),
+            name: name.trim(),
+            shared,
+          })
+        : api.addAccount({ provider, kind, secret: secret.trim(), name: name.trim(), shared }),
     invalidate: [["accounts"]],
-    success: "Account connected",
-    onSuccess: onDone,
+    onSuccess: (result) => ("phase" in result ? setChecking(result.id) : onDone()),
   })
   const submit = (e: FormEvent) => {
     e.preventDefault()
     if (secret.trim().length >= 8) add.mutate()
   }
+  if (checking)
+    return (
+      <PlanConnection
+        resumeId={checking}
+        kind={kind === "api_key" ? "api_key" : "login"}
+        onDone={onDone}
+      />
+    )
+  if (!advanced)
+    return (
+      <div className="flex flex-col gap-2">
+        <PlanConnection onDone={onDone} />
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          data-testid="account-other-method"
+          onClick={() => setAdvanced(true)}
+          className="self-start text-muted-foreground"
+        >
+          Use an API key or import a login
+        </Button>
+      </div>
+    )
   return (
     <form
       data-testid="account-form"
@@ -336,7 +410,9 @@ function AddAccount({ canShare, onDone }: { canShare: boolean; onDone: () => voi
           disabled={secret.trim().length < 8}
           loading={add.isPending}
         >
-          Connect
+          {provider === "codex" && options.data?.device_login
+            ? "Check and connect"
+            : "Save account"}
         </Button>
         <Button
           type="button"

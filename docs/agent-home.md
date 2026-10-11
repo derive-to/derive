@@ -28,12 +28,26 @@ The roster returns server-calculated ask and manage permissions from one members
 Task submission checks the same policy and the caller’s scope.
 A read-only OAuth grant cannot start work. Narrow grants retain their existing management scope.
 
+Connect with Codex opens a guided device approval. An isolated Box runs the official Codex
+app-server. The person approves on Codex, then a small model call checks access.
+The connection becomes ready only after that check. The check uses plan allowance or API credit.
+It is separate from the task cost ledger. Accounts stay private unless an owner selects sharing.
+Importing a Codex login or API key uses the same check when Box is enabled.
+Other imports show Access not checked yet. Connecting accounts cannot be assigned to a new agent.
+
+Reconnect keeps the account ID and agent assignments. Queued cloud tasks wait before compute
+allocation. Cancel restores the previous encrypted credential. Expired attempts hide their code.
+Retry replaces the attempt. Scoped callbacks cannot complete an expired or replaced attempt.
+Connection Boxes have a ten-minute TTL and archive after success, failure, or cancellation.
+
 Codex plan accounts use the official CLI's `auth.json` file. The account value stays encrypted.
 Cloud runners require memory-backed `/dev/shm` storage for login files and the model home.
 They fail before model startup if that storage is unavailable. Saved sandbox disks do not retain it.
 The runner also removes the private directory after a normal task return.
 Owner runners use the operating system's temporary directory.
-Codex OAuth-token accounts are not supported. This build does not add a hosted device-login flow.
+Codex OAuth-token accounts are not supported. Plan connections require Box and an allowlisted workspace.
+The runner saves changed Codex credentials before reporting. A claim and credential version fence
+each write. A stale task cannot overwrite a reconnect or another refresh.
 
 Task code can read its assigned model credential and injected secrets during execution.
 Use trusted skills and repositories for this pilot. Tmpfs prevents disk persistence across stops;
@@ -64,10 +78,23 @@ A stop succeeds only when Box reports `archived` and its disk-save operation rep
 Retirement archives the Box and keeps its files. It does not permanently delete the Box.
 The controller refuses a stored sandbox if the provider or API URL changes.
 
-**Runner release:** the stock pinned CLI 0.8.3 does not include this branch's usage receipts or
-skill-argument fix. Publish a matching CLI release and update `runtime-setup.ts` before enabling
+**Runner release:** the stock pinned CLI 0.8.3 does not include this branch's usage receipts,
+skill-argument fix, or refresh handoff. Publish a matching CLI release and update `runtime-setup.ts` before enabling
 this build on a hosted server. A custom self-host install can use this branch's CLI directly.
 The live pilot installs current branch files over the pinned CLI for verification only.
+
+## Preview setup
+
+The current PR preview does not pass the Box runtime settings. It shares production D1,
+Hyperdrive, and R2. Do not use that preview for account or task writes.
+Use an isolated preview database and storage first. Supply the Box settings above through
+the secret provider. Keep `DERIVE_AUTH_SECRET` stable; it encrypts accounts and signs callbacks.
+The existing secret names cover this connection flow. Each person supplies their own plan approval
+or provider key. The operator supplies the Box key.
+
+Publish the matching runner release and qualify direct Box bearer transport before hosted tasks.
+The preview has no cron or queue consumer for daily runs. Add a scheduler to that isolated
+environment before testing daily execution. A local controller tick proves the pilot only.
 
 ## Read AI cost
 
@@ -109,5 +136,7 @@ Keep evidence outside the private server data directory. Record task IDs, skill 
 model receipts, report contents, and the verified stop. Never publish cookies or account files.
 Before ending the pilot, pause its schedule, verify compute is stopped, and stop the local servers.
 
-Hosted deployment, gateway execution, GitHub/Google sign-in, external notifications, secret-provider
-sync, and credential refresh over time need separate live qualification.
+The guided device approval, verified login import, and a task on the new account pass live.
+The refresh route passes real claim and stale-version checks. Long-lived provider token rotation
+still needs qualification. Hosted deployment, gateway execution, GitHub/Google sign-in, external
+notifications, and secret-provider sync also need separate live qualification.

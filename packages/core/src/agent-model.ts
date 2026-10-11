@@ -231,7 +231,7 @@ export interface NewTrigger {
 
 export type AccountProvider = "claude" | "codex"
 export type AccountKind = "oauth" | "api_key" | "login"
-export type AccountStatus = "ready" | "not_checked"
+export type AccountStatus = "ready" | "not_checked" | "connecting" | "needs_attention"
 export interface AccountRecord {
   id: string
   org_id: string
@@ -437,7 +437,13 @@ export interface AgentModelStore<Agent = unknown> {
   getAccount(id: string): Promise<AccountRecord | null>
   /** A workspace's accounts; with `userId`, only that person's plus the shared pool. */
   listAccounts(orgId: string, userId?: string): Promise<AccountRecord[]>
-  updateAccount(id: string, orgId: string, patch: AccountPatch): Promise<AccountRecord | null>
+  /** With an expected ciphertext, replace a credential only if it is still current. */
+  updateAccount(
+    id: string,
+    orgId: string,
+    patch: AccountPatch,
+    expectSecretEnc?: string | null,
+  ): Promise<AccountRecord | null>
   deleteAccount(id: string, orgId: string): Promise<boolean>
 }
 

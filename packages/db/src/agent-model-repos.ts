@@ -440,12 +440,14 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
           ${userId ? sql`AND user_id IN (${userId}, ${WORKSPACE_ACCOUNT_OWNER})` : sql``}
         ORDER BY created_at, id`)
     },
-    updateAccount(id, orgId, patch) {
+    updateAccount(id, orgId, patch, expectSecretEnc) {
       const set = assignments(patch, ACCOUNT_FIELDS)
       set.push(sql`updated_at = ${iso()}`)
       return first<AccountRecord>(sql`
         UPDATE model_account SET ${sql.join(set, sql`, `)}
-        WHERE id = ${id} AND org_id = ${orgId} RETURNING *`)
+        WHERE id = ${id} AND org_id = ${orgId}
+          ${expectSecretEnc === undefined ? sql`` : expectSecretEnc === null ? sql`AND secret_enc IS NULL` : sql`AND secret_enc = ${expectSecretEnc}`}
+        RETURNING *`)
     },
     async deleteAccount(id, orgId) {
       const gone = await rows(

@@ -531,7 +531,9 @@ function AccountField({
 }) {
   const accounts = useQuery({ ...accountsQuery(), enabled: edit || !!agent.account_id })
   // An agent may run on its manager's own account or a shared one, never a teammate's.
-  const usable = (accounts.data ?? []).filter((a) => a.mine || a.shared)
+  const usable = (accounts.data ?? []).filter(
+    (a) => (a.mine || a.shared) && a.status !== "connecting" && a.status !== "needs_attention",
+  )
   const current = accounts.data?.find((a) => a.id === agent.account_id)
   const label = (a: ModelAccount) => `${accountLabel(a)}${a.hint ? ` ${a.hint}` : ""}`
   const hidden = "An account you can’t see"
@@ -556,6 +558,11 @@ function AccountField({
             <SelectItem value={DEFAULT}>{DEFAULT_LABEL}</SelectItem>
             {agent.account_id && !current && (
               <SelectItem value={agent.account_id}>{hidden}</SelectItem>
+            )}
+            {current && !usable.some((a) => a.id === current.id) && (
+              <SelectItem value={current.id} disabled>
+                {accountLabel(current)} · Finish connecting
+              </SelectItem>
             )}
             {usable.map((a) => (
               <SelectItem key={a.id} value={a.id}>

@@ -150,6 +150,14 @@ export class JobClient {
     })
   }
 
+  refreshAccount(job, body) {
+    return this.req(`/v1/jobs/${job.id}/account`, {
+      method: "POST",
+      body,
+      claim: job.started_at,
+    })
+  }
+
   environment(job) {
     return this.req(`/v1/jobs/${job.id}/environment`, { claim: job.started_at })
   }
@@ -349,6 +357,22 @@ async function modelEnvFor(
     writeFileSync(join(dir, name), content, { mode: 0o600 })
   return {
     env: { [spec.homeEnv]: dir },
+    flush: async () => {
+      if (providerName !== "codex" || res.credential.kind !== "login" || !res.account_id) return
+      try {
+        const next = readFileSync(join(dir, "auth.json"), "utf8")
+        if (next !== res.credential.value)
+          await client.refreshAccount(job, {
+            account_id: res.account_id,
+            credential_version: res.credential_version,
+            secret: next,
+          })
+      } catch {
+        process.stderr.write(
+          "[runner] Could not save the refreshed login. Reconnect if your next task needs it.\n",
+        )
+      }
+    },
     cleanup: () => {
       try {
         rmSync(dir, { recursive: true, force: true })
@@ -384,6 +408,7 @@ export async function serveJob(client, job, cfg, deps = {}) {
   tick.unref?.()
 
   let cleanup = () => {}
+  let flushCredential = async () => {}
   let shim = null
   try {
     let env
@@ -394,6 +419,7 @@ export async function serveJob(client, job, cfg, deps = {}) {
         localLogin: cfg.localLogin,
       })
       cleanup = cred.cleanup
+      flushCredential = cred.flush ?? flushCredential
       // Source tools: a shim in cwd and exactly what it needs to call this job's tool route.
       // The job's tool token, never the runner's credential: it reaches this job's tool route
       // and nothing else, and dies with the claim.
@@ -426,6 +452,7 @@ export async function serveJob(client, job, cfg, deps = {}) {
           env,
           meter,
         })
+    await flushCredential()
     if (lost) {
       console.error(
         `[runner] job ${job.id}: the claim moved to another runner; dropping the answer`,
@@ -505,6 +532,7 @@ export async function serveJob(client, job, cfg, deps = {}) {
     await client.report(job, { status: "succeeded", ...common })
     return "succeeded"
   } catch (e) {
+    await flushCredential()
     console.error(`[runner] job ${job.id} failed: ${e.message}`)
     await client
       .report(job, { status: "failed", body_md: e.message, retryable: e.retryable !== false })

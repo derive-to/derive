@@ -25,7 +25,7 @@ import { OVER_BUDGET } from "../lib/budget"
 import { chatArrival, refusalMessage } from "../lib/chat-gate"
 import { buildJobTools, JOB_TOOL_PREFIX } from "../lib/chat-tools"
 import { readEnvironmentBindings } from "../lib/context-environment"
-import { decryptSecret } from "../lib/crypto"
+import { decryptSecret, encryptSecret, sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 import { resolveJobCredential } from "../lib/job-accounts"
 import { advanceGraph, graphAware } from "../lib/job-graph"
@@ -998,6 +998,62 @@ export const jobRoutes = (ctx: AppContext) => {
     const provider = c.req.query("provider") === "codex" ? "codex" : agent.provider
     const cred = await resolveJobCredential(meta, deps.encryptionKey, agent, job, provider)
     return c.json(cred)
+  })
+
+  // The account id and ciphertext are pinned; a stale refresh cannot replace a reconnect.
+  // authz-exempt: heldJob pins this write to the authenticated live claim.
+  app.post("/v1/jobs/:id/account", async (c) => {
+    c.header("Cache-Control", "no-store")
+    const held = await heldJob(c)
+    if (held instanceof Response) return held
+    if (!deps.encryptionKey) return fail(c, 503, "Secret encryption is not configured")
+    const b = await readJson(
+      c,
+      z.object({
+        account_id: z.string(),
+        credential_version: z.string().length(64),
+        secret: z.string().min(8).max(20000),
+      }),
+    )
+    if (b instanceof Response) return b
+    const current = await resolveJobCredential(
+      meta,
+      deps.encryptionKey,
+      held.agent,
+      held.job,
+      "codex",
+    )
+    if (
+      !current.credential ||
+      current.credential.kind !== "login" ||
+      current.account_id !== b.account_id ||
+      current.credential_version !== b.credential_version
+    )
+      return c.json({ refreshed: false })
+    const account = await meta.getAccount(b.account_id)
+    if (!account?.secret_enc || sha256(account.secret_enc) !== b.credential_version)
+      return c.json({ refreshed: false })
+    const login = z.object({
+      tokens: z.object({ access_token: z.string().min(8), account_id: z.string().min(1) }),
+    })
+    try {
+      const before = login.parse(JSON.parse(current.credential.value))
+      const after = login.parse(JSON.parse(b.secret))
+      if (before.tokens.account_id !== after.tokens.account_id)
+        return fail(c, 400, "Account identity changed")
+    } catch {
+      return fail(c, 400, "Invalid login")
+    }
+    const updated = await meta.updateAccount(
+      account.id,
+      account.org_id,
+      {
+        secret_enc: encryptSecret(b.secret, deps.encryptionKey),
+        status: "ready",
+      },
+      account.secret_enc,
+    )
+    return c.json({ refreshed: !!updated })
   })
 
   // authz-exempt: heldJob gates on the runner owning this job (agent key or managing grant).

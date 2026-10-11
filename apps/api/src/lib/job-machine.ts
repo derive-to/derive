@@ -588,6 +588,23 @@ export async function machinePass(
     await guard("dispatch", job.id, async () => {
       let agent = await meta.getAgent(job.agent_id)
       if (!agent || !(await admitted(deps, agent))) return
+      // A reconnect keeps the selected account and queued work. Do not allocate compute
+      // or silently bill another account while its credential is being replaced.
+      const account = agent.account_id ? await meta.getAccount(agent.account_id) : null
+      if (account?.status === "connecting" || account?.status === "needs_attention") {
+        const last = (await meta.listJobMessages(job.id)).at(-1)
+        if (!last?.meta_json || JSON.parse(last.meta_json).held !== "account")
+          await meta.addJobMessage({
+            id: newId("jm"),
+            job_id: job.id,
+            author_kind: "agent",
+            author_id: agent.id,
+            body_md:
+              "This task waits for its model account. Finish connecting or cancel the reconnect in Settings → Model accounts.",
+            meta_json: JSON.stringify({ progress: true, held: "account", server: true }),
+          })
+        return
+      }
       // Past its payer's monthly budget: no sandbox comes up, and the job says why it waits.
       if (await jobOverBudget(meta, job)) {
         await noteHeldForBudget(meta, job)

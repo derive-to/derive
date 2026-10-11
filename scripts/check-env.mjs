@@ -63,6 +63,11 @@ const NON_CONFIG = new Set([
   "RAILWAY_PUBLIC_DOMAIN",
   "FLY_APP_NAME",
   "NODE_ENV",
+  // The embedded account-login script runs inside Box. PATH comes from that image;
+  // its scoped callback and provider key are injected per attempt, not server config.
+  "PATH",
+  "DERIVE_ACCOUNT_CALLBACK",
+  "CODEX_API_KEY",
 ])
 
 const walk = (dir, out = []) => {

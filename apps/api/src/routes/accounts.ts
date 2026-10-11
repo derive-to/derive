@@ -5,6 +5,7 @@ import type { AppContext } from "../context"
 import { encryptSecret } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 import { credentialKind } from "../lib/job-accounts"
+import { accountLoginRoutes, stopAccountConnection } from "./account-login"
 
 // MODEL ACCOUNTS: the credential a machine uses to call a model. A person owns theirs; a
 // workspace owner may add a shared one for the whole workspace. Values are write-only: this API
@@ -19,7 +20,7 @@ const Account = z
     shared: z.boolean().describe("A workspace account every agent may fall back to."),
     mine: z.boolean(),
     hint: z.string().nullable(),
-    status: z.enum(["ready", "not_checked"]),
+    status: z.enum(["ready", "not_checked", "connecting", "needs_attention"]),
     created_at: z.string(),
   })
   .openapi("ModelAccount")
@@ -34,6 +35,7 @@ const AccountName = z
 export const accountRoutes = (ctx: AppContext) => {
   const { meta, deps } = ctx
   const app = new OpenAPIHono<BlankEnv>()
+  app.route("/", accountLoginRoutes(ctx))
 
   const accountJson = (a: AccountRecord, me: string) => ({
     id: a.id,
@@ -42,7 +44,7 @@ export const accountRoutes = (ctx: AppContext) => {
     name: a.name,
     shared: a.user_id === WORKSPACE_ACCOUNT_OWNER,
     mine: a.user_id === me,
-    hint: a.kind === "login" ? "Login saved" : a.hint,
+    hint: a.hint ?? (a.kind === "login" && a.status !== "connecting" ? "Login saved" : null),
     status: a.status,
     created_at: a.created_at,
   })
@@ -184,6 +186,7 @@ export const accountRoutes = (ctx: AppContext) => {
       const a = await manageable(c, org, who)
       if (!a) return bail(fail(c, 404, "account not found"))
       await meta.deleteAccount(a.id, org)
+      await ctx.afterResponse(c, () => stopAccountConnection(ctx, a))
       // An agent assigned this account falls back to the asker's and the pool's.
       for (const ag of await meta.listAgents(org))
         if (ag.account_id === a.id) await meta.updateAgent(ag.id, org, { account_id: null })

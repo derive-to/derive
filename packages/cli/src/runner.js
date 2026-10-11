@@ -89,6 +89,9 @@ Do not end with prose like "this looks good" — end with the block.
 }
 </answer>
 
+Use JSON.stringify to encode multiline Markdown. After JSON parsing, body_md must
+contain actual newline characters. Do not double-escape line breaks.
+
 Escalate (escalate: true, with a short reason) when the manifest's escalation
 rules say so — still produce your best draft in body_md.
 

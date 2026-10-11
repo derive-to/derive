@@ -6,7 +6,7 @@ import {
   type MetaStore,
   WORKSPACE_ACCOUNT_OWNER,
 } from "@derive/core"
-import { decryptSecret } from "./crypto"
+import { decryptSecret, sha256 } from "./crypto"
 
 // WHICH MODEL ACCOUNT A JOB RUNS WITH, resolved once for every runner.
 //
@@ -18,7 +18,12 @@ import { decryptSecret } from "./crypto"
 // plans were carried into accounts at the agents cutover.
 
 export type JobCredential =
-  | { credential: { kind: "oauth" | "api_key" | "login"; value: string }; source: string }
+  | {
+      credential: { kind: "oauth" | "api_key" | "login"; value: string }
+      source: string
+      account_id: string
+      credential_version: string
+    }
   | { credential: null; reason: "none" | "unreadable" | "not_configured" }
 
 const accountProvider = (p: ExecutionProvider): AccountRecord["provider"] =>
@@ -100,7 +105,14 @@ export const resolveJobCredential = async (
     a: AccountRecord | undefined,
     source: string,
   ): Promise<JobCredential | null> => {
-    if (!a || a.provider !== want || !a.secret_enc) return null
+    if (
+      !a ||
+      a.provider !== want ||
+      !a.secret_enc ||
+      a.status === "connecting" ||
+      a.status === "needs_attention"
+    )
+      return null
     if (!(await seated(a))) return null
     const value = readable(a.secret_enc, key)
     if (value === null) {
@@ -111,12 +123,17 @@ export const resolveJobCredential = async (
     // so the Accounts page says what it is. A failed fix costs nothing; the next job retries.
     const kind = credentialKind(a.provider, a.kind, value)
     if (kind !== a.kind) await meta.updateAccount(a.id, a.org_id, { kind }).catch(() => null)
-    return { credential: { kind, value }, source }
+    return {
+      credential: { kind, value },
+      source,
+      account_id: a.id,
+      credential_version: sha256(a.secret_enc),
+    }
   }
-  const assigned = await tryAccount(
-    accounts.find((a) => a.id === agent.account_id),
-    "agent",
-  )
+  const selected = accounts.find((a) => a.id === agent.account_id)
+  if (selected?.status === "connecting" || selected?.status === "needs_attention")
+    return { credential: null, reason: "unreadable" }
+  const assigned = await tryAccount(selected, "agent")
   if (assigned) return assigned
   const payer =
     job.asked_by && (agent.machine === "derive" || job.asked_by === agent.created_by)

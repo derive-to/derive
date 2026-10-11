@@ -2473,7 +2473,9 @@
             "type": "string",
             "enum": [
               "ready",
-              "not_checked"
+              "not_checked",
+              "connecting",
+              "needs_attention"
             ]
           },
           "created_at": {
