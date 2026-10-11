@@ -15,8 +15,9 @@ import { connectionBindError } from "../lib/broker"
 import { EnvironmentBindings, readEnvironmentBindings } from "../lib/context-environment"
 import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
-import { machineWorkspaces, retireSandbox } from "../lib/job-machine"
+import { machineDepsFrom, retireSandbox } from "../lib/job-machine"
 import { agentAccess, cancelJob } from "../lib/jobs"
+import { cloudEnabled } from "../lib/runtime-connection"
 import { previousOccurrence } from "../lib/schedule"
 
 /** Agent registry (Admin-managed) + the agent's pull inbox of @mentions. The Agent +
@@ -40,7 +41,7 @@ export const agentRoutes = (ctx: AppContext) => {
             "application/json": {
               schema: z.object({
                 enabled: z.boolean(),
-                provider: z.enum(["ortam", "box"]).nullable(),
+                provider: z.enum(["ortam", "boat"]).nullable(),
               }),
             },
           },
@@ -50,8 +51,8 @@ export const agentRoutes = (ctx: AppContext) => {
     async (c) => {
       const org = await requireWorkspace(c, "read")
       if (org instanceof Response) return bail(org)
-      const enabled = machineWorkspaces(deps.runtime).has(org)
-      return c.json({ enabled, provider: enabled ? (deps.runtime?.provider ?? "ortam") : null })
+      const enabled = await cloudEnabled(meta, deps.runtime, org)
+      return c.json({ enabled, provider: deps.runtime?.provider ?? null })
     },
   )
 
@@ -149,7 +150,7 @@ export const agentRoutes = (ctx: AppContext) => {
       provider: z.enum(["claude-code", "codex"]).describe("Which coding agent runs its jobs."),
       runtime: z
         .object({
-          provider: z.enum(["ortam", "box"]),
+          provider: z.enum(["ortam", "boat"]),
           phase: z
             .enum(["creating", "provisioning", "stopping", "ready", "busy", "deleting", "failed"])
             .nullable(),
@@ -443,9 +444,9 @@ export const agentRoutes = (ctx: AppContext) => {
         ? (await meta.getMembership(org, creator).catch(() => null))?.role
         : undefined
       const role: Role = asked ?? (seat ? capRole("editor", seat) : "commenter")
-      if (b.machine === "derive" && !machineWorkspaces(deps.runtime).has(org))
+      if (b.machine === "derive" && !(await cloudEnabled(meta, deps.runtime, org)))
         return bail(
-          fail(c, 400, "Derive machines are not turned on for this workspace; use machine: owner"),
+          fail(c, 400, "Connect boat.dev in Settings → Connections before using cloud agents"),
         )
       if (b.schedule && !validCron(b.schedule.cron, b.schedule.tz))
         return bail(fail(c, 400, "schedule.cron is not a valid cron expression for that timezone"))
@@ -605,9 +606,9 @@ export const agentRoutes = (ctx: AppContext) => {
       }
       const refused = await definitionError(c, org, who, b)
       if (refused) return bail(fail(c, 400, refused))
-      if (b.machine === "derive" && !machineWorkspaces(deps.runtime).has(org))
+      if (b.machine === "derive" && !(await cloudEnabled(meta, deps.runtime, org)))
         return bail(
-          fail(c, 400, "Derive machines are not turned on for this workspace; use machine: owner"),
+          fail(c, 400, "Connect boat.dev in Settings → Connections before using cloud agents"),
         )
       // An agent may run on its manager's own account or a shared one, never a teammate's.
       if (b.account_id) {
@@ -811,7 +812,15 @@ export const agentRoutes = (ctx: AppContext) => {
       if (!target || !(await managerOf(c, target))) return bail(fail(c, 404, "agent not found"))
       const org = target.org_id
       const id = target.id
-      await retireSandbox(deps.runtime, deps.runtimeFetch, target)
+      await retireSandbox(
+        machineDepsFrom(meta, {
+          secret: deps.encryptionKey,
+          server: deps.baseUrl,
+          config: deps.runtime,
+          fetcher: deps.runtimeFetch,
+        }),
+        target,
+      )
       // Scope the delete to the caller's workspace: deleteAgent is keyed by
       // (id, org) so an Admin can't delete another workspace's agent by id.
       await meta.deleteAgent(id, org)

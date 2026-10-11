@@ -25,23 +25,21 @@ export const workspaceIdsFromEnv = (raw: string | undefined): ReadonlySet<string
  *  builder for the Node entry and both Worker uses (the app and the scheduled tick). */
 export const ortamRuntimeFromEnv = (env: {
   DERIVE_SANDBOX_PROVIDER?: string
-  DERIVE_BOX_API_URL?: string
-  DERIVE_BOX_API_KEY?: string
   DERIVE_ORTAM_RUNNER_PATH?: string
   DERIVE_ORTAM_API_URL?: string
   DERIVE_ORTAM_INTEGRATION_KEY?: string
   DERIVE_MANAGED_RUNS_ALLOWLIST?: string
 }) => {
   const provider = env.DERIVE_SANDBOX_PROVIDER ?? "ortam"
-  if (provider !== "ortam" && provider !== "box") throw new Error("Unknown sandbox provider")
-  const apiKey = provider === "box" ? env.DERIVE_BOX_API_KEY : env.DERIVE_ORTAM_INTEGRATION_KEY
+  if (provider !== "ortam" && provider !== "boat") throw new Error("Unknown sandbox provider")
+  const apiKey = provider === "ortam" ? env.DERIVE_ORTAM_INTEGRATION_KEY : undefined
   return env.DERIVE_ORTAM_RUNNER_PATH
     ? {
-        provider: provider as "ortam" | "box",
+        provider: provider as "ortam" | "boat",
         runnerPath: env.DERIVE_ORTAM_RUNNER_PATH,
         apiUrl:
-          provider === "box"
-            ? (env.DERIVE_BOX_API_URL ?? "https://boat.dev/api/v1")
+          provider === "boat"
+            ? "https://boat.dev/api/v1"
             : (env.DERIVE_ORTAM_API_URL ?? "https://api.ortam.dev/v1"),
         managed: apiKey
           ? {

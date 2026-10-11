@@ -363,7 +363,9 @@ export function NewAgent() {
                 Connections give it access. The skill tells it how to use that access.
               </p>
               {(connections.data ?? [])
-                .filter((c) => c.status === "active" && c.toolkit !== "secret")
+                .filter(
+                  (c) => c.status === "active" && c.toolkit !== "secret" && c.kind !== "runtime",
+                )
                 .map((c) => (
                   <label key={c.id} className="flex items-center gap-2">
                     <input
@@ -407,7 +409,15 @@ export function NewAgent() {
           )}
           {runtime.data && !runtime.data.enabled && (
             <p className="text-sm text-warning">
-              Cloud runs need a sandbox connection on this server.
+              Connect boat.dev for this workspace to run cloud work.{" "}
+              <Link
+                to="/settings/$section"
+                params={{ section: "sources" }}
+                data-testid="new-agent-connect-compute"
+                className="underline"
+              >
+                Connect cloud compute
+              </Link>
             </p>
           )}
           {!accounts.isPending && !readyAccounts.length && (
@@ -444,7 +454,7 @@ export function NewAgent() {
             </Button>
             {runtime.data?.enabled && (
               <span className="text-sm text-muted-foreground">
-                Runs in the cloud · {runtime.data.provider === "box" ? "Box" : "Ortam"}
+                Runs in the cloud · {runtime.data.provider === "boat" ? "boat.dev" : "Ortam"}
               </span>
             )}
           </div>

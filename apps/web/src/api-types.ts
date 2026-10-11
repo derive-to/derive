@@ -1229,7 +1229,7 @@ export interface paths {
                         "application/json": {
                             enabled: boolean;
                             /** @enum {string|null} */
-                            provider: "ortam" | "box" | null;
+                            provider: "ortam" | "boat" | null;
                         };
                     };
                 };
@@ -5005,6 +5005,88 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runtime/connection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The workspace's boat.dev compute connection. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Workspace compute connection. No credential. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ComputeConnection"];
+                    };
+                };
+            };
+        };
+        /** Verify and connect the workspace's boat.dev API key. */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        api_key: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Workspace compute connection. No credential. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ComputeConnection"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        /** Disconnect workspace compute and stop its active work. */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Workspace compute connection. No credential. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ComputeConnection"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/artifacts/{shortId}/rework": {
         parameters: {
             query?: never;
@@ -7444,7 +7526,7 @@ export interface components {
             /** @description Cloud sandbox availability and progress. No credentials. */
             runtime?: {
                 /** @enum {string} */
-                provider: "ortam" | "box";
+                provider: "ortam" | "boat";
                 /** @enum {string|null} */
                 phase: "creating" | "provisioning" | "stopping" | "ready" | "busy" | "deleting" | "failed" | null;
             } | null;
@@ -7527,7 +7609,7 @@ export interface components {
                 compute?: {
                     turn: string;
                     /** @enum {string} */
-                    provider: "ortam" | "box";
+                    provider: "ortam" | "boat";
                     sandbox_id: string;
                     started_at: string;
                     stopped_at: string;
@@ -8028,6 +8110,12 @@ export interface components {
             /** @description Id of the mentioned person or agent. */
             id: string;
             name: string;
+        };
+        ComputeConnection: {
+            available: boolean;
+            connected: boolean;
+            account_id: string | null;
+            can_manage: boolean;
         };
         ContextInfo: {
             id: string;

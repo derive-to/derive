@@ -19,9 +19,9 @@ const op = (kind: string, id: string, state: "running" | "succeeded" | "failed" 
   state,
 })
 
-/** Box (now Boat): the same Agent/Job lifecycle through its public v1 API. Creates are
+/** boat.dev: the same Agent/Job lifecycle through its public v1 API. Creates are
  * idempotent. Commands submit once. A stop is complete only after its saved-disk receipt. */
-export class BoxClient implements SandboxClient {
+export class BoatClient implements SandboxClient {
   private readonly fetcher: typeof fetch
   constructor(
     readonly base: string,
@@ -40,7 +40,7 @@ export class BoxClient implements SandboxClient {
         (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))
       )
     )
-      throw new Error("Box requires an HTTPS API URL (or local HTTP)")
+      throw new Error("boat.dev requires an HTTPS API URL (or local HTTP)")
   }
   private async request(path: string, method = "GET", body?: unknown, key?: string) {
     let response: Response
@@ -57,13 +57,13 @@ export class BoxClient implements SandboxClient {
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       })
     } catch {
-      throw new Error("Box request outcome is unknown")
+      throw new Error("boat.dev request outcome is unknown")
     }
-    if (!response.ok) throw new Error(`Box returned HTTP ${response.status}`)
+    if (!response.ok) throw new Error(`boat.dev returned HTTP ${response.status}`)
     try {
       return await response.json()
     } catch {
-      throw new Error("Box returned invalid JSON")
+      throw new Error("boat.dev returned invalid JSON")
     }
   }
   async authenticate() {
@@ -78,7 +78,7 @@ export class BoxClient implements SandboxClient {
       current.user_id !== identity.user_id ||
       current.organization_id !== identity.organization_id
     )
-      throw new Error("Box credential ownership changed")
+      throw new Error("boat.dev credential ownership changed")
   }
   private async read(id: string, identity: Identity) {
     await this.owned(identity)
@@ -86,7 +86,7 @@ export class BoxClient implements SandboxClient {
       .object({ sandbox: Box })
       .parse(await this.request(`/sandboxes/${encodeURIComponent(id)}`))
     if (sandbox.id !== id || (sandbox.createdById && sandbox.createdById !== identity.user_id))
-      throw new Error("Box sandbox ownership mismatch")
+      throw new Error("boat.dev sandbox ownership mismatch")
     return sandbox
   }
   async create(body: unknown, key: string, identity: Identity) {
@@ -157,7 +157,7 @@ export class BoxClient implements SandboxClient {
     kind: "create" | "resume" | "stop" | "delete",
     identity: Identity,
   ) {
-    if (id !== `${kind}:${sandboxId}`) throw new Error("Box operation mismatch")
+    if (id !== `${kind}:${sandboxId}`) throw new Error("boat.dev operation mismatch")
     const box = await this.read(sandboxId, identity)
     const ready =
       ["ready", "idle", "running"].includes(box.state) &&
@@ -193,7 +193,7 @@ export class BoxClient implements SandboxClient {
   }
   async process(sandboxId: string, id: string, identity: Identity) {
     await this.read(sandboxId, identity)
-    if (!/^\d+$/.test(id)) throw new Error("Box process mismatch")
+    if (!/^\d+$/.test(id)) throw new Error("boat.dev process mismatch")
     const result = z
       .object({ processId: z.number(), status: z.enum(["running", "exited", "lost"]) })
       .parse(
@@ -201,10 +201,10 @@ export class BoxClient implements SandboxClient {
           `/sandboxes/${encodeURIComponent(sandboxId)}/commands/${id}?tailBytes=1`,
         ),
       )
-    if (String(result.processId) !== id) throw new Error("Box process mismatch")
+    if (String(result.processId) !== id) throw new Error("boat.dev process mismatch")
     return { id, status: result.status === "lost" ? ("interrupted" as const) : result.status }
   }
-  // Retirement archives the Box and preserves its files. The agent drops the retired id;
+  // Retirement archives the sandbox and preserves its files. The agent drops the retired id;
   // provider retention handles permanent deletion. Never discard a failed disk save.
   async deleteSandbox(id: string, key: string, identity: Identity) {
     await this.lifecycle(id, "stop", key, identity)

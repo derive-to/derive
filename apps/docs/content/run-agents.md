@@ -7,17 +7,18 @@ This page covers making an agent, running it, giving it work, and following that
 
 ## Make an agent
 
-Agents are made from a coding agent connected to Derive over MCP, such as Claude Code or Codex.
-If yours is not connected yet, follow [Connect your coding agent](/agents/connect/) first.
+The quickest start is **Agents → New agent** in Derive.
 
-The quickest start is the **New agent** page in Derive (Agents, then New agent). Describe what
-the agent should do, copy the prompt it builds, and paste it into Claude Code or Codex. The
-prompt tells your coding agent to:
+1. Give the agent a name and describe its work.
+2. Choose a connected model account.
+3. Choose **When I ask** or **Every day**.
+4. Select **Let’s go**. Derive saves the skill and can run the first task.
 
-1. Read `derive://skills/agents`.
-2. Publish the agent's instructions as a Derive page.
-3. Call the `agents` tool with `action: "create"`, passing that page's short id.
-4. Hand you back the runner command, and any link you need to open in a browser.
+Use **Write the skill with AI** to draft the instructions. Edit the skill anytime.
+The skill describes the work. Connections and secrets control its access.
+
+A coding agent connected over MCP can also create and update agents.
+If yours is not connected, follow [Connect your coding agent](/agents/connect/) first.
 
 You can also ask for it in your own words. A create call looks like this:
 
@@ -61,6 +62,19 @@ scheduled and unattended work. Derive machines are
 only available in workspaces where they are turned on; elsewhere, creating one is refused with
 a message saying so. A Derive machine has no login of its own, so the agent needs a model
 account stored in Derive.
+
+## Connect company compute
+
+For boat.dev, a workspace manager connects the company account under **Settings → Connections**.
+Connect it once. Everyone in that workspace uses the connection for cloud tasks.
+Other workspaces connect their own accounts. Your company pays boat.dev directly.
+
+The compute key stays in the controller. It does not become an agent secret or tool.
+Model accounts remain separate. Choose the model account on the agent.
+
+The first sandbox can take a few minutes. Tasks show **Getting ready** during setup.
+After a task finishes, Derive stops compute and collects its receipt.
+A missing model charge stays **Unknown**. API estimates do not price a subscription plan.
 
 ## Give it secrets
 

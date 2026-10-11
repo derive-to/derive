@@ -3,11 +3,11 @@ import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
 import { ACCOUNT_LOGIN_SETUP } from "../lib/account-login-script"
-import { BoxClient } from "../lib/box-client"
 import { signCapabilityToken, verifyCapabilityToken } from "../lib/capability-token"
 import { decryptSecret, encryptSecret } from "../lib/crypto"
 import { fail, readJson } from "../lib/http"
 import { hasSeat } from "../lib/job-accounts"
+import { boatClient, boatConnection, cloudEnabled } from "../lib/runtime-connection"
 
 const DOMAIN = "derive-account-login:"
 const Pending = z.object({
@@ -15,7 +15,8 @@ const Pending = z.object({
   owner: z.string(),
   expires: z.number(),
   phase: z.enum(["starting", "awaiting", "checking", "failed"]),
-  box: z.string().optional(),
+  sandbox_id: z.string().optional(),
+  connection_id: z.string(),
   identity: z.object({ organization_id: z.string(), user_id: z.string() }),
   verification_url: z.literal("https://auth.openai.com/codex/device").optional(),
   user_code: z
@@ -49,26 +50,18 @@ const messages: Record<string, string> = {
   access_failed:
     "This account could not run the access check. Check your plan or key, then reconnect.",
   provider_unavailable: "We could not reach the provider. Try again.",
-  setup_failed: "The connection box could not start. Try again.",
+  setup_failed: "The connection sandbox could not start. Try again.",
 }
 
 export const stopAccountConnection = async (ctx: AppContext, a: AccountRecord) => {
-  const { runtime, encryptionKey } = ctx.deps
-  if (
-    !encryptionKey ||
-    !a.secret_enc ||
-    runtime?.provider !== "box" ||
-    !runtime.managed?.apiKey ||
-    !["connecting", "needs_attention"].includes(a.status)
-  )
-    return
-  const p = readPending(a, encryptionKey)
-  if (p?.box)
-    await new BoxClient(
-      runtime.apiUrl,
-      runtime.managed.apiKey,
-      ctx.deps.runtimeFetch,
-    ).deleteSandbox(p.box, p.attempt, p.identity)
+  const p = readPending(a, ctx.deps.encryptionKey)
+  const cn = await boatConnection(ctx.meta, a.org_id)
+  if (p?.sandbox_id && cn?.id === p.connection_id && cn.broker_ref === p.identity.user_id)
+    await boatClient(cn, ctx.deps.encryptionKey, ctx.deps.runtimeFetch).deleteSandbox(
+      p.sandbox_id,
+      p.attempt,
+      p.identity,
+    )
 }
 
 export const accountLoginRoutes = (ctx: AppContext) => {
@@ -76,13 +69,14 @@ export const accountLoginRoutes = (ctx: AppContext) => {
   const app = new Hono()
   const key = deps.encryptionKey
   const runtime = deps.runtime
-  const box =
-    runtime?.provider === "box" && runtime.managed?.apiKey
-      ? new BoxClient(runtime.apiUrl, runtime.managed.apiKey, deps.runtimeFetch)
-      : null
   const pending = (a: AccountRecord) => readPending(a, key)
-  const available = (org: string) =>
-    !!(key && box && runtime?.managed?.workspaceIds.has(org) && deps.baseUrl.startsWith("https://"))
+  const available = async (org: string) =>
+    !!(
+      key &&
+      runtime?.provider === "boat" &&
+      deps.baseUrl.startsWith("https://") &&
+      (await cloudEnabled(meta, runtime, org))
+    )
   const view = (a: AccountRecord) => {
     const p = pending(a)
     return {
@@ -108,8 +102,14 @@ export const accountLoginRoutes = (ctx: AppContext) => {
       a.secret_enc,
     )
   }
-  const stop = async (p: PendingLogin) => {
-    if (box && p.box) await box.deleteSandbox(p.box, p.attempt, p.identity)
+  const stop = async (p: PendingLogin, org: string) => {
+    const cn = await boatConnection(meta, org)
+    if (p.sandbox_id && cn?.id === p.connection_id && cn.broker_ref === p.identity.user_id)
+      await boatClient(cn, key, deps.runtimeFetch).deleteSandbox(
+        p.sandbox_id,
+        p.attempt,
+        p.identity,
+      )
   }
   const owned = async (c: Parameters<typeof ctx.requireWorkspace>[0], id: string) => {
     const org = await ctx.requireWorkspace(c, "publish")
@@ -132,7 +132,7 @@ export const accountLoginRoutes = (ctx: AppContext) => {
   app.get("/v1/accounts/login-options", async (c) => {
     const org = await ctx.requireWorkspace(c, "read")
     if (org instanceof Response) return org
-    return c.json({ device_login: available(org) })
+    return c.json({ device_login: await available(org) })
   })
 
   app.post("/v1/accounts/login", async (c) => {
@@ -141,12 +141,15 @@ export const accountLoginRoutes = (ctx: AppContext) => {
     if (org instanceof Response) return org
     const who = await ctx.managementPrincipal(c)
     if (!who) return fail(c, 403, "A signed-in person connects an account")
-    if (!key || !box || !available(org))
+    if (!key || !(await available(org)))
       return fail(
         c,
         503,
-        "Plan connections need Box enabled and an HTTPS callback for this workspace",
+        "Connect boat.dev in Settings → Connections before connecting a plan. This server also needs an HTTPS callback.",
       )
+    const cn = await boatConnection(meta, org)
+    if (!cn || cn.status !== "active") return fail(c, 503, "Connect boat.dev first")
+    const box = boatClient(cn, key, deps.runtimeFetch)
     const b = await readJson(
       c,
       z.object({
@@ -179,11 +182,12 @@ export const accountLoginRoutes = (ctx: AppContext) => {
       const old = pending(existing)
       if (old && existing.status === "connecting" && old.expires > Date.now())
         return c.json(view(existing), 202)
-      if (old) await ctx.afterResponse(c, () => stop(old))
+      if (old) await ctx.afterResponse(c, () => stop(old, org))
     }
     const p: PendingLogin = {
       attempt: newId("login"),
       owner: who,
+      connection_id: cn.id,
       expires: Date.now() + 600000,
       phase: "starting",
       identity: await box.authenticate(),
@@ -248,7 +252,7 @@ export const accountLoginRoutes = (ctx: AppContext) => {
           return c.json(view(current))
         }
         if (!current || !now || now.attempt !== p.attempt) break
-        const updated = await save(current, { ...now, box: created.sandbox.id })
+        const updated = await save(current, { ...now, sandbox_id: created.sandbox.id })
         if (!updated) continue
         if (updated.status === "needs_attention")
           await box.deleteSandbox(created.sandbox.id, p.attempt, p.identity)
@@ -262,7 +266,7 @@ export const accountLoginRoutes = (ctx: AppContext) => {
         { ...p, phase: "failed", reason: "setup_failed", secret: undefined },
         "needs_attention",
       )
-      return fail(c, 503, "The connection box could not start. Try again.")
+      return fail(c, 503, "The connection sandbox could not start. Try again.")
     }
   })
 
@@ -279,7 +283,7 @@ export const accountLoginRoutes = (ctx: AppContext) => {
           { ...p, phase: "failed", reason: "expired", secret: undefined },
           "needs_attention",
         )) ?? a
-      await ctx.afterResponse(c, () => stop(p))
+      await ctx.afterResponse(c, () => stop(p, a.org_id))
     }
     return c.json(view(a))
   })
@@ -300,7 +304,7 @@ export const accountLoginRoutes = (ctx: AppContext) => {
       auth.a.secret_enc,
     )
     if (!changed) return fail(c, 409, "This account changed. Open it again.")
-    await ctx.afterResponse(c, () => stop(p))
+    await ctx.afterResponse(c, () => stop(p, auth.org))
     return c.json({ cancelled: true })
   })
 
@@ -312,10 +316,14 @@ export const accountLoginRoutes = (ctx: AppContext) => {
     const claim = await verifyCapabilityToken(DOMAIN, key, token, Date.now())
     const a = await meta.getAccount(c.req.param("id"))
     const p = a && pending(a)
+    const cn = a && (await boatConnection(meta, a.org_id))
     if (
       !a ||
       !p ||
       a.status !== "connecting" ||
+      cn?.status !== "active" ||
+      cn.id !== p.connection_id ||
+      cn.broker_ref !== p.identity.user_id ||
       claim?.rest !== [a.id, a.org_id, p.attempt].join(".") ||
       !(await hasSeat(meta, a.org_id, p.owner))
     )
@@ -371,7 +379,7 @@ export const accountLoginRoutes = (ctx: AppContext) => {
         a.secret_enc,
       )
       if (!done) return fail(c, 409, "This connection changed")
-      await ctx.afterResponse(c, () => stop(p))
+      await ctx.afterResponse(c, () => stop(p, a.org_id))
     } else {
       if (b.phase === "awaiting" && p.phase !== "starting")
         return fail(c, 409, "This connection changed")
@@ -387,7 +395,7 @@ export const accountLoginRoutes = (ctx: AppContext) => {
         b.phase === "failed" ? "needs_attention" : "connecting",
       )
       if (!changed) return fail(c, 409, "This connection changed")
-      if (b.phase === "failed") await ctx.afterResponse(c, () => stop(p))
+      if (b.phase === "failed") await ctx.afterResponse(c, () => stop(p, a.org_id))
     }
     return c.json({ accepted: true })
   })

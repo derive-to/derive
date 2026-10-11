@@ -137,7 +137,14 @@ function taskStatus(job: Job, agent: Agent): string {
   if (job.status === "needs_you") return "Needs you"
   if (job.status === "failed" || job.status === "lost") return "Failed"
   if (job.status === "cancelled") return "Stopped"
-  if (job.status === "queued") return agent.paused ? "Paused" : "Queued"
+  if (job.status === "queued") {
+    if (agent.paused) return "Paused"
+    if (["creating", "provisioning", "stopping"].includes(agent.runtime?.phase ?? ""))
+      return "Getting ready"
+    if (agent.runtime?.phase === "failed") return "Retrying setup"
+    return "Queued"
+  }
+  if (job.machine_phase === "starting") return "Starting"
   if (job.machine_phase === "stopping") return "Saving files"
   return "Running"
 }
@@ -147,15 +154,21 @@ function detailOf(job: Job, agent: Agent): string | undefined {
   if (job.status === "failed" || job.status === "lost") return failureOf(job) ?? undefined
   if (job.status === "cancelled") return "Stopped before completion"
   if (job.status === "queued" && agent.runtime?.phase === "creating")
-    return "Getting its sandbox ready…"
+    return "Preparing its first sandbox. This can take a few minutes."
   if (job.status === "queued" && agent.runtime?.phase === "provisioning")
-    return "Setting up its tools…"
+    return "Installing its tools. Your task starts when setup finishes."
+  if (job.status === "queued" && agent.runtime?.phase === "stopping")
+    return "Saving the sandbox so it is ready for your task."
+  if (job.status === "queued" && agent.runtime?.phase === "failed")
+    return "Sandbox setup did not finish. Derive will try again."
   if (job.status === "queued")
     return agent.paused ? "Resume this agent in Settings to start" : "Waiting for its turn"
   if (job.status === "running" && job.machine_phase === "starting") return "Starting its sandbox…"
   if (job.status === "running" && ["ready", "launching"].includes(job.machine_phase ?? ""))
     return "Starting the task…"
   if (job.status === "running" && job.machine_phase === "stopping") return "Saving its files…"
+  if (job.status === "succeeded" && job.machine_phase === "stopping")
+    return "Your result is ready. Stopping compute and collecting its receipt."
   if (job.status === "succeeded") return job.result.effects?.[0]?.label
   return undefined
 }
@@ -177,6 +190,7 @@ export function JobRow({
   const retry = useApiMutation({ mutationFn: () => api.retryJob(job.id), invalidate })
   const needs = job.status === "needs_you"
   const failed = job.status === "failed" || job.status === "lost"
+  const detail = detailOf(job, agent)
   const asker =
     job.kind === "scheduled" ? "Schedule" : job.asked_by ? first(names.get(job.asked_by)) : null
 
@@ -201,7 +215,7 @@ export function JobRow({
             icon={JOB_ICON[job.status]}
             tone={needs ? "warning" : failed ? "destructive" : undefined}
             title={firstLine(job.instruction)}
-            detail={detailOf(job, agent)}
+            detail={detail && <span className="block whitespace-normal">{detail}</span>}
           />
         </button>
         <Meta>
@@ -215,7 +229,7 @@ export function JobRow({
           >
             {taskStatus(job, agent)}
           </span>
-          {asker && <span className="max-sm:hidden">{asker}</span>}
+          {asker && <span>{asker}</span>}
           {job.report_short_id && (
             <Link
               to="/artifacts/$ref"

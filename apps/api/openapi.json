@@ -1738,7 +1738,7 @@
                 "type": "string",
                 "enum": [
                   "ortam",
-                  "box"
+                  "boat"
                 ]
               },
               "phase": {
@@ -2081,7 +2081,7 @@
                       "type": "string",
                       "enum": [
                         "ortam",
-                        "box"
+                        "boat"
                       ]
                     },
                     "sandbox_id": {
@@ -3733,6 +3733,30 @@
         "required": [
           "id",
           "name"
+        ]
+      },
+      "ComputeConnection": {
+        "type": "object",
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "connected": {
+            "type": "boolean"
+          },
+          "account_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "can_manage": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "available",
+          "connected",
+          "account_id",
+          "can_manage"
         ]
       },
       "ContextInfo": {
@@ -6113,7 +6137,7 @@
                       "nullable": true,
                       "enum": [
                         "ortam",
-                        "box",
+                        "boat",
                         null
                       ]
                     }
@@ -10125,6 +10149,81 @@
                   "required": [
                     "seen_at"
                   ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/runtime/connection": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "The workspace's boat.dev compute connection.",
+        "responses": {
+          "200": {
+            "description": "Workspace compute connection. No credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputeConnection"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Verify and connect the workspace's boat.dev API key.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "api_key": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 4096
+                  }
+                },
+                "required": [
+                  "api_key"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Workspace compute connection. No credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputeConnection"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Disconnect workspace compute and stop its active work.",
+        "responses": {
+          "200": {
+            "description": "Workspace compute connection. No credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputeConnection"
                 }
               }
             }

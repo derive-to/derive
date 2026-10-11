@@ -3223,7 +3223,7 @@ export type ConnectionScope = "personal" | "workspace"
  *  carries its own server URL in its ref and its own bearer in `secret_enc`, so it needs no
  *  vendor account and no broker plan. It is NOT a direct kind — Derive does not make its HTTP
  *  call itself — and it has no vendor side to revoke. */
-export type ConnectionKind = "oauth" | "secret" | "github_app" | "slack" | "mcp"
+export type ConnectionKind = "oauth" | "secret" | "github_app" | "slack" | "mcp" | "runtime"
 
 /** A per-user connected external account (WO3): the owner authorized Derive's broker to act on
  *  their Gmail/Stripe/GitHub/etc. Always bound to ONE person (identity never falls back), and

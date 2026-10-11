@@ -1,5 +1,7 @@
+import { useState } from "react"
 import type { Agent, Job } from "@/api"
 import { SectionHeading } from "@/components/shared/section-title"
+import { useMemberNames } from "./use-member-names"
 
 type Run = NonNullable<Job["result"]["runs"]>[number]
 const dollars = (micro: number) =>
@@ -64,6 +66,9 @@ const average = (values: (number | null)[]) => {
 /** Summaries cover the loaded tasks. Plan usage, reported spend, and API estimates
  * have separate labels. Failed attempts remain in every spend and token total. */
 export function TaskUsage({ jobs, agents }: { jobs: Job[]; agents?: Agent[] }) {
+  const [groupBy, setGroupBy] = useState<"agent" | "person">("agent")
+  const names = useMemberNames()
+  const personOf = (job: Job) => job.asked_by ?? (job.kind === "scheduled" ? "schedule" : "unknown")
   const settled = jobs.filter((j) =>
     ["succeeded", "failed", "cancelled", "lost"].includes(j.status),
   )
@@ -119,6 +124,8 @@ export function TaskUsage({ jobs, agents }: { jobs: Job[]; agents?: Agent[] }) {
       </div>
       <p className="text-sm text-muted-foreground">
         Recent tasks · API estimates compare token usage. They do not price your plan.
+        {known.length < settled.length &&
+          " Plan charges can stay unknown. A missing charge does not mean free."}
       </p>
       <details className="text-sm text-muted-foreground" data-testid="task-usage-coverage">
         <summary>Receipt coverage</summary>
@@ -133,12 +140,26 @@ export function TaskUsage({ jobs, agents }: { jobs: Job[]; agents?: Agent[] }) {
       </details>
       {agents && (
         <div className="overflow-x-auto">
-          <SectionHeading className="mb-3">By agent</SectionHeading>
-          <table className="w-full text-left text-sm" data-testid="task-usage-by-agent">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <SectionHeading>By {groupBy}</SectionHeading>
+            <label className="flex items-center gap-2 text-sm text-muted-foreground">
+              Group by
+              <select
+                data-testid="task-usage-group"
+                value={groupBy}
+                onChange={(e) => setGroupBy(e.target.value === "person" ? "person" : "agent")}
+                className="rounded-md border border-border bg-background px-2 py-1 text-foreground"
+              >
+                <option value="agent">Agent</option>
+                <option value="person">Person</option>
+              </select>
+            </label>
+          </div>
+          <table className="w-full text-left text-sm" data-testid={`task-usage-by-${groupBy}`}>
             <thead className="text-muted-foreground">
               <tr>
                 <th scope="col" className="py-2 font-normal">
-                  Agent
+                  {groupBy === "agent" ? "Agent" : "Started by"}
                 </th>
                 <th scope="col" className="px-3 py-2 font-normal">
                   Completed
@@ -152,45 +173,58 @@ export function TaskUsage({ jobs, agents }: { jobs: Job[]; agents?: Agent[] }) {
               </tr>
             </thead>
             <tbody>
-              {[...new Set([...agents.map((a) => a.id), ...settled.map((j) => j.agent_id)])].map(
-                (id) => {
-                  const name =
-                    agents.find((a) => a.id === id)?.name ??
-                    (id === "derive" ? "Chat" : "Removed agent")
-                  const tasks = settled.filter((j) => j.agent_id === id)
-                  const done = tasks.filter((j) => j.status === "succeeded")
-                  const reported = tasks.filter((j) => j.cost_micro_usd !== null)
-                  const estimates = done.map(taskEstimate).filter((n): n is number => n !== null)
-                  const apiCost = average(estimates)
-                  return (
-                    <tr key={id} className="border-t border-border">
-                      <th scope="row" className="py-3 font-medium">
-                        {name}
-                      </th>
-                      <td className="px-3 font-mono">
-                        {done.length}/{tasks.length}
-                      </td>
-                      <td className="px-3 font-mono">
-                        {reported.length
-                          ? dollars(reported.reduce((n, j) => n + (j.cost_micro_usd ?? 0), 0))
-                          : "Unknown"}
-                      </td>
-                      <td className="text-right font-mono">
-                        {apiCost === null ? (
-                          "Unknown"
-                        ) : (
-                          <>
-                            {dollars(apiCost)}
-                            <span className="block font-sans text-sm text-muted-foreground">
-                              {estimates.length}/{done.length} tasks
-                            </span>
-                          </>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                },
-              )}
+              {[
+                ...new Set(
+                  groupBy === "agent"
+                    ? [...agents.map((a) => a.id), ...settled.map((j) => j.agent_id)]
+                    : settled.map(personOf),
+                ),
+              ].map((id) => {
+                const name =
+                  groupBy === "agent"
+                    ? (agents.find((a) => a.id === id)?.name ??
+                      (id === "derive" ? "Chat" : "Removed agent"))
+                    : names.get(id) ||
+                      (id === "schedule"
+                        ? "Schedule"
+                        : id === "unknown"
+                          ? "Unknown person"
+                          : "Former member")
+                const tasks = settled.filter(
+                  (j) => (groupBy === "agent" ? j.agent_id : personOf(j)) === id,
+                )
+                const done = tasks.filter((j) => j.status === "succeeded")
+                const reported = tasks.filter((j) => j.cost_micro_usd !== null)
+                const estimates = done.map(taskEstimate).filter((n): n is number => n !== null)
+                const apiCost = average(estimates)
+                return (
+                  <tr key={id} className="border-t border-border">
+                    <th scope="row" className="py-3 font-medium">
+                      {name}
+                    </th>
+                    <td className="px-3 font-mono">
+                      {done.length}/{tasks.length}
+                    </td>
+                    <td className="px-3 font-mono">
+                      {reported.length
+                        ? dollars(reported.reduce((n, j) => n + (j.cost_micro_usd ?? 0), 0))
+                        : "Unknown"}
+                    </td>
+                    <td className="text-right font-mono">
+                      {apiCost === null ? (
+                        "Unknown"
+                      ) : (
+                        <>
+                          {dollars(apiCost)}
+                          <span className="block font-sans text-sm text-muted-foreground">
+                            {estimates.length}/{done.length} tasks
+                          </span>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -351,7 +385,7 @@ export function TaskReceipt({ job }: { job: Job }) {
       )}
       {(job.result.compute ?? []).map((c) => (
         <p key={c.turn} className="text-muted-foreground">
-          {c.provider === "box" ? "Box" : "Ortam"} · compute stopped ·{" "}
+          {c.provider === "boat" ? "boat.dev" : "Ortam"} · compute stopped ·{" "}
           {c.billable_seconds === null
             ? "Unknown billable time"
             : `${number(c.billable_seconds)} billable seconds`}{" "}

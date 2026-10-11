@@ -50,7 +50,7 @@ const SECTIONS: { id: string; label: string; group: (typeof GROUP_ORDER)[number]
   { id: "members", label: "Members", group: "Workspace" },
   { id: "billing", label: "Billing", group: "Workspace" },
   { id: "machines", label: "Machines", group: "Workspace" },
-  { id: "sources", label: "Sources", group: "Workspace" },
+  { id: "sources", label: "Connections", group: "Workspace" },
   { id: "integrations", label: "Integrations", group: "Workspace" },
   { id: "webhooks", label: "Webhooks", group: "Workspace" },
   { id: "domains", label: "Domains", group: "Workspace" },

@@ -761,7 +761,7 @@ export interface Connection {
   scope?: "personal" | "workspace"
   /** How it authenticates. `mcp` is a Model Context Protocol server connected by URL — it needs
    *  no vendor account and no broker plan, which is why it is the one kind you can add here. */
-  kind?: "oauth" | "secret" | "github_app" | "slack" | "mcp"
+  kind?: "oauth" | "secret" | "github_app" | "slack" | "mcp" | "runtime"
   /** kind `mcp`: the server URL. Display only — the credential never comes back. */
   base_url?: string | null
   scopes_label: string | null
@@ -1361,6 +1361,13 @@ export const api = {
     f(`/v1/reports/${id}/dismiss`, opts({})).then(j),
 
   listAgents: (): Promise<{ agents: ListedAgent[] }> => f("/v1/agents", opts()).then(j),
+  computeConnection: () =>
+    f("/v1/runtime/connection", opts()).then(j) as Promise<
+      components["schemas"]["ComputeConnection"]
+    >,
+  connectCompute: (api_key: string) =>
+    f("/v1/runtime/connection", { ...opts({ api_key }), method: "PUT" }).then(j),
+  disconnectCompute: () => f("/v1/runtime/connection", { ...opts(), method: "DELETE" }).then(j),
   agentRuntime: () =>
     f("/v1/agents/runtime", opts()).then(j) as Promise<
       paths["/v1/agents/runtime"]["get"]["responses"][200]["content"]["application/json"]

@@ -103,7 +103,7 @@ const JobResultSchema = z.object({
     .array(
       z.object({
         turn: z.string(),
-        provider: z.enum(["ortam", "box"]),
+        provider: z.enum(["ortam", "boat"]),
         sandbox_id: z.string(),
         started_at: z.string(),
         stopped_at: z.string(),

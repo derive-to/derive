@@ -31,9 +31,9 @@ export function runtimeFailureReason(error: unknown): string {
     if (typeof (e as { status?: unknown }).status === "number" && typeof path === "string")
       return `ortam_http_${(e as { status: number }).status} /${path.split(/[/?]/)[1] ?? ""}`
     if ((e as { name?: unknown }).name === "ZodError") return "unexpected_response_shape"
-    if (typeof e.message === "string" && /^Box returned HTTP \d{3}$/.test(e.message))
+    if (typeof e.message === "string" && /^boat\.dev returned HTTP \d{3}$/.test(e.message))
       return e.message
-    if (typeof e.message === "string" && /^Box [A-Za-z ]+$/.test(e.message)) return e.message
+    if (typeof e.message === "string" && /^boat\.dev [A-Za-z ]+$/.test(e.message)) return e.message
     if (typeof e.message === "string" && /^Ortam [A-Za-z ./()-]+$/.test(e.message)) return e.message
     error = e.cause
   }

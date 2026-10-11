@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input"
 import { connectionsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useOneShotParams } from "@/lib/use-one-shot-params"
+import { BoatConnection } from "./boat-connection"
 import { SecretsGroup } from "./secrets-group"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
@@ -55,9 +56,10 @@ export function SourcesSection() {
 
   return (
     <SettingsSection
-      title="Sources"
-      description="What your agents can reach: connected tools, and secrets they read as environment variables."
+      title="Connections"
+      description="Connect cloud compute, tools, and secrets for this workspace."
     >
+      <BoatConnection />
       {justConnected ? (
         <StatusPanel
           tone="success"

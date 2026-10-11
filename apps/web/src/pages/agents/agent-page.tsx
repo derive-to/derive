@@ -73,7 +73,7 @@ export function AgentPage() {
       />
       <p data-testid="agent-run-config" className="text-sm text-muted-foreground">
         {agent.machine === "derive"
-          ? `Cloud · ${agent.runtime?.provider === "box" ? "Box" : "Ortam"}`
+          ? `Cloud · ${agent.runtime?.provider === "boat" ? "boat.dev" : "Ortam"}`
           : machineOf(agent, names).label}
         {" · "}
         {modelChoices(agent.provider).find((choice) => choice.id === agent.model)?.label ??

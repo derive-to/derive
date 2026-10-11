@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
+import { Link } from "@tanstack/react-router"
 import { type FormEvent, useState } from "react"
 import { api, type ModelAccount, type NewModelAccount } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
@@ -39,6 +40,7 @@ export const accountLabel = (a: ModelAccount): string =>
 // workspace's shared ones. A key is pasted once and never shown again; only its last four
 // characters come back.
 export function AccountsSection() {
+  const runtime = useQuery({ queryKey: ["agents", "runtime"], queryFn: api.agentRuntime })
   const accounts = useQuery(accountsQuery())
   const agents = useQuery(agentsQuery())
   const workspace = useQuery(workspaceQuery())
@@ -63,6 +65,19 @@ export function AccountsSection() {
 
   return (
     <SettingsSection title="Model accounts">
+      {runtime.data?.provider === "boat" && !runtime.data.enabled && (
+        <p className="mb-4 text-sm text-muted-foreground">
+          Connect boat.dev for this workspace before connecting a plan.{" "}
+          <Link
+            to="/settings/$section"
+            params={{ section: "sources" }}
+            data-testid="accounts-connect-compute"
+            className="underline"
+          >
+            Connect cloud compute
+          </Link>
+        </p>
+      )}
       {accounts.isError ? (
         <LoadError
           title="Couldn’t load accounts."

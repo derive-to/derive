@@ -2,7 +2,6 @@ import { type AgentRecord, type JobRecord, jobResult, type MetaStore, newId } fr
 import type { AppDeps } from "../context"
 import { log } from "../log"
 import { agentWritesOff } from "./agent-writes"
-import { BoxClient } from "./box-client"
 import { sha256 } from "./crypto"
 import {
   type JobDeps,
@@ -15,8 +14,9 @@ import {
 import { OrtamClient } from "./ortam-client"
 import { RUN_LEASE_MS, RUN_TIMEOUT_MS } from "./run-lifecycle"
 import { signWorkToken } from "./run-token"
+import { boatClient, boatConnection, cloudEnabled } from "./runtime-connection"
 import { runtimeFailureReason } from "./runtime-diagnostics"
-import { INSTALL_RUNTIME_RUNNER, RUNNER_VERSION } from "./runtime-setup"
+import { INSTALL_RUNTIME_RUNNER, runnerRunsJobs } from "./runtime-setup"
 import type { SandboxClient } from "./sandbox-client"
 
 // THE DERIVE MACHINE: one Ortam sandbox per agent, kept stopped between jobs so its files
@@ -59,7 +59,8 @@ interface Identity {
 }
 interface SandboxState {
   api_url: string
-  provider?: "ortam" | "box"
+  provider?: "ortam" | "boat"
+  connection_id?: string
   identity: Identity
   /** One id per sandbox this agent ever has: the create and delete idempotency keys carry it,
    *  so a recreate after a failure never gets the old sandbox back. */
@@ -94,13 +95,7 @@ const parse = <T>(s: string | null): T | null => {
 /** Does the pinned sandbox runner know job tokens? `runner run` with a `dkjob_` token arrived
  *  in CLI 0.8.0; an older pinned install would fail every job. A path with no version (a
  *  self-host's own install) is trusted. */
-export const runnerRunsJobs = (runnerPath: string, installs: string = RUNNER_VERSION): boolean => {
-  const [major = 0, minor = 0] = installs.split(".").map(Number)
-  if (major === 0 && minor < 8) return false
-  // The path must be the version the sandbox installs, or name none (a self-host's install).
-  const v = /derive-runtime\/(\d+\.\d+\.\d+)\//.exec(runnerPath)
-  return !v || v[1] === installs
-}
+export { runnerRunsJobs } from "./runtime-setup"
 
 /** Which workspaces may run Derive machines: the managed Ortam allowlist, once the sandbox
  *  runner can run jobs. */
@@ -118,13 +113,15 @@ const sandboxRequest = (agent: AgentRecord) => ({
 })
 
 /** One provider selection for normal work and retirement. Ortam scopes identity per agent. */
-const clientFor = (
-  deps: Pick<MachineDeps, "config" | "fetcher">,
-  agent: AgentRecord,
-): SandboxClient => {
+const clientFor = async (deps: MachineDeps, agent: AgentRecord): Promise<SandboxClient> => {
+  if (deps.config.provider === "boat") {
+    const cn = await boatConnection(deps.meta, agent.org_id)
+    const state = parse<SandboxState>(agent.sandbox_state_json)
+    if (!cn || (state?.connection_id && state.connection_id !== cn.id))
+      throw new Error("boat.dev connection is unavailable")
+    return boatClient(cn, deps.secret, deps.fetcher)
+  }
   if (!deps.config.managed?.apiKey) throw new Error("Derive machines are not configured")
-  if (deps.config.provider === "box")
-    return new BoxClient(deps.config.apiUrl, deps.config.managed.apiKey, deps.fetcher)
   return new OrtamClient(
     deps.config.apiUrl,
     deps.config.managed.apiKey,
@@ -139,7 +136,7 @@ const iso = (deps: MachineDeps) => (deps.now?.() ?? new Date()).toISOString()
 const admitted = async (deps: MachineDeps, agent: AgentRecord) =>
   agent.machine === "derive" &&
   !agent.paused_at &&
-  machineWorkspaces(deps.config).has(agent.org_id) &&
+  (await cloudEnabled(deps.meta, deps.config, agent.org_id)) &&
   // Fails closed: a settings read error counts as the brake being on.
   !(await agentWritesOff(deps.meta, agent.org_id))
 
@@ -166,7 +163,7 @@ export async function advanceSandbox(
 
   if (agent.sandbox_phase === null) {
     if (!allowed) return agent
-    const client = clientFor(deps, agent)
+    const client = await clientFor(deps, agent)
     const auth = await client.authenticate()
     const prior = parse<SandboxState>(agent.sandbox_state_json)
     return meta.transitionAgentSandbox(agent.id, agent.org_id, agent.sandbox_rev, {
@@ -174,6 +171,9 @@ export async function advanceSandbox(
       state_json: JSON.stringify({
         api_url: deps.config.apiUrl,
         provider: deps.config.provider ?? "ortam",
+        ...(deps.config.provider === "boat"
+          ? { connection_id: (await boatConnection(meta, agent.org_id))?.id }
+          : {}),
         identity: { organization_id: auth.organization_id, user_id: auth.user_id },
         generation: newId("sbg"),
         failures: prior?.failures ?? 0,
@@ -186,7 +186,7 @@ export async function advanceSandbox(
     (state.provider ?? "ortam") !== (deps.config.provider ?? "ortam")
   )
     throw new Error("Sandbox belongs to a different runtime")
-  const client = clientFor(deps, agent)
+  const client = await clientFor(deps, agent)
   const id = agent.sandbox_id
   // `failed` ends a sandbox's life; only a failed operation counts toward the backoff, not a
   // deliberate delete (an agent moved off Derive, admission withdrawn).
@@ -341,7 +341,7 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
     (state.provider ?? "ortam") !== (deps.config.provider ?? "ortam")
   )
     throw new Error("Sandbox belongs to a different runtime")
-  const client = clientFor(deps, agent)
+  const client = await clientFor(deps, agent)
   const sandbox = agent.sandbox_id
   const at = iso(deps)
   const expired = at >= m.deadline_at
@@ -476,6 +476,9 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
                   {
                     turn: m.turn,
                     provider: deps.config.provider ?? "ortam",
+                    ...(deps.config.provider === "boat"
+                      ? { connection_id: (await boatConnection(meta, agent.org_id))?.id }
+                      : {}),
                     sandbox_id: sandbox,
                     started_at: m.active_at,
                     stopped_at: stopped,
@@ -563,7 +566,7 @@ export async function machinePass(
 
   // A sandbox whose agent no longer runs on Derive is deleted; its files are gone with it.
   for (const agent of await meta.listAgentsInSandboxPhase(["ready"], 100))
-    if (agent.machine !== "derive")
+    if (agent.machine !== "derive" || !(await cloudEnabled(meta, deps.config, agent.org_id)))
       await guard("retire", agent.id, () =>
         meta.transitionAgentSandbox(agent.id, agent.org_id, agent.sandbox_rev, {
           phase: "deleting",
@@ -571,7 +574,7 @@ export async function machinePass(
       )
 
   const orgs = machineWorkspaces(deps.config)
-  if (orgs.size === 0) return out
+  if (deps.config.provider !== "boat" && orgs.size === 0) return out
   // Sandboxes coming up count against the same ceilings as jobs holding one.
   const starting = await meta.listAgentsInSandboxPhase(["creating", "provisioning"], 100)
   const perOrg = new Map<string, number>()
@@ -580,14 +583,32 @@ export async function machinePass(
   for (const a of starting) count(a.org_id)
   let room = GLOBAL_LIMIT - [...perOrg.values()].reduce((n, x) => n + x, 0)
   const tried = new Set<string>()
-  for (const job of await meta.listQueuedDeriveJobs(50, [...orgs])) {
+  for (const job of await meta.listQueuedDeriveJobs(
+    50,
+    deps.config.provider === "boat" ? undefined : [...orgs],
+  )) {
     if (room <= 0) break
     if ((perOrg.get(job.org_id) ?? 0) >= ORG_LIMIT) continue
     if (tried.has(job.agent_id)) continue
     tried.add(job.agent_id)
     await guard("dispatch", job.id, async () => {
       let agent = await meta.getAgent(job.agent_id)
-      if (!agent || !(await admitted(deps, agent))) return
+      if (!agent) return
+      if (!(await cloudEnabled(meta, deps.config, agent.org_id))) {
+        const last = (await meta.listJobMessages(job.id)).at(-1)
+        if (!last?.meta_json || JSON.parse(last.meta_json).held !== "compute")
+          await meta.addJobMessage({
+            id: newId("jm"),
+            job_id: job.id,
+            author_kind: "agent",
+            author_id: agent.id,
+            body_md:
+              "This task waits for cloud compute. Ask a workspace owner to connect boat.dev in Settings → Connections.",
+            meta_json: JSON.stringify({ progress: true, held: "compute", server: true }),
+          })
+        return
+      }
+      if (!(await admitted(deps, agent))) return
       // A reconnect keeps the selected account and queued work. Do not allocate compute
       // or silently bill another account while its credential is being replaced.
       const account = agent.account_id ? await meta.getAccount(agent.account_id) : null
@@ -689,13 +710,10 @@ async function failWaiting(deps: MachineDeps, agent: AgentRecord, why: string) {
 /** Delete an agent's sandbox now, for an agent that is itself being deleted (its row, and with
  *  it the sandbox's identity, is about to go). Best effort; the sandbox's own auto-stop bounds
  *  compute if this fails. */
-export async function retireSandbox(
-  config: AppDeps["runtime"] | undefined,
-  fetcher: typeof fetch | undefined,
-  agent: AgentRecord,
-): Promise<void> {
+export async function retireSandbox(deps: MachineDeps | null, agent: AgentRecord): Promise<void> {
   const state = parse<SandboxState>(agent.sandbox_state_json)
-  if (!state?.identity || !config?.managed?.apiKey) return
+  if (!state?.identity || !deps) return
+  const { config } = deps
   if (agent.sandbox_phase === null || agent.sandbox_phase === "failed") return
   try {
     if (
@@ -703,7 +721,7 @@ export async function retireSandbox(
       (state.provider ?? "ortam") !== (config.provider ?? "ortam")
     )
       throw new Error("Sandbox belongs to a different runtime")
-    const client = clientFor({ config, fetcher }, agent)
+    const client = await clientFor(deps, agent)
     // A create whose answer never arrived still made a sandbox; its key finds it.
     const id =
       agent.sandbox_id ??
@@ -737,7 +755,10 @@ export const machineDepsFrom = (
     announce?: JobDeps["announce"]
   },
 ): MachineDeps | null =>
-  opts.secret && opts.server && opts.config?.managed?.apiKey
+  opts.secret &&
+  opts.server &&
+  opts.config &&
+  (opts.config.provider === "boat" || opts.config.managed?.apiKey)
     ? {
         meta,
         secret: opts.secret,

@@ -141,7 +141,7 @@ export interface SessionUser {
 
 export interface AppDeps {
   runtime?: {
-    provider?: "ortam" | "box"
+    provider?: "ortam" | "boat"
     apiUrl: string
     /** Absolute path to a pinned CLI installation in the saved sandbox. */
     runnerPath: string
