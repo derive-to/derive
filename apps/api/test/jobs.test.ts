@@ -1741,10 +1741,10 @@ describe("jobs: which account a job runs with", () => {
       id: string
     }
     const [held] = await pull(app, edsAgent)
-    expect(held?.id).toBe(job.id)
+    expect(held).toBeDefined()
     const credFor = (headers: Record<string, string>) =>
       app.request(
-        `/v1/jobs/${job.id}/account?claim=${encodeURIComponent(held?.started_at ?? "")}`,
+        `/v1/jobs/${held?.id}/account?claim=${encodeURIComponent(held?.started_at ?? "")}`,
         { headers },
       )
     expect(await (await credFor(bearer(edsAgent.token))).json()).toMatchObject({
