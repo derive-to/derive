@@ -79,8 +79,7 @@ export function AgentPage() {
         {modelChoices(agent.provider).find((choice) => choice.id === agent.model)?.label ??
           agent.model ??
           "Account default"}
-        {" · "}
-        {Math.round(agent.max_run_ms / 60_000)} min maximum
+        {agent.max_run_ms !== null && ` · ${Math.round(agent.max_run_ms / 60_000)} min maximum`}
       </p>
       {workspace.isError && (
         <LoadError

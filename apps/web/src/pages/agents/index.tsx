@@ -190,12 +190,14 @@ export function AgentsHome() {
         <TabsContent value="tasks" className="flex flex-col gap-5 pt-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <fieldset className="flex flex-wrap gap-1" aria-label="Filter tasks">
-              {[
-                ["all", "All tasks"],
-                ["running", "Running"],
-                ["attention", "Needs you"],
-                ["done", "Completed"],
-              ].map(([id, label]) => (
+              {(
+                [
+                  ["all", "All tasks"],
+                  ["running", "Running"],
+                  ["attention", "Needs you"],
+                  ["done", "Completed"],
+                ] as const
+              ).map(([id, label]) => (
                 <Button
                   key={id}
                   variant={filter === id ? "secondary" : "ghost"}
