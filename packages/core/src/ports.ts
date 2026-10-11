@@ -3122,6 +3122,7 @@ export interface NewAgent {
   managed?: 0 | 1
   description?: string | null
   instructions_artifact_id?: string | null
+  account_id?: string | null
   machine?: import("./agent-model").AgentMachine
   connection_ids_json?: string | null
   repositories_json?: string | null
