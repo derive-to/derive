@@ -360,11 +360,13 @@ test("settings destinations and their retired paths resolve", async ({ owner }) 
   await owner.goto("/brandprint")
   await expect(owner).toHaveURL(/\/settings\/brandprint$/)
 
-  // GitHub is a standard integration now. Its retired standalone settings path lands on the
-  // shared connection surface, with no repository-mirroring controls or collection workflow.
+  // GitHub, Slack and MCP servers are all sources. The retired GitHub and Integrations paths
+  // land on Sources, with no repository-mirroring controls or collection workflow.
   await owner.goto("/settings/github")
-  await expect(owner).toHaveURL(/\/settings\/integrations$/)
+  await expect(owner).toHaveURL(/\/settings\/sources$/)
   await expect(owner.getByRole("heading", { name: "GitHub", exact: true })).toBeVisible()
+  await owner.goto("/settings/integrations")
+  await expect(owner).toHaveURL(/\/settings\/sources$/)
   await expect(
     owner.getByText("Ask an instance operator to configure the shared GitHub App."),
   ).toBeVisible()
@@ -882,7 +884,7 @@ test("Settings lists the machines agents run on and the accounts they use", asyn
   await expect(row).toContainText("Your Claude")
   await expect(row).toContainText("abcd")
   await owner.screenshot({ path: testInfo.outputPath("settings-accounts.png"), fullPage: true })
-  await owner.getByTestId("accounts").getByRole("button", { name: "Disconnect" }).click()
+  await owner.getByTestId("accounts").getByRole("button", { name: "Remove" }).click()
   await owner.getByTestId("account-disconnect-confirm").click()
   await expect(owner.getByTestId("accounts")).toHaveCount(0)
 })

@@ -28,10 +28,10 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 
 | Path | What is there |
 | --- | --- |
-| `/agents` | Agents: every agent in the workspace, grouped by what needs a person, what is running, what runs on a schedule, and what runs when asked. |
+| `/agents` | Agents: every agent in the workspace, grouped by what needs a person, what is running, what runs on a schedule, and what runs on demand. |
 | `/inbox` | Inbox: the jobs waiting on you, answered in place (a choice, a reply, or a link to the page to review), then the pages agents published in the workspace today. |
 | `/agents/new` | New agent: a prompt to paste into Claude Code or Codex. The coding session creates the agent over MCP. |
-| `/agents/{id}` | One agent. Jobs: what it is doing and has done, with Cancel, Retry, and answers to its questions. Settings: pause, schedules, account, sources, who can ask, its key, delete. |
+| `/agents/{id}` | One agent. Jobs: what needs you, answered in place, then every job with Cancel and Retry. Settings: status, name, description, instructions, schedule, machine, model account, model, sources, environment variables, publishing, access, runner key, delete. |
 | `/` | Artifacts, the library: everything in the workspace, most recently updated first. Filter by title, or press Enter to search everything. Collections narrow it. |
 | `/search` | Full search across the workspace, by keyword and by meaning. |
 | `/favorites` | Documents they starred. |
@@ -53,15 +53,14 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 | `/settings/profile` | Their name, handle, avatar. |
 | `/settings/security` | Password and sessions. |
 | `/settings/notifications` | Slack DMs, account linking, and what opens automatically for you. |
-| `/settings/accounts` | Model accounts: the Claude and Codex accounts agents call a model with: yours, and the workspace's shared ones. Paste a key to connect one; disconnect it here. Only an Admin adds a shared one. |
+| `/settings/accounts` | Model accounts: the Claude and Codex accounts agents call a model with: yours, and the workspace's shared ones. Paste a key to add one; remove it here. Only an Admin adds a shared one. |
 | `/settings/appearance` | Theme. |
-| `/settings/general` | Workspace name, its sharing defaults, and the "Agents can write" switch (Admin only): off, agents stop writing and their jobs wait. |
+| `/settings/general` | Workspace name, its sharing defaults, workspace email notifications, and the "Agents can write" switch (Admin only): off, agents stop writing and their jobs wait. |
 | `/settings/members` | Invite people, change roles, remove them. Admin only. |
 | `/people` | The workspace people directory. |
 | `/settings/billing` | Plan, seats, invoices. Admin only. |
 | `/settings/machines` | Where agents run: each person's machine running a runner, when it last checked in, and the command that starts a runner. |
-| `/settings/sources` | What agents can reach. Connected tools: add an MCP server so an agent can read from it. Secrets: named personal or workspace values (database passwords, API keys) an agent reads as environment variables; add, replace or revoke them. Values are write-only. |
-| `/settings/integrations` | Connect Slack and GitHub; manage workspace email notifications. |
+| `/settings/sources` | What agents can reach, on one page. GitHub and Slack (connect, disconnect, Slack channel routing). MCP servers: add one by URL so an agent can read its tools. Secrets: named personal or workspace values (database passwords, API keys) an agent reads as environment variables; add, replace or revoke them. Values are write-only. |
 | `/settings/webhooks` | Send Derive events to a URL. |
 | `/settings/domains` | Serve published pages on a custom domain. |
 | `/settings/brandprint` | The workspace's brand: what published pages look like. |
@@ -99,8 +98,8 @@ an agent or the CLI (`derive publish`) after connecting at `/welcome`.
 **Connect an agent (MCP).** `/welcome` has the setup for whichever agent they use. That is also
 how the CLI is authorised.
 
-**Connect a source.** `/settings/sources`, add the MCP server's URL. An agent reaches it once it is added
-under Reaches on the agent's Settings tab.
+**Connect a source.** `/settings/sources`: connect GitHub or Slack, or add an MCP server's URL. An
+agent uses it once it is added under Sources on the agent's Settings tab.
 
 **Make a collection.** The + beside Collections in the sidebar. Then drag documents in, or use the
 organize control on a document.
@@ -122,7 +121,7 @@ stay in one working version. Checkpoints and later versions stay in History and 
 **Follow someone.** Their profile, or the author chip on a document. Their work then shows in
 `/following`.
 
-**Get notified in Slack.** `/settings/integrations` connects Slack; channel routing is per-channel
+**Get notified in Slack.** `/settings/sources` connects Slack; channel routing is per-channel
 on that same screen. Derive can also send direct messages. Each person controls that at
 `/settings/notifications`.
 
@@ -130,14 +129,14 @@ on that same screen. Derive can also send direct messages. Each person controls 
 
 **Change how published pages look.** `/settings/brandprint`.
 
-**Schedule agent work.** The agent's Settings tab at `/agents/{id}`, under Runs. Make the agent first from `/agents/new`.
+**Schedule agent work.** The agent's Settings tab at `/agents/{id}`, under Schedule. Make the agent first from `/agents/new`.
 
 **Make an agent.** `/agents/new` gives a prompt to paste into Claude Code or Codex with Derive
 connected; the coding session creates it. Change it afterwards on its Settings tab.
 
 **Connect a model account.** `/settings/accounts`: paste a Claude or Codex key. An agent runs on
 the account picked on its Settings tab; otherwise on its creator's own account, then the
-workspace's shared one. With none of those its jobs fail. Only the account's owner disconnects it.
+workspace's shared one. With none of those its jobs fail. Only the account's owner removes it.
 
 ## Words people ask about
 
@@ -157,7 +156,7 @@ workspace's shared one. With none of those its jobs fail. Only the account's own
   failed, or cancelled, or waits on a person.
 - **Machine:** where an agent's jobs run: its owner's computer (a runner) or Derive.
 - **Brandprint:** the workspace's design and writing guidance for published work.
-- **Source:** a connected MCP server an agent can read from.
+- **Source:** something an agent can reach outside Derive: GitHub, Slack, an MCP server, or a secret it reads as an environment variable.
 - **Workspace:** the tenant. People, documents, settings, and billing all belong to one.
 
 ## When the answer is no

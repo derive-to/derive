@@ -154,7 +154,7 @@ export function AccountsSection() {
                           onClick={() => setRemoving(a)}
                           className="text-muted-foreground"
                         >
-                          Disconnect
+                          Remove
                         </Button>
                       )}
                     </Meta>
@@ -164,8 +164,8 @@ export function AccountsSection() {
             </Group>
           )}
           <p className="text-sm text-muted-foreground">
-            An agent uses the account picked on its Settings tab. Without one it uses its creator’s
-            own account here, then a shared one. With none of those, its jobs fail.
+            An agent runs on the account chosen on its Settings tab, or its creator’s account here,
+            then a shared one.
           </p>
           {workspace.isError && (
             <LoadError
@@ -186,7 +186,7 @@ export function AccountsSection() {
               onClick={() => setAdding(true)}
               className="self-start"
             >
-              Connect Claude or Codex
+              Add account
             </Button>
           )}
         </div>
@@ -194,9 +194,9 @@ export function AccountsSection() {
       <ConfirmDialog
         open={!!removing}
         onOpenChange={(o) => !o && setRemoving(null)}
-        title={removing ? `Disconnect ${accountLabel(removing)}?` : ""}
-        description="Agents assigned to it fall back to their creator’s own account, then a shared one."
-        confirmLabel="Disconnect"
+        title={removing ? `Remove ${accountLabel(removing)}?` : ""}
+        description="Agents using it fall back to their creator’s account, then a shared one."
+        confirmLabel="Remove"
         confirmTestId="account-disconnect-confirm"
         onConfirm={() =>
           removing ? disconnect.mutateAsync(removing).then(() => setRemoving(null)) : undefined
@@ -253,7 +253,7 @@ function AddAccount({ canShare, onDone }: { canShare: boolean; onDone: () => voi
       <Input
         value={name}
         onChange={(e) => setName(e.target.value)}
-        placeholder="Name it (optional), e.g. Work Max plan"
+        placeholder="Name (optional)"
         aria-label="Name"
         data-testid="account-name"
         maxLength={80}
@@ -286,7 +286,7 @@ function AddAccount({ canShare, onDone }: { canShare: boolean; onDone: () => voi
           disabled={secret.trim().length < 8}
           loading={add.isPending}
         >
-          Connect
+          Add
         </Button>
         <Button
           type="button"

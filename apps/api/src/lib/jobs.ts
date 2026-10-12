@@ -539,6 +539,13 @@ export const reportJob = async (
   const cost =
     r.cost_micro_usd == null ? job.cost_micro_usd : (job.cost_micro_usd ?? 0) + r.cost_micro_usd
   const result: JobResult = { ...jobResult(job), ...(r.result ?? {}) }
+  // A failure's reason is read off the row, so a runner that only wrote it in the message
+  // (a machine that would not start, a crashed run) still leaves one there.
+  if (r.status === "failed" && !result.failure && r.body_md?.trim())
+    result.failure = {
+      reason: r.body_md.trim().split("\n")[0]?.trim() ?? "",
+      retryable: r.retryable === true,
+    }
   const meta_json = r.meta ? JSON.stringify(r.meta) : job.meta_json
   const common = {
     cost_micro_usd: cost,
@@ -561,12 +568,42 @@ export const reportJob = async (
       fence,
     )
   } else if (r.status === "needs_you") {
+    const needs: JobNeeds = r.needs ?? { kind: "escalation", question: r.body_md ?? "" }
+    // A schedule that asks again closes what its earlier runs are still asking: one open
+    // question per schedule, which says how long it has gone unanswered.
+    const earlier = job.trigger_id
+      ? (
+          await meta.listJobs({
+            orgId: job.org_id,
+            agentId: job.agent_id,
+            triggerId: job.trigger_id,
+            status: ["needs_you"],
+          })
+        ).filter((j) => j.id !== job.id)
+      : []
+    for (const e of earlier) {
+      const prior = e.needs_json ? (JSON.parse(e.needs_json) as JobNeeds) : null
+      needs.asked_times = Math.max(needs.asked_times ?? 1, (prior?.asked_times ?? 1) + 1)
+      const first = prior?.first_asked_at ?? e.updated_at
+      if (!needs.first_asked_at || first < needs.first_asked_at) needs.first_asked_at = first
+      await meta.updateJob(
+        e.id,
+        {
+          status: "cancelled",
+          finished_at: now,
+          lease_until: null,
+          dedupe_key: null,
+          result_json: JSON.stringify({ ...jobResult(e), superseded_by: job.id }),
+        },
+        { status: "needs_you" },
+      )
+    }
     next = await meta.updateJob(
       job.id,
       {
         ...common,
         status: "needs_you",
-        needs_json: JSON.stringify(r.needs ?? { kind: "escalation", question: r.body_md ?? "" }),
+        needs_json: JSON.stringify(needs),
         lease_until: null,
       },
       fence,

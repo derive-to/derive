@@ -8,14 +8,14 @@ import { useAuth } from "@/ctx"
 import { agentsQuery, inboxJobsQuery, workspaceActivityQuery } from "@/lib/queries"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { useJobEvents } from "@/lib/use-job-events"
-import { AnswerBox, useCanSteer } from "./agents/agent-jobs"
+import { NeedsRow, useCanSteer } from "./agents/agent-jobs"
 import { firstLine, when } from "./agents/format"
 import { Group, Meta, RowLine, rowClass, Time } from "./agents/rows"
 import { AgentRowsSkeleton } from "./agents/skeleton"
 
-// Inbox (mock izfsuofr): what needs you, answered in place, then what agents published in
-// the workspace today. "Needs you" is every needs_you job you asked or whose agent you
-// manage; the answer goes through the same POST /v1/jobs/{id}/answer as the agent page.
+// Inbox: what needs you, answered in place, then what agents published in the workspace
+// today. "Needs you" is every waiting job you asked or whose agent you manage; the answer
+// goes through the same POST /v1/jobs/{id}/answer as the agent page.
 export function Inbox() {
   useDocumentTitle("Inbox")
   // Job events keep this live; the slow poll is the fallback for what no event reaches.
@@ -41,7 +41,7 @@ export function Inbox() {
         jobs.data.length > 0 && (
           <Group label="Needs you" testId="inbox-needs">
             {jobs.data.map((job) => (
-              <NeedsRow key={job.id} job={job} agent={names.get(job.agent_id)} />
+              <InboxNeedsRow key={job.id} job={job} agent={names.get(job.agent_id)} />
             ))}
           </Group>
         )
@@ -65,7 +65,7 @@ export function Inbox() {
   )
 }
 
-function NeedsRow({ job, agent }: { job: Job; agent: Agent | undefined }) {
+function InboxNeedsRow({ job, agent }: { job: Job; agent: Agent | undefined }) {
   const { me } = useAuth()
   const canSteer = useCanSteer(job, me?.id)
   const subject =
@@ -75,54 +75,37 @@ function NeedsRow({ job, agent }: { job: Job; agent: Agent | undefined }) {
   const reviewPage =
     job.needs?.kind === "review" && subject?.kind === "artifact" ? subject.id : null
   return (
-    <div
-      data-testid={`inbox-job-${job.id}`}
-      data-status={job.status}
-      className="-mx-3 my-0.5 rounded-lg bg-warning/10 px-3"
-    >
-      <div className="flex h-13 items-center gap-3.5 text-base">
-        <Link
-          to="/agents/$id"
-          params={{ id: job.agent_id }}
-          search={{}}
-          data-testid={`inbox-job-agent-${job.id}`}
-          className="flex h-full min-w-0 flex-1 items-center gap-3.5"
-        >
-          <RowLine
-            icon="job-needs-you"
-            tone="warning"
-            title={agent?.name ?? "Agent"}
-            detail={job.needs?.question ?? firstLine(job.instruction)}
-          />
-        </Link>
-        <Meta>
-          {job.report_short_id && (
-            <Link
-              to="/artifacts/$ref"
-              params={{ ref: job.report_short_id }}
-              data-testid={`inbox-job-report-${job.id}`}
-              className="font-medium text-foreground hover:underline"
-            >
-              Report
-            </Link>
-          )}
-          <Time>{when(job.updated_at)}</Time>
-        </Meta>
-      </div>
-      {reviewPage ? (
-        <div className="pb-3 pl-8 text-sm">
+    <div data-testid={`inbox-job-${job.id}`} data-status={job.status}>
+      <NeedsRow
+        job={job}
+        // A review is answered on the page itself, not here.
+        canSteer={canSteer && !reviewPage}
+        title={
           <Link
-            to="/artifacts/$ref"
-            params={{ ref: reviewPage }}
-            data-testid={`inbox-job-review-${job.id}`}
-            className="font-medium text-warning hover:underline"
+            to="/agents/$id"
+            params={{ id: job.agent_id }}
+            search={{}}
+            data-testid={`inbox-job-agent-${job.id}`}
+            className="hover:underline"
           >
-            Review the page
+            {agent?.name ?? "Agent"}
           </Link>
-        </div>
-      ) : (
-        canSteer && <AnswerBox job={job} />
-      )}
+        }
+        below={
+          reviewPage ? (
+            <div className="pl-8 text-sm">
+              <Link
+                to="/artifacts/$ref"
+                params={{ ref: reviewPage }}
+                data-testid={`inbox-job-review-${job.id}`}
+                className="font-medium text-warning hover:underline"
+              >
+                Review the page
+              </Link>
+            </div>
+          ) : undefined
+        }
+      />
     </div>
   )
 }
@@ -160,7 +143,7 @@ function Today({ activity }: { activity: WorkspaceActivity }) {
               icon="page"
               title={page.title}
               detail={
-                v.n === 1 ? "new page" : `v${v.n}${v.message ? ` · ${firstLine(v.message)}` : ""}`
+                v.n === 1 ? "New page" : `v${v.n}${v.message ? ` · ${firstLine(v.message)}` : ""}`
               }
             />
             <Meta>
