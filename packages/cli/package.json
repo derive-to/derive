@@ -1,8 +1,8 @@
 {
   "name": "@derive-to/cli",
-  "version": "0.8.6",
+  "version": "0.8.7",
   "type": "module",
-  "description": "CLI for Derive \u2014 create projects and publish durable, versioned artifacts from the terminal.",
+  "description": "CLI for Derive — create projects and publish durable, versioned artifacts from the terminal.",
   "keywords": [
     "derive",
     "ai-agents",

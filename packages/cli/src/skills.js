@@ -69,7 +69,7 @@ export async function fetchSkill(api, { id, version }) {
     const outline = await api.outline(id, v)
     const pages = outline?.pages ?? []
     if (pages.length === 0) throw new Error("no files in this version")
-    const entry = safeSkillPath(String(outline.entry ?? "SKILL.md").replace(/^\//, ""))
+    const entry = safeSkillPath(String(outline.entry || "SKILL.md").replace(/^\//, ""))
     if (entry !== "SKILL.md") throw new Error("skill entry must be the root SKILL.md")
     const files = new Map()
     for (const p of pages) {
