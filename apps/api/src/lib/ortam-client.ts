@@ -168,7 +168,7 @@ export class OrtamClient {
     identity: { organization_id: string; user_id: string }
   }
 
-  private auth() {
+  private auth(): Record<string, string> {
     return this.mode === "api_key"
       ? { Authorization: `Bearer ${this.access?.token}` }
       : { Authorization: `Bearer ${this.key}`, "X-Ortam-Integration-Subject": this.subject }
