@@ -841,8 +841,16 @@ test("an agent's page answers, retries, and changes the agent", async ({ owner }
   await expect(owner.getByText("Mondays 8:00")).toBeVisible()
   await owner.getByTestId("agent-write-policy-review").click()
   await expect(owner.getByTestId("agent-write-policy-review")).toHaveAttribute("data-state", "on")
+  // A value pasted here becomes a secret named after the variable, and the row says so.
+  await owner.getByTestId("agent-env-name").fill("database_url")
+  await owner.getByTestId("agent-env-value").fill("postgres://smoke:fixture@db/reports")
+  await owner.getByTestId("agent-env-add").click()
+  await expect(owner.getByTestId("agent-env-DATABASE_URL")).toContainText("Personal")
   const saved = await (await owner.request.get(`/v1/agents/${agent.id}`)).json()
   expect(saved).toMatchObject({ paused: true, write_policy: "review" })
+  expect(saved.environment_names).toEqual(["DATABASE_URL"])
+  expect(saved.sources).toMatchObject([{ name: "DATABASE_URL", kind: "secret", scope: "personal" }])
+  expect(JSON.stringify(saved)).not.toContain("smoke:fixture")
   expect(saved.triggers).toHaveLength(1)
   await owner.screenshot({ path: testInfo.outputPath("agent-settings.png"), fullPage: true })
 

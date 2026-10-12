@@ -4,6 +4,7 @@ import { type FormEvent, type ReactNode, useState } from "react"
 import {
   type AgentDetail,
   type AgentPatch,
+  type AgentSource,
   type AgentTrigger,
   api,
   type Connection,
@@ -18,6 +19,7 @@ import {
   Select,
   SelectContent,
   SelectItem,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
@@ -672,7 +674,7 @@ function ModelField({
   )
 }
 
-const KIND_WORD: Record<NonNullable<Connection["kind"]>, string> = {
+const KIND_WORD: Record<AgentSource["kind"], string> = {
   github_app: "GitHub",
   slack: "Slack",
   mcp: "MCP server",
@@ -680,6 +682,47 @@ const KIND_WORD: Record<NonNullable<Connection["kind"]>, string> = {
   secret: "Secret",
 }
 
+/** One bound row: a name, what it is, whose it is, and Remove while editing. */
+function BoundRow({
+  testId,
+  title,
+  mono,
+  detail,
+  right,
+  onRemove,
+  removeTestId,
+}: {
+  testId: string
+  title: string
+  mono?: boolean
+  detail?: string | null
+  right?: string | null
+  onRemove?: () => void
+  removeTestId: string
+}) {
+  return (
+    <div
+      data-testid={testId}
+      className="flex items-center justify-between gap-3 border-b border-border py-1 last:border-b-0"
+    >
+      <span className="flex min-w-0 items-baseline gap-2.5">
+        <span className={cn("truncate", mono && "font-mono")}>{title}</span>
+        {detail && <span className="truncate text-sm text-muted-foreground">{detail}</span>}
+      </span>
+      <span className="flex shrink-0 items-center gap-1 text-sm text-muted-foreground">
+        {right}
+        {onRemove && (
+          <Verb testId={removeTestId} onClick={onRemove}>
+            Remove
+          </Verb>
+        )}
+      </span>
+    </div>
+  )
+}
+
+/** The agent's sources, named by the server for whoever can see the agent (the workspace's
+ *  connections list hides a teammate's personal rows, so it is read only to offer more). */
 function SourcesField({
   agent,
   edit,
@@ -689,11 +732,8 @@ function SourcesField({
   edit: boolean
   onSave: (p: AgentPatch) => void
 }) {
-  const conns = useQuery({
-    ...agentConnectionsQuery(),
-    enabled: agent.connection_ids.length > 0 || edit,
-  })
-  const byId = new Map((conns.data ?? []).map((c) => [c.id, c]))
+  const conns = useQuery({ ...agentConnectionsQuery(), enabled: edit })
+  const known = new Map(agent.sources.map((s) => [s.id, s]))
   const attached = new Set(agent.connection_ids)
   const addable = (conns.data ?? []).filter(
     (c) => !attached.has(c.id) && c.status === "active" && c.kind !== "secret",
@@ -711,36 +751,21 @@ function SourcesField({
       )}
       {agent.connection_ids.length === 0 && <span className="text-muted-foreground">None</span>}
       {agent.connection_ids.map((id) => {
-        const c = byId.get(id)
+        const s = known.get(id)
         return (
-          <div
+          <BoundRow
             key={id}
-            data-testid={`agent-source-${id}`}
-            className="flex items-center justify-between gap-3 border-b border-border py-1 last:border-b-0"
-          >
-            <span className="flex min-w-0 items-baseline gap-2.5">
-              <span className={cn("truncate", !c && "font-mono text-muted-foreground")}>
-                {c ? sourceName(c) : id}
-              </span>
-              {c && (
-                <span className="text-sm text-muted-foreground">
-                  {c.kind ? KIND_WORD[c.kind] : null}
-                  {c.status !== "active" && " · Disconnected"}
-                </span>
-              )}
-            </span>
-            <span className="flex shrink-0 items-center gap-1 text-sm text-muted-foreground">
-              {c?.scope === "workspace" ? "Workspace" : c ? "Personal" : null}
-              {edit && (
-                <Verb
-                  testId={`agent-source-remove-${id}`}
-                  onClick={() => set(agent.connection_ids.filter((x) => x !== id))}
-                >
-                  Remove
-                </Verb>
-              )}
-            </span>
-          </div>
+            testId={`agent-source-${id}`}
+            title={s ? s.name : "Removed"}
+            detail={
+              s
+                ? `${KIND_WORD[s.kind]}${s.status !== "active" ? " · Disconnected" : ""}`
+                : "This source no longer exists."
+            }
+            right={s ? (s.scope === "workspace" ? "Workspace" : "Personal") : null}
+            removeTestId={`agent-source-remove-${id}`}
+            onRemove={edit ? () => set(agent.connection_ids.filter((x) => x !== id)) : undefined}
+          />
         )
       })}
       {edit && addable.length > 0 && (
@@ -776,8 +801,11 @@ function SourcesField({
   )
 }
 
-/** Variable name → saved secret. Values live in Settings › Sources › Secrets and are never
- *  sent back to the client. */
+const NEW_SECRET = "__new__"
+
+/** Variable name → a secret. Pick one already saved, or paste a value here: it is stored as a
+ *  personal secret named after the variable (Settings › Sources › Secrets) and bound at once.
+ *  Values are never sent back to the client. */
 function EnvironmentField({
   agent,
   edit,
@@ -788,20 +816,41 @@ function EnvironmentField({
   onSave: (p: AgentPatch) => void
 }) {
   const bound = Object.entries(agent.environment)
-  const conns = useQuery({ ...agentConnectionsQuery(), enabled: bound.length > 0 || edit })
-  const secrets = (conns.data ?? []).filter((c) => c.kind === "secret")
-  const byId = new Map(secrets.map((c) => [c.id, c]))
-  const addable = secrets.filter((c) => c.status === "active")
+  const known = new Map(agent.sources.map((s) => [s.id, s]))
+  const conns = useQuery({ ...agentConnectionsQuery(), enabled: edit })
+  const saved = (conns.data ?? []).filter((c) => c.kind === "secret" && c.status === "active")
   const [name, setName] = useState("")
-  const [secretId, setSecretId] = useState("")
+  const [choice, setChoice] = useState("")
+  const [value, setValue] = useState("")
+  const [requestId, setRequestId] = useState(() => crypto.randomUUID())
+  const key = name.trim()
+  // With nothing saved yet there is nothing to pick from, so the form is the value line.
+  const pasting = saved.length === 0 || choice === NEW_SECRET
   const set = (env: Record<string, string>) => onSave({ environment: env })
+  const reset = () => {
+    setName("")
+    setChoice("")
+    setValue("")
+    setRequestId(crypto.randomUUID())
+  }
+  const create = useApiMutation<Connection>({
+    mutationFn: () =>
+      api.createCredential({ name: key, secret: value, scope: "personal", request_id: requestId }),
+    invalidate: [["credentials"], ["connections"]],
+    onSuccess: (c) => {
+      set({ ...agent.environment, [key]: c.id })
+      reset()
+    },
+  })
+  const ready = !!key && (pasting ? !!value && !value.includes("\0") : !!choice)
   const add = (e: FormEvent) => {
     e.preventDefault()
-    const key = name.trim()
-    if (!key || !secretId) return
-    set({ ...agent.environment, [key]: secretId })
-    setName("")
-    setSecretId("")
+    if (!ready) return
+    if (pasting) create.mutate()
+    else {
+      set({ ...agent.environment, [key]: choice })
+      reset()
+    }
   }
   return (
     <Field label="Environment variables">
@@ -814,35 +863,29 @@ function EnvironmentField({
         />
       )}
       {bound.length === 0 && <span className="text-muted-foreground">None</span>}
-      {bound.map(([key, id]) => {
-        const c = byId.get(id)
+      {bound.map(([variable, id]) => {
+        const s = known.get(id)
         return (
-          <div
-            key={key}
-            data-testid={`agent-env-${key}`}
-            className="flex items-center justify-between gap-3 border-b border-border py-1 last:border-b-0"
-          >
-            <span className="flex min-w-0 items-baseline gap-2.5">
-              <span className="truncate font-mono">{key}</span>
-              <span className="truncate text-sm text-muted-foreground">
-                {c ? sourceName(c) : "Secret removed"}
-              </span>
-            </span>
-            {edit && (
-              <Verb
-                testId={`agent-env-remove-${key}`}
-                onClick={() => {
-                  const { [key]: _gone, ...rest } = agent.environment
-                  set(rest)
-                }}
-              >
-                Remove
-              </Verb>
-            )}
-          </div>
+          <BoundRow
+            key={variable}
+            testId={`agent-env-${variable}`}
+            title={variable}
+            mono
+            detail={s ? `${s.name}${s.status !== "active" ? " · Revoked" : ""}` : "Secret removed"}
+            right={s ? (s.scope === "workspace" ? "Workspace" : "Personal") : null}
+            removeTestId={`agent-env-remove-${variable}`}
+            onRemove={
+              edit
+                ? () => {
+                    const { [variable]: _gone, ...rest } = agent.environment
+                    set(rest)
+                  }
+                : undefined
+            }
+          />
         )
       })}
-      {edit && addable.length > 0 && (
+      {edit && conns.data && (
         <form onSubmit={add} className="mt-1 flex flex-wrap items-center gap-2">
           <Input
             data-testid="agent-env-name"
@@ -853,43 +896,57 @@ function EnvironmentField({
             // the server only accepts uppercase names, so typing `db_url` should just work
             onChange={(e) => setName(e.target.value.toUpperCase())}
           />
-          <Select value={secretId} onValueChange={setSecretId}>
-            <SelectTrigger data-testid="agent-env-secret" aria-label="Secret" className="w-56">
-              <SelectValue placeholder="Secret" />
-            </SelectTrigger>
-            <SelectContent>
-              {addable.map((c) => (
-                <SelectItem key={c.id} value={c.id}>
-                  {sourceName(c)}
+          {saved.length > 0 && (
+            <Select value={choice} onValueChange={setChoice}>
+              <SelectTrigger
+                data-testid="agent-env-secret"
+                aria-label="Saved secret"
+                className="w-56"
+              >
+                <SelectValue placeholder="Saved secret" />
+              </SelectTrigger>
+              <SelectContent>
+                {saved.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {sourceName(c)}
+                  </SelectItem>
+                ))}
+                <SelectSeparator />
+                <SelectItem value={NEW_SECRET} data-testid="agent-env-secret-new">
+                  Paste a value…
                 </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+              </SelectContent>
+            </Select>
+          )}
+          {pasting && (
+            <Input
+              data-testid="agent-env-value"
+              aria-label="Value"
+              type="password"
+              placeholder="Value"
+              className="w-64 font-mono"
+              autoComplete="new-password"
+              value={value}
+              onChange={(e) => {
+                setValue(e.target.value)
+                setRequestId(crypto.randomUUID())
+              }}
+            />
+          )}
           <Button
             type="submit"
             variant="ghost"
             size="sm"
             data-testid="agent-env-add"
-            disabled={!name.trim() || !secretId}
+            disabled={!ready}
+            loading={create.isPending}
           >
             Add
           </Button>
         </form>
       )}
-      {edit && conns.data && addable.length === 0 && (
-        <Sub>
-          Save a secret under{" "}
-          <Link
-            to="/settings/$section"
-            params={{ section: "sources" }}
-            hash="secrets"
-            data-testid="agent-env-secrets-link"
-            className="underline underline-offset-2 hover:text-foreground"
-          >
-            Settings › Sources
-          </Link>{" "}
-          first.
-        </Sub>
+      {edit && pasting && (
+        <Sub>Saved as a personal secret under Settings › Sources. Never shown again.</Sub>
       )}
     </Field>
   )
