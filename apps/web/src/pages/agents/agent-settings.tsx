@@ -692,6 +692,7 @@ const KIND_WORD: Record<NonNullable<Connection["kind"]>, string> = {
   mcp: "MCP server",
   oauth: "Account",
   secret: "Secret",
+  runtime: "Sandbox",
 }
 
 function SourcesField({
