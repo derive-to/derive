@@ -85,6 +85,7 @@ Do not end with prose like "this looks good" — end with the block.
   "caveats": ["..."],
   "escalate": false,
   "escalation_reason": null,
+  "escalation_options": null,
   "artifact": null
 }
 </answer>
@@ -92,13 +93,16 @@ Do not end with prose like "this looks good" — end with the block.
 Use JSON.stringify to encode multiline Markdown. After JSON parsing, body_md must
 contain actual newline characters. Do not double-escape line breaks.
 
-Escalate (escalate: true, with a short reason) when the manifest's escalation
-rules say so. Also escalate when missing access, credentials, tools, or user input
-prevents you from completing the requested work. A blocked check is not success.
-Set escalation_reason to the specific next step. Still return what you checked in
-body_md. Lead with a short answer. Keep routine results concise.
-Do not create a separate artifact unless the asker requests one or it contains
-useful work they need to inspect, keep, or share.
+Escalate (escalate: true) when your instructions say a person must decide, or
+when you need permission you do not have. escalation_reason is the question,
+addressed to that person, in two or three sentences; the detail goes in body_md.
+When the person is picking from a few choices, list them as short labels in
+escalation_options (for example ["Ban 14 days", "Ban 7 days", "Watch", "Clear"]);
+they become buttons. Still produce your best draft in body_md.
+
+Also escalate when missing access, credentials, tools, or user input blocks the work.
+A blocked check is not success. Lead with a short answer. Keep routine results concise.
+Do not create a separate artifact unless it contains useful work to inspect, keep, or share.
 
 When the asker wants a chart, visual, or report page, set "artifact" to ONE
 fully self-contained HTML document (inline CSS/JS/SVG, no external requests; it
@@ -226,6 +230,12 @@ export function parseAnswer(text) {
       caveats: Array.isArray(raw.caveats) ? raw.caveats.filter((x) => typeof x === "string") : [],
       escalate: raw.escalate === true,
       escalation_reason: typeof raw.escalation_reason === "string" ? raw.escalation_reason : null,
+      escalation_options: Array.isArray(raw.escalation_options)
+        ? raw.escalation_options
+            .filter((x) => typeof x === "string" && x.trim())
+            .map((x) => x.trim().slice(0, 60))
+            .slice(0, 8)
+        : [],
     },
   }
 }
@@ -234,7 +244,7 @@ export function parseAnswer(text) {
 // turn on the SAME claude session (--resume), so the model still holds everything
 // it just built — cheap to reformat, and a page it had only written to a file is
 // now recovered by pointing at that file rather than re-typing it into JSON.
-const NUDGE_PROMPT = `Your previous reply was NOT accepted — it did not end with the required <answer> block, so it never reached the asker. Reply now with ONLY that block and nothing else: <answer>{"body_md":"…","query":…,"confidence":…,"caveats":[…],"escalate":false,"escalation_reason":null,"artifact":…}</answer>. If you built a chart or page, either inline its full HTML in "artifact".html or — if it is large or you already wrote it to a file — send {"title":"…","path":"<relative path inside your working directory>"} and the runner will publish that file — write it into your working directory first if it is currently somewhere else like /tmp. Do not re-type a large page into JSON.`
+const NUDGE_PROMPT = `Your previous reply was NOT accepted — it did not end with the required <answer> block, so it never reached the asker. Reply now with ONLY that block and nothing else: <answer>{"body_md":"…","query":…,"confidence":…,"caveats":[…],"escalate":false,"escalation_reason":null,"escalation_options":null,"artifact":…}</answer>. If you built a chart or page, either inline its full HTML in "artifact".html or — if it is large or you already wrote it to a file — send {"title":"…","path":"<relative path inside your working directory>"} and the runner will publish that file — write it into your working directory first if it is currently somewhere else like /tmp. Do not re-type a large page into JSON.`
 
 // The follow-up for a run the API cut short. Resume, don't restart: the session
 // still holds everything the model built before the error, which on a long

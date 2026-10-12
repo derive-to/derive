@@ -945,7 +945,7 @@ if (cmd === "doctor") {
 // Contexts became agents. Old forms get one line pointing at the new one instead of a usage
 // dump, since the person typing them already knows what they meant to run.
 const AGENTS_NOW =
-  "Contexts are now agents: run `derive runner serve --agent <id>` with the key from the agent's Settings tab in Derive (DERIVE_TOKEN or --token-file)."
+  "That command was retired with the agents release. Run `derive runner serve --agent <id>` with the runner key from the agent's Settings tab in Derive (DERIVE_TOKEN or --token-file)."
 if (
   cmd === "context" ||
   cmd === "workflow" ||

@@ -482,7 +482,11 @@ export async function serveJob(client, job, cfg, deps = {}) {
       await client.report(job, {
         status: "needs_you",
         ...common,
-        needs: { kind: "escalation", question: a.escalation_reason ?? "This needs a person." },
+        needs: {
+          kind: "escalation",
+          question: a.escalation_reason ?? "This needs a person.",
+          ...(a.escalation_options?.length ? { options: a.escalation_options } : {}),
+        },
       })
       return "needs_you"
     }

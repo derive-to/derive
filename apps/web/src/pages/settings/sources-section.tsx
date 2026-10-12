@@ -4,33 +4,27 @@ import { api, type Connection } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
-import { SectionTitle } from "@/components/shared/section-title"
 import { SettingsEmpty } from "@/components/shared/settings-empty"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { StatusPanel } from "@/components/shared/status-panel"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { connectionsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useOneShotParams } from "@/lib/use-one-shot-params"
 import { CloudConnection } from "./cloud-connection"
+import { IntegrationGroups } from "./integrations-section"
 import { SecretsGroup } from "./secrets-group"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
-// Sources: what agents can reach. Connected tools (an MCP server an agent working for you can
-// read from) and Secrets (values an agent reads as environment variables).
+// Sources: everything an agent can reach outside Derive, on one page. GitHub and Slack
+// (integrations-section.tsx), MCP servers an agent reads tools from, and secrets it reads as
+// environment variables. An agent is given a source on its Settings tab.
 //
-// This screen existed once and was REMOVED, because the only broker behind it was a stub whose
-// `execute` returned the caller's own arguments — so it said "Connected" about something that
-// reached nothing. It comes back now because that is no longer true: an MCP connection talks to a
-// real server, the tool list is pinned at the moment you approve it, and the echo stub is behind a
-// developer flag. "Connected" here means the server answered.
-//
-// Only MCP is addable. The other connection kinds are either created by their own integration
-// flow (GitHub, Slack) or need a broker plan that cannot currently complete a connection.
+// An MCP connection talks to a real server, and its tool list is pinned at the moment you
+// approve it. "Connected" here means the server answered.
 
 /** What the OAuth callback writes into `scopes_label` for a connection authenticated by sign-in
  *  rather than by a pasted token. Kept in one place so the row can caption it correctly. */
@@ -49,56 +43,45 @@ export function SourcesSection() {
   useEffect(() => {
     if (justConnected) void qc.invalidateQueries({ queryKey: connectionsQuery().queryKey })
   }, [justConnected, qc])
-  // MCP only, to match what this screen can actually add and explain. A GitHub App or Slack row
-  // listed here has its own setup flow elsewhere, no server URL to show, and a `scopes_label`
-  // that is an account name — which the row below would caption as "· token acme-corp".
-  const sources = (connections ?? []).filter((c) => c.status !== "revoked" && c.kind === "mcp")
+  const servers = (connections ?? []).filter((c) => c.status !== "revoked" && c.kind === "mcp")
 
   return (
     <SettingsSection
-      title="Connections"
-      description="Connect cloud compute, tools, and secrets for this workspace."
+      title="Sources"
+      description="What your agents can reach: cloud compute, GitHub, Slack, MCP servers, and secrets they read as environment variables. Give one to an agent on its Settings tab."
     >
       <CloudConnection />
       {justConnected ? (
         <StatusPanel
           tone="success"
           title="Source connected"
-          description="You signed in, and its tools were recorded. Give it to an agent to let its jobs read from it."
+          description="Its tools were recorded. Give it to an agent to let its jobs read from it."
         />
       ) : null}
 
-      <section className="flex flex-col gap-2" data-testid="sources-tools">
-        <SectionTitle>Connected tools</SectionTitle>
-        {/* Not decoration: a server that changes its tool list goes quiet, and the row still
-            reads "Connected" while jobs read nothing from it. This is the only place that
-            fact is stated. */}
-        <p className="text-sm text-pretty text-muted-foreground">
-          Connect an MCP server and your agents can read from it. Its tools are recorded when you
-          connect; if that list changes later, the source goes quiet until you reconnect.
-        </p>
-        <AddSource onAdded={reload} />
+      <IntegrationGroups />
 
-        {isPending ? (
-          <SettingsListSkeleton />
-        ) : isError ? (
-          <LoadError
-            title="Couldn’t load your sources"
-            description="This is usually temporary. Your connected sources are unaffected."
-            testId="sources-retry"
-            onRetry={() => refetch()}
-          />
-        ) : sources.length === 0 ? (
-          <SettingsEmpty>
-            No sources connected. Agents can only use information already in Derive.
-          </SettingsEmpty>
-        ) : (
-          <SettingsGroup>
-            {sources.map((c) => (
-              <SourceRow key={c.id} conn={c} onRevoked={reload} />
-            ))}
-          </SettingsGroup>
-        )}
+      <section className="flex flex-col gap-2" data-testid="sources-tools">
+        <SettingsGroup
+          title="MCP servers"
+          description="Tools are recorded when you connect. If the server's tool list changes later, the source goes quiet until you reconnect."
+        >
+          {isPending ? (
+            <SettingsListSkeleton />
+          ) : isError ? (
+            <LoadError
+              title="Couldn’t load your sources"
+              description="This is usually temporary. Your connected sources are unaffected."
+              testId="sources-retry"
+              onRetry={() => refetch()}
+            />
+          ) : servers.length === 0 ? (
+            <SettingsEmpty>No MCP servers connected.</SettingsEmpty>
+          ) : (
+            servers.map((c) => <SourceRow key={c.id} conn={c} onRevoked={reload} />)
+          )}
+        </SettingsGroup>
+        <AddSource onAdded={reload} />
       </section>
 
       <SecretsGroup />
@@ -107,6 +90,7 @@ export function SourcesSection() {
 }
 
 function AddSource({ onAdded }: { onAdded: () => void }) {
+  const [open, setOpen] = useState(false)
   const [name, setName] = useState("")
   const [url, setUrl] = useState("")
   const [secret, setSecret] = useState("")
@@ -137,6 +121,7 @@ function AddSource({ onAdded }: { onAdded: () => void }) {
       setUrl("")
       setSecret("")
       setError(null)
+      setOpen(false)
       onAdded()
       if (authorize_url) window.location.href = authorize_url
     },
@@ -146,19 +131,27 @@ function AddSource({ onAdded }: { onAdded: () => void }) {
     onError: (e: Error) => setError(e.message),
   })
 
-  // Enough to know the button would do something, and no more. This used to carry its own copy
-  // of the URL policy — a looser one, which enabled Connect for `http://localhost.evil.com`, a
-  // URL the server then refused. Restating a rule the client cannot enforce buys nothing and
-  // gives it a second chance to be wrong: `clients-no-core-at-runtime` keeps runtime policy out
-  // of the web app on purpose, so the server owns this and its refusal is already what the
-  // reader sees (`source-error`, in the server's own words).
+  // Enough to know the button would do something, and no more. The server owns the URL policy
+  // and its refusal is already what the reader sees (`source-error`, in the server's own words).
   const ready = name.trim().length > 0 && url.trim().length > 0
 
-  // A real <form> (Enter in any field submits), but NOT AddForm: this composer is a stacked
-  // grid of labelled fields, not AddForm's one-line flex-wrap of controls.
+  if (!open)
+    return (
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        data-testid="sources-add-open"
+        onClick={() => setOpen(true)}
+        className="self-start"
+      >
+        Add MCP server
+      </Button>
+    )
+
   return (
     <form
-      className="mb-6 space-y-3"
+      className="flex max-w-xl flex-col gap-3 rounded-xl border border-border p-4"
       data-testid="sources-add"
       onSubmit={(e) => {
         e.preventDefault()
@@ -178,7 +171,7 @@ function AddSource({ onAdded }: { onAdded: () => void }) {
             onChange={(e) => setName(e.target.value)}
           />
           <p className="text-muted-foreground text-xs">
-            Prefixes the server's tools, so an agent can see where each one came from.
+            Prefixes the server's tools, so an agent can see where each came from.
           </p>
         </div>
         <div className="space-y-1.5">
@@ -192,15 +185,11 @@ function AddSource({ onAdded }: { onAdded: () => void }) {
             value={url}
             onChange={(e) => setUrl(e.target.value)}
           />
-          <p className="text-muted-foreground text-xs">Must be https.</p>
         </div>
       </div>
       <div className="space-y-1.5">
         <label htmlFor="source-secret" className="text-sm font-medium">
-          Token{" "}
-          <span className="text-muted-foreground font-normal">
-            (optional; most servers ask you to sign in instead)
-          </span>
+          Token <span className="text-muted-foreground font-normal">(optional)</span>
         </label>
         <Input
           id="source-secret"
@@ -211,7 +200,7 @@ function AddSource({ onAdded }: { onAdded: () => void }) {
           onChange={(e) => setSecret(e.target.value)}
         />
         <p className="text-muted-foreground text-xs">
-          Leave empty unless the server has no sign-in. A pasted token is encrypted and never shown
+          Most servers ask you to sign in instead. A pasted token is encrypted and never shown
           again.
         </p>
       </div>
@@ -220,16 +209,26 @@ function AddSource({ onAdded }: { onAdded: () => void }) {
           {error}
         </p>
       ) : null}
-      <Button
-        type="submit"
-        data-testid="source-connect"
-        variant="secondary"
-        size="sm"
-        loading={connect.isPending}
-        disabled={!ready || connect.isPending}
-      >
-        Connect
-      </Button>
+      <div className="flex items-center gap-2">
+        <Button
+          type="submit"
+          data-testid="source-connect"
+          size="sm"
+          loading={connect.isPending}
+          disabled={!ready || connect.isPending}
+        >
+          Connect
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          data-testid="source-cancel"
+          onClick={() => setOpen(false)}
+        >
+          Cancel
+        </Button>
+      </div>
     </form>
   )
 }
@@ -259,24 +258,21 @@ function SourceRow({ conn, onRevoked }: { conn: Connection; onRevoked: () => voi
       title={
         <span className="flex items-center gap-2">
           {conn.toolkit}
-          {conn.kind === "mcp" ? <Badge variant="secondary">MCP</Badge> : null}
-          {conn.status === "active" ? (
-            <Badge variant="outline">Connected</Badge>
-          ) : needsSignIn ? (
+          {needsSignIn ? (
             <StatusBadge tone="attention">Needs sign-in</StatusBadge>
-          ) : (
+          ) : conn.status !== "active" ? (
             <StatusBadge tone="muted">{conn.status}</StatusBadge>
-          )}
+          ) : null}
         </span>
       }
       meta={
         <>
           <span className="block truncate">
             {needsSignIn
-              ? "Sign in with this server to finish connecting. Nothing can read from it until you do."
+              ? "Sign in with this server to finish connecting."
               : (conn.base_url ?? "Not available")}
-            {/* A signed-in connection has no token to caption, and "token signed in" is what the
-                generic form produced. The label says which of the two ways this one authenticates. */}
+            {/* A signed-in connection has no token to caption. The label says which of the two
+                ways this one authenticates. */}
             {!needsSignIn && conn.scopes_label
               ? conn.scopes_label === SIGNED_IN_LABEL
                 ? " · signed in"
@@ -321,7 +317,7 @@ function SourceRow({ conn, onRevoked }: { conn: Connection; onRevoked: () => voi
           open={confirming}
           onOpenChange={setConfirming}
           title={`Disconnect ${conn.toolkit}?`}
-          description="Agents given this source stop being able to read from it. Nothing already written changes."
+          description="Agents given this source can no longer read from it. Nothing already written changes."
           confirmLabel="Disconnect"
           onConfirm={() => {
             revoke.mutate()

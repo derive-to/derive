@@ -47,3 +47,40 @@ export function mdToHtml(src: string, mentions?: Mention[]): string {
   )
   return h.replace(/\n/g, "<br/>")
 }
+
+/** Block-level markdown for an agent's report-style message: headings, bullet lists, and
+ *  paragraphs, each line through the inline renderer above. Not a full parser: what a runner
+ *  writes in body_md, no more. */
+export function mdBlocksToHtml(src: string): string {
+  const out: string[] = []
+  let list: string[] | null = null
+  const flush = () => {
+    if (list) out.push(`<ul>${list.map((l) => `<li>${l}</li>`).join("")}</ul>`)
+    list = null
+  }
+  for (const block of src.replace(/\r\n?/g, "\n").split(/\n{2,}/)) {
+    const lines = block.split("\n").filter((l) => l.trim())
+    if (!lines.length) continue
+    const para: string[] = []
+    for (const line of lines) {
+      const h = /^(#{1,6})\s+(.*)$/.exec(line)
+      const li = /^\s*[-*+]\s+(.*)$/.exec(line) ?? /^\s*\d+[.)]\s+(.*)$/.exec(line)
+      if (h) {
+        flush()
+        if (para.length) out.push(`<p>${para.splice(0).join("<br>")}</p>`)
+        const level = Math.min(h[1]?.length ?? 2, 4)
+        out.push(`<h${level}>${mdToHtml(h[2] ?? "")}</h${level}>`)
+      } else if (li) {
+        if (para.length) out.push(`<p>${para.splice(0).join("<br>")}</p>`)
+        list = list ?? []
+        list.push(mdToHtml(li[1] ?? ""))
+      } else {
+        flush()
+        para.push(mdToHtml(line))
+      }
+    }
+    flush()
+    if (para.length) out.push(`<p>${para.join("<br>")}</p>`)
+  }
+  return out.join("")
+}
