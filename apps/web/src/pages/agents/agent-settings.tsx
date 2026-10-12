@@ -671,7 +671,11 @@ function ModelField({
 }
 
 const connectionName = (c: Connection) =>
-  c.kind === "mcp" && c.base_url ? c.base_url.replace(/^https?:\/\//, "") : c.toolkit
+  c.kind === "secret"
+    ? (c.scopes_label ?? c.toolkit)
+    : c.kind === "mcp" && c.base_url
+      ? c.base_url.replace(/^https?:\/\//, "")
+      : c.toolkit
 
 function SourcesField({
   agent,
