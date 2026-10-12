@@ -68,6 +68,7 @@ import {
   rateLimited,
 } from "./lib/rate-limit"
 import { verifyWorkToken, workTokenKind } from "./lib/run-token"
+import type { RuntimeConfig } from "./lib/runtime-setup"
 import { billableSeatCount, isBillableRole, syncSeats } from "./lib/seats"
 import { enqueueSlackChannelEvent } from "./lib/slack-comments"
 import { sourceTexts } from "./lib/source-text-cache"
@@ -140,15 +141,7 @@ export interface SessionUser {
 }
 
 export interface AppDeps {
-  runtime?: {
-    provider?: "ortam" | "boat"
-    apiUrl: string
-    /** Absolute path to a pinned CLI installation in the saved sandbox. */
-    runnerPath: string
-    /** The CLI version the sandbox installs; defaults to RUNNER_VERSION (lib/runtime-setup). */
-    runnerVersion?: string
-    managed?: { apiKey: string; workspaceIds: ReadonlySet<string> }
-  }
+  runtime?: RuntimeConfig
   runtimeFetch?: typeof fetch
 
   meta: MetaStore
@@ -789,21 +782,44 @@ export function buildContext(input: AppDeps) {
         // new claim, so it cannot revive an earlier machine's token.
         const [jobId, claimMs] = claim.id.split("~")
         const j = jobId ? await meta.getJob(jobId) : null
+        const claimStamp = /^\d{10,14}$/.test(claimMs ?? "")
+          ? new Date(Number(claimMs)).toISOString()
+          : null
+        const turn =
+          j && meta.jobExecution && claimStamp
+            ? await meta.jobExecution.claimed(j.id, j.org_id, claimStamp)
+            : null
+        const reportOnly =
+          workKind === "job" &&
+          c.req.method === "POST" &&
+          c.req.path === `/v1/jobs/${jobId}/report` &&
+          !!meta.jobExecution &&
+          !!j &&
+          !!turn
         const live = !!(
           j &&
           j.agent_id === claim.agentId &&
           j.org_id === claim.orgId &&
-          j.status === "running" &&
-          j.started_at !== null &&
-          String(Date.parse(j.started_at)) === claimMs
+          (reportOnly ||
+            (j.status === "running" &&
+              j.started_at !== null &&
+              String(Date.parse(j.started_at)) === claimMs))
         )
         if (live && jobId) claim.id = jobId
         if (live) {
           const ag = await meta.getAgent(claim.agentId)
           if (ag && ag.org_id === claim.orgId) {
-            a = ag
-            owner = ag.created_by ?? null
-            jobScopeCache.set(c, claim.id)
+            const actor = turn?.actor_id ?? ag.created_by
+            const member = actor ? await meta.getMembership(ag.org_id, actor) : null
+            if (!turn || member || reportOnly) {
+              a = {
+                ...ag,
+                role: member ? capRole(ag.role, member.role) : ag.role,
+                created_by: actor ?? ag.created_by,
+              }
+              owner = actor ?? null
+              jobScopeCache.set(c, claim.id)
+            }
           }
         }
       }

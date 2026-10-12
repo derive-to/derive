@@ -301,7 +301,8 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
       if (phases.length === 0) return Promise.resolve([])
       return rows<AgentRecord>(sql`
         SELECT * FROM agent WHERE sandbox_phase IN (${list(phases)})
-        ORDER BY id LIMIT ${Math.max(1, Math.min(200, limit))}`)
+        ORDER BY CASE WHEN sandbox_phase = 'deleting' THEN 0 ELSE 1 END,
+          sandbox_rev, id LIMIT ${Math.max(1, Math.min(200, limit))}`)
     },
     async transitionJobMachine(id, expectRev, next) {
       const set: SQL[] = [
@@ -317,7 +318,8 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
     listMachineJobs(limit) {
       return rows<JobRecord>(sql`
         SELECT * FROM job WHERE machine_phase IS NOT NULL AND machine_phase <> 'released'
-        ORDER BY created_at, id LIMIT ${Math.max(1, Math.min(200, limit))}`)
+        ORDER BY CASE WHEN machine_phase = 'stopping' THEN 0 ELSE 1 END,
+          updated_at, id LIMIT ${Math.max(1, Math.min(200, limit))}`)
     },
     listOpenGraphJobs(limit) {
       return rows<JobRecord>(sql`

@@ -1,3 +1,5 @@
+import { archiveRunnerPath } from "./runtime-setup"
+
 // Runtime-neutral env parsing shared by the Node (config.ts) and Cloudflare Worker
 // (worker.ts) entries. config.ts itself can't be imported on the edge — it pulls in
 // node:crypto/fs/path — but these three transforms need no Node builtins, so they live
@@ -21,22 +23,37 @@ export const workspaceIdsFromEnv = (raw: string | undefined): ReadonlySet<string
       .filter(Boolean),
   )
 
-/** The Derive-machine (Ortam) runtime config, or undefined when no runner path is set. One
+/** The Derive-machine runtime config, or undefined when no runner is configured. One
  *  builder for the Node entry and both Worker uses (the app and the scheduled tick). */
 export const ortamRuntimeFromEnv = (env: {
   DERIVE_SANDBOX_PROVIDER?: string
   DERIVE_ORTAM_RUNNER_PATH?: string
+  DERIVE_RUNNER_ARCHIVE_URL?: string
+  DERIVE_RUNNER_ARCHIVE_SHA256?: string
   DERIVE_ORTAM_API_URL?: string
   DERIVE_ORTAM_INTEGRATION_KEY?: string
   DERIVE_MANAGED_RUNS_ALLOWLIST?: string
 }) => {
+  if (!!env.DERIVE_RUNNER_ARCHIVE_URL !== !!env.DERIVE_RUNNER_ARCHIVE_SHA256)
+    throw new Error("Set both runner archive URL and SHA-256, or leave both unset")
   const provider = env.DERIVE_SANDBOX_PROVIDER ?? "ortam"
   if (provider !== "ortam" && provider !== "boat") throw new Error("Unknown sandbox provider")
   const apiKey = provider === "ortam" ? env.DERIVE_ORTAM_INTEGRATION_KEY : undefined
-  return env.DERIVE_ORTAM_RUNNER_PATH
+  const runnerPath = env.DERIVE_RUNNER_ARCHIVE_SHA256
+    ? archiveRunnerPath(env.DERIVE_RUNNER_ARCHIVE_SHA256)
+    : env.DERIVE_ORTAM_RUNNER_PATH
+  return runnerPath
     ? {
         provider: provider as "ortam" | "boat",
-        runnerPath: env.DERIVE_ORTAM_RUNNER_PATH,
+        runnerPath,
+        ...(env.DERIVE_RUNNER_ARCHIVE_URL && env.DERIVE_RUNNER_ARCHIVE_SHA256
+          ? {
+              runnerArchive: {
+                url: env.DERIVE_RUNNER_ARCHIVE_URL,
+                sha256: env.DERIVE_RUNNER_ARCHIVE_SHA256,
+              },
+            }
+          : {}),
         apiUrl:
           provider === "boat"
             ? "https://boat.dev/api/v1"

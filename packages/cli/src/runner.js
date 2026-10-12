@@ -290,6 +290,8 @@ async function runStructured(provider, opts) {
     systemPrompt: opts.systemPrompt + contract,
     timeoutMs: opts.timeoutMs,
     env: opts.env,
+    signal: opts.signal,
+    onEvent: opts.onEvent,
   }
   const why = (x) => (x.lastText || x.resultText || x.stderr || "").replace(/\s+/g, " ").trim()
   // Cost METER, not a return value. This function has six exits and can spawn the model up to
@@ -299,6 +301,9 @@ async function runStructured(provider, opts) {
   // later can forget to carry the number.
   const meter = opts.meter ?? { costUsd: null }
   const spend = (x) => {
+    if (x?.sessionId) meter.sessionId = x.sessionId
+    if (Number.isFinite(x?.estimatedCostUsd))
+      meter.estimatedCostUsd = (meter.estimatedCostUsd ?? 0) + x.estimatedCostUsd
     if (Number.isFinite(x?.costUsd)) meter.costUsd = (meter.costUsd ?? 0) + x.costUsd
     if (x?.threadId) meter.threadId = x.threadId
     if (x?.usage) {
@@ -323,11 +328,17 @@ async function runStructured(provider, opts) {
     }
   }
   const started = Date.now()
-  let r = await provider.run({ ...base, prompt: opts.prompt, resumeSessionId: null })
+  let r = await provider.run({
+    ...base,
+    prompt: opts.prompt,
+    resumeSessionId: opts.resumeSessionId ?? null,
+  })
   spend(r)
   let parsed = parse(r.resultText)
 
   if (!parsed.value && provider.retryable(r)) {
+    if (opts.signal?.aborted)
+      return { ok: false, error: "This turn was stopped.", retryable: false }
     const sid = r.sessionId
     console.error(
       `[runner] run exited ${r.code}${r.apiErrorStatus ? ` (api ${r.apiErrorStatus})` : ""}: ${why(r).slice(0, 160) || "no output"} -- retrying once${sid ? ` (resume ${sid.slice(0, 8)})` : ""}`,
@@ -336,7 +347,7 @@ async function runStructured(provider, opts) {
     const left = opts.timeoutMs - (Date.now() - started)
     r = await provider.run({
       ...base,
-      timeoutMs: Math.max(left, 120_000),
+      timeoutMs: Math.max(1, left),
       prompt: sid ? RESUME_PROMPT : opts.prompt,
       resumeSessionId: sid,
     })
@@ -361,7 +372,7 @@ async function runStructured(provider, opts) {
     console.log(`[runner] no block; nudging (resume ${r.sessionId.slice(0, 8)})`)
     const r2 = await provider.run({
       ...base,
-      timeoutMs: Math.min(opts.timeoutMs, 180_000),
+      timeoutMs: Math.max(1, Math.min(opts.timeoutMs - (Date.now() - started), 180_000)),
       prompt: nudgePrompt,
       resumeSessionId: r.sessionId,
     })

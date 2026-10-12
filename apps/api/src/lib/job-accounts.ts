@@ -135,6 +135,7 @@ export const resolveJobCredential = async (
     return { credential: null, reason: "unreadable" }
   const assigned = await tryAccount(selected, "agent")
   if (assigned) return assigned
+  if (agent.account_id) return { credential: null, reason: sawUnreadable ? "unreadable" : "none" }
   const payer =
     job.asked_by && (agent.machine === "derive" || job.asked_by === agent.created_by)
       ? job.asked_by

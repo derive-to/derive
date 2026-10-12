@@ -1,8 +1,8 @@
 import type { ConnectionRecord, MetaStore } from "@derive/core"
-import type { AppDeps } from "../context"
 import { BoatClient } from "./boat-client"
 import { decryptSecret, sha256 } from "./crypto"
 import { OrtamClient } from "./ortam-client"
+import type { RuntimeConfig } from "./runtime-setup"
 import { runnerRunsJobs } from "./runtime-setup"
 
 export const BOAT_API_URL = "https://boat.dev/api/v1"
@@ -55,7 +55,7 @@ export const connectionClient = (
 
 export const workspaceRuntime = async (
   meta: MetaStore,
-  config: AppDeps["runtime"],
+  config: RuntimeConfig | undefined,
   org: string,
 ) => {
   const cn = await runtimeConnection(meta, org)
@@ -72,7 +72,12 @@ export const workspaceRuntime = async (
       }
 }
 
-export const cloudEnabled = async (meta: MetaStore, config: AppDeps["runtime"], org: string) => {
+export const cloudEnabled = async (
+  meta: MetaStore,
+  config: RuntimeConfig | undefined,
+  org: string,
+) => {
+  if (!meta.jobExecution) return false
   if (!config || !runnerRunsJobs(config.runnerPath, config.runnerVersion)) return false
   const cn = await runtimeConnection(meta, org)
   if (cn) return cn.status === "active"

@@ -14,40 +14,21 @@ const dollars = (micro: number) =>
 const number = (n: number) =>
   new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(n)
 
-// Standard text rates per million tokens, checked 2026-10-11. This is a comparison
-// estimate, never a charge or budget input. Unknown models and long contexts stay unknown.
-const API_RATES: Record<string, { input: number; cached: number; output: number }> = {
-  "gpt-6-luna": { input: 0.1, cached: 0.01, output: 0.5 },
-  "gpt-6.1-sol": { input: 2, cached: 0.1, output: 10 },
-}
-const estimate = (run: Run): number | null => {
-  const rate = run.provider === "codex" ? API_RATES[run.model] : undefined
-  if (
-    !rate ||
-    run.input_tokens === null ||
-    run.cached_input_tokens === null ||
-    run.output_tokens === null ||
-    run.input_tokens > 272_000 ||
-    run.cached_input_tokens > run.input_tokens
-  )
-    return null
-  return (
-    (run.input_tokens - run.cached_input_tokens) * rate.input +
-    run.cached_input_tokens * rate.cached +
-    run.output_tokens * rate.output
-  )
-}
+// Each receipt keeps its price version. Old receipts without one stay unknown.
+const estimate = (run: Run): number | null =>
+  run.api_estimate_micro_usd ?? run.harness_estimate_micro_usd ?? null
 const sumKnown = (values: (number | null)[]) =>
   values.length && values.every((n) => n !== null)
     ? values.reduce<number>((sum, n) => sum + (n ?? 0), 0)
     : null
 const taskEstimate = (job: Job) => {
+  if (!["succeeded", "failed", "cancelled", "lost"].includes(job.status)) return null
   const runs = job.result.runs ?? []
   // Older records cannot distinguish a fresh run from a manually reset retry cycle.
-  if (job.result.attempt_offset === undefined) return null
+  if (job.result.claim_ledger_version !== 1 || job.result.attempt_offset === undefined) return null
   // An unreported claim still consumed work. Never present a partial retry history
   // as the cost of the whole task.
-  for (let attempt = 0; attempt <= job.result.attempt_offset + job.attempt; attempt++)
+  for (let attempt = 0; attempt <= job.result.attempt_offset; attempt++)
     if (!runs.some((run) => run.attempt === attempt)) return null
   return sumKnown(runs.map(estimate))
 }
@@ -72,8 +53,8 @@ export function TaskUsage({ jobs, agents }: { jobs: Job[]; agents?: Agent[] }) {
   const settled = jobs.filter((j) =>
     ["succeeded", "failed", "cancelled", "lost"].includes(j.status),
   )
-  const runs = settled.flatMap((j) => j.result.runs ?? [])
-  const compute = settled.flatMap((j) => j.result.compute ?? [])
+  const runs = jobs.flatMap((j) => j.result.runs ?? [])
+  const compute = jobs.flatMap((j) => j.result.compute ?? [])
   if (!runs.length && !compute.length)
     return (
       <section data-testid="task-usage-empty" className="flex flex-col gap-2 py-5">
@@ -87,7 +68,7 @@ export function TaskUsage({ jobs, agents }: { jobs: Job[]; agents?: Agent[] }) {
       </section>
     )
   const completed = settled.filter((j) => j.status === "succeeded")
-  const known = settled.filter((j) => j.cost_micro_usd !== null)
+  const known = jobs.filter((j) => j.cost_micro_usd !== null)
   const spend = known.reduce((n, j) => n + (j.cost_micro_usd ?? 0), 0)
   const estimatedTasks = settled.flatMap((j) => {
     const cost = taskEstimate(j)
@@ -112,7 +93,7 @@ export function TaskUsage({ jobs, agents }: { jobs: Job[]; agents?: Agent[] }) {
           ["Completed tasks", `${completed.length}/${settled.length}`],
           ["Reported AI subtotal", known.length ? dollars(spend) : "Unknown"],
           [
-            "API estimate / success",
+            "Cost estimate / success",
             estimatedPerTask === null ? "Unknown" : dollars(estimatedPerTask),
           ],
           ["Cache reused", cacheShare(runs)],
@@ -126,15 +107,16 @@ export function TaskUsage({ jobs, agents }: { jobs: Job[]; agents?: Agent[] }) {
       <p className="text-sm text-muted-foreground">
         Recent tasks · Cost per success includes failed tasks and retries. API estimates do not
         price your plan.
-        {known.length < settled.length &&
+        {jobs.length > settled.length && " Active tasks show the receipts received so far."}
+        {known.length < jobs.length &&
           " Plan charges can stay unknown. A missing charge does not mean free."}
       </p>
       <details className="text-sm text-muted-foreground" data-testid="task-usage-coverage">
         <summary>Receipt coverage</summary>
         <p className="mt-2">
-          {settled.length} loaded tasks · {measured.length}/{runs.length} model runs have token
-          receipts · {known.length}/{settled.length} tasks report at least one dollar cost.
-          {known.length < settled.length && " Plans do not report dollar spend."}
+          {jobs.length} loaded tasks · {measured.length}/{runs.length} model runs have token
+          receipts · {known.length}/{jobs.length} tasks report at least one dollar cost.
+          {known.length < jobs.length && " Plans do not report dollar spend."}
           {" Missing attempt costs stay unknown."}
           {estimatedCompleted.length > 0 &&
             ` API estimates cover ${estimatedTasks.length}/${settled.length} tasks. Missing task costs keep cost per success unknown.`}
@@ -170,7 +152,7 @@ export function TaskUsage({ jobs, agents }: { jobs: Job[]; agents?: Agent[] }) {
                   Reported AI
                 </th>
                 <th scope="col" className="py-2 text-right font-normal">
-                  API estimate / success
+                  Cost estimate / success
                 </th>
               </tr>
             </thead>
@@ -178,8 +160,8 @@ export function TaskUsage({ jobs, agents }: { jobs: Job[]; agents?: Agent[] }) {
               {[
                 ...new Set(
                   groupBy === "agent"
-                    ? [...agents.map((a) => a.id), ...settled.map((j) => j.agent_id)]
-                    : settled.map(personOf),
+                    ? [...agents.map((a) => a.id), ...jobs.map((j) => j.agent_id)]
+                    : jobs.map(personOf),
                 ),
               ].map((id) => {
                 const name =
@@ -192,7 +174,7 @@ export function TaskUsage({ jobs, agents }: { jobs: Job[]; agents?: Agent[] }) {
                         : id === "unknown"
                           ? "Unknown person"
                           : "Former member")
-                const tasks = settled.filter(
+                const tasks = jobs.filter(
                   (j) => (groupBy === "agent" ? j.agent_id : personOf(j)) === id,
                 )
                 const done = tasks.filter((j) => j.status === "succeeded")
@@ -257,7 +239,7 @@ export function TaskUsage({ jobs, agents }: { jobs: Job[]; agents?: Agent[] }) {
                     Reported / run
                   </th>
                   <th scope="col" className="py-2 text-right font-normal">
-                    API estimate / run
+                    Cost estimate / run
                   </th>
                 </tr>
               </thead>
@@ -313,7 +295,7 @@ export function TaskUsage({ jobs, agents }: { jobs: Job[]; agents?: Agent[] }) {
         <details className="text-xs text-muted-foreground">
           <summary className="cursor-pointer">How we estimate API cost</summary>
           <p className="mt-2">
-            Standard text rates, checked October 11, 2026. This compares measured tokens with API
+            Standard text rates, checked October 12, 2026. This compares measured tokens with API
             prices. It does not price your plan. Tool fees, cache writes, regional fees and other
             service tiers are excluded. Large contexts and unsupported models stay unknown.
           </p>
@@ -372,7 +354,7 @@ export function TaskReceipt({ job }: { job: Job }) {
         {estimated !== null && (
           <>
             {" "}
-            · API estimate: <span className="font-mono text-foreground">{dollars(estimated)}</span>
+            · Cost estimate: <span className="font-mono text-foreground">{dollars(estimated)}</span>
           </>
         )}
       </p>
@@ -382,6 +364,10 @@ export function TaskReceipt({ job }: { job: Job }) {
           {r.input_tokens === null ? "Unknown input" : `${number(r.input_tokens)} input`} ·{" "}
           {r.output_tokens === null ? "Unknown output" : `${number(r.output_tokens)} output`}
           {r.cached_input_tokens !== null && ` · ${number(r.cached_input_tokens)} cached`}
+          {r.harness_estimate_micro_usd != null &&
+            ` · CLI estimate ${dollars(r.harness_estimate_micro_usd)}`}
+          {r.api_estimate_micro_usd != null &&
+            ` · API comparison ${dollars(r.api_estimate_micro_usd)}`}
           {r.skill && ` · Skill v${r.skill.version}`}
         </p>
       ))}

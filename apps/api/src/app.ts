@@ -8,6 +8,7 @@ import { OAUTH_ANON_CLIENT_TTL_MS } from "./auth-config"
 import { type AppDeps, buildContext } from "./context"
 import { draftChip, expiredDraftPage } from "./lib/draft-chip"
 import { cacheControlFor, corsFor, fail, TOMBSTONE } from "./lib/http"
+import { JobCommandError } from "./lib/job-command"
 import { isMissingTable } from "./lib/missing-table"
 import { observability, redactPath } from "./lib/observability"
 import { inMemoryRateLimiters, ipRateLimit } from "./lib/rate-limit"
@@ -153,6 +154,14 @@ export function createApp(deps: AppDeps): Hono {
   // Uncaught errors become a consistent JSON 500 (never a stack trace to the
   // client) and a structured server log line.
   app.onError((err, c) => {
+    if (err instanceof JobCommandError) return fail(c, err.status, err.message)
+    if (
+      (c.req.path.startsWith("/v1/jobs") || c.req.path.startsWith("/v1/agents")) &&
+      isMissingTable(err, ["job_command", "job_turn", "job_turn_receipt", "job_event"])
+    )
+      return fail(c, 503, "Cloud tasks are waiting for the Postgres update.", {
+        code: "job_execution_schema_unavailable",
+      })
     // Production always applies schema before flipping the worker. Unmerged PR
     // previews share production data but deliberately cannot apply their DDL;
     // explain only that narrow missing-table state instead of presenting a

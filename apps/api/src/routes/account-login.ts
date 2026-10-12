@@ -236,6 +236,8 @@ export const accountLoginRoutes = (ctx: AppContext) => {
     try {
       const created = await box.create(
         {
+          name: "Derive model account sign-in",
+          size: "small",
           setup_script: `${ACCOUNT_LOGIN_SETUP}\nnohup node /home/ortam/derive-account-login/connect.mjs >/dev/null 2>&1 </dev/null &`,
           auto_stop_after_seconds: 600,
           env: {

@@ -113,7 +113,21 @@ const makePgStore = (name: string, users: TestUser[], team: Seat[]): TestStore =
       ready.then((store) =>
         (store as unknown as Record<string, (...a: unknown[]) => unknown>)[prop]?.(...args),
       )
-  return new Proxy({} as TestStore, {
+  // The Postgres port also contains an execution store. Defer its methods without
+  // turning the nested object into a MetaStore method.
+  const jobExecution = new Proxy({} as NonNullable<MetaStore["jobExecution"]>, {
+    get: (_target, prop) => {
+      if (prop === "then") return undefined
+      return (...args: unknown[]) =>
+        ready.then((store) => {
+          const owner = store.jobExecution
+          if (!owner) throw new Error("Postgres fixture has no execution store")
+          const fn = Reflect.get(owner, prop) as (...a: unknown[]) => unknown
+          return fn.apply(owner, args)
+        })
+    },
+  })
+  return new Proxy({ jobExecution } as TestStore, {
     get: (target, prop: string) =>
       Object.hasOwn(target, prop) ? Reflect.get(target, prop) : deferredMethod(prop),
     // Fault-injection tests need to intercept the same method the app calls.

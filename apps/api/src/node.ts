@@ -662,7 +662,13 @@ if (cfg.backgroundWorkers) {
       bus: backplane,
       announce,
     })
-    const graphs = graphAware({ meta, blobs, bus: backplane, announce })
+    const graphs = graphAware({
+      meta,
+      blobs,
+      bus: backplane,
+      announce,
+      cloud: { secret: authSecret, config: runtimeConfig },
+    })
     void jobTick(graphs, new Date())
       .then(() => graphPass(graphs))
       .then(() => (machines ? machinePass(machines) : undefined))
@@ -672,7 +678,7 @@ if (cfg.backgroundWorkers) {
       })
   }
   tick()
-  jobTimer = setInterval(tick, 30_000)
+  jobTimer = setInterval(tick, 5_000)
   jobTimer.unref()
 }
 // One-time cleanup of pre-existing owner self-views (the route no longer records

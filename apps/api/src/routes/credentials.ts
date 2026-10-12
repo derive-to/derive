@@ -7,7 +7,7 @@ import { readEnvironmentBindings } from "../lib/context-environment"
 import { credentialRevision, credentialView, credentialVisible } from "../lib/credentials"
 import { encryptSecret } from "../lib/crypto"
 import { fail, readJson } from "../lib/http"
-import { canManageAgent } from "../lib/jobs"
+import { canManageAgent } from "../lib/job-policy"
 import { verifySecretUploadToken } from "../lib/secret-upload-token"
 import { saveSecret } from "../lib/secrets"
 

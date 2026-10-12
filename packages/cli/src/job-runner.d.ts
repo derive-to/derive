@@ -19,6 +19,17 @@ export interface PulledJob {
   id: string
   started_at: string
   lease_until: string | null
+  protocol_version?: number
+  execution?: { provider: "codex" | "claude-code"; model: string | null; agent_name: string }
+  turn?: {
+    id: string
+    ordinal: number
+    body_md: string
+    previous: {
+      session_id: string
+      checkpoint: import("./conversation-format.js").ConversationCheckpoint
+    } | null
+  }
   messages: { author_kind: "asker" | "agent"; body_md: string }[]
   /** The source tools the agent may call, and the model's token (tool route only) to call them. */
   tools?: { def: { name: string; description?: string; params?: unknown }; ref: string }[]

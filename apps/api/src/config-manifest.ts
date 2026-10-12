@@ -429,6 +429,18 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "/opt/derive/bin/derive.js",
   },
   {
+    name: "DERIVE_RUNNER_ARCHIVE_URL",
+    group: "advanced",
+    doc: "Optional immutable CLI archive for self-hosts and previews. HTTPS only. Requires DERIVE_RUNNER_ARCHIVE_SHA256. The archive carries no credentials.",
+    example: "https://example.com/derive-runner.tgz",
+  },
+  {
+    name: "DERIVE_RUNNER_ARCHIVE_SHA256",
+    group: "advanced",
+    doc: "SHA-256 of DERIVE_RUNNER_ARCHIVE_URL. Setup verifies these exact bytes before installation.",
+    example: "<64 lowercase hex characters>",
+  },
+  {
     name: "DERIVE_ORTAM_API_URL",
     group: "advanced",
     doc: "The Ortam API Derive machines are created through.",

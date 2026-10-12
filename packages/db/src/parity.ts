@@ -133,20 +133,47 @@ export type JunctionTable =
   | "oauthClientWorkspace"
   | "instanceOperator"
 
+export interface PgExecutionTables {
+  jobCommand: import("@derive/core").JobCommandReceipt
+  jobEvent: import("@derive/core").JobEventRecord
+  jobTurn: import("@derive/core").JobTurnRecord
+  jobTurnReceipt: {
+    turn_id: string
+    started_at: string
+    result_json: string
+    cost_micro_usd: number | null
+    reported: number
+    attempt_index: number | null
+  }
+}
+
 type ClassifiedKey = keyof TypedTables | JunctionTable
 
+/** Existing support rows are decoded by shared SQL owners rather than mirrored as core Records. */
+export type PgSupportTable =
+  | "collectionInvite"
+  | "orgSettings"
+  | "slackInstall"
+  | "slackThreadLink"
+  | "slackUserLink"
+  | "slackSubscription"
+  | "userNotificationPref"
+  | "activitySeen"
+
 /** `true` iff the schema's table keys are exactly the classified keys. */
-export type Exhaustive<Schema> = [Exclude<keyof Schema, ClassifiedKey>] extends [never]
-  ? [Exclude<ClassifiedKey, keyof Schema>] extends [never]
+export type Exhaustive<Schema, Extra = Record<never, never>, Support extends string = never> = [
+  Exclude<keyof Schema, ClassifiedKey | keyof Extra | Support>,
+] extends [never]
+  ? [Exclude<ClassifiedKey | keyof Extra | Support, keyof Schema>] extends [never]
     ? true
     : false
   : false
 
 /** Per-typed-table shape parity for a given dialect's `schema` object. */
-export type Shapes<Schema> = {
-  [K in keyof TypedTables]: K extends keyof Schema
+export type Shapes<Schema, Extra = Record<never, never>> = {
+  [K in keyof (TypedTables & Extra)]: K extends keyof Schema
     ? Schema[K] extends { $inferSelect: infer Row }
-      ? Exact<Row, TypedTables[K]>
+      ? Exact<Row, (TypedTables & Extra)[K]>
       : false
     : false
 }

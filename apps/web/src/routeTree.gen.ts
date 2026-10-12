@@ -35,6 +35,7 @@ import { Route as AgentsIndexRouteImport } from './routes/agents.index'
 import { Route as UsersHandleRouteImport } from './routes/users.$handle'
 import { Route as TemplatesRefRouteImport } from './routes/templates.$ref'
 import { Route as TemplateLibrariesIdRouteImport } from './routes/template-libraries.$id'
+import { Route as TasksIdRouteImport } from './routes/tasks.$id'
 import { Route as SettingsSectionRouteImport } from './routes/settings.$section'
 import { Route as PapersNewRouteImport } from './routes/papers.new'
 import { Route as PapersIdRouteImport } from './routes/papers.$id'
@@ -179,6 +180,11 @@ const TemplateLibrariesIdRoute = TemplateLibrariesIdRouteImport.update({
   path: '/template-libraries/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TasksIdRoute = TasksIdRouteImport.update({
+  id: '/tasks/$id',
+  path: '/tasks/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsSectionRoute = SettingsSectionRouteImport.update({
   id: '/$section',
   path: '/$section',
@@ -276,6 +282,7 @@ export interface FileRoutesByFullPath {
   '/papers/$id': typeof PapersIdRoute
   '/papers/new': typeof PapersNewRoute
   '/settings/$section': typeof SettingsSectionRoute
+  '/tasks/$id': typeof TasksIdRoute
   '/template-libraries/$id': typeof TemplateLibrariesIdRoute
   '/templates/$ref': typeof TemplatesRefRoute
   '/users/$handle': typeof UsersHandleRoute
@@ -316,6 +323,7 @@ export interface FileRoutesByTo {
   '/papers/$id': typeof PapersIdRoute
   '/papers/new': typeof PapersNewRoute
   '/settings/$section': typeof SettingsSectionRoute
+  '/tasks/$id': typeof TasksIdRoute
   '/template-libraries/$id': typeof TemplateLibrariesIdRoute
   '/templates/$ref': typeof TemplatesRefRoute
   '/users/$handle': typeof UsersHandleRoute
@@ -358,6 +366,7 @@ export interface FileRoutesById {
   '/papers/$id': typeof PapersIdRoute
   '/papers/new': typeof PapersNewRoute
   '/settings/$section': typeof SettingsSectionRoute
+  '/tasks/$id': typeof TasksIdRoute
   '/template-libraries/$id': typeof TemplateLibrariesIdRoute
   '/templates/$ref': typeof TemplatesRefRoute
   '/users/$handle': typeof UsersHandleRoute
@@ -401,6 +410,7 @@ export interface FileRouteTypes {
     | '/papers/$id'
     | '/papers/new'
     | '/settings/$section'
+    | '/tasks/$id'
     | '/template-libraries/$id'
     | '/templates/$ref'
     | '/users/$handle'
@@ -441,6 +451,7 @@ export interface FileRouteTypes {
     | '/papers/$id'
     | '/papers/new'
     | '/settings/$section'
+    | '/tasks/$id'
     | '/template-libraries/$id'
     | '/templates/$ref'
     | '/users/$handle'
@@ -482,6 +493,7 @@ export interface FileRouteTypes {
     | '/papers/$id'
     | '/papers/new'
     | '/settings/$section'
+    | '/tasks/$id'
     | '/template-libraries/$id'
     | '/templates/$ref'
     | '/users/$handle'
@@ -523,6 +535,7 @@ export interface RootRouteChildren {
   JoinTokenRoute: typeof JoinTokenRoute
   PapersIdRoute: typeof PapersIdRoute
   PapersNewRoute: typeof PapersNewRoute
+  TasksIdRoute: typeof TasksIdRoute
   TemplateLibrariesIdRoute: typeof TemplateLibrariesIdRoute
   TemplatesRefRoute: typeof TemplatesRefRoute
   UsersHandleRoute: typeof UsersHandleRoute
@@ -717,6 +730,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TemplateLibrariesIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/tasks/$id': {
+      id: '/tasks/$id'
+      path: '/tasks/$id'
+      fullPath: '/tasks/$id'
+      preLoaderRoute: typeof TasksIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings/$section': {
       id: '/settings/$section'
       path: '/$section'
@@ -855,6 +875,7 @@ const rootRouteChildren: RootRouteChildren = {
   JoinTokenRoute: JoinTokenRoute,
   PapersIdRoute: PapersIdRoute,
   PapersNewRoute: PapersNewRoute,
+  TasksIdRoute: TasksIdRoute,
   TemplateLibrariesIdRoute: TemplateLibrariesIdRoute,
   TemplatesRefRoute: TemplatesRefRoute,
   UsersHandleRoute: UsersHandleRoute,

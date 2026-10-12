@@ -17,10 +17,18 @@ type Process = {
   id: string
   status: "starting" | "running" | "exited" | "failed" | "timed_out" | "stopped" | "interrupted"
 }
+export interface SandboxCreate {
+  name: string
+  size: "small" | "medium" | "large"
+  auto_stop_after_seconds: number
+  setup_script: string
+  snapshot?: string
+  env?: Record<string, string>
+}
 export interface SandboxClient {
   authenticate(): Promise<Identity>
   create(
-    body: unknown,
+    body: SandboxCreate,
     key: string,
     identity: Identity,
   ): Promise<{ sandbox: Sandbox; operation: Operation }>

@@ -17,7 +17,8 @@ import { EnvironmentBindings, readEnvironmentBindings } from "../lib/context-env
 import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 import { machineDepsFrom, retireSandbox } from "../lib/job-machine"
-import { agentAccess, cancelJob } from "../lib/jobs"
+import { agentAccess } from "../lib/job-policy"
+import { cancelJob } from "../lib/jobs"
 import { cloudEnabled, workspaceRuntime } from "../lib/runtime-connection"
 import { previousOccurrence } from "../lib/schedule"
 
@@ -892,25 +893,42 @@ export const agentRoutes = (ctx: AppContext) => {
       if (!target || !(await managerOf(c, target))) return bail(fail(c, 404, "agent not found"))
       const org = target.org_id
       const id = target.id
-      await retireSandbox(
+      await meta.updateAgent(id, org, { paused_at: new Date().toISOString() })
+      await meta.rotateAgentToken(id, org, newId("revoked"))
+      for (let open = await openJobs(org, id); open.length; open = await openJobs(org, id)) {
+        let moved = 0
+        for (const job of open)
+          if (
+            await cancelJob(
+              {
+                meta,
+                bus: ctx.backplane,
+                cloud: { secret: deps.encryptionKey, config: deps.runtime },
+              },
+              job,
+            )
+          )
+            moved++
+        if (!moved) break
+      }
+      const retired = await retireSandbox(
         machineDepsFrom(meta, {
           secret: deps.encryptionKey,
           server: deps.baseUrl,
           config: deps.runtime,
           fetcher: deps.runtimeFetch,
         }),
-        target,
+        (await meta.getAgent(id)) ?? target,
       )
-      // Scope the delete to the caller's workspace: deleteAgent is keyed by
-      // (id, org) so an Admin can't delete another workspace's agent by id.
+      if (!retired)
+        return bail(
+          fail(
+            c,
+            409,
+            "The agent is paused. Its sandbox is stopping before deletion. Try again shortly.",
+          ),
+        )
       await meta.deleteAgent(id, org)
-      // Its open work and its schedules have nobody left to serve them.
-      for (let open = await openJobs(org, id); open.length; open = await openJobs(org, id)) {
-        let moved = 0
-        // No announce: the agent row is gone, so there is nobody to say it on behalf of.
-        for (const j of open) if (await cancelJob({ meta, bus: ctx.backplane }, j)) moved++
-        if (moved === 0) break
-      }
       for (const t of await meta.listTriggers(org, id)) await meta.deleteTrigger(t.id, org)
       // Drop it from the owner-lend list so stale ids don't accumulate in org settings.
       const settings = await meta.getOrgSettings(org)

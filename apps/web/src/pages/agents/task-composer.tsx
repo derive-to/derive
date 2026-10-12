@@ -1,20 +1,21 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link, useNavigate } from "@tanstack/react-router"
-import { useRef, useState } from "react"
 import { type Agent, ApiError, api } from "@/api"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
+import { useAuth } from "@/ctx"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { useTaskDraft } from "@/lib/use-task-draft"
 
 /** The same task input on the home page and inside an agent. */
 export function TaskComposer({ agents }: { agents: (Agent & { can_ask: boolean })[] }) {
   const navigate = useNavigate()
   const available = agents.filter((a) => a.can_ask)
-  const [agentId, setAgentId] = useState("")
-  const [text, setText] = useState("")
-  const key = useRef(crypto.randomUUID())
-  const agent = available.find((a) => a.id === agentId) ?? available[0]
+  const { me } = useAuth()
+  const draft = useTaskDraft("start", me?.id)
+  const { text } = draft
+  const agent = available.find((a) => a.id === draft.agentId) ?? available[0]
   const runtime = useQuery({
     queryKey: ["agents", "runtime"],
     queryFn: api.agentRuntime,
@@ -24,13 +25,17 @@ export function TaskComposer({ agents }: { agents: (Agent & { can_ask: boolean }
     errorToast: false,
     mutationFn: () => {
       if (!agent) throw new Error("Choose an agent first")
-      return api.askAgent(agent.id, text.trim(), undefined, { dedupe_key: key.current })
+      return api.askAgent(agent.id, text.trim(), undefined, {
+        dedupe_key: `${draft.key}:${agent.id}`,
+      })
     },
     invalidate: [["jobs"], ["agents"]],
     onSuccess: (job) => {
-      setText("")
-      key.current = crypto.randomUUID()
-      void navigate({ to: "/agents/$id", params: { id: job.agent_id }, search: {} })
+      draft.clear()
+      void navigate({ to: "/tasks/$id", params: { id: job.id } })
+    },
+    onError: (error) => {
+      if (error instanceof ApiError) draft.retry(error.status)
     },
   })
   const submit = () => {
@@ -55,8 +60,7 @@ export function TaskComposer({ agents }: { agents: (Agent & { can_ask: boolean }
         maxLength={20_000}
         disabled={ask.isPending}
         onChange={(event) => {
-          setText(event.target.value)
-          key.current = crypto.randomUUID()
+          draft.change(event.target.value)
         }}
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -76,8 +80,7 @@ export function TaskComposer({ agents }: { agents: (Agent & { can_ask: boolean }
               value={agent?.id ?? ""}
               disabled={ask.isPending}
               onChange={(event) => {
-                setAgentId(event.target.value)
-                key.current = crypto.randomUUID()
+                draft.choose(event.target.value)
               }}
             >
               {available.map((a) => (

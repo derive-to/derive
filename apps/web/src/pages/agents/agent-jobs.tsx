@@ -18,7 +18,6 @@ import { accountsQuery, agentJobsQuery, agentQuery, jobQuery } from "@/lib/queri
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useJobEvents } from "@/lib/use-job-events"
 import { cn } from "@/lib/utils"
-import { mdToHtml } from "../artifact/lib/markdown"
 import {
   askedLine,
   cronLabel,
@@ -32,7 +31,9 @@ import {
 } from "./format"
 import { Group, Meta, RowLine, Time } from "./rows"
 import { AgentRowsSkeleton } from "./skeleton"
-import { TaskReceipt, TaskUsage } from "./task-usage"
+import { TaskConversation } from "./task-conversation"
+import { TaskSchedule } from "./task-schedule"
+import { TaskUsage } from "./task-usage"
 
 const first = (name: string | undefined) => name?.trim().split(/\s+/)[0] || undefined
 
@@ -229,6 +230,16 @@ export function NeedsRow({
           </span>
         </button>
         <Meta>
+          {job.needs?.question_id && (
+            <Link
+              to="/tasks/$id"
+              params={{ id: job.id }}
+              data-testid={`job-task-link-${job.id}`}
+              className="font-medium text-foreground hover:underline"
+            >
+              Open task
+            </Link>
+          )}
           {asked && <span>{asked}</span>}
           {job.report_short_id && (
             <Link
@@ -274,11 +285,14 @@ function useNoAccount(agent: AgentDetail, meId: string): boolean {
   )
 }
 
-function taskStatus(job: Job, agent: Agent): string {
-  if (job.status === "succeeded") return "Done"
-  if (job.status === "needs_you") return "Needs you"
-  if (job.status === "failed" || job.status === "lost") return "Failed"
-  if (job.status === "cancelled") return "Stopped"
+export function taskStatus(job: Job, agent: Agent): string {
+  const stopping = job.machine_phase && job.machine_phase !== "released"
+  if (job.status === "succeeded") return stopping ? "Result ready · stopping compute…" : "Done"
+  if (job.status === "needs_you") return stopping ? "Needs you · stopping compute…" : "Needs you"
+  if (job.status === "failed" || job.status === "lost")
+    return stopping ? "Failed · stopping compute…" : "Failed"
+  if (job.status === "cancelled")
+    return job.machine_phase && job.machine_phase !== "released" ? "Stopping compute…" : "Stopped"
   if (job.status === "queued") {
     if (agent.paused) return "Paused"
     if (["creating", "provisioning", "stopping"].includes(agent.runtime?.phase ?? ""))
@@ -338,8 +352,6 @@ export function JobRow({
   const retry = useApiMutation({ mutationFn: () => api.retryJob(job.id), invalidate })
   const repeatKey = useRef(crypto.randomUUID())
   const [repeated, setRepeated] = useState(false)
-  const [daily, setDaily] = useState(false)
-  const [time, setTime] = useState("09:00")
   const repeat = useApiMutation({
     errorToast: false,
     mutationFn: () =>
@@ -349,29 +361,6 @@ export function JobRow({
       setRepeated(true)
     },
   })
-  const schedule = useApiMutation({
-    errorToast: false,
-    mutationFn: async () => {
-      const [hour, minute] = time.split(":").map(Number)
-      const cron = `${minute} ${hour} * * *`
-      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
-      // Reconcile a lost response before retrying so we do not add a second schedule.
-      const current = await api.getAgent(agent.id)
-      const saved = current.triggers.find(
-        (t) => t.cron === cron && t.tz === tz && t.instruction === job.instruction,
-      )
-      return saved
-        ? saved.enabled
-          ? saved
-          : api.updateTrigger(saved.id, { enabled: true })
-        : api.addTrigger(agent.id, { cron, tz, instruction: job.instruction })
-    },
-    invalidate: [["agents"]],
-    onSuccess: () => setDaily(false),
-  })
-  const scheduled = triggers.some(
-    (t) => t.kind === "schedule" && t.enabled && t.instruction === job.instruction,
-  )
   const needs = job.status === "needs_you"
   const failed = job.status === "failed" || job.status === "lost"
   const detail = detailOf(job, agent)
@@ -403,6 +392,14 @@ export function JobRow({
           />
         </button>
         <Meta>
+          <Link
+            to="/tasks/$id"
+            params={{ id: job.id }}
+            data-testid={`job-open-${job.id}`}
+            className="text-sm text-muted-foreground hover:text-foreground hover:underline"
+          >
+            Open task
+          </Link>
           <span
             className={cn(
               "text-sm",
@@ -482,64 +479,17 @@ export function JobRow({
                   </Button>
                 )}
                 {canSchedule && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    data-testid={`job-daily-${job.id}`}
-                    disabled={scheduled || schedule.isPending}
-                    onClick={() => setDaily(!daily)}
-                  >
-                    {scheduled ? "Runs every day" : "Run every day"}
-                  </Button>
+                  <TaskSchedule
+                    agentId={agent.id}
+                    instruction={job.instruction}
+                    triggers={triggers}
+                  />
                 )}
               </div>
               {repeat.error && (
                 <p role="alert" className="text-sm text-destructive">
                   {repeat.error.message}
                 </p>
-              )}
-              {daily && (
-                <form
-                  className="flex flex-wrap items-end gap-3"
-                  onSubmit={(e) => {
-                    e.preventDefault()
-                    if (time && !schedule.isPending) schedule.mutate()
-                  }}
-                >
-                  <label className="flex flex-col gap-2 text-sm">
-                    Every day · {Intl.DateTimeFormat().resolvedOptions().timeZone}
-                    <Input
-                      data-testid={`job-daily-time-${job.id}`}
-                      type="time"
-                      required
-                      value={time}
-                      onChange={(e) => setTime(e.target.value)}
-                    />
-                  </label>
-                  <Button
-                    type="submit"
-                    size="sm"
-                    data-testid={`job-daily-save-${job.id}`}
-                    loading={schedule.isPending}
-                  >
-                    Save schedule
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    data-testid={`job-daily-cancel-${job.id}`}
-                    onClick={() => setDaily(false)}
-                  >
-                    Cancel
-                  </Button>
-                  {schedule.error && (
-                    <p role="alert" className="w-full text-sm text-destructive">
-                      {schedule.error.message}
-                    </p>
-                  )}
-                </form>
               )}
             </div>
           )}
@@ -647,97 +597,9 @@ export function Transcript({
         <Skeleton className="h-4 w-1/2" />
       </div>
     )
-  const effects = q.data.result.effects ?? []
-  const answer = [...q.data.messages]
-    .reverse()
-    .find((message) => message.author_kind === "agent" && !message.progress)
-  const history = q.data.messages.filter((message) => message.id !== answer?.id)
   return (
     <div data-testid={`job-transcript-${id}`} className="flex max-w-2xl flex-col gap-4 pb-5 pl-8">
-      {answer && (
-        <div
-          data-testid={`job-result-${id}`}
-          className="rounded-xl border border-border bg-card p-4"
-        >
-          <p className="mb-2 text-xs font-medium text-muted-foreground">Result</p>
-          <div
-            className="text-sm leading-relaxed [&_a]:underline"
-            // biome-ignore lint/security/noDangerouslySetInnerHtml: mdToHtml escapes text and permits only HTTP or app-relative links.
-            dangerouslySetInnerHTML={{ __html: mdToHtml(answer.body_md) }}
-          />
-        </div>
-      )}
-      <details data-testid={`job-details-${id}`} className="text-sm">
-        <summary className="cursor-pointer text-muted-foreground">Usage and activity</summary>
-        <div className="mt-4 flex flex-col gap-4">
-          <TaskReceipt job={q.data} />
-          {history.map((m) => (
-            <div key={m.id} className="flex flex-col gap-1">
-              <div className="flex items-baseline gap-2 text-sm text-muted-foreground">
-                <span className="font-medium text-foreground">
-                  {m.author_kind === "agent"
-                    ? agentName
-                    : (first(names.get(m.author_id)) ?? "Someone")}
-                </span>
-                <Time>{when(m.created_at)}</Time>
-              </div>
-              <p
-                className={cn(
-                  "text-base leading-relaxed whitespace-pre-wrap",
-                  m.progress ? "text-muted-foreground" : "text-foreground",
-                )}
-              >
-                {m.body_md}
-              </p>
-            </div>
-          ))}
-        </div>
-      </details>
-      {(effects.length > 0 || q.data.report_short_id) && (
-        <div className="flex flex-wrap gap-2">
-          {q.data.report_short_id && (
-            <Link
-              to="/artifacts/$ref"
-              params={{ ref: q.data.report_short_id }}
-              data-testid={`job-report-${id}`}
-              className="rounded-lg border border-border px-2.5 py-1.5 text-sm font-medium hover:bg-secondary"
-            >
-              Report
-            </Link>
-          )}
-          {effects.map((e, i) =>
-            e.kind === "page" && e.ref ? (
-              <Link
-                key={`${e.kind}-${e.ref}-${e.label}`}
-                to="/artifacts/$ref"
-                params={{ ref: e.ref }}
-                data-testid={`job-effect-${id}-${i}`}
-                className="rounded-lg border border-border px-2.5 py-1.5 text-sm hover:bg-secondary"
-              >
-                {e.label}
-              </Link>
-            ) : e.url && /^https?:\/\//i.test(e.url) ? (
-              <a
-                key={`${e.kind}-${e.url}-${e.label}`}
-                href={e.url}
-                target="_blank"
-                rel="noreferrer"
-                data-testid={`job-effect-${id}-${i}`}
-                className="rounded-lg border border-border px-2.5 py-1.5 text-sm hover:bg-secondary"
-              >
-                {e.label}
-              </a>
-            ) : (
-              <span
-                key={`${e.kind}-${e.label}`}
-                className="rounded-lg border border-border px-2.5 py-1.5 text-sm"
-              >
-                {e.label}
-              </span>
-            ),
-          )}
-        </div>
-      )}
+      <TaskConversation job={q.data} agentName={agentName} names={names} />
     </div>
   )
 }

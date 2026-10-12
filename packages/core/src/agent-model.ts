@@ -61,6 +61,8 @@ export interface JobEffect {
 }
 
 export interface JobResult {
+  /** Set at admission only when every native claim is retained before execution. */
+  claim_ledger_version?: 1
   /** Server-owned baseline for receipt indexes across manual retry cycles. */
   attempt_offset?: number
   compute?: {
@@ -77,12 +79,19 @@ export interface JobResult {
     attempt: number
     provider: string
     model: string
+    runner_version?: string
+    harness_version?: string | null
     skill?: { short_id: string; version: number }
     input_tokens: number | null
     cached_input_tokens: number | null
     output_tokens: number | null
     duration_ms: number
     model_cost_micro_usd: number | null
+    harness_estimate_micro_usd?: number | null
+    api_estimate_micro_usd?: number | null
+    price_version?: string | null
+    turn_id?: string
+    actor_id?: string | null
   }[]
   effects?: JobEffect[]
   evidence?: { label: string; url?: string; ref?: string }[]
@@ -468,6 +477,20 @@ const parseJson = <T>(raw: string | null | undefined): T | null => {
 }
 export const jobNeeds = (j: Pick<JobRecord, "needs_json">): JobNeeds | null =>
   parseJson<JobNeeds>(j.needs_json)
+/** Keep the first ask and total ask count when a schedule replaces an open question. */
+export const questionHistory = (
+  needs: JobNeeds,
+  earlier: readonly Pick<JobRecord, "needs_json" | "updated_at">[],
+): JobNeeds => {
+  const next = { ...needs }
+  for (const job of earlier) {
+    const prior = jobNeeds(job)
+    next.asked_times = Math.max(next.asked_times ?? 1, (prior?.asked_times ?? 1) + 1)
+    const first = prior?.first_asked_at ?? job.updated_at
+    if (!next.first_asked_at || first < next.first_asked_at) next.first_asked_at = first
+  }
+  return next
+}
 export const jobResult = (j: Pick<JobRecord, "result_json">): JobResult =>
   parseJson<JobResult>(j.result_json) ?? {}
 export const isJobOpen = (s: JobStatus): boolean => JOB_OPEN_STATUSES.includes(s)

@@ -186,6 +186,7 @@ import {
   dynamicStateKey,
   dynamicStatePrefix,
 } from "./dynamic-storage"
+import { jobExecutionRepos } from "./job-execution-repos"
 import type { Exhaustive, Shapes } from "./parity"
 import {
   activitySeen,
@@ -228,6 +229,7 @@ import {
   notification,
   oauthClientWorkspace,
   orgSettings,
+  PG_SCHEMA,
   PG_SCHEMA_STATEMENTS,
   plan,
   renderJob,
@@ -271,71 +273,21 @@ const one = <T>(rows: T[]): T => {
 
 // Exported so the pg schema-conformance test can diff these defs against the
 // columns PG_SCHEMA_STATEMENTS actually creates in a real Postgres.
-export const schema = {
-  job,
-  jobMessage,
-  agentTrigger,
-  modelAccount,
-  artifact,
-  sharedState,
-  sharedStateActivity,
-  dynamicRevision,
-  version,
-  versionData,
-  comment,
-  webhook,
-  webhookDelivery,
-  exportJob,
-  importJob,
-  importLease,
-  renderJob,
-  membership,
-  workspace,
-  artifactMember,
-  notification,
-  artifactFavorite,
-  follow,
-  artifactTag,
-  reviewRound,
-  agent,
-  agentMention,
-  artifactScanEvent,
-  artifactScanCoverage,
-  skillRelation,
-  skillInstallation,
-  skillScanCoverage,
-  skillUse,
-  artifactSkillLink,
-  plan,
-  connection,
-  artifactInvite,
-  invitation,
-  workspaceJoinLink,
-  signupAttribution,
-  instanceOperator,
-  subscription,
-  oauthClientWorkspace,
-  context,
-  contextAsker,
-  collection,
-  collectionItem,
-  collectionMember,
-  collectionFavorite,
-  folder,
-  templateLibrary,
-  templateLibraryEntry,
-  githubApp,
-  domain,
-  report,
-  auditLog,
-  asset,
-}
+export const schema = PG_SCHEMA
 
 // Compile-time schema parity (see ./parity), same classification as the sqlite
 // dialect but checking the pg `$inferSelect` shapes. New table not classified, or
 // a pg column that drifts from its core Record → compile error here.
-const _schemaExhaustive: Exhaustive<typeof schema> = true
-const _schemaShapes: Shapes<typeof schema> = {
+const _schemaExhaustive: Exhaustive<
+  typeof schema,
+  import("./parity").PgExecutionTables,
+  import("./parity").PgSupportTable
+> = true
+const _schemaShapes: Shapes<typeof schema, import("./parity").PgExecutionTables> = {
+  jobCommand: true,
+  jobTurn: true,
+  jobTurnReceipt: true,
+  jobEvent: true,
   job: true,
   jobMessage: true,
   agentTrigger: true,
@@ -634,6 +586,7 @@ const mapOverviewRows = (rows: OverviewRow[]): CollectionsOverviewRead => {
 type PgWriter = Pick<NodePgDatabase<typeof schema>, "insert" | "update" | "delete">
 
 export class PgMetaStore implements MetaStore {
+  readonly jobExecution: import("@derive/core").JobExecutionStore<AgentRecord>
   private readonly agentModel = agentModelRepos(
     async (statement) => (await this.db.execute(statement)).rows,
   )
@@ -646,7 +599,20 @@ export class PgMetaStore implements MetaStore {
   claimJob = this.agentModel.claimJob
   updateJob = this.agentModel.updateJob
   countRunningJobs = this.agentModel.countRunningJobs
-  reclaimStaleJobs = this.agentModel.reclaimStaleJobs
+  reclaimStaleJobs: MetaStore["reclaimStaleJobs"] = (now, maxAttempts, orgIds) =>
+    this.db.transaction(async (tx) => {
+      const out = await agentModelRepos(async (q) => (await tx.execute(q)).rows).reclaimStaleJobs(
+        now,
+        maxAttempts,
+        orgIds,
+      )
+      for (const job of out.lost)
+        await tx.execute(sql`UPDATE job_turn SET
+          status = CASE WHEN status = 'running' THEN 'failed' ELSE 'cancelled' END,
+          finished_at = ${now}
+          WHERE job_id = ${job.id} AND org_id = ${job.org_id} AND status IN ('queued', 'running')`)
+      return out
+    })
   listQueuedDeriveJobs = this.agentModel.listQueuedDeriveJobs
   latestJobForTrigger = this.agentModel.latestJobForTrigger
   findOpenJobByDedupe = this.agentModel.findOpenJobByDedupe
@@ -684,7 +650,9 @@ export class PgMetaStore implements MetaStore {
   private constructor(
     private pool: Pool,
     private db: NodePgDatabase<typeof schema>,
-  ) {}
+  ) {
+    this.jobExecution = jobExecutionRepos(db)
+  }
 
   /** Connect and apply the schema (idempotent) before first use. `onError` is
    *  invoked for idle-pool errors: a DB restart / network blip emits an `'error'`
@@ -3026,6 +2994,13 @@ export class PgMetaStore implements MetaStore {
           this.db.select({ id: job.id }).from(job).where(eq(job.org_id, orgId)),
         ),
       )
+    await this.db.execute(
+      sql`DELETE FROM job_event WHERE turn_id IN (SELECT id FROM job_turn WHERE org_id = ${orgId})`,
+    )
+    await this.db.execute(sql`DELETE FROM job_turn_receipt WHERE turn_id IN
+      (SELECT id FROM job_turn WHERE org_id = ${orgId})`)
+    await this.db.execute(sql`DELETE FROM job_turn WHERE org_id = ${orgId}`)
+    await this.db.execute(sql`DELETE FROM job_command WHERE org_id = ${orgId}`)
     await this.db.delete(job).where(eq(job.org_id, orgId))
     await this.db.delete(agentTrigger).where(eq(agentTrigger.org_id, orgId))
     await this.db.delete(modelAccount).where(eq(modelAccount.org_id, orgId))

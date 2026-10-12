@@ -21,7 +21,8 @@ import {
   parseMeta,
   quoteOf,
 } from "./comments"
-import { canSteerJob, followUpJob, jobOverBudget } from "./jobs"
+import { canSteerJob } from "./job-policy"
+import { followUpJob, jobOverBudget } from "./jobs"
 import { notifyMentions, notifyThreadReplyAgents } from "./mentions"
 import { notifyCommentBells } from "./notify-comment"
 import { enqueueCommentEmails } from "./notify-email"

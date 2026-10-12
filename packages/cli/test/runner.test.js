@@ -418,6 +418,9 @@ describe("the runner command", () => {
     // A server with one job and no stored model account: an opted-out runner must fail the
     // job plainly instead of spending this machine's own model login.
     const reports = []
+    const harness = join(mkdtempSync(join(tmpdir(), "runner-version-")), "claude")
+    writeFileSync(harness, "#!/bin/sh\nprintf '1.0.0\\n'\n")
+    chmodSync(harness, 0o755)
     const server = createServer((req, res) => {
       let body = ""
       req.on("data", (c) => {
@@ -443,7 +446,7 @@ describe("the runner command", () => {
         const p = spawn(
           process.execPath,
           [bin, "runner", "once", "--agent", "ag_1", "--token", "dk_agt_x", "--server", url]
-            .concat(["--claude-bin", "/nonexistent/claude"])
+            .concat(["--claude-bin", harness])
             .concat(extra),
           { env: { ...process.env, DERIVE_TOKEN: "", RUNNER_LOCAL_LOGIN: "" } },
         )

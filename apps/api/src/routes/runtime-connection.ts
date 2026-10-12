@@ -36,7 +36,7 @@ const response = {
 export const runtimeConnectionRoutes = (ctx: AppContext) => {
   const { meta, deps, requireWorkspace } = ctx
   const app = new OpenAPIHono<BlankEnv>()
-  const available = !!deps.encryptionKey && !!deps.runtime
+  const available = !!deps.encryptionKey && !!deps.runtime && !!meta.jobExecution
   const view = async (org: string, canManage: boolean) => {
     const cn = await runtimeConnection(meta, org)
     return {

@@ -1443,14 +1443,28 @@ export const api = {
       "/v1/jobs",
       opts({ agent_id: agentId, instruction, ...(subject ? { subject } : {}), ...context }),
     ).then(j),
-  cancelJob: (id: string): Promise<Job> => f(`/v1/jobs/${id}/cancel`, opts({})).then(j),
-  retryJob: (id: string): Promise<Job> => f(`/v1/jobs/${id}/retry`, opts({})).then(j),
+  cancelJob: (id: string, key?: string): Promise<Job> =>
+    f(`/v1/jobs/${id}/cancel`, {
+      ...opts({}),
+      headers: {
+        "content-type": "application/json",
+        "Idempotency-Key": key ?? crypto.randomUUID(),
+      },
+    }).then(j),
+  retryJob: (id: string, key?: string): Promise<Job> =>
+    f(`/v1/jobs/${id}/retry`, {
+      ...opts({}),
+      headers: {
+        "content-type": "application/json",
+        "Idempotency-Key": key ?? crypto.randomUUID(),
+      },
+    }).then(j),
   /** Write to a job: a follow-up. A settled built-in Derive page ask answers it as another turn. */
-  writeJob: (id: string, body_md: string): Promise<JobDetail> =>
-    f(`/v1/jobs/${id}/messages`, opts({ body_md })).then(j),
+  writeJob: (id: string, body_md: string, dedupe_key?: string): Promise<JobDetail> =>
+    f(`/v1/jobs/${id}/messages`, opts({ body_md, dedupe_key })).then(j),
   answerJob: (
     id: string,
-    answer: { text?: string; option?: string; question_id?: string },
+    answer: { text?: string; option?: string; question_id?: string; dedupe_key?: string },
   ): Promise<Job> => f(`/v1/jobs/${id}/answer`, opts(answer)).then(j),
 
   // Model accounts (routes/accounts.ts): yours, and the workspace's shared ones.
