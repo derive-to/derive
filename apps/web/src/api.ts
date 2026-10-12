@@ -453,6 +453,8 @@ export type ListedAgent =
   paths["/v1/agents"]["get"]["responses"]["200"]["content"]["application/json"]["agents"][number]
 /** One schedule on an agent (routes/agents.ts Trigger). */
 export type AgentTrigger = NonNullable<components["schemas"]["AgentTrigger"]>
+/** One source or secret an agent is bound to, by name. Never a value. */
+export type AgentSource = components["schemas"]["AgentSource"]
 /** One agent with its schedules and what the caller may do with it. The spec marks the shared
  *  Trigger schema nullable (it is also the create response's optional `trigger`), but a list
  *  of an agent's schedules never holds a null. */

@@ -7501,6 +7501,17 @@ export interface components {
             /** @description True when the caller was already a member; their role is never changed. */
             already_member: boolean;
         };
+        AgentSource: {
+            id: string;
+            /** @description The source's name, or a secret's label. Never a value. */
+            name: string;
+            /** @enum {string} */
+            kind: "oauth" | "secret" | "github_app" | "slack" | "mcp";
+            /** @enum {string} */
+            scope: "personal" | "workspace";
+            /** @enum {string} */
+            status: "active" | "pending" | "revoked";
+        };
         AgentTrigger: {
             id: string;
             agent_id: string;
@@ -7582,6 +7593,8 @@ export interface components {
             };
             /** @description Environment variable names bound to credentials. Never values. */
             environment_names: string[];
+            /** @description Every source and secret it is bound to, by name: connection_ids and the secrets behind environment. Never values. */
+            sources: components["schemas"]["AgentSource"][];
             account_id: string | null;
         };
         ConnectedAgent: {

@@ -1557,6 +1557,50 @@
           "already_member"
         ]
       },
+      "AgentSource": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "The source's name, or a secret's label. Never a value."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "oauth",
+              "secret",
+              "github_app",
+              "slack",
+              "mcp"
+            ]
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "workspace"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "pending",
+              "revoked"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "scope",
+          "status"
+        ]
+      },
       "AgentTrigger": {
         "type": "object",
         "properties": {
@@ -1817,6 +1861,13 @@
             },
             "description": "Environment variable names bound to credentials. Never values."
           },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentSource"
+            },
+            "description": "Every source and secret it is bound to, by name: connection_ids and the secrets behind environment. Never values."
+          },
           "account_id": {
             "type": "string",
             "nullable": true
@@ -1843,6 +1894,7 @@
           "connection_ids",
           "environment",
           "environment_names",
+          "sources",
           "account_id"
         ]
       },

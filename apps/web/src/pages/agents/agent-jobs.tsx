@@ -14,13 +14,7 @@ import { LoadError } from "@/components/shared/load-error"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  accountsQuery,
-  agentConnectionsQuery,
-  agentJobsQuery,
-  agentQuery,
-  jobQuery,
-} from "@/lib/queries"
+import { accountsQuery, agentJobsQuery, agentQuery, jobQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useJobEvents } from "@/lib/use-job-events"
 import { cn } from "@/lib/utils"
@@ -85,7 +79,7 @@ export function AgentJobs({
     agent,
     names,
     useNoAccount(agent, meId),
-    useBrokenSources(agent, agent.can_manage),
+    agent.can_manage ? brokenSources(agent) : [],
   )
   const schedules = schedulesOf(agent.triggers)
   const rows = jobs.data?.pages.flatMap((p) => p.jobs) ?? []
@@ -147,28 +141,28 @@ export function AgentJobs({
   )
 }
 
-/** The names of this agent's sources and secrets that are no longer active, read with the
- *  same request its Settings tab uses. Only a manager can see them, so only a manager asks. */
-function useBrokenSources(agent: AgentDetail, enabled: boolean): string[] {
-  const used = agent.connection_ids.length > 0 || Object.keys(agent.environment).length > 0
-  const conns = useQuery({ ...agentConnectionsQuery(), enabled: enabled && used })
-  if (!conns.data) return []
-  const byId = new Map(conns.data.map((c) => [c.id, c]))
+/** The names of this agent's sources and secrets that are no longer active. The agent names
+ *  what it is bound to itself, so no second request is needed. */
+function brokenSources(agent: AgentDetail): string[] {
+  const byId = new Map(agent.sources.map((s) => [s.id, s]))
   const broken: string[] = []
   for (const id of agent.connection_ids) {
-    const c = byId.get(id)
-    if (c && c.status !== "active") broken.push(sourceName(c))
+    const s = byId.get(id)
+    if (s && s.status !== "active") broken.push(s.name)
   }
   for (const [name, id] of Object.entries(agent.environment)) {
-    const c = byId.get(id)
-    if (c?.status !== "active") broken.push(name)
+    if (byId.get(id)?.status !== "active") broken.push(name)
   }
   return broken
 }
 
 /** What a source is called in the product: the MCP server's host, or the integration's name. */
 export const sourceName = (c: Connection): string =>
-  c.kind === "mcp" && c.base_url ? c.base_url.replace(/^https?:\/\//, "") : c.toolkit
+  c.kind === "mcp" && c.base_url
+    ? c.base_url.replace(/^https?:\/\//, "")
+    : c.kind === "secret"
+      ? c.scopes_label?.trim() || "Stored secret"
+      : c.toolkit
 
 /** The first sentence of a question, for the one line a person scans. */
 export function gistOf(question: string): string {
