@@ -5,8 +5,8 @@ order: 5.8
 ---
 # Agents: named workers that take jobs
 
-An AGENT is a named worker in a workspace: standing instructions (a page), the sources and
-repositories it may use, a model account, and a machine to run on. Every piece of work it does is a
+An AGENT is a named worker in a workspace: an instructions page, the sources it may use, a
+model account, and a machine to run on. Every piece of work it does is a
 JOB: one ask, one scheduled run, or one graph. A job has a transcript, and ends `succeeded`,
 `failed`, `cancelled`, or `lost`, or stops at `needs_you` when it needs a person.
 
@@ -32,27 +32,26 @@ agents({ action: "create", name: "Weekly churn digest", instructions: "<short_id
 The reply carries the agent's key once. For an `owner` agent it also carries `runner_command`: give
 it to the person to run where the work should happen. The key rides `DERIVE_TOKEN` in that line;
 never echo it anywhere else. `role` defaults to `editor`, so its jobs can publish their reports;
-pass `commenter` for one that should only comment. It is capped at your own seat. An agent may use
-only connections its creator could attach: their
-own, or the workspace's if they manage it. A `derive` agent created while the workspace has no
+pass `commenter` for one that should only comment. It is capped at your own seat. An agent may use only sources its creator could give it:
+their own, or the workspace's if they manage it. A `derive` agent created while the workspace has no
 model account yet comes back with `needs_browser`: a link where a person signs one in. Pass that
 link on; do not try to do it yourself.
 
-Everything else (pause, schedule, account, sources, environment, who may ask, delete) can be
-changed later with `agents({ action: "update" })`, or by a person on the agent's Settings tab in
-Derive.
+Everything else (status, schedule, machine, model account, sources, environment variables,
+publishing, access, delete) can be changed later with `agents({ action: "update" })`, or by a
+person on the agent's Settings tab in Derive.
 
-## What it can reach
+## Sources
 
-`agents({ action: "sources" })` lists what you can give an agent: your own connections and
+`agents({ action: "sources" })` lists what you can give an agent: your own sources and
 secrets, and the workspace's. Each row says how to use it:
 
 - `use_as: "sources"`: put its id in `sources`. A job calls it through tools named after it
   (`github.get`, `stripe.read`, …). A GitHub source reads repositories, pull requests, PR
   comments and workflow runs through the GitHub API; it does not clone the repository, and it
   does not read file contents. Code a job must run belongs on its instructions page.
-- `use_as: "environment"`: a saved secret (a database URL, an API key). Bind it to a variable
-  name with `environment: { DATABASE_URL: "<id>" }`; every job gets it as that environment
+- `use_as: "environment"`: a saved secret (a database URL, an API key). Bind it to an
+  environment variable with `environment: { DATABASE_URL: "<id>" }`; every job gets it as that
   variable. Only the name and the secret's id are ever shown back, never the value. `{}`
   clears them.
 
@@ -84,8 +83,10 @@ session on the machine, pass `job_id` with a new instruction. A settled job reop
 
 `jobs()` lists recent jobs in the workspace; `jobs({ agent })` narrows to one agent;
 `jobs({ job_id })` returns one with its transcript. A job at `needs_you` carries `needs.question`
-and maybe `needs.options`: answer with `jobs({ job_id, action: "answer", option | text })`. Cancel
-an open job with `action: "cancel"`; run a failed or lost one again with `action: "retry"`.
+and maybe `needs.options`: answer with `jobs({ job_id, action: "answer", option | text })`. When
+a schedule asks again what an earlier run already asked, the earlier job closes as `cancelled`
+with `result.superseded_by`, and the open one says `needs.asked_times` and `needs.first_asked_at`.
+Cancel an open job with `action: "cancel"`; run a failed or lost one again with `action: "retry"`.
 
 ## Run an owner agent from this session
 
@@ -99,4 +100,6 @@ pull({ report: { job_id, started_at, status: "succeeded", body_md: "What I did, 
 Echo `started_at` exactly as the pull returned it. A report from a superseded claim is refused, so a
 job that timed out and was handed to another runner never gets two answers. For long work, report
 `status: "progress"` now and then: it keeps the claim alive. Report `needs_you` with `needs` to stop
-and ask a person; `failed` with `retryable: true` to have the job retried.
+and ask a person: `question` in two or three sentences, and `options` (short labels) when they
+are choosing between a few things, so the answer is one click. Report `failed` with
+`retryable: true` to have the job retried.

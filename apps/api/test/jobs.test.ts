@@ -1113,6 +1113,80 @@ describe("jobs: schedules", () => {
     ).toBe(204)
   })
 
+  it("a schedule that asks again closes its earlier unanswered ask and counts the asks", async () => {
+    const { app, meta } = await setup("jobs-supersede")
+    const created = await app.request(
+      "/v1/agents",
+      jsonAs(as(owner.email), {
+        name: "Sweep",
+        role: "editor",
+        schedule: { cron: "0 9 * * *", tz: "UTC", instruction: "Sweep and ask before any ban" },
+      }),
+    )
+    const a = (await created.json()) as { id: string; token: string }
+    // A runner claims a window only once it has arrived, so the clock moves with the mornings.
+    const day = new Date(Date.now() + 2 * 86_400_000)
+    const at = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 9, 30))
+    vi.useFakeTimers({ toFake: ["Date"] })
+    try {
+      vi.setSystemTime(at)
+      await jobTick({ meta }, at)
+      const [first] = await pull(app, a)
+      await report(app, a.token, first?.id ?? "", {
+        started_at: first?.started_at ?? null,
+        status: "needs_you",
+        needs: { kind: "escalation", question: "Ban R?", options: ["Ban", "Clear"] },
+      })
+      // The next morning runs even though yesterday's question is open, and asks again.
+      const next = new Date(at.getTime() + 86_400_000)
+      vi.setSystemTime(next)
+      await jobTick({ meta }, next)
+      const [second] = await pull(app, a)
+      expect(second?.id).toBeTruthy()
+      expect(second?.id).not.toBe(first?.id)
+      await report(app, a.token, second?.id ?? "", {
+        started_at: second?.started_at ?? null,
+        status: "needs_you",
+        needs: { kind: "escalation", question: "Ban R? (again)", options: ["Ban", "Clear"] },
+      })
+      const jobs = (await (
+        await app.request(`/v1/jobs?agent=${a.id}`, { headers: as(owner.email) })
+      ).json()) as {
+        jobs: {
+          id: string
+          status: string
+          needs: { asked_times?: number; first_asked_at?: string } | null
+          result: { superseded_by?: string }
+        }[]
+      }
+      const open = jobs.jobs.filter((j) => j.status === "needs_you")
+      expect(open.map((j) => j.id)).toEqual([second?.id])
+      expect(open[0]?.needs?.asked_times).toBe(2)
+      expect(open[0]?.needs?.first_asked_at).toBeTruthy()
+      const closed = jobs.jobs.find((j) => j.id === first?.id)
+      expect(closed).toMatchObject({ status: "cancelled", result: { superseded_by: second?.id } })
+      // A run that fails with only a message still leaves its reason on the row.
+      const answered = await app.request(
+        `/v1/jobs/${second?.id}/answer`,
+        jsonAs(as(owner.email), { option: "Clear" }),
+      )
+      expect(answered.status).toBe(200)
+      const [third] = await pull(app, a)
+      await report(app, a.token, third?.id ?? "", {
+        started_at: third?.started_at ?? null,
+        status: "failed",
+        body_md: "The machine for this job failed to start.\nDetails follow.",
+        retryable: false,
+      })
+      const failed = (await (
+        await app.request(`/v1/jobs/${third?.id}`, { headers: as(owner.email) })
+      ).json()) as { result: { failure?: { reason: string } } }
+      expect(failed.result.failure?.reason).toBe("The machine for this job failed to start.")
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it("a lapsed lease is reclaimed by the tick and the job runs again", async () => {
     const { app, meta } = await setup("jobs-reclaim")
     const a = await createAgent(app)
@@ -2169,7 +2243,7 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
     const publicTokens = new Set<string>()
     // Like Ortam, a repeated idempotency key returns the first answer, whatever happened since.
     const byKey = new Map<string, unknown>()
-    const state = { failCreates: 0 }
+    const state = { failCreates: 0, failResumes: 0 }
     let n = 0
     const json = (v: unknown) =>
       new Response(JSON.stringify(v), { headers: { "content-type": "application/json" } })
@@ -2249,7 +2323,18 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
         return json(o)
       }
       const life = path.match(/^\/sandboxes\/([^/]+)\/(resume|stop)$/)
-      if (life) return keep(op(decodeURIComponent(life[1] ?? ""), life[2] ?? ""))
+      if (life) {
+        const s = sandboxes.get(decodeURIComponent(life[1] ?? ""))
+        // Like Ortam: a sandbox whose activation failed refuses every lifecycle call.
+        if (s?.state === "failed") return new Response(null, { status: 409 })
+        const o = op(decodeURIComponent(life[1] ?? ""), life[2] ?? "")
+        if (life[2] === "resume" && s && state.failResumes > 0) {
+          state.failResumes--
+          o.state = "failed"
+          s.state = "failed"
+        }
+        return keep(o)
+      }
       const launch = path.match(/^\/sandboxes\/([^/]+)\/processes$/)
       if (launch && method === "POST") {
         // Ortam refuses an unkeyed process start.
@@ -2522,6 +2607,73 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
       headers: bearer(work.job.tool_token),
     })
     expect(rest.status).not.toBe(200)
+  })
+
+  it("a sandbox Ortam marks failed on resume is replaced, and the job runs on the new one", async () => {
+    const made = makeAuthedApp("jobs-machine-resume-failed", [owner, ed, outsider], "editor", {
+      deps: { encryptionKey: "test-encryption-key", runtime: config },
+    })
+    const { app, meta } = made
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const agent = (await (
+      await app.request(
+        "/v1/agents",
+        jsonAs(as(owner.email), { name: "Resumer", machine: "derive" }),
+      )
+    ).json()) as { id: string }
+    const ortam = fakeOrtam()
+    let clock = Date.now()
+    const deps = {
+      meta,
+      secret: "test-encryption-key",
+      server: "http://derive.test",
+      config,
+      fetcher: ortam.fetcher,
+      now: () => new Date(clock),
+    }
+    const warn = vi.spyOn(log, "warn").mockImplementation(() => {})
+    try {
+      // A first job brings the sandbox up and hands it back stopped.
+      const first = (await (await ask(app, owner.email, agent.id, "one")).json()) as {
+        id: string
+      }
+      for (let i = 0; i < 12 && ortam.launches.length === 0; i++) await machinePass(deps)
+      expect(ortam.launches).toHaveLength(1)
+      const env = ortam.launches[0] ?? {}
+      const cfg = loadOneJobConfig(
+        { DERIVE_TOKEN: env.DERIVE_TOKEN, DERIVE_JOB_ID: env.DERIVE_JOB_ID },
+        { server: "http://derive.test", mock: "true" },
+      )
+      const client = new JobClient(cfg, (url, init) => Promise.resolve(app.request(url, init)))
+      expect(await runOneJob(cfg, client)).toBe("succeeded")
+      expect((await meta.getJob(first.id))?.status).toBe("succeeded")
+      for (const p of ortam.procs.values()) p.status = "exited"
+      for (let i = 0; i < 6; i++) await machinePass(deps)
+      expect(await meta.getAgent(agent.id)).toMatchObject({ sandbox_phase: "ready" })
+      const firstSandbox = (await meta.getAgent(agent.id))?.sandbox_id
+
+      // The next resume fails on Ortam's side, leaving the sandbox `failed`.
+      ortam.state.failResumes = 1
+      const second = (await (await ask(app, owner.email, agent.id, "two")).json()) as {
+        id: string
+      }
+      for (let i = 0; i < 8; i++) await machinePass(deps)
+      // Not stuck retrying a stop Ortam refuses: the old sandbox is deleted.
+      expect(ortam.sandboxes.get(firstSandbox ?? "")?.state).toBe("deleted")
+      // Past the backoff, a fresh sandbox comes up and the job launches on it.
+      clock += 11 * 60_000
+      for (let i = 0; i < 20 && ortam.launches.length < 2; i++) await machinePass(deps)
+      expect(ortam.launches).toHaveLength(2)
+      expect(ortam.launches[1]?.DERIVE_JOB_ID).toBe(second.id)
+      const now = await meta.getAgent(agent.id)
+      expect(now?.sandbox_id).not.toBe(firstSandbox)
+      expect(warn).not.toHaveBeenCalledWith(
+        "machine step deferred",
+        expect.objectContaining({ reason: expect.stringContaining("409") }),
+      )
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   it("a runner that dies without reporting fails the job back into the queue", async () => {

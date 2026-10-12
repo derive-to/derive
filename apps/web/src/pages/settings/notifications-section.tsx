@@ -19,7 +19,7 @@ import { SettingsSection } from "./settings-section"
 // scoped to the caller: the Slack DM preference is per-user-per-workspace
 // (user_notification_pref), the account link is per-user, and auto-open is per
 // device. The workspace-wide switches (for example, whether this workspace emails anyone)
-// stay under Integrations — a workspace decision must
+// stay under Sources — a workspace decision must
 // not dress up as a personal one.
 //
 // The Slack DM pref is deliberately settable BEFORE the workspace connects Slack
@@ -128,7 +128,7 @@ export function NotificationsSection() {
               description={
                 connected
                   ? "Get a Slack direct message when an agent finishes work, someone mentions you, requests your review, or shares a document with you. Link your Slack account below so Derive knows where to send it."
-                  : "A Slack direct message when an agent finishes work, someone @mentions you, requests your review, or shares a doc with you. Takes effect once an admin connects Slack under Integrations."
+                  : "A Slack direct message when an agent finishes work, someone @mentions you, requests your review, or shares a doc with you. Takes effect once an admin connects Slack under Sources."
               }
             >
               <div className="flex items-center gap-2">
@@ -184,10 +184,10 @@ export function NotificationsSection() {
                     Linking becomes available once Slack is connected for this workspace, under{" "}
                     <Link
                       to="/settings/$section"
-                      params={{ section: "integrations" }}
+                      params={{ section: "sources" }}
                       className="text-primary underline underline-offset-2"
                     >
-                      Integrations
+                      Sources
                     </Link>
                     .
                   </>

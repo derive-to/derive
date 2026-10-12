@@ -74,7 +74,7 @@ const contextChildTables = (src) => {
 }
 
 /** The body of the named delete function in one implementation file. */
-const deleteBody = (src, file, name = "deleteArtifact") => {
+const deleteBody = (src, _file, name = "deleteArtifact") => {
   const at = src.search(new RegExp(`${name}[\\s(:]`))
   if (at === -1) return null
   // To the next top-level member: `\n  async name(` or `\n  const name =` at 2-space indent.

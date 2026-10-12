@@ -1,17 +1,32 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
-import { type FormEvent, useRef, useState } from "react"
-import { type Agent, type AgentDetail, type AgentTrigger, api, type Job } from "@/api"
+import { type FormEvent, type ReactNode, useRef, useState } from "react"
+import {
+  type Agent,
+  type AgentDetail,
+  type AgentTrigger,
+  api,
+  type Connection,
+  type Job,
+} from "@/api"
+import { Icon } from "@/components/icons"
 import { LoadError } from "@/components/shared/load-error"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
-import { accountsQuery, agentJobsQuery, agentQuery, jobQuery } from "@/lib/queries"
+import {
+  accountsQuery,
+  agentConnectionsQuery,
+  agentJobsQuery,
+  agentQuery,
+  jobQuery,
+} from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useJobEvents } from "@/lib/use-job-events"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "../artifact/lib/markdown"
 import {
+  askedLine,
   cronLabel,
   failureOf,
   firstLine,
@@ -33,8 +48,10 @@ export function warningFor(
   agent: Pick<Agent, "paused" | "machine" | "seen_at" | "created_by">,
   names: Map<string, string>,
   noAccount = false,
+  broken: string[] = [],
 ): string | null {
   if (agent.paused) return "This agent is paused. New tasks wait until you resume it in Settings."
+  if (broken.length) return `${broken.join(", ")} needs to reconnect. Open Sources in Settings.`
   // Only a Derive machine needs a stored account; a runner on someone's own machine falls back
   // to the login on that machine.
   if (noAccount && agent.machine === "derive")
@@ -63,7 +80,12 @@ export function AgentJobs({
   useJobEvents()
   const jobs = useInfiniteQuery({ ...agentJobsQuery(agent.id), refetchInterval: 10_000 })
   useQuery({ ...agentQuery(agent.id), refetchInterval: 10_000 })
-  const warning = warningFor(agent, names, useNoAccount(agent, meId))
+  const warning = warningFor(
+    agent,
+    names,
+    useNoAccount(agent, meId),
+    useBrokenSources(agent, agent.can_manage),
+  )
   const schedules = schedulesOf(agent.triggers)
   const rows = jobs.data?.pages.flatMap((p) => p.jobs) ?? []
 
@@ -124,6 +146,128 @@ export function AgentJobs({
   )
 }
 
+/** The names of this agent's sources and secrets that are no longer active, read with the
+ *  same request its Settings tab uses. Only a manager can see them, so only a manager asks. */
+function useBrokenSources(agent: AgentDetail, enabled: boolean): string[] {
+  const used = agent.connection_ids.length > 0 || Object.keys(agent.environment).length > 0
+  const conns = useQuery({ ...agentConnectionsQuery(), enabled: enabled && used })
+  if (!conns.data) return []
+  const byId = new Map(conns.data.map((c) => [c.id, c]))
+  const broken: string[] = []
+  for (const id of agent.connection_ids) {
+    const c = byId.get(id)
+    if (c && c.status !== "active") broken.push(sourceName(c))
+  }
+  for (const [name, id] of Object.entries(agent.environment)) {
+    const c = byId.get(id)
+    if (c?.status !== "active") broken.push(name)
+  }
+  return broken
+}
+
+/** What a source is called in the product: the MCP server's host, or the integration's name. */
+export const sourceName = (c: Connection): string =>
+  c.kind === "mcp" && c.base_url ? c.base_url.replace(/^https?:\/\//, "") : c.toolkit
+
+/** The first sentence of a question, for the one line a person scans. */
+export function gistOf(question: string): string {
+  const one = question.trim().replace(/\s+/g, " ")
+  const m = /^(.{12,}?[.?!])(\s|$)/.exec(one)
+  const first = m?.[1] ?? one
+  return first.length > 140 ? `${first.slice(0, 139).trimEnd()}…` : first
+}
+
+/** One open question, built for triage. Closed: one line (the question's first sentence),
+ *  how long it has been asked, the report, and Dismiss. Open: the transcript (what was asked,
+ *  what the agent found), the whole question, its choices as buttons, and a line to answer. */
+export function NeedsRow({
+  job,
+  canSteer,
+  title,
+  agentName,
+  names,
+  below,
+  defaultOpen = false,
+}: {
+  job: Job
+  canSteer: boolean
+  /** Shown before the question where the list spans agents (the inbox). */
+  title?: ReactNode
+  agentName: string
+  names: Map<string, string>
+  /** Always under the question: a link to the page a review waits on. */
+  below?: ReactNode
+  defaultOpen?: boolean
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  const asked = askedLine(job)
+  const question = job.needs?.question ?? job.instruction
+  const gist = gistOf(question)
+  const dismiss = useApiMutation({
+    mutationFn: () => api.cancelJob(job.id),
+    invalidate: [["jobs"]],
+  })
+  return (
+    <div
+      data-testid={`job-${job.id}`}
+      data-status={job.status}
+      className="-mx-3 my-0.5 flex flex-col gap-3 rounded-lg bg-warning/10 px-3 py-3"
+    >
+      <div className="flex items-center gap-3.5">
+        <button
+          type="button"
+          data-testid={`job-row-${job.id}`}
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+          className="flex min-w-0 flex-1 items-center gap-3.5 text-left"
+        >
+          <Icon
+            name="job-needs-you"
+            size={18}
+            strokeWidth={1.75}
+            className="shrink-0 text-warning"
+          />
+          <span className="flex min-w-0 flex-1 items-baseline gap-2.5 text-base whitespace-nowrap">
+            {title && <span className="shrink-0 font-medium text-foreground">{title}</span>}
+            <span className={cn("truncate text-foreground", open && "whitespace-normal")}>
+              {open ? question : gist}
+            </span>
+          </span>
+        </button>
+        <Meta>
+          {asked && <span>{asked}</span>}
+          {job.report_short_id && (
+            <Link
+              to="/artifacts/$ref"
+              params={{ ref: job.report_short_id }}
+              data-testid={`job-report-link-${job.id}`}
+              className="font-medium text-foreground hover:underline"
+            >
+              Report
+            </Link>
+          )}
+          <Time>{when(job.updated_at)}</Time>
+          {canSteer && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              data-testid={`job-dismiss-${job.id}`}
+              loading={dismiss.isPending}
+              onClick={() => dismiss.mutate()}
+              className="text-muted-foreground"
+            >
+              Dismiss
+            </Button>
+          )}
+        </Meta>
+      </div>
+      {below}
+      {open && <Transcript id={job.id} agentName={agentName} names={names} />}
+      {open && canSteer && <AnswerBox job={job} />}
+    </div>
+  )
+}
 /** Whether the viewer can tell that no model account would resolve for this agent's jobs.
  *  Only its creator can: the fallback is the creator's own account, then a shared one, and
  *  nobody else sees the creator's accounts. */
@@ -326,7 +470,7 @@ export function JobRow({
       {needs && canSteer && <AnswerBox job={job} />}
       {open && (
         <>
-          <TaskResult id={job.id} agentName={agent.name} names={names} />
+          <Transcript id={job.id} agentName={agent.name} names={names} />
           {job.status === "succeeded" && (canAsk || canSchedule) && (
             <div className="flex flex-col gap-3 pb-4">
               <div className="flex flex-wrap items-center gap-2">
@@ -478,7 +622,7 @@ export function AnswerBox({ job }: { job: Job }) {
 }
 
 /** The job's transcript and what it made, read when its row is opened. */
-function TaskResult({
+export function Transcript({
   id,
   agentName,
   names,

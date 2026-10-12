@@ -360,11 +360,13 @@ test("settings destinations and their retired paths resolve", async ({ owner }) 
   await owner.goto("/brandprint")
   await expect(owner).toHaveURL(/\/settings\/brandprint$/)
 
-  // GitHub is a standard integration now. Its retired standalone settings path lands on the
-  // shared connection surface, with no repository-mirroring controls or collection workflow.
+  // GitHub, Slack and MCP servers are all sources. The retired GitHub and Integrations paths
+  // land on Sources, with no repository-mirroring controls or collection workflow.
   await owner.goto("/settings/github")
-  await expect(owner).toHaveURL(/\/settings\/integrations$/)
+  await expect(owner).toHaveURL(/\/settings\/sources$/)
   await expect(owner.getByRole("heading", { name: "GitHub", exact: true })).toBeVisible()
+  await owner.goto("/settings/integrations")
+  await expect(owner).toHaveURL(/\/settings\/sources$/)
   await expect(
     owner.getByText("Ask an instance operator to configure the shared GitHub App."),
   ).toBeVisible()
@@ -882,7 +884,7 @@ test("Settings lists the machines agents run on and the accounts they use", asyn
   await expect(row).toContainText("Your Claude")
   await expect(row).toContainText("abcd")
   await owner.screenshot({ path: testInfo.outputPath("settings-accounts.png"), fullPage: true })
-  await owner.getByTestId("accounts").getByRole("button", { name: "Disconnect" }).click()
+  await owner.getByTestId("accounts").getByRole("button", { name: "Remove" }).click()
   await owner.getByTestId("account-disconnect-confirm").click()
   await expect(owner.getByTestId("accounts")).toHaveCount(0)
 })
@@ -926,7 +928,6 @@ test("Inbox answers what needs you in place and lists what agents published toda
   await expect(owner.getByTestId("inbox-today")).toContainText("Release note draft")
   await expect(owner.getByTestId("inbox-today")).toContainText("Scribe")
   await owner.screenshot({ path: testInfo.outputPath("inbox.png"), fullPage: true })
-
   await owner.getByTestId(`job-option-${jobId}-0`).click()
   await expect(row).toHaveCount(0)
   await expect(owner.getByTestId("nav-inbox")).not.toContainText("1")
@@ -940,6 +941,20 @@ test("Inbox answers what needs you in place and lists what agents published toda
   await expect(bell).toContainText("Ship it to the changelog?")
   await bell.click()
   await expect(owner).toHaveURL(new RegExp(`/agents/${agent.id}$`))
+
+  // A question can be put away without answering it; the agent asks again next time.
+  const other = await makeAgent(owner, { name: "Sweeper", role: "editor" })
+  const askedId = await askAgent(owner, other, "Run the sweep")
+  const [sweep] = await pullAs(owner, other)
+  if (sweep)
+    await reportAs(owner, other, sweep, {
+      status: "needs_you",
+      needs: { kind: "escalation", question: "Ban the paired accounts for 14 days?" },
+    })
+  await owner.goto("/inbox")
+  await owner.getByTestId(`job-dismiss-${askedId}`).click()
+  await expect(owner.getByTestId(`inbox-job-${askedId}`)).toHaveCount(0)
+  expect((await (await owner.request.get(`/v1/jobs/${askedId}`)).json()).status).toBe("cancelled")
 })
 
 test("a job's report page says which job it is, and the job links to it", async ({

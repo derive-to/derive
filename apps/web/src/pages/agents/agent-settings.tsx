@@ -23,10 +23,11 @@ import {
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { accountsQuery, agentConnectionsQuery } from "@/lib/queries"
+import { accountsQuery, agentConnectionsQuery, artifactQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 import { accountLabel } from "../settings/accounts-section"
+import { sourceName } from "./agent-jobs"
 import {
   cronLabel,
   firstLine,
@@ -36,10 +37,12 @@ import {
   runnerCommand,
   when,
 } from "./format"
+import { Group } from "./rows"
 
-// An agent's Settings tab (mock f9r5u1iq). Everything a coding session set when it made the
-// agent is changed here; nothing is created here. A person who cannot manage the agent sees
-// the same rows as plain text.
+// An agent's Settings tab. Everything a coding session set when it made the agent is changed
+// here; nothing is created here. A person who cannot manage the agent sees the same rows as
+// plain text. Each row is a noun and its value; the grey line under a value appears only
+// where the value needs explaining.
 
 type Props = {
   agent: AgentDetail
@@ -48,7 +51,7 @@ type Props = {
   isWorkspaceOwner: boolean
 }
 
-export function AgentSettings({ agent, names, workspaceName, isWorkspaceOwner }: Props) {
+export function AgentSettings({ agent, names, isWorkspaceOwner }: Props) {
   const edit = agent.can_manage
   const update = useApiMutation({
     mutationFn: (patch: AgentPatch) => api.updateAgent(agent.id, patch),
@@ -57,39 +60,40 @@ export function AgentSettings({ agent, names, workspaceName, isWorkspaceOwner }:
   const set = (patch: AgentPatch) => update.mutate(patch)
 
   return (
-    <div className="flex max-w-2xl flex-col gap-9">
-      <div
-        data-testid="agent-state"
-        className="flex items-center gap-3.5 rounded-xl border border-border px-4.5 py-4 text-base"
-      >
-        <span
-          aria-hidden="true"
-          className={cn(
-            "size-2 rounded-full",
-            agent.paused ? "border border-muted-foreground" : "bg-success",
-          )}
-        />
-        <span className="flex-1">{agent.paused ? "Paused" : "Active"}</span>
-        {edit && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            data-testid="agent-pause"
-            disabled={update.isPending}
-            onClick={() => set({ paused: !agent.paused })}
-            className="text-muted-foreground"
-          >
-            {agent.paused ? "Resume" : "Pause"}
-          </Button>
-        )}
-      </div>
-
-      <div className="flex flex-col">
+    <div className="flex max-w-2xl flex-col gap-10">
+      <Group testId="agent-general">
+        <Field
+          label="Status"
+          action={
+            edit && (
+              <Verb
+                testId="agent-pause"
+                disabled={update.isPending}
+                onClick={() => set({ paused: !agent.paused })}
+              >
+                {agent.paused ? "Resume" : "Pause"}
+              </Verb>
+            )
+          }
+        >
+          <span data-testid="agent-state" className="flex items-center gap-2.5">
+            <span
+              aria-hidden="true"
+              className={cn(
+                "size-1.5 rounded-full",
+                agent.paused ? "border border-muted-foreground" : "bg-success",
+              )}
+            />
+            {agent.paused ? "Paused" : "Active"}
+          </span>
+        </Field>
         <NameFields agent={agent} edit={edit} onSave={set} saving={update.isPending} />
         <InstructionsField agent={agent} edit={edit} onSave={set} />
+      </Group>
+
+      <Group label="Running" testId="agent-running">
         <SchedulesField agent={agent} edit={edit} />
-        <Field label="On">
+        <Field label="Machine">
           <Segmented
             testId="agent-machine"
             value={agent.machine}
@@ -105,8 +109,8 @@ export function AgentSettings({ agent, names, workspaceName, isWorkspaceOwner }:
           {agent.machine === "owner" && (
             <Sub>
               {agent.seen_at
-                ? `${machineOf(agent, names).on ? "Checked in" : "Last seen"} ${when(agent.seen_at)}.`
-                : "Its runner has never checked in."}
+                ? `${machineOf(agent, names).on ? "Connected" : "Last seen"} ${when(agent.seen_at)}`
+                : "Not connected yet"}
             </Sub>
           )}
           {agent.machine === "derive" && (
@@ -115,37 +119,43 @@ export function AgentSettings({ agent, names, workspaceName, isWorkspaceOwner }:
         </Field>
         <AccountField agent={agent} edit={edit} onSave={set} />
         <ModelField agent={agent} edit={edit} onSave={set} />
+      </Group>
+
+      <Group label="Sources" testId="agent-sources">
         <SourcesField agent={agent} edit={edit} onSave={set} />
         <EnvironmentField agent={agent} edit={edit} onSave={set} />
-        <Field label="Can write">
+      </Group>
+
+      <Group label="Permissions" testId="agent-permissions">
+        <Field label="Publishing">
           <Segmented
             testId="agent-write-policy"
             value={agent.write_policy}
             disabled={!edit}
             onChange={(v) => set({ write_policy: v as AgentDetail["write_policy"] })}
             options={[
-              { value: "publish", label: "Publish directly" },
-              { value: "review", label: "Ask for review first" },
+              { value: "publish", label: "Direct" },
+              { value: "review", label: "Review first" },
             ]}
           />
-          <Sub>Every version is kept and undoable either way.</Sub>
         </Field>
-        <Field label="Who can ask">
+        <Field label="Access">
           <Segmented
             testId="agent-ask-policy"
             value={agent.ask_policy}
             disabled={!edit}
             onChange={(v) => set({ ask_policy: v as AgentDetail["ask_policy"] })}
             options={[
-              { value: "workspace", label: `Everyone in ${workspaceName || "the workspace"}` },
-              { value: "invited", label: "Only me and workspace owners" },
+              { value: "workspace", label: "Workspace" },
+              { value: "invited", label: "Creator and owners" },
             ]}
           />
+          <Sub>Who can ask it for work.</Sub>
         </Field>
         {agent.machine === "owner" && (
           <KeyField agent={agent} canReplace={edit && isWorkspaceOwner} />
         )}
-      </div>
+      </Group>
 
       {edit && <DeleteAgent agent={agent} />}
     </div>
@@ -163,7 +173,7 @@ function Field({
   children: ReactNode
 }) {
   return (
-    <div className="grid gap-x-3.5 gap-y-1.5 border-b border-border py-3.5 last:border-b-0 sm:grid-cols-[7.5rem_minmax(0,1fr)_auto]">
+    <div className="grid gap-x-3.5 gap-y-1.5 border-b border-border py-3.5 last:border-b-0 sm:grid-cols-[9rem_minmax(0,1fr)_auto]">
       <span className="pt-0.5 text-sm text-muted-foreground">{label}</span>
       <div className="flex min-w-0 flex-col gap-1 text-base">{children}</div>
       <div className="flex items-start">{action}</div>
@@ -178,10 +188,12 @@ const Sub = ({ children }: { children: ReactNode }) => (
 function Verb({
   testId,
   onClick,
+  disabled,
   children,
 }: {
   testId: string
   onClick: () => void
+  disabled?: boolean
   children: ReactNode
 }) {
   return (
@@ -190,6 +202,7 @@ function Verb({
       variant="ghost"
       size="xs"
       data-testid={testId}
+      disabled={disabled}
       onClick={onClick}
       className="text-muted-foreground"
     >
@@ -252,7 +265,7 @@ function NameFields({
     return (
       <>
         <Field label="Name">{agent.name}</Field>
-        {agent.description && <Field label="What it does">{agent.description}</Field>}
+        {agent.description && <Field label="Description">{agent.description}</Field>}
       </>
     )
   const save = (e: FormEvent) => {
@@ -272,7 +285,7 @@ function NameFields({
         />
       </Field>
       <Field
-        label="What it does"
+        label="Description"
         action={
           dirty && (
             <Button
@@ -290,7 +303,7 @@ function NameFields({
         <Textarea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          aria-label="What it does"
+          aria-label="Description"
           data-testid="agent-description"
           maxLength={280}
         />
@@ -311,6 +324,8 @@ function InstructionsField({
   const [editing, setEditing] = useState(false)
   const [ref, setRef] = useState(agent.instructions_short_id ?? "")
   const short = agent.instructions_short_id
+  // The page's title is what a person recognises; its short id is only a fallback.
+  const page = useQuery({ ...artifactQuery(short ?? ""), enabled: !!short })
   return (
     <Field
       label="Skill"
@@ -352,12 +367,15 @@ function InstructionsField({
           to="/artifacts/$ref"
           params={{ ref: short }}
           data-testid="agent-instructions-link"
-          className="font-mono text-foreground underline-offset-4 hover:underline"
+          className={cn(
+            "text-foreground underline-offset-4 hover:underline",
+            !page.data?.title && "font-mono",
+          )}
         >
-          Open skill
+          {page.data?.title ?? short}
         </Link>
       ) : (
-        <span className="text-muted-foreground">No page</span>
+        <span className="text-muted-foreground">None</span>
       )}
       <Sub>
         The page it reads before every task. Edit it like any page; the next task uses the new
@@ -383,17 +401,17 @@ function SchedulesField({ agent, edit }: { agent: AgentDetail; edit: boolean }) 
   const schedules = agent.triggers.filter((t) => t.kind === "schedule")
   return (
     <Field
-      label="Runs"
+      label="Schedule"
       action={
         edit &&
         !editing && (
           <Verb testId="agent-schedule-add" onClick={() => setEditing("new")}>
-            Add schedule
+            Add
           </Verb>
         )
       }
     >
-      {schedules.length === 0 && !editing && <span>When asked</span>}
+      {schedules.length === 0 && !editing && <span className="text-muted-foreground">None</span>}
       {schedules.map((t) =>
         editing !== "new" && editing?.id === t.id ? (
           <ScheduleForm key={t.id} agentId={agent.id} trigger={t} onDone={() => setEditing(null)} />
@@ -407,7 +425,7 @@ function SchedulesField({ agent, edit }: { agent: AgentDetail; edit: boolean }) 
               <span className={cn(!t.enabled && "text-muted-foreground")}>
                 {t.cron ? cronLabel(t.cron) : "Schedule"}
                 {t.tz && <span className="ml-2 text-sm text-muted-foreground">{t.tz}</span>}
-                {!t.enabled && <span className="ml-2 text-sm">paused</span>}
+                {!t.enabled && <span className="ml-2 text-sm">Paused</span>}
               </span>
               <span className="truncate text-sm text-muted-foreground">
                 {firstLine(t.instruction)}
@@ -515,7 +533,6 @@ function ScheduleForm({
 }
 
 const DEFAULT = "default"
-const DEFAULT_LABEL = "Default (creator’s account, then shared)"
 
 // The server picks the account a job runs on: the one assigned here; else, on an owner
 // machine, the agent creator's own account (on a Derive machine, the asker's); then the
@@ -538,7 +555,7 @@ function AccountField({
   const label = (a: ModelAccount) => `${accountLabel(a)}${a.hint ? ` ${a.hint}` : ""}`
   const hidden = "An account you can’t see"
   return (
-    <Field label="Account">
+    <Field label="Model account">
       {accounts.isError ? (
         <LoadError
           layout="inline"
@@ -551,11 +568,15 @@ function AccountField({
           value={agent.account_id ?? DEFAULT}
           onValueChange={(v) => onSave({ account_id: v === DEFAULT ? null : v })}
         >
-          <SelectTrigger data-testid="agent-account" aria-label="Account" className="min-w-56">
+          <SelectTrigger
+            data-testid="agent-account"
+            aria-label="Model account"
+            className="min-w-56"
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={DEFAULT}>{DEFAULT_LABEL}</SelectItem>
+            <SelectItem value={DEFAULT}>Default</SelectItem>
             {agent.account_id && !current && (
               <SelectItem value={agent.account_id}>{hidden}</SelectItem>
             )}
@@ -572,13 +593,13 @@ function AccountField({
           </SelectContent>
         </Select>
       ) : (
-        <span>{current ? label(current) : agent.account_id ? hidden : DEFAULT_LABEL}</span>
+        <span>{current ? label(current) : agent.account_id ? hidden : "Default"}</span>
       )}
       {!agent.account_id && (
         <Sub>
           {agent.machine === "owner"
-            ? "Its creator’s own account from Settings › Model accounts, then the workspace’s shared one, then whatever the runner’s machine is signed into."
-            : "The asker’s own account, then the workspace’s shared one."}
+            ? "Default: the creator’s account, then the workspace’s shared account, then the login on the machine."
+            : "Default: the asker’s account, then the workspace’s shared account."}
         </Sub>
       )}
     </Field>
@@ -641,7 +662,7 @@ function ModelField({
                 autoFocus
                 aria-label="Model id"
                 data-testid="agent-model-custom"
-                placeholder="exact model id"
+                placeholder="Exact model id"
                 value={custom}
                 onChange={(e) => setCustom(e.target.value)}
                 className="w-64 font-mono"
@@ -661,21 +682,17 @@ function ModelField({
       ) : (
         <span>{shown}</span>
       )}
-      <Sub>
-        {agent.provider === "claude-code"
-          ? "Opus, Sonnet and Haiku always run the newest version. Custom pins an exact model id. Default is the runner’s choice."
-          : "Default is the runner’s choice. Custom pins an exact model id."}
-      </Sub>
     </Field>
   )
 }
 
-const connectionName = (c: Connection) =>
-  c.kind === "secret"
-    ? (c.scopes_label ?? c.toolkit)
-    : c.kind === "mcp" && c.base_url
-      ? c.base_url.replace(/^https?:\/\//, "")
-      : c.toolkit
+const KIND_WORD: Record<NonNullable<Connection["kind"]>, string> = {
+  github_app: "GitHub",
+  slack: "Slack",
+  mcp: "MCP server",
+  oauth: "Account",
+  secret: "Secret",
+}
 
 function SourcesField({
   agent,
@@ -692,10 +709,12 @@ function SourcesField({
   })
   const byId = new Map((conns.data ?? []).map((c) => [c.id, c]))
   const attached = new Set(agent.connection_ids)
-  const addable = (conns.data ?? []).filter((c) => !attached.has(c.id) && c.status === "active")
+  const addable = (conns.data ?? []).filter(
+    (c) => !attached.has(c.id) && c.status === "active" && c.kind !== "secret",
+  )
   const set = (ids: string[]) => onSave({ connection_ids: ids })
   return (
-    <Field label="Reaches">
+    <Field label="Sources">
       {conns.isError && (
         <LoadError
           layout="inline"
@@ -704,9 +723,7 @@ function SourcesField({
           onRetry={() => void conns.refetch()}
         />
       )}
-      {agent.connection_ids.length === 0 && (
-        <span className="text-muted-foreground">Nothing yet</span>
-      )}
+      {agent.connection_ids.length === 0 && <span className="text-muted-foreground">None</span>}
       {agent.connection_ids.map((id) => {
         const c = byId.get(id)
         return (
@@ -715,11 +732,19 @@ function SourcesField({
             data-testid={`agent-source-${id}`}
             className="flex items-center justify-between gap-3 border-b border-border py-1 last:border-b-0"
           >
-            <span className={cn("truncate", !c && "font-mono text-muted-foreground")}>
-              {c ? connectionName(c) : id}
+            <span className="flex min-w-0 items-baseline gap-2.5">
+              <span className={cn("truncate", !c && "font-mono text-muted-foreground")}>
+                {c ? sourceName(c) : id}
+              </span>
+              {c && (
+                <span className="text-sm text-muted-foreground">
+                  {c.kind ? KIND_WORD[c.kind] : null}
+                  {c.status !== "active" && " · Disconnected"}
+                </span>
+              )}
             </span>
-            <span className="flex items-center gap-1 text-sm text-muted-foreground">
-              {c?.scope === "workspace" ? "Workspace source" : c ? "Your source" : null}
+            <span className="flex shrink-0 items-center gap-1 text-sm text-muted-foreground">
+              {c?.scope === "workspace" ? "Workspace" : c ? "Personal" : null}
               {edit && (
                 <Verb
                   testId={`agent-source-remove-${id}`}
@@ -735,16 +760,31 @@ function SourcesField({
       {edit && addable.length > 0 && (
         <Select value="" onValueChange={(v) => set([...agent.connection_ids, v])}>
           <SelectTrigger data-testid="agent-source-add" aria-label="Add a source" className="mt-1">
-            <SelectValue placeholder="Add a source" />
+            <SelectValue placeholder="Add" />
           </SelectTrigger>
           <SelectContent>
             {addable.map((c) => (
               <SelectItem key={c.id} value={c.id}>
-                {connectionName(c)}
+                {sourceName(c)}
+                {c.kind ? ` · ${KIND_WORD[c.kind]}` : ""}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
+      )}
+      {edit && conns.data && addable.length === 0 && agent.connection_ids.length === 0 && (
+        <Sub>
+          Connect one under{" "}
+          <Link
+            to="/settings/$section"
+            params={{ section: "sources" }}
+            data-testid="agent-sources-settings-link"
+            className="underline underline-offset-2 hover:text-foreground"
+          >
+            Settings › Sources
+          </Link>
+          .
+        </Sub>
       )}
     </Field>
   )
@@ -778,7 +818,7 @@ function EnvironmentField({
     setSecretId("")
   }
   return (
-    <Field label="Environment">
+    <Field label="Environment variables">
       {conns.isError && (
         <LoadError
           layout="inline"
@@ -787,7 +827,7 @@ function EnvironmentField({
           onRetry={() => void conns.refetch()}
         />
       )}
-      {bound.length === 0 && <span className="text-muted-foreground">Nothing yet</span>}
+      {bound.length === 0 && <span className="text-muted-foreground">None</span>}
       {bound.map(([key, id]) => {
         const c = byId.get(id)
         return (
@@ -796,21 +836,23 @@ function EnvironmentField({
             data-testid={`agent-env-${key}`}
             className="flex items-center justify-between gap-3 border-b border-border py-1 last:border-b-0"
           >
-            <span className="truncate font-mono">{key}</span>
-            <span className="flex items-center gap-1 text-sm text-muted-foreground">
-              {c ? connectionName(c) : "Secret not found"}
-              {edit && (
-                <Verb
-                  testId={`agent-env-remove-${key}`}
-                  onClick={() => {
-                    const { [key]: _gone, ...rest } = agent.environment
-                    set(rest)
-                  }}
-                >
-                  Remove
-                </Verb>
-              )}
+            <span className="flex min-w-0 items-baseline gap-2.5">
+              <span className="truncate font-mono">{key}</span>
+              <span className="truncate text-sm text-muted-foreground">
+                {c ? sourceName(c) : "Secret removed"}
+              </span>
             </span>
+            {edit && (
+              <Verb
+                testId={`agent-env-remove-${key}`}
+                onClick={() => {
+                  const { [key]: _gone, ...rest } = agent.environment
+                  set(rest)
+                }}
+              >
+                Remove
+              </Verb>
+            )}
           </div>
         )
       })}
@@ -827,12 +869,12 @@ function EnvironmentField({
           />
           <Select value={secretId} onValueChange={setSecretId}>
             <SelectTrigger data-testid="agent-env-secret" aria-label="Secret" className="w-56">
-              <SelectValue placeholder="Choose a secret" />
+              <SelectValue placeholder="Secret" />
             </SelectTrigger>
             <SelectContent>
               {addable.map((c) => (
                 <SelectItem key={c.id} value={c.id}>
-                  {connectionName(c)}
+                  {sourceName(c)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -850,7 +892,7 @@ function EnvironmentField({
       )}
       {edit && conns.data && addable.length === 0 && (
         <Sub>
-          Save a secret in{" "}
+          Save a secret under{" "}
           <Link
             to="/settings/$section"
             params={{ section: "sources" }}
@@ -877,7 +919,7 @@ function KeyField({ agent, canReplace }: { agent: AgentDetail; canReplace: boole
   })
   return (
     <Field
-      label="Key"
+      label="Runner key"
       action={
         canReplace &&
         !key && (
@@ -889,7 +931,7 @@ function KeyField({ agent, canReplace }: { agent: AgentDetail; canReplace: boole
     >
       {key ? (
         <SecretReveal
-          title="Its new key and runner command. Shown once."
+          title="The new key, in its runner command. Shown once."
           secret={runnerCommand(agent.id, key)}
           copySuccess="Runner command copied"
           copyTestId="agent-key-copy"
@@ -899,20 +941,14 @@ function KeyField({ agent, canReplace }: { agent: AgentDetail; canReplace: boole
         />
       ) : (
         <>
-          <span>
-            {agent.seen_at ? `Used by its runner, ${when(agent.seen_at)}` : "Not used yet"}
-          </span>
-          <Sub>
-            {canReplace
-              ? "Replacing it stops the old key at once; restart the runner with the new one."
-              : "Only a workspace owner can replace it."}
-          </Sub>
+          <span>{agent.seen_at ? `Last used ${when(agent.seen_at)}` : "Not used yet"}</span>
+          {!canReplace && <Sub>Only a workspace owner can replace it.</Sub>}
         </>
       )}
       <ConfirmDialog
         open={confirming}
         onOpenChange={setConfirming}
-        title={`Replace ${agent.name}'s key?`}
+        title={`Replace ${agent.name}'s runner key?`}
         description="The old key stops working immediately, so its runner stops too. You get a new runner command to start it again."
         confirmLabel="Replace"
         confirmTestId="agent-key-confirm"
@@ -931,7 +967,7 @@ function DeleteAgent({ agent }: { agent: AgentDetail }) {
     onSuccess: () => void navigate({ to: "/agents" }),
   })
   return (
-    <div className="flex items-center gap-4 border-t border-border pt-5 text-sm text-muted-foreground">
+    <div className="border-t border-border pt-5">
       <Button
         type="button"
         variant="destructive-ghost"
@@ -939,14 +975,13 @@ function DeleteAgent({ agent }: { agent: AgentDetail }) {
         data-testid="agent-delete"
         onClick={() => setConfirming(true)}
       >
-        Delete this agent
+        Delete agent
       </Button>
-      <span>Its pages and reports stay. Its key stops working.</span>
       <ConfirmDialog
         open={confirming}
         onOpenChange={setConfirming}
         title={`Delete ${agent.name}?`}
-        description="Its open jobs are cancelled and its schedules removed. Its pages and reports stay."
+        description="Open jobs are cancelled and its schedules removed. Its pages and reports stay."
         confirmLabel="Delete"
         confirmTestId="agent-delete-confirm"
         onConfirm={() => del.mutateAsync().then(() => undefined)}
