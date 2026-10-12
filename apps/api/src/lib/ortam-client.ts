@@ -135,6 +135,7 @@ export class OrtamClient {
    *  on every call; it has no token exchange. */
   async authenticate() {
     if (this.mode === "api_key") {
+      if (this.access && this.access.expires > Date.now() + 30_000) return this.access.identity
       const result = z
         .object({ token: z.string() })
         .parse(await this.json("/auth/token", { headers: { "X-API-Key": this.key } }))
@@ -153,18 +154,23 @@ export class OrtamClient {
         !["sandboxes:read", "sandboxes:write"].every((scope) => claims.scopes.includes(scope))
       )
         throw new Error("Ortam key requires sandbox read and write access")
-      this.token = result.token
-      return { organization_id: claims.organization_id, user_id: claims.sub }
+      const identity = { organization_id: claims.organization_id, user_id: claims.sub }
+      this.access = { token: result.token, expires: claims.exp * 1000, identity }
+      return identity
     }
     return z
       .object({ organization_id: z.string(), user_id: z.string() })
       .parse(await this.json("/integration", { headers: this.auth() }))
   }
-  private token?: string
+  private access?: {
+    token: string
+    expires: number
+    identity: { organization_id: string; user_id: string }
+  }
 
   private auth() {
     return this.mode === "api_key"
-      ? { Authorization: `Bearer ${this.token}` }
+      ? { Authorization: `Bearer ${this.access?.token}` }
       : { Authorization: `Bearer ${this.key}`, "X-Ortam-Integration-Subject": this.subject }
   }
   async request(

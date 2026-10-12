@@ -87,7 +87,8 @@ Disconnect before changing providers. The controller retains the old key for cle
 Replacement waits until all agent sandboxes finish retirement and pending model sign-in is cancelled.
 Ortam retirement deletes agent sandboxes and their saved files. Boat retirement archives them.
 The disconnect confirmation explains this difference. Provider, API URL, identity, and connection
-stay pinned for the sandbox's life. Existing deployment-managed Ortam sandboxes keep their original
+stay pinned for the sandbox's life. Each sandbox retains an encrypted cleanup credential so a
+replacement race cannot strand it. Same-account rotation uses the current key. Existing deployment-managed Ortam sandboxes keep their original
 integration credential; a workspace connection cannot take over that identity.
 
 Codex device sign-in currently needs a Boat connection. Saved plan logins and model API keys run

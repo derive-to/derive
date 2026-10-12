@@ -62,6 +62,9 @@ interface SandboxState {
   snapshot?: string
   provider?: "ortam" | "boat"
   connection_id?: string
+  /** Encrypted controller credential retained until this sandbox finishes retirement. */
+  credential_enc?: string | null
+  account_id?: string
   identity: Identity
   /** One id per sandbox this agent ever has: the create and delete idempotency keys carry it,
    *  so a recreate after a failure never gets the old sandbox back. */
@@ -114,13 +117,33 @@ const sandboxRequest = (agent: AgentRecord, state: SandboxState) => ({
   ...(state.snapshot ? { snapshot: state.snapshot } : {}),
 })
 
-/** Existing integration sandboxes retain their deployment credential for cleanup.
- * Workspace connections cannot take ownership of their per-agent integration identity. */
+/** The sandbox keeps cleanup authority even if provider replacement races creation.
+ * Same-account key rotation uses the current key; another account uses the pinned key. */
 const runtimeForAgent = async (deps: MachineDeps, agent: AgentRecord) => {
   const state = parse<SandboxState>(agent.sandbox_state_json)
+  const current = await workspaceRuntime(deps.meta, deps.config, agent.org_id)
+  if (state?.api_url && state.connection_id && state.credential_enc) {
+    const cn = current.connection
+    const sameAccount =
+      cn?.id === state.connection_id &&
+      cn.toolkit === state.provider &&
+      cn.broker_ref === state.account_id
+    return {
+      provider: state.provider ?? "ortam",
+      apiUrl: state.api_url,
+      connection: {
+        id: state.connection_id,
+        toolkit: state.provider ?? "ortam",
+        secret_enc: sameAccount ? cn.secret_enc : state.credential_enc,
+        broker_ref: state.account_id,
+      },
+    }
+  }
+  // Existing integration sandboxes retain their deployment credential. A workspace
+  // connection cannot take ownership of their per-agent integration identity.
   return state?.api_url && !state.connection_id
     ? { provider: state.provider ?? "ortam", apiUrl: deps.config.apiUrl, connection: null }
-    : workspaceRuntime(deps.meta, deps.config, agent.org_id)
+    : current
 }
 
 /** One provider selection for normal work and retirement. Ortam scopes identity per agent. */
@@ -148,12 +171,23 @@ const clientFor = async (deps: MachineDeps, agent: AgentRecord): Promise<Sandbox
 const iso = (deps: MachineDeps) => (deps.now?.() ?? new Date()).toISOString()
 
 /** May this agent hold a sandbox right now? */
-const admitted = async (deps: MachineDeps, agent: AgentRecord) =>
-  agent.machine === "derive" &&
-  !agent.paused_at &&
-  (await cloudEnabled(deps.meta, deps.config, agent.org_id)) &&
-  // Fails closed: a settings read error counts as the brake being on.
-  !(await agentWritesOff(deps.meta, agent.org_id))
+const admitted = async (deps: MachineDeps, agent: AgentRecord) => {
+  if (
+    agent.machine !== "derive" ||
+    agent.paused_at ||
+    !(await cloudEnabled(deps.meta, deps.config, agent.org_id)) ||
+    (await agentWritesOff(deps.meta, agent.org_id))
+  )
+    return false
+  const state = parse<SandboxState>(agent.sandbox_state_json)
+  const current = (await workspaceRuntime(deps.meta, deps.config, agent.org_id)).connection
+  if (!state?.connection_id) return !state?.api_url || !current
+  return (
+    current?.id === state.connection_id &&
+    current.toolkit === state.provider &&
+    (!state.account_id || current.broker_ref === state.account_id)
+  )
+}
 
 // ---- The agent's sandbox --------------------------------------------------------------------
 
@@ -187,7 +221,13 @@ export async function advanceSandbox(
       state_json: JSON.stringify({
         api_url: runtime.apiUrl,
         provider: runtime.provider,
-        ...(runtime.connection ? { connection_id: runtime.connection.id } : {}),
+        ...(runtime.connection
+          ? {
+              connection_id: runtime.connection.id,
+              credential_enc: runtime.connection.secret_enc,
+              account_id: runtime.connection.broker_ref,
+            }
+          : {}),
         identity: { organization_id: auth.organization_id, user_id: auth.user_id },
         ...(runtime.provider === "boat"
           ? { snapshot: (await meta.getOrgSettings(agent.org_id)).boatSnapshot }
@@ -576,7 +616,7 @@ export async function machinePass(
 
   // A sandbox whose agent no longer runs on Derive is deleted; its files are gone with it.
   for (const agent of await meta.listAgentsInSandboxPhase(["ready"], 100))
-    if (agent.machine !== "derive" || !(await cloudEnabled(meta, deps.config, agent.org_id)))
+    if (!(await admitted(deps, agent)))
       await guard("retire", agent.id, () =>
         meta.transitionAgentSandbox(agent.id, agent.org_id, agent.sandbox_rev, {
           phase: "deleting",

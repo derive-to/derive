@@ -30,7 +30,7 @@ export const boatConnection = async (meta: MetaStore, org: string) => {
   return cn?.toolkit === "boat" ? cn : null
 }
 
-const connectionKey = (cn: ConnectionRecord, key: string | undefined) => {
+const connectionKey = (cn: Pick<ConnectionRecord, "secret_enc">, key: string | undefined) => {
   if (!key || !cn.secret_enc) throw new Error("Sandbox connection is unavailable")
   const value = decryptSecret(cn.secret_enc, key)
   if (!cn.secret_enc.startsWith("v1.") || value === cn.secret_enc)
@@ -38,11 +38,14 @@ const connectionKey = (cn: ConnectionRecord, key: string | undefined) => {
   return value
 }
 
-export const boatClient = (cn: ConnectionRecord, key: string | undefined, fetcher?: typeof fetch) =>
-  new BoatClient(BOAT_API_URL, connectionKey(cn, key), fetcher)
+export const boatClient = (
+  cn: Pick<ConnectionRecord, "secret_enc">,
+  key: string | undefined,
+  fetcher?: typeof fetch,
+) => new BoatClient(BOAT_API_URL, connectionKey(cn, key), fetcher)
 
 export const connectionClient = (
-  cn: ConnectionRecord,
+  cn: Pick<ConnectionRecord, "secret_enc" | "toolkit">,
   key: string | undefined,
   fetcher?: typeof fetch,
 ) =>
@@ -57,7 +60,11 @@ export const workspaceRuntime = async (
 ) => {
   const cn = await runtimeConnection(meta, org)
   return cn
-    ? { provider: cn.toolkit as SandboxProvider, apiUrl: cn.base_url, connection: cn }
+    ? {
+        provider: cn.toolkit as SandboxProvider,
+        apiUrl: sandboxApiUrl(cn.toolkit as SandboxProvider),
+        connection: cn,
+      }
     : {
         provider: config?.provider ?? "ortam",
         apiUrl: config?.apiUrl ?? ORTAM_API_URL,
