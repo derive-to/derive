@@ -1,6 +1,7 @@
 import { unbound } from "@derive/broker"
 import { z } from "zod"
-import type { SandboxClient } from "./sandbox-client"
+import { sha256 } from "./crypto"
+import type { SandboxClient, SandboxCreate } from "./sandbox-client"
 
 const Box = z.object({
   id: z.string(),
@@ -89,7 +90,7 @@ export class BoatClient implements SandboxClient {
       throw new Error("boat.dev sandbox ownership mismatch")
     return sandbox
   }
-  async create(body: unknown, key: string, identity: Identity) {
+  async create(body: SandboxCreate, key: string, identity: Identity) {
     await this.owned(identity)
     const input = z
       .object({
@@ -104,7 +105,8 @@ export class BoatClient implements SandboxClient {
         "/sandboxes",
         "POST",
         {
-          type: "small",
+          name: body.name,
+          type: body.size,
           ttlSeconds: input.auto_stop_after_seconds,
           noEnv: true,
           ...(input.snapshot ? { from: input.snapshot } : {}),
@@ -176,14 +178,29 @@ export class BoatClient implements SandboxClient {
   async launch(
     id: string,
     body: { argv: string[]; cwd: string; env: Record<string, string>; timeout_seconds: number },
-    _key: string,
+    key: string,
     identity: Identity,
   ) {
     await this.read(id, identity)
-    // Resume installs the scoped environment. Command history keeps command text for
-    // 90 days: credentials must never be interpolated into it.
-    const command = `test -n "$DERIVE_TOKEN" && exec ${body.argv.map(quote).join(" ")}`
-    const result = z.object({ processId: z.number().int(), success: z.literal(true) }).parse(
+    // Boat command submission has no idempotency contract. The owned runner's disk marker
+    // supplies it. Two accepted commands can race, but only one can own this operation.
+    const processId = `derive:${sha256(key)}`
+    const existing = await this.process(id, processId, identity)
+    if (existing.status !== "starting") return existing
+    const dir = `/home/ortam/.derive/operations/${sha256(key)}`
+    const command = [
+      "set -eu",
+      'test -n "$DERIVE_TOKEN"',
+      `mkdir -p ${quote(dir)}`,
+      `if ! mkdir ${quote(dir + "/claim")} 2>/dev/null; then exit 0; fi`,
+      `printf '%s\\n' \"$$\" > ${quote(dir + "/pid")}`,
+      `cat /proc/sys/kernel/random/boot_id > ${quote(dir + "/boot")}`,
+      `awk '{print $22}' /proc/$$/stat > ${quote(dir + "/started")}`,
+      `printf running > ${quote(dir + "/state")}`,
+      `trap ${quote(`printf exited > ${quote(dir + "/state")}`)} EXIT`,
+      `${body.argv.map(quote).join(" ")}`,
+    ].join("\n")
+    z.object({ processId: z.number().int(), success: z.literal(true) }).parse(
       await this.request(`/sandboxes/${encodeURIComponent(id)}/commands`, "POST", {
         command,
         cwd: body.cwd === "/home/ortam" ? "/home/user" : body.cwd,
@@ -191,10 +208,31 @@ export class BoatClient implements SandboxClient {
         timeoutSeconds: Math.min(600, body.timeout_seconds),
       }),
     )
-    return { id: String(result.processId), status: "running" as const }
+    return { id: processId, status: "running" as const }
   }
   async process(sandboxId: string, id: string, identity: Identity) {
     await this.read(sandboxId, identity)
+    if (/^derive:[a-f0-9]{64}$/.test(id)) {
+      const dir = `/home/ortam/.derive/operations/${id.slice(7)}`
+      const command = [
+        `dir=${quote(dir)}`,
+        'if [ ! -d "$dir/claim" ]; then printf starting;',
+        'elif [ "$(cat "$dir/state" 2>/dev/null)" = exited ]; then printf exited;',
+        'elif [ -f "$dir/pid" ] && [ "$(cat "$dir/boot" 2>/dev/null)" = "$(cat /proc/sys/kernel/random/boot_id)" ] &&',
+        '[ "$(awk \'{print $22}\' "/proc/$(cat "$dir/pid")/stat" 2>/dev/null)" = "$(cat "$dir/started" 2>/dev/null)" ]; then printf running;',
+        "else printf interrupted; fi",
+      ].join("\n")
+      const read = z.object({ success: z.literal(true), stdout: z.string() }).parse(
+        await this.request(`/sandboxes/${encodeURIComponent(sandboxId)}/commands`, "POST", {
+          command,
+          timeoutSeconds: 10,
+        }),
+      )
+      const status = z
+        .enum(["starting", "running", "exited", "interrupted"])
+        .parse(read.stdout.trim())
+      return { id, status }
+    }
     if (!/^\d+$/.test(id)) throw new Error("boat.dev process mismatch")
     const result = z
       .object({ processId: z.number(), status: z.enum(["running", "exited", "lost"]) })

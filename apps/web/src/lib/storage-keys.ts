@@ -3,6 +3,7 @@
 // scripts/check-frontend.mjs: storage may only be keyed by a member of this
 // object, never a bare string literal.
 export const STORAGE_KEYS = {
+  taskDraft: "derive.task.draft.",
   theme: "derive_theme",
   cursorPref: "derive.cursor.pref",
   commentsPanel: "derive.comments.panel",

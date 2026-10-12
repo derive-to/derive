@@ -13,15 +13,8 @@ import {
 } from "@derive/core"
 import { log } from "../log"
 import { agentWritesOff } from "./agent-writes"
-import {
-  announceJob,
-  askAgent,
-  canAskAgent,
-  cancelJob,
-  type JobDeps,
-  noteHeldForBudget,
-  overBudgetFor,
-} from "./jobs"
+import { canAskAgent, type JobDeps } from "./job-policy"
+import { announceJob, askAgent, cancelJob, noteHeldForBudget, overBudgetFor } from "./jobs"
 import { runtimeFailureReason } from "./runtime-diagnostics"
 
 // GRAPHS ON JOBS: an agent whose instructions page carries a `derive.workflow/v1` definition is

@@ -18,14 +18,18 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { checkpointConversation, restoreConversation } from "./conversation.js"
+import { RUNNER_PROTOCOL_VERSION } from "./conversation-format.js"
 import { selectProvider } from "./providers/index.js"
 import {
   buildPrompt,
+  DeriveClient,
   resolveArtifactHtml,
   runAgent,
   stripModelTokens,
   toMicroUsd,
 } from "./runner.js"
+import { fetchSkill, writeSkill } from "./skills.js"
 
 const positiveMs = (raw, fallback, floor) => {
   const n = Number(raw)
@@ -79,6 +83,7 @@ export class JobClient {
     if (body !== undefined) headers["content-type"] = "application/json"
     if (claim) headers["x-derive-claim"] = claim
     const res = await this.fetch(`${this.cfg.server}${path}`, {
+      signal: AbortSignal.timeout(20_000),
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -123,11 +128,17 @@ export class JobClient {
     return this.req(`/v1/agents/${this.cfg.agentId}/pull`, { method: "POST", body: { limit } })
   }
 
-  report(job, body) {
-    return this.req(`/v1/jobs/${job.id}/report`, {
-      method: "POST",
-      body: { started_at: job.started_at, ...body },
-    })
+  async report(job, body) {
+    const payload = { started_at: job.started_at, ...body }
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.req(`/v1/jobs/${job.id}/report`, { method: "POST", body: payload })
+      } catch (error) {
+        if (body.status === "progress" || (error.status && error.status < 500) || attempt >= 2)
+          throw error
+        await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt))
+      }
+    }
   }
 
   account(job, provider) {
@@ -283,9 +294,8 @@ async function modelEnvFor(
       { retryable: false },
     )
   const env = provider.credentialEnv?.(res.credential.kind, res.credential.value)
-  if (env) return { env, cleanup: () => {} }
   const spec = provider.credentialFiles?.(res.credential.kind, res.credential.value)
-  if (!spec)
+  if (!spec && !env)
     throw Object.assign(new Error(`can't use a ${res.credential.kind} credential here`), {
       retryable: false,
     })
@@ -303,10 +313,14 @@ async function modelEnvFor(
     }
   }
   const dir = mkdtempSync(join(credentialRoot, "derive-cred-"))
-  for (const [name, content] of Object.entries(spec.files))
+  for (const [name, content] of Object.entries(spec?.files ?? {}))
     writeFileSync(join(dir, name), content, { mode: 0o600 })
   return {
-    env: { [spec.homeEnv]: dir },
+    home: dir,
+    env: {
+      ...env,
+      [spec?.homeEnv ?? (providerName === "codex" ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR")]: dir,
+    },
     flush: async () => {
       if (providerName !== "codex" || res.credential.kind !== "login" || !res.account_id) return
       try {
@@ -340,27 +354,75 @@ export async function serveJob(client, job, cfg, deps = {}) {
   const began = Date.now()
   const meter = deps.meter ?? { costUsd: null }
   const run = deps.runAgent ?? runAgent
-  const providerName =
-    cfg.providerName ?? (job.execution?.provider === "codex" ? "codex" : "claude-code")
+  const providerName = job.turn
+    ? job.execution.provider
+    : (cfg.providerName ?? (job.execution?.provider === "codex" ? "codex" : "claude-code"))
   const provider = selectProvider(providerName)
-  const asked = (job.messages?.at(-1)?.body_md ?? "").slice(0, 80)
-  console.log(`[runner] job ${job.id}: "${asked}"`)
+  const model = job.turn
+    ? (job.execution.model ?? provider.defaultModel)
+    : (cfg.model ?? job.execution?.model ?? provider.defaultModel)
+  console.log(`[runner] job ${job.id}`)
 
   // Keep the claim alive while the model works.
   const leaseMs = job.lease_until ? new Date(job.lease_until).getTime() - Date.now() : 0
-  const tickEvery = Math.max(15_000, Math.floor(leaseMs / 3))
+  const tickEvery = Math.max(5_000, Math.min(15_000, Math.floor(leaseMs / 3)))
   let lost = false
+  const abort = new AbortController()
+  const events = []
+  let eventSeq = 0
   const tick = setInterval(() => {
-    client.report(job, { status: "progress" }).catch((e) => {
-      if (e.status === 409) lost = true
-    })
+    client
+      .report(job, {
+        status: "progress",
+        protocol_version: RUNNER_PROTOCOL_VERSION,
+        ...(job.turn ? { turn_id: job.turn.id, events: events.slice(-100) } : {}),
+      })
+      .catch((e) => {
+        if (e.status === 409 || e.status === 401 || e.status === 403) {
+          lost = true
+          abort.abort()
+        }
+      })
   }, tickEvery)
   tick.unref?.()
 
   let cleanup = () => {}
   let flushCredential = async () => {}
   let shim = null
+  let home = null
+  let harnessVersion = null
+  let checkpoint = null
+  let terminal = null
+  const report = (body) => {
+    const payload = {
+      protocol_version: RUNNER_PROTOCOL_VERSION,
+      ...(job.turn
+        ? {
+            turn_id: job.turn.id,
+            session_id: meter.sessionId ?? null,
+            checkpoint,
+            events: events.slice(-100),
+          }
+        : {}),
+      ...body,
+    }
+    terminal = payload
+    return client.report(job, payload)
+  }
   try {
+    if (job.turn && job.protocol_version !== RUNNER_PROTOCOL_VERSION)
+      throw Object.assign(new Error("This task requires another runner protocol."), {
+        retryable: false,
+      })
+    const bin = cfg.agentBin ?? provider.binFrom({}, process.env)
+    harnessVersion = cfg.mock ? null : await provider.version(bin)
+    if (!cfg.mock && !harnessVersion)
+      throw Object.assign(
+        new Error(
+          "The selected harness is unavailable in this sandbox. Update the sandbox environment.",
+        ),
+        { retryable: false },
+      )
     let env
     if (!cfg.mock) {
       // One after the other, so a credential file written for this job is always cleaned up.
@@ -369,7 +431,29 @@ export async function serveJob(client, job, cfg, deps = {}) {
         localLogin: cfg.localLogin,
       })
       cleanup = cred.cleanup
+      home = cred.home ?? null
+      if (job.turn?.previous) {
+        if (!home)
+          throw Object.assign(new Error("A private model home is required for continuation."), {
+            retryable: false,
+          })
+        restoreConversation(home, job.turn.previous, providerName)
+      }
+      if (job.turn?.ordinal > 1 && !job.turn.previous)
+        throw Object.assign(
+          new Error("The original conversation checkpoint is unavailable. Start a fresh task."),
+          { retryable: false },
+        )
       flushCredential = cred.flush ?? flushCredential
+      if (job.instructions?.bundle) {
+        const skill = await fetchSkill(new DeriveClient(cfg.server, cfg.token).skillApi(), {
+          id: job.instructions.short_id,
+          version: job.instructions.version,
+        })
+        const dir = join(cfg.cwd, ".derive", "skills", "instructions")
+        writeSkill(join(cfg.cwd, ".derive", "skills"), "instructions", skill.files)
+        job.instructions.body_md = `${skill.files.get("SKILL.md").toString()}\n\nSupporting files are in ${dir}.`
+      }
       // Source tools: a shim in cwd and exactly what it needs to call this job's tool route.
       // The job's tool token, never the runner's credential: it reaches this job's tool route
       // and nothing else, and dies with the claim.
@@ -395,19 +479,27 @@ export async function serveJob(client, job, cfg, deps = {}) {
       : await run(provider, {
           bin: cfg.agentBin ?? provider.binFrom({}, process.env),
           cwd: cfg.cwd,
-          model: cfg.model ?? job.execution?.model ?? provider.defaultModel,
+          model,
           timeoutMs: cfg.timeoutMs,
           systemPrompt: jobSystemPrompt(job, { shim: shim?.rel }),
-          prompt: buildPrompt(job.messages ?? []),
+          prompt: job.turn ? job.turn.body_md : buildPrompt(job.messages ?? []),
+          resumeSessionId: job.turn?.previous?.session_id ?? null,
           env,
+          signal: abort.signal,
+          onEvent: (event) => {
+            if (eventSeq < 500) events.push({ seq: ++eventSeq, kind: event.kind })
+          },
           meter,
         })
     await flushCredential()
-    if (lost) {
-      console.error(
-        `[runner] job ${job.id}: the claim moved to another runner; dropping the answer`,
-      )
-      return "lost"
+    if (job.turn && meter.sessionId && home) {
+      try {
+        checkpoint = checkpointConversation(home, providerName, meter.sessionId)
+      } catch {
+        console.error(
+          "[runner] The result is ready, but its conversation checkpoint could not be saved.",
+        )
+      }
     }
     const cost = toMicroUsd(meter.costUsd)
     const count = (n) => (Number.isSafeInteger(n) && n >= 0 ? n : null)
@@ -417,7 +509,11 @@ export async function serveJob(client, job, cfg, deps = {}) {
         {
           attempt: job.attempt ?? 0,
           provider: providerName,
-          model: cfg.model ?? job.execution?.model ?? provider.defaultModel,
+          model,
+          runner_version: JSON.parse(
+            readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+          ).version,
+          harness_version: harnessVersion,
           ...(job.instructions
             ? { skill: { short_id: job.instructions.short_id, version: job.instructions.version } }
             : {}),
@@ -426,11 +522,21 @@ export async function serveJob(client, job, cfg, deps = {}) {
           output_tokens: count(usage.output_tokens),
           duration_ms: Date.now() - began,
           model_cost_micro_usd: cost,
+          harness_estimate_micro_usd: toMicroUsd(meter.estimatedCostUsd),
         },
       ],
     }
+    if (lost) {
+      // A stopped claim still reports its measured usage. Settlement cannot reopen it.
+      await report({
+        status: "failed",
+        result: receipt,
+        ...(cost !== null ? { cost_micro_usd: cost } : {}),
+      }).catch(() => {})
+      return "lost"
+    }
     if (!result.ok) {
-      await client.report(job, {
+      await report({
         status: "failed",
         body_md: `The run failed: ${result.error}`,
         retryable: !!result.retryable,
@@ -443,6 +549,10 @@ export async function serveJob(client, job, cfg, deps = {}) {
     // Publish only a useful artifact. The task itself keeps its answer and receipt.
     const made = []
     const flagged = [...(a.caveats ?? [])]
+    if (job.turn && !checkpoint)
+      flagged.push(
+        "This result is ready. Its conversation checkpoint is unavailable, so continuing needs a fresh task.",
+      )
     if (a.artifact && !cfg.mock) {
       try {
         const src = resolveArtifactHtml(a.artifact, cfg.cwd)
@@ -479,21 +589,25 @@ export async function serveJob(client, job, cfg, deps = {}) {
       ...(cost !== null ? { cost_micro_usd: cost } : {}),
     }
     if (a.escalate) {
-      await client.report(job, {
+      await report({
         status: "needs_you",
         ...common,
         needs: { kind: "escalation", question: a.escalation_reason ?? "This needs a person." },
       })
       return "needs_you"
     }
-    await client.report(job, { status: "succeeded", ...common })
+    await report({ status: "succeeded", ...common })
     return "succeeded"
   } catch (e) {
     await flushCredential()
     console.error(`[runner] job ${job.id} failed: ${e.message}`)
-    await client
-      .report(job, { status: "failed", body_md: e.message, retryable: e.retryable !== false })
-      .catch(() => {})
+    if (terminal) {
+      await client.report(job, terminal).catch(() => {})
+      return "lost"
+    }
+    await report({ status: "failed", body_md: e.message, retryable: e.retryable !== false }).catch(
+      () => {},
+    )
     return "failed"
   } finally {
     clearInterval(tick)
@@ -533,7 +647,9 @@ export function loadOneJobConfig(env = process.env, flags = {}) {
 }
 
 export async function runOneJob(cfg, client = new JobClient(cfg), deps = {}) {
-  const { job } = await client.req(`/v1/jobs/${encodeURIComponent(cfg.jobId)}/work`)
+  const { job } = await client.req(
+    `/v1/jobs/${encodeURIComponent(cfg.jobId)}/work?protocol_version=${RUNNER_PROTOCOL_VERSION}`,
+  )
   return serveJob(
     client,
     job,

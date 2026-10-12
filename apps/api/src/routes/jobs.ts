@@ -1,6 +1,7 @@
 import { refRouter } from "@derive/broker"
 import {
   type AgentRecord,
+  capRole,
   DERIVE_AGENT_ID,
   type JobNeeds,
   type JobRecord,
@@ -8,6 +9,7 @@ import {
   roleAllows,
   type Selector,
 } from "@derive/core"
+import { checkpointProblem, RUNNER_PROTOCOL_VERSION } from "@derive-to/cli/conversation-format"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
@@ -28,16 +30,15 @@ import { readEnvironmentBindings } from "../lib/context-environment"
 import { decryptSecret, encryptSecret, sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 import { resolveJobCredential } from "../lib/job-accounts"
+import { turnAgent } from "../lib/job-command"
 import { advanceGraph, graphAware } from "../lib/job-graph"
+import { machineDepsFrom, machinePass } from "../lib/job-machine"
+import { canAskAgent, canManageAgent, canSteerJob, inboxScope } from "../lib/job-policy"
 import {
   answerJob,
   askAgent,
-  canAskAgent,
   cancelJob,
-  canManageAgent,
-  canSteerJob,
   followUpJob,
-  inboxScope,
   isServerNote,
   jobJson,
   jobOverBudget,
@@ -55,7 +56,6 @@ import {
 } from "../lib/page-ask"
 import { MAX_RUN_CEILING_MS } from "../lib/run-lifecycle"
 import { signWorkToken } from "../lib/run-token"
-import { cloudEnabled } from "../lib/runtime-connection"
 import { runtimeFailureReason } from "../lib/runtime-diagnostics"
 import { log } from "../log"
 
@@ -119,6 +119,8 @@ const JobResultSchema = z.object({
         attempt: z.number().int().nonnegative(),
         provider: z.string().max(80),
         model: z.string().max(200),
+        runner_version: z.string().max(80).optional(),
+        harness_version: z.string().max(100).nullable().optional(),
         skill: z
           .object({ short_id: z.string().max(64), version: z.number().int().positive() })
           .optional(),
@@ -127,9 +129,14 @@ const JobResultSchema = z.object({
         output_tokens: z.number().int().nonnegative().nullable(),
         duration_ms: z.number().int().nonnegative(),
         model_cost_micro_usd: z.number().int().nonnegative().nullable(),
+        harness_estimate_micro_usd: z.number().int().nonnegative().nullable().optional(),
+        api_estimate_micro_usd: z.number().int().nonnegative().nullable().optional(),
+        price_version: z.string().nullable().optional(),
+        turn_id: z.string().optional(),
+        actor_id: z.string().nullable().optional(),
       }),
     )
-    .max(30)
+    .max(600)
     .optional(),
   effects: z.array(JobEffectSchema).optional(),
   evidence: z
@@ -200,7 +207,40 @@ const JobMessage = z
   })
   .openapi("JobMessage")
 
-const JobDetail = Job.extend({ messages: z.array(JobMessage) }).openapi("JobDetail")
+const JobTurn = z.object({
+  id: z.string(),
+  ordinal: z.number(),
+  actor_id: z.string().nullable(),
+  body_md: z.string(),
+  status: z.enum(["queued", "running", "succeeded", "failed", "needs_you", "cancelled"]),
+  body_result_md: z.string().nullable(),
+  started_at: z.string().nullable(),
+  finished_at: z.string().nullable(),
+  resumable: z.boolean(),
+  execution: z.object({
+    provider: z.enum(["codex", "claude-code"]),
+    model: z.string().nullable(),
+    account_id: z.string().nullable(),
+    agent_name: z.string().optional(),
+    skill: z.object({ artifact_id: z.string(), version: z.number() }).nullable(),
+    sandbox: z
+      .object({
+        provider: z.enum(["boat", "ortam"]),
+        connection_id: z.string().nullable(),
+        account_id: z.string().nullable(),
+      })
+      .optional(),
+  }),
+})
+const JobDetail = Job.extend({
+  messages: z.array(JobMessage),
+  turns: z.array(JobTurn).optional(),
+  events: z
+    .array(
+      z.object({ turn_id: z.string(), seq: z.number(), kind: z.string(), created_at: z.string() }),
+    )
+    .optional(),
+}).openapi("JobDetail")
 
 const STATUSES = [
   "queued",
@@ -218,10 +258,48 @@ export const jobRoutes = (ctx: AppContext) => {
   const app = new OpenAPIHono<BlankEnv>()
   const jobDeps = graphAware({
     meta,
+    cloud: { secret: deps.encryptionKey, config: deps.runtime },
     bus: ctx.backplane,
     blobs: ctx.blobs,
     announce: ctx.announceJob,
   })
+  const wakeCloud = async (c: Context, job: JobRecord) => {
+    if (!meta.jobExecution || job.kind === "graph" || job.attended === 1) return
+    const agent = await meta.getAgent(job.agent_id)
+    if (agent?.machine !== "derive") return
+    const machine = machineDepsFrom(meta, {
+      secret: deps.encryptionKey,
+      server: deps.baseUrl,
+      config: deps.runtime,
+      fetcher: deps.runtimeFetch,
+      bus: ctx.backplane,
+      announce: ctx.announceJob,
+    })
+    if (machine) await ctx.afterResponse(c, () => machinePass(machine))
+  }
+  const turnsFor = async (job: JobRecord) =>
+    ((await meta.jobExecution?.turns(job.id, job.org_id)) ?? []).map((turn) => {
+      const choice = JSON.parse(turn.execution_json) as import("@derive/core").JobExecution
+      return {
+        id: turn.id,
+        ordinal: turn.ordinal,
+        actor_id: turn.actor_id,
+        body_md: turn.body_md,
+        status: turn.status,
+        body_result_md: turn.body_result_md,
+        started_at: turn.started_at,
+        finished_at: turn.finished_at,
+        resumable: !!turn.session_id && !!turn.checkpoint_enc,
+        execution: {
+          provider: choice.provider,
+          model: choice.model,
+          account_id: choice.account_id,
+          agent_name: choice.agent_name,
+          skill: choice.skill,
+          sandbox: choice.sandbox,
+        },
+      }
+    })
 
   const messageJson = (m: {
     id: string
@@ -508,28 +586,7 @@ export const jobRoutes = (ctx: AppContext) => {
       const open = b.dedupe_key
         ? await meta.findOpenJobByDedupe(agent.id, who.id, b.dedupe_key)
         : null
-      if (!open && agent.machine === "derive") {
-        if (!(await cloudEnabled(meta, deps.runtime, agent.org_id)))
-          return bail(fail(c, 409, "Connect a sandbox in Settings → Connections before starting."))
-        const account = await resolveJobCredential(
-          meta,
-          deps.encryptionKey,
-          agent,
-          { asked_by: who.id },
-          agent.provider,
-        )
-        if (!account.credential)
-          return bail(
-            fail(
-              c,
-              409,
-              account.reason === "unreadable"
-                ? "Your model account needs attention. Reconnect it in Settings before starting."
-                : "Connect your model account in Settings before starting.",
-            ),
-          )
-      }
-      if (!open && (await overBudgetFor(meta, agent, who.id)))
+      if (agent.machine !== "derive" && !open && (await overBudgetFor(meta, agent, who.id)))
         return bail(fail(c, 402, OVER_BUDGET))
       const subject: Selector | null = b.subject
         ? (normalizeSelectors([b.subject])[0] ?? null)
@@ -552,7 +609,13 @@ export const jobRoutes = (ctx: AppContext) => {
         dedupeKey: b.dedupe_key ?? null,
       })
       const messages = (await meta.listJobMessages(job.id)).map(messageJson)
-      const body = { ...(await showOne(job)), messages }
+      const body = {
+        ...(await showOne(job)),
+        messages,
+        turns: await turnsFor(job),
+        events: (await meta.jobExecution?.events(job.id, job.org_id)) ?? [],
+      }
+      if (created) await wakeCloud(c, job)
       return created ? c.json(body, 201) : c.json(body, 200)
     },
   )
@@ -572,7 +635,12 @@ export const jobRoutes = (ctx: AppContext) => {
       const job = await visibleJob(c, c.req.param("id"))
       if (job instanceof Response) return bail(job)
       const messages = (await meta.listJobMessages(job.id)).map(messageJson)
-      return c.json({ ...(await showOne(job)), messages })
+      return c.json({
+        ...(await showOne(job)),
+        messages,
+        turns: await turnsFor(job),
+        events: (await meta.jobExecution?.events(job.id, job.org_id)) ?? [],
+      })
     },
   )
 
@@ -626,12 +694,25 @@ export const jobRoutes = (ctx: AppContext) => {
           fail(c, 403, "only the person who asked, or the agent's manager, can follow up"),
         )
       if (job.status === "cancelled") return bail(fail(c, 409, "this job was cancelled; ask again"))
-      if (await reopensOverBudget(job)) return bail(fail(c, 402, OVER_BUDGET))
-      const b = await readJson(c, z.object({ body_md: z.string().trim().min(1).max(20_000) }))
+      if (!(agent.machine === "derive" && meta.jobExecution) && (await reopensOverBudget(job)))
+        return bail(fail(c, 402, OVER_BUDGET))
+      const b = await readJson(
+        c,
+        z.object({
+          body_md: z.string().trim().min(1).max(20_000),
+          dedupe_key: z.string().max(200).optional(),
+        }),
+      )
       if (b instanceof Response) return bail(b)
-      const next = await followUpJob(jobDeps, job, who.id, b.body_md)
+      const next = await followUpJob(jobDeps, job, who.id, b.body_md, b.dedupe_key)
+      await wakeCloud(c, next)
       const messages = (await meta.listJobMessages(job.id)).map(messageJson)
-      return c.json({ ...(await showOne(next)), messages })
+      return c.json({
+        ...(await showOne(next)),
+        messages,
+        turns: await turnsFor(next),
+        events: (await meta.jobExecution?.events(next.id, next.org_id)) ?? [],
+      })
     },
   )
 
@@ -681,21 +762,27 @@ export const jobRoutes = (ctx: AppContext) => {
           return bail(
             fail(c, 403, "only the person who asked, or the agent's manager, can do that"),
           )
-        if (reopens && (await reopensOverBudget(job))) return bail(fail(c, 402, OVER_BUDGET))
+        if (
+          reopens &&
+          !(agent?.machine === "derive" && meta.jobExecution) &&
+          (await reopensOverBudget(job))
+        )
+          return bail(fail(c, 402, OVER_BUDGET))
         const out = await act(job, c, who.id)
         if (!out) return bail(fail(c, 409, "this job cannot do that from where it is"))
         if ("error" in out) return bail(fail(c, 400, out.error))
+        await wakeCloud(c, out)
         return c.json(await showOne(out))
       },
     )
-  personAction("/v1/jobs/{id}/cancel", "Cancel an open job (and its children).", (job, _c, whoId) =>
-    cancelJob(jobDeps, job, whoId),
+  personAction("/v1/jobs/{id}/cancel", "Cancel an open job (and its children).", (job, c, whoId) =>
+    cancelJob(jobDeps, job, whoId, c.req.header("Idempotency-Key")),
   )
   personAction(
     "/v1/jobs/{id}/retry",
     "Run a failed or lost job again.",
     async (job, c, whoId) => {
-      if (!isPageAsk(job)) return retryJob(jobDeps, job)
+      if (!isPageAsk(job)) return retryJob(jobDeps, job, whoId, c.req.header("Idempotency-Key"))
       if (job.status !== "failed" && job.status !== "lost") return null
       if (JSON.parse(job.meta_json ?? "{}").saving === true)
         return {
@@ -737,6 +824,7 @@ export const jobRoutes = (ctx: AppContext) => {
           text: z.string().max(20_000).optional(),
           option: z.string().max(200).optional(),
           question_id: z.string().min(1).optional(),
+          dedupe_key: z.string().min(1).max(200).optional(),
         }),
       )
       if (b instanceof Response) return { error: "answer needs text or an option" }
@@ -831,19 +919,64 @@ export const jobRoutes = (ctx: AppContext) => {
     if (job.status !== "running") return fail(c, 409, "this job is not running")
     const claim = c.req.header("x-derive-claim") ?? c.req.query("claim")
     if (claim !== job.started_at) return fail(c, 409, "this claim has been superseded")
+    const turn = meta.jobExecution
+      ? (await meta.jobExecution.turns(job.id, job.org_id)).find(
+          (t) => t.started_at === job.started_at && t.status === "running",
+        )
+      : null
+    if (turn) {
+      if (turn.actor_id && !(await canSteerJob(meta, agent, job, turn.actor_id)))
+        return fail(c, 403, "The person who started this turn no longer has access.")
+      const member = turn.actor_id ? await meta.getMembership(job.org_id, turn.actor_id) : null
+      if (turn.actor_id && !member)
+        return fail(c, 403, "The person who started this turn no longer has access.")
+      return {
+        agent: {
+          ...turnAgent(agent, JSON.parse(turn.execution_json)),
+          role: member ? capRole(agent.role, member.role) : agent.role,
+          created_by: turn.actor_id ?? agent.created_by,
+        },
+        job,
+      }
+    }
     return { agent, job }
   }
 
   /** What a runner needs to do one job, besides secrets: the transcript, the agent's
    *  instructions, and the tools its sources grant. */
   const payload = async (agent: AgentRecord, jobs: JobRecord[]) => {
-    let instructions: { short_id: string; version: number; body_md: string } | null = null
+    const work = jobs[0]
+    const turn =
+      work?.started_at && meta.jobExecution
+        ? await meta.jobExecution.claim(work.id, work.org_id, work.started_at)
+        : null
+    const execution = turn
+      ? (JSON.parse(turn.execution_json) as import("@derive/core").JobExecution)
+      : null
+    if (execution) agent = turnAgent(agent, execution)
+    if (turn?.actor_id && work) {
+      const member = await meta.getMembership(work.org_id, turn.actor_id)
+      if (!member) throw new Error("The turn actor no longer has access")
+      agent = { ...agent, role: capRole(agent.role, member.role), created_by: turn.actor_id }
+    }
+    let instructions: {
+      short_id: string
+      version: number
+      body_md: string
+      bundle: boolean
+    } | null = null
     if (agent.instructions_artifact_id) {
       const art = await meta.getArtifactById(agent.instructions_artifact_id).catch(() => null)
-      const v = art ? await meta.getVersion(art.id, art.current_version) : null
+      const skillVersion = execution?.skill?.version ?? art?.current_version
+      const v = art && skillVersion ? await meta.getVersion(art.id, skillVersion) : null
       const body = v ? await ctx.sourceText(v) : null
       if (art && body != null)
-        instructions = { short_id: art.short_id, version: art.current_version, body_md: body }
+        instructions = {
+          short_id: art.short_id,
+          version: skillVersion ?? art.current_version,
+          body_md: body,
+          bundle: art.kind === "bundle",
+        }
     }
     const connIds = parseConnectionIds(agent.connection_ids_json)
     const quiet: SourceQuiet[] = []
@@ -903,6 +1036,27 @@ export const jobRoutes = (ctx: AppContext) => {
           .map(messageJson),
         instructions,
         execution: { provider: agent.provider, model: agent.model, agent_name: agent.name },
+        protocol_version: RUNNER_PROTOCOL_VERSION,
+        ...(turn
+          ? {
+              turn: {
+                id: turn.id,
+                ordinal: turn.ordinal,
+                body_md: turn.body_md,
+                previous: await (async () => {
+                  const turns = (await meta.jobExecution?.turns(j.id, j.org_id)) ?? []
+                  const previous = turns
+                    .filter((t) => t.ordinal < turn.ordinal && t.session_id && t.checkpoint_enc)
+                    .at(-1)
+                  if (!previous?.session_id || !previous.checkpoint_enc || !deps.encryptionKey)
+                    return null
+                  const checkpoint = decryptSecret(previous.checkpoint_enc, deps.encryptionKey)
+                  if (checkpoint === previous.checkpoint_enc) return null
+                  return { session_id: previous.session_id, checkpoint: JSON.parse(checkpoint) }
+                })(),
+              },
+            }
+          : {}),
         tools,
         ...(quiet.length ? { sources_quiet: quiet } : {}),
       })),
@@ -930,6 +1084,22 @@ export const jobRoutes = (ctx: AppContext) => {
       c,
       z.object({
         started_at: z.string().nullable(),
+        protocol_version: z.literal(RUNNER_PROTOCOL_VERSION).optional(),
+        turn_id: z.string().max(64).optional(),
+        session_id: z.string().max(200).nullish(),
+        checkpoint: z
+          .object({
+            version: z.literal(1),
+            provider: z.enum(["codex", "claude-code"]),
+            session_id: z.string().max(200),
+            sha256: z.string().regex(/^[a-f0-9]{64}$/),
+            files: z.record(z.string(), z.string().max(8_000_000)),
+          })
+          .refine(
+            (v) => Object.keys(v.files).length <= 10 && JSON.stringify(v).length <= 8_500_000,
+            "The checkpoint exceeds its supported size",
+          )
+          .nullish(),
         status: z.enum(["succeeded", "failed", "needs_you", "progress"]),
         body_md: z.string().max(200_000).nullish(),
         result: JobResultSchema.omit({ compute: true, attempt_offset: true }).nullish(),
@@ -939,6 +1109,22 @@ export const jobRoutes = (ctx: AppContext) => {
         meta: z.record(z.string(), z.unknown()).nullish(),
         report_artifact_id: z.string().nullish(),
         report_short_id: z.string().max(64).nullish(),
+        events: z
+          .array(
+            z.object({
+              seq: z.number().int().min(1).max(500),
+              kind: z.enum([
+                "command_execution",
+                "file_change",
+                "mcp_tool_call",
+                "web_search",
+                "plan_update",
+                "tool_use",
+              ]),
+            }),
+          )
+          .max(100)
+          .optional(),
       }),
     )
     if (b instanceof Response) return b
@@ -946,7 +1132,24 @@ export const jobRoutes = (ctx: AppContext) => {
     // job's workspace: pointing a job at a teammate's page would show it to everyone watching
     // the job, and the next turn would write over it. Runners name it by the short id their
     // publish returned.
-    const { report_short_id, ...report } = b
+    const { report_short_id, checkpoint, events, ...reportFields } = b
+    if (b.turn_id && b.protocol_version !== RUNNER_PROTOCOL_VERSION)
+      return fail(c, 409, "This runner needs an update before it can report cloud turns.")
+    if (checkpoint) {
+      const problem = checkpointProblem(checkpoint)
+      if (problem || sha256(JSON.stringify(checkpoint.files)) !== checkpoint.sha256)
+        return fail(c, 400, problem ?? "The checkpoint checksum does not match.")
+    }
+    if (checkpoint && (!deps.encryptionKey || checkpoint.session_id !== b.session_id))
+      return fail(c, 400, "The checkpoint does not match this conversation.")
+    const report = {
+      ...reportFields,
+      ...(checkpoint && deps.encryptionKey
+        ? {
+            checkpoint_enc: encryptSecret(JSON.stringify(checkpoint), deps.encryptionKey),
+          }
+        : {}),
+    }
     if (report_short_id || report.report_artifact_id) {
       const art = report_short_id
         ? await meta.getByShortId(report_short_id).catch(() => null)
@@ -958,12 +1161,21 @@ export const jobRoutes = (ctx: AppContext) => {
       // listed nowhere) when it is first attached, whatever the runner published it as: an
       // older runner made its report pages with the workspace's sharing defaults. Sharing it
       // further afterwards is a person's choice, so a later attach of the same page keeps it.
-      if (held.report_artifact_id !== art.id && held.status === "running")
-        await meta.setAccess(art.id, "member", "none", "none", null)
       report.report_artifact_id = art.id
+    }
+    if (events?.length && b.turn_id && b.started_at && held.status === "running") {
+      if (!(await meta.jobExecution?.append(held.id, held.org_id, b.turn_id, b.started_at, events)))
+        return fail(c, 409, "This event stream belongs to an old claim.")
     }
     const out = await reportJob(jobDeps, agent, c.req.param("id"), report)
     if ("error" in out) return fail(c, out.status as 404 | 409, out.error)
+    if (
+      report.report_artifact_id &&
+      held.report_artifact_id !== report.report_artifact_id &&
+      out.job.report_artifact_id === report.report_artifact_id
+    )
+      await meta.setAccess(report.report_artifact_id, "member", "none", "none", null)
+    if (b.status !== "progress") await wakeCloud(c, out.job)
     // A graph step settled: move its graph on now rather than at the next tick.
     if (out.job.parent_id && out.job.status !== "running") {
       const parent = await meta.getJob(out.job.parent_id)
@@ -977,12 +1189,15 @@ export const jobRoutes = (ctx: AppContext) => {
 
   // The one job a Derive machine's runner was launched for, shaped like a pull's entry.
   app.get("/v1/jobs/:id/work", async (c) => {
+    c.header("Cache-Control", "no-store")
     const job = await meta.getJob(c.req.param("id"))
     if (!job) return fail(c, 404, "not found")
     const agent = await runnerFor(c, job.agent_id, job.id)
     if (agent instanceof Response) return agent.status === 403 ? fail(c, 404, "not found") : agent
     if (!ctx.agentJobScope(c)) return fail(c, 403, "a job token is required")
     if (job.status !== "running") return fail(c, 409, "this job is not running")
+    if (c.req.query("protocol_version") !== String(RUNNER_PROTOCOL_VERSION))
+      return fail(c, 409, "This sandbox runner needs an update before the task can start.")
     const [work] = await payload(agent, [job])
     return c.json({ job: work })
   })

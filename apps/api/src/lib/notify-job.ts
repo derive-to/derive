@@ -34,7 +34,7 @@ import {
 import type { Backplane } from "../bus"
 import { log } from "../log"
 import { enqueueJobEvent } from "../webhooks"
-import { canManageAgent } from "./jobs"
+import { canManageAgent } from "./job-policy"
 import { enqueueJobInterrupts } from "./slack-dm"
 import { truncate } from "./text"
 

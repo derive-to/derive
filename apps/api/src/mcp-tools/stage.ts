@@ -10,7 +10,7 @@ import {
 } from "../lib/api-token"
 import { MAX_UPLOAD_BYTES } from "../lib/http"
 import { MAX_ASSET_BYTES } from "../lib/image"
-import { canManageAgent } from "../lib/jobs"
+import { canManageAgent } from "../lib/job-policy"
 import { badChoice } from "../lib/open-choice"
 import { PUBLISH_TARGET_CREATE, PUBLISH_TOKEN_TTL_MS, signPublishToken } from "../lib/publish-token"
 import { scopeGapMessage } from "../lib/scope-gap"

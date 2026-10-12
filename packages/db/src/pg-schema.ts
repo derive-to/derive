@@ -680,6 +680,77 @@ export const jobMessage = pgTable(
   (t) => [index("job_message_job").on(t.job_id, t.created_at)],
 )
 
+/** Durable cloud-task data is Postgres-only. A receipt survives task deletion. */
+export const jobCommand = pgTable(
+  "job_command",
+  {
+    org_id: text("org_id").notNull(),
+    source: text("source").notNull(),
+    command_key: text("command_key").notNull(),
+    actor_id: text("actor_id"),
+    request_hash: text("request_hash").notNull(),
+    job_id: text("job_id"),
+    turn_id: text("turn_id"),
+    error: text("error"),
+    status_code: integer("status_code").notNull(),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("job_command_key").on(t.org_id, t.source, t.command_key)],
+)
+
+export const jobTurn = pgTable(
+  "job_turn",
+  {
+    id: text("id").primaryKey(),
+    job_id: text("job_id")
+      .notNull()
+      .references(() => job.id),
+    org_id: text("org_id").notNull(),
+    ordinal: integer("ordinal").notNull(),
+    actor_id: text("actor_id"),
+    body_md: text("body_md").notNull(),
+    execution_json: text("execution_json").notNull(),
+    status: text("status").$type<import("@derive/core").JobTurnStatus>().notNull(),
+    started_at: text("started_at"),
+    session_id: text("session_id"),
+    checkpoint_enc: text("checkpoint_enc"),
+    result_json: text("result_json"),
+    body_result_md: text("body_result_md"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+    finished_at: text("finished_at"),
+  },
+  (t) => [
+    uniqueIndex("job_turn_order").on(t.job_id, t.ordinal),
+    index("job_turn_work").on(t.job_id, t.status, t.ordinal),
+  ],
+)
+
+export const jobTurnReceipt = pgTable(
+  "job_turn_receipt",
+  {
+    turn_id: text("turn_id")
+      .notNull()
+      .references(() => jobTurn.id),
+    started_at: text("started_at").notNull(),
+    result_json: text("result_json").notNull(),
+    cost_micro_usd: integer("cost_micro_usd"),
+  },
+  (t) => [uniqueIndex("job_turn_receipt_claim").on(t.turn_id, t.started_at)],
+)
+
+export const jobEvent = pgTable(
+  "job_event",
+  {
+    turn_id: text("turn_id")
+      .notNull()
+      .references(() => jobTurn.id),
+    seq: integer("seq").notNull(),
+    kind: text("kind").notNull(),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("job_event_sequence").on(t.turn_id, t.seq)],
+)
+
 // Standing configuration that creates jobs: a schedule or an event. (`trigger` is an SQL
 // keyword, hence the prefix.)
 export const agentTrigger = pgTable(
@@ -1393,6 +1464,10 @@ const TABLES = [
   agent,
   job,
   jobMessage,
+  jobCommand,
+  jobTurn,
+  jobTurnReceipt,
+  jobEvent,
   agentTrigger,
   modelAccount,
   agentMention,
@@ -1496,6 +1571,8 @@ export const buildPgSchemaStatements = (): string[] => {
     ...ddl.addColumns,
     ...ddl.createIndexes,
     ...PERF_INDEXES,
+    "CREATE INDEX IF NOT EXISTS job_machine_capacity ON job (org_id) WHERE machine_phase IS NOT NULL AND machine_phase <> 'released'",
+    "CREATE INDEX IF NOT EXISTS agent_compute_capacity ON agent (org_id) WHERE sandbox_phase IN ('creating', 'provisioning', 'stopping', 'deleting')",
     ...ARTIFACT_SEARCH_PG,
     // A Derive thread mirrors into every subscribed channel, so slack_thread_link is keyed
     // (thread_id, channel). A fresh database gets that from the CREATE above; an existing one

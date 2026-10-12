@@ -73,12 +73,19 @@ export interface JobResult {
     attempt: number
     provider: string
     model: string
+    runner_version?: string
+    harness_version?: string | null
     skill?: { short_id: string; version: number }
     input_tokens: number | null
     cached_input_tokens: number | null
     output_tokens: number | null
     duration_ms: number
     model_cost_micro_usd: number | null
+    harness_estimate_micro_usd?: number | null
+    api_estimate_micro_usd?: number | null
+    price_version?: string | null
+    turn_id?: string
+    actor_id?: string | null
   }[]
   effects?: JobEffect[]
   evidence?: { label: string; url?: string; ref?: string }[]

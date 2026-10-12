@@ -6,6 +6,7 @@
 // ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN from the inherited env, so a plan
 // token "just works" through the sanctioned client, no reimplementation here.
 import { spawn } from "node:child_process"
+import { terminateProcess } from "./process.js"
 
 /** Log one stream event; returns the assistant text it carried (if any), which
  *  the caller keeps as the run's last words for diagnostics. */
@@ -24,12 +25,13 @@ function logEvent(event) {
 
 /** Spawn `claude` once and normalize its stream-json output into the shared
  *  RunResult shape the runner's orchestrator consumes. */
-function spawnClaude({ bin, cwd, args, timeoutMs, env }) {
+function spawnClaude({ bin, cwd, args, timeoutMs, env, signal, onEvent }) {
   return new Promise((resolve) => {
     const child = spawn(bin, args, {
       cwd,
       env: env ?? process.env,
       stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
     })
     let buffer = ""
     let resultText = ""
@@ -46,25 +48,42 @@ function spawnClaude({ bin, cwd, args, timeoutMs, env }) {
     // model name is wrong" — the exit code alone can't tell them apart.
     let isError = false
     let apiErrorStatus = null
-    // What the turn COST, in USD, as the CLI reports it on that same result event. Captured so the
-    // workspace budget can enforce something: it sums run.cost_micro_usd, and while nothing wrote
-    // that column the sum was always zero, every check passed, and concurrency was the only real
-    // ceiling. Null when the CLI reports nothing (an older CLI, or a plan that does not price a
-    // turn) — null means UNKNOWN, never zero, so an unreported run cannot quietly look free.
+    // Claude Code reports a client-side estimate, including on subscription plans.
+    // https://code.claude.com/docs/en/costs — this is never a plan invoice.
     let costUsd = null
+    let usage = null
     let timedOut = false
     let killTimer
+    const stop = () => {
+      terminateProcess(child)
+      killTimer = setTimeout(() => terminateProcess(child, "SIGKILL"), 5_000)
+      killTimer.unref?.()
+    }
+    signal?.addEventListener("abort", stop, { once: true })
+    if (signal?.aborted) stop()
     const timer = setTimeout(() => {
       timedOut = true
-      child.kill("SIGTERM")
-      killTimer = setTimeout(() => child.kill("SIGKILL"), 5_000)
+      stop()
     }, timeoutMs)
     const take = (line) => {
       try {
         const event = JSON.parse(line)
         lastText = logEvent(event) || lastText
+        for (const c of event.message?.content ?? [])
+          if (c.type === "tool_use") onEvent?.({ kind: "tool_use" })
         if (!sessionId && typeof event.session_id === "string") sessionId = event.session_id
         if (event.type === "result") {
+          if (event.usage)
+            usage = {
+              input_tokens:
+                event.usage.input_tokens == null
+                  ? null
+                  : event.usage.input_tokens +
+                    (event.usage.cache_read_input_tokens ?? 0) +
+                    (event.usage.cache_creation_input_tokens ?? 0),
+              cached_input_tokens: event.usage.cache_read_input_tokens ?? null,
+              output_tokens: event.usage.output_tokens ?? null,
+            }
           if (typeof event.result === "string") resultText = event.result
           if (event.is_error === true) isError = true
           if (Number.isFinite(event.api_error_status)) apiErrorStatus = event.api_error_status
@@ -90,6 +109,7 @@ function spawnClaude({ bin, cwd, args, timeoutMs, env }) {
       stderr += b.toString()
     })
     child.on("close", (code) => {
+      signal?.removeEventListener("abort", stop)
       clearTimeout(timer)
       clearTimeout(killTimer)
       // The stream can end without a trailing newline; the unterminated line may
@@ -104,10 +124,13 @@ function spawnClaude({ bin, cwd, args, timeoutMs, env }) {
         lastText,
         isError,
         apiErrorStatus,
-        costUsd,
+        costUsd: null,
+        estimatedCostUsd: costUsd,
+        usage,
       })
     })
     child.on("error", (err) => {
+      signal?.removeEventListener("abort", stop)
       clearTimeout(timer)
       clearTimeout(killTimer)
       resolve({
@@ -155,7 +178,18 @@ export const claudeCode = {
    *  no longer see. Headless: --dangerously-skip-permissions, because an
    *  interactive prompt would hang the subprocess; the real safety boundary is
    *  the read-only credentials the MCP config carries. */
-  async run({ bin, cwd, model, systemPrompt, prompt, timeoutMs, resumeSessionId, env }) {
+  async run({
+    bin,
+    cwd,
+    model,
+    systemPrompt,
+    prompt,
+    timeoutMs,
+    resumeSessionId,
+    env,
+    signal,
+    onEvent,
+  }) {
     const systemArgs = [
       "--append-system-prompt",
       systemPrompt,
@@ -168,7 +202,7 @@ export const claudeCode = {
     const args = resumeSessionId
       ? ["-p", prompt, "--resume", resumeSessionId, ...systemArgs]
       : ["-p", prompt, ...systemArgs]
-    return spawnClaude({ bin, cwd, args, timeoutMs, env })
+    return spawnClaude({ bin, cwd, args, timeoutMs, env, signal, onEvent })
   },
 
   /** Is this run worth a second attempt? Only when the SERVICE failed, never

@@ -2919,7 +2919,10 @@ export interface MetaStore
     ModerationStore,
     AssetStore,
     SharedStateStore,
-    DynamicDataStore {}
+    DynamicDataStore {
+  /** Durable cloud execution uses Postgres on both Node and Workers. */
+  readonly jobExecution?: import("./job-execution").JobExecutionStore<AgentRecord>
+}
 
 /** What a user follows: another Derive person (`target` = their user id). */
 export type FollowKind = "user"

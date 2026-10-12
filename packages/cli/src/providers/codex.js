@@ -7,6 +7,7 @@
 // it gives the run a durable action receipt (commands, file changes, MCP calls, plan updates)
 // while leaving the final answer contract provider-agnostic.
 import { spawn } from "node:child_process"
+import { terminateProcess } from "./process.js"
 
 const ACTION_TYPES = new Set([
   "command_execution",
@@ -55,13 +56,16 @@ function actionOf(item, cwd) {
 }
 
 /** Spawn `codex exec --json` once and normalize its event stream. */
-function spawnCodex({ bin, cwd, args, timeoutMs, env }) {
+function spawnCodex({ bin, cwd, args, prompt, timeoutMs, env, signal, onEvent }) {
   return new Promise((resolve) => {
     const child = spawn(bin, args, {
       cwd,
       env: env ?? process.env,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
+      detached: process.platform !== "win32",
     })
+    child.stdin.on("error", () => {})
+    child.stdin.end(prompt)
     let buffer = ""
     let resultText = ""
     let threadId = null
@@ -72,10 +76,16 @@ function spawnCodex({ bin, cwd, args, timeoutMs, env }) {
     let isError = false
     let timedOut = false
     let killTimer
+    const stop = () => {
+      terminateProcess(child)
+      killTimer = setTimeout(() => terminateProcess(child, "SIGKILL"), 5_000)
+      killTimer.unref?.()
+    }
+    signal?.addEventListener("abort", stop, { once: true })
+    if (signal?.aborted) stop()
     const timer = setTimeout(() => {
       timedOut = true
-      child.kill("SIGTERM")
-      killTimer = setTimeout(() => child.kill("SIGKILL"), 5_000)
+      stop()
     }, timeoutMs)
     const take = (line) => {
       try {
@@ -98,6 +108,7 @@ function spawnCodex({ bin, cwd, args, timeoutMs, env }) {
             JSON.stringify([...actions, action]).length <= 4_000
           ) {
             actions.push(action)
+            onEvent?.({ kind: action.type })
             console.log(`[codex] → ${action.type}`)
           }
         }
@@ -124,6 +135,7 @@ function spawnCodex({ bin, cwd, args, timeoutMs, env }) {
       stderr += b.toString()
     })
     child.on("close", (code) => {
+      signal?.removeEventListener("abort", stop)
       clearTimeout(timer)
       clearTimeout(killTimer)
       if (buffer.trim()) take(buffer.trim())
@@ -131,9 +143,7 @@ function spawnCodex({ bin, cwd, args, timeoutMs, env }) {
         timedOut,
         code,
         resultText,
-        // Ephemeral runs intentionally cannot resume. Keep the thread id as receipt evidence,
-        // but make the orchestrator retry from a clean process if needed.
-        sessionId: null,
+        sessionId: threadId,
         threadId,
         stderr,
         lastText: lastText || clipped(stderr.trim().split("\n").at(-1), 200),
@@ -148,6 +158,7 @@ function spawnCodex({ bin, cwd, args, timeoutMs, env }) {
       })
     })
     child.on("error", (err) => {
+      signal?.removeEventListener("abort", stop)
       clearTimeout(timer)
       clearTimeout(killTimer)
       resolve({
@@ -180,12 +191,22 @@ export const codex = {
 
   /** Run one turn. Codex takes a single prompt, so the system prompt (which
    *  carries the answer contract) is prepended to the task rather than passed as
-   *  a separate flag. resumeSessionId is ignored (no resume). */
-  async run({ bin, cwd, model, systemPrompt, prompt, timeoutMs, env }) {
+   *  a separate flag. Follow-ups target an explicit native session. */
+  async run({
+    bin,
+    cwd,
+    model,
+    systemPrompt,
+    prompt,
+    timeoutMs,
+    resumeSessionId,
+    env,
+    signal,
+    onEvent,
+  }) {
     const args = [
       "exec",
       "--json",
-      "--ephemeral",
       "--ignore-user-config",
       "--ignore-rules",
       "--skip-git-repo-check",
@@ -193,10 +214,18 @@ export const codex = {
         ? ["--dangerously-bypass-approvals-and-sandbox"]
         : ["--sandbox", "workspace-write"]),
       ...(model ? ["--model", model] : []),
-      "--",
-      `${systemPrompt}\n\n---\n\n${prompt}`,
+      ...(resumeSessionId ? ["resume", resumeSessionId, "-"] : ["--", "-"]),
     ]
-    return spawnCodex({ bin, cwd, args, timeoutMs, env })
+    return spawnCodex({
+      bin,
+      cwd,
+      args,
+      prompt: `${systemPrompt}\n\n---\n\n${prompt}`,
+      timeoutMs,
+      env,
+      signal,
+      onEvent,
+    })
   },
 
   /** Without a structured api status, a nonzero exit that produced no output is

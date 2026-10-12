@@ -15,7 +15,8 @@ import type { AppContext } from "../context"
 import { log } from "../log"
 import { buildChatTools } from "./chat-tools"
 import { runChatTurn } from "./chat-turn"
-import { isServerNote, type JobDeps, wakeSettled } from "./jobs"
+import { type JobDeps } from "./job-policy"
+import { isServerNote, wakeSettled } from "./jobs"
 import type { ResolvedChatModel } from "./model-catalog"
 
 /** How much of the job's transcript a turn is given. A page conversation is short; past this

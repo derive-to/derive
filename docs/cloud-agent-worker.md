@@ -1,10 +1,101 @@
 # Portable cloud-agent worker
 
-Status: proposed design. This document stacks on PR #1014. It changes no runtime behavior.
+Status: implemented pilot on `feat/cloud-agent-worker`, stacked on design PR #1015.
+Cloud execution uses Postgres. General artifact storage keeps its existing adapters.
 
 Derive is the home for cloud work. Its worker is a lightweight coordinator.
 It runs on Node or Cloudflare Workers. A sandbox provider supplies the machine.
 A harness supplies the model conversation and tools. Sift is an optional workload.
+
+## Implementation and evidence
+
+The deployed pilot uses Node, Postgres, Boat, and the native Codex CLI.
+It calls Boat directly through the workspace connection. It calls no Sift service.
+The code below implements the first qualified path. The later sections retain the full design contract.
+
+| Journey | Evidence level | Observed result |
+| --- | --- | --- |
+| One-off task | RUNTIME-PROVEN | A skill bundle runs its supporting script and records tokens. |
+| Daily task | RUNTIME-PROVEN | A saved daily schedule creates a fresh task and conversation. |
+| Native continuation | RUNTIME-PROVEN | A later turn recalls a phrase omitted from its request and files. |
+| Runner update | RUNTIME-PROVEN | A pinned archive installs in a new path; the saved conversation resumes. |
+| Saved work files | RUNTIME-PROVEN | A later turn reads the original quickstart and runs its existing command. |
+| Request replay | RUNTIME-PROVEN | Concurrent requests return one task; a changed request with that key returns 409. |
+| Queued cancellation | RUNTIME-PROVEN | The task stops before compute; its original request returns the same stopped task. |
+| Missing question ID | RUNTIME-PROVEN | An old answer returns 409 and admits no turn. |
+| Private access | RUNTIME-PROVEN | An unauthenticated task read returns 401. |
+| Provider cleanup | RUNTIME-PROVEN | Boat reports compute stopped; the task records a separate compute receipt. |
+| Ortam | UNRUN | The adapter uses the same port. A connected public API key is still required. |
+| Workers host | SOURCE-ONLY | It shares admission, Postgres receipts, and bounded controller passes. No live Workers run is claimed. |
+| Claude continuation | SOURCE-ONLY | Native checkpoint support exists. The full live path is not qualified here. |
+
+The [Derive dogfood report](https://derive.to/artifacts/derive-cloud-agents-the-portable-worker-and-comp-deh8lcbl)
+keeps the screenshots, task IDs, inputs, receipts, and remaining qualification cases.
+Its prototype examples are fixtures. Its dogfood screenshots show the native deployed app.
+
+### Current ownership
+
+| Rule | Owner | Callers |
+| --- | --- | --- |
+| Admission, permissions, account selection | `apps/api/src/lib/job-command.ts` | App, API, schedules, follow-up, answer, retry, cancel |
+| Atomic intent and receipt | `packages/db/src/job-execution-repos.ts` | All native cloud commands |
+| Sandbox and turn lifecycle | `apps/api/src/lib/job-machine.ts` | Node timer, Workers wake, request wake |
+| Provider translation | `SandboxClient`, `BoatClient`, `OrtamClient` | Controller and native account sign-in |
+| Native conversation and credential home | `packages/cli/src/job-runner.js`, `conversation.js` | Codex and Claude providers |
+| Price snapshot | `packages/core/src/job-cost.ts` | Server settlement; UI reads saved estimates |
+| Conversation, schedule, usage UI | Shared task components in `apps/web/src/pages/agents` | Full task page and agent task list |
+
+Postgres adds four tables: `job_command`, `job_turn`, `job_turn_receipt`, and `job_event`.
+No second task store or cloud storage adapter exists.
+Commands lock their request key. Task changes lock the Job row.
+Capacity checks use one advisory lock and indexes for active compute.
+Late usage writes once. It cannot reopen a cancelled task or replace its result.
+Lease exhaustion marks the abandoned turn failed in the same transaction as the lost task.
+Failed turns cancel queued follow-ups. Retry repeats the failed request from the latest saved native checkpoint.
+If no checkpoint exists, start a fresh task.
+
+### Pilot limits
+
+The pilot runs trusted skills and repositories. It does not isolate credentials from hostile workload code.
+Another person can inspect and stop a permitted task. They start a fresh task to use their own accounts and files.
+Live steering is not enabled. Follow-ups run in order after the current turn.
+Event records keep sequence and action kind. They omit raw command output and credential values.
+Native checkpoint size is bounded. A missing checkpoint keeps the result but blocks continuation.
+Long network loss can prevent a terminal report. Durable runner outbox recovery remains unqualified.
+Repository revision pinning, gateway setup, Slack handoff, and the full capability manifest remain design work.
+Existing native setup and skill editing stay in place. This change does not add another AI editor.
+
+Model token receipts and estimates are separate from invoices.
+Codex plan tasks have no reported dollar charge.
+The server freezes a standard API comparison price for known models.
+Claude's `total_cost_usd` is a client estimate, including for plans. It does not debit an invoice budget.
+Unknown prices and missing receipts stay unknown. Active tasks show only received usage.
+
+### Deploy and try
+
+Use a persistent Postgres database and durable artifact storage.
+Use the existing Derive identity setup, then connect your model and sandbox accounts in Settings.
+Set `DERIVE_AUTH_SECRET` to a stable secret. Set the public base URL to the deployed host.
+The Node host uses its existing timer. Workers uses scheduled and bounded request wakes.
+
+The runner release is `@derive-to/cli@0.8.6`; it is not published by this change.
+Before that release exists, configure an immutable HTTPS archive and its SHA-256:
+
+```sh
+DERIVE_SANDBOX_PROVIDER=boat
+DERIVE_RUNNER_ARCHIVE_URL=https://your-host/assets/derive-cli-<sha256>.tgz
+DERIVE_RUNNER_ARCHIVE_SHA256=<64-lowercase-hex-characters>
+```
+
+The host derives the archive runner path from that hash.
+The controller freezes the path and installer for each turn.
+The runner checks protocol version 1 before requesting work.
+Keep old archives available while their turns can still recover.
+Connect Ortam in the same Settings flow when its public API key is available.
+Run the same task, continuation, cancellation, and cleanup proof before advertising Ortam as qualified.
+
+No production database migration, credential change, or deployment occurs in this proof.
+The preview uses an isolated Postgres database. Test schedules are paused after their due window runs.
 
 ## Decisions
 
@@ -165,8 +256,8 @@ The same bounded reconciliation pass runs under each host adapter.
 
 | Host | Entry and wake-up | Durable state | Long-running work |
 | --- | --- | --- | --- |
-| Node | Existing Hono entry; timer or external scheduled invocation | Existing SQLite or Postgres MetaStore; filesystem or object BlobStore | Detached harness inside sandbox |
-| Cloudflare Workers | Existing fetch entry; scheduled invocation and bounded background wake | Existing D1 or Postgres MetaStore; R2 BlobStore | Detached harness inside sandbox |
+| Node | Existing Hono entry; timer or external scheduled invocation | Postgres MetaStore; filesystem or object BlobStore | Detached harness inside sandbox |
+| Cloudflare Workers | Existing fetch entry; scheduled invocation and bounded background wake | Postgres MetaStore; object BlobStore | Detached harness inside sandbox |
 
 The coordinator uses explicit dependencies and Web-standard APIs such as fetch, URL, and crypto.
 Node imports, filesystem access, process spawning, and Cloudflare bindings stay in their adapters.
@@ -333,7 +424,7 @@ Retention and cleanup each use bounded batches and preserve outstanding cleanup 
 
 Do not make a network call inside a transaction. Conditional writes fence each state transition.
 Record an effect's stable ID before dispatch. Its retry owner reconciles that effect before another dispatch.
-The storage adapter must implement these invariants on SQLite, Postgres, and D1.
+Postgres implements these invariants. Cloud execution does not add a D1 or SQLite adapter.
 Inspect their actual statement and transaction limits before selecting a migration shape.
 
 ### Effect ownership and lease fencing
@@ -501,7 +592,7 @@ All fixtures and test credentials stay outside production.
 | Lease renewal versus replacement attempt | Renewal preserves active callbacks; replacement rejects stale completion |
 | Access revoked before queued delivery | Denied delivery; no inherited account or tool authority |
 | Scheduler outage and queued backlog | Latest eligible window or coalesced status; no burst of missed runs |
-| Atomic admission and cursor writes on each store | SQLite, Postgres, and D1 produce the same durable receipts under contention |
+| Atomic admission and cursor writes on each store | Postgres produces durable receipts under contention on either host |
 | Restore after model credential rotation | Same supported conversation; current credential grant; no old credential in checkpoint or snapshot |
 | Qualification manifest differs from runner | Start blocked before model work; explicit upgrade action |
 

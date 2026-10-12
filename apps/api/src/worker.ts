@@ -99,6 +99,8 @@ const PREVIEW_NAME = "previews"
  */
 export interface Env {
   DERIVE_ORTAM_RUNNER_PATH?: string
+  DERIVE_RUNNER_ARCHIVE_URL?: string
+  DERIVE_RUNNER_ARCHIVE_SHA256?: string
   DERIVE_ORTAM_API_URL?: string
   DERIVE_ORTAM_INTEGRATION_KEY?: string
   DERIVE_MANAGED_RUNS_ALLOWLIST?: string
@@ -628,7 +630,13 @@ async function jobTickEdge(env: Env): Promise<void> {
           pokeWebhooks: () => edgeWaitUntil(pokeOutbox(env)),
         })
       : undefined
-    const graphs = graphAware({ meta, blobs: new R2BlobStore(env.BUCKET), bus, announce })
+    const graphs = graphAware({
+      meta,
+      blobs: new R2BlobStore(env.BUCKET),
+      bus,
+      announce,
+      cloud: { secret: env.DERIVE_AUTH_SECRET, config: ortamRuntimeFromEnv(env) },
+    })
     await jobTick(graphs, new Date())
     await graphPass(graphs)
     const machines = machineDepsFrom(meta, {

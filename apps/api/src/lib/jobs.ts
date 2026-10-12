@@ -7,18 +7,18 @@ import {
   type JobResult,
   type JobStatus,
   jobResult,
-  type MembershipRecord,
   type MetaStore,
   newId,
-  roleAllows,
+  priceJobRun,
   type Selector,
   type TriggerRecord,
 } from "@derive/core"
-import type { Backplane } from "../bus"
 import { log } from "../log"
 import { agentWritesOff } from "./agent-writes"
 import { jobsOverBudget } from "./budget"
 import { creatorLeft, jobPayer } from "./job-accounts"
+import { commandJob, commandKey } from "./job-command"
+import { canAskAgent, canSteerJob, type JobDeps } from "./job-policy"
 import { leaseUntilFor, RUN_MAX_ATTEMPTS } from "./run-lifecycle"
 import { runtimeFailureReason } from "./runtime-diagnostics"
 import { previousOccurrence } from "./schedule"
@@ -37,19 +37,9 @@ import { previousOccurrence } from "./schedule"
 
 export const JOB_MAX_ATTEMPTS = RUN_MAX_ATTEMPTS
 
-export interface JobDeps {
-  meta: MetaStore
-  bus?: Pick<Backplane, "publish">
-  /** Is this agent a graph (its instructions page holds a workflow)? Its work opens as `graph`
-   *  jobs the server walks. Absent: never (a caller with no page store). */
-  isGraph?: (agent: AgentRecord) => Promise<boolean>
-  /** Tell the people a job concerns that it needs them or finished (lib/notify-job.ts). Called
-   *  once per transition, after the status-guarded write that made it landed; `actorId` is the
-   *  person whose own action caused it, who is not told. Absent: nobody is told. */
-  announce?: (job: JobRecord, actorId?: string | null) => Promise<void>
-}
-
 const iso = (ms = Date.now()) => new Date(ms).toISOString()
+const usesCloudTurns = (agent: AgentRecord | null, job: JobRecord): agent is AgentRecord =>
+  agent?.machine === "derive" && job.kind !== "graph" && job.attended === 0
 
 const wake = (
   deps: JobDeps,
@@ -154,7 +144,7 @@ export const standDownMember = async (
       let moved = 0
       for (const job of page) {
         await before?.(job)
-        if ((await cancelJob(deps, job, userId))?.status === "cancelled") moved++
+        if ((await cancelJob(deps, job))?.status === "cancelled") moved++
       }
       if (page.length < 200 || moved === 0) return
     }
@@ -180,86 +170,6 @@ export const standDownMember = async (
   }
 }
 
-// ---- Who may ask -------------------------------------------------------------------------
-
-/** One policy for detail reads and the roster's batched membership read. */
-export const agentAccess = (
-  agent: AgentRecord,
-  member: MembershipRecord | null,
-  caller?: Pick<AgentRecord, "id" | "role" | "org_id"> | null,
-) => {
-  if (!member || member.org_id !== agent.org_id) return { can_ask: false, can_manage: false }
-  const creator = agent.created_by === member.user_id
-  return {
-    can_ask:
-      (!caller || (caller.org_id === agent.org_id && roleAllows(caller.role, "publish"))) &&
-      agent.managed !== 1 &&
-      (agent.ask_policy === "workspace" || creator || member.role === "owner"),
-    can_manage:
-      (member.role === "owner" || (creator && member.role !== "viewer")) &&
-      (!caller ||
-        (caller.id.startsWith("oauth:") &&
-          caller.org_id === agent.org_id &&
-          (roleAllows(caller.role, "manage") || (roleAllows(caller.role, "publish") && creator)))),
-  }
-}
-
-/** A person may ask an agent when they are a member of its workspace and the agent's ask
- *  policy lets them: `workspace` lets every member ask; `invited` lets the agent's creator
- *  and workspace owners ask. */
-export const canAskAgent = async (
-  meta: MetaStore,
-  agent: AgentRecord,
-  userId: string,
-  caller?: Pick<AgentRecord, "id" | "role" | "org_id"> | null,
-): Promise<boolean> => {
-  const m = await meta.getMembership(agent.org_id, userId).catch(() => null)
-  return agentAccess(agent, m, caller).can_ask
-}
-
-/** A person may manage an agent (edit, pause, triggers, delete) when they created it or own
- *  the workspace. */
-export const canManageAgent = async (
-  meta: MetaStore,
-  agent: AgentRecord,
-  userId: string,
-): Promise<boolean> => {
-  // Both doors need a live seat: a creator who has left the workspace manages nothing.
-  const m = await meta.getMembership(agent.org_id, userId).catch(() => null)
-  return agentAccess(agent, m).can_manage
-}
-
-/** A person may act on a job (follow up, cancel, retry, answer) when they asked it or manage
- *  its agent. Seeing a job is wider (every member); steering someone else's is not. */
-export const canSteerJob = async (
-  meta: MetaStore,
-  agent: AgentRecord,
-  job: JobRecord,
-  userId: string,
-  caller?: Pick<AgentRecord, "id" | "role" | "org_id"> | null,
-): Promise<boolean> => {
-  const access = agentAccess(agent, await meta.getMembership(agent.org_id, userId), caller)
-  return (job.asked_by === userId && access.can_ask) || access.can_manage
-}
-
-/** Whose jobs are a person's to act on (the Inbox): the ones they asked, or on agents they
- *  manage (canManageAgent's rule, read with one membership lookup). `"all"` for a workspace
- *  owner, who manages every agent; null for someone with no seat here. */
-export const inboxScope = async (
-  meta: MetaStore,
-  orgId: string,
-  userId: string,
-): Promise<"all" | { askedBy: string; agentIds: string[] } | null> => {
-  const seat = await meta.getMembership(orgId, userId).catch(() => null)
-  if (!seat) return null
-  if (seat.role === "owner") return "all"
-  const own =
-    seat.role === "viewer"
-      ? []
-      : (await meta.listAgents(orgId)).filter((a) => a.created_by === userId)
-  return { askedBy: userId, agentIds: own.map((a) => a.id) }
-}
-
 // ---- Asking ------------------------------------------------------------------------------
 
 export interface AskInput {
@@ -282,13 +192,35 @@ export const askAgent = async (
   input: AskInput,
 ): Promise<{ job: JobRecord; created: boolean }> => {
   const { meta } = deps
+  const kind =
+    input.kind ?? ((await deps.isGraph?.(input.agent).catch(() => false)) ? "graph" : "ask")
+  if (input.agent.machine === "derive" && !input.attended && kind !== "graph") {
+    const out = await commandJob(deps, input.agent, input.askedBy, {
+      intent: "start",
+      source: "app",
+      key: commandKey(input.dedupeKey),
+      body: input.instruction,
+      job: {
+        id: newId("job"),
+        org_id: input.agent.org_id,
+        agent_id: input.agent.id,
+        kind,
+        instruction: input.instruction,
+        asked_by: input.askedBy,
+        payer_id: await jobPayer(meta, input.agent, input.askedBy),
+        subject_json: input.subject ? JSON.stringify(input.subject) : null,
+        parent_id: input.parentId ?? null,
+        node_id: input.nodeId ?? null,
+      },
+    })
+    wake(deps, input.agent.id, "job.queued", out.job)
+    return out
+  }
   if (input.dedupeKey) {
     const open = await meta.findOpenJobByDedupe(input.agent.id, input.askedBy, input.dedupeKey)
     if (open) return { job: open, created: false }
   }
   let job: JobRecord
-  const kind =
-    input.kind ?? ((await deps.isGraph?.(input.agent).catch(() => false)) ? "graph" : "ask")
   try {
     job = await meta.createJob({
       id: newId("job"),
@@ -331,8 +263,21 @@ export const followUpJob = async (
   job: JobRecord,
   authorId: string,
   body: string,
+  key?: string,
 ): Promise<JobRecord> => {
   const { meta } = deps
+  const agent = await meta.getAgent(job.agent_id)
+  if (usesCloudTurns(agent, job)) {
+    const out = await commandJob(deps, agent, authorId, {
+      intent: "follow_up",
+      source: "app",
+      key: commandKey(key),
+      job_id: job.id,
+      body,
+    })
+    wake(deps, job.agent_id, "job.queued", out.job)
+    return out.job
+  }
   await meta.addJobMessage({
     id: newId("jm"),
     job_id: job.id,
@@ -368,16 +313,35 @@ export const answerJob = async (
   deps: JobDeps,
   job: JobRecord,
   authorId: string,
-  answer: { text?: string; option?: string },
+  answer: { text?: string; option?: string; question_id?: string; dedupe_key?: string },
 ): Promise<JobRecord | { error: string }> => {
-  if (job.status !== "needs_you") return { error: "this job is not waiting on anyone" }
   const needs = job.needs_json ? (JSON.parse(job.needs_json) as JobNeeds) : null
-  if (answer.option && needs?.options?.length && !needs.options.includes(answer.option))
+  if (
+    job.status === "needs_you" &&
+    (!needs?.question_id || needs.question_id === answer.question_id) &&
+    answer.option &&
+    needs?.options?.length &&
+    !needs.options.includes(answer.option)
+  )
     return { error: `option must be one of: ${needs.options.join(", ")}` }
   const body = [answer.option ? `Decision: ${answer.option}` : null, answer.text ?? null]
     .filter(Boolean)
     .join("\n\n")
   if (!body) return { error: "answer needs text or an option" }
+  const agent = await deps.meta.getAgent(job.agent_id)
+  if (usesCloudTurns(agent, job)) {
+    const out = await commandJob(deps, agent, authorId, {
+      intent: "answer",
+      question_id: answer.question_id ?? null,
+      source: "app",
+      key: commandKey(answer.dedupe_key),
+      job_id: job.id,
+      body,
+    })
+    wake(deps, job.agent_id, "job.queued", out.job)
+    return out.job
+  }
+  if (job.status !== "needs_you") return { error: "this job is not waiting on anyone" }
   return followUpJob(deps, job, authorId, body)
 }
 
@@ -386,9 +350,24 @@ export const cancelJob = async (
   deps: JobDeps,
   job: JobRecord,
   actorId: string | null = null,
+  key?: string,
 ): Promise<JobRecord | null> => {
-  if (!isJobOpen(job.status)) return job
   if (job.agent_id === DERIVE_AGENT_ID && JSON.parse(job.meta_json ?? "{}").saving) return null
+  const agent = await deps.meta.getAgent(job.agent_id)
+  if (usesCloudTurns(agent, job) && deps.meta.jobExecution) {
+    const out = await commandJob(deps, agent, actorId, {
+      intent: "cancel",
+      source: actorId ? "app" : "system",
+      key: commandKey(key),
+      job_id: job.id,
+    })
+    if (out.created) {
+      wakeSettled(deps, out.job)
+      await announceJob(deps, out.job, actorId)
+    }
+    return out.job
+  }
+  if (!isJobOpen(job.status)) return job
   const done = await deps.meta.updateJob(
     job.id,
     { status: "cancelled", finished_at: iso(), lease_until: null, dedupe_key: null },
@@ -415,7 +394,24 @@ export const cancelJob = async (
 }
 
 /** Run a failed or lost job again, as a fresh attempt with the same transcript. */
-export const retryJob = async (deps: JobDeps, job: JobRecord): Promise<JobRecord | null> => {
+export const retryJob = async (
+  deps: JobDeps,
+  job: JobRecord,
+  actorId?: string,
+  key?: string,
+): Promise<JobRecord | null> => {
+  const agent = await deps.meta.getAgent(job.agent_id)
+  if (usesCloudTurns(agent, job) && actorId) {
+    const out = await commandJob(deps, agent, actorId, {
+      intent: "retry",
+      source: "app",
+      key: commandKey(key),
+      job_id: job.id,
+      body: job.instruction,
+    })
+    wake(deps, job.agent_id, "job.queued", out.job)
+    return out.job
+  }
   if (job.status !== "failed" && job.status !== "lost") return null
   const previous = jobResult(job)
   const again = await deps.meta.updateJob(
@@ -499,6 +495,9 @@ export const wakeSettled = (deps: JobDeps, job: JobRecord): void =>
   wake(deps, job.asked_by, "job.settled", job)
 
 export interface JobReport {
+  turn_id?: string
+  session_id?: string | null
+  checkpoint_enc?: string | null
   /** The claim's started_at, echoed back: proof this settle belongs to the claim it names. */
   started_at: string | null
   status: "succeeded" | "failed" | "needs_you" | "progress"
@@ -523,6 +522,85 @@ export const reportJob = async (
   const job = await meta.getJob(jobId)
   if (!job || job.agent_id !== agent.id || job.org_id !== agent.org_id)
     return { error: "not found", status: 404 }
+  if (meta.jobExecution && job.status === "running" && r.started_at) {
+    const turn = (await meta.jobExecution.turns(job.id, job.org_id)).find(
+      (t) => t.started_at === r.started_at,
+    )
+    if (turn?.actor_id && !(await canSteerJob(meta, agent, job, turn.actor_id))) {
+      await cancelJob(deps, job)
+      if (r.status === "progress")
+        return { error: "the turn actor no longer has access", status: 409 }
+    }
+  }
+  if (meta.jobExecution && r.status !== "progress" && r.started_at) {
+    const turn = (await meta.jobExecution.turns(job.id, job.org_id)).find(
+      (t) => t.started_at === r.started_at && (!r.turn_id || t.id === r.turn_id),
+    )
+    if (turn) {
+      const previousRuns = jobResult(job).runs ?? []
+      const choice = JSON.parse(turn.execution_json) as import("@derive/core").JobExecution
+      const receipts = r.result?.runs?.length
+        ? r.result.runs
+        : [
+            {
+              attempt: 0,
+              provider: choice.provider,
+              model: choice.model ?? "Unknown model",
+              input_tokens: null,
+              cached_input_tokens: null,
+              output_tokens: null,
+              model_cost_micro_usd: r.cost_micro_usd ?? null,
+              duration_ms: Math.max(0, Date.now() - Date.parse(r.started_at)),
+            },
+          ]
+      const result = {
+        ...(r.result ?? {}),
+        ...(r.status === "failed"
+          ? {
+              failure: r.result?.failure ?? {
+                reason: r.body_md || "This turn failed. Try again or start a fresh task.",
+                retryable: true,
+              },
+            }
+          : {}),
+        runs: receipts.map((run, i) =>
+          priceJobRun({
+            ...run,
+            attempt:
+              Math.max(jobResult(job).attempt_offset ?? -1, ...previousRuns.map((r) => r.attempt)) +
+              1 +
+              i,
+            provider: choice.provider,
+            model: choice.model ?? run.model,
+            turn_id: turn.id,
+            actor_id: turn.actor_id,
+          }),
+        ),
+      }
+      const next = await meta.jobExecution.settle({
+        job_id: job.id,
+        org_id: job.org_id,
+        turn_id: turn.id,
+        started_at: r.started_at,
+        status: r.status,
+        body_md: r.body_md ?? null,
+        result_json: JSON.stringify(result),
+        needs_json: r.needs ? JSON.stringify({ ...r.needs, question_id: turn.id }) : null,
+        session_id: r.session_id ?? null,
+        checkpoint_enc: r.checkpoint_enc ?? null,
+        cost_micro_usd: r.cost_micro_usd ?? null,
+        ...(r.report_artifact_id !== undefined ? { report_artifact_id: r.report_artifact_id } : {}),
+      })
+      if (!next) return { error: "this claim has been superseded", status: 409 }
+      if (next.settled) {
+        wakeSettled(deps, next.job)
+        if (next.job.status !== "queued" && next.job.status !== "running")
+          await announceJob(deps, next.job)
+      }
+      return { job: next.job }
+    }
+    if (r.turn_id) return { error: "this turn does not belong to the claim", status: 409 }
+  }
   if (job.status !== "running" || r.started_at !== job.started_at) {
     // The answer lands nowhere, but the money a superseded or cancelled run spent is real:
     // count it, or the workspace's spend undercounts exactly the runs that went wrong.
@@ -646,6 +724,7 @@ export const materializeTriggers = async (
   now: Date,
   scope: { agentId?: string; orgId?: string; orgIds?: readonly string[] } = {},
   isGraph?: JobDeps["isGraph"],
+  cloudDeps?: JobDeps,
 ): Promise<number> => {
   const triggers: TriggerRecord[] = scope.orgId
     ? (await meta.listTriggers(scope.orgId, scope.agentId)).filter(
@@ -680,6 +759,29 @@ export const materializeTriggers = async (
     if (!overBudget.has(agent.id))
       overBudget.set(agent.id, await jobsOverBudget(meta, agent.org_id, payer))
     try {
+      if (agent.machine === "derive" && cloudDeps && !(await isGraph?.(agent))) {
+        const out = await commandJob(cloudDeps, agent, agent.created_by, {
+          intent: "start",
+          source: `schedule:${t.id}`,
+          key: window,
+          body: t.instruction,
+          job: {
+            id: newId("job"),
+            org_id: t.org_id,
+            agent_id: t.agent_id,
+            kind: "scheduled",
+            instruction: t.instruction,
+            trigger_id: t.id,
+            scheduled_for: window,
+            asked_by: agent.created_by,
+            subject_json: t.subject_json,
+            payer_id: payer,
+          },
+        })
+        created += out.created ? 1 : 0
+        if (overBudget.get(agent.id)) await noteHeldForBudget(meta, out.job).catch(() => {})
+        continue
+      }
       const job = await meta.createJob({
         id: newId("job"),
         org_id: t.org_id,
@@ -709,7 +811,7 @@ export const jobTick = async (
 ): Promise<{ materialized: number; requeued: number; lost: number }> => {
   const out = { materialized: 0, requeued: 0, lost: 0 }
   try {
-    out.materialized = await materializeTriggers(deps.meta, now, { orgIds }, deps.isGraph)
+    out.materialized = await materializeTriggers(deps.meta, now, { orgIds }, deps.isGraph, deps)
   } catch (e) {
     log.warn("jobs: materialize failed", { reason: runtimeFailureReason(e) })
   }
