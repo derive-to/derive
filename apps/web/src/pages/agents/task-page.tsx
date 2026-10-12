@@ -49,6 +49,7 @@ export function TaskPage({ id }: { id: string }) {
   const canSteer = useCanSteer(job.data, me?.id)
   const draft = useTaskDraft(id, me?.id)
   const { text } = draft
+  const answering = draft.action ? draft.action === "answer" : job.data?.status === "needs_you"
   const composer = useRef<HTMLTextAreaElement>(null)
   useDocumentTitle(job.data ? firstLine(job.data.instruction).slice(0, 72) : "Task")
   const send = useApiMutation({
@@ -198,9 +199,9 @@ export function TaskPage({ id }: { id: string }) {
         >
           <Textarea
             ref={composer}
-            aria-label={task.status === "needs_you" ? "Your answer" : "Add to this task"}
+            aria-label={answering ? "Your answer" : "Add to this task"}
             data-testid="task-reply"
-            placeholder={task.status === "needs_you" ? "Your answer…" : "What should we do next?"}
+            placeholder={answering ? "Your answer…" : "What should we do next?"}
             value={text}
             maxLength={20_000}
             disabled={send.isPending}
@@ -219,12 +220,24 @@ export function TaskPage({ id }: { id: string }) {
               disabled={!text.trim()}
               loading={send.isPending}
             >
-              {task.status === "needs_you" ? "Send answer" : "Send follow-up"}
+              {draft.action
+                ? answering
+                  ? "Retry answer"
+                  : "Retry follow-up"
+                : answering
+                  ? "Send answer"
+                  : "Send follow-up"}
             </Button>
-            {task.status === "running" && (
+            {draft.action ? (
               <p className="text-xs text-muted-foreground">
-                Your follow-up waits for this turn to finish.
+                This draft may already be sent. You can retry safely.
               </p>
+            ) : (
+              task.status === "running" && (
+                <p className="text-xs text-muted-foreground">
+                  Your follow-up waits for this turn to finish.
+                </p>
+              )
             )}
           </div>
           {send.error && (

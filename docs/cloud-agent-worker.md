@@ -22,7 +22,7 @@ The code below implements the first qualified path. The later sections retain th
 | Saved work files | RUNTIME-PROVEN | A later turn reads the original quickstart and runs its existing command. |
 | Request replay | RUNTIME-PROVEN | Concurrent requests return one task; a changed request with that key returns 409. |
 | Queued cancellation | RUNTIME-PROVEN | The task stops before compute; its original request returns the same stopped task. |
-| Missing question ID | RUNTIME-PROVEN | An old answer returns 409 and admits no turn. |
+| Stale question ID | RUNTIME-PROVEN | An old answer returns 409 and admits no turn. |
 | Private access | RUNTIME-PROVEN | An unauthenticated task read returns 401. |
 | Provider cleanup | RUNTIME-PROVEN | Boat reports compute stopped; the task records a separate compute receipt. |
 | Ortam | UNRUN | The adapter uses the same port. A connected public API key is still required. |
@@ -49,7 +49,11 @@ Postgres adds four tables: `job_command`, `job_turn`, `job_turn_receipt`, and `j
 No second task store or cloud storage adapter exists.
 Commands lock their request key. Task changes lock the Job row.
 Capacity checks use one advisory lock and indexes for active compute.
-Late usage writes once. It cannot reopen a cancelled task or replace its result.
+Every claim is retained before the harness starts. It owns a stable attempt index.
+Late usage settles that claim once. It cannot reopen a cancelled task or replace its result.
+New tasks mark claim-ledger version 1. Whole-task comparisons require receipts for every claim.
+Legacy tasks with incomplete claim history keep that comparison unknown.
+Timeline reads omit checkpoint bytes. Work reads load only the latest required checkpoint.
 Lease exhaustion marks the abandoned turn failed in the same transaction as the lost task.
 Failed turns cancel queued follow-ups. Retry repeats the failed request from the latest saved native checkpoint.
 If no checkpoint exists, start a fresh task.
