@@ -12,9 +12,9 @@ export const SECTION_ALIASES: Record<string, string> = {
   agents: "machines",
   // The id was never `brand`; links that guessed it used to strand on Profile.
   brand: "brandprint",
-  // GitHub is a standard workspace integration now; old bookmarks land on the single
-  // connection surface instead of exposing a retired standalone page.
-  github: "integrations",
+  // GitHub, Slack and MCP servers are all sources now: one page for what agents can reach.
+  github: "sources",
+  integrations: "sources",
 }
 
 /** Aliases that land on one group of a section, not its top: the target section plus the

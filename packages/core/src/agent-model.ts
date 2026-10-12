@@ -44,6 +44,10 @@ export interface JobNeeds {
   options?: string[]
   /** The review round, for `kind: review`. */
   review_round_id?: string
+  /** For a scheduled job that asked again what an earlier run of the same schedule already
+   *  asked: how many runs have asked (this one included) and when the first did. */
+  asked_times?: number
+  first_asked_at?: string
 }
 
 /** One thing a job changed in the world. A page is the kind Derive knows best; the rest are
@@ -60,6 +64,8 @@ export interface JobResult {
   effects?: JobEffect[]
   evidence?: { label: string; url?: string; ref?: string }[]
   failure?: { reason: string; retryable: boolean }
+  /** Closed without an answer because a later run of the same schedule asked again. */
+  superseded_by?: string
   /** A graph job's recorded route: which node ran, which attempt, where it went next. */
   route?: { node_id: string; attempt: number; selected?: string[]; decision?: string }[]
 }
@@ -265,6 +271,8 @@ export interface JobQuery {
   kind?: readonly JobKind[]
   parentId?: string
   askedBy?: string
+  /** Only jobs opened by this schedule. */
+  triggerId?: string
   /** Only the job whose report page is this artifact. */
   reportArtifactId?: string
   /** Only jobs whose subject_json is one of these (a page's selector, by short id or id). */

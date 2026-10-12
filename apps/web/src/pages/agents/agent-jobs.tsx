@@ -1,20 +1,29 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
-import { type FormEvent, useState } from "react"
-import { type Agent, type AgentDetail, api, type Job } from "@/api"
+import { type FormEvent, type ReactNode, useState } from "react"
+import { type Agent, type AgentDetail, api, type Connection, type Job } from "@/api"
+import { Icon } from "@/components/icons"
 import { LoadError } from "@/components/shared/load-error"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
-import { accountsQuery, agentJobsQuery, agentQuery, jobQuery } from "@/lib/queries"
+import {
+  accountsQuery,
+  agentConnectionsQuery,
+  agentJobsQuery,
+  agentQuery,
+  jobQuery,
+} from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useJobEvents } from "@/lib/use-job-events"
 import { cn } from "@/lib/utils"
 import {
+  askedLine,
   cronLabel,
-  failureOf,
-  firstLine,
+  firstName,
   JOB_ICON,
+  jobDetail,
+  jobTitle,
   machineOf,
   schedulesOf,
   took,
@@ -23,29 +32,31 @@ import {
 import { Group, Machine, Meta, RowLine, Time } from "./rows"
 import { AgentRowsSkeleton } from "./skeleton"
 
-const first = (name: string | undefined) => name?.trim().split(/\s+/)[0] || undefined
-
 /** The one line that says why this agent's jobs will not start, or null when they will.
- *  `noAccount` is true only when the viewer can see that no model account would resolve. */
+ *  `noAccount` is true only when the viewer can see that no model account would resolve;
+ *  `broken` names the sources or secrets it uses that are no longer connected. */
 export function warningFor(
   agent: Pick<Agent, "paused" | "machine" | "seen_at" | "created_by">,
   names: Map<string, string>,
   noAccount = false,
+  broken: string[] = [],
 ): string | null {
   if (agent.paused) return "Paused. Jobs wait until it is resumed."
+  if (broken.length)
+    return `${broken.join(", ")} ${broken.length === 1 ? "is" : "are"} disconnected. Jobs that need ${broken.length === 1 ? "it" : "them"} fail.`
   // Only a Derive machine needs a stored account; a runner on someone's own machine falls back
   // to the login on that machine.
   if (noAccount && agent.machine === "derive")
-    return "No model account to run on. Its jobs fail until one is connected in Settings › Model accounts."
+    return "No model account. Jobs fail until one is added under Settings › Model accounts."
   if (agent.machine === "derive") return null
-  if (!agent.seen_at) return "Its runner has never checked in. Jobs wait until it does."
+  if (!agent.seen_at) return "No runner has connected yet. Jobs wait until one does."
   const mark = machineOf(agent, names)
   if (mark.on) return null
-  return `${mark.label.replace(/, off$/, "")} was last seen ${when(agent.seen_at)}. Jobs wait while it is off.`
+  return `${mark.label.replace(/, off$/, "")} has been off since ${when(agent.seen_at)}. Jobs wait until it is back.`
 }
 
-// The Jobs tab: what the agent does, what would stop it, where it runs, then every job it has
-// taken, newest first, one line each.
+// The Jobs tab: what the agent does and where it runs, anything that stops it, every open
+// question with its answer right there, then every job it has taken, one line each.
 export function AgentJobs({
   agent,
   names,
@@ -58,9 +69,17 @@ export function AgentJobs({
   // Job events keep this live; the slow poll catches teammates' asks, which send you nothing.
   useJobEvents()
   const jobs = useInfiniteQuery({ ...agentJobsQuery(agent.id), refetchInterval: 60_000 })
-  const warning = warningFor(agent, names, useNoAccount(agent, meId))
+  const warning = warningFor(
+    agent,
+    names,
+    useNoAccount(agent, meId),
+    useBrokenSources(agent, agent.can_manage),
+  )
   const schedules = schedulesOf(agent.triggers)
   const rows = jobs.data?.pages.flatMap((p) => p.jobs) ?? []
+  const open = rows.filter((j) => j.status === "needs_you")
+  const rest = rows.filter((j) => j.status !== "needs_you")
+  const canSteer = (job: Job) => agent.can_manage || (job.asked_by === meId && agent.can_ask)
 
   return (
     <div className="flex flex-col gap-9">
@@ -76,22 +95,16 @@ export function AgentJobs({
           )}
         </div>
         <dl className="grid grid-cols-[5.5rem_minmax(0,1fr)] content-start gap-x-3 gap-y-2 text-sm">
-          <dt className="text-muted-foreground">On</dt>
+          <dt className="text-muted-foreground">Machine</dt>
           <dd className="font-medium text-foreground">
             <Machine mark={machineOf(agent, names)} />
           </dd>
           {schedules.length > 0 && (
             <>
-              <dt className="text-muted-foreground">Runs</dt>
+              <dt className="text-muted-foreground">Schedule</dt>
               <dd className="font-medium text-foreground">
                 {schedules.map((t) => (t.cron ? cronLabel(t.cron) : "")).join(", ")}
               </dd>
-            </>
-          )}
-          {agent.machine === "owner" && agent.seen_at && (
-            <>
-              <dt className="text-muted-foreground">Last seen</dt>
-              <dd className="font-mono text-foreground">{when(agent.seen_at)}</dd>
             </>
           )}
           {agent.model && (
@@ -116,28 +129,44 @@ export function AgentJobs({
           No jobs yet.
         </p>
       ) : (
-        <Group label="Jobs" testId="agent-jobs">
-          {rows.map((job) => (
-            <JobRow
-              key={job.id}
-              job={job}
-              agent={agent}
-              names={names}
-              canSteer={agent.can_manage || (job.asked_by === meId && agent.can_ask)}
-            />
-          ))}
-          {jobs.hasNextPage && (
-            <button
-              type="button"
-              data-testid="agent-jobs-more"
-              disabled={jobs.isFetchingNextPage}
-              onClick={() => void jobs.fetchNextPage()}
-              className="self-start pt-1.5 text-sm text-muted-foreground hover:text-foreground"
-            >
-              Older jobs
-            </button>
+        <>
+          {open.length > 0 && (
+            <Group label="Needs you" testId="agent-needs">
+              {open.map((job) => (
+                <NeedsRow
+                  key={job.id}
+                  job={job}
+                  canSteer={canSteer(job)}
+                  transcript={<Transcript id={job.id} agentName={agent.name} names={names} />}
+                />
+              ))}
+            </Group>
           )}
-        </Group>
+          {rest.length > 0 && (
+            <Group label={open.length > 0 ? "Jobs" : undefined} testId="agent-jobs">
+              {rest.map((job) => (
+                <JobRow
+                  key={job.id}
+                  job={job}
+                  agent={agent}
+                  names={names}
+                  canSteer={canSteer(job)}
+                />
+              ))}
+              {jobs.hasNextPage && (
+                <button
+                  type="button"
+                  data-testid="agent-jobs-more"
+                  disabled={jobs.isFetchingNextPage}
+                  onClick={() => void jobs.fetchNextPage()}
+                  className="self-start pt-1.5 text-sm text-muted-foreground hover:text-foreground"
+                >
+                  Older jobs
+                </button>
+              )}
+            </Group>
+          )}
+        </>
       )}
     </div>
   )
@@ -153,13 +182,93 @@ function useNoAccount(agent: AgentDetail, meId: string): boolean {
   return !accounts.data.some((a) => a.mine || a.shared)
 }
 
-function detailOf(job: Job): string | undefined {
-  if (job.status === "needs_you") return job.needs?.question
-  if (job.status === "failed" || job.status === "lost") return failureOf(job) ?? undefined
-  if (job.status === "cancelled") return "cancelled"
-  if (job.status === "queued") return "waiting"
-  if (job.status === "succeeded") return job.result.effects?.[0]?.label
-  return undefined
+/** The names of this agent's sources and secrets that are no longer active, read with the
+ *  same request its Settings tab uses. Only a manager can see them, so only a manager asks. */
+function useBrokenSources(agent: AgentDetail, enabled: boolean): string[] {
+  const used = agent.connection_ids.length > 0 || Object.keys(agent.environment).length > 0
+  const conns = useQuery({ ...agentConnectionsQuery(), enabled: enabled && used })
+  if (!conns.data) return []
+  const byId = new Map(conns.data.map((c) => [c.id, c]))
+  const broken: string[] = []
+  for (const id of agent.connection_ids) {
+    const c = byId.get(id)
+    if (c && c.status !== "active") broken.push(sourceName(c))
+  }
+  for (const [name, id] of Object.entries(agent.environment)) {
+    const c = byId.get(id)
+    if (c?.status !== "active") broken.push(name)
+  }
+  return broken
+}
+
+/** What a source is called in the product: the MCP server's host, or the integration's name. */
+export const sourceName = (c: Connection): string =>
+  c.kind === "mcp" && c.base_url ? c.base_url.replace(/^https?:\/\//, "") : c.toolkit
+
+/** One open question: the whole question, its choices as buttons, and a line to answer in
+ *  words. The bell and question open the transcript, like any row. */
+export function NeedsRow({
+  job,
+  canSteer,
+  title,
+  below,
+  transcript,
+}: {
+  job: Job
+  canSteer: boolean
+  /** Shown before the question where the list spans agents (the inbox). */
+  title?: ReactNode
+  /** Always under the question: a link to the page a review waits on. */
+  below?: ReactNode
+  transcript?: ReactNode
+}) {
+  const [open, setOpen] = useState(false)
+  const asked = askedLine(job)
+  return (
+    <div
+      data-testid={`job-${job.id}`}
+      data-status={job.status}
+      className="-mx-3 my-0.5 flex flex-col gap-3 rounded-lg bg-warning/10 px-3 py-3.5"
+    >
+      <div className="flex items-start gap-3.5">
+        <button
+          type="button"
+          data-testid={`job-row-${job.id}`}
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+          className="flex min-w-0 flex-1 items-start gap-3.5 text-left"
+        >
+          <Icon
+            name="job-needs-you"
+            size={18}
+            strokeWidth={1.75}
+            className="mt-1 shrink-0 text-warning"
+          />
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5 text-base leading-relaxed">
+            {title && <span className="font-medium text-foreground">{title}</span>}
+            <span className="text-foreground">{job.needs?.question ?? job.instruction}</span>
+          </span>
+        </button>
+        <Meta>
+          {asked && <span>{asked}</span>}
+          {job.report_short_id && (
+            <Link
+              to="/artifacts/$ref"
+              params={{ ref: job.report_short_id }}
+              data-testid={`job-report-link-${job.id}`}
+              className="font-medium text-foreground hover:underline"
+            >
+              Report
+            </Link>
+          )}
+          <Time>{when(job.updated_at)}</Time>
+        </Meta>
+      </div>
+      {below}
+      {canSteer && <AnswerBox job={job} />}
+      {open && transcript}
+    </div>
+  )
 }
 
 function JobRow({
@@ -177,19 +286,14 @@ function JobRow({
   const invalidate = [["jobs"]]
   const cancel = useApiMutation({ mutationFn: () => api.cancelJob(job.id), invalidate })
   const retry = useApiMutation({ mutationFn: () => api.retryJob(job.id), invalidate })
-  const needs = job.status === "needs_you"
   const failed = job.status === "failed" || job.status === "lost"
-  const asker =
-    job.kind === "scheduled" ? "Schedule" : job.asked_by ? first(names.get(job.asked_by)) : null
+  const asker = job.trigger_id ? null : job.asked_by ? firstName(names.get(job.asked_by)) : null
 
   return (
     <div
       data-testid={`job-${job.id}`}
       data-status={job.status}
-      className={cn(
-        "border-b border-border last:border-b-0",
-        needs && "-mx-3 my-0.5 rounded-lg border-b-0 bg-warning/10 px-3",
-      )}
+      className="border-b border-border last:border-b-0"
     >
       <div className="flex h-13 items-center gap-3.5 text-base">
         <button
@@ -201,9 +305,9 @@ function JobRow({
         >
           <RowLine
             icon={JOB_ICON[job.status]}
-            tone={needs ? "warning" : failed ? "destructive" : undefined}
-            title={firstLine(job.instruction)}
-            detail={detailOf(job)}
+            tone={failed ? "destructive" : undefined}
+            title={jobTitle(job, agent.triggers)}
+            detail={jobDetail(job)}
           />
         </button>
         <Meta>
@@ -218,7 +322,7 @@ function JobRow({
               Report
             </Link>
           )}
-          {canSteer && (job.status === "running" || job.status === "queued" || needs) && (
+          {canSteer && (job.status === "running" || job.status === "queued") && (
             <Button
               type="button"
               variant="ghost"
@@ -255,7 +359,6 @@ function JobRow({
           )}
         </Meta>
       </div>
-      {needs && canSteer && <AnswerBox job={job} />}
       {open && <Transcript id={job.id} agentName={agent.name} names={names} />}
     </div>
   )
@@ -273,7 +376,7 @@ export function useCanSteer(job: Job | undefined, meId: string | undefined): boo
   return agent.data.can_manage || (job.asked_by === meId && agent.data.can_ask)
 }
 
-/** A needs-you job's question, answered here: one of its options, or in words. */
+/** A waiting job's answer: one of its choices, or words. */
 export function AnswerBox({ job }: { job: Job }) {
   const [text, setText] = useState("")
   const answer = useApiMutation({
@@ -291,7 +394,7 @@ export function AnswerBox({ job }: { job: Job }) {
   }
   const options = job.needs?.options ?? []
   return (
-    <form onSubmit={submit} className="flex flex-wrap items-center gap-2 pb-3 pl-8">
+    <form onSubmit={submit} className="flex flex-wrap items-center gap-2 pl-8">
       {options.map((o, i) => (
         <Button
           key={o}
@@ -328,7 +431,7 @@ export function AnswerBox({ job }: { job: Job }) {
 }
 
 /** The job's transcript and what it made, read when its row is opened. */
-function Transcript({
+export function Transcript({
   id,
   agentName,
   names,
@@ -362,7 +465,9 @@ function Transcript({
         <div key={m.id} className="flex flex-col gap-1">
           <div className="flex items-baseline gap-2 text-sm text-muted-foreground">
             <span className="font-medium text-foreground">
-              {m.author_kind === "agent" ? agentName : (first(names.get(m.author_id)) ?? "Someone")}
+              {m.author_kind === "agent"
+                ? agentName
+                : (firstName(names.get(m.author_id)) ?? "Someone")}
             </span>
             <Time>{when(m.created_at)}</Time>
           </div>

@@ -205,7 +205,7 @@ specialized deployments, but are intentionally not covered by the built-in backu
 | `DERIVE_PREVIEWS` | `false` | `true` to enable the shared Playwright worker for share-card previews and PDF, chart, email-image, and deck exports (Docker bundles Chromium; bare-Node hosts must run `playwright install --with-deps chromium` once) |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | (none) | Google sign-in |
 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_PROVIDER_ID` | (none) | Enterprise SSO |
-| `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` / `SLACK_SIGNING_SECRET` | (none) | Optional Slack app (all three required). Create it from **Settings → Integrations → Set up Slack app**; connect from Settings → Integrations. Bot tokens are encrypted at rest with `DERIVE_AUTH_SECRET`. |
+| `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` / `SLACK_SIGNING_SECRET` | (none) | Optional Slack app (all three required). Create it from **Settings → Sources → Set up Slack app**; connect from Settings → Sources. Bot tokens are encrypted at rest with `DERIVE_AUTH_SECRET`. |
 | `DERIVE_BILLING_ENABLED` | `false` | Explicit opt-in for billing UI, Stripe operations, and paid-plan restrictions. Off even with Stripe keys or stored subscriptions; operator storage and abuse limits still apply. |
 | `STRIPE_SECRET_KEY` | (none) | Stripe secret key (`sk_test_`/`sk_live_`). Required for Stripe operations when billing is enabled; self-host never needs it. |
 | `STRIPE_WEBHOOK_SECRET` | (none) | Signing secret for the Stripe webhook endpoint (`whsec_...`). Required for `/v1/billing/webhook` to accept events. |
@@ -261,12 +261,12 @@ for publishes, adds **Save to Derive** to message shortcuts, and can send direct
 messages for mentions, review requests, and shares. Direct messages work reliably after a member
 links their Slack account.
 
-1. Open **Settings → Integrations → Set up Slack app** (or go to `/settings/slack/app/new`).
+1. Open **Settings → Sources → Set up Slack app** (or go to `/settings/slack/app/new`).
    Derive fills the app manifest with this instance's URL, event subscriptions,
    interactivity, and bot scopes. At [api.slack.com/apps](https://api.slack.com/apps), choose
    **Create New App → From a manifest**, paste the manifest, and create the app.
 2. From the app's **Basic Information** page, set `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, and `SLACK_SIGNING_SECRET` (all three required, or Slack stays off). On Workers these are secrets: `wrangler secret put SLACK_CLIENT_ID` (and the other two).
-3. Workspace admins connect from **Settings → Integrations → Add to Slack**. Subscribe a
+3. Workspace admins connect from **Settings → Sources → Connect Slack**. Subscribe a
    channel from Settings or run `/derive subscribe` in the channel. A subscription can cover
    one collection and filter events by type and by whether a person or agent authored them.
    For a private channel, invite the bot first. Workspaces connected before private-channel
@@ -306,12 +306,12 @@ shared App. Workspace owners then install that App on a GitHub account and selec
 repositories that their workspace can use. One GitHub installation can connect to more than
 one Derive workspace. Each workspace keeps an independent connection.
 
-1. Sign in as the instance operator. Open **Settings → Integrations → Set up App**.
+1. Sign in as the instance operator. Open **Settings → Sources → Set up App**.
 2. Enter the GitHub organization that operates the Derive instance. GitHub shows this account
    as the App developer. Use a personal account only when that account should own the App.
 3. Review the generated manifest on GitHub and create the App. Derive stores the App credentials
    encrypted with `DERIVE_AUTH_SECRET`.
-4. Return to **Settings → Integrations**. Workspace owners can now connect GitHub accounts and
+4. Return to **Settings → Sources**. Workspace owners can now connect GitHub accounts and
    select repositories.
 
 Derive requests **Metadata: read**, **Pull requests: write**, and **Actions: write**. It uses
@@ -322,7 +322,7 @@ completion event.
 
 If a release adds an App permission or event, an App owner or manager must first update the shared
 App. Each connected GitHub account owner must then approve the update for that installation.
-Derive shows these as separate actions in **Settings → Integrations**. An instance operator can
+Derive shows these as separate actions in **Settings → Sources**. An instance operator can
 also repair the webhook URL and signing secret there. The secret stays on the server.
 
 ---

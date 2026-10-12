@@ -81,7 +81,7 @@ export function NewAgent() {
       ) : (
         !agents.isPending && (
           <div className="flex flex-col text-sm text-muted-foreground">
-            {own.length ? "Things people here have made" : "For example"}
+            {own.length ? "Agents in this workspace" : "Examples"}
             <div className="mt-2 flex flex-col">
               {examples.map((e) => (
                 <button

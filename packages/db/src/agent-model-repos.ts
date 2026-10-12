@@ -168,6 +168,7 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
       if (q.kind?.length) where.push(sql`kind IN (${list(q.kind)})`)
       if (q.parentId) where.push(sql`parent_id = ${q.parentId}`)
       if (q.askedBy) where.push(sql`asked_by = ${q.askedBy}`)
+      if (q.triggerId) where.push(sql`trigger_id = ${q.triggerId}`)
       if (q.reportArtifactId) where.push(sql`report_artifact_id = ${q.reportArtifactId}`)
       if (q.subjectJson?.length) where.push(sql`subject_json IN (${list(q.subjectJson)})`)
       if (q.askedByOrAgent) {

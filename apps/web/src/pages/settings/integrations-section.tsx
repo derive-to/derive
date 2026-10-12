@@ -1,29 +1,20 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { AlertTriangle } from "lucide-react"
 import { useEffect, useState } from "react"
-import { api, type GithubIntegrationAccount, type OrgSettings } from "@/api"
+import { api, type GithubIntegrationAccount } from "@/api"
 import { AdminNote } from "@/components/shared/admin-note"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
-import { SettingRow } from "@/components/shared/setting-row"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { toast } from "@/components/ui/sonner"
-import { Switch } from "@/components/ui/switch"
-import {
-  connectionsQuery,
-  githubQuery,
-  slackQuery,
-  workspaceQuery,
-  workspaceSettingsQuery,
-} from "@/lib/queries"
-import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
+import { connectionsQuery, githubQuery, slackQuery, workspaceQuery } from "@/lib/queries"
+import { useApiMutation } from "@/lib/use-api-mutation"
 import { useOneShotParams } from "@/lib/use-one-shot-params"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
-import { SettingsSection } from "./settings-section"
 import { SlackSubscriptionsSection } from "./slack-subscriptions-section"
 
 type SlackInstallResult = { connected: true } | { connected: false; error: string } | null
@@ -79,15 +70,13 @@ const GITHUB_INSTALL_ERRORS: Record<string, { title: string; description: string
   },
 }
 
-// Workspace-wide notifications plus standard integrations. GitHub is an on-demand integration:
-// its install callback creates the workspace connection directly, with no repo mirroring UI.
-// Personal notification prefs live in notifications-section.tsx; Slack delivery destinations
-// live in slack-subscriptions-section.tsx.
-export function IntegrationsSection() {
+// The GitHub and Slack groups of Settings › Sources. GitHub's install callback creates the
+// workspace connection directly, with no repo mirroring UI. Slack delivery destinations live
+// in slack-subscriptions-section.tsx, drawn under the Slack group once it is connected.
+export function IntegrationGroups() {
   const qc = useQueryClient()
-  const { data: settings, isPending, isError, refetch } = useQuery(workspaceSettingsQuery())
-  // The toggles PATCH an admin-only endpoint; mirror that gate in the UI so a
-  // non-admin sees the workspace's state without a switch that 403s on flip.
+  // The verbs PATCH admin-only endpoints; mirror that gate in the UI so a non-admin sees the
+  // workspace's state without a button that 403s.
   const { data: ws } = useQuery(workspaceQuery())
   const isAdmin = ws?.role === "owner"
   const { data: slack, isFetching: slackIsFetching } = useQuery(slackQuery())
@@ -145,26 +134,10 @@ export function IntegrationsSection() {
     if (githubInstallResult.connected) toast.success("GitHub connected")
   }, [githubInstallResult, qc])
 
-  // Toggle a single settings key, optimistically flipping the shared cache entry so the
-  // switch stays live; the primitive rolls back + toasts on failure, and the server's
-  // echoed settings replace the optimistic value on success.
-  const update = useApiMutation({
-    mutationFn: (patch: Partial<OrgSettings>) => api.updateWorkspaceSettings(patch),
-    optimistic: (patch, client) => {
-      const qk = workspaceSettingsQuery().queryKey
-      const rollback = snapshot(client, qk)
-      client.setQueryData(qk, (prev) => (prev ? { ...prev, ...patch } : prev))
-      return rollback
-    },
-    onSuccess: (s) => qc.setQueryData(workspaceSettingsQuery().queryKey, s),
-  })
-  const flip = (key: keyof OrgSettings) => (next: boolean) =>
-    update.mutate({ [key]: next } as Partial<OrgSettings>)
-
   const disconnect = useApiMutation({
     mutationFn: () => api.disconnectSlack(),
     success: "Slack disconnected",
-    invalidate: [slackQuery().queryKey, workspaceSettingsQuery().queryKey],
+    invalidate: [slackQuery().queryKey],
   })
   const disconnectSlack = () => disconnect.mutate()
 
@@ -181,42 +154,10 @@ export function IntegrationsSection() {
   }
 
   return (
-    <SettingsSection
-      title="Integrations"
-      description="Connect workspace tools once, then make them available to agents."
-    >
-      {isPending ? (
-        <SettingsListSkeleton />
-      ) : isError ? (
-        <LoadError
-          title="Couldn’t load integration settings"
-          testId="integrations-retry"
-          onRetry={() => refetch()}
-        />
-      ) : settings ? (
-        <>
-          <SettingsGroup>
-            <SettingRow
-              htmlFor="toggle-email"
-              label="Email notifications"
-              description="Email collaborators when a comment mentions them or lands on a thread they're in. Switches activity email on or off for everyone in this workspace."
-            >
-              <Switch
-                id="toggle-email"
-                data-testid="toggle-email"
-                checked={settings.emailNotifications}
-                disabled={!isAdmin}
-                onCheckedChange={flip("emailNotifications")}
-              />
-            </SettingRow>
-          </SettingsGroup>
-          {!isAdmin && <AdminNote can="change workspace activity settings" />}
-        </>
-      ) : null}
-
+    <>
       <SettingsGroup
         title="GitHub"
-        description="Read pull requests, add top-level PR comments, and run selected GitHub Actions workflows. Derive does not mirror repository files or create collections."
+        description="Pull requests, PR comments, and selected GitHub Actions workflows. Derive does not mirror repository files."
       >
         {githubInstallError && githubInstallResult && !githubInstallResult.connected && (
           <StatusPanel
@@ -453,7 +394,7 @@ export function IntegrationsSection() {
               Slack isn't configured on this Derive instance yet. Create the app from a manifest
               (event subscriptions come pre-wired), add the three secrets, then connect.
             </p>
-            <Button data-testid="slack-setup" variant="default" asChild>
+            <Button data-testid="slack-setup" variant="outline" size="sm" asChild>
               <a href="/settings/slack/app/new">Set up Slack app</a>
             </Button>
           </div>
@@ -489,7 +430,7 @@ export function IntegrationsSection() {
                   title="Derive can't use the saved Slack connection"
                   description="The app may have been removed or its token revoked, or it needs a permission that was added since. Reconnect to fix it."
                   action={
-                    <Button data-testid="slack-reconnect" variant="default" size="sm" asChild>
+                    <Button data-testid="slack-reconnect" variant="outline" size="sm" asChild>
                       <a href="/v1/slack/install">Reconnect Slack</a>
                     </Button>
                   }
@@ -525,7 +466,7 @@ export function IntegrationsSection() {
               Authorize a Slack workspace for this Derive workspace. If you already installed the
               app in Slack, complete this step once so Derive can save the connection.
             </p>
-            <Button data-testid="slack-connect" variant="default" asChild>
+            <Button data-testid="slack-connect" variant="outline" size="sm" asChild>
               <a href="/v1/slack/install">Connect Slack</a>
             </Button>
           </div>
@@ -534,6 +475,6 @@ export function IntegrationsSection() {
 
       {/* Where Derive posts, per channel. Only meaningful once a workspace is connected. */}
       {slack?.connected ? <SlackSubscriptionsSection /> : null}
-    </SettingsSection>
+    </>
   )
 }

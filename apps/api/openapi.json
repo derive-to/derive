@@ -2010,6 +2010,12 @@
               },
               "review_round_id": {
                 "type": "string"
+              },
+              "asked_times": {
+                "type": "number"
+              },
+              "first_asked_at": {
+                "type": "string"
               }
             },
             "required": [
@@ -2088,6 +2094,9 @@
                   "reason",
                   "retryable"
                 ]
+              },
+              "superseded_by": {
+                "type": "string"
               },
               "route": {
                 "type": "array",

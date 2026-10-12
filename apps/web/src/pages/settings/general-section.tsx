@@ -371,6 +371,21 @@ function SharingDefaults() {
           )}
         </SettingRow>
       </SettingsGroup>
+      <SettingsGroup title="Notifications">
+        <SettingRow
+          htmlFor="toggle-email"
+          label="Email notifications"
+          description="Email collaborators when a comment mentions them or lands on a thread they're in, for everyone in this workspace."
+        >
+          <Switch
+            id="toggle-email"
+            data-testid="toggle-email"
+            checked={settings.emailNotifications}
+            disabled={update.isPending}
+            onCheckedChange={(next) => set("emailNotifications", next)}
+          />
+        </SettingRow>
+      </SettingsGroup>
       {/* The one workspace-wide agent brake, on by default. Off, agents stop writing and no
         machine is handed work. Workspace owners only, like the PATCH behind it. */}
       <SettingsGroup title="Agents">

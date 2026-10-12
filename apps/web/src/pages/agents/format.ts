@@ -5,7 +5,7 @@ import type { IconName } from "@/components/icons"
 // Words and grouping for the agent screens. Pure, so the three screens (home, one agent,
 // Settings › Machines) say the same thing about the same agent.
 
-/** The agents a person sees: never the rows auto-minted for a context. */
+/** The agents a person sees: never the hidden row an imported paper keeps for itself. */
 export const rosterOf = <A extends Agent>(agents: A[]): A[] => agents.filter((a) => !a.managed)
 
 export const firstLine = (text: string): string => text.trim().split("\n")[0]?.trim() ?? ""
@@ -106,7 +106,43 @@ export const JOB_ICON: Record<JobStatus, IconName> = {
 
 /** Why a job did not finish, as the job recorded it. */
 export const failureOf = (job: Job): string | null =>
-  job.result.failure?.reason ?? (job.status === "lost" ? "no reply came back" : null)
+  job.result.failure?.reason ?? (job.status === "lost" ? "No reply came back" : null)
+
+/** A job's title: the schedule that opened it, else the first line of what was asked. */
+export function jobTitle(job: Job, triggers: AgentTrigger[] | undefined): string {
+  if (job.trigger_id) {
+    const t = (triggers ?? []).find((x) => x.id === job.trigger_id)
+    return t?.cron ? cronLabel(t.cron) : "Scheduled run"
+  }
+  return firstLine(job.instruction)
+}
+
+/** The one grey line after a job's title: its outcome, or what it is waiting on. */
+export function jobDetail(job: Job): string | undefined {
+  switch (job.status) {
+    case "needs_you":
+      return job.needs?.question
+    case "failed":
+    case "lost":
+      return failureOf(job) ?? undefined
+    case "cancelled":
+      return job.result.superseded_by ? "Superseded by a later run" : "Cancelled"
+    case "queued":
+      return "Waiting"
+    case "succeeded":
+      return job.result.effects?.[0]?.label
+    default:
+      return undefined
+  }
+}
+
+/** "Asked 4 times since Oct 9": how long a schedule has been asking the same thing. */
+export function askedLine(job: Job): string | null {
+  const n = job.needs?.asked_times ?? 1
+  if (n < 2) return null
+  const since = job.needs?.first_asked_at
+  return since ? `Asked ${n} times since ${when(since)}` : `Asked ${n} times`
+}
 
 export type AgentGroup = "running" | "scheduled" | "asked" | "never"
 

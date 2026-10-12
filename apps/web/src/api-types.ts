@@ -7437,6 +7437,8 @@ export interface components {
                 question: string;
                 options?: string[];
                 review_round_id?: string;
+                asked_times?: number;
+                first_asked_at?: string;
             } | null;
             result: {
                 effects?: {
@@ -7456,6 +7458,7 @@ export interface components {
                     reason: string;
                     retryable: boolean;
                 };
+                superseded_by?: string;
                 route?: {
                     node_id: string;
                     attempt: number;

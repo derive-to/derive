@@ -86,6 +86,8 @@ const JobNeedsSchema = z.object({
   question: z.string(),
   options: z.array(z.string()).optional(),
   review_round_id: z.string().optional(),
+  asked_times: z.number().optional(),
+  first_asked_at: z.string().optional(),
 })
 
 const JobEffectSchema = z.object({
@@ -102,6 +104,7 @@ const JobResultSchema = z.object({
     .array(z.object({ label: z.string(), url: z.string().optional(), ref: z.string().optional() }))
     .optional(),
   failure: z.object({ reason: z.string(), retryable: z.boolean() }).optional(),
+  superseded_by: z.string().optional(),
   route: z
     .array(
       z.object({

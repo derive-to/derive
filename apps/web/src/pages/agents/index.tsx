@@ -136,7 +136,7 @@ export function AgentsHome() {
                     detail={job.needs?.question ?? firstLine(job.instruction)}
                   />
                   <Meta>
-                    <span className="font-medium text-warning">Look</span>
+                    <span className="font-medium text-warning">Open</span>
                     <Time>{when(job.updated_at)}</Time>
                   </Meta>
                 </Link>
@@ -196,7 +196,7 @@ export function AgentsHome() {
             </Group>
           )}
           {(groups.asked.length > 0 || groups.never.length > 0) && (
-            <Group label="When asked" testId="agents-group-asked">
+            <Group label="On demand" testId="agents-group-asked">
               {groups.asked.map((a) => {
                 const last = lastWorked.get(a.id) ?? a.seen_at
                 return agentRow(
@@ -218,7 +218,7 @@ export function AgentsHome() {
                   onClick={() => setShowNever(true)}
                   className="self-start pt-1.5 text-sm text-muted-foreground hover:text-foreground"
                 >
-                  {groups.never.length} never used
+                  {groups.never.length} not run yet
                 </button>
               )}
             </Group>

@@ -10,8 +10,8 @@ import { useMemberNames } from "@/pages/agents/use-member-names"
 import { SettingsSection } from "./settings-section"
 
 // Settings › Machines: where the workspace's agents run. One row per person whose own
-// machine runs agents (their runner is the owner machine), then Derive when any agent runs
-// there. Derived from the agents themselves; a machine is not a thing you create here.
+// machine runs agents, then Derive when any agent runs there. Derived from the agents
+// themselves; a machine is not a thing you create here.
 export function MachinesSection() {
   const agents = useQuery(agentsQuery())
   const names = useMemberNames()
@@ -62,11 +62,11 @@ function Machines({ agents, names }: { agents: Agent[]; names: Map<string, strin
                     <Machine
                       mark={{
                         on: machineOf(seen, names).on,
-                        label: `seen ${when(seen.seen_at)}`,
+                        label: `Last seen ${when(seen.seen_at)}`,
                       }}
                     />
                   ) : (
-                    <Machine mark={{ on: false, label: "never seen" }} />
+                    <Machine mark={{ on: false, label: "Never connected" }} />
                   )}
                 </Meta>
               </div>
@@ -76,15 +76,15 @@ function Machines({ agents, names }: { agents: Agent[]; names: Map<string, strin
             <div data-testid="machine-derive" className={rowClass()}>
               <RowLine icon="cloud" title="Derive" detail={<AgentLinks agents={onDerive} />} />
               <Meta>
-                <span>keeps files between runs</span>
+                <span>Sandbox</span>
               </Meta>
             </div>
           )}
         </Group>
       )}
       <p className="text-sm text-muted-foreground">
-        Start a runner on the machine that should do an agent’s work. The key in it is shown once,
-        when the agent is made or its key is replaced.
+        To run an agent on your own machine, start a runner there. Its key is shown once, when the
+        agent is created or the key is replaced on its Settings tab.
       </p>
       <pre
         data-testid="machines-runner-command"
