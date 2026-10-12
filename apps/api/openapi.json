@@ -3741,6 +3741,13 @@
           "available": {
             "type": "boolean"
           },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "boat",
+              "ortam"
+            ]
+          },
           "connected": {
             "type": "boolean"
           },
@@ -3758,6 +3765,7 @@
         },
         "required": [
           "available",
+          "provider",
           "connected",
           "account_id",
           "can_manage",
@@ -10166,7 +10174,7 @@
         "tags": [
           "Agents"
         ],
-        "summary": "The workspace's boat.dev compute connection.",
+        "summary": "The workspace's sandbox connection.",
         "responses": {
           "200": {
             "description": "Workspace compute connection. No credential.",
@@ -10184,7 +10192,7 @@
         "tags": [
           "Agents"
         ],
-        "summary": "Verify and connect the workspace's boat.dev API key.",
+        "summary": "Verify and connect the workspace's sandbox API key.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -10195,6 +10203,14 @@
                     "type": "string",
                     "minLength": 8,
                     "maxLength": 4096
+                  },
+                  "provider": {
+                    "type": "string",
+                    "enum": [
+                      "boat",
+                      "ortam"
+                    ],
+                    "default": "boat"
                   }
                 },
                 "required": [

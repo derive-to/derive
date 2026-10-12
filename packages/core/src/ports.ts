@@ -2245,6 +2245,8 @@ export interface AgentStore {
       broker_ref?: string
       status?: ConnectionStatus
       scopes_label?: string | null
+      toolkit?: string
+      base_url?: string
     },
     expectSecretEnc?: string | null,
     expectStatus?: ConnectionStatus,

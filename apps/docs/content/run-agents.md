@@ -354,3 +354,22 @@ Each workspace has one switch for agent work, **Agents can write**, which a work
 finds under Settings, Machines. Turn it off and agents stop writing: no job is claimed,
 dispatched, or started by a schedule, and their jobs wait until it is back on. Pausing a
 single agent on its Settings tab does the same for that agent.
+
+
+### Choose Boat or Ortam
+
+Open Settings → Connections → Connect sandbox. Select **boat.dev** or **Ortam** and paste your
+company's API key. Derive verifies access and stores the key encrypted. Tasks do not receive it.
+Ortam keys need sandbox read and write permissions. Each workspace uses its own connection.
+
+Disconnect before switching providers. Wait for all old agent sandboxes to finish cleanup.
+Ortam cleanup deletes those sandboxes and their files; Boat cleanup archives them.
+The disconnect dialog explains this before you confirm.
+
+The public Ortam adapter uses its API-key token exchange and the saved `/workspace` disk.
+It installs a verified Node runtime when needed, then the pinned Derive CLI.
+It does not copy the old sandbox's files to another provider. Ortam sandbox charges show as
+unknown until a task-specific usage receipt is available. Model usage still appears on each task.
+
+Codex device sign-in currently runs through Boat. A saved model API key or imported plan login
+can run on either provider. No new server secret or database migration is required.

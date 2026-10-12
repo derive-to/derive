@@ -9,15 +9,16 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useApiMutation } from "@/lib/use-api-mutation"
 
-export function BoatConnection() {
+export function CloudConnection() {
   const connection = useQuery({ queryKey: ["compute-connection"], queryFn: api.computeConnection })
   const [editing, setEditing] = useState(false)
   const [removing, setRemoving] = useState(false)
+  const [provider, setProvider] = useState<"boat" | "ortam">("boat")
   const [value, setValue] = useState("")
   const [snapshot, setSnapshot] = useState<string | null>(null)
   const invalidate = [["compute-connection"], ["agents"], ["account-login-options"]]
   const connect = useApiMutation({
-    mutationFn: () => api.connectCompute(value.trim()),
+    mutationFn: () => api.connectCompute(value.trim(), provider),
     invalidate,
     onSuccess: () => {
       setValue("")
@@ -41,17 +42,19 @@ export function BoatConnection() {
       />
     )
   const cn = connection.data
+  const label = cn.provider === "boat" ? "boat.dev" : "Ortam"
+  const editingLabel = provider === "boat" ? "boat.dev" : "Ortam"
   return (
     <section className="flex flex-col gap-3" data-testid="compute-connection">
       <SectionTitle>Cloud compute</SectionTitle>
       <div className="rounded-xl border border-border p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h3 className="text-base font-medium">boat.dev</h3>
+            <h3 className="text-base font-medium">{label}</h3>
             <p className="mt-1 text-sm text-muted-foreground">
               {cn.connected
                 ? "Connected for everyone in this workspace."
-                : "Connect your company’s boat.dev account once. Everyone in this workspace can run cloud tasks."}
+                : "Connect your company’s sandbox account once. Everyone in this workspace can run cloud tasks."}
             </p>
           </div>
           {cn.available && cn.can_manage && !editing && (
@@ -62,10 +65,11 @@ export function BoatConnection() {
                 data-testid="compute-connect"
                 onClick={() => {
                   setEditing(true)
+                  setProvider(cn.provider)
                   connect.reset()
                 }}
               >
-                {cn.connected ? "Replace key" : "Connect boat.dev"}
+                {cn.connected ? "Replace key" : "Connect sandbox"}
               </Button>
               {cn.connected && (
                 <Button
@@ -87,21 +91,25 @@ export function BoatConnection() {
         )}
         {cn.available && !cn.can_manage && !cn.connected && (
           <p className="mt-3 text-sm text-muted-foreground">
-            Ask a workspace owner to connect boat.dev.
+            Ask a workspace owner to connect a sandbox.
           </p>
         )}
         <p className="mt-3 text-sm text-muted-foreground">
-          Your company pays boat.dev directly. Other workspaces use their own connection. Model
-          plans and API keys are separate.
+          Your company pays its sandbox provider directly. Other workspaces use their own
+          connection. Model plans and API keys are separate.
         </p>
         {cn.connected && (
           <details className="mt-3 text-xs text-muted-foreground">
             <summary className="cursor-pointer">Connection details</summary>
-            <p className="mt-2 break-all">boat.dev account: {cn.account_id}</p>
-            <p className="mt-1">Runner snapshot: {cn.snapshot ?? "Plain sandbox"}</p>
+            <p className="mt-2 break-all">
+              {label} account: {cn.account_id}
+            </p>
+            {cn.provider === "boat" && (
+              <p className="mt-1">Runner snapshot: {cn.snapshot ?? "Plain sandbox"}</p>
+            )}
           </details>
         )}
-        {cn.connected && cn.can_manage && (
+        {cn.connected && cn.can_manage && cn.provider === "boat" && (
           <details className="mt-3 text-sm">
             <summary className="cursor-pointer text-muted-foreground">Runner setup</summary>
             <form
@@ -155,10 +163,33 @@ export function BoatConnection() {
               if (value.trim() && !connect.isPending) connect.mutate()
             }}
           >
+            {!cn.connected && (
+              <fieldset className="space-y-2" disabled={connect.isPending}>
+                <legend className="text-sm font-medium">Sandbox provider</legend>
+                <div className="flex gap-2">
+                  {(["boat", "ortam"] as const).map((option) => (
+                    <Button
+                      key={option}
+                      type="button"
+                      variant={provider === option ? "default" : "outline"}
+                      data-testid={`compute-provider-${option}`}
+                      aria-pressed={provider === option}
+                      onClick={() => {
+                        setProvider(option)
+                        setValue("")
+                        connect.reset()
+                      }}
+                    >
+                      {option === "boat" ? "boat.dev" : "Ortam"}
+                    </Button>
+                  ))}
+                </div>
+              </fieldset>
+            )}
             <div className="space-y-2">
-              <Label htmlFor="boat-api-key">boat.dev API key</Label>
+              <Label htmlFor="sandbox-api-key">{editingLabel} API key</Label>
               <Input
-                id="boat-api-key"
+                id="sandbox-api-key"
                 data-testid="compute-api-key"
                 type="password"
                 autoComplete="off"
@@ -170,15 +201,18 @@ export function BoatConnection() {
               <p className="text-xs text-muted-foreground">
                 Create a key in your{" "}
                 <a
-                  href="https://boat.dev/dashboard"
+                  href={
+                    provider === "boat" ? "https://boat.dev/dashboard" : "https://app.ortam.dev"
+                  }
                   target="_blank"
                   rel="noreferrer"
                   data-testid="compute-get-key"
                   className="underline"
                 >
-                  boat.dev dashboard
+                  {editingLabel} dashboard
                 </a>
                 . We check access and store it encrypted.
+                {provider === "ortam" && " Allow sandbox read and write access on the key."}
               </p>
             </div>
             {connect.error && (
@@ -220,8 +254,8 @@ export function BoatConnection() {
       <ConfirmDialog
         open={removing}
         onOpenChange={setRemoving}
-        title="Disconnect boat.dev?"
-        description="Active cloud work stops. Queued tasks wait until your workspace connects again. Saved files stay in boat.dev."
+        title={`Disconnect ${label}?`}
+        description="Active cloud work stops. Queued tasks wait for a connection. Ortam agent sandboxes and their files are deleted during cleanup. Boat sandboxes are archived. Wait for cleanup before switching providers."
         confirmLabel="Disconnect"
         contentTestId="compute-disconnect-dialog"
         onConfirm={async () => {

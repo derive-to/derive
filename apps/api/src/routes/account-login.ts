@@ -43,6 +43,9 @@ const readPending = (a: AccountRecord, key: string | undefined): PendingLogin | 
     return null
   }
 }
+export const accountConnectionPending = (a: AccountRecord, key: string | undefined) =>
+  readPending(a, key) !== null
+
 const messages: Record<string, string> = {
   expired: "This code expired. Let’s try again.",
   approval_failed: "Approval did not finish. Let’s try again.",
@@ -73,7 +76,7 @@ export const accountLoginRoutes = (ctx: AppContext) => {
   const available = async (org: string) =>
     !!(
       key &&
-      runtime?.provider === "boat" &&
+      (await boatConnection(meta, org))?.status === "active" &&
       deps.baseUrl.startsWith("https://") &&
       (await cloudEnabled(meta, runtime, org))
     )

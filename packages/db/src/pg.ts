@@ -5787,6 +5787,8 @@ export class PgMetaStore implements MetaStore {
       broker_ref?: string
       status?: ConnectionStatus
       scopes_label?: string | null
+      toolkit?: string
+      base_url?: string
     },
     expectSecretEnc?: string | null,
     expectStatus?: ConnectionStatus,
@@ -5796,6 +5798,8 @@ export class PgMetaStore implements MetaStore {
     if (fields.broker_ref !== undefined) set.broker_ref = fields.broker_ref
     if (fields.status !== undefined) set.status = fields.status
     if (fields.scopes_label !== undefined) set.scopes_label = fields.scopes_label
+    if (fields.toolkit !== undefined) set.toolkit = fields.toolkit
+    if (fields.base_url !== undefined) set.base_url = fields.base_url
     if (Object.keys(set).length === 0) return this.getConnection(id)
     // The compare-and-swap rides IN the WHERE clause, so the check and the write are one
     // statement. Reading first and then writing would leave the window this exists to close.

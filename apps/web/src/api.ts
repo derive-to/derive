@@ -1365,8 +1365,8 @@ export const api = {
     f("/v1/runtime/connection", opts()).then(j) as Promise<
       components["schemas"]["ComputeConnection"]
     >,
-  connectCompute: (api_key: string) =>
-    f("/v1/runtime/connection", { ...opts({ api_key }), method: "PUT" }).then(j),
+  connectCompute: (api_key: string, provider: "boat" | "ortam") =>
+    f("/v1/runtime/connection", { ...opts({ api_key, provider }), method: "PUT" }).then(j),
   disconnectCompute: () => f("/v1/runtime/connection", { ...opts(), method: "DELETE" }).then(j),
   configureCompute: (snapshot: string | null) =>
     f("/v1/runtime/connection", { ...opts({ snapshot }), method: "PATCH" }).then(j),

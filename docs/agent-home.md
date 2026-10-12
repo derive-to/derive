@@ -1,15 +1,16 @@
-# Agent home and the Boat pilot
+# Agent home and sandbox connections
 
 An agent saves a skill, model account, model, and access. A task uses the existing Job record.
 The skill is a versioned `SKILL.md` bundle. Connections grant access; instructions do not.
 
 ## Start an agent
 
-1. Connect a plan or API key in Settings → Model accounts.
-2. Open Agents → New agent.
-3. Describe the work. Use Chat to write the skill if useful.
-4. Choose an account. Add a daily schedule or run when asked.
-5. Select **Let’s go**. The first task starts in the cloud.
+1. Connect Boat or Ortam in Settings → Connections.
+2. Connect a plan or API key in Settings → Model accounts.
+3. Open Agents → New agent.
+4. Describe the work. Use Chat to write the skill if useful.
+5. Choose an account. Add a daily schedule or run when asked.
+6. Select **Let’s go**. The first task starts in the cloud.
 
 The form waits while Chat writes the skill. The agent’s Skill tab reads and edits the same artifact.
 Use Write with AI for Chat, or Edit instructions for the existing source editor.
@@ -40,7 +41,7 @@ Other imports show Access not checked yet. Connecting accounts cannot be assigne
 Reconnect keeps the account ID and agent assignments. Queued cloud tasks wait before compute
 allocation. Cancel restores the previous encrypted credential. Expired attempts hide their code.
 Retry replaces the attempt. Scoped callbacks cannot complete an expired or replaced attempt.
-Connection Boates have a ten-minute TTL and archive after success, failure, or cancellation.
+Connection sandboxes have a ten-minute TTL and archive after success, failure, or cancellation.
 
 Codex plan accounts use the official CLI's `auth.json` file. The account value stays encrypted.
 Cloud runners require memory-backed `/dev/shm` storage for login files and the model home.
@@ -61,16 +62,37 @@ before running untrusted code with a personal plan account.
 The existing controller uses `SandboxClient`. Ortam and Boat implement that interface.
 Agents, jobs, claims, schedules, and permissions stay in Derive.
 
-Keep the existing Ortam settings for Ortam. To use Boat, configure:
+Set the default provider and pinned runner on the deployment. Workspace connections override the default:
 
 ```sh
 DERIVE_SANDBOX_PROVIDER=boat
 DERIVE_ORTAM_RUNNER_PATH=/home/ortam/derive-runtime/0.8.3/node_modules/@derive-to/cli/bin/derive.js
 ```
 
-A workspace owner connects the company's Boat API key in Settings → Connections.
+A workspace owner opens Settings → Connections → Connect sandbox, then selects Boat or Ortam.
 Derive verifies the account and encrypts the key. The controller holds it; tasks never receive it.
 Each workspace uses its own connection. The runner-path setting keeps its existing name.
+No deployment secret is needed for a workspace connection.
+
+Ortam requires a Developer API key with `sandboxes:read` and `sandboxes:write` scopes.
+Its public API exchanges the key at `/v1/auth/token`. Resource requests carry the short-lived token.
+Each request checks the same organization and user. A different account cannot replace an active key.
+The public API creates a plain Small sandbox with a 20-minute automatic stop limit.
+Public processes run as the workspace user. The adapter maps the saved runtime to `/workspace`.
+If the image lacks Node 24+, it installs pinned Node 24.14.0 with verified release hashes.
+The ordinary job launch installs the pinned Derive CLI. No custom environment or template is created.
+Ortam compute cost remains unknown until a task-specific usage receipt is available.
+
+Disconnect before changing providers. The controller retains the old key for cleanup.
+Replacement waits until all agent sandboxes finish retirement and pending model sign-in is cancelled.
+Ortam retirement deletes agent sandboxes and their saved files. Boat retirement archives them.
+The disconnect confirmation explains this difference. Provider, API URL, identity, and connection
+stay pinned for the sandbox's life. Existing deployment-managed Ortam sandboxes keep their original
+integration credential; a workspace connection cannot take over that identity.
+
+Codex device sign-in currently needs a Boat connection. Saved plan logins and model API keys run
+on either provider. Ortam users import their login or model key in Model accounts.
+Existing allowlisted Ortam service integrations remain available under their deployment settings.
 
 Boat creates a Small sandbox in the connected account's personal wallet.
 Runner setup accepts an optional company snapshot for new agents. The controller freezes its

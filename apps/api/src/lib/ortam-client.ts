@@ -1,4 +1,5 @@
 import { unbound } from "@derive/broker"
+import { decodeJwt } from "jose"
 import { z } from "zod"
 
 const Sandbox = z.object({
@@ -25,6 +26,34 @@ const Process = z.object({
     "interrupted",
   ]),
 })
+
+// Public Ortam processes use the workspace user. Install a verified Node runtime
+// on the saved writable disk only when the base image lacks Node 24+.
+const PUBLIC_RUNNER_SETUP = [
+  "set -eu",
+  "if ! command -v npm >/dev/null 2>&1 || ! node -e 'process.exit(Number(process.versions.node.split(\".\")[0]) < 24 ? 1 : 0)'; then",
+  "  case $(uname -m) in",
+  "    x86_64) arch=x64; checksum=41cd79bb7877c81605a9e68ec4c91547774f46a40c67a17e34d7179ef11729df ;;",
+  "    aarch64) arch=arm64; checksum=e7adfca03d9173276114a6f2219df1a7d25e1bfd6bbd771d3f839118a2053094 ;;",
+  "    *) exit 1 ;;",
+  "  esac",
+  "  node_dir=/workspace/.derive-node/node-v24.14.0-linux-$arch",
+  '  if [ ! -x "$node_dir/bin/node" ]; then',
+  '    test ! -e "$node_dir"',
+  "    mkdir -p /workspace/.derive-node",
+  "    node_stage=$(mktemp -d /workspace/.derive-node/.install-XXXXXX)",
+  "    trap 'rm -rf \"$node_stage\"' EXIT",
+  '    curl -fsSL --max-time 120 "https://nodejs.org/dist/v24.14.0/node-v24.14.0-linux-$arch.tar.xz" -o "$node_stage/node.tar.xz"',
+  '    printf \'%s  %s\\n\' "$checksum" "$node_stage/node.tar.xz" | sha256sum -c -',
+  '    mkdir "$node_stage/runtime"',
+  '    tar -xJf "$node_stage/node.tar.xz" --strip-components=1 -C "$node_stage/runtime"',
+  '    mv "$node_stage/runtime" "$node_dir"',
+  '    rm -rf "$node_stage"',
+  "    trap - EXIT",
+  "  fi",
+  '  export PATH="$node_dir/bin:$PATH"',
+  "fi",
+].join("\n")
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz"
@@ -65,6 +94,7 @@ export class OrtamClient {
     /** One integration subject per agent: its sandbox belongs to that identity. */
     private subject: string,
     fetcher: typeof fetch = fetch,
+    private mode: "integration" | "api_key" = "integration",
   ) {
     this.fetcher = unbound(fetcher)
     const url = new URL(base)
@@ -104,12 +134,38 @@ export class OrtamClient {
   /** The integration identity this agent's subject acts as. Ortam takes the key as the bearer
    *  on every call; it has no token exchange. */
   async authenticate() {
+    if (this.mode === "api_key") {
+      const result = z
+        .object({ token: z.string() })
+        .parse(await this.json("/auth/token", { headers: { "X-API-Key": this.key } }))
+      // This token comes directly from the trusted HTTPS token endpoint. Claims project
+      // identity only; Ortam validates the bearer on every resource request.
+      const claims = z
+        .object({
+          sub: z.string().min(1),
+          organization_id: z.string().min(1),
+          exp: z.number(),
+          scopes: z.array(z.string()),
+        })
+        .parse(decodeJwt(result.token))
+      if (
+        claims.exp * 1000 <= Date.now() ||
+        !["sandboxes:read", "sandboxes:write"].every((scope) => claims.scopes.includes(scope))
+      )
+        throw new Error("Ortam key requires sandbox read and write access")
+      this.token = result.token
+      return { organization_id: claims.organization_id, user_id: claims.sub }
+    }
     return z
       .object({ organization_id: z.string(), user_id: z.string() })
       .parse(await this.json("/integration", { headers: this.auth() }))
   }
+  private token?: string
+
   private auth() {
-    return { Authorization: `Bearer ${this.key}`, "X-Ortam-Integration-Subject": this.subject }
+    return this.mode === "api_key"
+      ? { Authorization: `Bearer ${this.token}` }
+      : { Authorization: `Bearer ${this.key}`, "X-Ortam-Integration-Subject": this.subject }
   }
   async request(
     path: string,
@@ -134,9 +190,23 @@ export class OrtamClient {
     })
   }
   async create(body: unknown, key: string, identity: { organization_id: string; user_id: string }) {
-    const result = z
-      .object({ sandbox: Sandbox, operation: Operation })
-      .parse(await this.request("/sandboxes", identity, "POST", body, key))
+    const result = z.object({ sandbox: Sandbox, operation: Operation }).parse(
+      await this.request(
+        "/sandboxes",
+        identity,
+        "POST",
+        this.mode === "api_key"
+          ? z
+              .object({
+                name: z.string(),
+                size: z.string(),
+                auto_stop_after_seconds: z.number(),
+              })
+              .parse(body)
+          : body,
+        key,
+      ),
+    )
     if (result.operation.sandbox_id !== result.sandbox.id || result.operation.kind !== "create")
       throw new Error("Ortam operation mismatch")
     return result
@@ -231,7 +301,18 @@ export class OrtamClient {
         `/sandboxes/${encodeURIComponent(id)}/processes`,
         identity,
         "POST",
-        body,
+        this.mode === "api_key"
+          ? {
+              ...body,
+              cwd: "/workspace",
+              argv: body.argv.map((arg, index) => {
+                const mapped = arg.replaceAll("/home/ortam", "/workspace")
+                return index === 2 && body.argv[0] === "sh" && body.argv[1] === "-c"
+                  ? `${PUBLIC_RUNNER_SETUP}\n${mapped}`
+                  : mapped
+              }),
+            }
+          : body,
         key,
       ),
     )

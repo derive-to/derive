@@ -5012,7 +5012,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The workspace's boat.dev compute connection. */
+        /** The workspace's sandbox connection. */
         get: {
             parameters: {
                 query?: never;
@@ -5033,7 +5033,7 @@ export interface paths {
                 };
             };
         };
-        /** Verify and connect the workspace's boat.dev API key. */
+        /** Verify and connect the workspace's sandbox API key. */
         put: {
             parameters: {
                 query?: never;
@@ -5045,6 +5045,11 @@ export interface paths {
                 content: {
                     "application/json": {
                         api_key: string;
+                        /**
+                         * @default boat
+                         * @enum {string}
+                         */
+                        provider?: "boat" | "ortam";
                     };
                 };
             };
@@ -8139,6 +8144,8 @@ export interface components {
         };
         ComputeConnection: {
             available: boolean;
+            /** @enum {string} */
+            provider: "boat" | "ortam";
             connected: boolean;
             account_id: string | null;
             can_manage: boolean;

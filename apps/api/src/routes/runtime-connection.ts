@@ -4,13 +4,22 @@ import type { AppContext } from "../context"
 import { BoatClient } from "../lib/boat-client"
 import { encryptSecret } from "../lib/crypto"
 import { bail, fail } from "../lib/http"
-import { BOAT_API_URL, boatConnection, boatConnectionId } from "../lib/runtime-connection"
+import { OrtamClient } from "../lib/ortam-client"
+import {
+  BOAT_API_URL,
+  ORTAM_API_URL,
+  runtimeConnection,
+  runtimeConnectionId,
+  sandboxApiUrl,
+  workspaceRuntime,
+} from "../lib/runtime-connection"
 import { log } from "../log"
-import { stopAccountConnection } from "./account-login"
+import { accountConnectionPending, stopAccountConnection } from "./account-login"
 
 const Connection = z
   .object({
     available: z.boolean(),
+    provider: z.enum(["boat", "ortam"]),
     connected: z.boolean(),
     account_id: z.string().nullable(),
     can_manage: z.boolean(),
@@ -27,15 +36,17 @@ const response = {
 export const runtimeConnectionRoutes = (ctx: AppContext) => {
   const { meta, deps, requireWorkspace } = ctx
   const app = new OpenAPIHono<BlankEnv>()
-  const available = !!deps.encryptionKey && deps.runtime?.provider === "boat"
+  const available = !!deps.encryptionKey && !!deps.runtime
   const view = async (org: string, canManage: boolean) => {
-    const cn = await boatConnection(meta, org)
+    const cn = await runtimeConnection(meta, org)
     return {
       available,
+      provider: (await workspaceRuntime(meta, deps.runtime, org)).provider,
       connected: cn?.status === "active",
       account_id: cn?.status === "active" ? cn.broker_ref : null,
       can_manage: canManage,
-      snapshot: (await meta.getOrgSettings(org)).boatSnapshot ?? null,
+      snapshot:
+        cn?.toolkit === "boat" ? ((await meta.getOrgSettings(org)).boatSnapshot ?? null) : null,
     }
   }
 
@@ -44,7 +55,7 @@ export const runtimeConnectionRoutes = (ctx: AppContext) => {
       method: "get",
       path: "/v1/runtime/connection",
       tags: ["Agents"],
-      summary: "The workspace's boat.dev compute connection.",
+      summary: "The workspace's sandbox connection.",
       responses: { 200: response },
     }),
     async (c) => {
@@ -60,12 +71,15 @@ export const runtimeConnectionRoutes = (ctx: AppContext) => {
       method: "put",
       path: "/v1/runtime/connection",
       tags: ["Agents"],
-      summary: "Verify and connect the workspace's boat.dev API key.",
+      summary: "Verify and connect the workspace's sandbox API key.",
       request: {
         body: {
           content: {
             "application/json": {
-              schema: z.object({ api_key: z.string().trim().min(8).max(4096) }),
+              schema: z.object({
+                api_key: z.string().trim().min(8).max(4096),
+                provider: z.enum(["boat", "ortam"]).default("boat"),
+              }),
             },
           },
         },
@@ -77,35 +91,42 @@ export const runtimeConnectionRoutes = (ctx: AppContext) => {
       const org = await requireWorkspace(c, "manage")
       if (org instanceof Response) return bail(org)
       const who = await ctx.managementPrincipal(c)
-      if (!who) return bail(fail(c, 403, "A workspace owner connects boat.dev"))
+      if (!who) return bail(fail(c, 403, "A workspace owner connects cloud compute"))
       const key = deps.encryptionKey
       if (!key || !available)
         return bail(fail(c, 503, "Cloud compute is not enabled on this server"))
-      const old = await boatConnection(meta, org)
-      let identity: { user_id: string }
+      const old = await runtimeConnection(meta, org)
+      const input = c.req.valid("json")
+      const label = input.provider === "boat" ? "boat.dev" : "Ortam"
+      if (old && old.toolkit !== input.provider && old.status === "active")
+        return bail(fail(c, 409, "Disconnect the current sandbox provider before switching."))
+      let identity: { user_id: string; organization_id: string }
       try {
-        identity = await new BoatClient(
-          BOAT_API_URL,
-          c.req.valid("json").api_key,
-          deps.runtimeFetch,
+        identity = await (input.provider === "boat"
+          ? new BoatClient(BOAT_API_URL, input.api_key, deps.runtimeFetch)
+          : new OrtamClient(ORTAM_API_URL, input.api_key, "", deps.runtimeFetch, "api_key")
         ).authenticate()
       } catch {
         return bail(
           fail(
             c,
             400,
-            "boat.dev could not verify this key. Check that it is an account API key and try again.",
+            `${label} could not verify this key. Check the key and its sandbox permissions, then try again.`,
           ),
         )
       }
       // A sandbox belongs to the account that created it. Rotation must keep that identity.
-      if (old && old.broker_ref !== identity.user_id) {
-        if (old.status === "active")
+      const account =
+        input.provider === "boat"
+          ? identity.user_id
+          : `${identity.organization_id}:${identity.user_id}`
+      if (!old || old.toolkit !== input.provider || old.broker_ref !== account) {
+        if (old?.status === "active")
           return bail(
             fail(
               c,
               409,
-              "This key belongs to another boat.dev account. Disconnect the current account first.",
+              "This key belongs to another account. Disconnect the current account first.",
             ),
           )
         const agents = await meta.listAgents(org)
@@ -118,12 +139,25 @@ export const runtimeConnectionRoutes = (ctx: AppContext) => {
             ),
           )
       }
-      const secret_enc = encryptSecret(c.req.valid("json").api_key, key)
+      if (old && old.toolkit !== input.provider) {
+        // Disconnect keeps the old credential for cleanup. Replacement is safe only
+        // after every sandbox is retired, and never while a model login owns compute.
+        if ((await meta.listAccounts(org)).some((a) => accountConnectionPending(a, key)))
+          return bail(fail(c, 409, "Finish or cancel model sign-in before switching providers."))
+      }
+      const secret_enc = encryptSecret(input.api_key, key)
       if (old) {
         const saved = await meta.updateConnectionCredential(
           old.id,
           org,
-          { secret_enc, broker_ref: identity.user_id, status: "active" },
+          {
+            secret_enc,
+            broker_ref: account,
+            status: "active",
+            toolkit: input.provider,
+            base_url: sandboxApiUrl(input.provider),
+            scopes_label: label,
+          },
           old.secret_enc,
           old.status,
         )
@@ -131,18 +165,18 @@ export const runtimeConnectionRoutes = (ctx: AppContext) => {
       } else {
         try {
           await meta.createConnection({
-            id: boatConnectionId(org),
+            id: runtimeConnectionId(org),
             org_id: org,
             user_id: who,
             scope: "workspace",
             kind: "runtime",
-            toolkit: "boat",
+            toolkit: input.provider,
             broker: "none",
-            broker_ref: identity.user_id,
-            base_url: BOAT_API_URL,
+            broker_ref: account,
+            base_url: sandboxApiUrl(input.provider),
             secret_enc,
             status: "active",
-            scopes_label: "boat.dev",
+            scopes_label: label,
           })
         } catch {
           return bail(fail(c, 409, "This connection changed. Open it again."))
@@ -183,8 +217,9 @@ export const runtimeConnectionRoutes = (ctx: AppContext) => {
       if (!(await ctx.managementPrincipal(c)))
         return bail(fail(c, 403, "A workspace owner chooses the runner setup"))
       if (!available) return bail(fail(c, 503, "Cloud compute is not enabled on this server"))
-      const cn = await boatConnection(meta, org)
-      if (cn?.status !== "active") return bail(fail(c, 409, "Connect boat.dev first"))
+      const cn = await runtimeConnection(meta, org)
+      if (cn?.status !== "active" || cn.toolkit !== "boat")
+        return bail(fail(c, 409, "Connect boat.dev to choose a Boat snapshot"))
       await meta.setBoatSnapshot(org, c.req.valid("json").snapshot)
       return c.json(await view(org, true))
     },
@@ -201,7 +236,7 @@ export const runtimeConnectionRoutes = (ctx: AppContext) => {
     async (c) => {
       const org = await requireWorkspace(c, "manage")
       if (org instanceof Response) return bail(org)
-      const cn = await boatConnection(meta, org)
+      const cn = await runtimeConnection(meta, org)
       if (cn) {
         // Retain the encrypted key for archive operations. No new work can spend it.
         const changed = await meta.updateConnectionCredential(

@@ -419,7 +419,7 @@ const CONFIG_VARS: ConfigVar[] = [
   {
     name: "DERIVE_SANDBOX_PROVIDER",
     group: "advanced",
-    doc: "The adapter for Derive machines: ortam (default) or boat. Existing sandboxes stay pinned to their provider. Retire them before switching.",
+    doc: "Default adapter for workspaces without a saved compute connection: ortam or boat. Owners connect either provider in Settings. Existing sandboxes stay pinned until retirement.",
     example: "ortam",
   },
   {

@@ -17,7 +17,7 @@ import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 import { machineDepsFrom, retireSandbox } from "../lib/job-machine"
 import { agentAccess, cancelJob } from "../lib/jobs"
-import { cloudEnabled } from "../lib/runtime-connection"
+import { cloudEnabled, workspaceRuntime } from "../lib/runtime-connection"
 import { previousOccurrence } from "../lib/schedule"
 
 /** Agent registry (Admin-managed) + the agent's pull inbox of @mentions. The Agent +
@@ -52,7 +52,10 @@ export const agentRoutes = (ctx: AppContext) => {
       const org = await requireWorkspace(c, "read")
       if (org instanceof Response) return bail(org)
       const enabled = await cloudEnabled(meta, deps.runtime, org)
-      return c.json({ enabled, provider: deps.runtime?.provider ?? null })
+      return c.json({
+        enabled,
+        provider: deps.runtime ? (await workspaceRuntime(meta, deps.runtime, org)).provider : null,
+      })
     },
   )
 
@@ -64,8 +67,13 @@ export const agentRoutes = (ctx: AppContext) => {
       return []
     }
   }
-  const agentJson = (a: AgentRecord, extra: { instructions_short_id?: string | null } = {}) => {
+  const agentJson = async (
+    a: AgentRecord,
+    extra: { instructions_short_id?: string | null; sandboxProvider?: "boat" | "ortam" } = {},
+  ) => {
     const environment = readEnvironmentBindings(a.environment_json)
+    const sandboxProvider =
+      extra.sandboxProvider ?? (await workspaceRuntime(meta, deps.runtime, a.org_id)).provider
     return {
       id: a.id,
       name: a.name,
@@ -79,7 +87,9 @@ export const agentRoutes = (ctx: AppContext) => {
       runtime:
         a.machine === "derive" && deps.runtime
           ? {
-              provider: deps.runtime.provider ?? "ortam",
+              provider: a.sandbox_state_json
+                ? (JSON.parse(a.sandbox_state_json).provider ?? sandboxProvider)
+                : sandboxProvider,
               phase: a.sandbox_phase,
             }
           : null,
@@ -266,17 +276,21 @@ export const agentRoutes = (ctx: AppContext) => {
       ]
       const pages = pageIds.length ? await meta.getArtifactsByIds(pageIds).catch(() => []) : []
       const shortOf = new Map(pages.map((p) => [p.id, p.short_id]))
+      const sandboxProvider = (await workspaceRuntime(meta, deps.runtime, org)).provider
       return c.json({
-        agents: agents.map((a) => ({
-          ...agentJson(a, {
-            instructions_short_id: a.instructions_artifact_id
-              ? (shortOf.get(a.instructions_artifact_id) ?? null)
-              : null,
-          }),
-          triggers: triggers.filter((t) => t.agent_id === a.id).map(triggerJson),
-          last_job_at: lastJob.get(a.id) ?? null,
-          ...agentAccess(a, member, caller),
-        })),
+        agents: await Promise.all(
+          agents.map(async (a) => ({
+            ...(await agentJson(a, {
+              sandboxProvider,
+              instructions_short_id: a.instructions_artifact_id
+                ? (shortOf.get(a.instructions_artifact_id) ?? null)
+                : null,
+            })),
+            triggers: triggers.filter((t) => t.agent_id === a.id).map(triggerJson),
+            last_job_at: lastJob.get(a.id) ?? null,
+            ...agentAccess(a, member, caller),
+          })),
+        ),
       })
     },
   )
@@ -516,7 +530,7 @@ export const agentRoutes = (ctx: AppContext) => {
       // The only place the raw key is ever exposed.
       return c.json(
         {
-          ...agentJson(agent, { instructions_short_id: b.instructions_short_id ?? null }),
+          ...(await agentJson(agent, { instructions_short_id: b.instructions_short_id ?? null })),
           token,
           runner_command,
           trigger: trigger ? triggerJson(trigger) : null,
@@ -557,9 +571,9 @@ export const agentRoutes = (ctx: AppContext) => {
       const member = await meta.getMembership(org, who.id)
       if (!agent || agent.org_id !== org || !member) return bail(fail(c, 404, "agent not found"))
       return c.json({
-        ...agentJson(agent, {
+        ...(await agentJson(agent, {
           instructions_short_id: await instructionsShortId(agent),
-        }),
+        })),
         triggers: (await meta.listTriggers(agent.org_id, agent.id)).map(triggerJson),
         ...agentAccess(agent, member, await ctx.agentFor(c)),
       })
@@ -657,7 +671,7 @@ export const agentRoutes = (ctx: AppContext) => {
       }
       if (!updated) return bail(fail(c, 404, "agent not found"))
       return c.json(
-        agentJson(updated, {
+        await agentJson(updated, {
           instructions_short_id: await instructionsShortId(updated),
         }),
       )
@@ -790,9 +804,9 @@ export const agentRoutes = (ctx: AppContext) => {
       const rotated = await meta.rotateAgentToken(c.req.param("id"), org, sha256(token))
       if (!rotated) return bail(fail(c, 404, "agent not found"))
       return c.json({
-        ...agentJson(rotated, {
+        ...(await agentJson(rotated, {
           instructions_short_id: await instructionsShortId(rotated),
-        }),
+        })),
         token,
       })
     },
@@ -896,7 +910,7 @@ export const agentRoutes = (ctx: AppContext) => {
     const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 20))
     const mentions = await meta.listPendingAgentMentions(agent.id, limit)
     return c.json({
-      agent: agentJson(agent),
+      agent: await agentJson(agent),
       mentions: mentions.map((m) => ({
         id: m.id,
         artifact: m.artifact_short_id,

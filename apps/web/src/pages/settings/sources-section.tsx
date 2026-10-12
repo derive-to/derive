@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input"
 import { connectionsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useOneShotParams } from "@/lib/use-one-shot-params"
-import { BoatConnection } from "./boat-connection"
+import { CloudConnection } from "./cloud-connection"
 import { SecretsGroup } from "./secrets-group"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
@@ -59,7 +59,7 @@ export function SourcesSection() {
       title="Connections"
       description="Connect cloud compute, tools, and secrets for this workspace."
     >
-      <BoatConnection />
+      <CloudConnection />
       {justConnected ? (
         <StatusPanel
           tone="success"

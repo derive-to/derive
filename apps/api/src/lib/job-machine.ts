@@ -14,7 +14,7 @@ import {
 import { OrtamClient } from "./ortam-client"
 import { RUN_LEASE_MS, RUN_TIMEOUT_MS } from "./run-lifecycle"
 import { signWorkToken } from "./run-token"
-import { boatClient, boatConnection, cloudEnabled } from "./runtime-connection"
+import { cloudEnabled, connectionClient, workspaceRuntime } from "./runtime-connection"
 import { runtimeFailureReason } from "./runtime-diagnostics"
 import { INSTALL_RUNTIME_RUNNER, runnerRunsJobs } from "./runtime-setup"
 import type { SandboxClient } from "./sandbox-client"
@@ -114,14 +114,27 @@ const sandboxRequest = (agent: AgentRecord, state: SandboxState) => ({
   ...(state.snapshot ? { snapshot: state.snapshot } : {}),
 })
 
+/** Existing integration sandboxes retain their deployment credential for cleanup.
+ * Workspace connections cannot take ownership of their per-agent integration identity. */
+const runtimeForAgent = async (deps: MachineDeps, agent: AgentRecord) => {
+  const state = parse<SandboxState>(agent.sandbox_state_json)
+  return state?.api_url && !state.connection_id
+    ? { provider: state.provider ?? "ortam", apiUrl: deps.config.apiUrl, connection: null }
+    : workspaceRuntime(deps.meta, deps.config, agent.org_id)
+}
+
 /** One provider selection for normal work and retirement. Ortam scopes identity per agent. */
 const clientFor = async (deps: MachineDeps, agent: AgentRecord): Promise<SandboxClient> => {
-  if (deps.config.provider === "boat") {
-    const cn = await boatConnection(deps.meta, agent.org_id)
-    const state = parse<SandboxState>(agent.sandbox_state_json)
-    if (!cn || (state?.connection_id && state.connection_id !== cn.id))
-      throw new Error("boat.dev connection is unavailable")
-    return boatClient(cn, deps.secret, deps.fetcher)
+  const runtime = await runtimeForAgent(deps, agent)
+  const state = parse<SandboxState>(agent.sandbox_state_json)
+  if (runtime.connection) {
+    if (
+      state?.connection_id &&
+      (state.connection_id !== runtime.connection.id ||
+        state.provider !== runtime.connection.toolkit)
+    )
+      throw new Error("Sandbox connection changed")
+    return connectionClient(runtime.connection, deps.secret, deps.fetcher)
   }
   if (!deps.config.managed?.apiKey) throw new Error("Derive machines are not configured")
   return new OrtamClient(
@@ -162,6 +175,7 @@ export async function advanceSandbox(
       ...(id !== undefined ? { sandbox_id: id } : {}),
     })
   const allowed = await admitted(deps, agent)
+  const runtime = await runtimeForAgent(deps, agent)
 
   if (agent.sandbox_phase === null) {
     if (!allowed) return agent
@@ -171,13 +185,11 @@ export async function advanceSandbox(
     return meta.transitionAgentSandbox(agent.id, agent.org_id, agent.sandbox_rev, {
       phase: "creating",
       state_json: JSON.stringify({
-        api_url: deps.config.apiUrl,
-        provider: deps.config.provider ?? "ortam",
-        ...(deps.config.provider === "boat"
-          ? { connection_id: (await boatConnection(meta, agent.org_id))?.id }
-          : {}),
+        api_url: runtime.apiUrl,
+        provider: runtime.provider,
+        ...(runtime.connection ? { connection_id: runtime.connection.id } : {}),
         identity: { organization_id: auth.organization_id, user_id: auth.user_id },
-        ...(deps.config.provider === "boat"
+        ...(runtime.provider === "boat"
           ? { snapshot: (await meta.getOrgSettings(agent.org_id)).boatSnapshot }
           : {}),
         generation: newId("sbg"),
@@ -186,10 +198,7 @@ export async function advanceSandbox(
     })
   }
   if (!state) return move("failed")
-  if (
-    state.api_url !== deps.config.apiUrl ||
-    (state.provider ?? "ortam") !== (deps.config.provider ?? "ortam")
-  )
+  if (state.api_url !== runtime.apiUrl || (state.provider ?? "ortam") !== runtime.provider)
     throw new Error("Sandbox belongs to a different runtime")
   const client = await clientFor(deps, agent)
   const id = agent.sandbox_id
@@ -341,10 +350,8 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
     await move("released")
     return
   }
-  if (
-    state.api_url !== deps.config.apiUrl ||
-    (state.provider ?? "ortam") !== (deps.config.provider ?? "ortam")
-  )
+  const runtime = await runtimeForAgent(deps, agent)
+  if (state.api_url !== runtime.apiUrl || (state.provider ?? "ortam") !== runtime.provider)
     throw new Error("Sandbox belongs to a different runtime")
   const client = await clientFor(deps, agent)
   const sandbox = agent.sandbox_id
@@ -480,10 +487,8 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
                   ...(result.compute ?? []),
                   {
                     turn: m.turn,
-                    provider: deps.config.provider ?? "ortam",
-                    ...(deps.config.provider === "boat"
-                      ? { connection_id: (await boatConnection(meta, agent.org_id))?.id }
-                      : {}),
+                    provider: state.provider ?? "ortam",
+                    ...(state.connection_id ? { connection_id: state.connection_id } : {}),
                     sandbox_id: sandbox,
                     started_at: m.active_at,
                     stopped_at: stopped,
@@ -578,8 +583,6 @@ export async function machinePass(
         }),
       )
 
-  const orgs = machineWorkspaces(deps.config)
-  if (deps.config.provider !== "boat" && orgs.size === 0) return out
   // Sandboxes coming up count against the same ceilings as jobs holding one.
   const starting = await meta.listAgentsInSandboxPhase(["creating", "provisioning"], 100)
   const perOrg = new Map<string, number>()
@@ -588,10 +591,7 @@ export async function machinePass(
   for (const a of starting) count(a.org_id)
   let room = GLOBAL_LIMIT - [...perOrg.values()].reduce((n, x) => n + x, 0)
   const tried = new Set<string>()
-  for (const job of await meta.listQueuedDeriveJobs(
-    50,
-    deps.config.provider === "boat" ? undefined : [...orgs],
-  )) {
+  for (const job of await meta.listQueuedDeriveJobs(50)) {
     if (room <= 0) break
     if ((perOrg.get(job.org_id) ?? 0) >= ORG_LIMIT) continue
     if (tried.has(job.agent_id)) continue
@@ -718,13 +718,10 @@ async function failWaiting(deps: MachineDeps, agent: AgentRecord, why: string) {
 export async function retireSandbox(deps: MachineDeps | null, agent: AgentRecord): Promise<void> {
   const state = parse<SandboxState>(agent.sandbox_state_json)
   if (!state?.identity || !deps) return
-  const { config } = deps
+  const runtime = await runtimeForAgent(deps, agent)
   if (agent.sandbox_phase === null || agent.sandbox_phase === "failed") return
   try {
-    if (
-      state.api_url !== config.apiUrl ||
-      (state.provider ?? "ortam") !== (config.provider ?? "ortam")
-    )
+    if (state.api_url !== runtime.apiUrl || (state.provider ?? "ortam") !== runtime.provider)
       throw new Error("Sandbox belongs to a different runtime")
     const client = await clientFor(deps, agent)
     // A create whose answer never arrived still made a sandbox; its key finds it.
@@ -760,10 +757,7 @@ export const machineDepsFrom = (
     announce?: JobDeps["announce"]
   },
 ): MachineDeps | null =>
-  opts.secret &&
-  opts.server &&
-  opts.config &&
-  (opts.config.provider === "boat" || opts.config.managed?.apiKey)
+  opts.secret && opts.server && opts.config
     ? {
         meta,
         secret: opts.secret,
