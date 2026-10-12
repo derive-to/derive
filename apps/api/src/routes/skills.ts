@@ -176,21 +176,27 @@ export const skillRoutes = (ctx: AppContext) => {
   // existing browser source editor can edit SKILL.md without making the person
   // download, unzip, rebuild, and re-upload the whole bundle. The write overlays
   // only that file; scripts, references, assets, and derive.skill.json are retained.
+  // Agents can also use standalone Markdown instructions. Keep those pages in
+  // their authored format when the agent's Skill tab reads or edits them.
   app.get("/v1/artifacts/:shortId/skill-source", async (c) => {
     const skill = await requireArtifact(c, "read")
     if (skill instanceof Response) return skill
-    if (skill.current_content_type !== SKILL_CONTENT_TYPE) return fail(c, 404, "not a skill")
+    const markdown = skill.current_content_type === "text/markdown"
+    if (!markdown && skill.current_content_type !== SKILL_CONTENT_TYPE)
+      return fail(c, 404, "not a skill or Markdown instructions")
     const version = await meta.getVersion(skill.id, skill.current_version)
     const text = version ? await pageTextResolver(blobs, version) : null
     const source = text ? await text("/SKILL.md") : null
-    if (!version || source === null) return fail(c, 404, "SKILL.md not found")
+    if (!version || source === null) return fail(c, 404, "instructions not found")
     return c.json({ source, version: version.n })
   })
 
   app.put("/v1/artifacts/:shortId/skill-source", async (c) => {
     const skill = await requireArtifact(c, "publish", { split: true })
     if (skill instanceof Response) return skill
-    if (skill.current_content_type !== SKILL_CONTENT_TYPE) return fail(c, 404, "not a skill")
+    const markdown = skill.current_content_type === "text/markdown"
+    if (!markdown && skill.current_content_type !== SKILL_CONTENT_TYPE)
+      return fail(c, 404, "not a skill or Markdown instructions")
     if (skill.locked) return fail(c, 409, "artifact is locked — unlock it to publish")
     const body = await readJson(c, skillSourceBody)
     if (body instanceof Response) return body
@@ -198,25 +204,35 @@ export const skillRoutes = (ctx: AppContext) => {
       return fail(c, 409, `Skill changed since editing began (now v${skill.current_version})`)
 
     const version = await meta.getVersion(skill.id, skill.current_version)
-    const manifest = version ? await manifestOf(blobs, version) : null
-    const text = version ? await pageTextResolver(blobs, version) : null
-    const sidecar = text ? await text(SKILL_SIDECAR_PATH) : null
-    if (!version || !manifest) return fail(c, 404, "Skill bundle not found")
-    const checked = validateSkillDefinition(body.source, sidecar)
-    if (checked.errors.length) return fail(c, 400, checked.errors.join("; "))
+    if (!version) return fail(c, 404, "instructions not found")
+    let bytes: Uint8Array
+    let title = body.title ?? skill.title ?? undefined
+    if (markdown) {
+      bytes = new TextEncoder().encode(body.source)
+    } else {
+      const manifest = await manifestOf(blobs, version)
+      const text = await pageTextResolver(blobs, version)
+      const sidecar = await text(SKILL_SIDECAR_PATH)
+      if (!manifest) return fail(c, 404, "Skill bundle not found")
+      const checked = validateSkillDefinition(body.source, sidecar)
+      if (checked.errors.length) return fail(c, 400, checked.errors.join("; "))
+      bytes = await mergeBundleZip(blobs, manifest, { "SKILL.md": body.source })
+      title ??= checked.metadata?.name ?? undefined
+    }
 
     const human = await actingHuman(c)
     const actor = (await actingUser(c)) ?? human
-    const bytes = await mergeBundleZip(blobs, manifest, { "SKILL.md": body.source })
     const saved = await publish(
       meta,
       blobs,
       {
         bytes,
-        filename: "skill.zip",
-        isBundle: true,
-        title: body.title ?? skill.title ?? checked.metadata?.name ?? undefined,
-        message: body.message?.trim() || "Edited SKILL.md in browser",
+        filename: markdown ? "instructions.md" : "skill.zip",
+        isBundle: !markdown,
+        title,
+        message:
+          body.message?.trim() ||
+          (markdown ? "Edited instructions in browser" : "Edited SKILL.md in browser"),
         author: human?.name ?? actor?.name ?? undefined,
         authorId: human?.id ?? null,
         agentId: actor && actor.id !== human?.id ? actor.id : null,

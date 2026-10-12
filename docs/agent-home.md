@@ -4,7 +4,8 @@ For the proposed harness-independent worker and complete journey, see
 [Portable cloud-agent worker](cloud-agent-worker.md). That design changes no runtime behavior.
 
 An agent saves a skill, model account, model, and access. A task uses the existing Job record.
-The skill is a versioned `SKILL.md` bundle. Connections grant access; instructions do not.
+The skill is a versioned `SKILL.md` bundle or a standalone Markdown instructions page.
+Connections grant access; instructions do not.
 
 ## Start an agent
 
@@ -18,6 +19,7 @@ The skill is a versioned `SKILL.md` bundle. Connections grant access; instructio
 The form waits while Chat writes the skill. The agent’s Skill tab reads and edits the same artifact.
 Use Write with AI for Chat, or Edit instructions for the existing source editor.
 Saving creates a version. A plain SKILL.md bundle needs no Derive sidecar.
+Standalone Markdown instructions stay Markdown when saved from the Skill tab.
 Unsaved instructions and version notes require a choice before leaving the editor.
 Saving checks the version atomically. A conflict keeps the draft and shows an inline error.
 Each new task records its skill version. Settings changes the model and account.
