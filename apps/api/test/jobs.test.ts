@@ -2145,6 +2145,18 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
     pilotWorkspaceIds: new Set<string>(),
     managed: { apiKey: "integration fixture", workspaceIds: new Set(["default"]) },
   }
+  const connectModel = async (app: App) => {
+    const connected = await app.request(
+      "/v1/accounts",
+      jsonAs(as(owner.email), {
+        provider: "claude",
+        kind: "api_key",
+        secret: "machine-fixture-key",
+        shared: true,
+      }),
+    )
+    expect(connected.status).toBe(201)
+  }
   /** A fake Ortam: sandboxes, operations that finish on the next read, and processes whose
    *  launch hands the test the env the runner would get. */
   const fakeOrtam = () => {
@@ -2244,6 +2256,7 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
     })
     const { app, meta } = made
     await app.request("/v1/me", { headers: as(owner.email) })
+    await connectModel(app)
     const created = await app.request(
       "/v1/agents",
       jsonAs(as(owner.email), { name: "Refused", machine: "derive" }),
@@ -2286,6 +2299,7 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
     })
     const { app, meta } = made
     await app.request("/v1/me", { headers: as(owner.email) })
+    await connectModel(app)
     await app.request("/v1/me", { headers: as(ed.email) })
     const created = await app.request(
       "/v1/agents",
@@ -2348,6 +2362,7 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
     })
     const { app, meta } = made
     await app.request("/v1/me", { headers: as(owner.email) })
+    await connectModel(app)
     await app.request("/v1/me", { headers: as(ed.email) })
     const page = (await (
       await publishAs(
@@ -2422,6 +2437,7 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
     })
     const { app, meta } = made
     await app.request("/v1/me", { headers: as(owner.email) })
+    await connectModel(app)
     const agent = (await (
       await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Flaky", machine: "derive" }))
     ).json()) as { id: string }
@@ -2453,6 +2469,7 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
       deps: { encryptionKey: "test-encryption-key", runtime: config },
     })
     await made.app.request("/v1/me", { headers: as(owner.email) })
+    await connectModel(made.app)
     await made.app.request("/v1/me", { headers: as(ed.email) })
     const agent = (await (
       await made.app.request(
