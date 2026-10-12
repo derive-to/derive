@@ -114,7 +114,7 @@ export const machineWorkspaces = (
 /** The one create request for an agent's sandbox; a replay with its key must send the same. */
 const sandboxRequest = (agent: AgentRecord, state: SandboxState, deps: MachineDeps) => ({
   name: `derive-${agent.id.replaceAll("_", "-")}`,
-  size: "small",
+  size: "small" as const,
   auto_stop_after_seconds: 1200,
   setup_script: state.setup_script ?? runtimeSetup(deps.config.runnerArchive),
   ...(state.snapshot ? { snapshot: state.snapshot } : {}),
