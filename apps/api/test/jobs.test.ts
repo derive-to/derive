@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process"
-import { existsSync, mkdtempSync } from "node:fs"
+import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import type { AddressInfo } from "node:net"
 import { tmpdir } from "node:os"
@@ -1844,6 +1844,11 @@ describe("jobs: which account a job runs with", () => {
 })
 
 describe("jobs: the CLI runner (derive runner serve --agent)", () => {
+  // These cases inject model replies. Supply the harness version that preflight checks,
+  // so they do not depend on a model CLI installed on the CI machine.
+  const harness = join(mkdtempSync(join(tmpdir(), "derive-runner-version-")), "claude")
+  writeFileSync(harness, "#!/bin/sh\nprintf '1.0.0\\n'\n")
+  chmodSync(harness, 0o755)
   const runnerFor = (app: App, agent: { id: string; token: string }, extra = {}) => {
     const cfg = loadJobRunnerConfig(
       {},
@@ -1851,6 +1856,7 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
         agent: agent.id,
         token: agent.token,
         server: "http://derive.test",
+        "claude-bin": harness,
         ...extra,
       },
     )
