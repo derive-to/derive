@@ -291,6 +291,10 @@ export async function advanceSandbox(
       const sandbox = await client.sandbox(id, state.identity)
       if (sandbox.state === "stopped")
         return move(allowed ? "ready" : "deleting", { stop_op: undefined, failures: 0 })
+      // Ortam ends a sandbox whose activation failed in `failed`, which refuses every lifecycle
+      // call (409). It will not come back: delete it, and the next job builds a fresh one.
+      if (sandbox.state === "failed")
+        return move("deleting", { stop_op: undefined, failures: broke() })
       if (!state.stop_op) {
         const op = await client.lifecycle(
           id,
@@ -504,6 +508,23 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
     }
     case "stopping": {
       const observed = await client.sandbox(sandbox, state.identity)
+      // A sandbox Ortam marked `failed` (an activation that failed on resume) refuses stop with
+      // a 409 forever. Give the job back to the queue and the sandbox to deletion; the agent's
+      // next job builds a fresh one.
+      if (observed.state === "failed") {
+        await failIfOpen(deps, agent, job, "The machine for this job failed to start.")
+        const released = await move("released")
+        if (released)
+          await meta.transitionAgentSandbox(agent.id, agent.org_id, agent.sandbox_rev, {
+            phase: "deleting",
+            state_json: JSON.stringify({
+              ...state,
+              holder: null,
+              failures: (state.failures ?? 0) + 1,
+            }),
+          })
+        return
+      }
       if (observed.state !== "stopped") {
         if (!m.stop_op) {
           const op = await client.lifecycle(

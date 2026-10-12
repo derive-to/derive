@@ -4,11 +4,13 @@ import {
   type JobCommandReceipt,
   type JobEventRecord,
   type JobExecutionStore,
+  type JobNeeds,
   type JobRecord,
   type JobResult,
   type JobTurnRecord,
   type JobTurnSummary,
   newId,
+  questionHistory,
 } from "@derive/core"
 import { type SQL, sql } from "drizzle-orm"
 import type { NodePgDatabase } from "drizzle-orm/node-postgres"
@@ -432,10 +434,31 @@ export const jobExecutionRepos = (
           WHERE job_id = ${job.id} AND org_id = ${job.org_id} AND status = 'queued'`)
       const status = waiting && input.status === "succeeded" ? "queued" : input.status
       if (input.status !== "failed") delete combined.failure
+      let needsJson = input.needs_json
+      if (input.status === "needs_you" && job.trigger_id && needsJson) {
+        const earlier = (
+          await tx.execute(sql`SELECT id, needs_json, result_json, updated_at FROM job
+            WHERE org_id = ${job.org_id} AND agent_id = ${job.agent_id}
+            AND trigger_id = ${job.trigger_id} AND id <> ${job.id}
+            AND status = 'needs_you' ORDER BY id FOR UPDATE`)
+        ).rows as unknown as Pick<JobRecord, "id" | "needs_json" | "result_json" | "updated_at">[]
+        needsJson = JSON.stringify(questionHistory(JSON.parse(needsJson) as JobNeeds, earlier))
+        for (const old of earlier)
+          await repos.updateJob(old.id, {
+            status: "cancelled",
+            finished_at: now,
+            lease_until: null,
+            dedupe_key: null,
+            result_json: JSON.stringify({
+              ...JSON.parse(old.result_json ?? "{}"),
+              superseded_by: job.id,
+            }),
+          })
+      }
       const updated = await repos.updateJob(job.id, {
         status,
         result_json: JSON.stringify(combined),
-        needs_json: input.needs_json,
+        needs_json: needsJson,
         lease_until: null,
         ...(status === "queued"
           ? { started_at: null, finished_at: null, attempt: 0 }

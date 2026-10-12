@@ -44,6 +44,10 @@ export interface JobNeeds {
   options?: string[]
   /** The review round, for `kind: review`. */
   review_round_id?: string
+  /** For a scheduled job that asked again what an earlier run of the same schedule already
+   *  asked: how many runs have asked (this one included) and when the first did. */
+  asked_times?: number
+  first_asked_at?: string
 }
 
 /** One thing a job changed in the world. A page is the kind Derive knows best; the rest are
@@ -92,6 +96,8 @@ export interface JobResult {
   effects?: JobEffect[]
   evidence?: { label: string; url?: string; ref?: string }[]
   failure?: { reason: string; retryable: boolean }
+  /** Closed without an answer because a later run of the same schedule asked again. */
+  superseded_by?: string
   /** A graph job's recorded route: which node ran, which attempt, where it went next. */
   route?: { node_id: string; attempt: number; selected?: string[]; decision?: string }[]
 }
@@ -297,6 +303,8 @@ export interface JobQuery {
   kind?: readonly JobKind[]
   parentId?: string
   askedBy?: string
+  /** Only jobs opened by this schedule. */
+  triggerId?: string
   /** Only the job whose report page is this artifact. */
   reportArtifactId?: string
   /** Only jobs whose subject_json is one of these (a page's selector, by short id or id). */
@@ -469,6 +477,20 @@ const parseJson = <T>(raw: string | null | undefined): T | null => {
 }
 export const jobNeeds = (j: Pick<JobRecord, "needs_json">): JobNeeds | null =>
   parseJson<JobNeeds>(j.needs_json)
+/** Keep the first ask and total ask count when a schedule replaces an open question. */
+export const questionHistory = (
+  needs: JobNeeds,
+  earlier: readonly Pick<JobRecord, "needs_json" | "updated_at">[],
+): JobNeeds => {
+  const next = { ...needs }
+  for (const job of earlier) {
+    const prior = jobNeeds(job)
+    next.asked_times = Math.max(next.asked_times ?? 1, (prior?.asked_times ?? 1) + 1)
+    const first = prior?.first_asked_at ?? job.updated_at
+    if (!next.first_asked_at || first < next.first_asked_at) next.first_asked_at = first
+  }
+  return next
+}
 export const jobResult = (j: Pick<JobRecord, "result_json">): JobResult =>
   parseJson<JobResult>(j.result_json) ?? {}
 export const isJobOpen = (s: JobStatus): boolean => JOB_OPEN_STATUSES.includes(s)

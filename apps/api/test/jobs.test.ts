@@ -1109,6 +1109,80 @@ describe("jobs: schedules", () => {
     ).toBe(204)
   })
 
+  it("a schedule that asks again closes its earlier unanswered ask and counts the asks", async () => {
+    const { app, meta } = await setup("jobs-supersede")
+    const created = await app.request(
+      "/v1/agents",
+      jsonAs(as(owner.email), {
+        name: "Sweep",
+        role: "editor",
+        schedule: { cron: "0 9 * * *", tz: "UTC", instruction: "Sweep and ask before any ban" },
+      }),
+    )
+    const a = (await created.json()) as { id: string; token: string }
+    // A runner claims a window only once it has arrived, so the clock moves with the mornings.
+    const day = new Date(Date.now() + 2 * 86_400_000)
+    const at = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 9, 30))
+    vi.useFakeTimers({ toFake: ["Date"] })
+    try {
+      vi.setSystemTime(at)
+      await jobTick({ meta }, at)
+      const [first] = await pull(app, a)
+      await report(app, a.token, first?.id ?? "", {
+        started_at: first?.started_at ?? null,
+        status: "needs_you",
+        needs: { kind: "escalation", question: "Ban R?", options: ["Ban", "Clear"] },
+      })
+      // The next morning runs even though yesterday's question is open, and asks again.
+      const next = new Date(at.getTime() + 86_400_000)
+      vi.setSystemTime(next)
+      await jobTick({ meta }, next)
+      const [second] = await pull(app, a)
+      expect(second?.id).toBeTruthy()
+      expect(second?.id).not.toBe(first?.id)
+      await report(app, a.token, second?.id ?? "", {
+        started_at: second?.started_at ?? null,
+        status: "needs_you",
+        needs: { kind: "escalation", question: "Ban R? (again)", options: ["Ban", "Clear"] },
+      })
+      const jobs = (await (
+        await app.request(`/v1/jobs?agent=${a.id}`, { headers: as(owner.email) })
+      ).json()) as {
+        jobs: {
+          id: string
+          status: string
+          needs: { asked_times?: number; first_asked_at?: string } | null
+          result: { superseded_by?: string }
+        }[]
+      }
+      const open = jobs.jobs.filter((j) => j.status === "needs_you")
+      expect(open.map((j) => j.id)).toEqual([second?.id])
+      expect(open[0]?.needs?.asked_times).toBe(2)
+      expect(open[0]?.needs?.first_asked_at).toBeTruthy()
+      const closed = jobs.jobs.find((j) => j.id === first?.id)
+      expect(closed).toMatchObject({ status: "cancelled", result: { superseded_by: second?.id } })
+      // A run that fails with only a message still leaves its reason on the row.
+      const answered = await app.request(
+        `/v1/jobs/${second?.id}/answer`,
+        jsonAs(as(owner.email), { option: "Clear" }),
+      )
+      expect(answered.status).toBe(200)
+      const [third] = await pull(app, a)
+      await report(app, a.token, third?.id ?? "", {
+        started_at: third?.started_at ?? null,
+        status: "failed",
+        body_md: "The machine for this job failed to start.\nDetails follow.",
+        retryable: false,
+      })
+      const failed = (await (
+        await app.request(`/v1/jobs/${third?.id}`, { headers: as(owner.email) })
+      ).json()) as { result: { failure?: { reason: string } } }
+      expect(failed.result.failure?.reason).toBe("The machine for this job failed to start.")
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it("a lapsed lease is reclaimed by the tick and the job runs again", async () => {
     const { app, meta } = await setup("jobs-reclaim")
     const a = await createAgent(app)

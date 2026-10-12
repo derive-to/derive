@@ -24,6 +24,14 @@ describe("parseAnswer", () => {
     expect(parseAnswer('<answer>{"body_md":"  "}</answer>').error).toMatch(/body_md/)
   })
 
+  it("carries the escalation's options as short labels, and none when there are none", () => {
+    const asked = parseAnswer(
+      '<answer>{"body_md":"x","escalate":true,"escalation_reason":"Ban R?","escalation_options":["Ban 14 days"," Watch ",7,""]}</answer>',
+    )
+    expect(asked.answer.escalation_options).toEqual(["Ban 14 days", "Watch"])
+    expect(parseAnswer('<answer>{"body_md":"x"}</answer>').answer.escalation_options).toEqual([])
+  })
+
   it("accepts a well-formed artifact; malformed/oversized/blank ones demote to null", () => {
     const ok = parseAnswer(
       '<answer>{"body_md":"chart below","artifact":{"title":"Orgs by provider","html":"<!doctype html><svg></svg>"}}</answer>',

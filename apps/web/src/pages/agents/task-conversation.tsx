@@ -44,11 +44,11 @@ export function TaskConversation({
           {/sandbox|compute/i.test(job.result.failure.reason) && (
             <Link
               to="/settings/$section"
-              params={{ section: "connections" }}
+              params={{ section: "sources" }}
               data-testid="task-failure-sandbox"
               className="mt-2 inline-block underline"
             >
-              Open connections
+              Open sources
             </Link>
           )}
         </div>

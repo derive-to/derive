@@ -12,7 +12,6 @@ import { BillingSection } from "./billing-section"
 import { BrandprintSettings } from "./brandprint-settings"
 import { CustomDomainsSection } from "./custom-domains-section"
 import { GeneralSection } from "./general-section"
-import { IntegrationsSection } from "./integrations-section"
 import { MachinesSection } from "./machines-section"
 import { MembersSection } from "./members-section"
 import { ModelsSection } from "./models-section"
@@ -31,7 +30,8 @@ const route = getRouteApi("/settings/$section")
 
 // THE section list — the nav rail's groups and the document-title map are both
 // derived from it, so an id or label can't drift between the two. Order here is
-// display order. Billing, models, and reports are data-gated at render; they
+// display order. Sources holds everything an agent can reach (GitHub, Slack, MCP servers,
+// secrets). Billing, models, and reports are data-gated at render; they
 // stay in this list unconditionally so a hidden tab keeps its title.
 //
 // Groups are SCOPE, and only scope: You (your account, follows you across
@@ -50,8 +50,7 @@ const SECTIONS: { id: string; label: string; group: (typeof GROUP_ORDER)[number]
   { id: "members", label: "Members", group: "Workspace" },
   { id: "billing", label: "Billing", group: "Workspace" },
   { id: "machines", label: "Machines", group: "Workspace" },
-  { id: "sources", label: "Connections", group: "Workspace" },
-  { id: "integrations", label: "Integrations", group: "Workspace" },
+  { id: "sources", label: "Sources", group: "Workspace" },
   { id: "webhooks", label: "Webhooks", group: "Workspace" },
   { id: "domains", label: "Domains", group: "Workspace" },
   { id: "brandprint", label: "Brandprint", group: "Workspace" },
@@ -154,7 +153,6 @@ export function Settings() {
             {active === "machines" && <MachinesSection />}
             {active === "members" && <MembersSection meId={me.id} />}
             {active === "billing" && <BillingSection />}
-            {active === "integrations" && <IntegrationsSection />}
             {active === "sources" && <SourcesSection />}
             {active === "brandprint" && <BrandprintSettings />}
             {active === "webhooks" && <WebhooksSection />}

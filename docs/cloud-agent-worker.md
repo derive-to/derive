@@ -54,6 +54,9 @@ Late usage settles that claim once. It cannot reopen a cancelled task or replace
 New tasks mark claim-ledger version 1. Whole-task comparisons require receipts for every claim.
 Legacy tasks with incomplete claim history keep that comparison unknown.
 Timeline reads omit checkpoint bytes. Work reads load only the latest required checkpoint.
+A new scheduled question closes earlier open questions from that schedule.
+Postgres records that change and its ask count in the same settlement transaction.
+The native inbox question links to the full task for conversation and usage.
 Lease exhaustion marks the abandoned turn failed in the same transaction as the lost task.
 Failed turns cancel queued follow-ups. Retry repeats the failed request from the latest saved native checkpoint.
 If no checkpoint exists, start a fresh task.

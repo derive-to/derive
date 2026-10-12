@@ -71,7 +71,7 @@ export const commandJob = async (
       !deps.cloud.config ||
       !(await cloudEnabled(deps.meta, deps.cloud.config, agent.org_id))
     )
-      reject("Connect a sandbox in Settings → Connections before starting.")
+      reject("Connect a sandbox in Settings → Sources before starting.")
     const account = await resolveJobCredential(
       deps.meta,
       deps.cloud?.secret,
