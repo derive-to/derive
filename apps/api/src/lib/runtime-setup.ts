@@ -12,7 +12,7 @@ export interface RuntimeConfig {
 // The runner a Derive machine (Ortam sandbox) installs once and then launches for every job.
 // job-machine.ts runs INSTALL_RUNTIME_RUNNER when it sets a sandbox up.
 
-export const RUNNER_VERSION = "0.8.6"
+export const RUNNER_VERSION = "0.8.7"
 
 /** The pinned install must support job tokens and match a versioned runner path. */
 export const runnerRunsJobs = (runnerPath: string, installs: string = RUNNER_VERSION): boolean => {
