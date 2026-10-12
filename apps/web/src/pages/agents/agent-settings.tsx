@@ -871,7 +871,14 @@ function EnvironmentField({
             testId={`agent-env-${variable}`}
             title={variable}
             mono
-            detail={s ? `${s.name}${s.status !== "active" ? " · Revoked" : ""}` : "Secret removed"}
+            // A secret named after its variable (the pasted-here default) says nothing twice.
+            detail={
+              s
+                ? [s.name === variable ? null : s.name, s.status !== "active" ? "Revoked" : null]
+                    .filter(Boolean)
+                    .join(" · ") || null
+                : "Secret removed"
+            }
             right={s ? (s.scope === "workspace" ? "Workspace" : "Personal") : null}
             removeTestId={`agent-env-remove-${variable}`}
             onRemove={
