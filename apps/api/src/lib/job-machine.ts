@@ -245,7 +245,8 @@ export async function advanceSandbox(
   const id = agent.sandbox_id
   // `failed` ends a sandbox's life; only a failed operation counts toward the backoff, not a
   // deliberate delete (an agent moved off Derive, admission withdrawn).
-  const failed = () => move("failed", { failed_at: iso(deps) })
+  const failed = () =>
+    move("failed", { failed_at: iso(deps), credential_enc: undefined, account_id: undefined })
   const broke = () => (state.failures ?? 0) + 1
 
   switch (agent.sandbox_phase) {

@@ -42,8 +42,14 @@ export function CloudConnection() {
       />
     )
   const cn = connection.data
-  const label = cn.provider === "boat" ? "boat.dev" : "Ortam"
   const editingLabel = provider === "boat" ? "boat.dev" : "Ortam"
+  const label = cn.connected
+    ? cn.provider === "boat"
+      ? "boat.dev"
+      : "Ortam"
+    : editing
+      ? editingLabel
+      : "Your sandbox"
   return (
     <section className="flex flex-col gap-3" data-testid="compute-connection">
       <SectionTitle>Cloud compute</SectionTitle>
