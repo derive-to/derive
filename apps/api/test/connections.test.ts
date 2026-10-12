@@ -353,6 +353,41 @@ describe("connections (Sources — per-user connected accounts)", () => {
     )
   })
 
+  it("an agent names the secrets it is bound to for anyone who can see it, even a teammate's personal one", async () => {
+    const theirs = (await (
+      await app.request(
+        "/v1/connections",
+        jsonAs(as(member.email), {
+          kind: "secret",
+          toolkit: "environment",
+          scopes_label: "Reporting DB",
+          secret: "theirs-fixture",
+        }),
+      )
+    ).json()) as { id: string }
+    const agent = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Nightly report" }))
+    ).json()
+    await meta.updateAgent(agent.id, "default", {
+      environment_json: JSON.stringify({ DATABASE_URL: theirs.id }),
+      connection_ids_json: JSON.stringify([theirs.id, "conn_gone"]),
+    })
+    // The owner cannot list the member's personal secret…
+    const listed = (await (
+      await app.request("/v1/connections?mine=1", { headers: as(owner.email) })
+    ).json()) as { connections: { id: string }[] }
+    expect(listed.connections.map((c) => c.id)).not.toContain(theirs.id)
+    // …but the agent still says what it reads, by name only. A row that no longer exists is absent.
+    const shown = (await (
+      await app.request(`/v1/agents/${agent.id}`, { headers: as(owner.email) })
+    ).json()) as { sources: unknown[]; environment_names: string[] }
+    expect(shown.environment_names).toEqual(["DATABASE_URL"])
+    expect(shown.sources).toEqual([
+      { id: theirs.id, name: "Reporting DB", kind: "secret", scope: "personal", status: "active" },
+    ])
+    expect(JSON.stringify(shown)).not.toContain("theirs-fixture")
+  })
+
   it("replacement keeps assignments, refuses stale versions and revocation, and names the agents that use it", async () => {
     const created = await app.request(
       "/v1/connections",
