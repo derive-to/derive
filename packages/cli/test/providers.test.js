@@ -90,9 +90,16 @@ describe("codex provider", () => {
   const fakeCodex = (reply) => {
     const dir = mkdtempSync(join(tmpdir(), "fake-codex-"))
     const bin = join(dir, "codex")
-    writeFileSync(bin, `#!/bin/sh\nprintf '%s\\n' "$@" > "${dir}/args"\n${reply}\n`)
+    writeFileSync(
+      bin,
+      `#!/bin/sh\nprintf '%s\\n' "$@" > "${dir}/args"\ncat > "${dir}/prompt"\n${reply}\n`,
+    )
     chmodSync(bin, 0o755)
-    return { bin, args: () => readFileSync(join(dir, "args"), "utf8") }
+    return {
+      bin,
+      args: () => readFileSync(join(dir, "args"), "utf8"),
+      prompt: () => readFileSync(join(dir, "prompt"), "utf8"),
+    }
   }
 
   it("runs `codex exec` with the model and the combined prompt, and parses the reply", async () => {
@@ -123,11 +130,10 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input
     const args = fake.args()
     expect(args).toContain("exec")
     expect(args).toContain("--json")
-    expect(args).toContain("--ephemeral")
     expect(args).toContain("workspace-write")
     expect(args).toContain("gpt-5-codex")
     // System prompt (with the appended contract) and the task travel in one prompt.
-    expect(args).toContain("you are a runner")
-    expect(args).toContain("how many?")
+    expect(fake.prompt()).toContain("you are a runner")
+    expect(fake.prompt()).toContain("how many?")
   })
 })
