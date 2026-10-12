@@ -2615,6 +2615,7 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
     })
     const { app, meta } = made
     await app.request("/v1/me", { headers: as(owner.email) })
+    await connectModel(app)
     const agent = (await (
       await app.request(
         "/v1/agents",
