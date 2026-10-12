@@ -12,6 +12,7 @@ import { NeedsRow, useCanSteer } from "./agents/agent-jobs"
 import { firstLine, when } from "./agents/format"
 import { Group, Meta, RowLine, rowClass, Time } from "./agents/rows"
 import { AgentRowsSkeleton } from "./agents/skeleton"
+import { useMemberNames } from "./agents/use-member-names"
 
 // Inbox: what needs you, answered in place, then what agents published in the workspace
 // today. "Needs you" is every waiting job you asked or whose agent you manage; the answer
@@ -24,7 +25,8 @@ export function Inbox() {
   const agents = useQuery(agentsQuery())
   // Shared with the rail, which keeps it warm for 30s; the inbox always reads it fresh.
   const activity = useQuery({ ...workspaceActivityQuery(), refetchOnMount: "always" })
-  const names = new Map((agents.data ?? []).map((a) => [a.id, a]))
+  const byId = new Map((agents.data ?? []).map((a) => [a.id, a]))
+  const names = useMemberNames()
 
   return (
     <PageShell width="wide" className="flex flex-col gap-9">
@@ -41,7 +43,13 @@ export function Inbox() {
         jobs.data.length > 0 && (
           <Group label="Needs you" testId="inbox-needs">
             {jobs.data.map((job) => (
-              <InboxNeedsRow key={job.id} job={job} agent={names.get(job.agent_id)} />
+              <InboxNeedsRow
+                key={job.id}
+                job={job}
+                agent={byId.get(job.agent_id)}
+                names={names}
+                defaultOpen={jobs.data.length === 1}
+              />
             ))}
           </Group>
         )
@@ -65,7 +73,17 @@ export function Inbox() {
   )
 }
 
-function InboxNeedsRow({ job, agent }: { job: Job; agent: Agent | undefined }) {
+function InboxNeedsRow({
+  job,
+  agent,
+  names,
+  defaultOpen,
+}: {
+  job: Job
+  agent: Agent | undefined
+  names: Map<string, string>
+  defaultOpen: boolean
+}) {
   const { me } = useAuth()
   const canSteer = useCanSteer(job, me?.id)
   const subject =
@@ -80,6 +98,9 @@ function InboxNeedsRow({ job, agent }: { job: Job; agent: Agent | undefined }) {
         job={job}
         // A review is answered on the page itself, not here.
         canSteer={canSteer && !reviewPage}
+        agentName={agent?.name ?? "Agent"}
+        names={names}
+        defaultOpen={defaultOpen}
         title={
           <Link
             to="/agents/$id"
