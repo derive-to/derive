@@ -2223,7 +2223,7 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
     const launches: Record<string, string>[] = []
     // Like Ortam, a repeated idempotency key returns the first answer, whatever happened since.
     const byKey = new Map<string, unknown>()
-    const state = { failCreates: 0 }
+    const state = { failCreates: 0, failResumes: 0 }
     let n = 0
     const json = (v: unknown) =>
       new Response(JSON.stringify(v), { headers: { "content-type": "application/json" } })
@@ -2284,7 +2284,18 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
         return json(o)
       }
       const life = path.match(/^\/sandboxes\/([^/]+)\/(resume|stop)$/)
-      if (life) return keep(op(decodeURIComponent(life[1] ?? ""), life[2] ?? ""))
+      if (life) {
+        const s = sandboxes.get(decodeURIComponent(life[1] ?? ""))
+        // Like Ortam: a sandbox whose activation failed refuses every lifecycle call.
+        if (s?.state === "failed") return new Response(null, { status: 409 })
+        const o = op(decodeURIComponent(life[1] ?? ""), life[2] ?? "")
+        if (life[2] === "resume" && s && state.failResumes > 0) {
+          state.failResumes--
+          o.state = "failed"
+          s.state = "failed"
+        }
+        return keep(o)
+      }
       const launch = path.match(/^\/sandboxes\/([^/]+)\/processes$/)
       if (launch && method === "POST") {
         // Ortam refuses an unkeyed process start.
@@ -2483,6 +2494,73 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
       headers: bearer(work.job.tool_token),
     })
     expect(rest.status).not.toBe(200)
+  })
+
+  it("a sandbox Ortam marks failed on resume is replaced, and the job runs on the new one", async () => {
+    const made = makeAuthedApp("jobs-machine-resume-failed", [owner, ed, outsider], "editor", {
+      deps: { encryptionKey: "test-encryption-key", runtime: config },
+    })
+    const { app, meta } = made
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const agent = (await (
+      await app.request(
+        "/v1/agents",
+        jsonAs(as(owner.email), { name: "Resumer", machine: "derive" }),
+      )
+    ).json()) as { id: string }
+    const ortam = fakeOrtam()
+    let clock = Date.now()
+    const deps = {
+      meta,
+      secret: "test-encryption-key",
+      server: "http://derive.test",
+      config,
+      fetcher: ortam.fetcher,
+      now: () => new Date(clock),
+    }
+    const warn = vi.spyOn(log, "warn").mockImplementation(() => {})
+    try {
+      // A first job brings the sandbox up and hands it back stopped.
+      const first = (await (await ask(app, owner.email, agent.id, "one")).json()) as {
+        id: string
+      }
+      for (let i = 0; i < 12 && ortam.launches.length === 0; i++) await machinePass(deps)
+      expect(ortam.launches).toHaveLength(1)
+      const env = ortam.launches[0] ?? {}
+      const cfg = loadOneJobConfig(
+        { DERIVE_TOKEN: env.DERIVE_TOKEN, DERIVE_JOB_ID: env.DERIVE_JOB_ID },
+        { server: "http://derive.test", mock: "true" },
+      )
+      const client = new JobClient(cfg, (url, init) => Promise.resolve(app.request(url, init)))
+      expect(await runOneJob(cfg, client)).toBe("succeeded")
+      expect((await meta.getJob(first.id))?.status).toBe("succeeded")
+      for (const p of ortam.procs.values()) p.status = "exited"
+      for (let i = 0; i < 6; i++) await machinePass(deps)
+      expect(await meta.getAgent(agent.id)).toMatchObject({ sandbox_phase: "ready" })
+      const firstSandbox = (await meta.getAgent(agent.id))?.sandbox_id
+
+      // The next resume fails on Ortam's side, leaving the sandbox `failed`.
+      ortam.state.failResumes = 1
+      const second = (await (await ask(app, owner.email, agent.id, "two")).json()) as {
+        id: string
+      }
+      for (let i = 0; i < 8; i++) await machinePass(deps)
+      // Not stuck retrying a stop Ortam refuses: the old sandbox is deleted.
+      expect(ortam.sandboxes.get(firstSandbox ?? "")?.state).toBe("deleted")
+      // Past the backoff, a fresh sandbox comes up and the job launches on it.
+      clock += 11 * 60_000
+      for (let i = 0; i < 20 && ortam.launches.length < 2; i++) await machinePass(deps)
+      expect(ortam.launches).toHaveLength(2)
+      expect(ortam.launches[1]?.DERIVE_JOB_ID).toBe(second.id)
+      const now = await meta.getAgent(agent.id)
+      expect(now?.sandbox_id).not.toBe(firstSandbox)
+      expect(warn).not.toHaveBeenCalledWith(
+        "machine step deferred",
+        expect.objectContaining({ reason: expect.stringContaining("409") }),
+      )
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   it("a runner that dies without reporting fails the job back into the queue", async () => {
