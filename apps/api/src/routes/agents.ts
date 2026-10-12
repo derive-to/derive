@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 import {
   type AgentRecord,
+  type ConnectionRecord,
   capRole,
   JOB_OPEN_STATUSES,
   newId,
@@ -67,9 +68,50 @@ export const agentRoutes = (ctx: AppContext) => {
       return []
     }
   }
+  // One bound source or secret, by name. Never a value, never a credential.
+  const sourceJson = (cn: ConnectionRecord) => ({
+    id: cn.id,
+    name:
+      cn.kind === "mcp" && cn.base_url
+        ? cn.base_url.replace(/^https?:\/\//, "")
+        : cn.scopes_label?.trim() || (cn.kind === "secret" ? "Stored secret" : cn.toolkit),
+    kind: cn.kind,
+    scope: cn.scope,
+    status: cn.status,
+  })
+  type AgentSourceJson = ReturnType<typeof sourceJson>
+  const boundIds = (a: AgentRecord): string[] => [
+    ...new Set([
+      ...parseIds(a.connection_ids_json),
+      ...Object.values(readEnvironmentBindings(a.environment_json)),
+    ]),
+  ]
+  // What these agents are bound to, by name: their sources and the secrets behind their
+  // environment variables. A viewer who cannot list a teammate's personal secret still sees
+  // what the agent reads, so a row is never a bare id. One query for any number of agents;
+  // a row that no longer exists is simply absent.
+  const sourcesOf = async (list: AgentRecord[]): Promise<Map<string, AgentSourceJson[]>> => {
+    const ids = [...new Set(list.flatMap(boundIds))]
+    const rows = ids.length ? await meta.getConnectionsByIds(ids).catch(() => []) : []
+    const byId = new Map(rows.map((cn) => [cn.id, cn]))
+    return new Map(
+      list.map((a) => [
+        a.id,
+        boundIds(a).flatMap((id) => {
+          const cn = byId.get(id)
+          return cn && cn.org_id === a.org_id ? [sourceJson(cn)] : []
+        }),
+      ]),
+    )
+  }
+  const sourcesOfOne = async (a: AgentRecord) => (await sourcesOf([a])).get(a.id) ?? []
   const agentJson = async (
     a: AgentRecord,
-    extra: { instructions_short_id?: string | null; sandboxProvider?: "boat" | "ortam" } = {},
+    extra: {
+      instructions_short_id?: string | null
+      sources?: AgentSourceJson[]
+      sandboxProvider?: "boat" | "ortam"
+    } = {},
   ) => {
     const environment = readEnvironmentBindings(a.environment_json)
     const sandboxProvider =
@@ -104,6 +146,7 @@ export const agentRoutes = (ctx: AppContext) => {
       connection_ids: parseIds(a.connection_ids_json),
       environment,
       environment_names: Object.keys(environment),
+      sources: extra.sources ?? [],
       account_id: a.account_id,
     }
   }
@@ -130,6 +173,16 @@ export const agentRoutes = (ctx: AppContext) => {
       : null
 
   // A workspace-registered agent, without its token hash.
+  const AgentSource = z
+    .object({
+      id: z.string(),
+      name: z.string().describe("The source's name, or a secret's label. Never a value."),
+      kind: z.enum(["oauth", "secret", "github_app", "slack", "mcp"]),
+      scope: z.enum(["personal", "workspace"]),
+      status: z.enum(["active", "pending", "revoked"]),
+    })
+    .openapi("AgentSource")
+
   const Agent = z
     .object({
       id: z.string(),
@@ -188,6 +241,11 @@ export const agentRoutes = (ctx: AppContext) => {
       environment_names: z
         .array(z.string())
         .describe("Environment variable names bound to credentials. Never values."),
+      sources: z
+        .array(AgentSource)
+        .describe(
+          "Every source and secret it is bound to, by name: connection_ids and the secrets behind environment. Never values.",
+        ),
       account_id: z.string().nullable(),
     })
     .openapi("Agent")
@@ -276,12 +334,14 @@ export const agentRoutes = (ctx: AppContext) => {
       ]
       const pages = pageIds.length ? await meta.getArtifactsByIds(pageIds).catch(() => []) : []
       const shortOf = new Map(pages.map((p) => [p.id, p.short_id]))
+      const sources = await sourcesOf(agents)
       const sandboxProvider = (await workspaceRuntime(meta, deps.runtime, org)).provider
       return c.json({
         agents: await Promise.all(
           agents.map(async (a) => ({
             ...(await agentJson(a, {
               sandboxProvider,
+              sources: sources.get(a.id),
               instructions_short_id: a.instructions_artifact_id
                 ? (shortOf.get(a.instructions_artifact_id) ?? null)
                 : null,
@@ -530,7 +590,10 @@ export const agentRoutes = (ctx: AppContext) => {
       // The only place the raw key is ever exposed.
       return c.json(
         {
-          ...(await agentJson(agent, { instructions_short_id: b.instructions_short_id ?? null })),
+          ...(await agentJson(agent, {
+            instructions_short_id: b.instructions_short_id ?? null,
+            sources: await sourcesOfOne(agent),
+          })),
           token,
           runner_command,
           trigger: trigger ? triggerJson(trigger) : null,
@@ -573,6 +636,7 @@ export const agentRoutes = (ctx: AppContext) => {
       return c.json({
         ...(await agentJson(agent, {
           instructions_short_id: await instructionsShortId(agent),
+          sources: await sourcesOfOne(agent),
         })),
         triggers: (await meta.listTriggers(agent.org_id, agent.id)).map(triggerJson),
         ...agentAccess(agent, member, await ctx.agentFor(c)),
@@ -673,6 +737,7 @@ export const agentRoutes = (ctx: AppContext) => {
       return c.json(
         await agentJson(updated, {
           instructions_short_id: await instructionsShortId(updated),
+          sources: await sourcesOfOne(updated),
         }),
       )
     },
@@ -805,6 +870,7 @@ export const agentRoutes = (ctx: AppContext) => {
       if (!rotated) return bail(fail(c, 404, "agent not found"))
       return c.json({
         ...(await agentJson(rotated, {
+          sources: await sourcesOfOne(rotated),
           instructions_short_id: await instructionsShortId(rotated),
         })),
         token,
@@ -910,7 +976,7 @@ export const agentRoutes = (ctx: AppContext) => {
     const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 20))
     const mentions = await meta.listPendingAgentMentions(agent.id, limit)
     return c.json({
-      agent: await agentJson(agent),
+      agent: await agentJson(agent, { sources: await sourcesOfOne(agent) }),
       mentions: mentions.map((m) => ({
         id: m.id,
         artifact: m.artifact_short_id,
