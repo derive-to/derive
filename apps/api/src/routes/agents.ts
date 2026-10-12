@@ -177,7 +177,7 @@ export const agentRoutes = (ctx: AppContext) => {
     .object({
       id: z.string(),
       name: z.string().describe("The source's name, or a secret's label. Never a value."),
-      kind: z.enum(["oauth", "secret", "github_app", "slack", "mcp"]),
+      kind: z.enum(["oauth", "secret", "github_app", "slack", "mcp", "runtime"]),
       scope: z.enum(["personal", "workspace"]),
       status: z.enum(["active", "pending", "revoked"]),
     })

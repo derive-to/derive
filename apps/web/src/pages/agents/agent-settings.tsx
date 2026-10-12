@@ -688,7 +688,7 @@ function ModelField({
   )
 }
 
-const KIND_WORD: Record<AgentSource["kind"] | "runtime", string> = {
+const KIND_WORD: Record<AgentSource["kind"], string> = {
   github_app: "GitHub",
   slack: "Slack",
   mcp: "MCP server",
