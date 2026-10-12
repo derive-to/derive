@@ -121,7 +121,7 @@ export function TaskComposer({ agents }: { agents: (Agent & { can_ask: boolean }
         {agent?.machine === "derive" && runtime.data && !runtime.data.enabled && (
           <Link
             to="/settings/$section"
-            params={{ section: "connections" }}
+            params={{ section: "sources" }}
             data-testid="task-connect-sandbox"
             className="text-warning underline"
           >
@@ -163,7 +163,7 @@ export function TaskComposer({ agents }: { agents: (Agent & { can_ask: boolean }
               {" · "}
               <Link
                 to="/settings/$section"
-                params={{ section: "connections" }}
+                params={{ section: "sources" }}
                 data-testid="task-setup-connections"
                 className="underline"
               >
