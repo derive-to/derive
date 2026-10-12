@@ -62,8 +62,9 @@ the shell: `curl -sS --data-binary @path/to/file "<upload_url>"`. The file goes 
 Derive. `agent` is optional; with it, the secret is bound under `name`, which must then be a
 valid variable name. A value the person already saved comes back as that secret instead of a
 copy. The link is theirs, lasts ten minutes, and can only save their own secret and set that
-one variable. Without MCP, the person can run `derive secrets put NAME --agent <id> < file`
-or use Settings › Sources › Secrets.
+one variable. Without MCP, the person can run `derive secrets put NAME --agent <id> < file`,
+paste the value under Environment variables on the agent's Settings tab, or use
+Settings › Sources › Secrets.
 
 The same rule covers both: your own personal ones, or the workspace's if you manage it.
 
