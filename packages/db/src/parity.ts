@@ -149,11 +149,22 @@ export interface PgExecutionTables {
 
 type ClassifiedKey = keyof TypedTables | JunctionTable
 
+/** Existing support rows are decoded by shared SQL owners rather than mirrored as core Records. */
+export type PgSupportTable =
+  | "collectionInvite"
+  | "orgSettings"
+  | "slackInstall"
+  | "slackThreadLink"
+  | "slackUserLink"
+  | "slackSubscription"
+  | "userNotificationPref"
+  | "activitySeen"
+
 /** `true` iff the schema's table keys are exactly the classified keys. */
-export type Exhaustive<Schema, Extra = Record<never, never>> = [
-  Exclude<keyof Schema, ClassifiedKey | keyof Extra>,
+export type Exhaustive<Schema, Extra = Record<never, never>, Support extends string = never> = [
+  Exclude<keyof Schema, ClassifiedKey | keyof Extra | Support>,
 ] extends [never]
-  ? [Exclude<ClassifiedKey | keyof Extra, keyof Schema>] extends [never]
+  ? [Exclude<ClassifiedKey | keyof Extra | Support, keyof Schema>] extends [never]
     ? true
     : false
   : false

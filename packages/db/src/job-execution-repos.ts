@@ -285,12 +285,13 @@ export const jobExecutionRepos = (
           coalesce(max(coalesce(r.attempt_index, (r.result_json::jsonb -> 'runs' -> 0 ->> 'attempt')::integer)), -1) + 1
         FROM job_turn_receipt r JOIN job_turn t ON t.id = r.turn_id WHERE t.job_id = ${jobId}
         ON CONFLICT DO NOTHING RETURNING attempt_index`)
-      if (receipt.rows.length) {
+      const receiptRow = receipt.rows[0]
+      if (receiptRow) {
         const result = JSON.parse(job.result_json ?? "{}") as JobResult
         await agentModelRepos(async (q) => (await tx.execute(q)).rows).updateJob(jobId, {
           result_json: JSON.stringify({
             ...result,
-            attempt_offset: Number(receipt.rows[0].attempt_index),
+            attempt_offset: Number(receiptRow.attempt_index),
           }),
         })
       }

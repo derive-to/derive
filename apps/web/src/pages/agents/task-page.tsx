@@ -54,21 +54,26 @@ export function TaskPage({ id }: { id: string }) {
   const send = useApiMutation({
     errorToast: false,
     paywall: false,
-    mutationFn: () =>
-      job.data?.status === "needs_you"
+    mutationFn: () => {
+      const request = draft.submission(
+        job.data?.status === "needs_you" ? "answer" : "follow_up",
+        job.data?.needs?.question_id ?? null,
+      )
+      return request.action === "answer"
         ? api.answerJob(id, {
-            text: text.trim(),
-            question_id: job.data?.needs?.question_id,
-            dedupe_key: draft.key,
+            text: request.text.trim(),
+            question_id: request.questionId ?? undefined,
+            dedupe_key: request.key,
           })
-        : api.writeJob(id, text.trim(), draft.key),
+        : api.writeJob(id, request.text.trim(), request.key)
+    },
     invalidate: [["jobs"], ["agents"]],
     onSuccess: () => {
       draft.clear()
       composer.current?.focus()
     },
     onError: (e) => {
-      if (e instanceof ApiError && e.status < 500) draft.retry()
+      if (e instanceof ApiError) draft.retry(e.status)
     },
   })
   const stopKey = useRef(crypto.randomUUID())

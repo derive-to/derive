@@ -278,7 +278,11 @@ export const schema = PG_SCHEMA
 // Compile-time schema parity (see ./parity), same classification as the sqlite
 // dialect but checking the pg `$inferSelect` shapes. New table not classified, or
 // a pg column that drifts from its core Record → compile error here.
-const _schemaExhaustive: Exhaustive<typeof schema, import("./parity").PgExecutionTables> = true
+const _schemaExhaustive: Exhaustive<
+  typeof schema,
+  import("./parity").PgExecutionTables,
+  import("./parity").PgSupportTable
+> = true
 const _schemaShapes: Shapes<typeof schema, import("./parity").PgExecutionTables> = {
   jobCommand: true,
   jobTurn: true,

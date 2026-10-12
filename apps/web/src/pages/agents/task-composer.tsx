@@ -35,7 +35,7 @@ export function TaskComposer({ agents }: { agents: (Agent & { can_ask: boolean }
       void navigate({ to: "/tasks/$id", params: { id: job.id } })
     },
     onError: (error) => {
-      if (error instanceof ApiError && error.status < 500) draft.retry()
+      if (error instanceof ApiError) draft.retry(error.status)
     },
   })
   const submit = () => {

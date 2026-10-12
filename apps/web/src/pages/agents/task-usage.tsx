@@ -366,6 +366,8 @@ export function TaskReceipt({ job }: { job: Job }) {
           {r.cached_input_tokens !== null && ` · ${number(r.cached_input_tokens)} cached`}
           {r.harness_estimate_micro_usd != null &&
             ` · CLI estimate ${dollars(r.harness_estimate_micro_usd)}`}
+          {r.api_estimate_micro_usd != null &&
+            ` · API comparison ${dollars(r.api_estimate_micro_usd)}`}
           {r.skill && ` · Skill v${r.skill.version}`}
         </p>
       ))}
