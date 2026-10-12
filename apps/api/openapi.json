@@ -2132,6 +2132,15 @@
                       "type": "string",
                       "maxLength": 200
                     },
+                    "runner_version": {
+                      "type": "string",
+                      "maxLength": 80
+                    },
+                    "harness_version": {
+                      "type": "string",
+                      "nullable": true,
+                      "maxLength": 100
+                    },
                     "skill": {
                       "type": "object",
                       "properties": {
@@ -2173,6 +2182,27 @@
                       "type": "integer",
                       "nullable": true,
                       "minimum": 0
+                    },
+                    "harness_estimate_micro_usd": {
+                      "type": "integer",
+                      "nullable": true,
+                      "minimum": 0
+                    },
+                    "api_estimate_micro_usd": {
+                      "type": "integer",
+                      "nullable": true,
+                      "minimum": 0
+                    },
+                    "price_version": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "turn_id": {
+                      "type": "string"
+                    },
+                    "actor_id": {
+                      "type": "string",
+                      "nullable": true
                     }
                   },
                   "required": [
@@ -2186,7 +2216,7 @@
                     "model_cost_micro_usd"
                   ]
                 },
-                "maxItems": 30
+                "maxItems": 600
               },
               "effects": {
                 "type": "array",
@@ -2364,6 +2394,161 @@
                 "type": "array",
                 "items": {
                   "$ref": "#/components/schemas/JobMessage"
+                }
+              },
+              "turns": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "ordinal": {
+                      "type": "number"
+                    },
+                    "actor_id": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "body_md": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "queued",
+                        "running",
+                        "succeeded",
+                        "failed",
+                        "needs_you",
+                        "cancelled"
+                      ]
+                    },
+                    "body_result_md": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "started_at": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "finished_at": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "resumable": {
+                      "type": "boolean"
+                    },
+                    "execution": {
+                      "type": "object",
+                      "properties": {
+                        "provider": {
+                          "type": "string",
+                          "enum": [
+                            "codex",
+                            "claude-code"
+                          ]
+                        },
+                        "model": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "account_id": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "agent_name": {
+                          "type": "string"
+                        },
+                        "skill": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "artifact_id": {
+                              "type": "string"
+                            },
+                            "version": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "artifact_id",
+                            "version"
+                          ]
+                        },
+                        "sandbox": {
+                          "type": "object",
+                          "properties": {
+                            "provider": {
+                              "type": "string",
+                              "enum": [
+                                "boat",
+                                "ortam"
+                              ]
+                            },
+                            "connection_id": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "account_id": {
+                              "type": "string",
+                              "nullable": true
+                            }
+                          },
+                          "required": [
+                            "provider",
+                            "connection_id",
+                            "account_id"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "provider",
+                        "model",
+                        "account_id",
+                        "skill"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "ordinal",
+                    "actor_id",
+                    "body_md",
+                    "status",
+                    "body_result_md",
+                    "started_at",
+                    "finished_at",
+                    "resumable",
+                    "execution"
+                  ]
+                }
+              },
+              "events": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "turn_id": {
+                      "type": "string"
+                    },
+                    "seq": {
+                      "type": "number"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "created_at": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "turn_id",
+                    "seq",
+                    "kind",
+                    "created_at"
+                  ]
                 }
               }
             },

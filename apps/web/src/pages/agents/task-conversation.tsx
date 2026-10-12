@@ -24,6 +24,35 @@ export function TaskConversation({
   const id = job.id
   return (
     <div data-testid={`task-conversation-${job.id}`} className="flex flex-col gap-6">
+      {job.result.failure && (job.status === "failed" || job.status === "lost") && (
+        <div
+          role="alert"
+          data-testid="task-failure"
+          className="rounded-xl border border-border bg-card p-4 text-sm"
+        >
+          <p>{job.result.failure.reason}</p>
+          {/model account/i.test(job.result.failure.reason) && (
+            <Link
+              to="/settings/$section"
+              params={{ section: "accounts" }}
+              data-testid="task-failure-model-account"
+              className="mt-2 inline-block underline"
+            >
+              Open model accounts
+            </Link>
+          )}
+          {/sandbox|compute/i.test(job.result.failure.reason) && (
+            <Link
+              to="/settings/$section"
+              params={{ section: "connections" }}
+              data-testid="task-failure-sandbox"
+              className="mt-2 inline-block underline"
+            >
+              Open connections
+            </Link>
+          )}
+        </div>
+      )}
       {job.turns?.length
         ? job.turns.map((turn) => (
             <section

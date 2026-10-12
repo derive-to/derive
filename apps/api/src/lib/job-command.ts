@@ -179,7 +179,7 @@ export const commandJob = async (
     )
   return {
     job: out.job,
-    created: !out.replayed && (input.intent !== "start" || out.job.id === input.job.id),
+    created: out.applied,
     turn_id: out.receipt.turn_id,
   }
 }

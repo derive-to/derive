@@ -7651,6 +7651,8 @@ export interface components {
                     attempt: number;
                     provider: string;
                     model: string;
+                    runner_version?: string;
+                    harness_version?: string | null;
                     skill?: {
                         short_id: string;
                         version: number;
@@ -7660,6 +7662,11 @@ export interface components {
                     output_tokens: number | null;
                     duration_ms: number;
                     model_cost_micro_usd: number | null;
+                    harness_estimate_micro_usd?: number | null;
+                    api_estimate_micro_usd?: number | null;
+                    price_version?: string | null;
+                    turn_id?: string;
+                    actor_id?: string | null;
                 }[];
                 effects?: {
                     /** @enum {string} */
@@ -7699,6 +7706,41 @@ export interface components {
         };
         JobDetail: components["schemas"]["Job"] & {
             messages: components["schemas"]["JobMessage"][];
+            turns?: {
+                id: string;
+                ordinal: number;
+                actor_id: string | null;
+                body_md: string;
+                /** @enum {string} */
+                status: "queued" | "running" | "succeeded" | "failed" | "needs_you" | "cancelled";
+                body_result_md: string | null;
+                started_at: string | null;
+                finished_at: string | null;
+                resumable: boolean;
+                execution: {
+                    /** @enum {string} */
+                    provider: "codex" | "claude-code";
+                    model: string | null;
+                    account_id: string | null;
+                    agent_name?: string;
+                    skill: {
+                        artifact_id: string;
+                        version: number;
+                    } | null;
+                    sandbox?: {
+                        /** @enum {string} */
+                        provider: "boat" | "ortam";
+                        connection_id: string | null;
+                        account_id: string | null;
+                    };
+                };
+            }[];
+            events?: {
+                turn_id: string;
+                seq: number;
+                kind: string;
+                created_at: string;
+            }[];
         };
         JobMessage: {
             id: string;

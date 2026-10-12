@@ -80,9 +80,12 @@ export type JobCommandIntent =
 /** Postgres owns transactions and receipts. Other stores do not advertise cloud turns. */
 export interface JobExecutionStore<Agent> {
   receipt(orgId: string, source: string, key: string): Promise<JobCommandReceipt | null>
-  command(
-    input: JobCommand,
-  ): Promise<{ receipt: JobCommandReceipt; job: JobRecord | null; replayed: boolean }>
+  command(input: JobCommand): Promise<{
+    receipt: JobCommandReceipt
+    job: JobRecord | null
+    replayed: boolean
+    applied: boolean
+  }>
   turns(jobId: string, orgId: string): Promise<JobTurnRecord[]>
   events(jobId: string, orgId: string): Promise<JobEventRecord[]>
   append(

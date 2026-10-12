@@ -227,7 +227,8 @@ export function TaskPage({ id }: { id: string }) {
               <p>{send.error.message}</p>
               {/account|reconnect/i.test(send.error.message) && (
                 <Link
-                  to="/settings/accounts"
+                  to="/settings/$section"
+                  params={{ section: "accounts" }}
                   data-testid="task-reconnect"
                   className="mt-2 inline-block underline"
                 >

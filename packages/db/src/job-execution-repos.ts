@@ -1,5 +1,6 @@
 import {
   type AgentRecord,
+  isJobOpen,
   type JobCommandReceipt,
   type JobEventRecord,
   type JobExecutionStore,
@@ -63,6 +64,7 @@ export const jobExecutionRepos = (
             },
             job: null,
             replayed: true,
+            applied: false,
           }
         const job = found.job_id
           ? ((
@@ -71,12 +73,13 @@ export const jobExecutionRepos = (
               )
             ).rows[0] as unknown as JobRecord | undefined)
           : null
-        return { receipt: found, job: job ?? null, replayed: true }
+        return { receipt: found, job: job ?? null, replayed: true, applied: false }
       }
       const now = new Date().toISOString()
       const repos = agentModelRepos(async (s) => (await tx.execute(s)).rows)
       let job: JobRecord | null = null
       let turnId: string | null = null
+      let applied = false
       let refusal = input.refusal
       if (!refusal && input.intent !== "start") {
         job =
@@ -134,22 +137,29 @@ export const jobExecutionRepos = (
         input.source === `schedule:${input.job.trigger_id}`
       ) {
         job = await repos.createJob(input.job)
+        applied = true
         job = await repos.updateJob(job.id, {
           status: "failed",
           finished_at: now,
           result_json: JSON.stringify({ failure: { reason: refusal.error, retryable: true } }),
         })
       }
-      if (!refusal && input.intent === "start" && !job) job = await repos.createJob(input.job)
+      if (!refusal && input.intent === "start" && !job) {
+        job = await repos.createJob(input.job)
+        applied = true
+      }
       if (!refusal && job) {
         if (input.intent === "cancel") {
-          await tx.execute(sql`UPDATE job_turn SET status = 'cancelled', finished_at = ${now}
+          if (isJobOpen(job.status)) {
+            await tx.execute(sql`UPDATE job_turn SET status = 'cancelled', finished_at = ${now}
             WHERE job_id = ${job.id} AND status IN ('queued', 'running')`)
-          job = await repos.updateJob(job.id, {
-            status: "cancelled",
-            finished_at: now,
-            lease_until: null,
-          })
+            job = await repos.updateJob(job.id, {
+              status: "cancelled",
+              finished_at: now,
+              lease_until: null,
+            })
+            applied = true
+          }
         } else if (!coalesced) {
           if (!input.execution) throw new Error("admitted work needs an execution selection")
           const order = (
@@ -157,6 +167,7 @@ export const jobExecutionRepos = (
             FROM job_turn WHERE job_id = ${job.id}`)
           ).rows[0] as { ordinal: number }
           turnId = newId("jt")
+          applied = true
           await tx.execute(sql`INSERT INTO job_turn
             (id, job_id, org_id, ordinal, actor_id, body_md, execution_json, status, created_at)
             VALUES (${turnId}, ${job.id}, ${input.org_id}, ${Number(order.ordinal)},
@@ -196,7 +207,7 @@ export const jobExecutionRepos = (
         (org_id, source, command_key, actor_id, request_hash, job_id, turn_id, error, status_code, created_at)
         VALUES (${receipt.org_id}, ${receipt.source}, ${receipt.command_key}, ${receipt.actor_id},
           ${receipt.request_hash}, ${receipt.job_id}, ${receipt.turn_id}, ${receipt.error}, ${receipt.status_code}, ${now})`)
-      return { receipt, job, replayed: false }
+      return { receipt, job, replayed: false, applied }
     })
   },
   async turns(jobId, orgId) {
