@@ -1574,7 +1574,8 @@
               "secret",
               "github_app",
               "slack",
-              "mcp"
+              "mcp",
+              "runtime"
             ]
           },
           "scope": {

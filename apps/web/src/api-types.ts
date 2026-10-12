@@ -7506,7 +7506,7 @@ export interface components {
             /** @description The source's name, or a secret's label. Never a value. */
             name: string;
             /** @enum {string} */
-            kind: "oauth" | "secret" | "github_app" | "slack" | "mcp";
+            kind: "oauth" | "secret" | "github_app" | "slack" | "mcp" | "runtime";
             /** @enum {string} */
             scope: "personal" | "workspace";
             /** @enum {string} */
