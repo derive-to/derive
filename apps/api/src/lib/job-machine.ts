@@ -693,7 +693,7 @@ export async function machinePass(
             return
           }
           const since = Date.parse(iso(deps)) - Date.parse(prior?.failed_at ?? "")
-          if (since < RETRY_BACKOFF_MS * Math.max(1, failures)) return
+          if (failures > 0 && since < RETRY_BACKOFF_MS * failures) return
           agent = await meta.transitionAgentSandbox(agent.id, agent.org_id, agent.sandbox_rev, {
             phase: null,
             state_json: JSON.stringify({ failures }),
