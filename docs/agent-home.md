@@ -1,5 +1,8 @@
 # Agent home and sandbox connections
 
+For the proposed harness-independent worker and complete journey, see
+[Portable cloud-agent worker](cloud-agent-worker.md). That design changes no runtime behavior.
+
 An agent saves a skill, model account, model, and access. A task uses the existing Job record.
 The skill is a versioned `SKILL.md` bundle. Connections grant access; instructions do not.
 
