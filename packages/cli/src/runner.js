@@ -388,8 +388,9 @@ export async function runAgent(provider, opts) {
       caveats: [
         "The runner couldn't parse a structured answer, so this is the model's raw reply -- treat any figures and confidence with extra care.",
       ],
-      escalate: false,
-      escalation_reason: null,
+      escalate: true,
+      escalation_reason:
+        "Check this reply before continuing. The runner could not confirm a structured result.",
       artifact: null,
     }),
   })

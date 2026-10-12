@@ -3750,13 +3750,18 @@
           },
           "can_manage": {
             "type": "boolean"
+          },
+          "snapshot": {
+            "type": "string",
+            "nullable": true
           }
         },
         "required": [
           "available",
           "connected",
           "account_id",
-          "can_manage"
+          "can_manage",
+          "snapshot"
         ]
       },
       "ContextInfo": {
@@ -10194,6 +10199,45 @@
                 },
                 "required": [
                   "api_key"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Workspace compute connection. No credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputeConnection"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Choose the workspace's Boat snapshot for new agent sandboxes.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "snapshot": {
+                    "type": "string",
+                    "nullable": true,
+                    "minLength": 1,
+                    "maxLength": 120,
+                    "pattern": "^[a-zA-Z0-9_-]+$"
+                  }
+                },
+                "required": [
+                  "snapshot"
                 ]
               }
             }

@@ -120,7 +120,8 @@ export function TaskComposer({ agents }: { agents: (Agent & { can_ask: boolean }
         )}
         {agent?.machine === "derive" && runtime.data && !runtime.data.enabled && (
           <Link
-            to="/settings/connections"
+            to="/settings/$section"
+            params={{ section: "connections" }}
             data-testid="task-connect-sandbox"
             className="text-warning underline"
           >
@@ -151,12 +152,18 @@ export function TaskComposer({ agents }: { agents: (Agent & { can_ask: boolean }
           {ask.error.message}{" "}
           {ask.error instanceof ApiError && ask.error.status === 409 && (
             <>
-              <Link to="/settings/accounts" data-testid="task-setup-accounts" className="underline">
+              <Link
+                to="/settings/$section"
+                params={{ section: "accounts" }}
+                data-testid="task-setup-accounts"
+                className="underline"
+              >
                 Model accounts
               </Link>
               {" · "}
               <Link
-                to="/settings/connections"
+                to="/settings/$section"
+                params={{ section: "connections" }}
                 data-testid="task-setup-connections"
                 className="underline"
               >

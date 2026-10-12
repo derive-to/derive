@@ -1368,6 +1368,8 @@ export const api = {
   connectCompute: (api_key: string) =>
     f("/v1/runtime/connection", { ...opts({ api_key }), method: "PUT" }).then(j),
   disconnectCompute: () => f("/v1/runtime/connection", { ...opts(), method: "DELETE" }).then(j),
+  configureCompute: (snapshot: string | null) =>
+    f("/v1/runtime/connection", { ...opts({ snapshot }), method: "PATCH" }).then(j),
   agentRuntime: () =>
     f("/v1/agents/runtime", opts()).then(j) as Promise<
       paths["/v1/agents/runtime"]["get"]["responses"][200]["content"]["application/json"]

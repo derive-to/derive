@@ -287,6 +287,14 @@ list. Cancel an open job with `action: "cancel"`, and run a failed or lost one a
 separate artifact only when the agent produces useful work to inspect, keep, or share.
 Missing access, credentials, or tools stops the task at `needs_you`, with a specific next step.
 Existing report pages stay available. Comments on them still reopen their tasks.
+An unstructured model reply also stops at `needs_you`; it cannot confirm task completion.
+
+**Your runner setup.** In Settings → Connections → Cloud compute, open **Runner setup** to
+choose a Boat snapshot. New agents start with the code and tools in that snapshot.
+Existing agents keep their saved sandboxes. Leave the field blank to start a plain sandbox.
+Use a snapshot owned by your company and approved for this workspace. Boat checks snapshot
+access with the workspace's compute credential. Derive does not inherit the Boat account's
+environment. Bind task secrets through the agent's existing environment settings.
 
 **When a job needs you.** An agent can stop a job at `needs_you` with a question, and maybe a
 few options. Answer it with `jobs({ job_id, action: "answer", option })` (or `text`), or in

@@ -14,6 +14,7 @@ export function BoatConnection() {
   const [editing, setEditing] = useState(false)
   const [removing, setRemoving] = useState(false)
   const [value, setValue] = useState("")
+  const [snapshot, setSnapshot] = useState<string | null>(null)
   const invalidate = [["compute-connection"], ["agents"], ["account-login-options"]]
   const connect = useApiMutation({
     mutationFn: () => api.connectCompute(value.trim()),
@@ -24,6 +25,11 @@ export function BoatConnection() {
     },
   })
   const disconnect = useApiMutation({ mutationFn: api.disconnectCompute, invalidate })
+  const setup = useApiMutation({
+    mutationFn: () => api.configureCompute(snapshot?.trim() || null),
+    invalidate,
+    onSuccess: () => setSnapshot(null),
+  })
   if (connection.isPending)
     return <p className="text-sm text-muted-foreground">Loading cloud compute…</p>
   if (connection.isError)
@@ -92,6 +98,52 @@ export function BoatConnection() {
           <details className="mt-3 text-xs text-muted-foreground">
             <summary className="cursor-pointer">Connection details</summary>
             <p className="mt-2 break-all">boat.dev account: {cn.account_id}</p>
+            <p className="mt-1">Runner snapshot: {cn.snapshot ?? "Plain sandbox"}</p>
+          </details>
+        )}
+        {cn.connected && cn.can_manage && (
+          <details className="mt-3 text-sm">
+            <summary className="cursor-pointer text-muted-foreground">Runner setup</summary>
+            <form
+              className="mt-3 max-w-xl space-y-3"
+              data-testid="compute-runner-form"
+              onSubmit={(event) => {
+                event.preventDefault()
+                setup.mutate()
+              }}
+            >
+              <Label htmlFor="boat-snapshot">Boat snapshot</Label>
+              <Input
+                id="boat-snapshot"
+                data-testid="compute-snapshot"
+                value={snapshot ?? cn.snapshot ?? ""}
+                onChange={(event) => {
+                  setSnapshot(event.target.value)
+                  setup.reset()
+                }}
+                disabled={setup.isPending}
+                placeholder="Leave blank for a plain sandbox"
+              />
+              <p className="text-xs text-muted-foreground">
+                Use your company’s snapshot to include its code and tools. New agents use this
+                setup. Existing agents keep their files. Use only a snapshot this workspace may
+                access.
+              </p>
+              {setup.error && (
+                <p role="alert" className="text-sm text-destructive">
+                  {setup.error.message}
+                </p>
+              )}
+              <Button
+                type="submit"
+                size="sm"
+                data-testid="compute-runner-save"
+                loading={setup.isPending}
+                disabled={snapshot === null || setup.isPending}
+              >
+                Save setup
+              </Button>
+            </form>
           </details>
         )}
         {editing && cn.can_manage && (

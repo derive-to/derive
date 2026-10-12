@@ -3879,6 +3879,8 @@ export interface OrgSettings {
    *  users with no connected agent (the concierge, workspace-owned living docs).
    *  Absent = none. */
   defaultAgentId?: string
+  /** Workspace-owned Boat snapshot for new agent sandboxes. Existing sandboxes keep their files. */
+  boatSnapshot?: string
   /** The workspace's Brandprint: a conventions collection agents pull as context, plus
    *  the generated brand profile. Absent until set. Mirrored on a profile (user layer);
    *  resolved profile-over-workspace. */

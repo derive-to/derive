@@ -14,6 +14,7 @@ const Connection = z
     connected: z.boolean(),
     account_id: z.string().nullable(),
     can_manage: z.boolean(),
+    snapshot: z.string().nullable(),
   })
   .openapi("ComputeConnection")
 const response = {
@@ -34,6 +35,7 @@ export const runtimeConnectionRoutes = (ctx: AppContext) => {
       connected: cn?.status === "active",
       account_id: cn?.status === "active" ? cn.broker_ref : null,
       can_manage: canManage,
+      snapshot: (await meta.getOrgSettings(org)).boatSnapshot ?? null,
     }
   }
 
@@ -146,6 +148,48 @@ export const runtimeConnectionRoutes = (ctx: AppContext) => {
           return bail(fail(c, 409, "This connection changed. Open it again."))
         }
       }
+      return c.json(await view(org, true))
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "patch",
+      path: "/v1/runtime/connection",
+      tags: ["Agents"],
+      summary: "Choose the workspace's Boat snapshot for new agent sandboxes.",
+      request: {
+        body: {
+          content: {
+            "application/json": {
+              schema: z.object({
+                snapshot: z
+                  .string()
+                  .trim()
+                  .min(1)
+                  .max(120)
+                  .regex(/^[a-zA-Z0-9_-]+$/)
+                  .nullable(),
+              }),
+            },
+          },
+        },
+      },
+      responses: { 200: response },
+    }),
+    async (c) => {
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
+      if (!(await ctx.managementPrincipal(c)))
+        return bail(fail(c, 403, "A workspace owner chooses the runner setup"))
+      if (!available) return bail(fail(c, 503, "Cloud compute is not enabled on this server"))
+      const cn = await boatConnection(meta, org)
+      if (cn?.status !== "active") return bail(fail(c, 409, "Connect boat.dev first"))
+      const settings = await meta.getOrgSettings(org)
+      await meta.setOrgSettings(org, {
+        ...settings,
+        boatSnapshot: c.req.valid("json").snapshot ?? undefined,
+      })
       return c.json(await view(org, true))
     },
   )

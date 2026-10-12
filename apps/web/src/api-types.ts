@@ -5084,7 +5084,33 @@ export interface paths {
         };
         options?: never;
         head?: never;
-        patch?: never;
+        /** Choose the workspace's Boat snapshot for new agent sandboxes. */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        snapshot: string | null;
+                    };
+                };
+            };
+            responses: {
+                /** @description Workspace compute connection. No credential. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ComputeConnection"];
+                    };
+                };
+            };
+        };
         trace?: never;
     };
     "/v1/artifacts/{shortId}/rework": {
@@ -8116,6 +8142,7 @@ export interface components {
             connected: boolean;
             account_id: string | null;
             can_manage: boolean;
+            snapshot: string | null;
         };
         ContextInfo: {
             id: string;

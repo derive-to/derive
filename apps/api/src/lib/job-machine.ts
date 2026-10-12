@@ -59,6 +59,7 @@ interface Identity {
 }
 interface SandboxState {
   api_url: string
+  snapshot?: string
   provider?: "ortam" | "boat"
   connection_id?: string
   identity: Identity
@@ -105,11 +106,12 @@ export const machineWorkspaces = (config: AppDeps["runtime"] | undefined): Reado
     : new Set()
 
 /** The one create request for an agent's sandbox; a replay with its key must send the same. */
-const sandboxRequest = (agent: AgentRecord) => ({
+const sandboxRequest = (agent: AgentRecord, state: SandboxState) => ({
   name: `derive-${agent.id.replaceAll("_", "-")}`,
   size: "small",
   auto_stop_after_seconds: 1200,
   setup_script: INSTALL_RUNTIME_RUNNER,
+  ...(state.snapshot ? { snapshot: state.snapshot } : {}),
 })
 
 /** One provider selection for normal work and retirement. Ortam scopes identity per agent. */
@@ -175,6 +177,9 @@ export async function advanceSandbox(
           ? { connection_id: (await boatConnection(meta, agent.org_id))?.id }
           : {}),
         identity: { organization_id: auth.organization_id, user_id: auth.user_id },
+        ...(deps.config.provider === "boat"
+          ? { snapshot: (await meta.getOrgSettings(agent.org_id)).boatSnapshot }
+          : {}),
         generation: newId("sbg"),
         failures: prior?.failures ?? 0,
       } satisfies SandboxState),
@@ -199,7 +204,7 @@ export async function advanceSandbox(
       // lost may have made a sandbox, and only the same key finds it to delete.
       // The same immutable request and key, so a lost response resolves to the same sandbox.
       const result = await client.create(
-        sandboxRequest(agent),
+        sandboxRequest(agent, state),
         `derive-agent-${agent.id}-${state.generation}-create`,
         state.identity,
       )

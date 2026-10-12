@@ -96,6 +96,7 @@ export class BoatClient implements SandboxClient {
         setup_script: z.string(),
         auto_stop_after_seconds: z.number(),
         env: z.record(z.string(), z.string()).optional(),
+        snapshot: z.string().optional(),
       })
       .parse(body)
     const { sandbox } = z.object({ sandbox: Box }).parse(
@@ -106,6 +107,7 @@ export class BoatClient implements SandboxClient {
           type: "small",
           ttlSeconds: input.auto_stop_after_seconds,
           noEnv: true,
+          ...(input.snapshot ? { from: input.snapshot } : {}),
           ...(input.env ? { env: input.env } : {}),
           snapshots: true,
           setupScript: `sudo install -d -o "$(id -u)" -g "$(id -g)" /home/ortam\n${input.setup_script}`,
