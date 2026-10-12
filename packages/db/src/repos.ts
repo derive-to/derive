@@ -3347,6 +3347,20 @@ export function makeRepos(db: SqliteDb) {
       })
       .run()
   }
+  const setBoatSnapshot = async (orgId: string, snapshot: string | null): Promise<void> => {
+    const patch = JSON.stringify({ boatSnapshot: snapshot })
+    await db
+      .insert(orgSettings)
+      .values({
+        org_id: orgId,
+        settings: JSON.stringify(snapshot ? { boatSnapshot: snapshot } : {}),
+      })
+      .onConflictDoUpdate({
+        target: orgSettings.org_id,
+        set: { settings: sql`json_patch(${orgSettings.settings}, ${patch})` },
+      })
+      .run()
+  }
   const setOrgSettingsIfRevision = async (
     orgId: string,
     expectedRevision: number,
@@ -5395,6 +5409,7 @@ export function makeRepos(db: SqliteDb) {
     setGithubApp,
     getOrgSettings,
     setOrgSettings,
+    setBoatSnapshot,
     setOrgSettingsIfRevision,
     getSubscription,
     getSubscriptionByStripeId,

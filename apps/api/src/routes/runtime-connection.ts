@@ -185,11 +185,7 @@ export const runtimeConnectionRoutes = (ctx: AppContext) => {
       if (!available) return bail(fail(c, 503, "Cloud compute is not enabled on this server"))
       const cn = await boatConnection(meta, org)
       if (cn?.status !== "active") return bail(fail(c, 409, "Connect boat.dev first"))
-      const settings = await meta.getOrgSettings(org)
-      await meta.setOrgSettings(org, {
-        ...settings,
-        boatSnapshot: c.req.valid("json").snapshot ?? undefined,
-      })
+      await meta.setBoatSnapshot(org, c.req.valid("json").snapshot)
       return c.json(await view(org, true))
     },
   )

@@ -1613,6 +1613,8 @@ export interface IntegrationStore {
   ): Promise<{ settings: OrgSettings; personalBrandprint: string | null }>
   /** Persist the workspace's integration preferences (full object; upsert by org). */
   setOrgSettings(orgId: string, settings: OrgSettings): Promise<void>
+  /** Change only the Boat snapshot. Preserve concurrent edits to other workspace settings. */
+  setBoatSnapshot(orgId: string, snapshot: string | null): Promise<void>
   /** Persist settings only when the stored settings revision still matches. The compare and
    *  write are atomic; callers retry from a fresh read when false. This is the write primitive
    *  for deploy-wide settings whose operators may act concurrently. */
