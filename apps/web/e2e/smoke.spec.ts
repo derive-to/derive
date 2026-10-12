@@ -928,7 +928,6 @@ test("Inbox answers what needs you in place and lists what agents published toda
   await expect(owner.getByTestId("inbox-today")).toContainText("Release note draft")
   await expect(owner.getByTestId("inbox-today")).toContainText("Scribe")
   await owner.screenshot({ path: testInfo.outputPath("inbox.png"), fullPage: true })
-
   await owner.getByTestId(`job-option-${jobId}-0`).click()
   await expect(row).toHaveCount(0)
   await expect(owner.getByTestId("nav-inbox")).not.toContainText("1")
@@ -942,6 +941,20 @@ test("Inbox answers what needs you in place and lists what agents published toda
   await expect(bell).toContainText("Ship it to the changelog?")
   await bell.click()
   await expect(owner).toHaveURL(new RegExp(`/agents/${agent.id}$`))
+
+  // A question can be put away without answering it; the agent asks again next time.
+  const other = await makeAgent(owner, { name: "Sweeper", role: "editor" })
+  const askedId = await askAgent(owner, other, "Run the sweep")
+  const [sweep] = await pullAs(owner, other)
+  if (sweep)
+    await reportAs(owner, other, sweep, {
+      status: "needs_you",
+      needs: { kind: "escalation", question: "Ban the paired accounts for 14 days?" },
+    })
+  await owner.goto("/inbox")
+  await owner.getByTestId(`job-dismiss-${askedId}`).click()
+  await expect(owner.getByTestId(`inbox-job-${askedId}`)).toHaveCount(0)
+  expect((await (await owner.request.get(`/v1/jobs/${askedId}`)).json()).status).toBe("cancelled")
 })
 
 test("a job's report page says which job it is, and the job links to it", async ({

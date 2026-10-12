@@ -17,6 +17,7 @@ import {
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useJobEvents } from "@/lib/use-job-events"
 import { cn } from "@/lib/utils"
+import { mdBlocksToHtml } from "../artifact/lib/markdown"
 import {
   askedLine,
   cronLabel,
@@ -137,7 +138,9 @@ export function AgentJobs({
                   key={job.id}
                   job={job}
                   canSteer={canSteer(job)}
-                  transcript={<Transcript id={job.id} agentName={agent.name} names={names} />}
+                  agentName={agent.name}
+                  names={names}
+                  defaultOpen={open.length === 1}
                 />
               ))}
             </Group>
@@ -205,48 +208,69 @@ function useBrokenSources(agent: AgentDetail, enabled: boolean): string[] {
 export const sourceName = (c: Connection): string =>
   c.kind === "mcp" && c.base_url ? c.base_url.replace(/^https?:\/\//, "") : c.toolkit
 
-/** One open question: the whole question, its choices as buttons, and a line to answer in
- *  words. The bell and question open the transcript, like any row. */
+/** The first sentence of a question, for the one line a person scans. */
+export function gistOf(question: string): string {
+  const one = question.trim().replace(/\s+/g, " ")
+  const m = /^(.{12,}?[.?!])(\s|$)/.exec(one)
+  const first = m?.[1] ?? one
+  return first.length > 140 ? `${first.slice(0, 139).trimEnd()}…` : first
+}
+
+/** One open question, built for triage. Closed: one line (the question's first sentence),
+ *  how long it has been asked, the report, and Dismiss. Open: the transcript (what was asked,
+ *  what the agent found), the whole question, its choices as buttons, and a line to answer. */
 export function NeedsRow({
   job,
   canSteer,
   title,
+  agentName,
+  names,
   below,
-  transcript,
+  defaultOpen = false,
 }: {
   job: Job
   canSteer: boolean
   /** Shown before the question where the list spans agents (the inbox). */
   title?: ReactNode
+  agentName: string
+  names: Map<string, string>
   /** Always under the question: a link to the page a review waits on. */
   below?: ReactNode
-  transcript?: ReactNode
+  defaultOpen?: boolean
 }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(defaultOpen)
   const asked = askedLine(job)
+  const question = job.needs?.question ?? job.instruction
+  const gist = gistOf(question)
+  const dismiss = useApiMutation({
+    mutationFn: () => api.cancelJob(job.id),
+    invalidate: [["jobs"]],
+  })
   return (
     <div
       data-testid={`job-${job.id}`}
       data-status={job.status}
-      className="-mx-3 my-0.5 flex flex-col gap-3 rounded-lg bg-warning/10 px-3 py-3.5"
+      className="-mx-3 my-0.5 flex flex-col gap-3 rounded-lg bg-warning/10 px-3 py-3"
     >
-      <div className="flex items-start gap-3.5">
+      <div className="flex items-center gap-3.5">
         <button
           type="button"
           data-testid={`job-row-${job.id}`}
           aria-expanded={open}
           onClick={() => setOpen((o) => !o)}
-          className="flex min-w-0 flex-1 items-start gap-3.5 text-left"
+          className="flex min-w-0 flex-1 items-center gap-3.5 text-left"
         >
           <Icon
             name="job-needs-you"
             size={18}
             strokeWidth={1.75}
-            className="mt-1 shrink-0 text-warning"
+            className="shrink-0 text-warning"
           />
-          <span className="flex min-w-0 flex-1 flex-col gap-0.5 text-base leading-relaxed">
-            {title && <span className="font-medium text-foreground">{title}</span>}
-            <span className="text-foreground">{job.needs?.question ?? job.instruction}</span>
+          <span className="flex min-w-0 flex-1 items-baseline gap-2.5 text-base whitespace-nowrap">
+            {title && <span className="shrink-0 font-medium text-foreground">{title}</span>}
+            <span className={cn("truncate text-foreground", open && "whitespace-normal")}>
+              {open ? question : gist}
+            </span>
           </span>
         </button>
         <Meta>
@@ -262,11 +286,24 @@ export function NeedsRow({
             </Link>
           )}
           <Time>{when(job.updated_at)}</Time>
+          {canSteer && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              data-testid={`job-dismiss-${job.id}`}
+              loading={dismiss.isPending}
+              onClick={() => dismiss.mutate()}
+              className="text-muted-foreground"
+            >
+              Dismiss
+            </Button>
+          )}
         </Meta>
       </div>
       {below}
-      {canSteer && <AnswerBox job={job} />}
-      {open && transcript}
+      {open && <Transcript id={job.id} agentName={agentName} names={names} />}
+      {open && canSteer && <AnswerBox job={job} />}
     </div>
   )
 }
@@ -471,14 +508,22 @@ export function Transcript({
             </span>
             <Time>{when(m.created_at)}</Time>
           </div>
-          <p
-            className={cn(
-              "text-base leading-relaxed whitespace-pre-wrap",
-              m.progress ? "text-muted-foreground" : "text-foreground",
-            )}
-          >
-            {m.body_md}
-          </p>
+          {m.author_kind === "agent" && !m.progress ? (
+            <div
+              className="cmt-body flex flex-col gap-2 text-base leading-relaxed [word-break:break-word] [&_h1]:text-base [&_h1]:font-medium [&_h2]:text-base [&_h2]:font-medium [&_h3]:text-base [&_h3]:font-medium [&_h4]:font-medium [&_ul]:list-disc [&_ul]:pl-5"
+              // biome-ignore lint/security/noDangerouslySetInnerHtml: input is escaped first in mdToHtml.
+              dangerouslySetInnerHTML={{ __html: mdBlocksToHtml(m.body_md) }}
+            />
+          ) : (
+            <p
+              className={cn(
+                "text-base leading-relaxed whitespace-pre-wrap",
+                m.progress ? "text-muted-foreground" : "text-foreground",
+              )}
+            >
+              {m.body_md}
+            </p>
+          )}
         </div>
       ))}
       {(effects.length > 0 || q.data.report_short_id) && (
