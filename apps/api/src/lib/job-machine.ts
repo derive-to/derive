@@ -179,6 +179,7 @@ const admitted = async (deps: MachineDeps, agent: AgentRecord) => {
     (await agentWritesOff(deps.meta, agent.org_id))
   )
     return false
+  if (agent.sandbox_phase === null || agent.sandbox_phase === "failed") return true
   const state = parse<SandboxState>(agent.sandbox_state_json)
   const current = (await workspaceRuntime(deps.meta, deps.config, agent.org_id)).connection
   if (!state?.connection_id) return !state?.api_url || !current
