@@ -732,7 +732,7 @@ export async function retireSandbox(deps: MachineDeps | null, agent: AgentRecord
       agent.sandbox_id ??
       (
         await client.create(
-          sandboxRequest(agent),
+          sandboxRequest(agent, state),
           `derive-agent-${agent.id}-${state.generation}-create`,
           state.identity,
         )
