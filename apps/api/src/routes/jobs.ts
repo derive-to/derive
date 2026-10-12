@@ -972,11 +972,12 @@ export const jobRoutes = (ctx: AppContext) => {
       const skillVersion = execution?.skill?.version ?? art?.current_version
       const v = art && skillVersion ? await meta.getVersion(art.id, skillVersion) : null
       const body = v ? await ctx.sourceText(v) : null
-      if (art && body != null)
+      // File-only skills have no preview entry; the runner loads SKILL.md from the bundle.
+      if (art && v && (body != null || art.kind === "bundle"))
         instructions = {
           short_id: art.short_id,
           version: skillVersion ?? art.current_version,
-          body_md: body,
+          body_md: body ?? "",
           bundle: art.kind === "bundle",
         }
     }
