@@ -3347,6 +3347,20 @@ export function makeRepos(db: SqliteDb) {
       })
       .run()
   }
+  const setBoatSnapshot = async (orgId: string, snapshot: string | null): Promise<void> => {
+    const patch = JSON.stringify({ boatSnapshot: snapshot })
+    await db
+      .insert(orgSettings)
+      .values({
+        org_id: orgId,
+        settings: JSON.stringify(snapshot ? { boatSnapshot: snapshot } : {}),
+      })
+      .onConflictDoUpdate({
+        target: orgSettings.org_id,
+        set: { settings: sql`json_patch(${orgSettings.settings}, ${patch})` },
+      })
+      .run()
+  }
   const setOrgSettingsIfRevision = async (
     orgId: string,
     expectedRevision: number,
@@ -4464,6 +4478,8 @@ export function makeRepos(db: SqliteDb) {
       broker_ref?: string
       status?: ConnectionStatus
       scopes_label?: string | null
+      toolkit?: string
+      base_url?: string
     },
     expectSecretEnc?: string | null,
     expectStatus?: ConnectionStatus,
@@ -4473,6 +4489,8 @@ export function makeRepos(db: SqliteDb) {
     if (fields.broker_ref !== undefined) set.broker_ref = fields.broker_ref
     if (fields.status !== undefined) set.status = fields.status
     if (fields.scopes_label !== undefined) set.scopes_label = fields.scopes_label
+    if (fields.toolkit !== undefined) set.toolkit = fields.toolkit
+    if (fields.base_url !== undefined) set.base_url = fields.base_url
     if (Object.keys(set).length === 0) return getConnection(id)
     // The compare-and-swap rides IN the WHERE clause, so the check and the write are one
     // statement. Reading first and then writing would leave the window this exists to close.
@@ -5395,6 +5413,7 @@ export function makeRepos(db: SqliteDb) {
     setGithubApp,
     getOrgSettings,
     setOrgSettings,
+    setBoatSnapshot,
     setOrgSettingsIfRevision,
     getSubscription,
     getSubscriptionByStripeId,

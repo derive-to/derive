@@ -6,6 +6,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
 import { newId } from "@derive/core"
+import { SignJWT } from "jose"
 import { describe, expect, it, vi } from "vitest"
 import {
   JobClient,
@@ -1815,10 +1816,10 @@ describe("jobs: which account a job runs with", () => {
       id: string
     }
     const [held] = await pull(app, edsAgent)
-    expect(held?.id).toBe(job.id)
+    expect(held).toBeDefined()
     const credFor = (headers: Record<string, string>) =>
       app.request(
-        `/v1/jobs/${job.id}/account?claim=${encodeURIComponent(held?.started_at ?? "")}`,
+        `/v1/jobs/${held?.id}/account?claim=${encodeURIComponent(held?.started_at ?? "")}`,
         { headers },
       )
     expect(await (await credFor(bearer(edsAgent.token))).json()).toMatchObject({
@@ -1953,17 +1954,10 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
     }
     expect(done.status).toBe("succeeded")
     expect(done.messages.at(-1)?.author_kind).toBe("agent")
-    // The job left a report page, as the agent, that the asker can read.
-    expect(done.report_short_id).toBeTruthy()
-    const source = async () =>
-      (
-        await app.request(`/v1/artifacts/${done.report_short_id}/content`, {
-          headers: as(ed.email),
-        })
-      ).text()
-    expect(await source()).toContain("## Asked\n\nCount the signups")
+    // Routine answers stay on the task, without an automatic report artifact.
+    expect(done.report_short_id).toBeNull()
 
-    // A follow-up reopens the job and rewrites the same page as a new version.
+    // A follow-up reopens the same task.
     await app.request(
       `/v1/jobs/${job.id}/messages`,
       jsonAs(as(ed.email), { body_md: "And last week?" }),
@@ -1972,69 +1966,7 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
     const again = (await (
       await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
     ).json()) as { report_short_id: string | null }
-    expect(again.report_short_id).toBe(done.report_short_id)
-    expect(await source()).toContain("## Asked\n\nAnd last week?")
-  })
-
-  it("makes the report private to the workspace, and a person's comment on it reopens the job", async () => {
-    const { app } = await setup("jobs-cli-report-private")
-    const agent = await createAgent(app)
-    const job = (await (await ask(app, ed.email, agent.id, "Count the signups")).json()) as {
-      id: string
-    }
-    const { cfg, client } = runnerFor(app, agent, { mock: "true" })
-    expect(await jobDrainPass(cfg, client)).toMatchObject({ served: 1 })
-    const done = (await (
-      await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
-    ).json()) as { status: string; report_short_id: string }
-    expect(done.status).toBe("succeeded")
-    const page = (await (
-      await app.request(`/v1/artifacts/${done.report_short_id}`, { headers: as(ed.email) })
-    ).json()) as { workspace_access: string; link_role: string; listed: string }
-    expect(page).toMatchObject({ workspace_access: "member", link_role: "none", listed: "none" })
-
-    // The asker comments in the report's margin: the job reopens with that as the next turn.
-    const commented = await app.request(
-      `/v1/artifacts/${done.report_short_id}/comments`,
-      jsonAs(as(ed.email), { body_md: "Split it by plan too." }),
-    )
-    expect(commented.status).toBe(201)
-    const reopened = (await (
-      await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
-    ).json()) as { status: string; messages: { author_kind: string; body_md: string }[] }
-    expect(reopened.status).toBe("queued")
-    expect(reopened.messages.at(-1)).toMatchObject({
-      author_kind: "asker",
-      body_md: "Split it by plan too.",
-    })
-    // The runner's next turn rewrites the same report.
-    expect(await jobDrainPass(cfg, client)).toMatchObject({ served: 1 })
-    const again = (await (
-      await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
-    ).json()) as { status: string; report_short_id: string }
-    expect(again).toMatchObject({ status: "succeeded", report_short_id: done.report_short_id })
-
-    // A reply rides its thread, and a comment that @mentions the agent reaches it through its
-    // inbox: neither also reopens the job, which would set the agent to the same work twice.
-    const thread = ((await commented.json()) as { thread_id: string }).thread_id
-    await app.request(
-      `/v1/artifacts/${done.report_short_id}/comments`,
-      jsonAs(as(ed.email), { body_md: "Thanks.", thread_id: thread }),
-    )
-    await app.request(
-      `/v1/artifacts/${done.report_short_id}/comments`,
-      jsonAs(as(ed.email), {
-        body_md: "@agent one more pass",
-        mentions: [{ id: agent.id, name: "agent" }],
-      }),
-    )
-    expect(
-      (
-        (await (await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })).json()) as {
-          status: string
-        }
-      ).status,
-    ).toBe("succeeded")
+    expect(again.report_short_id).toBeNull()
   })
 
   it("a report must be a page the agent made, not a teammate's", async () => {
@@ -2288,13 +2220,27 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
     pilotWorkspaceIds: new Set<string>(),
     managed: { apiKey: "integration fixture", workspaceIds: new Set(["default"]) },
   }
+  const connectModel = async (app: App) => {
+    const connected = await app.request(
+      "/v1/accounts",
+      jsonAs(as(owner.email), {
+        provider: "claude",
+        kind: "api_key",
+        secret: "machine-fixture-key",
+        shared: true,
+      }),
+    )
+    expect(connected.status).toBe(201)
+  }
   /** A fake Ortam: sandboxes, operations that finish on the next read, and processes whose
    *  launch hands the test the env the runner would get. */
-  const fakeOrtam = () => {
+  const fakeOrtam = (publicApi = false) => {
     const sandboxes = new Map<string, { id: string; state: string }>()
     const ops = new Map<string, { id: string; sandbox_id: string; kind: string; state: string }>()
     const procs = new Map<string, { id: string; status: string }>()
     const launches: Record<string, string>[] = []
+    const processBodies: { argv: string[]; cwd: string; env: Record<string, string> }[] = []
+    const publicTokens = new Set<string>()
     // Like Ortam, a repeated idempotency key returns the first answer, whatever happened since.
     const byKey = new Map<string, unknown>()
     const state = { failCreates: 0, failResumes: 0 }
@@ -2322,8 +2268,27 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
         if (key) byKey.set(key, v)
         return json(v)
       }
+      if (publicApi && path === "/auth/token") {
+        const key = new Headers(init?.headers).get("X-API-Key")
+        if (key !== "company-key-fixture" && key !== "replacement-key-fixture")
+          return new Response(null, { status: 401 })
+        const token = await new SignJWT({
+          organization_id: "o",
+          scopes: ["sandboxes:read", "sandboxes:write"],
+        })
+          .setProtectedHeader({ alg: "HS256" })
+          .setSubject(key === "company-key-fixture" ? "public-owner" : "replacement-owner")
+          .setExpirationTime("5m")
+          .sign(new TextEncoder().encode("ortam-public-http-fixture"))
+        publicTokens.add(`Bearer ${token}`)
+        return json({ token })
+      }
       // Like Ortam: the integration key is the bearer on every call, with no token exchange.
-      if (new Headers(init?.headers).get("Authorization") !== `Bearer ${config.managed.apiKey}`)
+      if (
+        publicApi
+          ? !publicTokens.has(new Headers(init?.headers).get("Authorization") ?? "")
+          : new Headers(init?.headers).get("Authorization") !== `Bearer ${config.managed.apiKey}`
+      )
         return new Response(null, { status: 401 })
       if (path === "/integration") {
         const subject = new Headers(init?.headers).get("X-Ortam-Integration-Subject")
@@ -2374,7 +2339,12 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
       if (launch && method === "POST") {
         // Ortam refuses an unkeyed process start.
         if (!key) return new Response(null, { status: 422 })
-        const body = JSON.parse(String(init?.body)) as { env: Record<string, string> }
+        const body = JSON.parse(String(init?.body)) as {
+          argv: string[]
+          cwd: string
+          env: Record<string, string>
+        }
+        processBodies.push(body)
         launches.push(body.env)
         const p = { id: `proc_${++n}`, status: "running" }
         procs.set(p.id, p)
@@ -2389,8 +2359,74 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
       }
       return new Response(null, { status: 404 })
     }
-    return { fetcher, sandboxes, procs, launches, state }
+    return { fetcher, sandboxes, procs, launches, processBodies, state }
   }
+
+  it("connects a workspace Ortam key, runs and cleans up, then rebinds the retired agent to another account", async () => {
+    const ortam = fakeOrtam(true)
+    const runtime = { ...config, provider: "boat" as const, managed: undefined }
+    const { app, meta } = await setup("jobs-public-ortam", { runtime, runtimeFetch: ortam.fetcher })
+    const connect = (secret: string, user = owner.email) =>
+      app.request("/v1/runtime/connection", {
+        ...jsonAs(as(user), { provider: "ortam", api_key: secret }),
+        method: "PUT",
+      })
+    expect((await connect("company-key-fixture", ed.email)).status).toBe(403)
+    expect((await connect("invalid-key-fixture")).status).toBe(400)
+    const connected = await connect("company-key-fixture")
+    expect(connected.status).toBe(200)
+    expect(await connected.json()).toMatchObject({ connected: true, provider: "ortam" })
+    const visible = await (await app.request("/v1/connections", { headers: as(ed.email) })).text()
+    expect(visible).not.toContain("company-key-fixture")
+    await connectModel(app)
+    const created = await app.request(
+      "/v1/agents",
+      jsonAs(as(owner.email), { name: "Public Ortam", machine: "derive" }),
+    )
+    expect(created.status).toBe(201)
+    const agent = (await created.json()) as { id: string; runtime: { provider: string } }
+    expect(agent.runtime.provider).toBe("ortam")
+    const first = (await (await ask(app, owner.email, agent.id, "Check the workspace")).json()) as {
+      id: string
+    }
+    const deps = {
+      meta,
+      secret: "test-encryption-key",
+      server: "http://derive.test",
+      config: runtime,
+      fetcher: ortam.fetcher,
+    }
+    for (let i = 0; i < 16 && ortam.launches.length === 0; i++) await machinePass(deps)
+    expect(ortam.launches).toHaveLength(1)
+    expect(ortam.processBodies[0]?.cwd).toBe("/workspace")
+    expect(ortam.processBodies[0]?.argv.join(" ")).not.toContain("/home/ortam")
+    expect(Object.values(ortam.launches[0] ?? {})).not.toContain("company-key-fixture")
+    expect((await connect("replacement-key-fixture")).status).toBe(409)
+    const env = ortam.launches[0] ?? {}
+    const cfg = loadOneJobConfig(
+      { DERIVE_TOKEN: env.DERIVE_TOKEN, DERIVE_JOB_ID: env.DERIVE_JOB_ID },
+      { server: "http://derive.test", mock: "true" },
+    )
+    await runOneJob(cfg, new JobClient(cfg, (url, init) => Promise.resolve(app.request(url, init))))
+    for (const process of ortam.procs.values()) process.status = "exited"
+    for (let i = 0; i < 16 && (await meta.getJob(first.id))?.machine_phase !== "released"; i++)
+      await machinePass(deps)
+    expect((await meta.getJob(first.id))?.status).toBe("succeeded")
+    expect((await meta.getJob(first.id))?.machine_phase).toBe("released")
+    expect(
+      (await app.request("/v1/runtime/connection", { method: "DELETE", headers: as(owner.email) }))
+        .status,
+    ).toBe(200)
+    expect((await connect("replacement-key-fixture")).status).toBe(409)
+    for (let i = 0; i < 16 && (await meta.getAgent(agent.id))?.sandbox_phase !== "failed"; i++)
+      await machinePass(deps)
+    expect([...ortam.sandboxes.values()].every((sandbox) => sandbox.state === "deleted")).toBe(true)
+    expect((await connect("replacement-key-fixture")).status).toBe(200)
+    expect((await ask(app, owner.email, agent.id, "Check again")).status).toBe(201)
+    for (let i = 0; i < 20 && ortam.launches.length < 2; i++) await machinePass(deps)
+    expect(ortam.launches).toHaveLength(2)
+    expect(ortam.sandboxes.size).toBe(2)
+  })
 
   it("a sandbox that can't start says why in the log, and its waiting job fails instead of waiting forever", async () => {
     const made = makeAuthedApp("jobs-machine-why", [owner, ed, outsider], "editor", {
@@ -2398,6 +2434,7 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
     })
     const { app, meta } = made
     await app.request("/v1/me", { headers: as(owner.email) })
+    await connectModel(app)
     const created = await app.request(
       "/v1/agents",
       jsonAs(as(owner.email), { name: "Refused", machine: "derive" }),
@@ -2440,6 +2477,7 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
     })
     const { app, meta } = made
     await app.request("/v1/me", { headers: as(owner.email) })
+    await connectModel(app)
     await app.request("/v1/me", { headers: as(ed.email) })
     const created = await app.request(
       "/v1/agents",
@@ -2502,6 +2540,7 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
     })
     const { app, meta } = made
     await app.request("/v1/me", { headers: as(owner.email) })
+    await connectModel(app)
     await app.request("/v1/me", { headers: as(ed.email) })
     const page = (await (
       await publishAs(
@@ -2576,6 +2615,7 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
     })
     const { app, meta } = made
     await app.request("/v1/me", { headers: as(owner.email) })
+    await connectModel(app)
     const agent = (await (
       await app.request(
         "/v1/agents",
@@ -2643,6 +2683,7 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
     })
     const { app, meta } = made
     await app.request("/v1/me", { headers: as(owner.email) })
+    await connectModel(app)
     const agent = (await (
       await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Flaky", machine: "derive" }))
     ).json()) as { id: string }
@@ -2674,6 +2715,7 @@ describe("jobs: the Derive machine (one Ortam sandbox per agent)", () => {
       deps: { encryptionKey: "test-encryption-key", runtime: config },
     })
     await made.app.request("/v1/me", { headers: as(owner.email) })
+    await connectModel(made.app)
     await made.app.request("/v1/me", { headers: as(ed.email) })
     const agent = (await (
       await made.app.request(

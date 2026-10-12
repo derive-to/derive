@@ -1203,6 +1203,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/runtime": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Cloud runtime available to this workspace. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Runtime availability, without credentials. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            enabled: boolean;
+                            /** @enum {string|null} */
+                            provider: "ortam" | "boat" | null;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents": {
         parameters: {
             query?: never;
@@ -1231,6 +1271,8 @@ export interface paths {
                                 triggers: components["schemas"]["AgentTrigger"][];
                                 /** @description When it last had work, among the workspace's recent jobs. */
                                 last_job_at: string | null;
+                                can_ask: boolean;
+                                can_manage: boolean;
                             })[];
                         };
                     };
@@ -1246,7 +1288,40 @@ export interface paths {
                 path?: never;
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        name: string;
+                        /** @enum {string} */
+                        role?: "viewer" | "commenter" | "editor";
+                        description?: string | null;
+                        instructions_short_id?: string | null;
+                        /** @enum {string} */
+                        machine?: "owner" | "derive";
+                        /** @enum {string} */
+                        provider?: "claude-code" | "codex";
+                        model?: string | null;
+                        /** @enum {string} */
+                        ask_policy?: "workspace" | "invited";
+                        /** @enum {string} */
+                        write_policy?: "publish" | "review";
+                        connection_ids?: string[];
+                        environment?: {
+                            [key: string]: string;
+                        };
+                        max_run_ms?: number | null;
+                        max_concurrency?: number;
+                        schedule?: {
+                            cron: string;
+                            /** @default UTC */
+                            tz?: string;
+                            instruction: string;
+                            subject?: unknown;
+                        };
+                        account_id?: string | null;
+                    };
+                };
+            };
             responses: {
                 /** @description The created agent, its key (shown only here), and how to run it. */
                 201: {
@@ -4930,6 +5005,119 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runtime/connection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The workspace's sandbox connection. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Workspace compute connection. No credential. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ComputeConnection"];
+                    };
+                };
+            };
+        };
+        /** Verify and connect the workspace's sandbox API key. */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        api_key: string;
+                        /**
+                         * @default boat
+                         * @enum {string}
+                         */
+                        provider?: "boat" | "ortam";
+                    };
+                };
+            };
+            responses: {
+                /** @description Workspace compute connection. No credential. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ComputeConnection"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        /** Disconnect workspace compute and stop its active work. */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Workspace compute connection. No credential. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ComputeConnection"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Choose the workspace's Boat snapshot for new agent sandboxes. */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        snapshot: string | null;
+                    };
+                };
+            };
+            responses: {
+                /** @description Workspace compute connection. No credential. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ComputeConnection"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
     "/v1/artifacts/{shortId}/rework": {
         parameters: {
             query?: never;
@@ -7318,7 +7506,7 @@ export interface components {
             /** @description The source's name, or a secret's label. Never a value. */
             name: string;
             /** @enum {string} */
-            kind: "oauth" | "secret" | "github_app" | "slack" | "mcp";
+            kind: "oauth" | "secret" | "github_app" | "slack" | "mcp" | "runtime";
             /** @enum {string} */
             scope: "personal" | "workspace";
             /** @enum {string} */
@@ -7377,6 +7565,13 @@ export interface components {
              * @enum {string}
              */
             provider: "claude-code" | "codex";
+            /** @description Cloud sandbox availability and progress. No credentials. */
+            runtime?: {
+                /** @enum {string} */
+                provider: "ortam" | "boat";
+                /** @enum {string|null} */
+                phase: "creating" | "provisioning" | "stopping" | "ready" | "busy" | "deleting" | "failed" | null;
+            } | null;
             model: string | null;
             /** @enum {string} */
             ask_policy: "workspace" | "invited";
@@ -7422,6 +7617,8 @@ export interface components {
             kind: "ask" | "scheduled" | "graph" | "node";
             /** @enum {string} */
             status: "queued" | "running" | "needs_you" | "succeeded" | "failed" | "cancelled" | "lost";
+            /** @enum {string|null} */
+            machine_phase?: "starting" | "ready" | "launching" | "running" | "stopping" | "released" | null;
             instruction: string;
             asked_by: string | null;
             attended: boolean;
@@ -7454,6 +7651,31 @@ export interface components {
                 first_asked_at?: string;
             } | null;
             result: {
+                attempt_offset?: number;
+                compute?: {
+                    turn: string;
+                    /** @enum {string} */
+                    provider: "ortam" | "boat";
+                    sandbox_id: string;
+                    started_at: string;
+                    stopped_at: string;
+                    billable_seconds: number | null;
+                    cost_micro_usd: number | null;
+                }[];
+                runs?: {
+                    attempt: number;
+                    provider: string;
+                    model: string;
+                    skill?: {
+                        short_id: string;
+                        version: number;
+                    };
+                    input_tokens: number | null;
+                    cached_input_tokens: number | null;
+                    output_tokens: number | null;
+                    duration_ms: number;
+                    model_cost_micro_usd: number | null;
+                }[];
                 effects?: {
                     /** @enum {string} */
                     kind: "page" | "pr" | "email" | "rows" | "other";
@@ -7521,7 +7743,7 @@ export interface components {
             mine: boolean;
             hint: string | null;
             /** @enum {string} */
-            status: "ready" | "not_checked";
+            status: "ready" | "not_checked" | "connecting" | "needs_attention";
             created_at: string;
         };
         BulkSummary: {
@@ -7935,6 +8157,15 @@ export interface components {
             /** @description Id of the mentioned person or agent. */
             id: string;
             name: string;
+        };
+        ComputeConnection: {
+            available: boolean;
+            /** @enum {string} */
+            provider: "boat" | "ortam";
+            connected: boolean;
+            account_id: string | null;
+            can_manage: boolean;
+            snapshot: string | null;
         };
         ContextInfo: {
             id: string;

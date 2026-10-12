@@ -7,7 +7,15 @@
 // so a report from a claim the server already handed to another runner is refused. And a long
 // job reports `progress` at a third of its lease, which renews the lease; a runner that stops
 // ticking (a closed laptop) loses the job to the server's reclaim instead of holding it forever.
-import { mkdirSync, mkdtempSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs"
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmdirSync,
+  rmSync,
+  statfsSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { selectProvider } from "./providers/index.js"
@@ -111,20 +119,6 @@ export class JobClient {
     return res.json()
   }
 
-  /** The job's report page: a new version of the one it already has, or its first. A first
-   *  report is private to the workspace (members can open it, no link, listed nowhere): it is
-   *  the job's record, found from the job, and sharing it further is a person's choice. */
-  publishReport(job, md) {
-    return this.publish({
-      title: reportTitle(job),
-      filename: "report.md",
-      type: "text/markdown",
-      body: md,
-      shortId: job.report_short_id ?? undefined,
-      access: REPORT_ACCESS,
-    })
-  }
-
   pull(limit = 10) {
     return this.req(`/v1/agents/${this.cfg.agentId}/pull`, { method: "POST", body: { limit } })
   }
@@ -138,6 +132,14 @@ export class JobClient {
 
   account(job, provider) {
     return this.req(`/v1/jobs/${job.id}/account?provider=${encodeURIComponent(provider)}`, {
+      claim: job.started_at,
+    })
+  }
+
+  refreshAccount(job, body) {
+    return this.req(`/v1/jobs/${job.id}/account`, {
+      method: "POST",
+      body,
       claim: job.started_at,
     })
   }
@@ -163,39 +165,6 @@ const runnerFreeEnv = (env, { keepModelLogin = false } = {}) => {
   ])
     delete out[k]
   return out
-}
-
-/** How a job's report page is shared when it is first made. */
-const REPORT_ACCESS = { workspace_access: "member", link_role: "none", listed: "none" }
-
-const firstLine = (s) =>
-  (s ?? "")
-    .split("\n")
-    .find((l) => l.trim())
-    ?.trim() ?? ""
-const reportTitle = (job) => firstLine(job.instruction).slice(0, 120) || `Job ${job.id}`
-
-/** The report every job leaves: what was asked, what was done, what to look at twice, what it
- *  made, and how it knows. Sections with nothing to say are left out. */
-export function reportMarkdown(job, answer, { made = [], flagged = [], cfg = {} } = {}) {
-  const asked = [...(job.messages ?? [])].reverse().find((m) => m.author_kind === "asker")?.body_md
-  const parts = [
-    `# ${reportTitle(job)}`,
-    "",
-    "## Asked",
-    "",
-    asked ?? job.instruction ?? "",
-    "",
-    "## Did",
-    "",
-    answer.body_md ?? "",
-  ]
-  if (flagged.length) parts.push("", "## Flagged", "", ...flagged.map((f) => `- ${f}`))
-  if (made.length) parts.push("", "## Made", "", ...made.map((m) => `- ${m.title} (${m.short_id})`))
-  if (answer.query) parts.push("", "## Evidence", "", "```", answer.query, "```")
-  const model = cfg.model ?? job.execution?.model ?? job.execution?.provider ?? ""
-  parts.push("", "---", "", `\`${[job.id, model].filter(Boolean).join(" · ")}\``)
-  return `${parts.join("\n")}\n`
 }
 
 /** The system prompt for one job: the agent's standing instructions, then what this job is,
@@ -320,21 +289,56 @@ async function modelEnvFor(
     throw Object.assign(new Error(`can't use a ${res.credential.kind} credential here`), {
       retryable: false,
     })
-  const dir = mkdtempSync(join(tmpdir(), "derive-cred-"))
+  // A cloud stop can interrupt finally before the provider saves the disk. Keep the
+  // credential and all model-home files on tmpfs, which a saved disk cannot retain.
+  let credentialRoot = tmpdir()
+  if (process.env.DERIVE_RUNNER_ISOLATED === "1") {
+    try {
+      if (statfsSync("/dev/shm").type !== 0x01021994) throw new Error("not tmpfs")
+      credentialRoot = "/dev/shm"
+    } catch {
+      throw Object.assign(new Error("Cloud login files require memory-backed /dev/shm storage"), {
+        retryable: false,
+      })
+    }
+  }
+  const dir = mkdtempSync(join(credentialRoot, "derive-cred-"))
   for (const [name, content] of Object.entries(spec.files))
     writeFileSync(join(dir, name), content, { mode: 0o600 })
   return {
     env: { [spec.homeEnv]: dir },
+    flush: async () => {
+      if (providerName !== "codex" || res.credential.kind !== "login" || !res.account_id) return
+      try {
+        const next = readFileSync(join(dir, "auth.json"), "utf8")
+        if (next !== res.credential.value)
+          await client.refreshAccount(job, {
+            account_id: res.account_id,
+            credential_version: res.credential_version,
+            secret: next,
+          })
+      } catch {
+        process.stderr.write(
+          "[runner] Could not save the refreshed login. Reconnect if your next task needs it.\n",
+        )
+      }
+    },
     cleanup: () => {
       try {
         rmSync(dir, { recursive: true, force: true })
-      } catch {}
+      } catch (error) {
+        process.stderr.write(
+          `[runner] Could not remove model credential files: ${error.code ?? "unknown error"}\n`,
+        )
+      }
     },
   }
 }
 
 /** Do one claimed job and report it. Never throws: every failure becomes a report. */
 export async function serveJob(client, job, cfg, deps = {}) {
+  const began = Date.now()
+  const meter = deps.meter ?? { costUsd: null }
   const run = deps.runAgent ?? runAgent
   const providerName =
     cfg.providerName ?? (job.execution?.provider === "codex" ? "codex" : "claude-code")
@@ -354,6 +358,7 @@ export async function serveJob(client, job, cfg, deps = {}) {
   tick.unref?.()
 
   let cleanup = () => {}
+  let flushCredential = async () => {}
   let shim = null
   try {
     let env
@@ -364,6 +369,7 @@ export async function serveJob(client, job, cfg, deps = {}) {
         localLogin: cfg.localLogin,
       })
       cleanup = cred.cleanup
+      flushCredential = cred.flush ?? flushCredential
       // Source tools: a shim in cwd and exactly what it needs to call this job's tool route.
       // The job's tool token, never the runner's credential: it reaches this job's tool route
       // and nothing else, and dies with the claim.
@@ -394,27 +400,47 @@ export async function serveJob(client, job, cfg, deps = {}) {
           systemPrompt: jobSystemPrompt(job, { shim: shim?.rel }),
           prompt: buildPrompt(job.messages ?? []),
           env,
-          meter: deps.meter,
+          meter,
         })
+    await flushCredential()
     if (lost) {
       console.error(
         `[runner] job ${job.id}: the claim moved to another runner; dropping the answer`,
       )
       return "lost"
     }
-    const cost = toMicroUsd(deps.meter?.costUsd)
+    const cost = toMicroUsd(meter.costUsd)
+    const count = (n) => (Number.isSafeInteger(n) && n >= 0 ? n : null)
+    const usage = meter.usage ?? {}
+    const receipt = {
+      runs: [
+        {
+          attempt: job.attempt ?? 0,
+          provider: providerName,
+          model: cfg.model ?? job.execution?.model ?? provider.defaultModel,
+          ...(job.instructions
+            ? { skill: { short_id: job.instructions.short_id, version: job.instructions.version } }
+            : {}),
+          input_tokens: count(usage.input_tokens),
+          cached_input_tokens: count(usage.cached_input_tokens ?? usage.cache_read_input_tokens),
+          output_tokens: count(usage.output_tokens),
+          duration_ms: Date.now() - began,
+          model_cost_micro_usd: cost,
+        },
+      ],
+    }
     if (!result.ok) {
       await client.report(job, {
         status: "failed",
         body_md: `The run failed: ${result.error}`,
         retryable: !!result.retryable,
+        result: receipt,
         ...(cost !== null ? { cost_micro_usd: cost } : {}),
       })
       return "failed"
     }
     const a = result.answer
-    // What the answer made (a chart page), then the job's report page. Either failing demotes
-    // to a line in the reply: the answer itself still lands.
+    // Publish only a useful artifact. The task itself keeps its answer and receipt.
     const made = []
     const flagged = [...(a.caveats ?? [])]
     if (a.artifact && !cfg.mock) {
@@ -432,15 +458,24 @@ export async function serveJob(client, job, cfg, deps = {}) {
         flagged.push(`The page it made could not be published: ${e.message}`)
       }
     }
-    let report = null
-    try {
-      report = await client.publishReport(job, reportMarkdown(job, a, { made, flagged, cfg }))
-    } catch (e) {
-      console.error(`[runner] job ${job.id}: report not published: ${e.message}`)
-    }
     const common = {
-      body_md: a.body_md,
-      ...(report?.short_id ? { report_short_id: report.short_id } : {}),
+      result: {
+        ...receipt,
+        ...(made.length
+          ? {
+              effects: made.map((page) => ({
+                kind: "page",
+                label: page.title,
+                ref: page.short_id,
+              })),
+            }
+          : {}),
+      },
+      body_md: [
+        a.body_md,
+        ...(a.query ? [`Evidence: ${a.query}`] : []),
+        ...flagged.map((note) => `Note: ${note}`),
+      ].join("\n\n"),
       ...(cost !== null ? { cost_micro_usd: cost } : {}),
     }
     if (a.escalate) {
@@ -458,6 +493,7 @@ export async function serveJob(client, job, cfg, deps = {}) {
     await client.report(job, { status: "succeeded", ...common })
     return "succeeded"
   } catch (e) {
+    await flushCredential()
     console.error(`[runner] job ${job.id} failed: ${e.message}`)
     await client
       .report(job, { status: "failed", body_md: e.message, retryable: e.retryable !== false })

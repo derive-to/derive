@@ -417,6 +417,12 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "1",
   },
   {
+    name: "DERIVE_SANDBOX_PROVIDER",
+    group: "advanced",
+    doc: "Default adapter for workspaces without a saved compute connection: ortam or boat. Owners connect either provider in Settings. Existing sandboxes stay pinned until retirement.",
+    example: "ortam",
+  },
+  {
     name: "DERIVE_ORTAM_RUNNER_PATH",
     group: "advanced",
     doc: "Derive machines (Ortam sandboxes). Each sandbox installs this exact, pinned CLI. Unset =\nno Derive machines on this deploy.",

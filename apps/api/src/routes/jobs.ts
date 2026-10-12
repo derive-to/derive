@@ -5,6 +5,7 @@ import {
   type JobNeeds,
   type JobRecord,
   normalizeSelectors,
+  roleAllows,
   type Selector,
 } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
@@ -24,7 +25,7 @@ import { OVER_BUDGET } from "../lib/budget"
 import { chatArrival, refusalMessage } from "../lib/chat-gate"
 import { buildJobTools, JOB_TOOL_PREFIX } from "../lib/chat-tools"
 import { readEnvironmentBindings } from "../lib/context-environment"
-import { decryptSecret } from "../lib/crypto"
+import { decryptSecret, encryptSecret, sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 import { resolveJobCredential } from "../lib/job-accounts"
 import { advanceGraph, graphAware } from "../lib/job-graph"
@@ -54,6 +55,7 @@ import {
 } from "../lib/page-ask"
 import { MAX_RUN_CEILING_MS } from "../lib/run-lifecycle"
 import { signWorkToken } from "../lib/run-token"
+import { cloudEnabled } from "../lib/runtime-connection"
 import { runtimeFailureReason } from "../lib/runtime-diagnostics"
 import { log } from "../log"
 
@@ -99,6 +101,38 @@ const JobEffectSchema = z.object({
 })
 
 const JobResultSchema = z.object({
+  attempt_offset: z.number().int().nonnegative().optional(),
+  compute: z
+    .array(
+      z.object({
+        turn: z.string(),
+        provider: z.enum(["ortam", "boat"]),
+        sandbox_id: z.string(),
+        started_at: z.string(),
+        stopped_at: z.string(),
+        billable_seconds: z.number().nonnegative().nullable(),
+        cost_micro_usd: z.number().int().nonnegative().nullable(),
+      }),
+    )
+    .optional(),
+  runs: z
+    .array(
+      z.object({
+        attempt: z.number().int().nonnegative(),
+        provider: z.string().max(80),
+        model: z.string().max(200),
+        skill: z
+          .object({ short_id: z.string().max(64), version: z.number().int().positive() })
+          .optional(),
+        input_tokens: z.number().int().nonnegative().nullable(),
+        cached_input_tokens: z.number().int().nonnegative().nullable(),
+        output_tokens: z.number().int().nonnegative().nullable(),
+        duration_ms: z.number().int().nonnegative(),
+        model_cost_micro_usd: z.number().int().nonnegative().nullable(),
+      }),
+    )
+    .max(30)
+    .optional(),
   effects: z.array(JobEffectSchema).optional(),
   evidence: z
     .array(z.object({ label: z.string(), url: z.string().optional(), ref: z.string().optional() }))
@@ -130,6 +164,10 @@ const Job = z
     agent_id: z.string(),
     kind: z.enum(["ask", "scheduled", "graph", "node"]),
     status: z.enum(["queued", "running", "needs_you", "succeeded", "failed", "cancelled", "lost"]),
+    machine_phase: z
+      .enum(["starting", "ready", "launching", "running", "stopping", "released"])
+      .nullable()
+      .optional(),
     instruction: z.string(),
     asked_by: z.string().nullable(),
     attended: z.boolean(),
@@ -270,6 +308,9 @@ export const jobRoutes = (ctx: AppContext) => {
     userId: string,
     modelId?: string | null,
   ): Promise<PageTurnGrant | Response> => {
+    const caller = await agentFor(c)
+    if (caller && (caller.org_id !== org || !roleAllows(caller.role, "publish")))
+      return fail(c, 403, "this grant cannot start work")
     const rl = await ctx.limited(c, ctx.askLimiter)
     if (rl) return rl
     const { catalog, slots } = await ctx.modelsFor(c)
@@ -461,11 +502,8 @@ export const jobRoutes = (ctx: AppContext) => {
         return c.json({ ...(await showOne((await meta.getJob(job.id)) ?? job)), messages }, 201)
       }
       const agent = await meta.getAgent(b.agent_id)
-      if (!agent || !(await canAskAgent(meta, agent, who.id)))
-        return bail(fail(c, 404, "no such agent you can ask"))
-      // A bearer agent may ask another agent in its own workspace only.
       const caller = await agentFor(c)
-      if (caller && caller.org_id !== agent.org_id)
+      if (!agent || !(await canAskAgent(meta, agent, who.id, caller)))
         return bail(fail(c, 404, "no such agent you can ask"))
       // A workspace past its monthly model budget takes no new work. Checked before anything
       // is written, so a refused ask leaves no job behind. A dedupe key naming an open job
@@ -473,6 +511,27 @@ export const jobRoutes = (ctx: AppContext) => {
       const open = b.dedupe_key
         ? await meta.findOpenJobByDedupe(agent.id, who.id, b.dedupe_key)
         : null
+      if (!open && agent.machine === "derive") {
+        if (!(await cloudEnabled(meta, deps.runtime, agent.org_id)))
+          return bail(fail(c, 409, "Connect a sandbox in Settings → Connections before starting."))
+        const account = await resolveJobCredential(
+          meta,
+          deps.encryptionKey,
+          agent,
+          { asked_by: who.id },
+          agent.provider,
+        )
+        if (!account.credential)
+          return bail(
+            fail(
+              c,
+              409,
+              account.reason === "unreadable"
+                ? "Your model account needs attention. Reconnect it in Settings before starting."
+                : "Connect your model account in Settings before starting.",
+            ),
+          )
+      }
       if (!open && (await overBudgetFor(meta, agent, who.id)))
         return bail(fail(c, 402, OVER_BUDGET))
       const subject: Selector | null = b.subject
@@ -565,7 +624,7 @@ export const jobRoutes = (ctx: AppContext) => {
         return c.json({ ...(await showOne((await meta.getJob(job.id)) ?? next)), messages })
       }
       const agent = await meta.getAgent(job.agent_id)
-      if (!agent || !(await canSteerJob(meta, agent, job, who.id)))
+      if (!agent || !(await canSteerJob(meta, agent, job, who.id, await agentFor(c))))
         return bail(
           fail(c, 403, "only the person who asked, or the agent's manager, can follow up"),
         )
@@ -615,10 +674,12 @@ export const jobRoutes = (ctx: AppContext) => {
         const who = await personFor(c)
         if (who instanceof Response) return bail(who)
         const agent = await meta.getAgent(job.agent_id)
+        const caller = await agentFor(c)
         if (
           isPageAsk(job)
-            ? job.asked_by !== who.id
-            : !agent || !(await canSteerJob(meta, agent, job, who.id))
+            ? job.asked_by !== who.id ||
+              (!!caller && (caller.org_id !== job.org_id || !roleAllows(caller.role, "publish")))
+            : !agent || !(await canSteerJob(meta, agent, job, who.id, caller))
         )
           return bail(
             fail(c, 403, "only the person who asked, or the agent's manager, can do that"),
@@ -844,7 +905,7 @@ export const jobRoutes = (ctx: AppContext) => {
           .filter((m) => !isServerNote(m))
           .map(messageJson),
         instructions,
-        execution: { provider: agent.provider, model: agent.model },
+        execution: { provider: agent.provider, model: agent.model, agent_name: agent.name },
         tools,
         ...(quiet.length ? { sources_quiet: quiet } : {}),
       })),
@@ -874,7 +935,7 @@ export const jobRoutes = (ctx: AppContext) => {
         started_at: z.string().nullable(),
         status: z.enum(["succeeded", "failed", "needs_you", "progress"]),
         body_md: z.string().max(200_000).nullish(),
-        result: JobResultSchema.nullish(),
+        result: JobResultSchema.omit({ compute: true, attempt_offset: true }).nullish(),
         needs: JobNeedsSchema.nullish(),
         cost_micro_usd: z.number().int().nonnegative().nullish(),
         retryable: z.boolean().optional(),
@@ -962,6 +1023,62 @@ export const jobRoutes = (ctx: AppContext) => {
     const provider = c.req.query("provider") === "codex" ? "codex" : agent.provider
     const cred = await resolveJobCredential(meta, deps.encryptionKey, agent, job, provider)
     return c.json(cred)
+  })
+
+  // The account id and ciphertext are pinned; a stale refresh cannot replace a reconnect.
+  // authz-exempt: heldJob pins this write to the authenticated live claim.
+  app.post("/v1/jobs/:id/account", async (c) => {
+    c.header("Cache-Control", "no-store")
+    const held = await heldJob(c)
+    if (held instanceof Response) return held
+    if (!deps.encryptionKey) return fail(c, 503, "Secret encryption is not configured")
+    const b = await readJson(
+      c,
+      z.object({
+        account_id: z.string(),
+        credential_version: z.string().length(64),
+        secret: z.string().min(8).max(20000),
+      }),
+    )
+    if (b instanceof Response) return b
+    const current = await resolveJobCredential(
+      meta,
+      deps.encryptionKey,
+      held.agent,
+      held.job,
+      "codex",
+    )
+    if (
+      !current.credential ||
+      current.credential.kind !== "login" ||
+      current.account_id !== b.account_id ||
+      current.credential_version !== b.credential_version
+    )
+      return c.json({ refreshed: false })
+    const account = await meta.getAccount(b.account_id)
+    if (!account?.secret_enc || sha256(account.secret_enc) !== b.credential_version)
+      return c.json({ refreshed: false })
+    const login = z.object({
+      tokens: z.object({ access_token: z.string().min(8), account_id: z.string().min(1) }),
+    })
+    try {
+      const before = login.parse(JSON.parse(current.credential.value))
+      const after = login.parse(JSON.parse(b.secret))
+      if (before.tokens.account_id !== after.tokens.account_id)
+        return fail(c, 400, "Account identity changed")
+    } catch {
+      return fail(c, 400, "Invalid login")
+    }
+    const updated = await meta.updateAccount(
+      account.id,
+      account.org_id,
+      {
+        secret_enc: encryptSecret(b.secret, deps.encryptionKey),
+        status: "ready",
+      },
+      account.secret_enc,
+    )
+    return c.json({ refreshed: !!updated })
   })
 
   // authz-exempt: heldJob gates on the runner owning this job (agent key or managing grant).

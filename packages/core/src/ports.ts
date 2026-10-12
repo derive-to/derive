@@ -1613,6 +1613,8 @@ export interface IntegrationStore {
   ): Promise<{ settings: OrgSettings; personalBrandprint: string | null }>
   /** Persist the workspace's integration preferences (full object; upsert by org). */
   setOrgSettings(orgId: string, settings: OrgSettings): Promise<void>
+  /** Change only the Boat snapshot. Preserve concurrent edits to other workspace settings. */
+  setBoatSnapshot(orgId: string, snapshot: string | null): Promise<void>
   /** Persist settings only when the stored settings revision still matches. The compare and
    *  write are atomic; callers retry from a fresh read when false. This is the write primitive
    *  for deploy-wide settings whose operators may act concurrently. */
@@ -2243,6 +2245,8 @@ export interface AgentStore {
       broker_ref?: string
       status?: ConnectionStatus
       scopes_label?: string | null
+      toolkit?: string
+      base_url?: string
     },
     expectSecretEnc?: string | null,
     expectStatus?: ConnectionStatus,
@@ -3122,6 +3126,7 @@ export interface NewAgent {
   managed?: 0 | 1
   description?: string | null
   instructions_artifact_id?: string | null
+  account_id?: string | null
   machine?: import("./agent-model").AgentMachine
   connection_ids_json?: string | null
   repositories_json?: string | null
@@ -3222,7 +3227,7 @@ export type ConnectionScope = "personal" | "workspace"
  *  carries its own server URL in its ref and its own bearer in `secret_enc`, so it needs no
  *  vendor account and no broker plan. It is NOT a direct kind — Derive does not make its HTTP
  *  call itself — and it has no vendor side to revoke. */
-export type ConnectionKind = "oauth" | "secret" | "github_app" | "slack" | "mcp"
+export type ConnectionKind = "oauth" | "secret" | "github_app" | "slack" | "mcp" | "runtime"
 
 /** A per-user connected external account (WO3): the owner authorized Derive's broker to act on
  *  their Gmail/Stripe/GitHub/etc. Always bound to ONE person (identity never falls back), and
@@ -3878,6 +3883,8 @@ export interface OrgSettings {
    *  users with no connected agent (the concierge, workspace-owned living docs).
    *  Absent = none. */
   defaultAgentId?: string
+  /** Workspace-owned Boat snapshot for new agent sandboxes. Existing sandboxes keep their files. */
+  boatSnapshot?: string
   /** The workspace's Brandprint: a conventions collection agents pull as context, plus
    *  the generated brand profile. Absent until set. Mirrored on a profile (user layer);
    *  resolved profile-over-workspace. */

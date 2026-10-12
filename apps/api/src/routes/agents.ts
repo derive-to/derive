@@ -16,8 +16,9 @@ import { connectionBindError } from "../lib/broker"
 import { EnvironmentBindings, readEnvironmentBindings } from "../lib/context-environment"
 import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
-import { machineWorkspaces, retireSandbox } from "../lib/job-machine"
-import { canAskAgent, cancelJob, canManageAgent } from "../lib/jobs"
+import { machineDepsFrom, retireSandbox } from "../lib/job-machine"
+import { agentAccess, cancelJob } from "../lib/jobs"
+import { cloudEnabled, workspaceRuntime } from "../lib/runtime-connection"
 import { previousOccurrence } from "../lib/schedule"
 
 /** Agent registry (Admin-managed) + the agent's pull inbox of @mentions. The Agent +
@@ -27,6 +28,37 @@ import { previousOccurrence } from "../lib/schedule"
 export const agentRoutes = (ctx: AppContext) => {
   const { meta, deps, agentFor, privateOwnerId, requireUser, requireWorkspace } = ctx
   const app = new OpenAPIHono<BlankEnv>()
+
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/agents/runtime",
+      tags: ["Agents"],
+      summary: "Cloud runtime available to this workspace.",
+      responses: {
+        200: {
+          description: "Runtime availability, without credentials.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                enabled: z.boolean(),
+                provider: z.enum(["ortam", "boat"]).nullable(),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const org = await requireWorkspace(c, "read")
+      if (org instanceof Response) return bail(org)
+      const enabled = await cloudEnabled(meta, deps.runtime, org)
+      return c.json({
+        enabled,
+        provider: deps.runtime ? (await workspaceRuntime(meta, deps.runtime, org)).provider : null,
+      })
+    },
+  )
 
   const parseIds = (raw: string | null): string[] => {
     try {
@@ -73,11 +105,17 @@ export const agentRoutes = (ctx: AppContext) => {
     )
   }
   const sourcesOfOne = async (a: AgentRecord) => (await sourcesOf([a])).get(a.id) ?? []
-  const agentJson = (
+  const agentJson = async (
     a: AgentRecord,
-    extra: { instructions_short_id?: string | null; sources?: AgentSourceJson[] } = {},
+    extra: {
+      instructions_short_id?: string | null
+      sources?: AgentSourceJson[]
+      sandboxProvider?: "boat" | "ortam"
+    } = {},
   ) => {
     const environment = readEnvironmentBindings(a.environment_json)
+    const sandboxProvider =
+      extra.sandboxProvider ?? (await workspaceRuntime(meta, deps.runtime, a.org_id)).provider
     return {
       id: a.id,
       name: a.name,
@@ -88,6 +126,15 @@ export const agentRoutes = (ctx: AppContext) => {
       description: a.description,
       instructions_short_id: extra.instructions_short_id ?? null,
       machine: a.machine,
+      runtime:
+        a.machine === "derive" && deps.runtime
+          ? {
+              provider: a.sandbox_state_json
+                ? (JSON.parse(a.sandbox_state_json).provider ?? sandboxProvider)
+                : sandboxProvider,
+              phase: a.sandbox_phase,
+            }
+          : null,
       provider: a.provider,
       model: a.model,
       ask_policy: a.ask_policy,
@@ -130,7 +177,7 @@ export const agentRoutes = (ctx: AppContext) => {
     .object({
       id: z.string(),
       name: z.string().describe("The source's name, or a secret's label. Never a value."),
-      kind: z.enum(["oauth", "secret", "github_app", "slack", "mcp"]),
+      kind: z.enum(["oauth", "secret", "github_app", "slack", "mcp", "runtime"]),
       scope: z.enum(["personal", "workspace"]),
       status: z.enum(["active", "pending", "revoked"]),
     })
@@ -164,6 +211,16 @@ export const agentRoutes = (ctx: AppContext) => {
         .enum(["owner", "derive"])
         .describe("Where its jobs run: the owner's runner or MCP session, or a Derive sandbox."),
       provider: z.enum(["claude-code", "codex"]).describe("Which coding agent runs its jobs."),
+      runtime: z
+        .object({
+          provider: z.enum(["ortam", "boat"]),
+          phase: z
+            .enum(["creating", "provisioning", "stopping", "ready", "busy", "deleting", "failed"])
+            .nullable(),
+        })
+        .nullable()
+        .optional()
+        .describe("Cloud sandbox availability and progress. No credentials."),
       model: z.string().nullable(),
       ask_policy: z.enum(["workspace", "invited"]),
       write_policy: z
@@ -246,6 +303,8 @@ export const agentRoutes = (ctx: AppContext) => {
                       .string()
                       .nullable()
                       .describe("When it last had work, among the workspace's recent jobs."),
+                    can_ask: z.boolean(),
+                    can_manage: z.boolean(),
                   }),
                 ),
               }),
@@ -258,6 +317,9 @@ export const agentRoutes = (ctx: AppContext) => {
       const org = await requireWorkspace(c, "read")
       if (org instanceof Response) return bail(org)
       const agents = await meta.listAgents(org)
+      const who = await ctx.actingHuman(c)
+      const member = who ? await meta.getMembership(org, who.id) : null
+      const caller = await ctx.agentFor(c)
       // What the Agents screen groups by, in two queries rather than one per agent: each
       // agent's schedules, and when it last had work.
       const triggers = await meta.listTriggers(org)
@@ -273,17 +335,22 @@ export const agentRoutes = (ctx: AppContext) => {
       const pages = pageIds.length ? await meta.getArtifactsByIds(pageIds).catch(() => []) : []
       const shortOf = new Map(pages.map((p) => [p.id, p.short_id]))
       const sources = await sourcesOf(agents)
+      const sandboxProvider = (await workspaceRuntime(meta, deps.runtime, org)).provider
       return c.json({
-        agents: agents.map((a) => ({
-          ...agentJson(a, {
-            instructions_short_id: a.instructions_artifact_id
-              ? (shortOf.get(a.instructions_artifact_id) ?? null)
-              : null,
-            sources: sources.get(a.id),
-          }),
-          triggers: triggers.filter((t) => t.agent_id === a.id).map(triggerJson),
-          last_job_at: lastJob.get(a.id) ?? null,
-        })),
+        agents: await Promise.all(
+          agents.map(async (a) => ({
+            ...(await agentJson(a, {
+              sandboxProvider,
+              sources: sources.get(a.id),
+              instructions_short_id: a.instructions_artifact_id
+                ? (shortOf.get(a.instructions_artifact_id) ?? null)
+                : null,
+            })),
+            triggers: triggers.filter((t) => t.agent_id === a.id).map(triggerJson),
+            last_job_at: lastJob.get(a.id) ?? null,
+            ...agentAccess(a, member, caller),
+          })),
+        ),
       })
     },
   )
@@ -297,13 +364,10 @@ export const agentRoutes = (ctx: AppContext) => {
     agent: AgentRecord | null | undefined,
   ): Promise<string | null> => {
     if (!agent) return null
-    const full = await ctx.managementPrincipal(c)
-    if (full) return (await canManageAgent(meta, agent, full)) ? full : null
     const who = await ctx.actingHuman(c)
-    const caller = await ctx.agentFor(c)
-    if (!who || !caller?.id.startsWith("oauth:") || caller.org_id !== agent.org_id) return null
-    if (!(await ctx.workspaceCan(c, "publish"))) return null
-    return (await canManageAgent(meta, agent, who.id)) && agent.created_by === who.id
+    if (!who) return null
+    return agentAccess(agent, await meta.getMembership(agent.org_id, who.id), await ctx.agentFor(c))
+      .can_manage
       ? who.id
       : null
   }
@@ -390,6 +454,17 @@ export const agentRoutes = (ctx: AppContext) => {
     }
   }
 
+  const CreateAgentInput = AgentFields.partial().extend({
+    name: z
+      .string()
+      .min(1)
+      .max(160)
+      .refine((s) => s.trim() !== "", "name required"),
+    role: z.enum(["viewer", "commenter", "editor"]).optional(),
+    schedule: ScheduleInput.optional(),
+    account_id: z.string().min(1).max(64).nullable().optional(),
+  })
+
   // Create an agent. Its key is returned ONCE here; only its SHA-256 hash is stored, so a
   // database leak cannot expose usable credentials. An agent on the owner's machine also gets the
   // one command that starts its runner. Any publishing member may create an agent; it acts on
@@ -400,6 +475,9 @@ export const agentRoutes = (ctx: AppContext) => {
       path: "/v1/agents",
       tags: ["Agents"],
       summary: "Create an agent and mint its key (returned once).",
+      request: {
+        body: { required: true, content: { "application/json": { schema: CreateAgentInput } } },
+      },
       responses: {
         201: {
           description: "The created agent, its key (shown only here), and how to run it.",
@@ -418,14 +496,7 @@ export const agentRoutes = (ctx: AppContext) => {
     async (c) => {
       const org = await requireWorkspace(c, "publish")
       if (org instanceof Response) return bail(org)
-      const b = await readJson(
-        c,
-        AgentFields.partial().extend({
-          name: z.string().refine((s) => s.trim() !== "", "name required"),
-          role: z.unknown().optional(),
-          schedule: ScheduleInput.optional(),
-        }),
-      )
+      const b = await readJson(c, CreateAgentInput)
       if (b instanceof Response) return bail(b)
       const name = b.name.trim()
       const asked: Role | null =
@@ -447,12 +518,24 @@ export const agentRoutes = (ctx: AppContext) => {
         ? (await meta.getMembership(org, creator).catch(() => null))?.role
         : undefined
       const role: Role = asked ?? (seat ? capRole("editor", seat) : "commenter")
-      if (b.machine === "derive" && !machineWorkspaces(deps.runtime).has(org))
+      if (b.machine === "derive" && !(await cloudEnabled(meta, deps.runtime, org)))
         return bail(
-          fail(c, 400, "Derive machines are not turned on for this workspace; use machine: owner"),
+          fail(c, 400, "Connect boat.dev in Settings → Connections before using cloud agents"),
         )
       if (b.schedule && !validCron(b.schedule.cron, b.schedule.tz))
         return bail(fail(c, 400, "schedule.cron is not a valid cron expression for that timezone"))
+      if (b.account_id) {
+        const account = await meta.getAccount(b.account_id)
+        if (
+          !account ||
+          account.status === "connecting" ||
+          account.status === "needs_attention" ||
+          account.org_id !== org ||
+          (account.user_id !== creator && account.user_id !== "__workspace__") ||
+          account.provider !== (b.provider === "codex" ? "codex" : "claude")
+        )
+          return bail(fail(c, 400, "Choose an available model account for this provider"))
+      }
       const token = `dk_agt_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`
       let agent: AgentRecord
       try {
@@ -480,6 +563,7 @@ export const agentRoutes = (ctx: AppContext) => {
               : null,
           max_run_ms: b.max_run_ms ?? null,
           max_concurrency: b.max_concurrency ?? 1,
+          account_id: b.account_id ?? null,
         })
       } catch {
         return bail(fail(c, 409, "an agent with that name already exists"))
@@ -506,10 +590,10 @@ export const agentRoutes = (ctx: AppContext) => {
       // The only place the raw key is ever exposed.
       return c.json(
         {
-          ...agentJson(agent, {
+          ...(await agentJson(agent, {
             instructions_short_id: b.instructions_short_id ?? null,
             sources: await sourcesOfOne(agent),
-          }),
+          })),
           token,
           runner_command,
           trigger: trigger ? triggerJson(trigger) : null,
@@ -547,16 +631,15 @@ export const agentRoutes = (ctx: AppContext) => {
       const org = await requireWorkspace(c, "read")
       if (org instanceof Response) return bail(org)
       const agent = await meta.getAgent(c.req.param("id"))
-      if (!agent || agent.org_id !== org || !(await meta.getMembership(org, who.id)))
-        return bail(fail(c, 404, "agent not found"))
+      const member = await meta.getMembership(org, who.id)
+      if (!agent || agent.org_id !== org || !member) return bail(fail(c, 404, "agent not found"))
       return c.json({
-        ...agentJson(agent, {
+        ...(await agentJson(agent, {
           instructions_short_id: await instructionsShortId(agent),
           sources: await sourcesOfOne(agent),
-        }),
+        })),
         triggers: (await meta.listTriggers(agent.org_id, agent.id)).map(triggerJson),
-        can_ask: await canAskAgent(meta, agent, who.id),
-        can_manage: (await managerOf(c, agent)) !== null,
+        ...agentAccess(agent, member, await ctx.agentFor(c)),
       })
     },
   )
@@ -601,15 +684,17 @@ export const agentRoutes = (ctx: AppContext) => {
       }
       const refused = await definitionError(c, org, who, b)
       if (refused) return bail(fail(c, 400, refused))
-      if (b.machine === "derive" && !machineWorkspaces(deps.runtime).has(org))
+      if (b.machine === "derive" && !(await cloudEnabled(meta, deps.runtime, org)))
         return bail(
-          fail(c, 400, "Derive machines are not turned on for this workspace; use machine: owner"),
+          fail(c, 400, "Connect boat.dev in Settings → Connections before using cloud agents"),
         )
       // An agent may run on its manager's own account or a shared one, never a teammate's.
       if (b.account_id) {
         const acct = await meta.getAccount(b.account_id)
         if (
           !acct ||
+          acct.status === "connecting" ||
+          acct.status === "needs_attention" ||
           acct.org_id !== org ||
           (acct.user_id !== who && acct.user_id !== "__workspace__")
         )
@@ -650,7 +735,7 @@ export const agentRoutes = (ctx: AppContext) => {
       }
       if (!updated) return bail(fail(c, 404, "agent not found"))
       return c.json(
-        agentJson(updated, {
+        await agentJson(updated, {
           instructions_short_id: await instructionsShortId(updated),
           sources: await sourcesOfOne(updated),
         }),
@@ -716,7 +801,10 @@ export const agentRoutes = (ctx: AppContext) => {
       if (t instanceof Response) return bail(t)
       const b = await readJson(
         c,
-        ScheduleInput.partial().extend({ enabled: z.boolean().optional() }),
+        ScheduleInput.partial().extend({
+          tz: z.string().trim().min(1).max(64).optional(),
+          enabled: z.boolean().optional(),
+        }),
       )
       if (b instanceof Response) return bail(b)
       const cron = b.cron ?? t.cron ?? ""
@@ -781,10 +869,10 @@ export const agentRoutes = (ctx: AppContext) => {
       const rotated = await meta.rotateAgentToken(c.req.param("id"), org, sha256(token))
       if (!rotated) return bail(fail(c, 404, "agent not found"))
       return c.json({
-        ...agentJson(rotated, {
+        ...(await agentJson(rotated, {
           sources: await sourcesOfOne(rotated),
           instructions_short_id: await instructionsShortId(rotated),
-        }),
+        })),
         token,
       })
     },
@@ -804,7 +892,15 @@ export const agentRoutes = (ctx: AppContext) => {
       if (!target || !(await managerOf(c, target))) return bail(fail(c, 404, "agent not found"))
       const org = target.org_id
       const id = target.id
-      await retireSandbox(deps.runtime, deps.runtimeFetch, target)
+      await retireSandbox(
+        machineDepsFrom(meta, {
+          secret: deps.encryptionKey,
+          server: deps.baseUrl,
+          config: deps.runtime,
+          fetcher: deps.runtimeFetch,
+        }),
+        target,
+      )
       // Scope the delete to the caller's workspace: deleteAgent is keyed by
       // (id, org) so an Admin can't delete another workspace's agent by id.
       await meta.deleteAgent(id, org)
@@ -880,7 +976,7 @@ export const agentRoutes = (ctx: AppContext) => {
     const limit = Math.min(50, Math.max(1, Number(c.req.query("limit")) || 20))
     const mentions = await meta.listPendingAgentMentions(agent.id, limit)
     return c.json({
-      agent: agentJson(agent, { sources: await sourcesOfOne(agent) }),
+      agent: await agentJson(agent, { sources: await sourcesOfOne(agent) }),
       mentions: mentions.map((m) => ({
         id: m.id,
         artifact: m.artifact_short_id,

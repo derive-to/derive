@@ -2,6 +2,14 @@
 // job-machine.ts runs INSTALL_RUNTIME_RUNNER when it sets a sandbox up.
 
 export const RUNNER_VERSION = "0.8.3"
+
+/** The pinned install must support job tokens and match a versioned runner path. */
+export const runnerRunsJobs = (runnerPath: string, installs: string = RUNNER_VERSION): boolean => {
+  const [major = 0, minor = 0] = installs.split(".").map(Number)
+  if (major === 0 && minor < 8) return false
+  const v = /derive-runtime\/(\d+\.\d+\.\d+)\//.exec(runnerPath)
+  return !v || v[1] === installs
+}
 const RUNNER_DIRECTORY = `/home/ortam/derive-runtime/${RUNNER_VERSION}`
 
 /** Install once per saved environment, then atomically expose a complete runner. */

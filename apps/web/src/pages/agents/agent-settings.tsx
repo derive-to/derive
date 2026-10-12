@@ -30,7 +30,15 @@ import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 import { accountLabel } from "../settings/accounts-section"
 import { sourceName } from "./agent-jobs"
-import { cronLabel, firstLine, machineOf, ownerMachineName, runnerCommand, when } from "./format"
+import {
+  cronLabel,
+  firstLine,
+  machineOf,
+  modelChoices,
+  ownerMachineName,
+  runnerCommand,
+  when,
+} from "./format"
 import { Group } from "./rows"
 
 // An agent's Settings tab. Everything a coding session set when it made the agent is changed
@@ -106,6 +114,9 @@ export function AgentSettings({ agent, names, isWorkspaceOwner }: Props) {
                 ? `${machineOf(agent, names).on ? "Connected" : "Last seen"} ${when(agent.seen_at)}`
                 : "Not connected yet"}
             </Sub>
+          )}
+          {agent.machine === "derive" && (
+            <Sub>A Derive sandbox that keeps its files between tasks.</Sub>
           )}
         </Field>
         <AccountField agent={agent} edit={edit} onSave={set} />
@@ -319,7 +330,7 @@ function InstructionsField({
   const page = useQuery({ ...artifactQuery(short ?? ""), enabled: !!short })
   return (
     <Field
-      label="Instructions"
+      label="Skill"
       action={
         edit &&
         !editing && (
@@ -368,7 +379,10 @@ function InstructionsField({
       ) : (
         <span className="text-muted-foreground">None</span>
       )}
-      <Sub>A page it reads before every job.</Sub>
+      <Sub>
+        The page it reads before every task. Edit it like any page; the next task uses the new
+        version.
+      </Sub>
     </Field>
   )
 }
@@ -536,7 +550,9 @@ function AccountField({
 }) {
   const accounts = useQuery({ ...accountsQuery(), enabled: edit || !!agent.account_id })
   // An agent may run on its manager's own account or a shared one, never a teammate's.
-  const usable = (accounts.data ?? []).filter((a) => a.mine || a.shared)
+  const usable = (accounts.data ?? []).filter(
+    (a) => (a.mine || a.shared) && a.status !== "connecting" && a.status !== "needs_attention",
+  )
   const current = accounts.data?.find((a) => a.id === agent.account_id)
   const label = (a: ModelAccount) => `${accountLabel(a)}${a.hint ? ` ${a.hint}` : ""}`
   const hidden = "An account you can’t see"
@@ -566,6 +582,11 @@ function AccountField({
             {agent.account_id && !current && (
               <SelectItem value={agent.account_id}>{hidden}</SelectItem>
             )}
+            {current && !usable.some((a) => a.id === current.id) && (
+              <SelectItem value={current.id} disabled>
+                {accountLabel(current)} · Finish connecting
+              </SelectItem>
+            )}
             {usable.map((a) => (
               <SelectItem key={a.id} value={a.id}>
                 {label(a)}
@@ -587,13 +608,6 @@ function AccountField({
   )
 }
 
-// Claude Code's model aliases: it maps each to the newest model of that family, so this list
-// stays current without a Derive release. An exact model id (a pinned version) goes in Custom.
-const CLAUDE_MODELS = [
-  { id: "opus", label: "Opus" },
-  { id: "sonnet", label: "Sonnet" },
-  { id: "haiku", label: "Haiku" },
-]
 const CUSTOM = "custom"
 
 function ModelField({
@@ -605,7 +619,7 @@ function ModelField({
   edit: boolean
   onSave: (p: AgentPatch) => void
 }) {
-  const choices = agent.provider === "claude-code" ? CLAUDE_MODELS : []
+  const choices = modelChoices(agent.provider)
   const known = choices.find((m) => m.id === agent.model)
   const [custom, setCustom] = useState<string | null>(null)
   const selected = custom !== null ? CUSTOM : !agent.model ? DEFAULT : known ? known.id : CUSTOM
@@ -680,6 +694,7 @@ const KIND_WORD: Record<AgentSource["kind"], string> = {
   mcp: "MCP server",
   oauth: "Account",
   secret: "Secret",
+  runtime: "Sandbox",
 }
 
 /** One bound row: a name, what it is, whose it is, and Remove while editing. */

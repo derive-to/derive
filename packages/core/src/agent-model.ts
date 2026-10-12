@@ -61,6 +61,29 @@ export interface JobEffect {
 }
 
 export interface JobResult {
+  /** Server-owned baseline for receipt indexes across manual retry cycles. */
+  attempt_offset?: number
+  compute?: {
+    turn: string
+    provider: "ortam" | "boat"
+    sandbox_id: string
+    started_at: string
+    stopped_at: string
+    billable_seconds: number | null
+    cost_micro_usd: number | null
+  }[]
+  /** One accepted runner report per attempt. Missing numbers stay unknown. */
+  runs?: {
+    attempt: number
+    provider: string
+    model: string
+    skill?: { short_id: string; version: number }
+    input_tokens: number | null
+    cached_input_tokens: number | null
+    output_tokens: number | null
+    duration_ms: number
+    model_cost_micro_usd: number | null
+  }[]
   effects?: JobEffect[]
   evidence?: { label: string; url?: string; ref?: string }[]
   failure?: { reason: string; retryable: boolean }
@@ -214,7 +237,7 @@ export interface NewTrigger {
 
 export type AccountProvider = "claude" | "codex"
 export type AccountKind = "oauth" | "api_key" | "login"
-export type AccountStatus = "ready" | "not_checked"
+export type AccountStatus = "ready" | "not_checked" | "connecting" | "needs_attention"
 export interface AccountRecord {
   id: string
   org_id: string
@@ -422,7 +445,13 @@ export interface AgentModelStore<Agent = unknown> {
   getAccount(id: string): Promise<AccountRecord | null>
   /** A workspace's accounts; with `userId`, only that person's plus the shared pool. */
   listAccounts(orgId: string, userId?: string): Promise<AccountRecord[]>
-  updateAccount(id: string, orgId: string, patch: AccountPatch): Promise<AccountRecord | null>
+  /** With an expected ciphertext, replace a credential only if it is still current. */
+  updateAccount(
+    id: string,
+    orgId: string,
+    patch: AccountPatch,
+    expectSecretEnc?: string | null,
+  ): Promise<AccountRecord | null>
   deleteAccount(id: string, orgId: string): Promise<boolean>
 }
 

@@ -194,3 +194,16 @@ export function runnerCommand(agentId: string, key: string): string {
   const server = API_BASE || (typeof window === "undefined" ? "" : window.location.origin)
   return `DERIVE_TOKEN=${key} npx -y @derive-to/cli runner serve --agent ${agentId} --server ${server}`
 }
+
+/** Account defaults and custom IDs stay available; named choices are shared by setup. */
+export const modelChoices = (provider: Agent["provider"]) =>
+  provider === "claude-code"
+    ? [
+        { id: "opus", label: "Opus (newest)" },
+        { id: "sonnet", label: "Sonnet (newest)" },
+        { id: "haiku", label: "Haiku (newest)" },
+      ]
+    : [
+        { id: "gpt-6-luna", label: "Luna · lower cost" },
+        { id: "gpt-6.1-sol", label: "Sol · complex work" },
+      ]

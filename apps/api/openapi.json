@@ -1574,7 +1574,8 @@
               "secret",
               "github_app",
               "slack",
-              "mcp"
+              "mcp",
+              "runtime"
             ]
           },
           "scope": {
@@ -1774,6 +1775,38 @@
             ],
             "description": "Which coding agent runs its jobs."
           },
+          "runtime": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "provider": {
+                "type": "string",
+                "enum": [
+                  "ortam",
+                  "boat"
+                ]
+              },
+              "phase": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "creating",
+                  "provisioning",
+                  "stopping",
+                  "ready",
+                  "busy",
+                  "deleting",
+                  "failed",
+                  null
+                ]
+              }
+            },
+            "required": [
+              "provider",
+              "phase"
+            ],
+            "description": "Cloud sandbox availability and progress. No credentials."
+          },
           "model": {
             "type": "string",
             "nullable": true
@@ -1946,6 +1979,19 @@
               "lost"
             ]
           },
+          "machine_phase": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "starting",
+              "ready",
+              "launching",
+              "running",
+              "stopping",
+              "released",
+              null
+            ]
+          },
           "instruction": {
             "type": "string"
           },
@@ -2078,6 +2124,129 @@
           "result": {
             "type": "object",
             "properties": {
+              "attempt_offset": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "compute": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "turn": {
+                      "type": "string"
+                    },
+                    "provider": {
+                      "type": "string",
+                      "enum": [
+                        "ortam",
+                        "boat"
+                      ]
+                    },
+                    "sandbox_id": {
+                      "type": "string"
+                    },
+                    "started_at": {
+                      "type": "string"
+                    },
+                    "stopped_at": {
+                      "type": "string"
+                    },
+                    "billable_seconds": {
+                      "type": "number",
+                      "nullable": true,
+                      "minimum": 0
+                    },
+                    "cost_micro_usd": {
+                      "type": "integer",
+                      "nullable": true,
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "turn",
+                    "provider",
+                    "sandbox_id",
+                    "started_at",
+                    "stopped_at",
+                    "billable_seconds",
+                    "cost_micro_usd"
+                  ]
+                }
+              },
+              "runs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "attempt": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "provider": {
+                      "type": "string",
+                      "maxLength": 80
+                    },
+                    "model": {
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    "skill": {
+                      "type": "object",
+                      "properties": {
+                        "short_id": {
+                          "type": "string",
+                          "maxLength": 64
+                        },
+                        "version": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "exclusiveMinimum": true
+                        }
+                      },
+                      "required": [
+                        "short_id",
+                        "version"
+                      ]
+                    },
+                    "input_tokens": {
+                      "type": "integer",
+                      "nullable": true,
+                      "minimum": 0
+                    },
+                    "cached_input_tokens": {
+                      "type": "integer",
+                      "nullable": true,
+                      "minimum": 0
+                    },
+                    "output_tokens": {
+                      "type": "integer",
+                      "nullable": true,
+                      "minimum": 0
+                    },
+                    "duration_ms": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "model_cost_micro_usd": {
+                      "type": "integer",
+                      "nullable": true,
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "attempt",
+                    "provider",
+                    "model",
+                    "input_tokens",
+                    "cached_input_tokens",
+                    "output_tokens",
+                    "duration_ms",
+                    "model_cost_micro_usd"
+                  ]
+                },
+                "maxItems": 30
+              },
               "effects": {
                 "type": "array",
                 "items": {
@@ -2366,7 +2535,9 @@
             "type": "string",
             "enum": [
               "ready",
-              "not_checked"
+              "not_checked",
+              "connecting",
+              "needs_attention"
             ]
           },
           "created_at": {
@@ -3624,6 +3795,43 @@
         "required": [
           "id",
           "name"
+        ]
+      },
+      "ComputeConnection": {
+        "type": "object",
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "boat",
+              "ortam"
+            ]
+          },
+          "connected": {
+            "type": "boolean"
+          },
+          "account_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "can_manage": {
+            "type": "boolean"
+          },
+          "snapshot": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "available",
+          "provider",
+          "connected",
+          "account_id",
+          "can_manage",
+          "snapshot"
         ]
       },
       "ContextInfo": {
@@ -5982,6 +6190,44 @@
         }
       }
     },
+    "/v1/agents/runtime": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Cloud runtime available to this workspace.",
+        "responses": {
+          "200": {
+            "description": "Runtime availability, without credentials.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "provider": {
+                      "type": "string",
+                      "nullable": true,
+                      "enum": [
+                        "ortam",
+                        "boat",
+                        null
+                      ]
+                    }
+                  },
+                  "required": [
+                    "enabled",
+                    "provider"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/agents": {
       "get": {
         "tags": [
@@ -6016,11 +6262,19 @@
                                 "type": "string",
                                 "nullable": true,
                                 "description": "When it last had work, among the workspace's recent jobs."
+                              },
+                              "can_ask": {
+                                "type": "boolean"
+                              },
+                              "can_manage": {
+                                "type": "boolean"
                               }
                             },
                             "required": [
                               "triggers",
-                              "last_job_at"
+                              "last_job_at",
+                              "can_ask",
+                              "can_manage"
                             ]
                           }
                         ]
@@ -6041,6 +6295,141 @@
           "Agents"
         ],
         "summary": "Create an agent and mint its key (returned once).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "viewer",
+                      "commenter",
+                      "editor"
+                    ]
+                  },
+                  "description": {
+                    "type": "string",
+                    "nullable": true,
+                    "maxLength": 280
+                  },
+                  "instructions_short_id": {
+                    "type": "string",
+                    "nullable": true,
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "machine": {
+                    "type": "string",
+                    "enum": [
+                      "owner",
+                      "derive"
+                    ]
+                  },
+                  "provider": {
+                    "type": "string",
+                    "enum": [
+                      "claude-code",
+                      "codex"
+                    ]
+                  },
+                  "model": {
+                    "type": "string",
+                    "nullable": true,
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "ask_policy": {
+                    "type": "string",
+                    "enum": [
+                      "workspace",
+                      "invited"
+                    ]
+                  },
+                  "write_policy": {
+                    "type": "string",
+                    "enum": [
+                      "publish",
+                      "review"
+                    ]
+                  },
+                  "connection_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    },
+                    "maxItems": 20
+                  },
+                  "environment": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    }
+                  },
+                  "max_run_ms": {
+                    "type": "integer",
+                    "nullable": true,
+                    "minimum": 30000,
+                    "maximum": 21600000
+                  },
+                  "max_concurrency": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10
+                  },
+                  "schedule": {
+                    "type": "object",
+                    "properties": {
+                      "cron": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 120
+                      },
+                      "tz": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64,
+                        "default": "UTC"
+                      },
+                      "instruction": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 20000
+                      },
+                      "subject": {
+                        "nullable": true
+                      }
+                    },
+                    "required": [
+                      "cron",
+                      "instruction"
+                    ]
+                  },
+                  "account_id": {
+                    "type": "string",
+                    "nullable": true,
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "required": [
+                  "name"
+                ]
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
             "description": "The created agent, its key (shown only here), and how to run it.",
@@ -9835,6 +10224,128 @@
                   "required": [
                     "seen_at"
                   ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/runtime/connection": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "The workspace's sandbox connection.",
+        "responses": {
+          "200": {
+            "description": "Workspace compute connection. No credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputeConnection"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Verify and connect the workspace's sandbox API key.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "api_key": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 4096
+                  },
+                  "provider": {
+                    "type": "string",
+                    "enum": [
+                      "boat",
+                      "ortam"
+                    ],
+                    "default": "boat"
+                  }
+                },
+                "required": [
+                  "api_key"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Workspace compute connection. No credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputeConnection"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Choose the workspace's Boat snapshot for new agent sandboxes.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "snapshot": {
+                    "type": "string",
+                    "nullable": true,
+                    "minLength": 1,
+                    "maxLength": 120,
+                    "pattern": "^[a-zA-Z0-9_-]+$"
+                  }
+                },
+                "required": [
+                  "snapshot"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Workspace compute connection. No credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputeConnection"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Disconnect workspace compute and stop its active work.",
+        "responses": {
+          "200": {
+            "description": "Workspace compute connection. No credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputeConnection"
                 }
               }
             }

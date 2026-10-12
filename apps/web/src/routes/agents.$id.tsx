@@ -11,8 +11,10 @@ export const Route = createFileRoute("/agents/$id")({
     // is never an agent id, so it lands on the Agents home.
     if (args.params.id.startsWith("ctx_")) throw redirect({ to: "/agents", replace: true })
   },
-  validateSearch: (search: Record<string, unknown>): { tab?: "settings" } =>
-    search.tab === "settings" ? { tab: "settings" } : {},
+  validateSearch: (search: Record<string, unknown>): { tab?: "settings" | "skill" | "usage" } =>
+    search.tab === "settings" || search.tab === "skill" || search.tab === "usage"
+      ? { tab: search.tab }
+      : {},
   loader: ({ context, params }) =>
     Promise.all([
       context.queryClient.ensureQueryData(agentQuery(params.id)).catch(() => {}),

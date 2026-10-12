@@ -90,12 +90,19 @@ Do not end with prose like "this looks good" — end with the block.
 }
 </answer>
 
+Use JSON.stringify to encode multiline Markdown. After JSON parsing, body_md must
+contain actual newline characters. Do not double-escape line breaks.
+
 Escalate (escalate: true) when your instructions say a person must decide, or
 when you need permission you do not have. escalation_reason is the question,
 addressed to that person, in two or three sentences; the detail goes in body_md.
 When the person is picking from a few choices, list them as short labels in
 escalation_options (for example ["Ban 14 days", "Ban 7 days", "Watch", "Clear"]);
 they become buttons. Still produce your best draft in body_md.
+
+Also escalate when missing access, credentials, tools, or user input blocks the work.
+A blocked check is not success. Lead with a short answer. Keep routine results concise.
+Do not create a separate artifact unless it contains useful work to inspect, keep, or share.
 
 When the asker wants a chart, visual, or report page, set "artifact" to ONE
 fully self-contained HTML document (inline CSS/JS/SVG, no external requests; it
@@ -294,7 +301,18 @@ async function runStructured(provider, opts) {
   const spend = (x) => {
     if (Number.isFinite(x?.costUsd)) meter.costUsd = (meter.costUsd ?? 0) + x.costUsd
     if (x?.threadId) meter.threadId = x.threadId
-    if (x?.usage) meter.usage = x.usage
+    if (x?.usage) {
+      const previous = meter.usage ?? {}
+      meter.usage = {
+        ...previous,
+        ...Object.fromEntries(
+          Object.entries(x.usage).map(([key, value]) => [
+            key,
+            Number.isFinite(value) ? (previous[key] ?? 0) + value : value,
+          ]),
+        ),
+      }
+    }
     if (Array.isArray(x?.actions) && x.actions.length) {
       const collected = meter.actions ?? []
       for (const action of x.actions) {
@@ -380,8 +398,9 @@ export async function runAgent(provider, opts) {
       caveats: [
         "The runner couldn't parse a structured answer, so this is the model's raw reply -- treat any figures and confidence with extra care.",
       ],
-      escalate: false,
-      escalation_reason: null,
+      escalate: true,
+      escalation_reason:
+        "Check this reply before continuing. The runner could not confirm a structured result.",
       artifact: null,
     }),
   })

@@ -1,11 +1,10 @@
 import type { ReactNode } from "react"
 import { Icon, type IconName } from "@/components/icons"
+import { SectionHeading } from "@/components/shared/section-title"
 import { cn } from "@/lib/utils"
 import type { MachineMark } from "./format"
 
-// The one row the agent screens are built from: a state glyph, the title, one grey line,
-// and metadata hard right. One line, 52px, hairline between rows. A group is a quiet
-// uppercase label over its rows; an empty group is not drawn at all.
+// Shared agent rows: a state glyph, a title and detail, then quiet metadata.
 
 export function Group({
   label,
@@ -19,11 +18,7 @@ export function Group({
 }) {
   return (
     <section data-testid={testId} className="flex flex-col">
-      {label && (
-        <h2 className="mb-1.5 text-sm font-medium tracking-wider text-muted-foreground uppercase">
-          {label}
-        </h2>
-      )}
+      {label && <SectionHeading className="mb-3">{label}</SectionHeading>}
       <div className="flex flex-col">{children}</div>
     </section>
   )
@@ -45,7 +40,7 @@ export function RowLine({
     <>
       <Icon
         name={icon}
-        size={18}
+        size={16}
         strokeWidth={1.75}
         className={cn(
           "text-muted-foreground",
@@ -54,12 +49,12 @@ export function RowLine({
           icon === "job-running" && "motion-safe:animate-spin",
         )}
       />
-      <span className="flex min-w-0 flex-1 items-baseline gap-2.5 overflow-hidden whitespace-nowrap">
+      <span className="flex min-w-0 flex-1 flex-col gap-1 overflow-hidden">
         <span className="truncate font-medium text-foreground">{title}</span>
         {detail && (
           <span
             className={cn(
-              "truncate text-muted-foreground max-sm:hidden",
+              "w-full truncate text-sm text-muted-foreground",
               tone === "warning" && "text-foreground",
             )}
           >
@@ -71,10 +66,10 @@ export function RowLine({
   )
 }
 
-/** Row chrome: 52px, hairline under every row but the last; the needs-you wash. */
+/** Row spacing, separators and the needs-you wash. */
 export const rowClass = (tone?: "warning") =>
   cn(
-    "flex h-13 items-center gap-3.5 border-b border-border text-base last:border-b-0",
+    "flex min-h-18 items-center gap-3.5 border-b border-border py-3 text-base last:border-b-0 hover:bg-secondary/40",
     tone === "warning" && "-mx-3 rounded-lg border-b-0 bg-warning/10 px-3",
   )
 

@@ -493,6 +493,17 @@ export type NewModelAccount = {
   name?: string
   shared: boolean
 }
+/** A device connection. Provider credentials never ride this response. */
+export type AccountLogin = {
+  id: string
+  status: ModelAccount["status"]
+  phase: "starting" | "awaiting" | "checking" | "ready" | "failed"
+  verification_url: string | null
+  user_code: string | null
+  expires_at: string | null
+  message: string | null
+  can_restore: boolean
+}
 
 /** An imported paper, stored as a read-only Context (the papers routes read /v1/contexts).
  *  Generated from the OpenAPI spec. */
@@ -752,7 +763,7 @@ export interface Connection {
   scope?: "personal" | "workspace"
   /** How it authenticates. `mcp` is a Model Context Protocol server connected by URL — it needs
    *  no vendor account and no broker plan, which is why it is the one kind you can add here. */
-  kind?: "oauth" | "secret" | "github_app" | "slack" | "mcp"
+  kind?: "oauth" | "secret" | "github_app" | "slack" | "mcp" | "runtime"
   /** kind `mcp`: the server URL. Display only — the credential never comes back. */
   base_url?: string | null
   scopes_label: string | null
@@ -1352,6 +1363,22 @@ export const api = {
     f(`/v1/reports/${id}/dismiss`, opts({})).then(j),
 
   listAgents: (): Promise<{ agents: ListedAgent[] }> => f("/v1/agents", opts()).then(j),
+  computeConnection: () =>
+    f("/v1/runtime/connection", opts()).then(j) as Promise<
+      components["schemas"]["ComputeConnection"]
+    >,
+  connectCompute: (api_key: string, provider: "boat" | "ortam") =>
+    f("/v1/runtime/connection", { ...opts({ api_key, provider }), method: "PUT" }).then(j),
+  disconnectCompute: () => f("/v1/runtime/connection", { ...opts(), method: "DELETE" }).then(j),
+  configureCompute: (snapshot: string | null) =>
+    f("/v1/runtime/connection", { ...opts({ snapshot }), method: "PATCH" }).then(j),
+  agentRuntime: () =>
+    f("/v1/agents/runtime", opts()).then(j) as Promise<
+      paths["/v1/agents/runtime"]["get"]["responses"][200]["content"]["application/json"]
+    >,
+  createAgent: (
+    body: NonNullable<paths["/v1/agents"]["post"]["requestBody"]>["content"]["application/json"],
+  ): Promise<Agent> => f("/v1/agents", opts(body)).then(j),
   // Rotation is a credential event, never an identity event: the old bearer dies at
   // once; id, role, hosting, and attribution are untouched. Token shown only here.
   rotateAgent: (id: string): Promise<Agent & { token: string }> =>
@@ -1405,7 +1432,12 @@ export const api = {
     agentId: string,
     instruction: string,
     subject?: { kind: "artifact"; id: string },
-    context?: { selection?: string; base_version?: number; model_id?: string | null },
+    context?: {
+      selection?: string
+      base_version?: number
+      model_id?: string | null
+      dedupe_key?: string
+    },
   ): Promise<JobDetail> =>
     f(
       "/v1/jobs",
@@ -1425,6 +1457,19 @@ export const api = {
   listAccounts: (): Promise<{ accounts: ModelAccount[] }> => f("/v1/accounts", opts()).then(j),
   addAccount: (body: NewModelAccount): Promise<ModelAccount> =>
     f("/v1/accounts", opts(body)).then(j),
+  accountLoginOptions: (): Promise<{ device_login: boolean }> =>
+    f("/v1/accounts/login-options", opts()).then(j),
+  connectPlan: (body: {
+    account_id?: string
+    name?: string
+    kind?: "login" | "api_key"
+    secret?: string
+    shared?: boolean
+  }): Promise<AccountLogin> => f("/v1/accounts/login", opts(body)).then(j),
+  accountLogin: (id: string): Promise<AccountLogin> =>
+    f(`/v1/accounts/${id}/login`, opts()).then(j),
+  cancelAccountLogin: (id: string): Promise<{ cancelled: boolean }> =>
+    f(`/v1/accounts/${id}/login`, { ...opts(), method: "DELETE" }).then(j),
   /** Rename an account; null (or blank) goes back to the provider's name. */
   renameAccount: (id: string, name: string | null): Promise<ModelAccount> =>
     f(`/v1/accounts/${id}`, { ...opts({ name }), method: "PATCH" }).then(j),

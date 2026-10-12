@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input"
 import { connectionsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useOneShotParams } from "@/lib/use-one-shot-params"
+import { CloudConnection } from "./cloud-connection"
 import { IntegrationGroups } from "./integrations-section"
 import { SecretsGroup } from "./secrets-group"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
@@ -47,8 +48,9 @@ export function SourcesSection() {
   return (
     <SettingsSection
       title="Sources"
-      description="What your agents can reach: GitHub, Slack, MCP servers, and secrets they read as environment variables. Give one to an agent on its Settings tab."
+      description="What your agents can reach: cloud compute, GitHub, Slack, MCP servers, and secrets they read as environment variables. Give one to an agent on its Settings tab."
     >
+      <CloudConnection />
       {justConnected ? (
         <StatusPanel
           tone="success"

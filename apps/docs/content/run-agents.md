@@ -7,17 +7,18 @@ This page covers making an agent, running it, giving it work, and following that
 
 ## Make an agent
 
-Agents are made from a coding agent connected to Derive over MCP, such as Claude Code or Codex.
-If yours is not connected yet, follow [Connect your coding agent](/agents/connect/) first.
+The quickest start is **Agents → New agent** in Derive.
 
-The quickest start is the **New agent** page in Derive (Agents, then New agent). Describe what
-the agent should do, copy the prompt it builds, and paste it into Claude Code or Codex. The
-prompt tells your coding agent to:
+1. Describe its work. Derive suggests a name you can edit.
+2. Use the connected model account. If several accounts are ready, choose one.
+3. Choose **When I ask** or **Every day**.
+4. Select **Let’s go**. Derive saves the skill and can run the first task.
 
-1. Read `derive://skills/agents`.
-2. Publish the agent's instructions as a Derive page.
-3. Call the `agents` tool with `action: "create"`, passing that page's short id.
-4. Hand you back the runner command, and any link you need to open in a browser.
+Use **Write the skill with AI** to draft the instructions. Edit the skill anytime.
+The skill describes the work. Connections and secrets control its access.
+
+A coding agent connected over MCP can also create and update agents.
+If yours is not connected, follow [Connect your coding agent](/agents/connect/) first.
 
 You can also ask for it in your own words. A create call looks like this:
 
@@ -61,6 +62,29 @@ scheduled and unattended work. Derive machines are
 only available in workspaces where they are turned on; elsewhere, creating one is refused with
 a message saying so. A Derive machine has no login of its own, so the agent needs a model
 account stored in Derive.
+
+## Connect company compute
+
+For boat.dev, a workspace manager connects the company account under **Settings → Connections**.
+Connect it once. Everyone in that workspace uses the connection for cloud tasks.
+Other workspaces connect their own accounts. Your company pays boat.dev directly.
+
+The compute key stays in the controller. It does not become an agent secret or tool.
+Model accounts remain separate. Choose the model account on the agent.
+
+The first sandbox can take a few minutes. Tasks show **Getting ready** during setup.
+After a task finishes, Derive stops compute and collects its receipt.
+A missing model charge stays **Unknown**. API estimates do not price a subscription plan.
+
+## Repeat a task
+
+Open a completed task and select **Run again** to start the same work.
+Select **Run every day**, choose a time, then select **Save schedule**.
+Derive uses your browser time zone. Manage the schedule on the agent’s **Settings** tab.
+
+The **Usage** tab shows **API estimate / success**. It includes failed tasks and retries.
+If any settled task lacks a complete estimate, cost per success stays **Unknown**.
+This measure helps compare AI use. It does not show the charge for a subscription plan.
 
 ## Give it secrets
 
@@ -259,10 +283,18 @@ everyone in the workspace or only the agent's maker and workspace owners.
 list. Cancel an open job with `action: "cancel"`, and run a failed or lost one again with
 `action: "retry"`.
 
-**Reports.** A job the CLI runner does leaves a report page: what was asked, what the agent did,
-what it flagged, what it made, and its evidence. The page is private to the workspace (members
-only, no link, not listed), and a follow-up rewrites the same page as a new version. A comment on
-a report page reopens its job, with the comment as the next message.
+**Results.** The CLI runner keeps the answer and usage receipt on the task. It publishes a
+separate artifact only when the agent produces useful work to inspect, keep, or share.
+Missing access, credentials, or tools stops the task at `needs_you`, with a specific next step.
+Existing report pages stay available. Comments on them still reopen their tasks.
+An unstructured model reply also stops at `needs_you`; it cannot confirm task completion.
+
+**Your runner setup.** In Settings → Connections → Cloud compute, open **Runner setup** to
+choose a Boat snapshot. New agents start with the code and tools in that snapshot.
+Existing agents keep their saved sandboxes. Leave the field blank to start a plain sandbox.
+Use a snapshot owned by your company and approved for this workspace. Boat checks snapshot
+access with the workspace's compute credential. Derive does not inherit the Boat account's
+environment. Bind task secrets through the agent's existing environment settings.
 
 **When a job needs you.** An agent can stop a job at `needs_you` with a question, and maybe a
 few options. Answer it with `jobs({ job_id, action: "answer", option })` (or `text`), or in
@@ -322,3 +354,22 @@ Each workspace has one switch for agent work, **Agents can write**, which a work
 finds under Settings, Machines. Turn it off and agents stop writing: no job is claimed,
 dispatched, or started by a schedule, and their jobs wait until it is back on. Pausing a
 single agent on its Settings tab does the same for that agent.
+
+
+### Choose Boat or Ortam
+
+Open Settings → Connections → Connect sandbox. Select **boat.dev** or **Ortam** and paste your
+company's API key. Derive verifies access and stores the key encrypted. Tasks do not receive it.
+Ortam keys need sandbox read and write permissions. Each workspace uses its own connection.
+
+Disconnect before switching providers. Wait for all old agent sandboxes to finish cleanup.
+Ortam cleanup deletes those sandboxes and their files; Boat cleanup archives them.
+The disconnect dialog explains this before you confirm.
+
+The public Ortam adapter uses its API-key token exchange and the saved `/workspace` disk.
+It installs a verified Node runtime when needed, then the pinned Derive CLI.
+It does not copy the old sandbox's files to another provider. Ortam sandbox charges show as
+unknown until a task-specific usage receipt is available. Model usage still appears on each task.
+
+Codex device sign-in currently runs through Boat. A saved model API key or imported plan login
+can run on either provider. No new server secret or database migration is required.

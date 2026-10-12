@@ -1,14 +1,23 @@
-import { type AgentRecord, type JobRecord, type MetaStore, newId } from "@derive/core"
+import { type AgentRecord, type JobRecord, jobResult, type MetaStore, newId } from "@derive/core"
 import type { AppDeps } from "../context"
 import { log } from "../log"
 import { agentWritesOff } from "./agent-writes"
 import { sha256 } from "./crypto"
-import { type JobDeps, jobOverBudget, noteHeldForBudget, reportJob, wakeClaimed } from "./jobs"
+import {
+  type JobDeps,
+  jobOverBudget,
+  noteHeldForBudget,
+  reportJob,
+  wakeClaimed,
+  wakeSettled,
+} from "./jobs"
 import { OrtamClient } from "./ortam-client"
 import { RUN_LEASE_MS, RUN_TIMEOUT_MS } from "./run-lifecycle"
 import { signWorkToken } from "./run-token"
+import { cloudEnabled, connectionClient, workspaceRuntime } from "./runtime-connection"
 import { runtimeFailureReason } from "./runtime-diagnostics"
-import { INSTALL_RUNTIME_RUNNER, RUNNER_VERSION } from "./runtime-setup"
+import { INSTALL_RUNTIME_RUNNER, runnerRunsJobs } from "./runtime-setup"
+import type { SandboxClient } from "./sandbox-client"
 
 // THE DERIVE MACHINE: one Ortam sandbox per agent, kept stopped between jobs so its files
 // persist. Two sagas, each a phase plus a revision that fences every transition, advanced a
@@ -50,6 +59,12 @@ interface Identity {
 }
 interface SandboxState {
   api_url: string
+  snapshot?: string
+  provider?: "ortam" | "boat"
+  connection_id?: string
+  /** Encrypted controller credential retained until this sandbox finishes retirement. */
+  credential_enc?: string | null
+  account_id?: string
   identity: Identity
   /** One id per sandbox this agent ever has: the create and delete idempotency keys carry it,
    *  so a recreate after a failure never gets the old sandbox back. */
@@ -62,6 +77,7 @@ interface SandboxState {
   failed_at?: string
 }
 interface MachineState {
+  active_at?: string
   /** One id per turn on the machine: resume and stop keys carry it, so a reopened job's next
    *  turn never gets its previous turn's operations back. */
   turn: string
@@ -83,13 +99,7 @@ const parse = <T>(s: string | null): T | null => {
 /** Does the pinned sandbox runner know job tokens? `runner run` with a `dkjob_` token arrived
  *  in CLI 0.8.0; an older pinned install would fail every job. A path with no version (a
  *  self-host's own install) is trusted. */
-export const runnerRunsJobs = (runnerPath: string, installs: string = RUNNER_VERSION): boolean => {
-  const [major = 0, minor = 0] = installs.split(".").map(Number)
-  if (major === 0 && minor < 8) return false
-  // The path must be the version the sandbox installs, or name none (a self-host's install).
-  const v = /derive-runtime\/(\d+\.\d+\.\d+)\//.exec(runnerPath)
-  return !v || v[1] === installs
-}
+export { runnerRunsJobs } from "./runtime-setup"
 
 /** Which workspaces may run Derive machines: the managed Ortam allowlist, once the sandbox
  *  runner can run jobs. */
@@ -99,15 +109,56 @@ export const machineWorkspaces = (config: AppDeps["runtime"] | undefined): Reado
     : new Set()
 
 /** The one create request for an agent's sandbox; a replay with its key must send the same. */
-const sandboxRequest = (agent: AgentRecord) => ({
+const sandboxRequest = (agent: AgentRecord, state: SandboxState) => ({
   name: `derive-${agent.id.replaceAll("_", "-")}`,
   size: "small",
   auto_stop_after_seconds: 1200,
   setup_script: INSTALL_RUNTIME_RUNNER,
+  ...(state.snapshot ? { snapshot: state.snapshot } : {}),
 })
 
-/** One integration subject per agent, so each agent's sandbox belongs to its own Ortam user. */
-const clientFor = (deps: MachineDeps, agent: AgentRecord) => {
+/** The sandbox keeps cleanup authority even if provider replacement races creation.
+ * Same-account key rotation uses the current key; another account uses the pinned key. */
+const runtimeForAgent = async (deps: MachineDeps, agent: AgentRecord) => {
+  const state = parse<SandboxState>(agent.sandbox_state_json)
+  const current = await workspaceRuntime(deps.meta, deps.config, agent.org_id)
+  if (state?.api_url && state.connection_id && state.credential_enc) {
+    const cn = current.connection
+    const sameAccount =
+      cn?.id === state.connection_id &&
+      cn.toolkit === state.provider &&
+      cn.broker_ref === state.account_id
+    return {
+      provider: state.provider ?? "ortam",
+      apiUrl: state.api_url,
+      connection: {
+        id: state.connection_id,
+        toolkit: state.provider ?? "ortam",
+        secret_enc: sameAccount ? cn.secret_enc : state.credential_enc,
+        broker_ref: state.account_id,
+      },
+    }
+  }
+  // Existing integration sandboxes retain their deployment credential. A workspace
+  // connection cannot take ownership of their per-agent integration identity.
+  return state?.api_url && !state.connection_id
+    ? { provider: state.provider ?? "ortam", apiUrl: deps.config.apiUrl, connection: null }
+    : current
+}
+
+/** One provider selection for normal work and retirement. Ortam scopes identity per agent. */
+const clientFor = async (deps: MachineDeps, agent: AgentRecord): Promise<SandboxClient> => {
+  const runtime = await runtimeForAgent(deps, agent)
+  const state = parse<SandboxState>(agent.sandbox_state_json)
+  if (runtime.connection) {
+    if (
+      state?.connection_id &&
+      (state.connection_id !== runtime.connection.id ||
+        state.provider !== runtime.connection.toolkit)
+    )
+      throw new Error("Sandbox connection changed")
+    return connectionClient(runtime.connection, deps.secret, deps.fetcher)
+  }
   if (!deps.config.managed?.apiKey) throw new Error("Derive machines are not configured")
   return new OrtamClient(
     deps.config.apiUrl,
@@ -120,12 +171,24 @@ const clientFor = (deps: MachineDeps, agent: AgentRecord) => {
 const iso = (deps: MachineDeps) => (deps.now?.() ?? new Date()).toISOString()
 
 /** May this agent hold a sandbox right now? */
-const admitted = async (deps: MachineDeps, agent: AgentRecord) =>
-  agent.machine === "derive" &&
-  !agent.paused_at &&
-  machineWorkspaces(deps.config).has(agent.org_id) &&
-  // Fails closed: a settings read error counts as the brake being on.
-  !(await agentWritesOff(deps.meta, agent.org_id))
+const admitted = async (deps: MachineDeps, agent: AgentRecord) => {
+  if (
+    agent.machine !== "derive" ||
+    agent.paused_at ||
+    !(await cloudEnabled(deps.meta, deps.config, agent.org_id)) ||
+    (await agentWritesOff(deps.meta, agent.org_id))
+  )
+    return false
+  if (agent.sandbox_phase === null || agent.sandbox_phase === "failed") return true
+  const state = parse<SandboxState>(agent.sandbox_state_json)
+  const current = (await workspaceRuntime(deps.meta, deps.config, agent.org_id)).connection
+  if (!state?.connection_id) return !state?.api_url || !current
+  return (
+    current?.id === state.connection_id &&
+    current.toolkit === state.provider &&
+    (!state.account_id || current.broker_ref === state.account_id)
+  )
+}
 
 // ---- The agent's sandbox --------------------------------------------------------------------
 
@@ -147,30 +210,43 @@ export async function advanceSandbox(
       ...(id !== undefined ? { sandbox_id: id } : {}),
     })
   const allowed = await admitted(deps, agent)
+  const runtime = await runtimeForAgent(deps, agent)
 
   if (agent.sandbox_phase === null) {
     if (!allowed) return agent
-    const client = clientFor(deps, agent)
+    const client = await clientFor(deps, agent)
     const auth = await client.authenticate()
     const prior = parse<SandboxState>(agent.sandbox_state_json)
     return meta.transitionAgentSandbox(agent.id, agent.org_id, agent.sandbox_rev, {
       phase: "creating",
       state_json: JSON.stringify({
-        api_url: deps.config.apiUrl,
+        api_url: runtime.apiUrl,
+        provider: runtime.provider,
+        ...(runtime.connection
+          ? {
+              connection_id: runtime.connection.id,
+              credential_enc: runtime.connection.secret_enc,
+              account_id: runtime.connection.broker_ref,
+            }
+          : {}),
         identity: { organization_id: auth.organization_id, user_id: auth.user_id },
+        ...(runtime.provider === "boat"
+          ? { snapshot: (await meta.getOrgSettings(agent.org_id)).boatSnapshot }
+          : {}),
         generation: newId("sbg"),
         failures: prior?.failures ?? 0,
       } satisfies SandboxState),
     })
   }
   if (!state) return move("failed")
-  if (state.api_url !== deps.config.apiUrl)
-    throw new Error("Sandbox belongs to a different Ortam API")
-  const client = clientFor(deps, agent)
+  if (state.api_url !== runtime.apiUrl || (state.provider ?? "ortam") !== runtime.provider)
+    throw new Error("Sandbox belongs to a different runtime")
+  const client = await clientFor(deps, agent)
   const id = agent.sandbox_id
   // `failed` ends a sandbox's life; only a failed operation counts toward the backoff, not a
   // deliberate delete (an agent moved off Derive, admission withdrawn).
-  const failed = () => move("failed", { failed_at: iso(deps) })
+  const failed = () =>
+    move("failed", { failed_at: iso(deps), credential_enc: undefined, account_id: undefined })
   const broke = () => (state.failures ?? 0) + 1
 
   switch (agent.sandbox_phase) {
@@ -179,7 +255,7 @@ export async function advanceSandbox(
       // lost may have made a sandbox, and only the same key finds it to delete.
       // The same immutable request and key, so a lost response resolves to the same sandbox.
       const result = await client.create(
-        sandboxRequest(agent),
+        sandboxRequest(agent, state),
         `derive-agent-${agent.id}-${state.generation}-create`,
         state.identity,
       )
@@ -280,6 +356,7 @@ async function borrow(
       phase: "starting",
       machine_json: JSON.stringify({
         turn: newId("mjt"),
+        active_at: now.toISOString(),
         deadline_at: deadline.toISOString(),
       } satisfies MachineState),
     })
@@ -319,11 +396,27 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
     await move("released")
     return
   }
-  const client = clientFor(deps, agent)
+  const runtime = await runtimeForAgent(deps, agent)
+  if (state.api_url !== runtime.apiUrl || (state.provider ?? "ortam") !== runtime.provider)
+    throw new Error("Sandbox belongs to a different runtime")
+  const client = await clientFor(deps, agent)
   const sandbox = agent.sandbox_id
   const at = iso(deps)
   const expired = at >= m.deadline_at
   const open = job.status === "running"
+  const environment = async () => ({
+    DERIVE_TOKEN: await signWorkToken(
+      "job",
+      deps.secret,
+      `${job.id}~${Date.parse(job.started_at ?? "")}`,
+      agent.id,
+      agent.org_id,
+      Date.parse(m.deadline_at) + 5 * 60_000,
+    ),
+    DERIVE_SERVER: deps.server,
+    DERIVE_JOB_ID: job.id,
+    DERIVE_RUNNER_ISOLATED: "1",
+  })
 
   if (job.machine_phase !== "stopping" && (expired || !open || !(await admitted(deps, agent)))) {
     await move("stopping")
@@ -337,8 +430,9 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
           "resume",
           `derive-job-${m.turn}-resume`,
           state.identity,
+          await environment(),
         )
-        await move("starting", { resume_op: op.id })
+        await move("starting", { resume_op: op.id, active_at: m.active_at ?? at })
         return
       }
       const op = await client.operation(m.resume_op, sandbox, "resume", state.identity)
@@ -362,14 +456,6 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
       // the deadline stops the machine.
       if (!launching || !job.started_at) return
       // Bound to this claim, so a later claim of the same job (a retry) does not revive it.
-      const token = await signWorkToken(
-        "job",
-        deps.secret,
-        `${job.id}~${Date.parse(job.started_at)}`,
-        agent.id,
-        agent.org_id,
-        Date.parse(m.deadline_at) + 5 * 60_000,
-      )
       const process = await client.launch(
         sandbox,
         {
@@ -385,12 +471,7 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
             WORKDIR,
           ],
           cwd: "/home/ortam",
-          env: {
-            DERIVE_TOKEN: token,
-            DERIVE_SERVER: deps.server,
-            DERIVE_JOB_ID: job.id,
-            DERIVE_RUNNER_ISOLATED: "1",
-          },
+          env: await environment(),
           timeout_seconds: Math.max(
             1,
             Math.ceil((Date.parse(m.deadline_at) - Date.parse(at)) / 1000),
@@ -452,6 +533,39 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
       }
       // Stopped, files saved. A runner that never reported fails the job so it can retry.
       await failIfOpen(deps, agent, job, "The machine stopped before the job reported back.")
+      const fresh = await meta.getJob(job.id)
+      if (fresh && m.active_at) {
+        const stopped = iso(deps)
+        const usage = await client
+          .usage?.(sandbox, m.active_at, stopped, state.identity)
+          .catch(() => null)
+        const result = jobResult(fresh)
+        if (!result.compute?.some((c) => c.turn === m.turn)) {
+          const updated = await meta.updateJob(
+            job.id,
+            {
+              result_json: JSON.stringify({
+                ...result,
+                compute: [
+                  ...(result.compute ?? []),
+                  {
+                    turn: m.turn,
+                    provider: state.provider ?? "ortam",
+                    ...(state.connection_id ? { connection_id: state.connection_id } : {}),
+                    sandbox_id: sandbox,
+                    started_at: m.active_at,
+                    stopped_at: stopped,
+                    billable_seconds: usage?.billable_seconds ?? null,
+                    cost_micro_usd: usage?.cost_micro_usd ?? null,
+                  },
+                ],
+              }),
+            },
+            { status: fresh.status, started_at: fresh.started_at },
+          )
+          if (updated) wakeSettled(deps, updated)
+        }
+      }
       const released = await move("released")
       if (released)
         await meta.transitionAgentSandbox(agent.id, agent.org_id, agent.sandbox_rev, {
@@ -525,15 +639,13 @@ export async function machinePass(
 
   // A sandbox whose agent no longer runs on Derive is deleted; its files are gone with it.
   for (const agent of await meta.listAgentsInSandboxPhase(["ready"], 100))
-    if (agent.machine !== "derive")
+    if (!(await admitted(deps, agent)))
       await guard("retire", agent.id, () =>
         meta.transitionAgentSandbox(agent.id, agent.org_id, agent.sandbox_rev, {
           phase: "deleting",
         }),
       )
 
-  const orgs = machineWorkspaces(deps.config)
-  if (orgs.size === 0) return out
   // Sandboxes coming up count against the same ceilings as jobs holding one.
   const starting = await meta.listAgentsInSandboxPhase(["creating", "provisioning"], 100)
   const perOrg = new Map<string, number>()
@@ -542,14 +654,46 @@ export async function machinePass(
   for (const a of starting) count(a.org_id)
   let room = GLOBAL_LIMIT - [...perOrg.values()].reduce((n, x) => n + x, 0)
   const tried = new Set<string>()
-  for (const job of await meta.listQueuedDeriveJobs(50, [...orgs])) {
+  for (const job of await meta.listQueuedDeriveJobs(50)) {
     if (room <= 0) break
     if ((perOrg.get(job.org_id) ?? 0) >= ORG_LIMIT) continue
     if (tried.has(job.agent_id)) continue
     tried.add(job.agent_id)
     await guard("dispatch", job.id, async () => {
       let agent = await meta.getAgent(job.agent_id)
-      if (!agent || !(await admitted(deps, agent))) return
+      if (!agent) return
+      if (!(await cloudEnabled(meta, deps.config, agent.org_id))) {
+        const last = (await meta.listJobMessages(job.id)).at(-1)
+        if (!last?.meta_json || JSON.parse(last.meta_json).held !== "compute")
+          await meta.addJobMessage({
+            id: newId("jm"),
+            job_id: job.id,
+            author_kind: "agent",
+            author_id: agent.id,
+            body_md:
+              "This task waits for cloud compute. Ask a workspace owner to connect boat.dev in Settings → Connections.",
+            meta_json: JSON.stringify({ progress: true, held: "compute", server: true }),
+          })
+        return
+      }
+      if (!(await admitted(deps, agent))) return
+      // A reconnect keeps the selected account and queued work. Do not allocate compute
+      // or silently bill another account while its credential is being replaced.
+      const account = agent.account_id ? await meta.getAccount(agent.account_id) : null
+      if (account?.status === "connecting" || account?.status === "needs_attention") {
+        const last = (await meta.listJobMessages(job.id)).at(-1)
+        if (!last?.meta_json || JSON.parse(last.meta_json).held !== "account")
+          await meta.addJobMessage({
+            id: newId("jm"),
+            job_id: job.id,
+            author_kind: "agent",
+            author_id: agent.id,
+            body_md:
+              "This task waits for its model account. Finish connecting or cancel the reconnect in Settings → Model accounts.",
+            meta_json: JSON.stringify({ progress: true, held: "account", server: true }),
+          })
+        return
+      }
       // Past its payer's monthly budget: no sandbox comes up, and the job says why it waits.
       if (await jobOverBudget(meta, job)) {
         await noteHeldForBudget(meta, job)
@@ -570,7 +714,7 @@ export async function machinePass(
             return
           }
           const since = Date.parse(iso(deps)) - Date.parse(prior?.failed_at ?? "")
-          if (since < RETRY_BACKOFF_MS * Math.max(1, failures)) return
+          if (failures > 0 && since < RETRY_BACKOFF_MS * failures) return
           agent = await meta.transitionAgentSandbox(agent.id, agent.org_id, agent.sandbox_rev, {
             phase: null,
             state_json: JSON.stringify({ failures }),
@@ -634,27 +778,21 @@ async function failWaiting(deps: MachineDeps, agent: AgentRecord, why: string) {
 /** Delete an agent's sandbox now, for an agent that is itself being deleted (its row, and with
  *  it the sandbox's identity, is about to go). Best effort; the sandbox's own auto-stop bounds
  *  compute if this fails. */
-export async function retireSandbox(
-  config: AppDeps["runtime"] | undefined,
-  fetcher: typeof fetch | undefined,
-  agent: AgentRecord,
-): Promise<void> {
+export async function retireSandbox(deps: MachineDeps | null, agent: AgentRecord): Promise<void> {
   const state = parse<SandboxState>(agent.sandbox_state_json)
-  if (!state?.identity || !config?.managed?.apiKey) return
+  if (!state?.identity || !deps) return
+  const runtime = await runtimeForAgent(deps, agent)
   if (agent.sandbox_phase === null || agent.sandbox_phase === "failed") return
   try {
-    const client = new OrtamClient(
-      config.apiUrl,
-      config.managed.apiKey,
-      sha256(JSON.stringify([agent.org_id, "agent", agent.id])),
-      fetcher,
-    )
+    if (state.api_url !== runtime.apiUrl || (state.provider ?? "ortam") !== runtime.provider)
+      throw new Error("Sandbox belongs to a different runtime")
+    const client = await clientFor(deps, agent)
     // A create whose answer never arrived still made a sandbox; its key finds it.
     const id =
       agent.sandbox_id ??
       (
         await client.create(
-          sandboxRequest(agent),
+          sandboxRequest(agent, state),
           `derive-agent-${agent.id}-${state.generation}-create`,
           state.identity,
         )
@@ -682,7 +820,7 @@ export const machineDepsFrom = (
     announce?: JobDeps["announce"]
   },
 ): MachineDeps | null =>
-  opts.secret && opts.server && opts.config?.managed?.apiKey
+  opts.secret && opts.server && opts.config
     ? {
         meta,
         secret: opts.secret,

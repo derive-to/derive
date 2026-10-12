@@ -322,6 +322,7 @@ export const connectionRoutes = (ctx: AppContext) => {
     if (!cn || cn.org_id !== org) return fail(c, 404, "not found")
     if (cn.kind === "secret" && cn.scope === "personal" && cn.user_id !== me.id)
       return fail(c, 404, "not found")
+    if (cn.kind === "runtime") return fail(c, 400, "Disconnect boat.dev from Cloud compute")
     // Personal: the owner may revoke their own; anyone else's needs manage.
     // Workspace: admin-managed — always manage, even for whoever added it.
     if (cn.scope === "workspace" || cn.user_id !== me.id) {

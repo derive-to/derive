@@ -81,7 +81,9 @@ export const spendableConnections = async (
 ): Promise<ConnectionRecord[]> => {
   if (connectionIds.length === 0) return []
   const conns = await meta.getConnectionsByIds(connectionIds)
-  const active = conns.filter((cn) => cn.org_id === orgId && cn.status === "active")
+  const active = conns.filter(
+    (cn) => cn.org_id === orgId && cn.status === "active" && cn.kind !== "runtime",
+  )
   const owners = [...new Set(active.filter((cn) => cn.scope === "personal").map((c) => c.user_id))]
   const seats = await Promise.all(
     owners.map(async (uid) => [uid, await meta.getMembership(orgId, uid)] as const),
@@ -559,6 +561,7 @@ export const connectionBindError = async (
   if (conns.length !== connectionIds.length || conns.some((cn) => cn.org_id !== orgId))
     return "connections must exist in this workspace"
   for (const cn of conns) {
+    if (cn.kind === "runtime") return "Compute connections cannot be attached as tools or secrets"
     if (cn.scope === "workspace") {
       if (!actor.canManage) return `attaching workspace connection "${cn.toolkit}" needs manage`
     } else if (!actor.userId || cn.user_id !== actor.userId) {
