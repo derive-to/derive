@@ -27,6 +27,20 @@ const seedApp = async (meta: Awaited<ReturnType<typeof quotaApp>>["meta"]) => {
   })
 }
 
+const repositoryAccessFixture = (path: string): Response | null => {
+  if (/^\/app\/installations\/\d+\/access_tokens$/.test(path))
+    return new Response(
+      JSON.stringify({
+        token: "fixture-installation-token",
+        expires_at: new Date(Date.now() + 3600000).toISOString(),
+      }),
+      { status: 201 },
+    )
+  if (path === "/installation/repositories")
+    return new Response(JSON.stringify({ total_count: 0, repositories: [] }), { status: 200 })
+  return null
+}
+
 describe("standard GitHub integration", () => {
   const owner: TestUser = {
     id: "u_gh_standard_owner",
@@ -128,6 +142,8 @@ describe("standard GitHub integration", () => {
       "fetch",
       vi.fn(async (url: string | URL, init?: RequestInit) => {
         const parsed = new URL(String(url))
+        const repositoryAccess = repositoryAccessFixture(parsed.pathname)
+        if (repositoryAccess) return repositoryAccess
         const path = parsed.pathname
         if (path === "/app/installations/44001")
           return new Response(
@@ -217,7 +233,7 @@ describe("standard GitHub integration", () => {
       authorize(firstSetup.headers.get("location"), "first"),
       authorize(concurrentSetup.headers.get("location"), "concurrent"),
     ])
-    expect(first.headers.get("location")).toContain("/settings/integrations?github_connected=1")
+    expect(first.headers.get("location")).toContain("/settings/sources?github_connected=1")
     expect(concurrentReplay.headers.get("location")).toContain("github_connected=1")
     expect(oauthCodes).toEqual(expect.arrayContaining(["first", "concurrent"]))
     expect(oauthVerifiers).toHaveLength(2)
@@ -360,6 +376,8 @@ describe("standard GitHub integration", () => {
       "fetch",
       vi.fn(async (url: string | URL) => {
         const parsed = new URL(String(url))
+        const repositoryAccess = repositoryAccessFixture(parsed.pathname)
+        if (repositoryAccess) return repositoryAccess
         if (parsed.pathname === "/app/installations")
           return new Response(JSON.stringify(installations), { status: 200 })
         return new Response("not found", { status: 404 })
@@ -392,6 +410,8 @@ describe("standard GitHub integration", () => {
       "fetch",
       vi.fn(async (url: string | URL) => {
         const parsed = new URL(String(url))
+        const repositoryAccess = repositoryAccessFixture(parsed.pathname)
+        if (repositoryAccess) return repositoryAccess
         if (parsed.host === "github.com" && parsed.pathname === "/login/oauth/access_token")
           return new Response(JSON.stringify({ access_token: "ghu_existing" }), { status: 200 })
         if (parsed.pathname === "/user/installations")
@@ -499,6 +519,8 @@ describe("standard GitHub integration", () => {
       "fetch",
       vi.fn(async (url: string | URL) => {
         const parsed = new URL(String(url))
+        const repositoryAccess = repositoryAccessFixture(parsed.pathname)
+        if (repositoryAccess) return repositoryAccess
         const installationId = parsed.pathname.split("/").at(-1)
         if (parsed.host === "github.com")
           return new Response(JSON.stringify({ access_token: "ghu_direct" }), { status: 200 })
@@ -559,6 +581,8 @@ describe("standard GitHub integration", () => {
       "fetch",
       vi.fn(async (url: string | URL) => {
         const parsed = new URL(String(url))
+        const repositoryAccess = repositoryAccessFixture(parsed.pathname)
+        if (repositoryAccess) return repositoryAccess
         if (parsed.pathname === "/app/installations/44006")
           return new Response(
             JSON.stringify({ id: 44006, account: { login: "other-org", type: "Organization" } }),

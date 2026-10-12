@@ -1556,6 +1556,14 @@ export const api = {
 
   // Standard GitHub integration: install-backed and available directly to agents.
   getGithub: (): Promise<GithubStatus> => f("/v1/github", opts()).then(j),
+  githubRepositories: (
+    connectionId: string,
+    page: number,
+  ): Promise<components["schemas"]["GithubRepositories"]> =>
+    f(
+      `/v1/github/connections/${encodeURIComponent(connectionId)}/repositories?page=${page}`,
+      opts(),
+    ).then(j),
   disconnectGithub: (connectionId: string): Promise<void> =>
     f(`/v1/github/connections/${connectionId}`, {
       method: "DELETE",

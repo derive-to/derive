@@ -509,12 +509,21 @@ export const slackQuery = () =>
   })
 
 // GitHub standard-integration status. The install callback returns to this page, and a
-// GitHub-side repository selection change may happen in another tab, so refetch on focus.
+// GitHub-side changes are refreshed explicitly; avoid repeating provider requests on focus.
 export const githubQuery = () =>
   queryOptions({
     queryKey: ["github"] as const,
     queryFn: () => api.getGithub(),
-    refetchOnWindowFocus: "always",
+    refetchOnWindowFocus: false,
+    retry: false,
+  })
+
+export const githubRepositoriesQuery = (connectionId: string, page: number) =>
+  queryOptions({
+    queryKey: ["github", connectionId, "repositories", page] as const,
+    queryFn: () => api.githubRepositories(connectionId, page),
+    retry: false,
+    refetchOnWindowFocus: false,
   })
 
 // The workspace's Slack channel subscriptions, plus the event types one can carry (the server
