@@ -99,6 +99,7 @@ const JobEffectSchema = z.object({
 })
 
 const JobResultSchema = z.object({
+  claim_ledger_version: z.literal(1).optional(),
   attempt_offset: z.number().int().nonnegative().optional(),
   compute: z
     .array(
@@ -289,7 +290,7 @@ export const jobRoutes = (ctx: AppContext) => {
         body_result_md: turn.body_result_md,
         started_at: turn.started_at,
         finished_at: turn.finished_at,
-        resumable: !!turn.session_id && !!turn.checkpoint_enc,
+        resumable: !!turn.session_id && turn.has_checkpoint,
         execution: {
           provider: choice.provider,
           model: choice.model,
@@ -920,9 +921,7 @@ export const jobRoutes = (ctx: AppContext) => {
     const claim = c.req.header("x-derive-claim") ?? c.req.query("claim")
     if (claim !== job.started_at) return fail(c, 409, "this claim has been superseded")
     const turn = meta.jobExecution
-      ? (await meta.jobExecution.turns(job.id, job.org_id)).find(
-          (t) => t.started_at === job.started_at && t.status === "running",
-        )
+      ? await meta.jobExecution.claimed(job.id, job.org_id, job.started_at ?? "")
       : null
     if (turn) {
       if (turn.actor_id && !(await canSteerJob(meta, agent, job, turn.actor_id)))
@@ -1044,10 +1043,7 @@ export const jobRoutes = (ctx: AppContext) => {
                 ordinal: turn.ordinal,
                 body_md: turn.body_md,
                 previous: await (async () => {
-                  const turns = (await meta.jobExecution?.turns(j.id, j.org_id)) ?? []
-                  const previous = turns
-                    .filter((t) => t.ordinal < turn.ordinal && t.session_id && t.checkpoint_enc)
-                    .at(-1)
+                  const previous = await meta.jobExecution?.checkpoint(j.id, j.org_id, turn.ordinal)
                   if (!previous?.session_id || !previous.checkpoint_enc || !deps.encryptionKey)
                     return null
                   const checkpoint = decryptSecret(previous.checkpoint_enc, deps.encryptionKey)

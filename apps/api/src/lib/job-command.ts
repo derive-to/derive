@@ -151,7 +151,7 @@ export const commandJob = async (
           )
         if (
           !["queued", "running"].includes(previous.status) &&
-          !turns.some((t) => t.session_id && t.checkpoint_enc)
+          !turns.some((t) => t.session_id && t.has_checkpoint)
         )
           reject(
             "The conversation checkpoint is unavailable. Start a fresh task with the context you want to keep.",

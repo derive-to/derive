@@ -734,6 +734,8 @@ export const jobTurnReceipt = pgTable(
     started_at: text("started_at").notNull(),
     result_json: text("result_json").notNull(),
     cost_micro_usd: integer("cost_micro_usd"),
+    reported: integer("reported").notNull().default(1),
+    attempt_index: integer("attempt_index"),
   },
   (t) => [uniqueIndex("job_turn_receipt_claim").on(t.turn_id, t.started_at)],
 )
@@ -1445,7 +1447,7 @@ export const versionData = pgTable(
 const PG_TIMESTAMP_DEFAULT = `to_char((now() at time zone 'utc'), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`
 
 // Drizzle tables, in FK-dependency order (a referenced table is created first).
-const TABLES = [
+export const PG_SCHEMA = {
   artifact,
   sharedState,
   sharedStateActivity,
@@ -1515,7 +1517,8 @@ const TABLES = [
   report,
   auditLog,
   asset,
-]
+}
+const TABLES = Object.values(PG_SCHEMA)
 
 /** Build the Postgres boot DDL: table CREATEs + placeholder tables, then the idempotent
  *  ADD COLUMN IF NOT EXISTS reconciliation, and only then every index — an index may

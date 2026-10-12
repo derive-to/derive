@@ -523,9 +523,7 @@ export const reportJob = async (
   if (!job || job.agent_id !== agent.id || job.org_id !== agent.org_id)
     return { error: "not found", status: 404 }
   if (meta.jobExecution && job.status === "running" && r.started_at) {
-    const turn = (await meta.jobExecution.turns(job.id, job.org_id)).find(
-      (t) => t.started_at === r.started_at,
-    )
+    const turn = await meta.jobExecution.claimed(job.id, job.org_id, r.started_at)
     if (turn?.actor_id && !(await canSteerJob(meta, agent, job, turn.actor_id))) {
       await cancelJob(deps, job)
       if (r.status === "progress")
@@ -533,10 +531,8 @@ export const reportJob = async (
     }
   }
   if (meta.jobExecution && r.status !== "progress" && r.started_at) {
-    const turn = (await meta.jobExecution.turns(job.id, job.org_id)).find(
-      (t) => t.started_at === r.started_at && (!r.turn_id || t.id === r.turn_id),
-    )
-    if (turn) {
+    const turn = await meta.jobExecution.claimed(job.id, job.org_id, r.started_at)
+    if (turn && (!r.turn_id || turn.id === r.turn_id)) {
       const previousRuns = jobResult(job).runs ?? []
       const choice = JSON.parse(turn.execution_json) as import("@derive/core").JobExecution
       const receipts = r.result?.runs?.length
@@ -555,6 +551,7 @@ export const reportJob = async (
           ]
       const result = {
         ...(r.result ?? {}),
+        claim_ledger_version: jobResult(job).claim_ledger_version,
         ...(r.status === "failed"
           ? {
               failure: r.result?.failure ?? {
@@ -567,9 +564,11 @@ export const reportJob = async (
           priceJobRun({
             ...run,
             attempt:
-              Math.max(jobResult(job).attempt_offset ?? -1, ...previousRuns.map((r) => r.attempt)) +
-              1 +
-              i,
+              (turn.attempt_index ??
+                Math.max(
+                  jobResult(job).attempt_offset ?? -1,
+                  ...previousRuns.map((r) => r.attempt),
+                ) + 1) + i,
             provider: choice.provider,
             model: choice.model ?? run.model,
             turn_id: turn.id,

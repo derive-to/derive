@@ -2065,6 +2065,12 @@
           "result": {
             "type": "object",
             "properties": {
+              "claim_ledger_version": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              },
               "attempt_offset": {
                 "type": "integer",
                 "minimum": 0

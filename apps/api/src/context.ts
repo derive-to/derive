@@ -782,15 +782,20 @@ export function buildContext(input: AppDeps) {
         // new claim, so it cannot revive an earlier machine's token.
         const [jobId, claimMs] = claim.id.split("~")
         const j = jobId ? await meta.getJob(jobId) : null
+        const claimStamp = /^\d{10,14}$/.test(claimMs ?? "")
+          ? new Date(Number(claimMs)).toISOString()
+          : null
+        const turn =
+          j && meta.jobExecution && claimStamp
+            ? await meta.jobExecution.claimed(j.id, j.org_id, claimStamp)
+            : null
         const reportOnly =
           workKind === "job" &&
           c.req.method === "POST" &&
           c.req.path === `/v1/jobs/${jobId}/report` &&
           !!meta.jobExecution &&
           !!j &&
-          (await meta.jobExecution.turns(j.id, j.org_id)).some(
-            (t) => t.started_at && String(Date.parse(t.started_at)) === claimMs,
-          )
+          !!turn
         const live = !!(
           j &&
           j.agent_id === claim.agentId &&
@@ -804,12 +809,6 @@ export function buildContext(input: AppDeps) {
         if (live) {
           const ag = await meta.getAgent(claim.agentId)
           if (ag && ag.org_id === claim.orgId) {
-            const turn =
-              j && meta.jobExecution
-                ? (await meta.jobExecution.turns(j.id, j.org_id)).find(
-                    (t) => t.started_at && String(Date.parse(t.started_at)) === claimMs,
-                  )
-                : null
             const actor = turn?.actor_id ?? ag.created_by
             const member = actor ? await meta.getMembership(ag.org_id, actor) : null
             if (!turn || member || reportOnly) {

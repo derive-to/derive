@@ -142,6 +142,8 @@ export interface PgExecutionTables {
     started_at: string
     result_json: string
     cost_micro_usd: number | null
+    reported: number
+    attempt_index: number | null
   }
 }
 

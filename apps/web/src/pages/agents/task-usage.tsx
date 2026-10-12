@@ -25,10 +25,10 @@ const taskEstimate = (job: Job) => {
   if (!["succeeded", "failed", "cancelled", "lost"].includes(job.status)) return null
   const runs = job.result.runs ?? []
   // Older records cannot distinguish a fresh run from a manually reset retry cycle.
-  if (job.result.attempt_offset === undefined) return null
+  if (job.result.claim_ledger_version !== 1 || job.result.attempt_offset === undefined) return null
   // An unreported claim still consumed work. Never present a partial retry history
   // as the cost of the whole task.
-  for (let attempt = 0; attempt <= job.result.attempt_offset + job.attempt; attempt++)
+  for (let attempt = 0; attempt <= job.result.attempt_offset; attempt++)
     if (!runs.some((run) => run.attempt === attempt)) return null
   return sumKnown(runs.map(estimate))
 }

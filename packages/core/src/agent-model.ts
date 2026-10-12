@@ -57,6 +57,8 @@ export interface JobEffect {
 }
 
 export interface JobResult {
+  /** Set at admission only when every native claim is retained before execution. */
+  claim_ledger_version?: 1
   /** Server-owned baseline for receipt indexes across manual retry cycles. */
   attempt_offset?: number
   compute?: {

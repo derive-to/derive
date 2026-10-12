@@ -48,6 +48,8 @@ export interface JobTurnRecord {
   finished_at: string | null
 }
 
+export type JobTurnSummary = Omit<JobTurnRecord, "checkpoint_enc"> & { has_checkpoint: boolean }
+
 export interface JobCommandReceipt {
   org_id: string
   source: string
@@ -86,7 +88,17 @@ export interface JobExecutionStore<Agent> {
     replayed: boolean
     applied: boolean
   }>
-  turns(jobId: string, orgId: string): Promise<JobTurnRecord[]>
+  turns(jobId: string, orgId: string): Promise<JobTurnSummary[]>
+  claimed(
+    jobId: string,
+    orgId: string,
+    startedAt: string,
+  ): Promise<(JobTurnSummary & { attempt_index: number | null }) | null>
+  checkpoint(
+    jobId: string,
+    orgId: string,
+    beforeOrdinal: number,
+  ): Promise<Pick<JobTurnRecord, "session_id" | "checkpoint_enc"> | null>
   events(jobId: string, orgId: string): Promise<JobEventRecord[]>
   append(
     jobId: string,

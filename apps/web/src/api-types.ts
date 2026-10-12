@@ -7636,6 +7636,8 @@ export interface components {
                 review_round_id?: string;
             } | null;
             result: {
+                /** @enum {number} */
+                claim_ledger_version?: 1;
                 attempt_offset?: number;
                 compute?: {
                     turn: string;

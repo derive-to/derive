@@ -7,12 +7,18 @@ import {
   type JobRecord,
   type JobResult,
   type JobTurnRecord,
+  type JobTurnSummary,
   newId,
 } from "@derive/core"
 import { type SQL, sql } from "drizzle-orm"
 import type { NodePgDatabase } from "drizzle-orm/node-postgres"
 import { agentModelRepos } from "./agent-model-repos"
-import type * as schema from "./pg-schema"
+import type { PG_SCHEMA } from "./pg-schema"
+
+// Ordinary task reads never fetch encrypted native conversation files.
+const summaryColumns = sql`t.id, t.job_id, t.org_id, t.ordinal, t.actor_id, t.body_md,
+  t.execution_json, t.status, t.session_id, (t.checkpoint_enc IS NOT NULL) AS has_checkpoint,
+  t.result_json, t.body_result_md, t.created_at, t.finished_at`
 
 const capacityAvailable = async (
   execute: (q: SQL) => Promise<unknown[]>,
@@ -33,7 +39,7 @@ const capacityAvailable = async (
 
 /** Transactions share the Job row with the existing lifecycle. No second task store. */
 export const jobExecutionRepos = (
-  db: NodePgDatabase<typeof schema>,
+  db: NodePgDatabase<typeof PG_SCHEMA>,
 ): JobExecutionStore<AgentRecord> => ({
   async receipt(org, source, key) {
     const r = await db.execute(sql`SELECT * FROM job_command
@@ -146,6 +152,9 @@ export const jobExecutionRepos = (
       }
       if (!refusal && input.intent === "start" && !job) {
         job = await repos.createJob(input.job)
+        job = await repos.updateJob(job.id, {
+          result_json: JSON.stringify({ claim_ledger_version: 1 }),
+        })
         applied = true
       }
       if (!refusal && job) {
@@ -212,9 +221,26 @@ export const jobExecutionRepos = (
   },
   async turns(jobId, orgId) {
     return (
-      await db.execute(sql`SELECT * FROM job_turn WHERE job_id = ${jobId}
-      AND org_id = ${orgId} ORDER BY ordinal LIMIT 200`)
-    ).rows as unknown as JobTurnRecord[]
+      await db.execute(sql`SELECT ${summaryColumns}, t.started_at FROM job_turn t WHERE t.job_id = ${jobId}
+      AND t.org_id = ${orgId} ORDER BY t.ordinal LIMIT 200`)
+    ).rows as unknown as JobTurnSummary[]
+  },
+  async claimed(jobId, orgId, startedAt) {
+    const out =
+      await db.execute(sql`SELECT ${summaryColumns}, ${startedAt} AS started_at, r.attempt_index
+      FROM job_turn t LEFT JOIN job_turn_receipt r ON r.turn_id = t.id AND r.started_at = ${startedAt}
+      WHERE t.job_id = ${jobId} AND t.org_id = ${orgId}
+      AND (r.turn_id IS NOT NULL OR t.started_at = ${startedAt}) LIMIT 1`)
+    return (
+      (out.rows[0] as unknown as (JobTurnSummary & { attempt_index: number | null }) | undefined) ??
+      null
+    )
+  },
+  async checkpoint(jobId, orgId, beforeOrdinal) {
+    const out = await db.execute(sql`SELECT session_id, checkpoint_enc FROM job_turn
+      WHERE job_id = ${jobId} AND org_id = ${orgId} AND ordinal < ${beforeOrdinal}
+      AND session_id IS NOT NULL AND checkpoint_enc IS NOT NULL ORDER BY ordinal DESC LIMIT 1`)
+    return (out.rows[0] as { session_id: string; checkpoint_enc: string } | undefined) ?? null
   },
   async events(jobId, orgId) {
     return (
@@ -243,16 +269,31 @@ export const jobExecutionRepos = (
   async claim(jobId, orgId, startedAt) {
     return db.transaction(async (tx) => {
       const job = (
-        await tx.execute(sql`SELECT id FROM job WHERE id = ${jobId}
+        await tx.execute(sql`SELECT * FROM job WHERE id = ${jobId}
         AND org_id = ${orgId} AND status = 'running' AND started_at = ${startedAt}
         FOR UPDATE`)
-      ).rows[0]
+      ).rows[0] as unknown as JobRecord | undefined
       if (!job) return null
       const turn = (
         await tx.execute(sql`SELECT * FROM job_turn WHERE job_id = ${jobId}
         AND status IN ('queued', 'running') ORDER BY ordinal LIMIT 1 FOR UPDATE`)
       ).rows[0] as unknown as JobTurnRecord | undefined
       if (!turn) return null
+      const receipt = await tx.execute(sql`INSERT INTO job_turn_receipt
+        (turn_id, started_at, result_json, reported, attempt_index)
+        SELECT ${turn.id}, ${startedAt}, '{}', 0,
+          coalesce(max(coalesce(r.attempt_index, (r.result_json::jsonb -> 'runs' -> 0 ->> 'attempt')::integer)), -1) + 1
+        FROM job_turn_receipt r JOIN job_turn t ON t.id = r.turn_id WHERE t.job_id = ${jobId}
+        ON CONFLICT DO NOTHING RETURNING attempt_index`)
+      if (receipt.rows.length) {
+        const result = JSON.parse(job.result_json ?? "{}") as JobResult
+        await agentModelRepos(async (q) => (await tx.execute(q)).rows).updateJob(jobId, {
+          result_json: JSON.stringify({
+            ...result,
+            attempt_offset: Number(receipt.rows[0].attempt_index),
+          }),
+        })
+      }
       if (turn.status === "running" && turn.started_at === startedAt) return turn
       return (
         await tx.execute(sql`UPDATE job_turn SET status = 'running', started_at = ${startedAt}
@@ -324,11 +365,15 @@ export const jobExecutionRepos = (
         await tx.execute(sql`SELECT * FROM job_turn WHERE id = ${input.turn_id}
         AND job_id = ${job.id} AND org_id = ${input.org_id} FOR UPDATE`)
       ).rows[0] as unknown as JobTurnRecord | undefined
-      if (!turn || turn.started_at !== input.started_at) return null
-      const receipt = await tx.execute(sql`INSERT INTO job_turn_receipt
-        (turn_id, started_at, result_json, cost_micro_usd)
-        VALUES (${turn.id}, ${input.started_at}, ${input.result_json}, ${input.cost_micro_usd})
-        ON CONFLICT DO NOTHING RETURNING turn_id`)
+      if (!turn) return null
+      // A current pre-upgrade claim is valid too. Older claims need their retained row.
+      if (turn.started_at === input.started_at)
+        await tx.execute(sql`INSERT INTO job_turn_receipt (turn_id, started_at, result_json, reported)
+          VALUES (${turn.id}, ${input.started_at}, '{}', 0) ON CONFLICT DO NOTHING`)
+      const receipt = await tx.execute(sql`UPDATE job_turn_receipt SET reported = 1,
+        result_json = ${input.result_json}, cost_micro_usd = ${input.cost_micro_usd}
+        WHERE turn_id = ${turn.id} AND started_at = ${input.started_at} AND reported = 0
+        RETURNING turn_id`)
       if (!receipt.rows.length) return { job, settled: false }
       const repos = agentModelRepos(async (s) => (await tx.execute(s)).rows)
       if (input.cost_micro_usd !== null) await repos.addJobCost(job.id, input.cost_micro_usd)
@@ -343,12 +388,15 @@ export const jobExecutionRepos = (
           ...(previous.runs ?? []).map((r) => r.attempt),
           ...(next.runs ?? []).map((r) => r.attempt),
         ),
-        runs: [...(previous.runs ?? []), ...(next.runs ?? [])].slice(-600),
+        runs: [...(previous.runs ?? []), ...(next.runs ?? [])]
+          .sort((a, b) => a.attempt - b.attempt)
+          .slice(-600),
       }
       // Late usage is countable; a cancelled attempt cannot reopen the task.
       if (
         job.status !== "running" ||
         job.started_at !== input.started_at ||
+        turn.started_at !== input.started_at ||
         turn.status !== "running"
       ) {
         const late = await repos.updateJob(job.id, {
