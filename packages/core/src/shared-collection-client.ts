@@ -151,7 +151,17 @@ export const installCollections = (hostReady: () => void) => {
         call.reject(
           new Error(typeof data.error === "string" ? data.error : "shared-state request failed"),
         )
-      else call.resolve(data)
+      else {
+        if (!Array.isArray(data.activity) && typeof data.key === "string") {
+          try {
+            deliver(data.key, receiveSnapshot(data.key, data))
+          } catch (error) {
+            call.reject(error instanceof Error ? error : new Error("Invalid shared-state response"))
+            return
+          }
+        }
+        call.resolve(data)
+      }
     }
   })
 
