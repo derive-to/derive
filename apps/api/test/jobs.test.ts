@@ -2086,16 +2086,16 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
     const agent = await createAgent(app)
     await ask(app, ed.email, agent.id, "Check the page and show me")
     const cwd = mkdtempSync(join(tmpdir(), "jobs-cli-images-"))
-    mkdirSync(join(cwd, "shots"))
+    mkdirSync(join(cwd, "qa", "shots"), { recursive: true })
     writeFileSync(
-      join(cwd, "shots", "home.png"),
+      join(cwd, "qa", "shots", "home.png"),
       Buffer.from(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
         "base64",
       ),
     )
     writeFileSync(
-      join(cwd, "report.html"),
+      join(cwd, "qa", "report.html"),
       '<h1>PASS</h1><img src="shots/home.png" alt="Home"><img src="https://example.test/x.png">',
     )
     const { cfg, client } = runnerFor(app, agent, { cwd })
@@ -2108,7 +2108,7 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
           answer: {
             body_md: "PASS",
             escalate: false,
-            artifact: { title: "Proof", path: "report.html" },
+            artifact: { title: "Proof", path: "qa/report.html" },
           },
         }),
       }),

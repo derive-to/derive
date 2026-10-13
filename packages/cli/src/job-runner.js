@@ -20,7 +20,7 @@ import {
   writeFileSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
-import { join, resolve, sep } from "node:path"
+import { dirname, join, resolve, sep } from "node:path"
 import { checkpointConversation, restoreConversation } from "./conversation.js"
 import { RUNNER_PROTOCOL_VERSION } from "./conversation-format.js"
 import { selectProvider } from "./providers/index.js"
@@ -377,15 +377,17 @@ const IMAGE_TYPES = {
 /** A page's `<img src="shots/a.png">` names a file in the working directory, which no reader
  *  can open. Stage each such image as a workspace asset and point the page at its permanent
  *  URL, so a report can carry real screenshots without inlining megabytes of base64. */
-export async function stageLocalImages(client, html, cwd, notes = []) {
+export async function stageLocalImages(client, html, cwd, notes = [], page = ".") {
   const root = realpathSync(cwd)
+  // Relative links resolve from the page's own folder, as a browser would.
+  const base = dirname(resolve(root, page))
   const staged = new Map()
   for (const [, path] of html.matchAll(/<img\b[^>]*?\ssrc=["']([^"':]+?)["']/gi)) {
     if (staged.has(path) || path.startsWith("/") || path.startsWith("//")) continue
     const type = IMAGE_TYPES[path.split(".").pop()?.toLowerCase() ?? ""]
     if (!type) continue
     try {
-      const full = realpathSync(resolve(root, path))
+      const full = realpathSync(resolve(base, path))
       if (!full.startsWith(root + sep)) throw new Error("outside the working directory")
       staged.set(path, await client.uploadAsset(readFileSync(full), type))
     } catch (e) {
@@ -672,7 +674,7 @@ export async function serveJob(client, job, cfg, deps = {}) {
           title: a.artifact.title,
           filename: "page.html",
           type: "text/html",
-          body: await stageLocalImages(client, src.html, cfg.cwd, flagged),
+          body: await stageLocalImages(client, src.html, cfg.cwd, flagged, a.artifact.path),
         })
         made.push({ title: a.artifact.title, short_id: pub.short_id })
       } catch (e) {
