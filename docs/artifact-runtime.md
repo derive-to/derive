@@ -62,3 +62,8 @@ Exact source operation validation and application use the shared protocol.
 Source maps, source stamps, incremental hashes, and page reconciliation use the same source owner.
 Slide operations retain comment identities and rewrite copied DOM and structural references.
 Layout edits read real attributes. Quoted attribute examples stay unchanged.
+
+Structural editing and inverse receipts come from the shared protocol.
+The shared inspector validates source ranges, region owners, and node identities.
+Legacy deck backfill uses the same source rules for serving and saved edits.
+Unsafe slides keep navigation identities without receiving structural handles.
