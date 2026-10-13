@@ -292,7 +292,7 @@ const layoutOf = (tag: HtmlTag, label: string) => {
   const read = (name: string) => exactlyOne(tag, name, label)
   const paired = (key: "width" | "height" | "align" | "gap", value: string | number | null) => {
     const [property, unit] = STRUCTURAL_LAYOUT[key]
-    const custom = stylePropertyValues(style, property)
+    const custom = stylePropertyValues(style, property, true)
     if (
       custom.length !== (value === null ? 0 : 1) ||
       (value !== null && custom[0] !== `${value}${unit}`)
@@ -768,8 +768,8 @@ export const backfillLegacyDeckStructure = (
           (!options.layout &&
             attrValues(tag.attrs, "style").some(
               (style) =>
-                stylePropertyValues(style, STRUCTURAL_WIDTH_PROPERTY).length > 0 ||
-                stylePropertyValues(style, STRUCTURAL_HEIGHT_PROPERTY).length > 0,
+                stylePropertyValues(style, STRUCTURAL_WIDTH_PROPERTY, true).length > 0 ||
+                stylePropertyValues(style, STRUCTURAL_HEIGHT_PROPERTY, true).length > 0,
             ))),
     )
   )
