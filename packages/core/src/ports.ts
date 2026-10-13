@@ -3118,6 +3118,10 @@ export interface AgentRecord {
   /** Which coding agent runs its jobs, and optionally which model. */
   provider: import("./execution").ExecutionProvider
   model: string | null
+  /** Harness reasoning level (`low`, `medium`, `high`, ...). Null = the harness default. */
+  effort: string | null
+  /** The machine its Derive jobs run on, as JSON (core AgentSandbox). Null = workspace default. */
+  sandbox_json: string | null
 }
 export interface NewAgent {
   id: string
@@ -3140,6 +3144,8 @@ export interface NewAgent {
   max_concurrency?: number
   provider?: import("./execution").ExecutionProvider
   model?: string | null
+  effort?: string | null
+  sandbox_json?: string | null
 }
 
 /** A principal that acts like an agent but has no row: an OAuth grant, the built-in Derive
@@ -3171,6 +3177,8 @@ export const syntheticAgent = (
   max_concurrency: 1,
   provider: "claude-code",
   model: null,
+  effort: null,
+  sandbox_json: null,
   ...a,
 })
 

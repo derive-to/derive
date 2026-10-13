@@ -674,6 +674,8 @@ export const agent = sqliteTable(
     max_concurrency: integer("max_concurrency").notNull().default(1),
     provider: text("provider").$type<ExecutionProvider>().notNull().default("claude-code"),
     model: text("model"),
+    effort: text("effort"),
+    sandbox_json: text("sandbox_json"),
     created_at: text("created_at").notNull().default(now),
   },
   (t) => [

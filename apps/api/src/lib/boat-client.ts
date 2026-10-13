@@ -1,7 +1,12 @@
 import { unbound } from "@derive/broker"
 import { z } from "zod"
 import { sha256 } from "./crypto"
-import { type SandboxClient, type SandboxCreate, SandboxCreateRejected } from "./sandbox-client"
+import {
+  type SandboxClient,
+  type SandboxCreate,
+  SandboxCreateRejected,
+  type SandboxMachine,
+} from "./sandbox-client"
 
 const Box = z.object({
   id: z.string(),
@@ -9,6 +14,8 @@ const Box = z.object({
   createdById: z.string().nullish(),
   archiveAfter: z.string().nullish(),
   setupStatus: z.string().nullish(),
+  /** False while a restored disk is still copying in. */
+  hydrated: z.boolean().nullish(),
   stop: z.object({ id: z.string(), status: z.string() }).nullish(),
 })
 type Identity = { organization_id: string; user_id: string }
@@ -103,6 +110,7 @@ export class BoatClient implements SandboxClient {
         auto_stop_after_seconds: z.number(),
         env: z.record(z.string(), z.string()).optional(),
         snapshot: z.string().optional(),
+        environment: z.string().optional(),
       })
       .parse(body)
     const { sandbox } = z.object({ sandbox: Box }).parse(
@@ -113,7 +121,8 @@ export class BoatClient implements SandboxClient {
           name: body.name,
           type: body.size,
           ttlSeconds: input.auto_stop_after_seconds,
-          noEnv: true,
+          // An owner-chosen environment brings its repositories and secrets; otherwise none.
+          ...(input.environment ? { environment: input.environment } : { noEnv: true }),
           ...(input.snapshot ? { from: input.snapshot } : {}),
           ...(input.env ? { env: input.env } : {}),
           snapshots: true,
@@ -144,12 +153,25 @@ export class BoatClient implements SandboxClient {
   async sandbox(id: string, identity: Identity) {
     return this.normalize(await this.read(id, identity))
   }
-  async lifecycle(id: string, action: "resume" | "stop", key: string, identity: Identity) {
+  async lifecycle(
+    id: string,
+    action: "resume" | "stop",
+    key: string,
+    identity: Identity,
+    _env?: Record<string, string>,
+    machine: SandboxMachine = {},
+  ) {
     await this.read(id, identity)
     await this.request(
       `/sandboxes/${encodeURIComponent(id)}/${action}`,
       "POST",
-      action === "resume" ? { ttlSeconds: 1200, noEnv: true, type: "small" } : {},
+      action === "resume"
+        ? {
+            ttlSeconds: 1200,
+            type: machine.size ?? "small",
+            ...(machine.environment ? { environment: machine.environment } : { noEnv: true }),
+          }
+        : {},
       key,
     )
     return op(action, id)
@@ -162,10 +184,13 @@ export class BoatClient implements SandboxClient {
   ) {
     if (id !== `${kind}:${sandboxId}`) throw new Error("boat.dev operation mismatch")
     const box = await this.read(sandboxId, identity)
+    // A sandbox restored from a snapshot answers before its files are all on disk. Work must
+    // not start until they are, or it sees a home directory that is still arriving.
     const ready =
       ["ready", "idle", "running"].includes(box.state) &&
       box.setupStatus !== "running" &&
-      box.setupStatus !== "pending"
+      box.setupStatus !== "pending" &&
+      box.hydrated !== false
     const done =
       kind === "stop" || kind === "delete"
         ? box.state === "archived" && box.stop?.status === "completed"
@@ -217,7 +242,7 @@ export class BoatClient implements SandboxClient {
       "set -eu",
       `mkdir -p ${quote(dir)}`,
       `if ! mkdir ${quote(dir + "/claim")} 2>/dev/null; then rm -f ${quote(envFile)}; exit 0; fi`,
-      `printf '%s\\n' \"$$\" > ${quote(dir + "/pid")}`,
+      `printf '%s\\n' "$$" > ${quote(dir + "/pid")}`,
       `cat /proc/sys/kernel/random/boot_id > ${quote(dir + "/boot")}`,
       `awk '{print $22}' /proc/$$/stat > ${quote(dir + "/started")}`,
       `printf running > ${quote(dir + "/state")}`,

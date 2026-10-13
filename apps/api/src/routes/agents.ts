@@ -1,12 +1,16 @@
 import { randomUUID } from "node:crypto"
 import {
   type AgentRecord,
+  type AgentSandbox,
   type ConnectionRecord,
   capRole,
+  EXECUTION_EFFORTS,
   JOB_OPEN_STATUSES,
   newId,
   normalizeSelectors,
+  parseAgentSandbox,
   type Role,
+  SANDBOX_SIZES,
   type TriggerRecord,
 } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
@@ -16,11 +20,50 @@ import { connectionBindError } from "../lib/broker"
 import { EnvironmentBindings, readEnvironmentBindings } from "../lib/context-environment"
 import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
-import { machineDepsFrom, retireSandbox } from "../lib/job-machine"
+import { machineDepsFrom, replaceIdleSandbox, retireSandbox } from "../lib/job-machine"
 import { agentAccess } from "../lib/job-policy"
 import { cancelJob } from "../lib/jobs"
 import { cloudEnabled, workspaceRuntime } from "../lib/runtime-connection"
 import { previousOccurrence } from "../lib/schedule"
+
+/** The machine an agent's Derive jobs run on (core AgentSandbox). */
+const AgentSandboxSchema = z
+  .object({
+    snapshot: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9._-]{1,120}$/)
+      .optional()
+      .describe("A prepared provider image, such as a Boat named snapshot."),
+    environment: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9._-]{1,120}$/)
+      .optional()
+      .describe(
+        "A provider environment to attach, with its repositories and secrets. Absent: none of the account's secrets.",
+      ),
+    size: z.enum(SANDBOX_SIZES).optional().describe("Machine size."),
+    fresh: z
+      .boolean()
+      .optional()
+      .describe("Build a new machine from the snapshot for every task instead of resuming."),
+    check: z
+      .string()
+      .max(2_000)
+      .optional()
+      .describe(
+        "Shell command run before the harness starts. A nonzero exit ends the task with its output and spends no model tokens.",
+      ),
+  })
+  .openapi("AgentSandbox")
+
+/** Store a machine spec; an empty one clears it. Undefined leaves it untouched. */
+const sandboxJson = (spec: AgentSandbox | undefined) => {
+  if (spec === undefined) return undefined
+  const clean = parseAgentSandbox(JSON.stringify(spec))
+  return Object.keys(clean).length ? JSON.stringify(clean) : null
+}
 
 /** Agent registry (Admin-managed) + the agent's pull inbox of @mentions. The Agent +
  *  ConnectedAgent response schemas are the single source for the web client's types
@@ -138,6 +181,8 @@ export const agentRoutes = (ctx: AppContext) => {
           : null,
       provider: a.provider,
       model: a.model,
+      effort: a.effort,
+      sandbox: parseAgentSandbox(a.sandbox_json),
       ask_policy: a.ask_policy,
       write_policy: a.write_policy,
       paused: a.paused_at !== null,
@@ -223,6 +268,10 @@ export const agentRoutes = (ctx: AppContext) => {
         .optional()
         .describe("Cloud sandbox availability and progress. No credentials."),
       model: z.string().nullable(),
+      effort: z.string().nullable().describe("Harness reasoning level. Null is its default."),
+      sandbox: AgentSandboxSchema.describe(
+        "The machine its Derive jobs run on. Empty uses the workspace default.",
+      ),
       ask_policy: z.enum(["workspace", "invited"]),
       write_policy: z
         .enum(["publish", "review"])
@@ -380,8 +429,17 @@ export const agentRoutes = (ctx: AppContext) => {
     c: Parameters<typeof requireUser>[0],
     org: string,
     manager: string | null,
-    b: { role?: unknown; connection_ids?: string[]; environment?: Record<string, string> },
+    b: {
+      role?: unknown
+      connection_ids?: string[]
+      environment?: Record<string, string>
+      sandbox?: AgentSandbox
+    },
   ): Promise<string | null> => {
+    // A snapshot or environment carries the company's code, tools, and secrets into the agent's
+    // machine, so the workspace owner chooses it, like the sandbox connection itself.
+    if ((b.sandbox?.snapshot || b.sandbox?.environment) && !(await ctx.workspaceCan(c, "manage")))
+      return "only a workspace owner can choose an agent's machine snapshot or environment"
     if (typeof b.role === "string" && manager) {
       const seat = (await meta.getMembership(org, manager).catch(() => null))?.role
       if (!seat || capRole(b.role as Role, seat) !== b.role)
@@ -416,6 +474,8 @@ export const agentRoutes = (ctx: AppContext) => {
     machine: z.enum(["owner", "derive"]),
     provider: z.enum(["claude-code", "codex"]),
     model: z.string().trim().min(1).max(120).nullable(),
+    effort: z.enum(EXECUTION_EFFORTS).nullable(),
+    sandbox: AgentSandboxSchema,
     ask_policy: z.enum(["workspace", "invited"]),
     write_policy: z.enum(["publish", "review"]),
     connection_ids: z.array(z.string().min(1).max(64)).max(20),
@@ -555,6 +615,8 @@ export const agentRoutes = (ctx: AppContext) => {
           machine: b.machine ?? "owner",
           provider: b.provider ?? "claude-code",
           model: b.model ?? null,
+          effort: b.effort ?? null,
+          sandbox_json: sandboxJson(b.sandbox) ?? null,
           ask_policy: b.ask_policy ?? "workspace",
           write_policy: b.write_policy ?? "publish",
           connection_ids_json: b.connection_ids?.length ? JSON.stringify(b.connection_ids) : null,
@@ -711,6 +773,8 @@ export const agentRoutes = (ctx: AppContext) => {
           machine: b.machine,
           provider: b.provider,
           model: b.model,
+          effort: b.effort,
+          sandbox_json: sandboxJson(b.sandbox),
           ask_policy: b.ask_policy,
           write_policy: b.write_policy,
           connection_ids_json:
@@ -735,6 +799,7 @@ export const agentRoutes = (ctx: AppContext) => {
         return bail(fail(c, 409, "an agent with that name already exists"))
       }
       if (!updated) return bail(fail(c, 404, "agent not found"))
+      if (updated.sandbox_json !== agent.sandbox_json) await replaceIdleSandbox(meta, updated)
       return c.json(
         await agentJson(updated, {
           instructions_short_id: await instructionsShortId(updated),

@@ -287,6 +287,7 @@ async function runStructured(provider, opts) {
     bin: opts.bin,
     cwd: opts.cwd,
     model: opts.model,
+    effort: opts.effort,
     systemPrompt: opts.systemPrompt + contract,
     timeoutMs: opts.timeoutMs,
     env: opts.env,

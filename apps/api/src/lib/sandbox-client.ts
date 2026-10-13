@@ -22,11 +22,18 @@ type Process = {
 }
 export interface SandboxCreate {
   name: string
-  size: "small" | "medium" | "large"
+  size: "small" | "medium" | "default" | "large" | "xlarge"
   auto_stop_after_seconds: number
   setup_script: string
   snapshot?: string
+  /** A provider environment to attach. Absent: the machine gets none of the account's secrets. */
+  environment?: string
   env?: Record<string, string>
+}
+/** How a resumed machine is shaped; providers without these ignore them. */
+export interface SandboxMachine {
+  size?: SandboxCreate["size"]
+  environment?: string
 }
 export interface SandboxClient {
   authenticate(): Promise<Identity>
@@ -48,6 +55,7 @@ export interface SandboxClient {
     key: string,
     identity: Identity,
     env?: Record<string, string>,
+    machine?: SandboxMachine,
   ): Promise<Operation>
   launch(
     id: string,

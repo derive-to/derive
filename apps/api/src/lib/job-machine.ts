@@ -1,9 +1,16 @@
-import { type AgentRecord, type JobRecord, type MetaStore, newId } from "@derive/core"
+import {
+  type AgentRecord,
+  type JobRecord,
+  type MetaStore,
+  newId,
+  parseAgentSandbox,
+  type SandboxSize,
+} from "@derive/core"
 import { log } from "../log"
 import { agentWritesOff } from "./agent-writes"
 import { sha256 } from "./crypto"
 import { turnProblem } from "./job-command"
-import { type JobDeps } from "./job-policy"
+import type { JobDeps } from "./job-policy"
 import { jobOverBudget, noteHeldForBudget, reportJob, wakeClaimed, wakeSettled } from "./jobs"
 import { OrtamClient } from "./ortam-client"
 import { RUN_LEASE_MS, RUN_TIMEOUT_MS } from "./run-lifecycle"
@@ -46,6 +53,9 @@ const WORKDIR = "/home/ortam/work"
 /** After a failed sandbox, wait this long times the failure count before trying again, and
  *  after this many failures in a row, fail the work that was waiting for it. */
 const RETRY_BACKOFF_MS = 10 * 60_000
+/** A new sandbox's provider-side stop timer. Room for a snapshot to finish restoring before a
+ *  full-length job; the job's own deadline still stops it as soon as the work ends. */
+const CREATE_TTL_SECONDS = 2700
 const MAX_SANDBOX_FAILURES = 3
 
 interface Identity {
@@ -55,6 +65,14 @@ interface Identity {
 interface SandboxState {
   api_url: string
   snapshot?: string
+  /** Frozen from the agent's machine spec when this sandbox was reserved. */
+  size?: SandboxSize
+  environment?: string
+  /** Retire this sandbox after each task, so the next one starts from the snapshot. */
+  fresh?: boolean
+  /** Set when a fresh sandbox is retired after its task: deletion returns the agent to no
+   *  sandbox instead of counting a failure. */
+  recycle?: boolean
   setup_script?: string
   provider?: "ortam" | "boat"
   connection_id?: string
@@ -114,8 +132,9 @@ export const machineWorkspaces = (
 /** The one create request for an agent's sandbox; a replay with its key must send the same. */
 const sandboxRequest = (agent: AgentRecord, state: SandboxState, deps: MachineDeps) => ({
   name: `derive-${agent.id.replaceAll("_", "-")}`,
-  size: "small" as const,
-  auto_stop_after_seconds: 1200,
+  size: state.size ?? "small",
+  ...(state.environment ? { environment: state.environment } : {}),
+  auto_stop_after_seconds: CREATE_TTL_SECONDS,
   setup_script: state.setup_script ?? runtimeSetup(deps.config.runnerArchive),
   ...(state.snapshot ? { snapshot: state.snapshot } : {}),
 })
@@ -221,6 +240,7 @@ export async function advanceSandbox(
     const client = await clientFor(deps, agent)
     const auth = await client.authenticate()
     const prior = parse<SandboxState>(agent.sandbox_state_json)
+    const spec = parseAgentSandbox(agent.sandbox_json)
     if (!meta.jobExecution) return null
     return meta.jobExecution.reserve({
       agent_id: agent.id,
@@ -241,9 +261,15 @@ export async function advanceSandbox(
             }
           : {}),
         identity: { organization_id: auth.organization_id, user_id: auth.user_id },
-        ...(runtime.provider === "boat"
-          ? { snapshot: (await meta.getOrgSettings(agent.org_id)).boatSnapshot }
-          : {}),
+        // The agent's own machine wins; the workspace snapshot stays the default.
+        ...(spec.snapshot
+          ? { snapshot: spec.snapshot }
+          : runtime.provider === "boat"
+            ? { snapshot: (await meta.getOrgSettings(agent.org_id)).boatSnapshot }
+            : {}),
+        ...(spec.size ? { size: spec.size } : {}),
+        ...(spec.environment ? { environment: spec.environment } : {}),
+        ...(spec.fresh ? { fresh: true } : {}),
         generation: newId("sbg"),
         failures: prior?.failures ?? 0,
       } satisfies SandboxState),
@@ -332,7 +358,14 @@ export async function advanceSandbox(
     case "deleting": {
       if (!id) return failed()
       if (!state.delete_op) {
-        if (await client.isSandboxDeleted(id, state.identity)) return failed()
+        if (await client.isSandboxDeleted(id, state.identity))
+          return state.recycle
+            ? meta.transitionAgentSandbox(agent.id, agent.org_id, agent.sandbox_rev, {
+                phase: null,
+                state_json: JSON.stringify({ failures: 0 }),
+                sandbox_id: null,
+              })
+            : failed()
         const op = await client.deleteSandbox(
           id,
           `derive-agent-${agent.id}-${state.generation}-delete`,
@@ -345,7 +378,13 @@ export async function advanceSandbox(
         op.state === "succeeded" ||
         (op.state === "failed" && (await client.isSandboxDeleted(id, state.identity)))
       )
-        return failed()
+        return state.recycle
+          ? meta.transitionAgentSandbox(agent.id, agent.org_id, agent.sandbox_rev, {
+              phase: null,
+              state_json: JSON.stringify({ failures: 0 }),
+              sandbox_id: null,
+            })
+          : failed()
       return agent
     }
     default:
@@ -446,7 +485,7 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
         argv: [
           "sh",
           "-c",
-          `${claim.runner_setup}\nexec node \"$@\"`,
+          `${claim.runner_setup}\nexec node "$@"`,
           "derive-runner",
           claim.runner_path,
           "runner",
@@ -485,6 +524,7 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
           `derive-job-${m.turn}-resume`,
           state.identity,
           await environment(),
+          { size: state.size, environment: state.environment },
         )
         await move("starting", { resume_op: op.id, active_at: m.active_at ?? at })
         return
@@ -499,7 +539,7 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
       if (
         observed.state !== "ready" ||
         observed.auto_stop_after_seconds <= 0 ||
-        observed.auto_stop_after_seconds > 1200
+        observed.auto_stop_after_seconds > CREATE_TTL_SECONDS
       ) {
         await move("stopping")
         return
@@ -595,8 +635,9 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
       const released = await move("released")
       if (released)
         await meta.transitionAgentSandbox(agent.id, agent.org_id, agent.sandbox_rev, {
-          phase: "ready",
-          state_json: JSON.stringify({ ...state, holder: null }),
+          // A fresh machine serves one task, then retires; the next task builds a new one.
+          phase: state.fresh ? "deleting" : "ready",
+          state_json: JSON.stringify({ ...state, holder: null, recycle: state.fresh || undefined }),
         })
       return
     }
@@ -688,6 +729,8 @@ export async function machinePass(
       const next = await advanceSandbox(deps, current, actorId)
       if (
         !next ||
+        // A retired sandbox waits for work; only dispatch reserves the next one.
+        (next.sandbox_phase === null && current.sandbox_phase !== null) ||
         (next.sandbox_phase === current.sandbox_phase &&
           next.sandbox_state_json === current.sandbox_state_json)
       )
@@ -911,6 +954,17 @@ export async function retireSandbox(
     phase: "deleting",
   })
   return false
+}
+
+/** The agent's machine spec changed: retire an idle sandbox so its next task builds one from
+ *  the new spec. A sandbox in use finishes its task first and keeps the spec it started with. */
+export async function replaceIdleSandbox(meta: MetaStore, agent: AgentRecord): Promise<void> {
+  if (agent.sandbox_phase !== "ready") return
+  const state = parse<SandboxState>(agent.sandbox_state_json)
+  await meta.transitionAgentSandbox(agent.id, agent.org_id, agent.sandbox_rev, {
+    phase: "deleting",
+    state_json: JSON.stringify({ ...state, recycle: true }),
+  })
 }
 
 /** For the tick's callers: the pass, or nothing when this deploy has no Derive machines. */

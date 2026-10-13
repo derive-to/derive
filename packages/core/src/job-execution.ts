@@ -7,12 +7,20 @@ export interface JobExecution {
   agent_name: string
   provider: ExecutionProvider
   model: string | null
+  /** Harness reasoning level; absent on turns admitted before it existed. */
+  effort?: string | null
   account_id: string | null
   connection_ids: string[]
   repositories_json: string
   environment_json: string
   skill: { artifact_id: string; version: number } | null
-  sandbox: { provider: "boat" | "ortam"; connection_id: string | null; account_id: string | null }
+  sandbox: {
+    provider: "boat" | "ortam"
+    connection_id: string | null
+    account_id: string | null
+    /** The agent's machine spec at admission (core AgentSandbox), as JSON. */
+    spec_json?: string | null
+  }
 }
 
 export interface JobEventRecord {

@@ -135,5 +135,24 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input
     // System prompt (with the appended contract) and the task travel in one prompt.
     expect(fake.prompt()).toContain("you are a runner")
     expect(fake.prompt()).toContain("how many?")
+    expect(args).not.toContain("model_reasoning_effort")
+  })
+
+  it("passes the agent's reasoning effort to Codex", async () => {
+    const fake = fakeCodex(`
+printf '%s\n' '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"<answer>{\\"body_md\\":\\"ok\\"}</answer>"}}'
+`)
+    const out = await runAgent(codex, {
+      bin: fake.bin,
+      cwd: tmpdir(),
+      model: "gpt-6-luna",
+      effort: "medium",
+      timeoutMs: 30_000,
+      systemPrompt: "s",
+      prompt: "p",
+      meter: { costUsd: null, actions: [] },
+    })
+    expect(out.ok).toBe(true)
+    expect(fake.args()).toContain('model_reasoning_effort="medium"')
   })
 })

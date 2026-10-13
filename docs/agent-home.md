@@ -107,6 +107,22 @@ The workspace owner must approve the snapshot's code, tools, and saved files for
 Derive withholds the account's environment. Resume supplies only the task's scoped environment.
 Commands never contain the task token. A command is submitted once.
 
+Each agent can name its own machine on its Settings tab: a snapshot, a size, whether each task
+starts fresh or keeps the last machine's files, and a ready check. A workspace owner picks the
+snapshot and, when the work needs the company's repositories and secrets, a provider environment
+(for Boat, a named environment such as `base`). Without one, Derive withholds the account's
+environment; Boat then also scrubs owner files from the restored snapshot, so a prepared
+checkout disappears. A Boat machine counts as ready only once its snapshot is fully on disk.
+
+The ready check runs before the model, with the agent's secrets in its environment. A nonzero
+exit fails the task with the check's last lines and spends no model tokens. A fresh machine
+serves one task, then retires. Changing the machine retires an idle one. Codex agents also take
+an effort level, passed to the harness as its reasoning effort.
+
+A report the agent publishes can reference screenshots by relative path
+(`<img src="shots/home.png">`). The runner stages each local image as a workspace asset and
+rewrites the link before publishing.
+
 A stop succeeds only when Boat reports `archived` and its disk-save operation reports `completed`.
 Retirement archives the Boat and keeps its files. It does not permanently delete the Boat.
 The controller refuses a stored sandbox if the provider or API URL changes.

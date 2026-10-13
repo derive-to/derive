@@ -1557,6 +1557,41 @@
           "already_member"
         ]
       },
+      "AgentSandbox": {
+        "type": "object",
+        "properties": {
+          "snapshot": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]{1,120}$",
+            "description": "A prepared provider image, such as a Boat named snapshot."
+          },
+          "environment": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]{1,120}$",
+            "description": "A provider environment to attach, with its repositories and secrets. Absent: none of the account's secrets."
+          },
+          "size": {
+            "type": "string",
+            "enum": [
+              "small",
+              "default",
+              "large",
+              "xlarge"
+            ],
+            "description": "Machine size."
+          },
+          "fresh": {
+            "type": "boolean",
+            "description": "Build a new machine from the snapshot for every task instead of resuming."
+          },
+          "check": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "Shell command run before the harness starts. A nonzero exit ends the task with its output and spends no model tokens."
+          }
+        },
+        "description": "The machine its Derive jobs run on. Empty uses the workspace default."
+      },
       "AgentSource": {
         "type": "object",
         "properties": {
@@ -1811,6 +1846,14 @@
             "type": "string",
             "nullable": true
           },
+          "effort": {
+            "type": "string",
+            "nullable": true,
+            "description": "Harness reasoning level. Null is its default."
+          },
+          "sandbox": {
+            "$ref": "#/components/schemas/AgentSandbox"
+          },
           "ask_policy": {
             "type": "string",
             "enum": [
@@ -1886,6 +1929,8 @@
           "machine",
           "provider",
           "model",
+          "effort",
+          "sandbox",
           "ask_policy",
           "write_policy",
           "paused",
@@ -2519,6 +2564,10 @@
                           ]
                         },
                         "model": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "effort": {
                           "type": "string",
                           "nullable": true
                         },
@@ -6583,6 +6632,21 @@
                     "nullable": true,
                     "minLength": 1,
                     "maxLength": 120
+                  },
+                  "effort": {
+                    "type": "string",
+                    "nullable": true,
+                    "enum": [
+                      "minimal",
+                      "low",
+                      "medium",
+                      "high",
+                      "xhigh",
+                      null
+                    ]
+                  },
+                  "sandbox": {
+                    "$ref": "#/components/schemas/AgentSandbox"
                   },
                   "ask_policy": {
                     "type": "string",

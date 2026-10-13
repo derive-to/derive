@@ -275,6 +275,8 @@ CREATE TABLE IF NOT EXISTS agent (
   max_concurrency INTEGER NOT NULL DEFAULT 1,
   provider TEXT NOT NULL DEFAULT 'claude-code',
   model TEXT,
+  effort TEXT,
+  sandbox_json TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (token),
   UNIQUE (org_id, name)

@@ -35,3 +35,50 @@ export const parseRunExecution = (
   }
   return { version: 1, provider: fallback, location: "hosted", model: null }
 }
+
+/** Reasoning levels a harness may take. Which a model accepts is the harness's call. */
+export const EXECUTION_EFFORTS = ["minimal", "low", "medium", "high", "xhigh"] as const
+export type ExecutionEffort = (typeof EXECUTION_EFFORTS)[number]
+
+/** Provider machine sizes, smallest first. */
+export const SANDBOX_SIZES = ["small", "default", "large", "xlarge"] as const
+export type SandboxSize = (typeof SANDBOX_SIZES)[number]
+
+/**
+ * The machine an agent's Derive jobs run on.
+ *
+ * `snapshot` names a prepared provider image (a Boat named snapshot). `fresh` builds a new
+ * machine from it for every task instead of resuming the last one, so a task never inherits a
+ * previous task's drift. `check` is a shell command the runner runs before the harness: a
+ * nonzero exit ends the task with its output and spends no model tokens. `environment` attaches
+ * the provider's named environment (its repositories, variables, and secret files); without it
+ * the machine gets none of the account's secrets.
+ */
+export interface AgentSandbox {
+  snapshot?: string
+  environment?: string
+  size?: SandboxSize
+  fresh?: boolean
+  check?: string
+}
+
+/** Read a stored machine spec defensively; unknown fields and bad values drop out. */
+export const parseAgentSandbox = (json: string | null | undefined): AgentSandbox => {
+  if (!json) return {}
+  let raw: unknown
+  try {
+    raw = JSON.parse(json)
+  } catch {
+    return {}
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {}
+  const v = raw as Record<string, unknown>
+  const size = SANDBOX_SIZES.find((s) => s === v.size)
+  return {
+    ...(typeof v.snapshot === "string" && v.snapshot ? { snapshot: v.snapshot } : {}),
+    ...(typeof v.environment === "string" && v.environment ? { environment: v.environment } : {}),
+    ...(size ? { size } : {}),
+    ...(v.fresh === true ? { fresh: true } : {}),
+    ...(typeof v.check === "string" && v.check.trim() ? { check: v.check } : {}),
+  }
+}
