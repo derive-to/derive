@@ -38,11 +38,15 @@ export const d1ArtifactVersions = (d1: D1Database, db: DrizzleD1Database<typeof 
         ...artifactVersionFields(v, 0, at),
         current_version: sql`(select n from version where id = ${v.id})`,
       })
-      .where(
-        and(eq(artifact.id, artifactId), sql`exists (select 1 from version where id = ${v.id})`),
-      )
+      .where(and(eq(artifact.id, artifactId), sql`changes() > 0`))
       .toSQL()
-    const read = db.select().from(version).where(eq(version.id, v.id)).toSQL()
+    // A reused id can exist even when the conditional INSERT writes nothing.
+    // Only return a version after this batch updates the head.
+    const read = db
+      .select()
+      .from(version)
+      .where(and(eq(version.id, v.id), eq(version.artifact_id, artifactId), sql`changes() > 0`))
+      .toSQL()
     const results = await d1.batch<VersionRecord>([
       prepare(dialect.sqlToQuery(insert)),
       prepare(bump),

@@ -1,10 +1,10 @@
 {
   "repository": "https://github.com/derive-to/open-artifact",
   "baseCommit": "9b6a221ca7ac64dea06c1603426504771aee4dab",
-  "previewVersion": "0.6.0-core.8",
+  "previewVersion": "0.6.0-core.10",
   "sources": {
     "anchors.ts": "a6981a8e44f3004a0fad2814fecc637a1fac92e057d1b8f539b348745080aaa1",
-    "collection.ts": "88ed72a13b6039f8dc27753f37ecf26bbb6d3f5bf7781e722448f5f41edd706c",
+    "collection.ts": "a2b3e15154bc80ee338f57d4d7a0123662c415f7e8ff666fcb37be98e972d626",
     "define.ts": "b44e53891552645e3d21796acd99a07f97ee9598b1e6f00beabb6d2343e2559f",
     "extension.ts": "1faf238170f12723df8b1580a97fcc90e5feeab9e11957df8a25c2a5ddb522dc",
     "http.ts": "19ff56ffc561899bf88b98d2965530dfcd21210812a8bea7f0a2e6ce59e52a68",
@@ -27,14 +27,40 @@
     "source-text-segments.ts": "97f6a1bc48ca12a35b9082f1be2cb7e5b5ff76039eda7a241820844d1f5c9ea9",
     "source-text.ts": "8192554896e5e847fd1b304c22c53b3516398f7c441b6e06aa112dd79000dda3",
     "source.ts": "5d1b1cca31985dea45c919f525f58aaa93640e736d3f4b67a2e7c33aaabff1c3",
-    "state-apply.ts": "8aa1b74802044d876f0e03dc233531557ad0abfd6bc50b4fbda4d1e5cdb66b73",
+    "state-apply.ts": "dfc173017d93ae6ea5b7f0092e9f64d5e13f7f04764dd79e597bb46044ee8ecc",
     "state-limits.ts": "d9ba463e9d219dfe02b6529dd4de67124a9feb1238a08b5d82ba4f0cc6265092",
     "state.ts": "87d86ed02f1e64ef56184404adc1249d9339419db33763b47b4edc4eeecb9bd7",
     "text.ts": "a81fba971a48c9ad544d4f5f53c63378441e65684c5e1a4f5be4c959590fb2c0",
     "tools.ts": "a83f4d194b0fcf7f56f37753fbd1f4b1a48d32f1aaafebb98fea2584bf996611",
     "viewer.ts": "e7c87eda4dbbbf8a02f7e25aff70139df90f7375967086be0f9a740f8ea64f41"
   },
-  "tarballSha256": "16f190ca44fc1b8036c98227d7bb2accb1395a02a1a7793a14d1dd09216564ad",
+  "tarballSha256": "10fb0aa5c705637fc2e0b5a7a15b303bd3cc2d5b52f45021d53ac124b2d3caf3",
   "note": "Packed source preview for the first Derive consumer. This is not a published npm release.",
-  "sourceCommit": "1e2353333fe4e61cebf6da4d71fb27ccd96678b1"
+  "sourceCommit": "84e4b818b1c5110fe22e9a10667b927ffca4e806",
+  "runtimeSources": {
+    "anchoring.ts": "138f9789b3ec2fbc4aec410adbcee348000148fce615763db5b8d0039673204a",
+    "connection.ts": "ebb1704972a86e554f065c7e635f40e421716831120dd8bf1a541913fab7a953",
+    "editing.ts": "7140bcbf11744cbe6668a74f8cbfc36c8b557143db42d9e0d931d73315bf45f9",
+    "geometry.ts": "152dd33acb9d2148a2f9ac6913e4c479a6f31a0062e1c654761d35c343780893",
+    "highlights.ts": "9adfb6a14288185932b57cdf5752ff787917d29b32224198fb57258834e547b5",
+    "index.ts": "abb1e66a78c32f1e8bbd667e888e4ddf8ddbd39e177cbe8ca3486558ee3d2696",
+    "layout-handle.ts": "656f5f32c1844e12cc9ff4626ac94558a54cce3bc994bc2ea688792c8a47699e",
+    "layout.ts": "fdc89a3664b356bc0e313b8465bf294f662e791452f95262320964e1a6f2a421",
+    "presence.ts": "a0abdf48f2b03ce169c611c0038331c501cebdb69f48b31f4df14a8da98def61",
+    "runtime.entry.ts": "840035f2d16e5ee4bab1698f692504b86a03afa8260c34877a2fddd44b538d28",
+    "runtime.ts": "c4dca5dbc4f0d25a050c06861956e04f6ff74db17f17780b4f25de3e20c80745",
+    "sandbox.entry.ts": "e8864a20ae0ce50ad08b13636717ae20e2773defc0174fab5179fe1d3f8f70b0",
+    "shared.ts": "1ca727f7fe78b4390c42894fe6d3060dcba580d5243a21d6117609b16d9fffd8",
+    "slides.ts": "7352609373e1072e92b4bec9980725ce5efd84f571665860a70f0dfb28058cb5",
+    "state-backend.ts": "0eae651f0a73c4318d231e5e6c034b4970b080445c2d96c397680f32d67799e6",
+    "text-index.ts": "b03514540909f94a08c83074687151b7b0bc907061e12cccf53748416d78798e",
+    "theme.ts": "d6e31b99487bf70b3bcae129f3846fb725e851689ceed0f7c40d47cdb62d8577",
+    "viewer.entry.ts": "ba030f8c1483ba6c741284e498fa47b7798b9bd27d682b0fe36fc9457e7252b4",
+    "viewer.ts": "2855a1bc365c0fc2af552fa3d3c7da2da598f13d2ca4824290587501685ceed5"
+  },
+  "runtimeTarballSha256": "e1fc89d402496e652319607b40e01211d2d626ead8848740bd4b0261f85505f5",
+  "runtimeDeclarationBase": {
+    "version": "0.5.2",
+    "sha256": "d02d2797c94147df26ba1f3e7e1746d617022f61f01718bca218b456a5b052ef"
+  }
 }

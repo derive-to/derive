@@ -27,7 +27,10 @@ It preserves the version ID and number. It updates the content and attribution,
 clears preview fields, deletes extracted facts, and updates the artifact head.
 These changes commit together. A stale replacement returns `null` without changes.
 
-D1 checks `changes()` immediately after the conditional version update. It updates
+D1 appends check `changes()` after the insert and after the head update. An old
+version ID cannot make a stale append return success or move the head backwards.
+
+D1 replacements check `changes()` immediately after the conditional version update. It updates
 the head before it deletes facts. This order also supports versions without facts.
 
 The portable repositories do not implement these writes. This prevents callers
