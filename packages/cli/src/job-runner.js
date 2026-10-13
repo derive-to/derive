@@ -590,6 +590,8 @@ export async function serveJob(client, job, cfg, deps = {}) {
           cwd: cfg.cwd,
           firstTurn: (job.turn?.ordinal ?? 1) === 1,
           tokenFile,
+          // A Derive machine runs one task at a time; a team's own box runs many side by side.
+          ...(process.env.DERIVE_RUNNER_ISOLATED === "1" ? {} : { task: job.id }),
         })
         renewGit = setInterval(
           () =>

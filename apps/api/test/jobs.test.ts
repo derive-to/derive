@@ -3250,13 +3250,19 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
       reason: "Bind a GitHub connection for acme-dev to this agent to work in acme-dev/widgets.",
       retryable: false,
     })
-    // A repository is only for cloud agents.
-    const local = await createAgent(app, { provider: "codex" })
-    const refused = await app.request(
+    // A team's own box takes repository tasks too; interactive sessions stay on Derive machines.
+    const box = await createAgent(app, { provider: "codex" })
+    const onBox = await app.request(
       "/v1/jobs",
-      jsonAs(as(ed.email), { agent_id: local.id, instruction: "x", repo: "acme-dev/widgets" }),
+      jsonAs(as(ed.email), { agent_id: box.id, instruction: "x", repo: "acme-dev/widgets" }),
     )
-    expect(refused.status).toBe(400)
+    expect(onBox.status).toBe(201)
+    expect(((await onBox.json()) as { task: { repo: string } }).task.repo).toBe("acme-dev/widgets")
+    const session = await app.request(
+      "/v1/jobs",
+      jsonAs(as(ed.email), { agent_id: box.id, instruction: "x", session: true }),
+    )
+    expect(session.status).toBe(400)
   })
 
   it("an interrupting follow-up ends the running turn and runs next; a plain one waits", async () => {

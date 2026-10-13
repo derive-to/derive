@@ -624,8 +624,10 @@ export const jobRoutes = (ctx: AppContext) => {
       const caller = await agentFor(c)
       if (!agent || !(await canAskAgent(meta, agent, who.id, caller)))
         return bail(fail(c, 404, "no such agent you can ask"))
-      if ((b.session || b.repo) && agent.machine !== "derive")
-        return bail(fail(c, 400, "Sessions and repositories need an agent that runs on Derive"))
+      // A session is attached to over a Derive machine's SSH; a team's own box has its own tools
+      // for that. Repositories work on both.
+      if (b.session && agent.machine !== "derive")
+        return bail(fail(c, 400, "Interactive sessions need an agent that runs on Derive"))
       // A workspace past its monthly model budget takes no new work. Checked before anything
       // is written, so a refused ask leaves no job behind. A dedupe key naming an open job
       // still finds it: that work is already asked for.

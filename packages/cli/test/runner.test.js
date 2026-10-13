@@ -616,4 +616,47 @@ describe("cloud sessions", () => {
       else process.env.GIT_CONFIG_GLOBAL = before.GIT_CONFIG_GLOBAL
     }
   })
+
+  it("on a shared box, each task works in its own worktree and keeps it for follow-ups", () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-box-"))
+    const bare = join(root, "origin.git")
+    execSync(`git init -q --bare ${bare}`)
+    const seed = join(root, "seed")
+    execSync(`git init -q -b main ${seed}`)
+    execSync(`git -C ${seed} -c user.email=a@b -c user.name=a commit -q --allow-empty -m first`)
+    execSync(`git -C ${seed} push -q ${bare} main`)
+    const config = join(root, "gitconfig")
+    writeFileSync(
+      config,
+      `[url "${bare}"]\n\tinsteadOf = https://github.com/acme-dev/widgets.git\n`,
+    )
+    const before = process.env.GIT_CONFIG_GLOBAL
+    process.env.GIT_CONFIG_GLOBAL = config
+    try {
+      const work = join(root, "work")
+      mkdirSync(work)
+      const checkout = (task) =>
+        prepareRepo(
+          { repo: "acme-dev/widgets", ref: "main", token: "t" },
+          {
+            cwd: work,
+            firstTurn: true,
+            tokenFile: join(mkdtempSync(join(tmpdir(), "g-")), "t"),
+            task,
+          },
+        ).dir
+      const a = checkout("job_a")
+      const b = checkout("job_b")
+      // Two tasks at once, two folders: one task's edits never reach the other.
+      expect(a).not.toBe(b)
+      writeFileSync(join(a, "change.txt"), "task a")
+      expect(existsSync(join(b, "change.txt"))).toBe(false)
+      // A follow-up on task a returns to its own folder with the work in progress.
+      expect(checkout("job_a")).toBe(a)
+      expect(readFileSync(join(a, "change.txt"), "utf8")).toBe("task a")
+    } finally {
+      if (before === undefined) delete process.env.GIT_CONFIG_GLOBAL
+      else process.env.GIT_CONFIG_GLOBAL = before
+    }
+  })
 })
