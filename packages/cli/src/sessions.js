@@ -154,7 +154,10 @@ async function ensureRunning(api, id, log) {
   let task = await api(`/v1/jobs/${id}`)
   if (task.machine_phase !== "running" && !["queued", "running"].includes(task.status)) {
     log("resuming the session…")
-    await api(`/v1/jobs/${id}/messages`, { method: "POST", body: { body_md: SESSION_RESUME } })
+    task = await api(`/v1/jobs/${id}/messages`, {
+      method: "POST",
+      body: { body_md: SESSION_RESUME },
+    })
   }
   for (let i = 0; i < 90 && task.machine_phase !== "running"; i++) {
     if (["failed", "cancelled", "lost"].includes(task.status))
