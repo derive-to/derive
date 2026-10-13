@@ -105,7 +105,13 @@ export const verifyApiToken = async (
   secret: string,
   token: string,
   nowMs: number,
-): Promise<{ userId: string; orgId: string; role: Role; clientId: string } | null> => {
+): Promise<{
+  userId: string
+  orgId: string
+  role: Role
+  clientId: string
+  expiresAt: number
+} | null> => {
   if (!isApiToken(token)) return null
   const claim = await verifyCapabilityToken(
     DOMAIN,
@@ -123,5 +129,5 @@ export const verifyApiToken = async (
   if (!userId || !orgId) return null
   if (role !== "viewer" && role !== "commenter" && role !== "editor" && role !== "owner")
     return null
-  return { userId, orgId, role, clientId: clientParts.join(".") }
+  return { userId, orgId, role, clientId: clientParts.join("."), expiresAt: claim.expiresAt }
 }

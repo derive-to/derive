@@ -12,6 +12,15 @@ import { type Auth, oauthIssuerFor } from "../auth-config"
 import { clientName } from "./client-names"
 import { sha256 } from "./crypto"
 
+export const oauthScopeRole = (scopes: readonly string[]): Role =>
+  scopes.includes("derive:manage")
+    ? "owner"
+    : scopes.includes("derive:publish")
+      ? "editor"
+      : scopes.includes("derive:comment")
+        ? "commenter"
+        : "viewer"
+
 /** The synthetic agent an OAuth client (or a token minted from its grant) acts as: one shape,
  *  built in one place, for every bearer that resolves through a grant. `role` must already be
  *  capped by the granting user's membership in `orgId`. */
@@ -84,20 +93,6 @@ export function makeOauthAgent({
   audiences,
   provisionPersonal,
 }: OauthAgentDeps) {
-  // The least-privilege role an OAuth-granted scope set maps to: publish earns
-  // editor; comment earns commenter; read alone is viewer.
-  // derive:manage maps to owner-grade, but scopeRole is always capped by the
-  // grantor's ACTUAL membership role (capRole below) — the scope can widen what
-  // the grant may attempt, never what the human could do themselves.
-  const roleFromScopes = (scopes: string[]): Role =>
-    scopes.includes("derive:manage")
-      ? "owner"
-      : scopes.includes("derive:publish")
-        ? "editor"
-        : scopes.includes("derive:comment")
-          ? "commenter"
-          : "viewer"
-
   // The DEFAULT workspace the agent runs in (headerless resolution), the owner's
   // membership role there (the cap on the scope-derived role), and the grant's
   // reachable SET. Precedence: the workspaces the user ticked on the consent
@@ -164,7 +159,7 @@ export function makeOauthAgent({
         grant.userName,
         joined ?? undefined,
       )
-      const scopeRole = roleFromScopes(grant.scopes)
+      const scopeRole = oauthScopeRole(grant.scopes)
       return {
         ownerId: grant.userId,
         ownerName: grant.userName,
@@ -227,7 +222,7 @@ export function makeOauthAgent({
     const clientId = String(claims.azp ?? claims.client_id ?? "")
     const u = (await meta.getUsers([userId]))[0]
     const ws = await oauthWorkspace(userId, clientId, u?.email ?? null, u?.name ?? null)
-    const scopeRole = roleFromScopes(scopes)
+    const scopeRole = oauthScopeRole(scopes)
     return {
       ownerId: userId,
       ownerName: u?.name ?? null,
