@@ -87,6 +87,7 @@ import { readTarget, uploadArtifact } from "../src/publish.js"
 import { DeriveClient } from "../src/runner.js"
 import { lockScan } from "../src/scan-lock.js"
 import { attachSecret, ENV_NAME, listSecrets, putSecret, readSecretValue } from "../src/secrets.js"
+import { sessionApi, sessionCommand } from "../src/sessions.js"
 import {
   addToSkillScanSpool,
   commitSkillScanState,
@@ -204,6 +205,12 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "--yes") flags.yes = "true"
   else if (a === "--shared") flags.shared = "true"
   else if (a === "--new") flags.new = "true"
+  // Cloud sessions: which harness, everyone's tasks, and following a task to its end.
+  else if (a === "--codex") flags.codex = "true"
+  else if (a === "--claude") flags.claude = "true"
+  else if (a === "--team") flags.team = "true"
+  else if (a === "--follow") flags.follow = "true"
+  else if (a === "--here") flags.here = "true"
   // Repeatable: `--env-file a --env-file b` stacks (equivalent to --env-file a,b).
   else if (a === "--env-file")
     flags["env-file"] = flags["env-file"] ? `${flags["env-file"]},${args[++i]}` : args[++i]
@@ -999,6 +1006,31 @@ if (cmd === "runner") {
       process.exit(0)
     }
     await serveJobs(jcfg)
+  } catch (e) {
+    console.error(`error: ${e.message}`)
+    process.exit(1)
+  }
+}
+
+// ---- Cloud sessions (code / run / ls / attach / forward / stop) ------------
+if (["code", "run", "ls", "attach", "forward", "stop"].includes(cmd)) {
+  let cfg = null
+  try {
+    cfg = loadConfig(".")
+  } catch {}
+  const r = resolvePublish(flags, cfg)
+  requireNoTargetError(r)
+  r.token = flags.token ?? process.env.DERIVE_TOKEN ?? (await freshToken(r.server, r.accountId))
+  requireSignedIn(r)
+  try {
+    process.exit(
+      await sessionCommand(
+        cmd,
+        positional,
+        flags,
+        sessionApi({ server: r.server, token: r.token, workspaceId: r.workspaceId }),
+      ),
+    )
   } catch (e) {
     console.error(`error: ${e.message}`)
     process.exit(1)
@@ -2076,6 +2108,15 @@ if (cmd !== "publish") {
   derive resolve|reopen <comment_id>       set a thread's state
   derive status [--id X] [--json]          review-round state + open threads (the loop's poll target)
   derive send-back [--id X] [--note m]     open the page to send your answers back (a browser gesture)
+  derive code [owner/name[@ref]] ["first message"] [--agent a] [--codex|--claude]
+                                            open a Claude Code or Codex session on its own cloud
+                                            machine and attach this terminal to it
+                                            --here: push this branch and continue it there
+  derive run <agent> "ask" [--repo owner/name[@ref] | --here] [--follow]   start a cloud task
+  derive ls [--team] [--json]              your cloud sessions and tasks (--team: everyone's)
+  derive attach <task>                     reattach to a session (resumes a paused one)
+  derive forward <task> <port>[:<local>]   open a session's dev server on localhost
+  derive stop <task>                       stop a task and retire its machine
   derive runner serve|once --agent <id>    work an agent's jobs on this machine (\`derive runner\` for flags)
   derive runner run <dkjob_ token>         run one job a Derive machine was handed, then exit
   derive scan [--since 30d]                scan local logs for artifact and Skill activity

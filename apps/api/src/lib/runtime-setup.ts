@@ -7,6 +7,8 @@ export interface RuntimeConfig {
   runnerVersion?: string
   runnerArchive?: { url: string; sha256: string }
   managed?: { apiKey: string; workspaceIds: ReadonlySet<string> }
+  /** Machines that may hold compute at once, across the deploy and per workspace. */
+  limits: { global: number; workspace: number }
 }
 
 // The runner a Derive machine (Ortam sandbox) installs once and then launches for every job.
@@ -42,8 +44,12 @@ export const INSTALL_RUNTIME_RUNNER = [
 
 /** Self-hosts can install an immutable archive before its public CLI release. */
 export const runtimeSetup = (archive?: { url: string; sha256: string }) => {
-  const harness =
-    'test "$(codex --version 2>/dev/null)" = "codex-cli 0.162.1" || npm install -g --no-audit --no-fund @openai/codex@0.162.1'
+  // The harnesses this runner is verified against, and tmux for interactive sessions.
+  const harness = [
+    'test "$(codex --version 2>/dev/null)" = "codex-cli 0.162.1" || npm install -g --no-audit --no-fund @openai/codex@0.162.1',
+    'test "$(claude --version 2>/dev/null)" = "2.1.141 (Claude Code)" || npm install -g --no-audit --no-fund --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claude-code@2.1.141',
+    "command -v tmux >/dev/null || (sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tmux)",
+  ].join("\n")
   if (!archive) return [INSTALL_RUNTIME_RUNNER, harness].join("\n")
   const url = new URL(archive.url)
   if (

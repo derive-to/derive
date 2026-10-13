@@ -14,7 +14,7 @@ import { useDocumentTitle } from "@/lib/use-document-title"
 import { useJobEvents } from "@/lib/use-job-events"
 import { JobRow } from "./agent-jobs"
 import { cronLabel, firstLine, groupAgents, rosterOf, schedulesOf, when } from "./format"
-import { Group, Meta, RowLine, rowClass, Time } from "./rows"
+import { Group, Meta, RowLine, rowClass, Segmented, Time } from "./rows"
 import { AgentRowsSkeleton } from "./skeleton"
 import { TaskComposer } from "./task-composer"
 import { TaskUsage } from "./task-usage"
@@ -34,6 +34,8 @@ export function AgentsHome() {
   const names = useMemberNames()
   const roster = rosterOf(agents.data ?? [])
   const [filter, setFilter] = useState("all")
+  // Whose work the Tasks view shows: yours, what schedules started, or the whole team's.
+  const [scope, setScope] = useState("mine")
   const [search, setSearch] = useState("")
   const header = (
     <PageHeader
@@ -79,6 +81,8 @@ export function AgentsHome() {
   const jobs = allJobs.filter((job) => roster.some((a) => a.id === job.agent_id))
   const filtered = jobs.filter(
     (job) =>
+      (scope === "team" ||
+        (scope === "scheduled" ? job.kind === "scheduled" : job.asked_by === me?.id)) &&
       (filter === "all" ||
         (filter === "attention"
           ? ["needs_you", "failed", "lost"].includes(job.status)
@@ -189,6 +193,16 @@ export function AgentsHome() {
         </TabsContent>
         <TabsContent value="tasks" className="flex flex-col gap-5 pt-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
+            <Segmented
+              testId="tasks-scope"
+              value={scope}
+              onChange={setScope}
+              options={[
+                { value: "mine", label: "Mine" },
+                { value: "scheduled", label: "Scheduled" },
+                { value: "team", label: "Team" },
+              ]}
+            />
             <fieldset className="flex flex-wrap gap-1" aria-label="Filter tasks">
               {(
                 [

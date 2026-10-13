@@ -21,10 +21,11 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve, sep } from "node:path"
-import { checkpointConversation, restoreConversation } from "./conversation.js"
-import { RUNNER_PROTOCOL_VERSION } from "./conversation-format.js"
+import { checkpointConversation, latestSessionId, restoreConversation } from "./conversation.js"
+import { RUNNER_PROTOCOL_VERSION, SESSION_RESUME } from "./conversation-format.js"
 import { selectProvider } from "./providers/index.js"
 import { terminateProcess } from "./providers/process.js"
+import { prepareRepo, pullRequestFor } from "./repo.js"
 import {
   buildPrompt,
   DeriveClient,
@@ -33,6 +34,7 @@ import {
   stripModelTokens,
   toMicroUsd,
 } from "./runner.js"
+import { runSession } from "./session.js"
 import { fetchSkill, writeSkill } from "./skills.js"
 
 const positiveMs = (raw, fallback, floor) => {
@@ -102,6 +104,8 @@ export class JobClient {
         `${method} ${path} → ${res.status}: ${parsed?.error ?? text.slice(0, 200)}`,
       )
       err.status = res.status
+      // What the server said, for a failure the person reads; the route stays in `message`.
+      err.reason = parsed?.error ?? null
       throw err
     }
     return parsed
@@ -174,6 +178,15 @@ export class JobClient {
 
   environment(job) {
     return this.req(`/v1/jobs/${job.id}/environment`, { claim: job.started_at })
+  }
+
+  /** The task's repository token. A refusal (no GitHub connection for the owner, or GitHub
+   *  said no) is the person's to fix, so it fails the turn plainly instead of retrying. */
+  git(job) {
+    return this.req(`/v1/jobs/${job.id}/git`, { claim: job.started_at }).catch((error) => {
+      if (error.status !== 404 && error.status !== 409) throw error
+      throw Object.assign(new Error(error.reason ?? error.message), { retryable: false })
+    })
   }
 }
 
@@ -285,6 +298,24 @@ function writeToolShim(cwd, job) {
   }
 }
 
+/** A private folder for one job's secrets. A cloud stop can interrupt `finally` before the
+ *  provider saves the disk, so on a Derive machine it lives on tmpfs, which a saved disk
+ *  cannot retain. */
+function privateDir(prefix) {
+  let root = tmpdir()
+  if (process.env.DERIVE_RUNNER_ISOLATED === "1") {
+    try {
+      if (statfsSync("/dev/shm").type !== 0x01021994) throw new Error("not tmpfs")
+      root = "/dev/shm"
+    } catch {
+      throw Object.assign(new Error("Cloud login files require memory-backed /dev/shm storage"), {
+        retryable: false,
+      })
+    }
+  }
+  return mkdtempSync(join(root, prefix))
+}
+
 /** The model credential for this job as a per-spawn env overlay, plus its cleanup. Throws with
  *  a sentence a person can act on when nothing is connected. */
 async function modelEnvFor(
@@ -316,20 +347,7 @@ async function modelEnvFor(
     throw Object.assign(new Error(`can't use a ${res.credential.kind} credential here`), {
       retryable: false,
     })
-  // A cloud stop can interrupt finally before the provider saves the disk. Keep the
-  // credential and all model-home files on tmpfs, which a saved disk cannot retain.
-  let credentialRoot = tmpdir()
-  if (process.env.DERIVE_RUNNER_ISOLATED === "1") {
-    try {
-      if (statfsSync("/dev/shm").type !== 0x01021994) throw new Error("not tmpfs")
-      credentialRoot = "/dev/shm"
-    } catch {
-      throw Object.assign(new Error("Cloud login files require memory-backed /dev/shm storage"), {
-        retryable: false,
-      })
-    }
-  }
-  const dir = mkdtempSync(join(credentialRoot, "derive-cred-"))
+  const dir = privateDir("derive-cred-")
   for (const [name, content] of Object.entries(spec?.files ?? {}))
     writeFileSync(join(dir, name), content, { mode: 0o600 })
   return {
@@ -400,7 +418,34 @@ export async function stageLocalImages(client, html, cwd, notes = [], page = "."
   return out
 }
 
+/** One interactive session turn: the native harness in tmux until it exits or idles. A turn
+ *  that only reopens the session (`derive attach`) sends no message; any other follow-up is
+ *  typed in as the session's next message. */
+async function serveSession(
+  start,
+  { provider, providerName, bin, cwd, model, effort, systemPrompt, turn, env, home, signal, meter },
+) {
+  const resumeSessionId = turn?.previous?.session_id ?? null
+  const prompt = resumeSessionId && turn?.body_md === SESSION_RESUME ? null : turn?.body_md
+  const args = provider.sessionArgs({ model, effort, systemPrompt, prompt, resumeSessionId, home })
+  provider.prepareSession?.({ home, cwd, env, systemPrompt })
+  const ended = await start({ bin, args, cwd, env, signal })
+  meter.sessionId = latestSessionId(home, providerName) ?? resumeSessionId
+  if (ended === "stopped") return { ok: false, error: "The session was stopped.", retryable: false }
+  return {
+    ok: true,
+    answer: {
+      body_md:
+        ended === "idle"
+          ? "Session paused while idle. `derive attach` picks it up where it left off."
+          : "Session ended.",
+      escalate: false,
+    },
+  }
+}
+
 const CHECK_TIMEOUT_MS = 10 * 60_000
+const GIT_TOKEN_RENEW_MS = 40 * 60_000
 
 /** Run the agent's machine check. A nonzero exit fails the task with the output's tail and
  *  is not retryable: the same machine would fail the same way. Async, so lease ticks continue. */
@@ -495,6 +540,9 @@ export async function serveJob(client, job, cfg, deps = {}) {
   let shim = null
   let home = null
   let harnessVersion = null
+  let git = null
+  let gitDir = null
+  let renewGit = null
   let checkpoint = null
   let terminal = null
   const report = (body) => {
@@ -531,6 +579,35 @@ export async function serveJob(client, job, cfg, deps = {}) {
     if (!cfg.mock) {
       // One after the other, so a credential file written for this job is always cleaned up.
       const { environment = {} } = (await client.environment(job)) ?? {}
+      // The task's repository comes first: the check, the harness, and the skill all work in it.
+      if (job.execution?.repo) {
+        git = await client.git(job)
+        // Git reads the token from a private file the runner renews before it expires (about
+        // an hour), so a long session can still push and open its pull request.
+        gitDir = privateDir("derive-git-")
+        const tokenFile = join(gitDir, "token")
+        const checkout = prepareRepo(git, {
+          cwd: cfg.cwd,
+          firstTurn: (job.turn?.ordinal ?? 1) === 1,
+          tokenFile,
+        })
+        renewGit = setInterval(
+          () =>
+            client
+              .git(job)
+              .then((next) => {
+                writeFileSync(tokenFile, next.token, { mode: 0o600 })
+                git = { ...git, token: next.token }
+              })
+              .catch((error) =>
+                console.error(`[runner] could not renew the repository token: ${error.message}`),
+              ),
+          GIT_TOKEN_RENEW_MS,
+        )
+        renewGit.unref?.()
+        cfg = { ...cfg, cwd: checkout.dir }
+        Object.assign(environment, checkout.env)
+      }
       // The machine must be ready before a model credential or token is spent on it.
       if (job.execution?.check)
         await (deps.checkMachine ?? checkMachine)(
@@ -551,7 +628,7 @@ export async function serveJob(client, job, cfg, deps = {}) {
           })
         restoreConversation(home, job.turn.previous, providerName)
       }
-      if (job.turn?.ordinal > 1 && !job.turn.previous)
+      if (job.turn?.ordinal > 1 && !job.turn.previous && !job.turn.fresh)
         throw Object.assign(
           new Error("The original conversation checkpoint is unavailable. Start a fresh task."),
           { retryable: false },
@@ -588,22 +665,44 @@ export async function serveJob(client, job, cfg, deps = {}) {
     }
     const result = cfg.mock
       ? { ok: true, answer: { body_md: `Mock run of job ${job.id}.`, escalate: false } }
-      : await run(provider, {
-          bin: cfg.agentBin ?? provider.binFrom({}, process.env),
-          cwd: cfg.cwd,
-          model,
-          effort: job.execution?.effort ?? null,
-          timeoutMs: cfg.timeoutMs,
-          systemPrompt: jobSystemPrompt(job, { shim: shim?.rel }),
-          prompt: job.turn ? job.turn.body_md : buildPrompt(job.messages ?? []),
-          resumeSessionId: job.turn?.previous?.session_id ?? null,
-          env,
-          signal: abort.signal,
-          onEvent: (event) => {
-            if (eventSeq < 500) events.push({ seq: ++eventSeq, kind: event.kind })
-          },
-          meter,
-        })
+      : job.execution?.session
+        ? await serveSession(deps.runSession ?? runSession, {
+            provider,
+            providerName,
+            bin: cfg.agentBin ?? provider.binFrom({}, process.env),
+            cwd: cfg.cwd,
+            model,
+            effort: job.execution.effort ?? null,
+            systemPrompt: jobSystemPrompt(job, { shim: shim?.rel }),
+            turn: job.turn,
+            env,
+            home,
+            signal: abort.signal,
+            meter,
+          })
+        : await run(provider, {
+            bin: cfg.agentBin ?? provider.binFrom({}, process.env),
+            cwd: cfg.cwd,
+            model,
+            effort: job.execution?.effort ?? null,
+            timeoutMs: cfg.timeoutMs,
+            systemPrompt: jobSystemPrompt(job, { shim: shim?.rel }),
+            // A turn with nothing to continue reads the whole exchange so far.
+            prompt:
+              job.turn && !job.turn.fresh ? job.turn.body_md : buildPrompt(job.messages ?? []),
+            resumeSessionId: job.turn?.previous?.session_id ?? null,
+            env,
+            signal: abort.signal,
+            onEvent: (event) => {
+              if (eventSeq < 500)
+                events.push({
+                  seq: ++eventSeq,
+                  kind: event.kind,
+                  ...(event.label ? { label: String(event.label).slice(0, 160) } : {}),
+                })
+            },
+            meter,
+          })
     await flushCredential()
     if (job.turn && meter.sessionId && home) {
       try {
@@ -681,19 +780,14 @@ export async function serveJob(client, job, cfg, deps = {}) {
         flagged.push(`The page it made could not be published: ${e.message}`)
       }
     }
+    // A turn in a repository reports the pull request its branch has, if any.
+    const pr = git && !cfg.mock ? await (deps.pullRequestFor ?? pullRequestFor)(git, cfg.cwd) : null
+    const effects = [
+      ...made.map((page) => ({ kind: "page", label: page.title, ref: page.short_id })),
+      ...(pr ? [pr] : []),
+    ]
     const common = {
-      result: {
-        ...receipt,
-        ...(made.length
-          ? {
-              effects: made.map((page) => ({
-                kind: "page",
-                label: page.title,
-                ref: page.short_id,
-              })),
-            }
-          : {}),
-      },
+      result: { ...receipt, ...(effects.length ? { effects } : {}) },
       body_md: [
         a.body_md,
         ...(a.query ? [`Evidence: ${a.query}`] : []),
@@ -728,6 +822,8 @@ export async function serveJob(client, job, cfg, deps = {}) {
     return "failed"
   } finally {
     clearInterval(tick)
+    clearInterval(renewGit)
+    if (gitDir) rmSync(gitDir, { recursive: true, force: true })
     cleanup()
     shim?.cleanup()
   }

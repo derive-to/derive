@@ -102,8 +102,9 @@ export interface JobResult {
   route?: { node_id: string; attempt: number; selected?: string[]; decision?: string }[]
 }
 
-/** A Derive machine (one Ortam sandbox per agent): created lazily, then stopped between jobs.
- *  `ready` is stopped and idle; `busy` is lent to one job (its id in sandbox_state_json). */
+/** An agent's shared Derive machine (agents that keep files between tasks): created lazily,
+ *  then stopped between jobs. `ready` is stopped and idle; `busy` is lent to one job (its id in
+ *  sandbox_state_json). Agents that start fresh give each task its own machine instead. */
 export type AgentSandboxPhase =
   | "creating"
   | "provisioning"
@@ -112,15 +113,29 @@ export type AgentSandboxPhase =
   | "busy"
   | "deleting"
   | "failed"
-/** One job's turn on its agent's sandbox. `released` means the sandbox is stopped and handed
- *  back; nothing further happens. */
+/** One job's turn on a sandbox: its agent's shared one, or its own.
+ *
+ *  shared:  starting → ready → launching → running → stopping → released (handed back)
+ *  own:     creating → provisioning → ready → launching → running → stopping → parked
+ *           parked → starting (the next turn resumes it)   parked → deleting → released
+ *
+ *  `parked` is stopped with its files kept and costs no compute; `released` holds nothing. */
 export type JobMachinePhase =
+  | "creating"
+  | "provisioning"
+  | "parked"
+  | "deleting"
   | "starting"
   | "ready"
   | "launching"
   | "running"
   | "stopping"
   | "released"
+
+/** Whether a job's machine still holds (or is returning) compute: set, and neither released
+ *  nor parked, which keeps only files. */
+export const machineHoldsCompute = (phase: JobMachinePhase | null | undefined): boolean =>
+  !!phase && phase !== "released" && phase !== "parked"
 
 export interface JobRecord {
   id: string
@@ -426,8 +441,13 @@ export interface AgentModelStore<Agent = unknown> {
     expectRev: number,
     next: { phase: JobMachinePhase; machine_json?: string | null },
   ): Promise<JobRecord | null>
-  /** Jobs still holding or returning a sandbox (machine_phase set and not released). */
+  /** Jobs still holding or returning a sandbox (machine_phase set, not parked or released). */
   listMachineJobs(limit: number): Promise<JobRecord[]>
+  /** Jobs whose own sandbox is parked and whose last activity is before `before`. */
+  listParkedJobs(before: string, limit: number): Promise<JobRecord[]>
+  /** Move every parked task machine of an agent to deletion and count the agent's task
+   *  machines not yet released (deletion waits for zero). */
+  retireAgentMachines(orgId: string, agentId: string): Promise<number>
   /** Graph jobs the server is walking or about to start (queued or running). */
   listOpenGraphJobs(limit: number): Promise<JobRecord[]>
   addJobMessage(m: NewJobMessage): Promise<JobMessageRecord>

@@ -1,17 +1,19 @@
 import { execFile } from "node:child_process"
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import type { AddressInfo } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
 import { newId } from "@derive/core"
+import { sessionApi, sessionCommand } from "@derive-to/cli/sessions"
 import { SignJWT } from "jose"
 import { describe, expect, it, vi } from "vitest"
 import {
   JobClient,
   jobDrainPass,
   loadJobRunnerConfig,
+  runOneJob,
   serveJob,
 } from "../../../packages/cli/src/job-runner.js"
 import type { AppDeps } from "../src/context"
@@ -20,6 +22,7 @@ import type { ModelTurn } from "../src/lib/agent-loop"
 import { signCapabilityToken } from "../src/lib/capability-token"
 import { encryptSecret } from "../src/lib/crypto"
 import { advanceGraph, graphAware, graphPass } from "../src/lib/job-graph"
+import { machineDepsFrom, machinePass } from "../src/lib/job-machine"
 import { HELD_FOR_BUDGET, jobTick, OWNER_LEFT } from "../src/lib/jobs"
 import { catalogOf } from "../src/lib/model-catalog"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
@@ -2841,5 +2844,538 @@ describe("jobs: graphs (a workflow on an agent's instructions page)", () => {
     expect(done?.status).toBe("failed")
     const last = (await meta.listJobMessages(asked.id)).at(-1)?.body_md
     expect(last).toMatch(/limit of 2 tries/)
+  })
+})
+
+// Derive machines need the Postgres execution store; `pnpm test:pg` runs these.
+describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on boat.dev", () => {
+  /** boat.dev as the BoatClient sees it: sandboxes that come up, stop, resume, and run the
+   *  launched runner as a detached command whose state the test drives. */
+  const fakeBoat = () => {
+    const boxes = new Map<
+      string,
+      { state: string; stopped: boolean; archiveAt: number; env?: Record<string, string> }
+    >()
+    // The runner's state per launch, keyed by its operation directory, as the runner's marker is.
+    const launches = new Map<string, { box: string; state: "running" | "exited" }>()
+    const operation = (command: string) => /operations\/([a-f0-9]{64})/.exec(command)?.[1] ?? ""
+    const calls: string[] = []
+    // Starts boat.dev refuses next, as a plan's start limit does.
+    const limited = { starts: 0 }
+    let next = 0
+    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input))
+      const path = url.pathname.replace("/api/v1", "")
+      const method = init?.method ?? "GET"
+      const body = init?.body ? JSON.parse(String(init.body)) : {}
+      const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200 })
+      if (path === "/me") return json({ user: { id: "boat-user" } })
+      if (path === "/sandboxes" && method === "POST") {
+        if (limited.starts > 0) {
+          limited.starts--
+          return new Response(
+            JSON.stringify({ message: "Rate limit hit: 210 sandbox starts per hour." }),
+            { status: 429, headers: { "retry-after": "1" } },
+          )
+        }
+        const id = `bx_${++next}`
+        boxes.set(id, {
+          state: "idle",
+          stopped: false,
+          archiveAt: Date.now() + (body.ttlSeconds ?? 1800) * 1000,
+        })
+        calls.push(`create ${id} ${body.from ?? "-"} ${body.type}`)
+        return json({ sandbox: { id, state: "provisioned" } })
+      }
+      const [, , id, action] = path.split("/")
+      const box = id ? boxes.get(id) : undefined
+      if (!id || !box) return new Response("{}", { status: 404 })
+      const sandbox = () => ({
+        id,
+        state: box.stopped ? "archived" : box.state,
+        setupStatus: "done",
+        hydrated: true,
+        archiveAfter: new Date(box.archiveAt).toISOString(),
+        ...(box.stopped ? { stop: { id: `stop-${id}`, status: "completed" } } : {}),
+      })
+      if (!action) return json({ sandbox: sandbox() })
+      if (action === "stop") {
+        calls.push(`stop ${id}`)
+        box.stopped = true
+        return json({})
+      }
+      if (action === "resume") {
+        calls.push(`resume ${id}`)
+        box.stopped = false
+        // boat.dev starts the stop timer when the resume finishes, a little after it was asked.
+        box.archiveAt = Date.now() + (body.ttlSeconds + 20) * 1000
+        return json({})
+      }
+      if (action === "files") {
+        box.env = JSON.parse(body.content)
+        return json({ success: true })
+      }
+      if (action === "commands") {
+        if (body.detached) {
+          launches.set(operation(body.command), { box: id, state: "running" })
+          return json({ processId: 1, success: true })
+        }
+        return json({
+          success: true,
+          stdout: body.command.includes("claim")
+            ? (launches.get(operation(body.command))?.state ?? "starting")
+            : "",
+        })
+      }
+      if (action === "usage")
+        return json({ sandboxId: id, seconds: 30, dollars: 0.0006, running: false })
+      if (action === "sshkey") {
+        calls.push(`sshkey ${id} ${body.key.split(" ")[0]}`)
+        return json({
+          success: true,
+          machineIp: "203.0.113.10",
+          sshUser: "user",
+          hostKey: "ssh-ed25519 AAAAhost",
+        })
+      }
+      return new Response("{}", { status: 404 })
+    }) as typeof fetch
+    /** The runner process on a sandbox finished (its newest launch). */
+    const exit = (id: string) => {
+      const last = [...launches.values()].filter((l) => l.box === id).at(-1)
+      if (last) last.state = "exited"
+    }
+    return { fetcher, boxes, calls, exit, limited }
+  }
+
+  const SESSION_UUID = "0b6f2a1e-3c4d-4e5f-8a9b-0c1d2e3f4a5b"
+  const harness = join(mkdtempSync(join(tmpdir(), "derive-machine-codex-")), "codex")
+  writeFileSync(harness, "#!/bin/sh\nprintf 'codex-cli 0.162.1\\n'\n")
+  chmodSync(harness, 0o755)
+
+  const cloudSetup = async (name: string, limits = { global: 100, workspace: 20 }) => {
+    const boat = fakeBoat()
+    const runtime = {
+      provider: "boat" as const,
+      apiUrl: "https://boat.dev/api/v1",
+      runnerPath: "/opt/derive/bin/derive.js",
+      limits,
+    }
+    const made = await setup(name, {
+      runtime,
+      runtimeFetch: boat.fetcher,
+      baseUrl: "http://derive.test",
+    })
+    const { app, meta } = made
+    expect(
+      (
+        await app.request(
+          "/v1/runtime/connection",
+          jsonAs(as(owner.email), { api_key: "x".repeat(16), provider: "boat" }, "PUT"),
+        )
+      ).status,
+    ).toBe(200)
+    await app.request(
+      "/v1/accounts",
+      jsonAs(as(owner.email), {
+        provider: "codex",
+        kind: "api_key",
+        secret: "sk-codex-0001234",
+        shared: true,
+      }),
+    )
+    const deps = machineDepsFrom(meta, {
+      secret: "test-encryption-key",
+      server: "http://derive.test",
+      config: runtime,
+      fetcher: boat.fetcher,
+    })
+    if (!deps) throw new Error("no machine deps")
+    const pass = () => machinePass(deps, { maxRequests: 400, maxTransitions: 200 })
+    /** Run passes until the job's machine reaches `phase` (or fail after a few). */
+    const until = async (jobId: string, phase: string) => {
+      for (let i = 0; i < 8; i++) {
+        if ((await meta.getJob(jobId))?.machine_phase === phase) return
+        await pass()
+      }
+      expect((await meta.getJob(jobId))?.machine_phase).toBe(phase)
+    }
+    /** Act as the runner the machine launched: claim the job with its token and report. */
+    const runTurn = async (
+      sandboxId: string,
+      answer: string,
+      runSession?: (opts: {
+        args: string[]
+        env: Record<string, string>
+        cwd: string
+      }) => Promise<"exited" | "idle" | "stopped">,
+      hold?: Promise<void>,
+    ) => {
+      const env = boat.boxes.get(sandboxId)?.env
+      if (!env) throw new Error(`nothing launched on ${sandboxId}`)
+      const cfg = {
+        ...loadJobRunnerConfig(
+          {},
+          {
+            token: env.DERIVE_TOKEN ?? "",
+            agent: "from-job",
+            server: "http://derive.test",
+            "agent-bin": harness,
+          },
+        ),
+        localLogin: false,
+        jobId: env.DERIVE_JOB_ID ?? "",
+      }
+      const client = new JobClient(cfg, (url, init) => Promise.resolve(app.request(url, init)))
+      const out = await runOneJob(cfg, client, {
+        // A model turn as Codex leaves it: an answer plus its session file in CODEX_HOME,
+        // which the runner checkpoints so the next turn continues the conversation.
+        runAgent: async (_p, raw) => {
+          const opts = raw as { env: Record<string, string>; meter: { sessionId?: string } }
+          const day = join(opts.env.CODEX_HOME ?? "", "sessions", "2026", "10", "13")
+          mkdirSync(day, { recursive: true })
+          writeFileSync(
+            join(day, `rollout-1-${sandboxId}-thread.jsonl`),
+            `{"answer":"${answer}"}\n`,
+          )
+          opts.meter.sessionId = `${sandboxId}-thread`
+          await hold
+          return { ok: true, answer: { body_md: answer, escalate: false } }
+        },
+        // An interactive harness leaves its own session file, named by the id it chose.
+        ...(runSession
+          ? {
+              runSession: async (opts: {
+                bin: string
+                args: string[]
+                env: Record<string, string>
+                cwd: string
+              }) => {
+                const day = join(opts.env.CODEX_HOME ?? "", "sessions", "2026", "10", "13")
+                mkdirSync(day, { recursive: true })
+                writeFileSync(
+                  join(day, `rollout-2026-10-13T00-00-00-${SESSION_UUID}.jsonl`),
+                  "{}\n",
+                )
+                return runSession(opts)
+              },
+            }
+          : {}),
+      })
+      boat.exit(sandboxId)
+      return out
+    }
+    return { ...made, boat, pass, until, runTurn }
+  }
+
+  it("a fresh agent gives each task its own machine: parallel, parked between turns, resumed, retired on stop", async () => {
+    const { app, meta, boat, until, runTurn } = await cloudSetup("jobs-machine-own")
+    const agent = await createAgent(app, {
+      machine: "derive",
+      provider: "codex",
+      sandbox: { snapshot: "team-image", size: "large", fresh: true },
+    })
+    const a = (await (await ask(app, ed.email, agent.id, "Fix the inbox copy")).json()) as {
+      id: string
+    }
+    const b = (await (await ask(app, ed.email, agent.id, "Bump the bundler")).json()) as {
+      id: string
+    }
+    await until(a.id, "running")
+    await until(b.id, "running")
+    // Two tasks on one agent run at once, each on its own large machine from the snapshot.
+    expect(boat.calls.filter((c) => c.startsWith("create"))).toEqual([
+      "create bx_1 team-image large",
+      "create bx_2 team-image large",
+    ])
+    const jobA = await meta.getJob(a.id)
+    const jobB = await meta.getJob(b.id)
+    expect([jobA?.machine_phase, jobB?.machine_phase]).toEqual(["running", "running"])
+    const sandboxOf = (job: typeof jobA) => JSON.parse(job?.machine_json ?? "{}").own.sandbox_id
+    const boxA = sandboxOf(jobA)
+    const boxB = sandboxOf(jobB)
+
+    expect(await runTurn(boxA, "Inbox copy fixed")).toBe("succeeded")
+    expect(await runTurn(boxB, "Bundler bumped")).toBe("succeeded")
+    await until(a.id, "parked")
+    await until(b.id, "parked")
+    // Finished turns park their machines: stopped, files kept, no compute held.
+    expect((await meta.getJob(a.id))?.machine_phase).toBe("parked")
+    expect(boat.boxes.get(boxA)?.stopped).toBe(true)
+
+    // A follow-up resumes the same machine instead of building a new one.
+    await app.request(
+      `/v1/jobs/${a.id}/messages`,
+      jsonAs(as(ed.email), { body_md: "Also the empty state" }),
+    )
+    await until(a.id, "running")
+    expect(boat.calls).toContain(`resume ${boxA}`)
+    expect(boat.calls.filter((c) => c.startsWith("create"))).toHaveLength(2)
+    expect(await runTurn(boxA, "Empty state too")).toBe("succeeded")
+    await until(a.id, "parked")
+
+    // Stopping a task for good retires its parked machine.
+    await app.request(`/v1/jobs/${b.id}/cancel`, { method: "POST", headers: as(ed.email) })
+    await until(b.id, "released")
+    const usage = JSON.parse((await meta.getJob(a.id))?.result_json ?? "{}").compute
+    expect(usage).toHaveLength(2)
+  })
+
+  it("an interactive session runs the native harness, parks when idle, and only its starter attaches", async () => {
+    const { app, meta, boat, until, runTurn } = await cloudSetup("jobs-machine-session")
+    // A session gets its own machine even on an agent that keeps files.
+    const agent = await createAgent(app, { machine: "derive", provider: "codex", effort: "medium" })
+    const res = await app.request(
+      "/v1/jobs",
+      jsonAs(as(ed.email), {
+        agent_id: agent.id,
+        instruction: "Tidy the inbox empty state",
+        session: true,
+      }),
+    )
+    const job = (await res.json()) as { id: string }
+    await until(job.id, "running")
+    const box = JSON.parse((await meta.getJob(job.id))?.machine_json ?? "{}").own.sandbox_id
+    const key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOx3 ed@laptop"
+    const attach = (who: string) =>
+      app.request(`/v1/jobs/${job.id}/attach`, jsonAs(as(who), { public_key: key }))
+
+    // Only the person who started the session gets a shell on its machine.
+    expect((await attach(owner.email)).status).toBe(403)
+    const opened = await attach(ed.email)
+    expect(opened.status).toBe(200)
+    expect(await opened.json()).toEqual({
+      host: "203.0.113.10",
+      port: 22,
+      user: "user",
+      host_key: "ssh-ed25519 AAAAhost",
+      tmux_session: "derive",
+    })
+
+    // The runner starts the harness interactively with the task's model and effort.
+    let first: string[] = []
+    let home: Record<string, string> = {}
+    await runTurn(box, "", async ({ args, env, cwd }) => {
+      first = args
+      // The private model home answers the interactive harness's first-run questions.
+      home = {
+        auth: readFileSync(join(env.CODEX_HOME ?? "", "auth.json"), "utf8"),
+        config: readFileSync(join(env.CODEX_HOME ?? "", "config.toml"), "utf8"),
+        agents: readFileSync(join(env.CODEX_HOME ?? "", "AGENTS.md"), "utf8"),
+        cwd,
+      }
+      return "idle"
+    })
+    expect(JSON.parse(home.auth ?? "{}")).toEqual({ OPENAI_API_KEY: "sk-codex-0001234" })
+    expect(home.config).toContain(`[projects.${JSON.stringify(home.cwd)}]\ntrust_level = "trusted"`)
+    expect(first.slice(0, 5)).toEqual([
+      "--dangerously-bypass-approvals-and-sandbox",
+      "-m",
+      "gpt-6-luna",
+      "-c",
+      'model_reasoning_effort="medium"',
+    ])
+    // The person sees the task as the first message; the instructions ride AGENTS.md.
+    expect(first.at(-1)).toBe("Tidy the inbox empty state")
+    expect(home.agents).toContain("Derive")
+    await until(job.id, "parked")
+    expect((await meta.listJobMessages(job.id)).at(-1)?.body_md).toContain("Session paused")
+    expect((await attach(ed.email)).status).toBe(409)
+    // `derive ls` lists it as a paused session.
+    const printed: string[] = []
+    const log = vi
+      .spyOn(console, "log")
+      .mockImplementation((line) => void printed.push(String(line)))
+    const cli = sessionApi({
+      server: "http://derive.test",
+      token: null,
+      workspaceId: null,
+      fetcher: (url: RequestInfo | URL, init?: RequestInit) =>
+        Promise.resolve(
+          app.request(String(url), {
+            ...init,
+            headers: { ...(init?.headers as Record<string, string>), ...as(ed.email) },
+          }),
+        ),
+    })
+    expect(await sessionCommand("ls", [], {}, cli)).toBe(0)
+    log.mockRestore()
+    expect(printed.join("\n")).toMatch(
+      new RegExp(`${job.id.slice(-6)}\\s+.+?\\s+codex\\s+session\\s+-\\s+paused`),
+    )
+
+    // Reopening resumes the same conversation on the same machine without a new message.
+    await app.request(
+      `/v1/jobs/${job.id}/messages`,
+      jsonAs(as(ed.email), { body_md: "Resume the session." }),
+    )
+    await until(job.id, "running")
+    expect(boat.calls).toContain(`resume ${box}`)
+    let second: string[] = []
+    await runTurn(box, "", async ({ args }) => {
+      second = args
+      return "exited"
+    })
+    expect(second[0]).toBe("resume")
+    expect(second.at(-1)).toBe(SESSION_UUID)
+  })
+
+  it("a code task carries its repository, and fails plainly with no GitHub connection for it", async () => {
+    const { app, meta, until, runTurn } = await cloudSetup("jobs-machine-repo")
+    const agent = await createAgent(app, { machine: "derive", provider: "codex" })
+    const res = await app.request(
+      "/v1/jobs",
+      jsonAs(as(ed.email), {
+        agent_id: agent.id,
+        instruction: "Fix the flaky test",
+        repo: "acme-dev/widgets@main",
+      }),
+    )
+    const job = (await res.json()) as { id: string; task: { repo: string } }
+    expect(job.task.repo).toBe("acme-dev/widgets@main")
+    await until(job.id, "running")
+    // The runner asks for the repository's token before any model runs, and is told why not.
+    expect(await runTurn("bx_1", "unused")).toBe("failed")
+    const failed = (await (
+      await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
+    ).json()) as {
+      result: { failure: { reason: string; retryable: boolean } }
+    }
+    expect(failed.result.failure).toEqual({
+      reason: "Bind a GitHub connection for acme-dev to this agent to work in acme-dev/widgets.",
+      retryable: false,
+    })
+    // A repository is only for cloud agents.
+    const local = await createAgent(app, { provider: "codex" })
+    const refused = await app.request(
+      "/v1/jobs",
+      jsonAs(as(ed.email), { agent_id: local.id, instruction: "x", repo: "acme-dev/widgets" }),
+    )
+    expect(refused.status).toBe(400)
+  })
+
+  it("an interrupting follow-up ends the running turn and runs next; a plain one waits", async () => {
+    const { app, meta, boat, pass, until, runTurn } = await cloudSetup("jobs-machine-interrupt")
+    const agent = await createAgent(app, { machine: "derive", provider: "codex" })
+    const job = (await (await ask(app, ed.email, agent.id, "Refactor the parser")).json()) as {
+      id: string
+    }
+    await until(job.id, "running")
+    // The runner is mid-turn when the interrupt arrives.
+    let release = () => {}
+    const inFlight = runTurn(
+      "bx_1",
+      "Half done",
+      undefined,
+      new Promise<void>((resolve) => {
+        release = resolve
+      }),
+    )
+    const turnRunning = async () =>
+      (
+        (await (await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })).json()) as {
+          turns: { status: string }[]
+        }
+      ).turns[0]?.status === "running"
+    for (let i = 0; i < 250 && !(await turnRunning()); i++)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(await turnRunning()).toBe(true)
+    const machineTurn = async () =>
+      JSON.parse((await meta.getJob(job.id))?.machine_json ?? "{}").turn as string
+    const first = await machineTurn()
+    const say = (body_md: string, interrupt?: boolean) =>
+      app.request(
+        `/v1/jobs/${job.id}/messages`,
+        jsonAs(as(ed.email), { body_md, ...(interrupt ? { interrupt } : {}) }),
+      )
+    // A plain follow-up waits for the turn in progress.
+    expect(((await (await say("Also add tests")).json()) as { status: string }).status).toBe(
+      "running",
+    )
+    // An interrupting one ends its claim at once: the task is queued again.
+    const after = (await (await say("Stop, use the old API", true)).json()) as {
+      status: string
+      lease_until: string | null
+    }
+    expect(after).toMatchObject({ status: "queued", lease_until: null })
+    // The runner's late answer counts its usage but cannot settle the cancelled turn. The
+    // runner exits; the next turn starts.
+    release()
+    await inFlight
+    const interrupted = (
+      (await (await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })).json()) as {
+        turns: { status: string; body_result_md: string | null }[]
+      }
+    ).turns[0]
+    expect(interrupted).toMatchObject({ status: "cancelled", body_result_md: null })
+    for (let i = 0; i < 6 && (await machineTurn()) === first; i++) await pass()
+    await until(job.id, "running")
+    expect(await machineTurn()).not.toBe(first)
+    expect((await meta.getJob(job.id))?.status).toBe("running")
+    // Nothing had finished before the interrupt, so the next turn starts the conversation
+    // from the transcript rather than failing for want of a checkpoint.
+    expect(await runTurn("bx_1", "Kept the old API")).toBe("succeeded")
+  })
+
+  it("a provider start limit makes the task wait, saying why, then start", async () => {
+    const { app, boat, pass, until } = await cloudSetup("jobs-machine-start-limit")
+    const agent = await createAgent(app, {
+      machine: "derive",
+      provider: "codex",
+      sandbox: { fresh: true },
+    })
+    boat.limited.starts = 1
+    const job = (await (await ask(app, ed.email, agent.id, "Fix the copy")).json()) as {
+      id: string
+    }
+    for (let i = 0; i < 3; i++) await pass()
+    const view = async () =>
+      (await (await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })).json()) as {
+        machine_phase: string
+        machine_waiting: string | null
+      }
+    expect(await view()).toMatchObject({
+      machine_phase: "creating",
+      machine_waiting: "Rate limit hit: 210 sandbox starts per hour.",
+    })
+    // It does not ask again until the provider's window passes.
+    expect(boat.calls.filter((c) => c.startsWith("create"))).toEqual([])
+    await new Promise((resolve) => setTimeout(resolve, 1100))
+    await until(job.id, "running")
+    expect((await view()).machine_waiting).toBeNull()
+
+    // A task stopped while it waits is released without a machine ever being built.
+    boat.limited.starts = 1
+    const other = (await (await ask(app, ed.email, agent.id, "Bump deps")).json()) as {
+      id: string
+    }
+    for (let i = 0; i < 3; i++) await pass()
+    await app.request(`/v1/jobs/${other.id}/cancel`, { method: "POST", headers: as(ed.email) })
+    await new Promise((resolve) => setTimeout(resolve, 1100))
+    await until(other.id, "released")
+    expect(boat.calls.filter((c) => c.startsWith("create"))).toHaveLength(1)
+  })
+
+  it("the workspace machine limit holds the next task until a machine frees", async () => {
+    const { app, meta, pass, runTurn, boat } = await cloudSetup("jobs-machine-limit", {
+      global: 100,
+      workspace: 1,
+    })
+    const agent = await createAgent(app, {
+      machine: "derive",
+      provider: "codex",
+      sandbox: { fresh: true },
+    })
+    const a = (await (await ask(app, ed.email, agent.id, "One")).json()) as { id: string }
+    const b = (await (await ask(app, ed.email, agent.id, "Two")).json()) as { id: string }
+    for (let i = 0; i < 4; i++) await pass()
+    expect((await meta.getJob(a.id))?.machine_phase).toBe("running")
+    expect((await meta.getJob(b.id))?.status).toBe("queued")
+    await runTurn("bx_1", "done")
+    for (let i = 0; i < 4; i++) await pass()
+    // A parked machine holds no compute, so the waiting task starts.
+    expect((await meta.getJob(a.id))?.machine_phase).toBe("parked")
+    expect((await meta.getJob(b.id))?.machine_phase).toBe("running")
+    expect(boat.calls.filter((c) => c.startsWith("create"))).toHaveLength(2)
   })
 })

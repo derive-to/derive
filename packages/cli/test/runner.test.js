@@ -15,6 +15,7 @@ import { describe, expect, it } from "vitest"
 import { loadJobRunnerConfig } from "../src/job-runner.js"
 import { claudeCode } from "../src/providers/claude-code.js"
 import { OUTPUT_CONTRACT, parseAnswer, resolveArtifactHtml, runAgent } from "../src/runner.js"
+import { sessionCommand } from "../src/sessions.js"
 import { materializeSkills, skillDigest, skillSlug, writeSkill } from "../src/skills.js"
 
 describe("parseAnswer", () => {
@@ -477,6 +478,68 @@ describe("the runner command", () => {
     ).toBe("dk_agt_from_file")
     expect(() => loadJobRunnerConfig({}, { agent: "ag_1", "token-file": join(d, "none") })).toThrow(
       /--token-file/,
+    )
+  })
+})
+
+describe("cloud sessions", () => {
+  it("--here pushes this branch and hands the cloud task the repository at it", async () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-here-"))
+    const bare = join(root, "origin.git")
+    const work = join(root, "widgets")
+    const git = (cwd, ...args) => execSync(`git ${args.join(" ")}`, { cwd, stdio: "pipe" })
+    git(root, "init", "-q", "--bare", bare)
+    git(root, "init", "-q", "-b", "main", work)
+    // The checkout's origin is on GitHub; pushes land in a local bare repository instead.
+    git(work, "remote", "add", "origin", "https://github.com/acme-dev/widgets.git")
+    git(work, "config", `url.${bare}.pushInsteadOf`, "https://github.com/acme-dev/widgets.git")
+    git(
+      work,
+      "-c",
+      "user.email=a@b",
+      "-c",
+      "user.name=a",
+      "commit",
+      "-q",
+      "--allow-empty",
+      "-m",
+      "x",
+    )
+    git(work, "checkout", "-q", "-b", "fix-copy")
+    const sent = []
+    const api = async (path, { body } = {}) => {
+      if (path === "/v1/agents")
+        return { agents: [{ id: "ag_1", name: "Coding", machine: "derive", provider: "codex" }] }
+      sent.push(body)
+      return { id: "job_abcdef123456" }
+    }
+    const cwd = process.cwd()
+    process.chdir(work)
+    try {
+      writeFileSync(join(work, "README"), "x")
+      git(work, "add", "README")
+      // Work not yet committed stays on the laptop, and the command says so.
+      await expect(
+        sessionCommand("run", ["Coding", "Fix the copy"], { here: "true" }, api, { log: () => {} }),
+      ).rejects.toThrow(/commit your changes first/)
+      git(work, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-q", "-m", "wip")
+      const log = console.log
+      console.log = () => {}
+      try {
+        await sessionCommand("run", ["Coding", "Fix the copy"], { here: "true" }, api, {
+          log: () => {},
+        })
+      } finally {
+        console.log = log
+      }
+    } finally {
+      process.chdir(cwd)
+    }
+    expect(sent).toEqual([
+      { agent_id: "ag_1", instruction: "Fix the copy", repo: "acme-dev/widgets@fix-copy" },
+    ])
+    expect(git(bare, "rev-parse", "fix-copy").toString().trim()).toBe(
+      git(work, "rev-parse", "HEAD").toString().trim(),
     )
   })
 })

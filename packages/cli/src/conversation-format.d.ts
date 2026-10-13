@@ -1,4 +1,6 @@
 export declare const RUNNER_PROTOCOL_VERSION: 1
+export declare const SESSION_TMUX: "derive"
+export declare const SESSION_RESUME: "Resume the session."
 export interface ConversationCheckpoint {
   version: 1
   provider: "codex" | "claude-code"
@@ -12,3 +14,9 @@ export declare function checkpointFileAllowed(
   file: string,
 ): boolean
 export declare function checkpointProblem(value: ConversationCheckpoint): string | null
+export interface TaskOptions {
+  session?: boolean
+  repo?: string
+}
+export declare const TASK_REPO: RegExp
+export declare function taskOptions(metaJson: string | null | undefined): TaskOptions

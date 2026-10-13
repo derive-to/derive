@@ -145,8 +145,9 @@ export const PERF_INDEXES: string[] = [
   // One job per trigger window, and at most one OPEN job per (agent, asker, dedupe key).
   `CREATE UNIQUE INDEX IF NOT EXISTS job_trigger_window ON job (trigger_id, scheduled_for) WHERE trigger_id IS NOT NULL AND scheduled_for IS NOT NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS job_dedupe_open ON job (agent_id, asked_by, dedupe_key) WHERE dedupe_key IS NOT NULL AND status IN ('queued', 'running', 'needs_you')`,
-  // A Derive machine is one sandbox per agent: at most one job holds it at a time.
-  `CREATE UNIQUE INDEX IF NOT EXISTS job_machine_holder ON job (agent_id) WHERE machine_phase IS NOT NULL AND machine_phase <> 'released'`,
+  // Tasks on one agent can each hold their own sandbox, so the old one-holder-per-agent index
+  // goes; borrowing an agent's shared sandbox locks the agent row instead.
+  `DROP INDEX IF EXISTS job_machine_holder`,
   // A report page finds its job (GET /v1/jobs?report=).
   `CREATE INDEX IF NOT EXISTS job_report ON job (org_id, report_artifact_id) WHERE report_artifact_id IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS artifact_org_created ON artifact (org_id, created_at, id)`,

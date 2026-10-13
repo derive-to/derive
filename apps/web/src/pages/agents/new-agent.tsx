@@ -22,7 +22,16 @@ import { accountLabel } from "../settings/accounts-section"
 import { PlanConnection } from "../settings/plan-connection"
 import { modelChoices } from "./format"
 
+// "Coding" is the agent `derive code` looks for: each task gets its own machine, so a person
+// can run many sessions at once, and it does not start a task on creation.
 const EXAMPLES = [
+  {
+    name: "Coding",
+    brief:
+      "Work in the task's repository like a careful engineer. Make the change, run the relevant tests, and open a pull request that says what changed and how you checked it.",
+    daily: false,
+    coding: true,
+  },
   {
     name: "Daily cloud health",
     brief:
@@ -80,6 +89,7 @@ export function NewAgent() {
     suggestedName = `${title} ${suffix}`
   const name = customName ?? suggestedName
   const [daily, setDaily] = useState(false)
+  const [coding, setCoding] = useState(false)
   const [time, setTime] = useState("09:00")
   const [account, setAccount] = useState("")
   const [connectingPlan, setConnectingPlan] = useState(false)
@@ -167,8 +177,9 @@ export function NewAgent() {
           account_id: chosen.id,
           model: model.trim() || null,
           connection_ids: sources,
-          max_run_ms: 600_000,
-          max_concurrency: 1,
+          ...(coding
+            ? { sandbox: { fresh: true }, max_run_ms: 3_600_000, max_concurrency: 10 }
+            : { max_run_ms: 600_000, max_concurrency: 1 }),
           ...(schedule ? { schedule } : {}),
         } satisfies Parameters<typeof api.createAgent>[0]
         try {
@@ -235,6 +246,8 @@ export function NewAgent() {
                   setName(example.name)
                   setBrief(example.brief)
                   setDaily(example.daily)
+                  setCoding(!!example.coding)
+                  if (example.coding) setStart(false)
                 }}
               >
                 {example.name}

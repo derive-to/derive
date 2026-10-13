@@ -2028,14 +2028,36 @@
             "type": "string",
             "nullable": true,
             "enum": [
+              "creating",
+              "provisioning",
               "starting",
               "ready",
               "launching",
               "running",
               "stopping",
+              "parked",
+              "deleting",
               "released",
               null
-            ]
+            ],
+            "description": "Where the task's cloud machine is. `parked`: stopped with its files, resumable."
+          },
+          "machine_waiting": {
+            "type": "string",
+            "nullable": true,
+            "description": "Why the machine is waiting to start, in the provider's words (a start limit)."
+          },
+          "task": {
+            "type": "object",
+            "properties": {
+              "session": {
+                "type": "boolean"
+              },
+              "repo": {
+                "type": "string"
+              }
+            },
+            "description": "How the task runs: an interactive session, and the repository it works in."
           },
           "instruction": {
             "type": "string"
@@ -2474,6 +2496,7 @@
           "agent_id",
           "kind",
           "status",
+          "task",
           "instruction",
           "asked_by",
           "attended",
@@ -2655,6 +2678,10 @@
                     },
                     "kind": {
                       "type": "string"
+                    },
+                    "label": {
+                      "type": "string",
+                      "nullable": true
                     },
                     "created_at": {
                       "type": "string"
@@ -7290,6 +7317,81 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/jobs/{id}/attach": {
+      "post": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Let your SSH key into your running interactive session's machine.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "public_key": {
+                    "type": "string",
+                    "pattern": "^(ssh-ed25519|ecdsa-sha2-nistp256|ssh-rsa) [A-Za-z0-9+/=]+( \\S+)?$",
+                    "description": "An OpenSSH public key. Private keys are refused."
+                  }
+                },
+                "required": [
+                  "public_key"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Where to connect. Attach with `tmux attach -t derive` once connected.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "host": {
+                      "type": "string"
+                    },
+                    "port": {
+                      "type": "number"
+                    },
+                    "user": {
+                      "type": "string"
+                    },
+                    "host_key": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Pin this in known_hosts."
+                    },
+                    "tmux_session": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "host",
+                    "port",
+                    "user",
+                    "host_key",
+                    "tmux_session"
+                  ]
                 }
               }
             }

@@ -285,14 +285,18 @@ function useNoAccount(agent: AgentDetail, meId: string): boolean {
   )
 }
 
+/** Mirrors @derive/core machineHoldsCompute (the web imports core types only). */
+const holdsCompute = (phase: string | null | undefined) =>
+  !!phase && phase !== "released" && phase !== "parked"
+
 export function taskStatus(job: Job, agent: Agent): string {
-  const stopping = job.machine_phase && job.machine_phase !== "released"
+  const stopping = holdsCompute(job.machine_phase)
   if (job.status === "succeeded") return stopping ? "Result ready · stopping compute…" : "Done"
   if (job.status === "needs_you") return stopping ? "Needs you · stopping compute…" : "Needs you"
   if (job.status === "failed" || job.status === "lost")
     return stopping ? "Failed · stopping compute…" : "Failed"
-  if (job.status === "cancelled")
-    return job.machine_phase && job.machine_phase !== "released" ? "Stopping compute…" : "Stopped"
+  if (job.status === "cancelled") return stopping ? "Stopping compute…" : "Stopped"
+  if (job.status === "queued" && job.machine_phase === "parked") return "Resuming"
   if (job.status === "queued") {
     if (agent.paused) return "Paused"
     if (["creating", "provisioning", "stopping"].includes(agent.runtime?.phase ?? ""))
@@ -300,9 +304,9 @@ export function taskStatus(job: Job, agent: Agent): string {
     if (agent.runtime?.phase === "failed") return "Retrying setup"
     return "Queued"
   }
-  if (job.machine_phase === "starting") return "Starting"
+  if (["creating", "provisioning", "starting"].includes(job.machine_phase ?? "")) return "Starting"
   if (job.machine_phase === "stopping") return "Saving files"
-  return "Running"
+  return job.task.session ? "Session open" : "Running"
 }
 
 function detailOf(job: Job, agent: Agent): string | undefined {
@@ -319,12 +323,22 @@ function detailOf(job: Job, agent: Agent): string | undefined {
     return "Sandbox setup did not finish. Derive will try again."
   if (job.status === "queued")
     return agent.paused ? "Resume this agent in Settings to start" : "Waiting for its turn"
-  if (job.status === "running" && job.machine_phase === "starting") return "Starting its sandbox…"
+  if (job.status === "running" && job.machine_waiting)
+    return `Waiting to start: ${job.machine_waiting}`
+  if (job.status === "running" && job.machine_phase === "creating")
+    return "Building its own machine from the agent's image…"
+  if (job.status === "running" && job.machine_phase === "provisioning")
+    return "Setting up its machine. The first start takes a minute or two."
+  if (job.status === "running" && job.machine_phase === "starting") return "Waking its machine…"
   if (job.status === "running" && ["ready", "launching"].includes(job.machine_phase ?? ""))
     return "Starting the task…"
   if (job.status === "running" && job.machine_phase === "stopping") return "Saving its files…"
   if (job.status === "succeeded" && job.machine_phase === "stopping")
     return "Your result is ready. Stopping compute and collecting its receipt."
+  if (job.machine_phase === "parked")
+    return job.task.session
+      ? "Paused with its files kept. Attach to pick it up where it left off."
+      : "Its machine is paused with the files kept, ready for a follow-up."
   if (job.status === "succeeded") return job.result.effects?.[0]?.label
   return undefined
 }

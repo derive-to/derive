@@ -991,7 +991,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS job_trigger_window ON job (trigger_id, schedul
 
 CREATE UNIQUE INDEX IF NOT EXISTS job_dedupe_open ON job (agent_id, asked_by, dedupe_key) WHERE dedupe_key IS NOT NULL AND status IN ('queued', 'running', 'needs_you');
 
-CREATE UNIQUE INDEX IF NOT EXISTS job_machine_holder ON job (agent_id) WHERE machine_phase IS NOT NULL AND machine_phase <> 'released';
+DROP INDEX IF EXISTS job_machine_holder;
 
 CREATE INDEX IF NOT EXISTS job_report ON job (org_id, report_artifact_id) WHERE report_artifact_id IS NOT NULL;
 

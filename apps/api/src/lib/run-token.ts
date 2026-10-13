@@ -15,7 +15,6 @@
  * A thin wrapper over lib/capability-token.ts (the HMAC format publish/upload tokens share).
  */
 import { signCapabilityToken, verifyCapabilityToken } from "./capability-token"
-import { RUN_TOKEN_TTL_MS } from "./run-lifecycle"
 
 /** What a capability token authorizes work on. `job` is a runner's: it acts as the agent on
  *  its one job's routes. `jobtool` is the model's, handed to it so it can call the job's source
@@ -31,11 +30,9 @@ const PREFIX: Record<WorkKind, string> = {
   jobtool: "dkjtool_",
 }
 
-// The TTL belongs to the run lifecycle clock (run-lifecycle.ts), not to this file: it must
-// EXCEED the work timeout so an honest job can still write its result, and fall SHORT of the
-// reclaim lease so a requeued item's previous executor is provably powerless before a second
-// one starts. Re-exported here for the token's callers.
-export { RUN_TOKEN_TTL_MS }
+// A token's expiry belongs to the run lifecycle clock (run-lifecycle.ts tokenExpiryAfter): past the
+// deadline so an honest job can still write its result, short of the reclaim lease so a
+// requeued item's previous executor is provably powerless before a second one starts.
 
 /** Which kind of work token this bearer is, or null when it is none (a registered agent
  *  token, an OAuth access token, the static operator bearer). */

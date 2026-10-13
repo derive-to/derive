@@ -1,5 +1,13 @@
 export const RUNNER_PROTOCOL_VERSION = 1
 
+/** The tmux session an interactive task's harness runs in; the runner starts it and
+ *  `derive attach` joins it. */
+export const SESSION_TMUX = "derive"
+
+/** A follow-up that only reopens a paused session: the runner resumes the conversation and
+ *  sends no message. */
+export const SESSION_RESUME = "Resume the session."
+
 export const checkpointFileAllowed = (provider, session, file) => {
   if (
     !/^[a-zA-Z0-9_-]{1,200}$/.test(session) ||
@@ -34,4 +42,28 @@ export const checkpointProblem = (value) => {
   if (new TextEncoder().encode(JSON.stringify(value.files)).length > 8_000_000)
     return "The conversation exceeds the checkpoint limit."
   return null
+}
+
+/** A task's options beyond its message, stored on its job: `session` runs the agent's own
+ *  harness interactively in tmux for a person to attach to; `repo` (`owner/name[@ref]`) is
+ *  checked out before the harness starts. Shared by the API, which stores and checks them,
+ *  and the CLI, which sends them. */
+
+/** `owner/name` or `owner/name@ref`, as GitHub names a repository and a branch, tag, or sha. */
+export const TASK_REPO = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}(@[A-Za-z0-9_./-]{1,200})?$/
+
+/** Read a task's options from its job meta_json; anything else in it is ignored. */
+export const taskOptions = (metaJson) => {
+  if (!metaJson) return {}
+  let raw
+  try {
+    raw = JSON.parse(metaJson)
+  } catch {
+    return {}
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {}
+  return {
+    ...(raw.session === true ? { session: true } : {}),
+    ...(typeof raw.repo === "string" && TASK_REPO.test(raw.repo) ? { repo: raw.repo } : {}),
+  }
 }

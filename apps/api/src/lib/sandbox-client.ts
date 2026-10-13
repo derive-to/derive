@@ -1,5 +1,15 @@
 /** Creation was refused before allocation; transport failures are not this error. */
 export class SandboxCreateRejected extends Error {}
+/** The provider is out of starts for now (a plan's hourly or daily limit). Nothing was
+ *  started; try again after `retryAfterSeconds`. `message` is the provider's own sentence. */
+export class SandboxRateLimited extends Error {
+  constructor(
+    message: string,
+    readonly retryAfterSeconds: number,
+  ) {
+    super(message)
+  }
+}
 
 /** Provider adapters own API translation. The controller owns jobs, claims, and
  * retries. A stopped sandbox must mean compute is off and its files are saved. */
@@ -34,6 +44,8 @@ export interface SandboxCreate {
 export interface SandboxMachine {
   size?: SandboxCreate["size"]
   environment?: string
+  /** Provider stop timer for the resumed turn. */
+  ttl_seconds?: number
 }
 export interface SandboxClient {
   authenticate(): Promise<Identity>
@@ -66,6 +78,13 @@ export interface SandboxClient {
   process(sandboxId: string, id: string, identity: Identity): Promise<Process>
   deleteSandbox(id: string, key: string, identity: Identity): Promise<Operation>
   isSandboxDeleted(id: string, identity: Identity): Promise<boolean>
+  /** Authorize an OpenSSH public key on a running sandbox; where to connect, and the host key
+   *  to pin. */
+  sshKey?(
+    id: string,
+    publicKey: string,
+    identity: Identity,
+  ): Promise<{ host: string; port: number; user: string; host_key: string | null }>
   usage?(
     id: string,
     since: string,

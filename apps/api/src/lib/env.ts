@@ -33,6 +33,8 @@ export const ortamRuntimeFromEnv = (env: {
   DERIVE_ORTAM_API_URL?: string
   DERIVE_ORTAM_INTEGRATION_KEY?: string
   DERIVE_MANAGED_RUNS_ALLOWLIST?: string
+  DERIVE_MACHINE_LIMIT?: string
+  DERIVE_WORKSPACE_MACHINE_LIMIT?: string
 }) => {
   if (!!env.DERIVE_RUNNER_ARCHIVE_URL !== !!env.DERIVE_RUNNER_ARCHIVE_SHA256)
     throw new Error("Set both runner archive URL and SHA-256, or leave both unset")
@@ -64,8 +66,19 @@ export const ortamRuntimeFromEnv = (env: {
               workspaceIds: workspaceIdsFromEnv(env.DERIVE_MANAGED_RUNS_ALLOWLIST),
             }
           : undefined,
+        limits: {
+          global: limitFromEnv(env.DERIVE_MACHINE_LIMIT, 100),
+          workspace: limitFromEnv(env.DERIVE_WORKSPACE_MACHINE_LIMIT, 20),
+        },
       }
     : undefined
+}
+
+const limitFromEnv = (raw: string | undefined, fallback: number) => {
+  if (raw === undefined || raw === "") return fallback
+  const n = Number(raw)
+  if (!Number.isInteger(n) || n < 1) throw new Error("Machine limits must be positive integers")
+  return n
 }
 
 /** The Slack App credentials — only when all three are set (else Slack stays off). */

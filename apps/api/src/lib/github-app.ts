@@ -88,6 +88,7 @@ export type GitHubTokenProfile =
   | "pr-comment"
   | "workflow-read"
   | "workflow-dispatch"
+  | "code-write"
 
 const PROFILE_PERMISSIONS: Record<GitHubTokenProfile, Record<string, string>> = {
   "contents-read": { metadata: "read", contents: "read" },
@@ -96,6 +97,8 @@ const PROFILE_PERMISSIONS: Record<GitHubTokenProfile, Record<string, string>> = 
   "pr-comment": { metadata: "read", pull_requests: "write" },
   "workflow-read": { actions: "read", metadata: "read" },
   "workflow-dispatch": { actions: "write", metadata: "read" },
+  // A cloud task's checkout: push its branch and open its pull request, in one repository.
+  "code-write": { metadata: "read", contents: "write", pull_requests: "write" },
 }
 
 /**
@@ -162,7 +165,12 @@ export async function installationToken(
   apiBaseUrl = API,
 ): Promise<string> {
   if (!/^[1-9][0-9]{0,19}$/.test(installationId)) throw new Error("invalid GitHub installation id")
-  if ((profile.startsWith("workflow-") || profile.startsWith("contents-")) && !repository)
+  if (
+    (profile.startsWith("workflow-") ||
+      profile.startsWith("contents-") ||
+      profile === "code-write") &&
+    !repository
+  )
     throw new Error("a workflow token must name one repository")
   if (typeof repository === "number" && (!Number.isSafeInteger(repository) || repository < 1))
     throw new Error("invalid GitHub repository id")

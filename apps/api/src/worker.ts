@@ -104,6 +104,8 @@ export interface Env {
   DERIVE_ORTAM_API_URL?: string
   DERIVE_ORTAM_INTEGRATION_KEY?: string
   DERIVE_MANAGED_RUNS_ALLOWLIST?: string
+  DERIVE_MACHINE_LIMIT?: string
+  DERIVE_WORKSPACE_MACHINE_LIMIT?: string
   DB: D1Database
   /** Isolated, short-lived Workers for the read-only derive_code MCP tool. */
   LOADER: WorkerLoader

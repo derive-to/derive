@@ -48,6 +48,8 @@ export const commandJob = async (
       node: "job" in input ? input.job.node_id : null,
       trigger: "job" in input ? input.job.trigger_id : null,
       window: "job" in input ? input.job.scheduled_for : null,
+      task: "job" in input ? (input.job.meta_json ?? null) : null,
+      interrupt: input.intent === "follow_up" ? !!input.interrupt : null,
     }),
   )
   const current = "job_id" in input ? await deps.meta.getJob(input.job_id) : null

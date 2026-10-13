@@ -214,6 +214,31 @@ Verify both the conversation checkpoint and expected environment before running 
 If continuity is unavailable, offer Start a fresh task. Link its source task and state what context it copies.
 Never label reconstructed prompts or a new harness session as native resume.
 
+### 5a. Sessions and code tasks
+
+A task can carry `session: true` and a `repo` (`owner/name[@ref]`). Either one gives the task its
+own sandbox instead of the agent's shared one; so does an agent saved with `sandbox.fresh`.
+An own sandbox moves `creating → provisioning → starting → running → stopping → parked`.
+Parked is stopped with its disk kept and holds no compute; the next turn resumes it, cancel
+retires it, and a sweep deletes one parked longer than seven days.
+
+A session runs the agent's native harness (Claude Code or Codex) in tmux. `POST
+/v1/jobs/{id}/attach` adds the starter's SSH public key to that machine and returns its address
+and pinned host key. Agent keys may not attach. The runner holds the claim while someone is
+attached or the session prints, and ends the turn after 20 minutes detached and quiet. The next
+turn resumes the harness's own conversation by its session id, so resume is native.
+
+A repository is checked out before the machine check and the model run. `GET
+/v1/jobs/{id}/git` mints an installation token for that one repository (contents and pull
+requests, write) from a GitHub connection bound to the agent whose owner matches. Git reads it
+through a credential helper from the environment, so it never lands on the kept disk. With no
+such connection the turn fails once, plainly, before any model runs. The pull request the turn's
+branch opened becomes the task's result link.
+
+Capacity: `DERIVE_MACHINE_LIMIT` (default 100) and `DERIVE_WORKSPACE_MACHINE_LIMIT` (default 20)
+count machines holding compute; parked ones do not count. A follow-up may interrupt the running
+turn, which cancels it and runs next on the same machine.
+
 ### 6. Use Slack
 
 Reuse Derive's existing Slack app and verified user link.

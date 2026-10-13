@@ -14,6 +14,7 @@ import {
   type Selector,
   type TriggerRecord,
 } from "@derive/core"
+import { type TaskOptions, taskOptions } from "@derive-to/cli/conversation-format"
 import { log } from "../log"
 import { agentWritesOff } from "./agent-writes"
 import { jobsOverBudget } from "./budget"
@@ -183,6 +184,8 @@ export interface AskInput {
   parentId?: string | null
   nodeId?: string | null
   kind?: "ask" | "node" | "graph"
+  /** How a Derive-machine task runs (interactive session, repository); kept for its life. */
+  task?: TaskOptions
 }
 
 /** Open a job for an agent. With a dedupe key that already names an open job, returns that
@@ -212,6 +215,9 @@ export const askAgent = async (
         subject_json: input.subject ? JSON.stringify(input.subject) : null,
         parent_id: input.parentId ?? null,
         node_id: input.nodeId ?? null,
+        ...(input.task && Object.keys(input.task).length
+          ? { meta_json: JSON.stringify(input.task) }
+          : {}),
       },
     })
     wake(deps, input.agent.id, "job.queued", out.job)
@@ -265,6 +271,7 @@ export const followUpJob = async (
   authorId: string,
   body: string,
   key?: string,
+  interrupt = false,
 ): Promise<JobRecord> => {
   const { meta } = deps
   const agent = await meta.getAgent(job.agent_id)
@@ -275,6 +282,7 @@ export const followUpJob = async (
       key: commandKey(key),
       job_id: job.id,
       body,
+      ...(interrupt ? { interrupt: true } : {}),
     })
     wake(deps, job.agent_id, "job.queued", out.job)
     return out.job
@@ -366,6 +374,9 @@ export const cancelJob = async (
       wakeSettled(deps, out.job)
       await announceJob(deps, out.job, actorId)
     }
+    // Stopping a task, even one that already finished, frees its parked sandbox now.
+    if (out.job.machine_phase === "parked")
+      await deps.meta.transitionJobMachine(out.job.id, out.job.machine_rev, { phase: "deleting" })
     return out.job
   }
   if (!isJobOpen(job.status)) return job
@@ -557,7 +568,7 @@ export const reportJob = async (
           ? {
               failure: r.result?.failure ?? {
                 reason: r.body_md || "This turn failed. Try again or start a fresh task.",
-                retryable: true,
+                retryable: r.retryable !== false,
               },
             }
           : {}),
@@ -893,6 +904,18 @@ export const chatContext = (j: JobRecord) => {
     : null
 }
 
+/** Why a task's machine is waiting to start, while it still is (job-machine.ts `waiting`). */
+const machineWaiting = (j: JobRecord): string | null => {
+  if (j.status !== "running" || !j.machine_json) return null
+  try {
+    const w = (JSON.parse(j.machine_json) as { waiting?: { reason: string; until: string } })
+      .waiting
+    return w && w.until > new Date().toISOString() ? w.reason : null
+  } catch {
+    return null
+  }
+}
+
 export const jobJson = (j: JobRecord) => ({
   chat_context: chatContext(j),
   id: j.id,
@@ -900,6 +923,8 @@ export const jobJson = (j: JobRecord) => ({
   kind: j.kind,
   status: j.status,
   machine_phase: j.machine_phase,
+  machine_waiting: machineWaiting(j),
+  task: taskOptions(j.meta_json),
   instruction: j.instruction,
   asked_by: j.asked_by,
   attended: j.attended === 1,

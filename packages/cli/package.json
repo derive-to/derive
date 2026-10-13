@@ -1,6 +1,6 @@
 {
   "name": "@derive-to/cli",
-  "version": "0.8.7",
+  "version": "0.8.8",
   "type": "module",
   "description": "CLI for Derive — create projects and publish durable, versioned artifacts from the terminal.",
   "keywords": [
@@ -33,6 +33,10 @@
     "./conversation-format": {
       "types": "./src/conversation-format.d.ts",
       "default": "./src/conversation-format.js"
+    },
+    "./sessions": {
+      "types": "./src/sessions.d.ts",
+      "default": "./src/sessions.js"
     },
     "./config": {
       "types": "./src/config.d.ts",

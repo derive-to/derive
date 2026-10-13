@@ -7,7 +7,9 @@
 // it gives the run a durable action receipt (commands, file changes, MCP calls, plan updates)
 // while leaving the final answer contract provider-agnostic.
 import { spawn } from "node:child_process"
-import { terminateProcess } from "./process.js"
+import { appendFileSync, existsSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
+import { clipped, safeCommand, terminateProcess } from "./process.js"
 
 const ACTION_TYPES = new Set([
   "command_execution",
@@ -16,18 +18,6 @@ const ACTION_TYPES = new Set([
   "web_search",
   "plan_update",
 ])
-
-const clipped = (value, max = 300) =>
-  String(value ?? "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, max)
-
-const safeCommand = (value) =>
-  clipped(value, 200)
-    .replace(/\b(dk(?:run|sess|_agt)?_[A-Za-z0-9_-]{12,}|sk-[A-Za-z0-9_-]{12,})\b/g, "[redacted]")
-    .replace(/\b([A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD))=\S+/g, "$1=[redacted]")
-    .replace(/(authorization\s*[:=]?\s*bearer)\s+\S+/gi, "$1 [redacted]")
 
 /** Keep evidence useful without persisting command output, absolute temp roots, or secrets. */
 function actionOf(item, cwd) {
@@ -54,6 +44,9 @@ function actionOf(item, cwd) {
     name: clipped(item.name ?? item.tool ?? item.query ?? item.text, 160),
   }
 }
+
+/** One line a person watching the task can read: the command, the first file, or the tool. */
+const actionLabel = (action) => action.command ?? action.changes?.[0]?.path ?? action.name ?? null
 
 /** Spawn `codex exec --json` once and normalize its event stream. */
 function spawnCodex({ bin, cwd, args, prompt, timeoutMs, env, signal, onEvent }) {
@@ -108,7 +101,7 @@ function spawnCodex({ bin, cwd, args, prompt, timeoutMs, env, signal, onEvent })
             JSON.stringify([...actions, action]).length <= 4_000
           ) {
             actions.push(action)
-            onEvent?.({ kind: action.type })
+            onEvent?.({ kind: action.type, label: actionLabel(action) })
             console.log(`[codex] → ${action.type}`)
           }
         }
@@ -228,6 +221,36 @@ export const codex = {
       signal,
       onEvent,
     })
+  },
+
+  /** Arguments for an interactive session in a terminal. Codex takes no separate system
+   *  prompt, so a new session's first message carries it, as a headless turn's does. */
+  sessionArgs({ model, effort, systemPrompt, prompt, resumeSessionId, home }) {
+    const flags = [
+      "--dangerously-bypass-approvals-and-sandbox",
+      ...(model ? ["-m", model] : []),
+      ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : []),
+    ]
+    if (resumeSessionId) return ["resume", ...flags, resumeSessionId, ...(prompt ? [prompt] : [])]
+    // With a private home the instructions live in its AGENTS.md (prepareSession), so the
+    // person sees only the task as the first message; otherwise they lead the prompt.
+    if (home) return [...flags, ...(prompt ? [prompt] : [])]
+    return [...flags, `${systemPrompt}\n\n---\n\n${prompt ?? ""}`.trimEnd()]
+  },
+
+  /** The interactive Codex reads its login only from `auth.json` (CODEX_API_KEY is for
+   *  `exec`), and asks before trusting a folder. The task's private home answers both, and
+   *  carries the task's instructions as Codex's global AGENTS.md. */
+  prepareSession({ home, cwd, env, systemPrompt }) {
+    if (!home) return
+    if (systemPrompt) writeFileSync(join(home, "AGENTS.md"), systemPrompt, { mode: 0o600 })
+    const auth = join(home, "auth.json")
+    if (!existsSync(auth) && env?.CODEX_API_KEY)
+      writeFileSync(auth, JSON.stringify({ OPENAI_API_KEY: env.CODEX_API_KEY }), { mode: 0o600 })
+    appendFileSync(
+      join(home, "config.toml"),
+      `\n[projects.${JSON.stringify(cwd)}]\ntrust_level = "trusted"\n`,
+    )
   },
 
   /** Without a structured api status, a nonzero exit that produced no output is

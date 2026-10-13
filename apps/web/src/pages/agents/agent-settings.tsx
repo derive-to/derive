@@ -24,7 +24,6 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { accountsQuery, agentConnectionsQuery, artifactQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
@@ -39,7 +38,7 @@ import {
   runnerCommand,
   when,
 } from "./format"
-import { Group } from "./rows"
+import { Group, Segmented } from "./rows"
 
 // An agent's Settings tab. Everything a coding session set when it made the agent is changed
 // here; nothing is created here. A person who cannot manage the agent sees the same rows as
@@ -239,42 +238,6 @@ function Verb({
     >
       {children}
     </Button>
-  )
-}
-
-function Segmented({
-  testId,
-  value,
-  options,
-  onChange,
-  disabled,
-}: {
-  testId: string
-  value: string
-  options: { value: string; label: string; disabled?: boolean }[]
-  onChange: (value: string) => void
-  disabled?: boolean
-}) {
-  return (
-    <ToggleGroup
-      type="single"
-      value={value}
-      onValueChange={(v) => v && v !== value && onChange(v)}
-      data-testid={testId}
-      className="w-fit gap-0.5 rounded-lg bg-secondary p-0.5"
-    >
-      {options.map((o) => (
-        <ToggleGroupItem
-          key={o.value}
-          value={o.value}
-          disabled={disabled || o.disabled}
-          data-testid={`${testId}-${o.value}`}
-          className="h-7 rounded-md px-3 text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-(--shadow-sm)"
-        >
-          {o.label}
-        </ToggleGroupItem>
-      ))}
-    </ToggleGroup>
   )
 }
 

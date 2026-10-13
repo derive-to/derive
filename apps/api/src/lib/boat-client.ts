@@ -6,6 +6,7 @@ import {
   type SandboxCreate,
   SandboxCreateRejected,
   type SandboxMachine,
+  SandboxRateLimited,
 } from "./sandbox-client"
 
 const Box = z.object({
@@ -66,6 +67,14 @@ export class BoatClient implements SandboxClient {
       })
     } catch {
       throw new Error("boat.dev request outcome is unknown")
+    }
+    if (response.status === 429) {
+      const body = (await response.json().catch(() => null)) as { message?: unknown } | null
+      const after = Number(response.headers.get("retry-after"))
+      throw new SandboxRateLimited(
+        typeof body?.message === "string" ? body.message : "boat.dev rate limit reached",
+        Number.isFinite(after) && after > 0 ? after : 60,
+      )
     }
     if (!response.ok) {
       const message = `boat.dev returned HTTP ${response.status}`
@@ -167,7 +176,7 @@ export class BoatClient implements SandboxClient {
       "POST",
       action === "resume"
         ? {
-            ttlSeconds: 1200,
+            ttlSeconds: machine.ttl_seconds ?? 1200,
             type: machine.size ?? "small",
             ...(machine.environment ? { environment: machine.environment } : { noEnv: true }),
           }
@@ -248,7 +257,9 @@ export class BoatClient implements SandboxClient {
       `printf running > ${quote(dir + "/state")}`,
       `trap ${quote(`printf exited > ${quote(dir + "/state")}`)} EXIT`,
       `chmod 600 ${quote(envFile)}`,
-      `node -e ${quote(run)} ${quote(envFile)} ${body.argv.map(quote).join(" ")}`,
+      // The runner's own output stays beside its marker, so a turn that ends without a report
+      // can be read back on the machine.
+      `node -e ${quote(run)} ${quote(envFile)} ${body.argv.map(quote).join(" ")} >> ${quote(dir + "/runner.log")} 2>&1`,
     ].join("\n")
     z.object({ processId: z.number().int(), success: z.literal(true) }).parse(
       await this.request(`/sandboxes/${encodeURIComponent(id)}/commands`, "POST", {
@@ -302,6 +313,30 @@ export class BoatClient implements SandboxClient {
   }
   async isSandboxDeleted(id: string, identity: Identity) {
     return (await this.sandbox(id, identity)).state === "stopped"
+  }
+  async sshKey(id: string, publicKey: string, identity: Identity) {
+    await this.read(id, identity)
+    const r = z
+      .object({
+        machineIp: z.string().nullish(),
+        sshUser: z.string().default("user"),
+        sshEndpoint: z.string().nullish(),
+        hostKey: z.string().nullish(),
+      })
+      .parse(
+        await this.request(`/sandboxes/${encodeURIComponent(id)}/sshkey`, "POST", {
+          key: publicKey,
+        }),
+      )
+    // A machine without its own public address is reached through a forwarded port.
+    const [host, port] = r.sshEndpoint
+      ? [
+          r.sshEndpoint.slice(0, r.sshEndpoint.lastIndexOf(":")),
+          Number(r.sshEndpoint.split(":").at(-1)),
+        ]
+      : [r.machineIp, 22]
+    if (!host || !Number.isInteger(port)) throw new Error("boat.dev gave no SSH address")
+    return { host, port, user: r.sshUser, host_key: r.hostKey ?? null }
   }
   async usage(id: string, since: string, until: string, identity: Identity) {
     await this.read(id, identity)

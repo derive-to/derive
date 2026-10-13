@@ -750,6 +750,8 @@ export const jobEvent = pgTable(
       .references(() => jobTurn.id),
     seq: integer("seq").notNull(),
     kind: text("kind").notNull(),
+    /** What a watching person reads: a redacted command, a file path, or a tool name. */
+    label: text("label"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   (t) => [uniqueIndex("job_event_sequence").on(t.turn_id, t.seq)],
@@ -1576,7 +1578,10 @@ export const buildPgSchemaStatements = (): string[] => {
     ...ddl.addColumns,
     ...ddl.createIndexes,
     ...PERF_INDEXES,
+    // Kept while released builds still count machines by it (PR previews share this database).
     "CREATE INDEX IF NOT EXISTS job_machine_capacity ON job (org_id) WHERE machine_phase IS NOT NULL AND machine_phase <> 'released'",
+    "CREATE INDEX IF NOT EXISTS job_machine_active ON job (org_id) WHERE machine_phase IS NOT NULL AND machine_phase NOT IN ('released', 'parked')",
+    "CREATE INDEX IF NOT EXISTS job_machine_parked ON job (updated_at) WHERE machine_phase = 'parked'",
     "CREATE INDEX IF NOT EXISTS agent_compute_capacity ON agent (org_id) WHERE sandbox_phase IN ('creating', 'provisioning', 'stopping', 'deleting')",
     ...ARTIFACT_SEARCH_PG,
     // A Derive thread mirrors into every subscribed channel, so slack_thread_link is keyed
