@@ -3426,7 +3426,11 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
     const responseLoss = { next: false }
     const creates: Array<{ body: Record<string, unknown>; key: string }> = []
     const created = new Map<string, string>()
-    const createOutcome = { loseNext: false, status: 200 }
+    const createOutcome = {
+      loseNext: false,
+      status: 200,
+      holdNext: undefined as Promise<void> | undefined,
+    }
     let deleted = false
     const certificates: Array<unknown> = []
     const certificateExpiry = new Date(Date.now() + 60_000).toISOString()
@@ -3454,12 +3458,18 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
         const body = (await request.json()) as Record<string, unknown>
         const key = request.headers.get("Idempotency-Key") ?? ""
         creates.push({ body, key })
-        if (createOutcome.status !== 200)
-          return new Response(null, { status: createOutcome.status })
+        const status = createOutcome.status
+        const hold = createOutcome.holdNext
+        createOutcome.holdNext = undefined
+        if (status !== 200) {
+          await hold
+          return new Response(null, { status })
+        }
         const fingerprint = JSON.stringify(body)
         if (created.has(key) && created.get(key) !== fingerprint)
           return new Response(null, { status: 409 })
         created.set(key, fingerprint)
+        await hold
         if (createOutcome.loseNext) {
           createOutcome.loseNext = false
           throw new Error("create response lost")
@@ -3756,6 +3766,49 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
     }
     expect((await fixture.meta.getJob(fixture.job.id))?.machine_phase).toBe("released")
     expect(fixture.launches).toHaveLength(0)
+  })
+
+  it("fences a refusing first attempt against an accepted concurrent replay", async () => {
+    const fixture = await cloudSetup("jobs-ortam-create-concurrent-refusal", 2700, {
+      reserveOnly: true,
+    })
+    await fixture.until("creating")
+    const first = await fixture.meta.getJob(fixture.job.id)
+    if (!first) throw new Error("missing reserved job")
+    let refuse = () => {}
+    let accepted = () => {}
+    fixture.createOutcome.status = 422
+    fixture.createOutcome.holdNext = new Promise<void>((resolve) => {
+      refuse = resolve
+    })
+    const original = advanceMachineJob(fixture.deps, first)
+    await vi.waitFor(() => expect(fixture.creates).toHaveLength(1))
+    const replaying = await fixture.meta.getJob(fixture.job.id)
+    if (!replaying) throw new Error("missing submitted job")
+    fixture.createOutcome.status = 200
+    fixture.createOutcome.holdNext = new Promise<void>((resolve) => {
+      accepted = resolve
+    })
+    const replay = advanceMachineJob(fixture.deps, replaying)
+    await vi.waitFor(() => expect(fixture.creates).toHaveLength(2))
+    try {
+      refuse()
+      await original
+      expect((await fixture.meta.getJob(fixture.job.id))?.machine_phase).toBe("creating")
+      expect((await fixture.meta.getJob(fixture.job.id))?.status).toBe("running")
+      accepted()
+      await replay
+      const after = await fixture.meta.getJob(fixture.job.id)
+      expect(after?.machine_phase).toBe("provisioning")
+      expect(after?.status).toBe("running")
+      expect(JSON.parse(after?.machine_json ?? "{}").own.sandbox_id).toBe("sbx")
+      expect(fixture.creates[1]).toEqual(fixture.creates[0])
+      expect(fixture.launches).toHaveLength(0)
+    } finally {
+      refuse()
+      accepted()
+      await Promise.allSettled([original, replay])
+    }
   })
 
   it("does not submit a reserved create once its turn deadline has passed", async () => {
