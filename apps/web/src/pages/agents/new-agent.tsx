@@ -94,6 +94,7 @@ export function NewAgent() {
   const skillChats = useQuery({
     ...pageAsksQuery(savedSkill ?? ""),
     enabled: !!savedSkill,
+    refetchIntervalInBackground: true,
     refetchInterval: (query) =>
       query.state.data?.some((job) => ["queued", "running"].includes(job.status)) ? 2000 : false,
   })
