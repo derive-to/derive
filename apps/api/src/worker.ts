@@ -28,6 +28,10 @@ import { purgeUserDataAndSyncSeats, workspacesBlockingDeletion } from "./lib/acc
 import { makeBillingDriver } from "./lib/billing"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { cloudflareSandbox } from "./lib/code-sandbox-cloudflare"
+import { workerSessionTransport } from "./lib/session-transport-worker"
+
+declare const WebSocketPair: typeof import("@cloudflare/workers-types").WebSocketPair
+
 import { buildAuthEmail } from "./lib/email"
 import {
   ortamRuntimeFromEnv,
@@ -337,6 +341,14 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
       const models = catalogFromGateway(workerGateway(env))
       app = createApp({
         runtime: ortamRuntimeFromEnv(env),
+        sessionTransport: workerSessionTransport({
+          dial: (request) => fetch(request),
+          pair: () => new WebSocketPair(),
+          response: (webSocket) => {
+            const init = { status: 101, webSocket }
+            return new Response(null, init)
+          },
+        }),
         meta,
         // The static operator/CI bearer (isToken). The Node entry wires this via
         // loadConfig(process.env); the edge builds deps by hand from the CF binding and

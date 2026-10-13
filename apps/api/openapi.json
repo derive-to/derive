@@ -7390,32 +7390,83 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "host": {
-                      "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "host": {
+                          "type": "string"
+                        },
+                        "port": {
+                          "type": "number"
+                        },
+                        "user": {
+                          "type": "string"
+                        },
+                        "host_key": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "Pin this in known_hosts."
+                        },
+                        "tmux_session": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "host",
+                        "port",
+                        "user",
+                        "host_key",
+                        "tmux_session"
+                      ]
                     },
-                    "port": {
-                      "type": "number"
-                    },
-                    "user": {
-                      "type": "string"
-                    },
-                    "host_key": {
-                      "type": "string",
-                      "nullable": true,
-                      "description": "Pin this in known_hosts."
-                    },
-                    "tmux_session": {
-                      "type": "string"
+                    {
+                      "type": "object",
+                      "properties": {
+                        "transport": {
+                          "type": "string",
+                          "enum": [
+                            "websocket"
+                          ]
+                        },
+                        "user": {
+                          "type": "string",
+                          "enum": [
+                            "ortam"
+                          ]
+                        },
+                        "host_key": {
+                          "type": "string"
+                        },
+                        "certificate": {
+                          "type": "string"
+                        },
+                        "certificate_expires_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "tunnel_path": {
+                          "type": "string"
+                        },
+                        "claim": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "tmux_session": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "transport",
+                        "user",
+                        "host_key",
+                        "certificate",
+                        "certificate_expires_at",
+                        "tunnel_path",
+                        "claim",
+                        "tmux_session"
+                      ]
                     }
-                  },
-                  "required": [
-                    "host",
-                    "port",
-                    "user",
-                    "host_key",
-                    "tmux_session"
                   ]
                 }
               }

@@ -41,7 +41,13 @@ import { bail, fail, readJson } from "../lib/http"
 import { resolveJobCredential } from "../lib/job-accounts"
 import { turnAgent } from "../lib/job-command"
 import { advanceGraph, graphAware } from "../lib/job-graph"
-import { attachSession, machineDepsFrom, machinePass } from "../lib/job-machine"
+import {
+  attachSession,
+  machineDepsFrom,
+  machinePass,
+  sessionClaim,
+  sessionTunnelRequest,
+} from "../lib/job-machine"
 import { canAskAgent, canManageAgent, canSteerJob, inboxScope } from "../lib/job-policy"
 import {
   answerJob,
@@ -66,6 +72,7 @@ import {
 import { MAX_RUN_CEILING_MS } from "../lib/run-lifecycle"
 import { signWorkToken } from "../lib/run-token"
 import { runtimeFailureReason } from "../lib/runtime-diagnostics"
+import { relaySession } from "../lib/session-transport"
 import { log } from "../log"
 
 // JOBS: the one unit of agent work (lib/jobs.ts). Two audiences:
@@ -410,6 +417,67 @@ export const jobRoutes = (ctx: AppContext) => {
     )
       return fail(c, 404, "not found")
     return job
+  }
+
+  const sessionAccess = async (c: Context, id: string) => {
+    const job = await visibleJob(c, id)
+    if (job instanceof Response) return job
+    const who = await personFor(c)
+    if (who instanceof Response) return who
+    const grant = await ctx.oauthGrant(c)
+    if (job.asked_by !== who.id || (!!(await agentFor(c)) && !grant))
+      return fail(c, 403, "Only the person who started this session can attach to it")
+    const membership = await meta.getMembership(job.org_id, who.id)
+    if (
+      !membership ||
+      !roleAllows(membership.role, "publish") ||
+      (grant && !roleAllows(grant.scopeRole, "publish"))
+    )
+      return fail(c, 403, "SSH access requires derive:publish or derive:manage authorization")
+    const claim = sessionClaim(job)
+    if (!claim) return fail(c, 409, "This session is not running. Resume it first.")
+    const machine = machineDepsFrom(meta, {
+      secret: deps.encryptionKey,
+      server: deps.baseUrl,
+      config: deps.runtime,
+      fetcher: deps.runtimeFetch,
+    })
+    if (!machine) return fail(c, 503, "Cloud compute is not enabled on this server")
+    const consent =
+      grant && !ctx.isMintedApiToken(c)
+        ? (await meta.listUserGrants(who.id)).find((row) => row.clientId === grant.clientId)
+        : null
+    if (grant && !ctx.isMintedApiToken(c) && !consent)
+      return fail(c, 403, "This session's authorization was revoked")
+    const consentStamp = JSON.stringify(consent)
+    const claimStamp = JSON.stringify(claim)
+    const stillAllowed = async () => {
+      const current = await meta.getJob(job.id)
+      const membership = await meta.getMembership(job.org_id, who.id)
+      if (
+        !current ||
+        current.org_id !== job.org_id ||
+        current.agent_id !== job.agent_id ||
+        current.asked_by !== who.id ||
+        JSON.stringify(sessionClaim(current)) !== claimStamp ||
+        !membership ||
+        !roleAllows(membership.role, "publish")
+      )
+        return false
+      if (consent && grant) {
+        const [grants, bound] = await Promise.all([
+          meta.listUserGrants(who.id),
+          meta.getOAuthClientWorkspaces(who.id, grant.clientId),
+        ])
+        if (
+          JSON.stringify(grants.find((row) => row.clientId === grant.clientId)) !== consentStamp ||
+          (bound.length > 0 && !bound.includes(job.org_id))
+        )
+          return false
+      }
+      return true
+    }
+    return { job, machine, claim, stillAllowed }
   }
 
   // ---- The built-in Derive, asked from a page (lib/page-ask.ts) ---------------------------
@@ -866,46 +934,60 @@ export const jobRoutes = (ctx: AppContext) => {
           description: "Where to connect. Attach with `tmux attach -t derive` once connected.",
           content: {
             "application/json": {
-              schema: z.object({
-                host: z.string(),
-                port: z.number(),
-                user: z.string(),
-                host_key: z.string().nullable().describe("Pin this in known_hosts."),
-                tmux_session: z.string(),
-              }),
+              schema: z.union([
+                z.object({
+                  host: z.string(),
+                  port: z.number(),
+                  user: z.string(),
+                  host_key: z.string().nullable().describe("Pin this in known_hosts."),
+                  tmux_session: z.string(),
+                }),
+                z.object({
+                  transport: z.literal("websocket"),
+                  user: z.literal("ortam"),
+                  host_key: z.string(),
+                  certificate: z.string(),
+                  certificate_expires_at: z.iso.datetime(),
+                  tunnel_path: z.string(),
+                  claim: z.iso.datetime(),
+                  tmux_session: z.string(),
+                }),
+              ]),
             },
           },
         },
       },
     }),
     async (c) => {
-      const job = await visibleJob(c, c.req.param("id") ?? "")
-      if (job instanceof Response) return bail(job)
-      const who = await personFor(c)
-      if (who instanceof Response) return bail(who)
-      // A session's machine holds its starter's files and model login: only they get a shell,
-      // from their browser session or their own CLI login, never through an agent's key.
-      const viaAgentKey = !!(await agentFor(c)) && !(await ctx.oauthGrant(c))
-      if (job.asked_by !== who.id || viaAgentKey)
-        return bail(fail(c, 403, "Only the person who started this session can attach to it"))
-      const machine = machineDepsFrom(meta, {
-        secret: deps.encryptionKey,
-        server: deps.baseUrl,
-        config: deps.runtime,
-        fetcher: deps.runtimeFetch,
-      })
-      if (!machine) return bail(fail(c, 503, "Cloud compute is not enabled on this server"))
-      const out = await attachSession(machine, job, c.req.valid("json").public_key)
+      const access = await sessionAccess(c, c.req.param("id") ?? "")
+      if (access instanceof Response) return bail(access)
+      if (!(await access.stillAllowed()))
+        return bail(fail(c, 409, "This session changed. Attach again."))
+      const out = await attachSession(access.machine, access.job, c.req.valid("json").public_key)
       if (!out.ok) return bail(fail(c, out.status, out.error))
-      // Who opened a terminal on the session, and when, stays on the task.
+      if (!(await access.stillAllowed()))
+        return bail(fail(c, 409, "This session changed. Attach again."))
+      // Who opened a terminal on the session, and when, stays on the task. Only its starter can.
+      const starter = access.job.asked_by ?? ""
       await meta.addJobMessage({
         id: newId("jm"),
-        job_id: job.id,
+        job_id: access.job.id,
         author_kind: "agent",
-        author_id: job.agent_id,
-        body_md: `${(await meta.getUsers([who.id]))[0]?.name ?? "Its starter"} opened a terminal on this session.`,
-        meta_json: JSON.stringify({ progress: true, server: true, attached_by: who.id }),
+        author_id: access.job.agent_id,
+        body_md: `${(await meta.getUsers([starter]))[0]?.name ?? "Its starter"} opened a terminal on this session.`,
+        meta_json: JSON.stringify({ progress: true, server: true, attached_by: starter }),
       })
+      if (out.transport === "websocket")
+        return c.json({
+          transport: out.transport,
+          user: out.user,
+          host_key: out.host_key,
+          certificate: out.certificate,
+          certificate_expires_at: out.certificate_expires_at,
+          tunnel_path: `/v1/jobs/${access.job.id}/ssh`,
+          claim: access.claim.startedAt,
+          tmux_session: SESSION_TMUX,
+        })
       return c.json({
         host: out.host,
         port: out.port,
@@ -915,6 +997,42 @@ export const jobRoutes = (ctx: AppContext) => {
       })
     },
   )
+  app.get("/v1/jobs/:id/ssh", async (c) => {
+    const access = await sessionAccess(c, c.req.param("id"))
+    if (access instanceof Response) return bail(access)
+    if (c.req.header("x-derive-job-claim") !== access.claim.startedAt)
+      return bail(fail(c, 409, "This session changed. Attach again."))
+    if (c.req.header("upgrade")?.toLowerCase() !== "websocket" || c.req.raw.url.includes("?"))
+      return bail(
+        fail(c, 400, "Use an authenticated WebSocket connection without query parameters"),
+      )
+    const transport = deps.sessionTransport
+    if (!transport) return bail(fail(c, 503, "SSH tunnels are not enabled on this server"))
+    if (!(await access.stillAllowed()))
+      return bail(fail(c, 409, "This session changed. Attach again."))
+    const request = await sessionTunnelRequest(access.machine, access.job)
+    if (!request) return bail(fail(c, 409, "This machine has no SSH tunnel"))
+    const upstream = await transport.connect(
+      new Request(request, { signal: AbortSignal.any([request.signal, c.req.raw.signal]) }),
+      c,
+    )
+    try {
+      if (!(await access.stillAllowed())) {
+        upstream.close()
+        return bail(fail(c, 409, "This session changed. Attach again."))
+      }
+      const relay = relaySession(upstream, access.stillAllowed, Date.parse(access.claim.deadlineAt))
+      try {
+        return await transport.accept(c, relay.ready, relay.close)
+      } catch (error) {
+        relay.close()
+        throw error
+      }
+    } catch (error) {
+      upstream.close()
+      throw error
+    }
+  })
   personAction(
     "/v1/jobs/{id}/retry",
     "Run a failed or lost job again.",

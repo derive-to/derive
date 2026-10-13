@@ -10,6 +10,7 @@ import { s3FromUrl } from "@derive/storage/s3"
 import { serve } from "@hono/node-server"
 import Database from "better-sqlite3"
 import { Pool } from "pg"
+import { WebSocketServer } from "ws"
 import { createApp } from "./app"
 import { type AuthDb, makeAuth, migrateAuth, OAUTH_ANON_CLIENT_TTL_MS } from "./auth-config"
 import { createInProcessBackplane } from "./bus"
@@ -42,6 +43,7 @@ import { modelSource, readLibrary } from "./lib/model-library"
 import { jobAnnouncer } from "./lib/notify-job"
 import { NODE_REPO_CAPS } from "./lib/repo-fetch"
 import { mountWeb } from "./lib/serve-web"
+import { nodeSessionTransport } from "./lib/session-transport-node"
 import { signupPolicy } from "./lib/signup-policy"
 import { originProxy } from "./lib/site"
 import { makeSlackIngestSender, makeSlackSender } from "./lib/slack-comments"
@@ -493,6 +495,7 @@ const app = createApp({
   // An attended editor save answers once its version is stored; indexing and realtime follow.
   detachAfterResponse: true,
   runtime: runtimeConfig,
+  sessionTransport: nodeSessionTransport,
   meta,
   // Self-host: whatever the image was built from. Docker builds can pass it; a source run
   // reports "dev". Same contract as the edge — /healthz answers "what is running".
@@ -716,19 +719,27 @@ if (!cfg.sandboxOrigin && (cfg.crossSite || cfg.webOrigins.length)) {
 // operator shouldn't lose a running instance to a stray env var on upgrade.
 for (const w of configWarnings(process.env)) log.warn(w)
 
-const server = serve({ fetch: app.fetch, port: cfg.port }, () => {
-  log.info("derive api listening", {
+const sessionSockets = new WebSocketServer({ noServer: true, maxPayload: 1_048_576 })
+const server = serve(
+  {
+    fetch: app.fetch,
     port: cfg.port,
-    base_url: cfg.baseUrl,
-    // Name the HOST, not just the driver: "postgres" alone once read the same for a
-    // local database and a production one, and nobody could tell for a day.
-    meta: cfg.databaseUrl ? `postgres (${dbHost ?? "unparseable"})` : `sqlite (${cfg.dataDir})`,
-    blobs: cfg.objectStoreUrl ? "S3/R2" : `local disk (${cfg.dataDir})`,
-    web: cfg.serveWeb ? "bundled SPA" : "API only",
-    spaces: `multi-workspace (bootstrap org ${defaultOrg})`,
-    workers: cfg.backgroundWorkers ? "on" : "OFF (DERIVE_BACKGROUND_WORKERS=0)",
-  })
-})
+    websocket: { server: sessionSockets },
+  },
+  () => {
+    log.info("derive api listening", {
+      port: cfg.port,
+      base_url: cfg.baseUrl,
+      // Name the HOST, not just the driver: "postgres" alone once read the same for a
+      // local database and a production one, and nobody could tell for a day.
+      meta: cfg.databaseUrl ? `postgres (${dbHost ?? "unparseable"})` : `sqlite (${cfg.dataDir})`,
+      blobs: cfg.objectStoreUrl ? "S3/R2" : `local disk (${cfg.dataDir})`,
+      web: cfg.serveWeb ? "bundled SPA" : "API only",
+      spaces: `multi-workspace (bootstrap org ${defaultOrg})`,
+      workers: cfg.backgroundWorkers ? "on" : "OFF (DERIVE_BACKGROUND_WORKERS=0)",
+    })
+  },
+)
 
 // Graceful shutdown: Fly's auto-stop and every redeploy send SIGTERM. The sequence
 // lives in lifecycle.ts (so it's unit-testable); here we just wire the real server,
@@ -736,7 +747,10 @@ const server = serve({ fetch: app.fetch, port: cfg.port }, () => {
 // returns to the plain http.Server we create (closeIdleConnections since Node 18.2).
 const shutdown = makeShutdown({
   server: {
-    close: (cb) => server.close(() => cb()),
+    close: (cb) => {
+      for (const socket of sessionSockets.clients) socket.terminate()
+      server.close(() => cb())
+    },
     closeIdleConnections:
       "closeIdleConnections" in server ? () => server.closeIdleConnections() : undefined,
   },

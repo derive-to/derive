@@ -120,6 +120,7 @@ interface MachineState {
   stop_op?: string
   process_id?: string
   launch_timeout_seconds?: number
+  launch_keep_awake?: boolean
   runner_path?: string
   runner_setup?: string
   /** Present when the job runs on its own sandbox rather than its agent's shared one. */
@@ -672,6 +673,7 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
         cwd: "/home/ortam",
         env: await environment(),
         timeout_seconds: claim.launch_timeout_seconds,
+        keep_awake: claim.launch_keep_awake ?? false,
       },
       `derive-job-${m.turn}-launch`,
       state.identity,
@@ -726,19 +728,20 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
     }
     case "ready": {
       const observed = await client.sandbox(sandbox, state.identity)
-      // The provider's own stop timer must be set and must not outlive this turn by much. It
-      // starts when a resume finishes rather than when it was asked for, so it may run a little
-      // past the asked time.
+      // Deadline timers bound compute after resume; idle timers reset with activity and are
+      // held by the runner process. Both keep the controller deadline and process timeout.
       if (
         observed.state !== "ready" ||
         observed.auto_stop_after_seconds <= 0 ||
-        observed.auto_stop_after_seconds >
-          Math.max(CREATE_TTL_SECONDS, ttlFor(m.deadline_at, at)) + TTL_SLACK_SECONDS
+        (client.stopTimer === "deadline" &&
+          observed.auto_stop_after_seconds >
+            Math.max(CREATE_TTL_SECONDS, ttlFor(m.deadline_at, at)) + TTL_SLACK_SECONDS)
       ) {
         await move("stopping")
         return
       }
       const launching = await move("launching", {
+        launch_keep_awake: client.stopTimer === "idle",
         launch_timeout_seconds: Math.max(
           1,
           Math.ceil((Date.parse(m.deadline_at) - Date.parse(at)) / 1000),
@@ -1226,14 +1229,14 @@ export async function attachSession(
   job: JobRecord,
   publicKey: string,
 ): Promise<
-  | { ok: true; host: string; port: number; user: string; host_key: string | null }
+  | ({ ok: true } & import("./sandbox-client").SandboxSshAccess)
   | { ok: false; status: 404 | 409; error: string }
 > {
   const agent = await deps.meta.getAgent(job.agent_id)
   const own = parse<MachineState>(job.machine_json)?.own
   if (!agent || !taskOptions(job.meta_json).session)
     return { ok: false, status: 404, error: "This task is not an interactive session." }
-  if (job.machine_phase !== "running" || !own?.sandbox_id)
+  if (job.status !== "running" || job.machine_phase !== "running" || !own?.sandbox_id)
     return {
       ok: false,
       status: 409,
@@ -1244,6 +1247,39 @@ export async function attachSession(
   const client = await clientFor(deps, agent, own)
   if (!client.sshKey) return { ok: false, status: 409, error: "This machine has no SSH access." }
   return { ok: true, ...(await client.sshKey(own.sandbox_id, publicKey, own.identity)) }
+}
+
+export function sessionClaim(job: JobRecord) {
+  const state = parse<MachineState>(job.machine_json)
+  if (
+    job.status !== "running" ||
+    job.machine_phase !== "running" ||
+    !job.started_at ||
+    !taskOptions(job.meta_json).session ||
+    !state?.own?.sandbox_id ||
+    !state.turn ||
+    !Number.isFinite(Date.parse(state.deadline_at)) ||
+    Date.parse(state.deadline_at) <= Date.now()
+  )
+    return null
+  return {
+    startedAt: job.started_at,
+    turn: state.turn,
+    sandboxId: state.own.sandbox_id,
+    deadlineAt: state.deadline_at,
+    identity: state.own.identity,
+    provider: state.own.provider,
+    connectionId: state.own.connection_id,
+    apiUrl: state.own.api_url,
+  }
+}
+
+export async function sessionTunnelRequest(deps: MachineDeps, job: JobRecord) {
+  const agent = await deps.meta.getAgent(job.agent_id)
+  const own = parse<MachineState>(job.machine_json)?.own
+  if (!agent || !own?.sandbox_id || !sessionClaim(job)) return null
+  const client = await clientFor(deps, agent, own)
+  return client.sshTunnel ? client.sshTunnel(own.sandbox_id, own.identity) : null
 }
 
 /** For the tick's callers: the pass, or nothing when this deploy has no Derive machines. */

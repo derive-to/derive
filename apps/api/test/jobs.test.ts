@@ -16,6 +16,7 @@ import {
   runOneJob,
   serveJob,
 } from "../../../packages/cli/src/job-runner.js"
+import { createApp } from "../src/app"
 import type { AppDeps } from "../src/context"
 import { purgeUserDataAndSyncSeats } from "../src/lib/account"
 import type { ModelTurn } from "../src/lib/agent-loop"
@@ -23,9 +24,10 @@ import { signCapabilityToken } from "../src/lib/capability-token"
 import { encryptSecret } from "../src/lib/crypto"
 import { workspaceIdsFromEnv } from "../src/lib/env"
 import { advanceGraph, graphAware, graphPass } from "../src/lib/job-graph"
-import { machineDepsFrom, machinePass } from "../src/lib/job-machine"
+import { advanceMachineJob, machineDepsFrom, machinePass } from "../src/lib/job-machine"
 import { HELD_FOR_BUDGET, jobTick, OWNER_LEFT } from "../src/lib/jobs"
 import { catalogOf } from "../src/lib/model-catalog"
+import { bufferedSessionSocket } from "../src/lib/session-transport"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // THE AGENT MODEL, through the surface people and runners use: an agent is created, asked,
@@ -3499,5 +3501,485 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     expect((await meta.getJob(a.id))?.machine_phase).toBe("parked")
     expect((await meta.getJob(b.id))?.machine_phase).toBe("running")
     expect(boat.calls.filter((c) => c.startsWith("create"))).toHaveLength(2)
+  })
+})
+
+describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machines", () => {
+  const cloudSetup = async (
+    name: string,
+    idleSeconds: number,
+    options: { session?: boolean; sessionTransport?: AppDeps["sessionTransport"] } = {},
+  ) => {
+    const identity = { organization_id: "ortam-org", user_id: "ortam-user" }
+    const processes = new Map<string, { body: string; id: string }>()
+    const launches: Array<{ body: Record<string, unknown>; key: string }> = []
+    const responseLoss = { next: false }
+    const certificates: Array<unknown> = []
+    const certificateExpiry = new Date(Date.now() + 60_000).toISOString()
+    let stopped = false
+    const provisioning = { ready: false }
+    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init)
+      const path = new URL(request.url).pathname.replace("/v1", "")
+      expect(request.headers.get("Authorization")).toBe("Bearer managed-ortam-key")
+      expect(request.headers.get("X-Ortam-Integration-Subject")).toMatch(/^[a-f0-9]{64}$/)
+      if (path === "/integration") return Response.json(identity)
+      const sandbox = {
+        id: "sbx",
+        state: stopped ? "stopped" : "ready",
+        current_operation_id: null,
+        auto_stop_after_seconds: idleSeconds,
+      }
+      const operation = (kind: string) => ({
+        id: `op-${kind}`,
+        sandbox_id: "sbx",
+        kind,
+        state: kind === "create" && !provisioning.ready ? "queued" : "succeeded",
+      })
+      if (path === "/sandboxes" && request.method === "POST")
+        return Response.json({ sandbox, operation: operation("create") })
+      if (path === "/sandboxes/sbx") return Response.json(sandbox)
+      if (path === "/sandboxes/sbx/ssh-certificate") {
+        certificates.push(await request.json())
+        return Response.json({
+          certificate: "ssh-ed25519-cert-v01@openssh.com AAAAcert",
+          principal: "ortam",
+          host_public_key: "ssh-ed25519 AAAAhost",
+          valid_before: certificateExpiry,
+        })
+      }
+      if (path.startsWith("/operations/"))
+        return Response.json(operation(path.slice("/operations/op-".length)))
+      if (path === "/sandboxes/sbx/stop") {
+        stopped = true
+        return Response.json(operation("stop"))
+      }
+      if (path === "/sandboxes/sbx/processes" && request.method === "POST") {
+        const body = (await request.json()) as Record<string, unknown>
+        const key = request.headers.get("Idempotency-Key") ?? ""
+        launches.push({ body, key })
+        const { env: _env, ...immutable } = body
+        const fingerprint = JSON.stringify(immutable)
+        const old = processes.get(key)
+        if (old && old.body !== fingerprint) return new Response(null, { status: 409 })
+        const process = old ?? { body: fingerprint, id: `process-${processes.size + 1}` }
+        processes.set(key, process)
+        if (responseLoss.next) {
+          responseLoss.next = false
+          throw new Error("process response lost")
+        }
+        return Response.json({ id: process.id, status: "running" })
+      }
+      if (path.startsWith("/sandboxes/sbx/processes/"))
+        return Response.json({ id: path.split("/").at(-1), status: "running" })
+      throw new Error(`Unexpected Ortam request: ${request.method} ${path}`)
+    }) as typeof fetch
+    const runtime = {
+      provider: "ortam" as const,
+      apiUrl: "https://ortam.test/v1",
+      runnerPath: "/opt/derive/bin/derive.js",
+      limits: { global: 100, workspace: 20 },
+      managed: { apiKey: "managed-ortam-key", workspaceIds: new Set(["default"]) },
+    }
+    const made = await setup(name, {
+      runtime,
+      runtimeFetch: fetcher,
+      baseUrl: "http://derive.test",
+      sessionTransport: options.sessionTransport,
+    })
+    await made.app.request(
+      "/v1/accounts",
+      jsonAs(as(owner.email), {
+        provider: "codex",
+        kind: "api_key",
+        secret: "sk-codex-0001234",
+        shared: true,
+      }),
+    )
+    const deps = machineDepsFrom(made.meta, {
+      secret: "test-encryption-key",
+      server: "http://derive.test",
+      config: runtime,
+      fetcher,
+    })
+    if (!deps) throw new Error("no managed Ortam machine deps")
+    const agent = await createAgent(made.app, {
+      machine: "derive",
+      provider: "codex",
+      sandbox: { fresh: true },
+    })
+    const response = await ask(made.app, ed.email, agent.id, "Fix the parser", {
+      session: options.session ?? false,
+    })
+    expect(response.status).toBe(201)
+    const job = (await response.json()) as { id: string }
+    const until = async (phase: string) => {
+      provisioning.ready = true
+      for (let i = 0; i < 12; i++) {
+        const current = await made.meta.getJob(job.id)
+        if (current?.machine_phase === phase) return
+        if (current?.machine_phase) await advanceMachineJob(deps, current)
+        else await machinePass(deps, { maxRequests: 400, maxTransitions: 2 })
+      }
+      expect((await made.meta.getJob(job.id))?.machine_phase).toBe(phase)
+    }
+    return {
+      ...made,
+      deps,
+      job,
+      agent,
+      until,
+      launches,
+      processes,
+      responseLoss,
+      certificates,
+      certificateExpiry,
+    }
+  }
+
+  it.each([
+    60, 86400,
+  ])("runs with a %s-second idle timer and keeps a separate turn deadline", async (idleSeconds) => {
+    const { meta, deps, job, until, launches } = await cloudSetup(
+      `jobs-ortam-idle-${idleSeconds}`,
+      idleSeconds,
+    )
+    await until("running")
+    const running = await meta.getJob(job.id)
+    const machine = JSON.parse(running?.machine_json ?? "{}")
+    expect(launches[0]?.body).toMatchObject({ cwd: "/home/ortam", keep_awake: true })
+    expect(launches[0]?.body.timeout_seconds).toBeGreaterThan(60)
+    expect(launches[0]?.body.timeout_seconds).toBeLessThanOrEqual(21600)
+    expect(machine.launch_keep_awake).toBe(true)
+    if (!running) throw new Error("missing running Ortam job")
+    await advanceMachineJob(
+      { ...deps, now: () => new Date(Date.parse(machine.deadline_at) + 1) },
+      running,
+    )
+    expect((await meta.getJob(job.id))?.machine_phase).toBe("stopping")
+    await until("parked")
+    expect((await meta.getJob(job.id))?.machine_phase).toBe("parked")
+  })
+
+  it("only the running session's starter receives an Ortam certificate and Derive tunnel path", async () => {
+    const { app, meta, job, agent, until, certificates, certificateExpiry } = await cloudSetup(
+      "jobs-ortam-attach",
+      2700,
+      { session: true },
+    )
+    await until("running")
+    const publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOx3 ed@laptop"
+    const attach = (headers: Record<string, string>) =>
+      app.request(`/v1/jobs/${job.id}/attach`, jsonAs(headers, { public_key: publicKey }))
+    expect((await attach(as(owner.email))).status).toBe(403)
+    expect((await attach(as(outsider.email))).status).toBe(404)
+    expect((await attach(bearer(agent.token))).status).toBe(403)
+    expect(certificates).toEqual([])
+    const opened = await attach(as(ed.email))
+    expect(opened.status).toBe(200)
+    const current = await meta.getJob(job.id)
+    expect(await opened.json()).toEqual({
+      transport: "websocket",
+      user: "ortam",
+      host_key: "ssh-ed25519 AAAAhost",
+      certificate: "ssh-ed25519-cert-v01@openssh.com AAAAcert",
+      certificate_expires_at: certificateExpiry,
+      tunnel_path: `/v1/jobs/${job.id}/ssh`,
+      claim: current?.started_at,
+      tmux_session: "derive",
+    })
+    expect(certificates).toEqual([{ public_key: publicKey }])
+    if (!current) throw new Error("missing attached Ortam session")
+    const machine = JSON.parse(current.machine_json ?? "{}")
+    await meta.transitionJobMachine(job.id, current.machine_rev, { phase: "parked" })
+    expect((await attach(as(ed.email))).status).toBe(409)
+    const parked = await meta.getJob(job.id)
+    if (!parked) throw new Error("missing parked Ortam session")
+    await meta.transitionJobMachine(job.id, parked.machine_rev, {
+      phase: "running",
+      machine_json: JSON.stringify(machine),
+    })
+    await meta.updateJob(job.id, { meta_json: "{}" })
+    expect((await attach(as(ed.email))).status).toBe(409)
+    await meta.updateJob(job.id, { meta_json: current.meta_json })
+    const fresh = await meta.getJob(job.id)
+    if (!fresh) throw new Error("missing running Ortam session")
+    delete machine.own
+    await meta.transitionJobMachine(job.id, fresh.machine_rev, {
+      phase: "running",
+      machine_json: JSON.stringify(machine),
+    })
+    expect((await attach(as(ed.email))).status).toBe(409)
+    expect(certificates).toEqual([{ public_key: publicKey }])
+  })
+
+  it("checks the turn claim before opening Ortam and closes a tunnel invalidated during the handshake", async () => {
+    const closed = vi.fn()
+    const accepted = vi.fn()
+    const socket = bufferedSessionSocket(async () => {}, closed)
+    let revoke = async () => {}
+    const upstreamRequests: Array<Request> = []
+    const transport = {
+      connect: async (request: Request) => {
+        upstreamRequests.push(request)
+        await revoke()
+        return socket.socket
+      },
+      accept: async () => {
+        accepted()
+        return new Response("accepted")
+      },
+    }
+    const { app, meta, job, until } = await cloudSetup("jobs-ortam-handshake", 2700, {
+      session: true,
+      sessionTransport: transport,
+    })
+    await until("running")
+    const current = await meta.getJob(job.id)
+    const tunnel = (claim: string) =>
+      app.request(`/v1/jobs/${job.id}/ssh`, {
+        headers: { ...as(ed.email), upgrade: "websocket", "x-derive-job-claim": claim },
+      })
+    expect((await tunnel("2000-01-01T00:00:00.000Z")).status).toBe(409)
+    expect(upstreamRequests).toEqual([])
+    revoke = async () => {
+      await meta.removeMembership("default", ed.id)
+    }
+    expect((await tunnel(current?.started_at ?? "")).status).toBe(409)
+    expect(
+      upstreamRequests.map((request) => ({
+        url: request.url,
+        authorization: request.headers.get("authorization"),
+        upgrade: request.headers.get("upgrade"),
+      })),
+    ).toEqual([
+      {
+        url: "https://ortam.test/v1/sandboxes/sbx/ssh-tunnel",
+        authorization: "Bearer managed-ortam-key",
+        upgrade: "websocket",
+      },
+    ])
+    expect(closed).toHaveBeenCalledOnce()
+    expect(accepted).not.toHaveBeenCalled()
+  })
+
+  it("relays SSH bytes and closes both sockets when the starter cancels the session", async () => {
+    const toOrtam: Array<number[]> = []
+    const toLaptop: Array<number[]> = []
+    const upstreamClosed = vi.fn()
+    const downstreamClosed = vi.fn()
+    const upstream = bufferedSessionSocket(async (bytes) => {
+      toOrtam.push([...bytes])
+    }, upstreamClosed)
+    const downstream = bufferedSessionSocket(async (bytes) => {
+      toLaptop.push([...bytes])
+    }, downstreamClosed)
+    const transport: NonNullable<AppDeps["sessionTransport"]> = {
+      connect: async () => upstream.socket,
+      accept: async (_context, ready) => {
+        ready(downstream.socket)
+        return new Response("tunnel-open")
+      },
+    }
+    const { app, meta, job, until } = await cloudSetup("jobs-ortam-relay-cancel", 2700, {
+      session: true,
+      sessionTransport: transport,
+    })
+    await until("running")
+    const current = await meta.getJob(job.id)
+    try {
+      const response = await app.request(`/v1/jobs/${job.id}/ssh`, {
+        headers: {
+          ...as(ed.email),
+          upgrade: "websocket",
+          "x-derive-job-claim": current?.started_at ?? "",
+        },
+      })
+      expect(await response.text()).toBe("tunnel-open")
+      downstream.message(new Uint8Array([0, 255, 42]))
+      upstream.message(new Uint8Array([83, 83, 72]))
+      await vi.waitFor(() => {
+        expect(toOrtam).toEqual([[0, 255, 42]])
+        expect(toLaptop).toEqual([[83, 83, 72]])
+      })
+      expect(
+        (await app.request(`/v1/jobs/${job.id}/cancel`, { method: "POST", headers: as(ed.email) }))
+          .status,
+      ).toBe(200)
+      await vi.waitFor(
+        () => {
+          expect(upstreamClosed).toHaveBeenCalledOnce()
+          expect(downstreamClosed).toHaveBeenCalledOnce()
+        },
+        { timeout: 6000, interval: 25 },
+      )
+      expect((await meta.getJob(job.id))?.status).toBe("cancelled")
+    } finally {
+      upstream.close()
+      downstream.close()
+    }
+  }, 15_000)
+
+  it.each([
+    "consent",
+    "workspace binding",
+    "membership role",
+  ])("honors OAuth scope and %s revocation after access-token expiry", async (revoked) => {
+    const upstreamClosed = vi.fn()
+    const downstreamClosed = vi.fn()
+    const upstream = bufferedSessionSocket(async () => {}, upstreamClosed)
+    const downstream = bufferedSessionSocket(async () => {}, downstreamClosed)
+    const transport: NonNullable<AppDeps["sessionTransport"]> = {
+      connect: async () => upstream.socket,
+      accept: async (_context, ready) => {
+        ready(downstream.socket)
+        return new Response("tunnel-open")
+      },
+    }
+    const made = await cloudSetup(`jobs-ortam-oauth-${revoked.replaceAll(" ", "-")}`, 2700, {
+      session: true,
+      sessionTransport: transport,
+    })
+    await made.until("running")
+    const scopes = { value: ["derive:read"] }
+    const expires = { at: new Date(Date.now() + 60_000) }
+    const consent = { active: true }
+    const bound = { workspaces: ["default"] }
+    const meta = new Proxy(made.ctx.meta, {
+      get(target, prop, receiver) {
+        if (prop === "oauthGrantWithWorkspaces")
+          return async () => ({
+            grant: {
+              userId: ed.id,
+              userEmail: ed.email,
+              userName: ed.name,
+              clientId: "session-cli",
+              clientName: "Session CLI",
+              scopes: scopes.value,
+              expiresAt: expires.at,
+            },
+            mine: await made.meta.listWorkspaces(ed.id),
+            bound: bound.workspaces,
+          })
+        if (prop === "getOAuthClientWorkspaces") return async () => bound.workspaces
+        if (prop === "listUserGrants")
+          return async () =>
+            consent.active
+              ? [
+                  {
+                    clientId: "session-cli",
+                    clientName: "Session CLI",
+                    scopes: ["derive:read", "derive:publish"],
+                    grantedAt: "2026-10-13T00:00:00.000Z",
+                  },
+                ]
+              : []
+        return Reflect.get(target, prop, receiver)
+      },
+    })
+    const app = createApp({ ...made.ctx.deps, meta })
+    const headers = { ...bearer("session-cli-access"), "x-derive-workspace": "default" }
+    const attach = () =>
+      app.request(
+        `/v1/jobs/${made.job.id}/attach`,
+        jsonAs(headers, { public_key: "ssh-ed25519 AAAAclient" }),
+      )
+    const current = await made.meta.getJob(made.job.id)
+    const tunnel = () =>
+      app.request(`/v1/jobs/${made.job.id}/ssh`, {
+        headers: {
+          ...headers,
+          upgrade: "websocket",
+          "x-derive-job-claim": current?.started_at ?? "",
+        },
+      })
+    for (const granted of [["derive:read"], ["derive:read", "derive:comment"]]) {
+      scopes.value = granted
+      expect((await attach()).status).toBe(403)
+      expect((await tunnel()).status).toBe(403)
+    }
+    expect(made.certificates).toEqual([])
+    scopes.value = ["derive:read", "derive:publish"]
+    expect((await attach()).status).toBe(200)
+    expires.at = new Date(Date.now() + 1000)
+    try {
+      expect(await (await tunnel()).text()).toBe("tunnel-open")
+      await new Promise((resolve) => setTimeout(resolve, 5200))
+      expect((await attach()).status).toBe(403)
+      expect(upstreamClosed).not.toHaveBeenCalled()
+      expect(downstreamClosed).not.toHaveBeenCalled()
+      if (revoked === "consent") consent.active = false
+      else if (revoked === "workspace binding") bound.workspaces = ["other-workspace"]
+      else
+        await made.meta.setMembership({
+          id: "m_ortam_demoted",
+          org_id: "default",
+          user_id: ed.id,
+          role: "viewer",
+        })
+      await vi.waitFor(
+        () => {
+          expect(upstreamClosed).toHaveBeenCalledOnce()
+          expect(downstreamClosed).toHaveBeenCalledOnce()
+        },
+        { timeout: 5500, interval: 25 },
+      )
+    } finally {
+      upstream.close()
+      downstream.close()
+    }
+  }, 15_000)
+
+  it("replays a saved launch from before keep-awake support after losing its response", async () => {
+    const { meta, deps, job, until, launches, processes, responseLoss } = await cloudSetup(
+      "jobs-ortam-legacy-launch",
+      2700,
+    )
+    await until("ready")
+    const ready = await meta.getJob(job.id)
+    if (!ready) throw new Error("missing ready Ortam job")
+    const machine = JSON.parse(ready.machine_json ?? "{}")
+    delete machine.launch_keep_awake
+    machine.launch_timeout_seconds = Math.ceil(
+      (Date.parse(machine.deadline_at) - Date.now()) / 1000,
+    )
+    const launching = await meta.transitionJobMachine(job.id, ready.machine_rev, {
+      phase: "launching",
+      machine_json: JSON.stringify(machine),
+    })
+    if (!launching) throw new Error("legacy launch reservation lost")
+    responseLoss.next = true
+    await expect(advanceMachineJob(deps, launching)).rejects.toThrow(
+      "Ortam request outcome is unknown",
+    )
+    expect((await meta.getJob(job.id))?.machine_phase).toBe("launching")
+    const replay = await meta.getJob(job.id)
+    if (!replay) throw new Error("missing legacy launch for replay")
+    await advanceMachineJob(deps, replay)
+    const running = await meta.getJob(job.id)
+    expect(running?.machine_phase).toBe("running")
+    expect(processes.size).toBe(1)
+    expect(
+      launches.map(({ body, key }) => ({
+        key,
+        cwd: body.cwd,
+        keep_awake: body.keep_awake,
+        timeout: body.timeout_seconds,
+      })),
+    ).toEqual([
+      {
+        key: `derive-job-${machine.turn}-launch`,
+        cwd: "/home/ortam",
+        keep_awake: undefined,
+        timeout: machine.launch_timeout_seconds,
+      },
+      {
+        key: `derive-job-${machine.turn}-launch`,
+        cwd: "/home/ortam",
+        keep_awake: undefined,
+        timeout: machine.launch_timeout_seconds,
+      },
+    ])
+    expect(JSON.parse(running?.machine_json ?? "{}").process_id).toBe("process-1")
   })
 })
