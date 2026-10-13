@@ -57,3 +57,8 @@ The existing client guard checks the generated bundle before delivery.
 
 The collection client is one completed runtime seam. The full artifact kit,
 anchor client, frame bridge, React reader, and format controls still need adoption.
+
+Exact source operation validation and application use the shared protocol.
+Source maps, source stamps, incremental hashes, and page reconciliation use the same source owner.
+Slide operations retain comment identities and rewrite copied DOM and structural references.
+Layout edits read real attributes. Quoted attribute examples stay unchanged.

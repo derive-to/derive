@@ -9,8 +9,19 @@
  * never serializes a browser DOM.
  */
 
+import {
+  exactlyOne,
+  fail,
+  identity,
+  layoutKey,
+  layoutOf,
+  SIZES,
+  type SourceElement,
+  StructuralEditError,
+  setAttribute,
+  sourceElements,
+} from "@aniraga/open-artifact-protocol/source"
 import { STRUCTURAL_ID as ID, nextUnusedSlideId, sliceSlides } from "./decks"
-import { EditError } from "./doc-text"
 import { attrValues, type HtmlTag, hasAttr, tags } from "./html-tags"
 import { injectArtifactRuntimeScripts } from "./shared-state-client"
 import {
@@ -23,11 +34,16 @@ import {
   STRUCTURAL_ALIGN_PROPERTY,
   STRUCTURAL_GAP_PROPERTY,
   STRUCTURAL_HEIGHT_PROPERTY,
-  STRUCTURAL_LAYOUT,
   STRUCTURAL_WIDTH_PROPERTY,
   type StructuralAlignment,
 } from "./structural-width"
 import { stylePropertyValues, updateOpeningTagStyle } from "./style-attribute"
+
+export {
+  StructuralEditError,
+  setLayoutAttributes,
+  sourceElements,
+} from "@aniraga/open-artifact-protocol/source"
 
 export const STRUCTURAL_EDIT_SCHEMA = "derive.structural-edit/v1" as const
 export const STRUCTURAL_RECEIPT_SCHEMA = "derive.structural-edit-receipt/v1" as const
@@ -167,23 +183,7 @@ export interface StructuralBackfillResult {
   skipped: StructuralBackfillSkip[]
 }
 
-export class StructuralEditError extends EditError {
-  readonly code:
-    | "invalid-operation"
-    | "invalid-structure"
-    | "missing-target"
-    | "ambiguous-target"
-    | "no-change"
-
-  constructor(code: StructuralEditError["code"], message: string) {
-    super(message)
-    this.name = "StructuralEditError"
-    this.code = code
-  }
-}
-
 const MAX_STRUCTURAL_EDITS = 200
-const SIZES = new Set<StructuralSize>(["compact", "standard", "full"])
 const LAYOUTS = new Set<StructuralLayout>(["stack", "row"])
 const STRUCTURAL_ATTRIBUTES = [
   "data-derive-region",
@@ -207,186 +207,6 @@ const STRUCTURAL_ATTRIBUTES = [
   "data-derive-runtime-align",
   "data-derive-runtime-gap",
 ] as const
-
-const fail = (code: StructuralEditError["code"], message: string): never => {
-  throw new StructuralEditError(code, message)
-}
-
-const exactlyOne = (tag: HtmlTag, name: string, label: string): string | null => {
-  const values = attrValues(tag.attrs, name)
-  if (values.length > 1) fail("ambiguous-target", `${label} has more than one ${name} attribute.`)
-  if (values.length === 0 && hasAttr(tag.attrs, name))
-    fail("invalid-structure", `${label} has ${name} without a value.`)
-  return values[0] ?? null
-}
-
-const identity = (value: string | null, label: string): string => {
-  if (!value || !ID.test(value))
-    fail(
-      "invalid-structure",
-      `${label} must be 1–128 characters and start with a letter; only letters, numbers, _ and - are allowed.`,
-    )
-  return value as string
-}
-
-const structuralWidth = (value: string | null, label: string): number | null => {
-  if (value === null) return null
-  if (!/^(?:[1-9]|[1-9][0-9]|100)$/.test(value))
-    fail(
-      "invalid-structure",
-      `${label} must be a whole percentage from ${MIN_STRUCTURAL_WIDTH_PCT} to ${MAX_STRUCTURAL_WIDTH_PCT}.`,
-    )
-  const width = Number.parseInt(value, 10)
-  if (width < MIN_STRUCTURAL_WIDTH_PCT || width > MAX_STRUCTURAL_WIDTH_PCT)
-    fail(
-      "invalid-structure",
-      `${label} must be a whole percentage from ${MIN_STRUCTURAL_WIDTH_PCT} to ${MAX_STRUCTURAL_WIDTH_PCT}.`,
-    )
-  return width
-}
-
-const structuralHeight = (value: string | null, label: string): number | null => {
-  if (value === null) return null
-  if (!/^\d+$/.test(value))
-    fail(
-      "invalid-structure",
-      `${label} must be a whole pixel value from ${MIN_STRUCTURAL_HEIGHT_PX} to ${MAX_STRUCTURAL_HEIGHT_PX}.`,
-    )
-  const height = Number.parseInt(value, 10)
-  if (height < MIN_STRUCTURAL_HEIGHT_PX || height > MAX_STRUCTURAL_HEIGHT_PX)
-    fail(
-      "invalid-structure",
-      `${label} must be a whole pixel value from ${MIN_STRUCTURAL_HEIGHT_PX} to ${MAX_STRUCTURAL_HEIGHT_PX}.`,
-    )
-  return height
-}
-
-const structuralGap = (value: string | null, label: string): number | null => {
-  if (value === null) return null
-  if (!/^\d+$/.test(value))
-    fail(
-      "invalid-structure",
-      `${label} must be a whole pixel value from ${MIN_STRUCTURAL_GAP_PX} to ${MAX_STRUCTURAL_GAP_PX}.`,
-    )
-  const gap = Number.parseInt(value, 10)
-  if (gap < MIN_STRUCTURAL_GAP_PX || gap > MAX_STRUCTURAL_GAP_PX)
-    fail(
-      "invalid-structure",
-      `${label} must be a whole pixel value from ${MIN_STRUCTURAL_GAP_PX} to ${MAX_STRUCTURAL_GAP_PX}.`,
-    )
-  return gap
-}
-
-/** A canonical layout attribute's key in STRUCTURAL_LAYOUT, or null. */
-const layoutKey = (name: string): keyof typeof STRUCTURAL_LAYOUT | null => {
-  const key = name.replace(/^data-derive-/, "")
-  return key !== name && Object.hasOwn(STRUCTURAL_LAYOUT, key)
-    ? (key as keyof typeof STRUCTURAL_LAYOUT)
-    : null
-}
-
-/** Read and check an opening tag's layout contract: every value in range, size and width
- * exclusive, and each value paired with exactly one matching inline custom property. */
-const layoutOf = (tag: HtmlTag, label: string) => {
-  const style = exactlyOne(tag, "style", label) ?? ""
-  const read = (name: string) => exactlyOne(tag, name, label)
-  const paired = (key: "width" | "height" | "align" | "gap", value: string | number | null) => {
-    const [property, unit] = STRUCTURAL_LAYOUT[key]
-    const custom = stylePropertyValues(style, property, true)
-    if (
-      custom.length !== (value === null ? 0 : 1) ||
-      (value !== null && custom[0] !== `${value}${unit}`)
-    )
-      fail(
-        "invalid-structure",
-        `${label} must pair data-derive-${key} with one matching ${property} inline property.`,
-      )
-  }
-  const size = read("data-derive-size")
-  if (size !== null && !SIZES.has(size as StructuralSize))
-    fail("invalid-structure", `${label} has unsupported size ${JSON.stringify(size)}.`)
-  const width = structuralWidth(read("data-derive-width"), `${label} data-derive-width`)
-  if (size !== null && width !== null)
-    fail(
-      "invalid-structure",
-      `${label} cannot declare both data-derive-size and data-derive-width.`,
-    )
-  paired("width", width)
-  const height = structuralHeight(read("data-derive-height"), `${label} data-derive-height`)
-  paired("height", height)
-  const align = read("data-derive-align")
-  if (align !== null && !/^(?:start|center|end)$/.test(align))
-    fail("invalid-structure", `${label} has unsupported alignment ${JSON.stringify(align)}.`)
-  paired("align", align)
-  const gap = structuralGap(read("data-derive-gap"), `${label} data-derive-gap`)
-  paired("gap", gap)
-  return {
-    size: size as StructuralSize | null,
-    width,
-    height,
-    align: align as StructuralAlignment | null,
-    gap,
-  }
-}
-
-/** Set layout attributes on one opening tag (after its style is final) and check the
- * result by the same contract every node and region is inspected against. Values are
- * keywords and whole numbers, so nothing else can reach the tag. */
-export const setLayoutAttributes = (
-  opening: string,
-  attrs: Readonly<Record<string, string | null>>,
-  label: string,
-): string => {
-  let out = opening
-  for (const [name, value] of Object.entries(attrs)) {
-    if (!layoutKey(name)) fail("invalid-operation", `${label} can't set ${name}.`)
-    if (value !== null && !/^[a-z0-9]{1,16}$/.test(value))
-      fail("invalid-operation", `${label} has an invalid ${name} value.`)
-    out = setAttribute(out, name, value)
-  }
-  layoutOf(tags(out)[0] as HtmlTag, label)
-  return out
-}
-
-interface SourceElement {
-  tag: HtmlTag
-  parentStart: number | null
-  closeStart: number
-  end: number
-  explicitlyClosed: boolean
-}
-
-/** Build browser-effective element ranges and parentage while retaining whether a
- * declared element has a matching authored close token. */
-export const sourceElements = (
-  html: string,
-  all: readonly HtmlTag[] = tags(html),
-): SourceElement[] => {
-  const closeFor = new Map<number, HtmlTag>()
-  for (const tag of all) {
-    if (!tag.closing) continue
-    for (const start of tag.closedOpenStarts) closeFor.set(start, tag)
-  }
-
-  const elements: SourceElement[] = []
-  for (const tag of all) {
-    if (tag.closing) continue
-    const close = closeFor.get(tag.start)
-    const explicitlyClosed = tag.selfClosing || (!!close && close.name === tag.name)
-    const end = tag.selfClosing ? tag.end : close?.name === tag.name ? close.end : -1
-    const closeStart = tag.selfClosing ? tag.end : close?.name === tag.name ? close.start : -1
-    elements.push({ tag, parentStart: null, closeStart, end, explicitlyClosed })
-  }
-
-  const stack: SourceElement[] = []
-  for (const element of elements) {
-    while ((stack.at(-1)?.end ?? Number.POSITIVE_INFINITY) <= element.tag.start) stack.pop()
-    const parent = stack.at(-1)
-    if (parent && parent.end >= element.end) element.parentStart = parent.tag.start
-    if (!element.tag.selfClosing && element.end >= 0) stack.push(element)
-  }
-  return elements
-}
 
 interface OwnedNode extends StructuralNodeInspection {
   align: StructuralAlignment | null
@@ -653,27 +473,6 @@ const nodeFor = (region: OwnedRegion, id: unknown, label: string): OwnedNode => 
 }
 
 /** Add, replace, or remove one opening-tag attribute without touching other bytes. */
-const setAttribute = (opening: string, name: string, value: string | null): string => {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-  const pattern = new RegExp(`(\\s+)${escaped}\\s*=\\s*(?:"[^"]*"|'[^']*'|[^\\s>]+)`, "i")
-  const match = pattern.exec(opening)
-  if (match) {
-    if (value === null)
-      return opening.slice(0, match.index) + opening.slice(match.index + match[0].length)
-    const raw = match[0]
-    const quote = raw.includes("'") && !raw.includes('"') ? "'" : '"'
-    const replacement = `${match[1]}${name}=${quote}${value}${quote}`
-    return opening.slice(0, match.index) + replacement + opening.slice(match.index + raw.length)
-  }
-  if (value === null) return opening
-  const close = opening.lastIndexOf(">")
-  if (close < 0) return opening
-  let insert = close
-  while (insert > 0 && /\s/.test(opening.charAt(insert - 1))) insert--
-  if (opening[insert - 1] === "/") insert--
-  return `${opening.slice(0, insert)} ${name}="${value}"${opening.slice(insert)}`
-}
-
 const backfillStyle = (runtime: boolean): string => {
   const prefix = runtime ? "data-derive-runtime" : "data-derive"
   return `<style data-derive-structural-backfill>

@@ -1,7 +1,7 @@
 {
   "repository": "https://github.com/derive-to/open-artifact",
   "baseCommit": "9b6a221ca7ac64dea06c1603426504771aee4dab",
-  "previewVersion": "0.6.0-core.26",
+  "previewVersion": "0.6.0-core.27",
   "sources": {
     "anchors.ts": "a6981a8e44f3004a0fad2814fecc637a1fac92e057d1b8f539b348745080aaa1",
     "collection.ts": "a2b3e15154bc80ee338f57d4d7a0123662c415f7e8ff666fcb37be98e972d626",
@@ -16,6 +16,12 @@
     "quote-match.ts": "1652cf7b904aa9afb301850ec78df4c767476d63fdb1d8c9c4b3b6118c3e469a",
     "slot-map.ts": "96586fc021c7f191a5659573ba0b388e2f3e73850748c1c209b30daa73bdf5ea",
     "source-anchors.ts": "529fc45bec055ad20bfaffb342bdb344ddb4de1440759efa48b1a30bbe2027b2",
+    "source-cache.ts": "64e67526a9afff336d7f77a152ec27975fc964ac90f00364581cbc356be89c8a",
+    "source-copy-dom.ts": "b27112c86f610c6113aedd1c1fb712521f11c51b9160edc12c69e4cdfcf519dc",
+    "source-copy-identities.ts": "b6fecea97c494ce901e9f65140abad93452b10e0b4c60c0202d537813d8f375c",
+    "source-deck-elements.ts": "964de16f5e6cf6d24d5c57a906758ab6eba4356b2f94bbcd8fa31ca1ed1042db",
+    "source-deck-ops.ts": "4796458642dc7828c45a85311253641225f883c946597de92d16eb957cf1f67b",
+    "source-deck.ts": "582d92410721d5003e148254aa29c728cf1b4a425408f5bac568b4b62300e387",
     "source-edits.ts": "5688cdfc79445479b2a77509fd165990f4578b6b523926f65ca5e0f1935d8b8f",
     "source-element-edits.ts": "de65a8cd0fa29a2b27de33619df162fd21b7f3c9bd6e0feb6f5264ffbe3c4b8a",
     "source-element-match.ts": "71f04c626c0b21f3887b9bb7c1f5fb7f7173af322863ffce0792d429e849b2d0",
@@ -32,14 +38,27 @@
     "source-html-attributes.ts": "4066455cf14e23cedf7a7dbe0bb5e50d2d6d895d79fd7483717714e291d51444",
     "source-html-elements.ts": "50126672f48078ecf15779a8d2ed5fbcedad74014418b7da72a65fa0b4abf708",
     "source-html.ts": "3ea1dd7683a205839b513af6cdd7c7ee581d678ed79de3183b0960d7f49e2458",
+    "source-layout-limits.ts": "87fd410eb78dac893b8897d6985d8ee233eaf8b4fc1d56c61be68f143315ab7e",
+    "source-layout.ts": "d32344733aaea1f69ca2ddf0f1475815d34434b18b3956d9a49af537386a1ee8",
+    "source-op-apply.ts": "30e3a53d2755ef7021b5593cfad74974be90395149e6ca589fc69d0861e73c7c",
+    "source-op-context.ts": "0ed781b6aedc50f13a0b46e4b13f043ae9302925ec5090e37536dd47cbde2753",
+    "source-op-hash.ts": "a96fe05dce11d07a884c6312f83244f902ff3d06b494a5a9f680f477674cf926",
+    "source-op-index.ts": "ac2034689b39858a28d1533584c91c79094d13e75e56e31e79db9bf443659770",
+    "source-op-parse.ts": "916444b05fa680fe36ba93388a96f98a3d3eaee4c5586511b838ee3dd11bf71a",
+    "source-op-render.ts": "b3f5a28920509e60f27de395cec07bdbc63d75e6234b492000770da97cd9d769",
     "source-op-types.ts": "f037098a7aa625bfc996565076b4b091160f1b34512bbc9a95861ba9208e12da",
+    "source-ranges.ts": "edfcceb7384ac41f1b02e6bb596303884f0019799a75746b979049c2ccc0c778",
     "source-reflow.ts": "5415af7fcf4ed75a8d176a3e8037daca1350e1a1061866c9031979f97174fcaf",
+    "source-sha256.ts": "8a9b094cf6bd141e4411820b43ecd851a976b3a5e79281ce0a6bc88a8fa61309",
+    "source-stamp.ts": "2d0823940bae8340a7bbc45f2761a467966fa54f2a0f301ac575c55d09ca56a5",
+    "source-stamped-sync.ts": "16ab391cb00a049af6a2e30df514981aa418aee726f0cc7e34f9840d267e83f0",
     "source-style.ts": "2230d06be2362f0115942b2e81321ec720a44510bd2fa8e7e799899440b4c9b3",
+    "source-tags.ts": "9cbe96ebae938d2aeae42decde332d518986c77eefa9b755d851ea724433d481",
     "source-text-index.ts": "47a483046f51467f9f84322a2cb3a6338f8efd76d1ea8d43685670380ed4c7fe",
     "source-text-range.ts": "dd219b00db2399a0261b43baa18baebc123c1347e04a5c8d5de1c405767f94b6",
     "source-text-segments.ts": "97f6a1bc48ca12a35b9082f1be2cb7e5b5ff76039eda7a241820844d1f5c9ea9",
     "source-text.ts": "8192554896e5e847fd1b304c22c53b3516398f7c441b6e06aa112dd79000dda3",
-    "source.ts": "5f66a61bb2d0f489513671da6ae9e30e498911ba459d3e652b72665e6b885354",
+    "source.ts": "c665925220fc4c18ef534467887f5bc1f838a68396dd14b26ef28a8102647c55",
     "state-apply.ts": "dfc173017d93ae6ea5b7f0092e9f64d5e13f7f04764dd79e597bb46044ee8ecc",
     "state-limits.ts": "d9ba463e9d219dfe02b6529dd4de67124a9feb1238a08b5d82ba4f0cc6265092",
     "state.ts": "71d110ce032da3b3bde8671d8fb5f1fc5abb6293aac965d6128014010a429c39",
@@ -47,9 +66,9 @@
     "tools.ts": "a83f4d194b0fcf7f56f37753fbd1f4b1a48d32f1aaafebb98fea2584bf996611",
     "viewer.ts": "e7c87eda4dbbbf8a02f7e25aff70139df90f7375967086be0f9a740f8ea64f41"
   },
-  "tarballSha256": "724da95108d67f7a21c8ef9d656b63457b9ccc6492e1161a226847c1b8262f07",
-  "note": "Packed source preview for the first Derive consumer. This is not a published npm release.",
-  "sourceCommit": "f2a0320a8fe1c2bc1dbc5b2868cb7f295d25ccad",
+  "tarballSha256": "a455df4943c8a8db7c64c31a57dace8293450b6567b77373ca100d6d267de365",
+  "note": "Packed committed source for Derive. Shared source, collection, publication, browser capture, source operations, and slide identities. Registry release remains pending.",
+  "sourceCommit": "c24960a6c690bef4da2b9914e1223777e26243ff",
   "runtimeSources": {
     "anchoring.ts": "138f9789b3ec2fbc4aec410adbcee348000148fce615763db5b8d0039673204a",
     "connection.ts": "ebb1704972a86e554f065c7e635f40e421716831120dd8bf1a541913fab7a953",
@@ -79,7 +98,7 @@
     "viewer.entry.ts": "ba030f8c1483ba6c741284e498fa47b7798b9bd27d682b0fe36fc9457e7252b4",
     "viewer.ts": "2855a1bc365c0fc2af552fa3d3c7da2da598f13d2ca4824290587501685ceed5"
   },
-  "runtimeTarballSha256": "9ffad922d0fe89aa25a49227202c538886cd8157163f1e7fb7a6c7782b81f509",
+  "runtimeTarballSha256": "b697f7d323296924f7c69342e51957537ed10029e9d70d5dd81e674d235c28be",
   "runtimeDeclarationBase": {
     "version": "0.5.2",
     "sha256": "d02d2797c94147df26ba1f3e7e1746d617022f61f01718bca218b456a5b052ef"
@@ -162,7 +181,7 @@
     "source.ts": "25e5f94cbab7612d41713eb857864b60c402710ad743fd09b92518249714bcb6",
     "testing.ts": "cedbc1dd20a8a6c796a3751032a0e5f1a51c8b16cd460a1a4ad744b9b76a08b4"
   },
-  "serverTarballSha256": "dc76933eff506baa7e950e595cd4451e0714f5ca2981b445ae3598ddfaafb674",
+  "serverTarballSha256": "83f8dc60634fd18d4eb09698039249a30af3d53066225ac2fbe04da23dd2710d",
   "serverDeclarationBase": {
     "version": "0.5.2",
     "sha256": "64caa1af433ede4c9b565d54c2d2a998880f3e8c88c5efc10b2f24bf32d3cac2"
