@@ -303,6 +303,30 @@ export class BoatClient implements SandboxClient {
   async isSandboxDeleted(id: string, identity: Identity) {
     return (await this.sandbox(id, identity)).state === "stopped"
   }
+  async sshKey(id: string, publicKey: string, identity: Identity) {
+    await this.read(id, identity)
+    const r = z
+      .object({
+        machineIp: z.string().nullish(),
+        sshUser: z.string().default("user"),
+        sshEndpoint: z.string().nullish(),
+        hostKey: z.string().nullish(),
+      })
+      .parse(
+        await this.request(`/sandboxes/${encodeURIComponent(id)}/sshkey`, "POST", {
+          key: publicKey,
+        }),
+      )
+    // A machine without its own public address is reached through a forwarded port.
+    const [host, port] = r.sshEndpoint
+      ? [
+          r.sshEndpoint.slice(0, r.sshEndpoint.lastIndexOf(":")),
+          Number(r.sshEndpoint.split(":").at(-1)),
+        ]
+      : [r.machineIp, 22]
+    if (!host || !Number.isInteger(port)) throw new Error("boat.dev gave no SSH address")
+    return { host, port, user: r.sshUser, host_key: r.hostKey ?? null }
+  }
   async usage(id: string, since: string, until: string, identity: Identity) {
     await this.read(id, identity)
     const result = z

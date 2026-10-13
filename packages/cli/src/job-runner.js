@@ -21,8 +21,8 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve, sep } from "node:path"
-import { checkpointConversation, restoreConversation } from "./conversation.js"
-import { RUNNER_PROTOCOL_VERSION } from "./conversation-format.js"
+import { checkpointConversation, latestSessionId, restoreConversation } from "./conversation.js"
+import { RUNNER_PROTOCOL_VERSION, SESSION_RESUME } from "./conversation-format.js"
 import { selectProvider } from "./providers/index.js"
 import { terminateProcess } from "./providers/process.js"
 import {
@@ -33,6 +33,7 @@ import {
   stripModelTokens,
   toMicroUsd,
 } from "./runner.js"
+import { runSession } from "./session.js"
 import { fetchSkill, writeSkill } from "./skills.js"
 
 const positiveMs = (raw, fallback, floor) => {
@@ -400,6 +401,31 @@ export async function stageLocalImages(client, html, cwd, notes = [], page = "."
   return out
 }
 
+/** One interactive session turn: the native harness in tmux until it exits or idles. A turn
+ *  that only reopens the session (`derive attach`) sends no message; any other follow-up is
+ *  typed in as the session's next message. */
+async function serveSession(
+  start,
+  { provider, providerName, bin, cwd, model, effort, systemPrompt, turn, env, home, signal, meter },
+) {
+  const resumeSessionId = turn?.previous?.session_id ?? null
+  const prompt = resumeSessionId && turn?.body_md === SESSION_RESUME ? null : turn?.body_md
+  const args = provider.sessionArgs({ model, effort, systemPrompt, prompt, resumeSessionId })
+  const ended = await start({ bin, args, cwd, env, signal })
+  meter.sessionId = latestSessionId(home, providerName) ?? resumeSessionId
+  if (ended === "stopped") return { ok: false, error: "The session was stopped.", retryable: false }
+  return {
+    ok: true,
+    answer: {
+      body_md:
+        ended === "idle"
+          ? "Session paused while idle. `derive attach` picks it up where it left off."
+          : "Session ended.",
+      escalate: false,
+    },
+  }
+}
+
 const CHECK_TIMEOUT_MS = 10 * 60_000
 
 /** Run the agent's machine check. A nonzero exit fails the task with the output's tail and
@@ -588,22 +614,37 @@ export async function serveJob(client, job, cfg, deps = {}) {
     }
     const result = cfg.mock
       ? { ok: true, answer: { body_md: `Mock run of job ${job.id}.`, escalate: false } }
-      : await run(provider, {
-          bin: cfg.agentBin ?? provider.binFrom({}, process.env),
-          cwd: cfg.cwd,
-          model,
-          effort: job.execution?.effort ?? null,
-          timeoutMs: cfg.timeoutMs,
-          systemPrompt: jobSystemPrompt(job, { shim: shim?.rel }),
-          prompt: job.turn ? job.turn.body_md : buildPrompt(job.messages ?? []),
-          resumeSessionId: job.turn?.previous?.session_id ?? null,
-          env,
-          signal: abort.signal,
-          onEvent: (event) => {
-            if (eventSeq < 500) events.push({ seq: ++eventSeq, kind: event.kind })
-          },
-          meter,
-        })
+      : job.execution?.session
+        ? await serveSession(deps.runSession ?? runSession, {
+            provider,
+            providerName,
+            bin: cfg.agentBin ?? provider.binFrom({}, process.env),
+            cwd: cfg.cwd,
+            model,
+            effort: job.execution.effort ?? null,
+            systemPrompt: jobSystemPrompt(job, { shim: shim?.rel }),
+            turn: job.turn,
+            env,
+            home,
+            signal: abort.signal,
+            meter,
+          })
+        : await run(provider, {
+            bin: cfg.agentBin ?? provider.binFrom({}, process.env),
+            cwd: cfg.cwd,
+            model,
+            effort: job.execution?.effort ?? null,
+            timeoutMs: cfg.timeoutMs,
+            systemPrompt: jobSystemPrompt(job, { shim: shim?.rel }),
+            prompt: job.turn ? job.turn.body_md : buildPrompt(job.messages ?? []),
+            resumeSessionId: job.turn?.previous?.session_id ?? null,
+            env,
+            signal: abort.signal,
+            onEvent: (event) => {
+              if (eventSeq < 500) events.push({ seq: ++eventSeq, kind: event.kind })
+            },
+            meter,
+          })
     await flushCredential()
     if (job.turn && meter.sessionId && home) {
       try {

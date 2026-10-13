@@ -15,6 +15,7 @@ import {
   runOneJob,
   serveJob,
 } from "../../../packages/cli/src/job-runner.js"
+import { sessionApi, sessionCommand } from "../../../packages/cli/src/sessions.js"
 import type { AppDeps } from "../src/context"
 import { purgeUserDataAndSyncSeats } from "../src/lib/account"
 import type { ModelTurn } from "../src/lib/agent-loop"
@@ -2913,6 +2914,15 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
       }
       if (action === "usage")
         return json({ sandboxId: id, seconds: 30, dollars: 0.0006, running: false })
+      if (action === "sshkey") {
+        calls.push(`sshkey ${id} ${body.key.split(" ")[0]}`)
+        return json({
+          success: true,
+          machineIp: "203.0.113.10",
+          sshUser: "user",
+          hostKey: "ssh-ed25519 AAAAhost",
+        })
+      }
       return new Response("{}", { status: 404 })
     }) as typeof fetch
     /** The runner process on a sandbox finished (its newest launch). */
@@ -2923,6 +2933,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     return { fetcher, boxes, calls, exit }
   }
 
+  const SESSION_UUID = "0b6f2a1e-3c4d-4e5f-8a9b-0c1d2e3f4a5b"
   const harness = join(mkdtempSync(join(tmpdir(), "derive-machine-codex-")), "codex")
   writeFileSync(harness, "#!/bin/sh\nprintf 'codex-cli 0.162.1\\n'\n")
   chmodSync(harness, 0o755)
@@ -2975,7 +2986,11 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
       expect((await meta.getJob(jobId))?.machine_phase).toBe(phase)
     }
     /** Act as the runner the machine launched: claim the job with its token and report. */
-    const runTurn = async (sandboxId: string, answer: string) => {
+    const runTurn = async (
+      sandboxId: string,
+      answer: string,
+      runSession?: (opts: { args: string[] }) => Promise<string>,
+    ) => {
       const env = boat.boxes.get(sandboxId)?.env
       if (!env) throw new Error(`nothing launched on ${sandboxId}`)
       const cfg = {
@@ -3008,6 +3023,20 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
           opts.meter.sessionId = `${sandboxId}-thread`
           return { ok: true, answer: { body_md: answer, escalate: false } }
         },
+        // An interactive harness leaves its own session file, named by the id it chose.
+        ...(runSession
+          ? {
+              runSession: async (opts: { args: string[]; env: Record<string, string> }) => {
+                const day = join(opts.env.CODEX_HOME ?? "", "sessions", "2026", "10", "13")
+                mkdirSync(day, { recursive: true })
+                writeFileSync(
+                  join(day, `rollout-2026-10-13T00-00-00-${SESSION_UUID}.jsonl`),
+                  "{}\n",
+                )
+                return runSession(opts)
+              },
+            }
+          : {}),
       })
       boat.exit(sandboxId)
       return out
@@ -3066,6 +3095,90 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     await until(b.id, "released")
     const usage = JSON.parse((await meta.getJob(a.id))?.result_json ?? "{}").compute
     expect(usage).toHaveLength(2)
+  })
+
+  it("an interactive session runs the native harness, parks when idle, and only its starter attaches", async () => {
+    const { app, meta, boat, until, runTurn } = await cloudSetup("jobs-machine-session")
+    // A session gets its own machine even on an agent that keeps files.
+    const agent = await createAgent(app, { machine: "derive", provider: "codex", effort: "medium" })
+    const res = await app.request(
+      "/v1/jobs",
+      jsonAs(as(ed.email), {
+        agent_id: agent.id,
+        instruction: "Tidy the inbox empty state",
+        session: true,
+      }),
+    )
+    const job = (await res.json()) as { id: string }
+    await until(job.id, "running")
+    const box = JSON.parse((await meta.getJob(job.id))?.machine_json ?? "{}").own.sandbox_id
+    const key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOx3 ed@laptop"
+    const attach = (who: string) =>
+      app.request(`/v1/jobs/${job.id}/attach`, jsonAs(as(who), { public_key: key }))
+
+    // Only the person who started the session gets a shell on its machine.
+    expect((await attach(owner.email)).status).toBe(403)
+    const opened = await attach(ed.email)
+    expect(opened.status).toBe(200)
+    expect(await opened.json()).toEqual({
+      host: "203.0.113.10",
+      port: 22,
+      user: "user",
+      host_key: "ssh-ed25519 AAAAhost",
+      tmux_session: "derive",
+    })
+
+    // The runner starts the harness interactively with the task's model and effort.
+    let first: string[] = []
+    await runTurn(box, "", async ({ args }) => {
+      first = args
+      return "idle"
+    })
+    expect(first.slice(0, 5)).toEqual([
+      "--dangerously-bypass-approvals-and-sandbox",
+      "-m",
+      "gpt-6-luna",
+      "-c",
+      'model_reasoning_effort="medium"',
+    ])
+    expect(first.at(-1)).toContain("Tidy the inbox empty state")
+    await until(job.id, "parked")
+    expect((await meta.listJobMessages(job.id)).at(-1)?.body_md).toContain("Session paused")
+    expect((await attach(ed.email)).status).toBe(409)
+    // `derive ls` lists it as a paused session.
+    const printed: string[] = []
+    const log = vi
+      .spyOn(console, "log")
+      .mockImplementation((line) => void printed.push(String(line)))
+    const cli = sessionApi({
+      server: "http://derive.test",
+      token: null,
+      workspaceId: null,
+      fetcher: (url, init) =>
+        Promise.resolve(
+          app.request(String(url), { ...init, headers: { ...init?.headers, ...as(ed.email) } }),
+        ),
+    })
+    expect(await sessionCommand("ls", [], {}, cli)).toBe(0)
+    log.mockRestore()
+    expect(printed.join("\n")).toMatch(
+      new RegExp(`${job.id.slice(-6)}\\s+.+?\\s+codex\\s+session\\s+-\\s+paused`),
+    )
+
+    // Reopening resumes the same conversation on the same machine without a new message.
+    await app.request(
+      `/v1/jobs/${job.id}/messages`,
+      jsonAs(as(ed.email), { body_md: "Resume the session." }),
+    )
+    await until(job.id, "running")
+    expect(boat.calls).toContain(`resume ${box}`)
+    let second: string[] = []
+    await runTurn(box, "", async ({ args }) => {
+      second = args
+      return "exited"
+    })
+    expect(second[0]).toBe("resume")
+    expect(second.at(-1)).toBe(SESSION_UUID)
   })
 
   it("the workspace machine limit holds the next task until a machine frees", async () => {

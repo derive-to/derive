@@ -7,6 +7,7 @@ import {
   newId,
   parseAgentSandbox,
   type SandboxSize,
+  taskOptions,
 } from "@derive/core"
 import { log } from "../log"
 import { agentWritesOff } from "./agent-writes"
@@ -15,7 +16,7 @@ import { turnProblem } from "./job-command"
 import type { JobDeps } from "./job-policy"
 import { jobOverBudget, noteHeldForBudget, reportJob, wakeClaimed, wakeSettled } from "./jobs"
 import { OrtamClient } from "./ortam-client"
-import { machineClock } from "./run-lifecycle"
+import { MAX_RUN_CEILING_MS, machineClock } from "./run-lifecycle"
 import { signWorkToken } from "./run-token"
 import { cloudEnabled, connectionClient, workspaceRuntime } from "./runtime-connection"
 import { runtimeFailureReason } from "./runtime-diagnostics"
@@ -457,7 +458,11 @@ async function borrow(
   const store = deps.meta.jobExecution
   if (!store) return null
   const now = deps.now?.() ?? new Date()
-  const clock = machineClock(agent.max_run_ms, now.getTime())
+  // An interactive session runs until its person leaves it idle; the runner parks it then.
+  const clock = machineClock(
+    taskOptions(job.meta_json).session ? MAX_RUN_CEILING_MS : agent.max_run_ms,
+    now.getTime(),
+  )
   const held = await store.borrow({
     job_id: job.id,
     org_id: job.org_id,
@@ -959,7 +964,11 @@ export async function machinePass(
       // The machine the turn was admitted with, not whatever the agent says now.
       const spec = parseAgentSandbox(execution.sandbox?.spec_json ?? agent.sandbox_json)
       const parked = parse<MachineState>(job.machine_json)?.own
-      const ownsMachine = spec.fresh || (job.machine_phase === "parked" && !!parked)
+      // An interactive session always gets its own machine, whatever the agent shares.
+      const ownsMachine =
+        spec.fresh ||
+        !!taskOptions(job.meta_json).session ||
+        (job.machine_phase === "parked" && !!parked)
       if (tried.has(ownsMachine ? job.id : agent.id)) return
       tried.add(ownsMachine ? job.id : agent.id)
       if (!(await admitted(deps, agent, ownsMachine ? (parked ?? null) : sharedState(agent))))
@@ -1130,6 +1139,35 @@ export async function replaceIdleSandbox(meta: MetaStore, agent: AgentRecord): P
   await meta.transitionAgentSandbox(agent.id, agent.org_id, agent.sandbox_rev, {
     phase: "deleting",
   })
+}
+
+/** Let a person's SSH key into a running interactive session's machine. Returns where to
+ *  connect, or why not yet. Only the session's own machine is ever opened: a shared sandbox
+ *  carries other tasks' files. */
+export async function attachSession(
+  deps: MachineDeps,
+  job: JobRecord,
+  publicKey: string,
+): Promise<
+  | { ok: true; host: string; port: number; user: string; host_key: string | null }
+  | { ok: false; status: 404 | 409; error: string }
+> {
+  const agent = await deps.meta.getAgent(job.agent_id)
+  const own = parse<MachineState>(job.machine_json)?.own
+  if (!agent || !taskOptions(job.meta_json).session)
+    return { ok: false, status: 404, error: "This task is not an interactive session." }
+  if (job.machine_phase !== "running" || !own?.sandbox_id)
+    return {
+      ok: false,
+      status: 409,
+      error:
+        job.machine_phase === "parked" || !job.machine_phase || job.machine_phase === "released"
+          ? "This session is paused. Resume it first."
+          : "This session is still starting.",
+    }
+  const client = await clientFor(deps, agent, own)
+  if (!client.sshKey) return { ok: false, status: 409, error: "This machine has no SSH access." }
+  return { ok: true, ...(await client.sshKey(own.sandbox_id, publicKey, own.identity)) }
 }
 
 /** For the tick's callers: the pass, or nothing when this deploy has no Derive machines. */

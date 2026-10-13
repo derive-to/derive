@@ -1838,6 +1838,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/jobs/{id}/attach": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Let your SSH key into your running interactive session's machine. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        /** @description An OpenSSH public key. Private keys are refused. */
+                        public_key: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Where to connect. Attach with `tmux attach -t derive` once connected. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            host: string;
+                            port: number;
+                            user: string;
+                            /** @description Pin this in known_hosts. */
+                            host_key: string | null;
+                            tmux_session: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/jobs/{id}/retry": {
         parameters: {
             query?: never;
@@ -7679,8 +7731,16 @@ export interface components {
             kind: "ask" | "scheduled" | "graph" | "node";
             /** @enum {string} */
             status: "queued" | "running" | "needs_you" | "succeeded" | "failed" | "cancelled" | "lost";
-            /** @enum {string|null} */
-            machine_phase?: "starting" | "ready" | "launching" | "running" | "stopping" | "released" | null;
+            /**
+             * @description Where the task's cloud machine is. `parked`: stopped with its files, resumable.
+             * @enum {string|null}
+             */
+            machine_phase?: "creating" | "provisioning" | "starting" | "ready" | "launching" | "running" | "stopping" | "parked" | "deleting" | "released" | null;
+            /** @description How the task runs: an interactive session, and the repository it works in. */
+            task: {
+                session?: boolean;
+                repo?: string;
+            };
             instruction: string;
             asked_by: string | null;
             attended: boolean;

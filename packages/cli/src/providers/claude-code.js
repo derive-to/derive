@@ -205,6 +205,19 @@ export const claudeCode = {
     return spawnClaude({ bin, cwd, args, timeoutMs, env, signal, onEvent })
   },
 
+  /** Arguments for an interactive session in a terminal. The person at the terminal approves
+   *  nothing: the cloud machine is the boundary, as for a headless turn. */
+  sessionArgs({ model, systemPrompt, prompt, resumeSessionId }) {
+    return [
+      "--dangerously-skip-permissions",
+      "--append-system-prompt",
+      systemPrompt,
+      ...(model ? ["--model", model] : []),
+      ...(resumeSessionId ? ["--resume", resumeSessionId] : []),
+      ...(prompt ? [prompt] : []),
+    ]
+  },
+
   /** Is this run worth a second attempt? Only when the SERVICE failed, never
    *  when the configuration did — a wrong model name or a missing binary fails
    *  the same way twice, and paying a sleep plus a second spawn to learn that is

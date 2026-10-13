@@ -1,5 +1,13 @@
 export const RUNNER_PROTOCOL_VERSION = 1
 
+/** The tmux session an interactive task's harness runs in; the runner starts it and
+ *  `derive attach` joins it. */
+export const SESSION_TMUX = "derive"
+
+/** A follow-up that only reopens a paused session: the runner resumes the conversation and
+ *  sends no message. */
+export const SESSION_RESUME = "Resume the session."
+
 export const checkpointFileAllowed = (provider, session, file) => {
   if (
     !/^[a-zA-Z0-9_-]{1,200}$/.test(session) ||

@@ -12,7 +12,9 @@ import {
   priceJobRun,
   questionHistory,
   type Selector,
+  type TaskOptions,
   type TriggerRecord,
+  taskOptions,
 } from "@derive/core"
 import { log } from "../log"
 import { agentWritesOff } from "./agent-writes"
@@ -183,6 +185,8 @@ export interface AskInput {
   parentId?: string | null
   nodeId?: string | null
   kind?: "ask" | "node" | "graph"
+  /** How a Derive-machine task runs (interactive session, repository); kept for its life. */
+  task?: TaskOptions
 }
 
 /** Open a job for an agent. With a dedupe key that already names an open job, returns that
@@ -212,6 +216,9 @@ export const askAgent = async (
         subject_json: input.subject ? JSON.stringify(input.subject) : null,
         parent_id: input.parentId ?? null,
         node_id: input.nodeId ?? null,
+        ...(input.task && Object.keys(input.task).length
+          ? { meta_json: JSON.stringify(input.task) }
+          : {}),
       },
     })
     wake(deps, input.agent.id, "job.queued", out.job)
@@ -903,6 +910,7 @@ export const jobJson = (j: JobRecord) => ({
   kind: j.kind,
   status: j.status,
   machine_phase: j.machine_phase,
+  task: taskOptions(j.meta_json),
   instruction: j.instruction,
   asked_by: j.asked_by,
   attended: j.attended === 1,

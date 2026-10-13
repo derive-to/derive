@@ -9,8 +9,14 @@ import {
   parseAgentSandbox,
   roleAllows,
   type Selector,
+  TASK_REPO,
+  taskOptions,
 } from "@derive/core"
-import { checkpointProblem, RUNNER_PROTOCOL_VERSION } from "@derive-to/cli/conversation-format"
+import {
+  checkpointProblem,
+  RUNNER_PROTOCOL_VERSION,
+  SESSION_TMUX,
+} from "@derive-to/cli/conversation-format"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
@@ -33,7 +39,7 @@ import { bail, fail, readJson } from "../lib/http"
 import { resolveJobCredential } from "../lib/job-accounts"
 import { turnAgent } from "../lib/job-command"
 import { advanceGraph, graphAware } from "../lib/job-graph"
-import { machineDepsFrom, machinePass } from "../lib/job-machine"
+import { attachSession, machineDepsFrom, machinePass } from "../lib/job-machine"
 import { canAskAgent, canManageAgent, canSteerJob, inboxScope } from "../lib/job-policy"
 import {
   answerJob,
@@ -174,9 +180,24 @@ const Job = z
     kind: z.enum(["ask", "scheduled", "graph", "node"]),
     status: z.enum(["queued", "running", "needs_you", "succeeded", "failed", "cancelled", "lost"]),
     machine_phase: z
-      .enum(["starting", "ready", "launching", "running", "stopping", "released"])
+      .enum([
+        "creating",
+        "provisioning",
+        "starting",
+        "ready",
+        "launching",
+        "running",
+        "stopping",
+        "parked",
+        "deleting",
+        "released",
+      ])
       .nullable()
-      .optional(),
+      .optional()
+      .describe("Where the task's cloud machine is. `parked`: stopped with its files, resumable."),
+    task: z
+      .object({ session: z.boolean().optional(), repo: z.string().optional() })
+      .describe("How the task runs: an interactive session, and the repository it works in."),
     instruction: z.string(),
     asked_by: z.string().nullable(),
     attended: z.boolean(),
@@ -551,6 +572,10 @@ export const jobRoutes = (ctx: AppContext) => {
           model_id: z.string().trim().min(1).max(200).nullish(),
           selection: z.string().trim().min(1).max(8000).optional(),
           base_version: z.number().int().positive().optional(),
+          // A Derive-machine task only: run interactively for the asker to attach to, and the
+          // repository to check out first.
+          session: z.boolean().optional(),
+          repo: z.string().regex(TASK_REPO).optional(),
         }),
       )
       if (b instanceof Response) return bail(b)
@@ -587,6 +612,8 @@ export const jobRoutes = (ctx: AppContext) => {
       const caller = await agentFor(c)
       if (!agent || !(await canAskAgent(meta, agent, who.id, caller)))
         return bail(fail(c, 404, "no such agent you can ask"))
+      if ((b.session || b.repo) && agent.machine !== "derive")
+        return bail(fail(c, 400, "Sessions and repositories need an agent that runs on Derive"))
       // A workspace past its monthly model budget takes no new work. Checked before anything
       // is written, so a refused ask leaves no job behind. A dedupe key naming an open job
       // still finds it: that work is already asked for.
@@ -614,6 +641,7 @@ export const jobRoutes = (ctx: AppContext) => {
         instruction: b.instruction,
         subject,
         dedupeKey: b.dedupe_key ?? null,
+        task: { ...(b.session ? { session: true } : {}), ...(b.repo ? { repo: b.repo } : {}) },
       })
       const messages = (await meta.listJobMessages(job.id)).map(messageJson)
       const body = {
@@ -784,6 +812,72 @@ export const jobRoutes = (ctx: AppContext) => {
     )
   personAction("/v1/jobs/{id}/cancel", "Cancel an open job (and its children).", (job, c, whoId) =>
     cancelJob(jobDeps, job, whoId, c.req.header("Idempotency-Key")),
+  )
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/jobs/{id}/attach",
+      tags: ["Jobs"],
+      summary: "Let your SSH key into your running interactive session's machine.",
+      request: {
+        params: z.object({ id: z.string() }),
+        body: {
+          content: {
+            "application/json": {
+              schema: z.object({
+                public_key: z
+                  .string()
+                  .trim()
+                  .regex(/^(ssh-ed25519|ecdsa-sha2-nistp256|ssh-rsa) [A-Za-z0-9+/=]+( \S+)?$/)
+                  .describe("An OpenSSH public key. Private keys are refused."),
+              }),
+            },
+          },
+        },
+      },
+      responses: {
+        200: {
+          description: "Where to connect. Attach with `tmux attach -t derive` once connected.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                host: z.string(),
+                port: z.number(),
+                user: z.string(),
+                host_key: z.string().nullable().describe("Pin this in known_hosts."),
+                tmux_session: z.string(),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const job = await visibleJob(c, c.req.param("id") ?? "")
+      if (job instanceof Response) return bail(job)
+      const who = await personFor(c)
+      if (who instanceof Response) return bail(who)
+      // A session's machine holds its starter's files and model login: only they get a shell.
+      if (job.asked_by !== who.id || (await agentFor(c)))
+        return bail(fail(c, 403, "Only the person who started this session can attach to it"))
+      const machine = machineDepsFrom(meta, {
+        secret: deps.encryptionKey,
+        server: deps.baseUrl,
+        config: deps.runtime,
+        fetcher: deps.runtimeFetch,
+      })
+      if (!machine) return bail(fail(c, 503, "Cloud compute is not enabled on this server"))
+      const out = await attachSession(machine, job, c.req.valid("json").public_key)
+      if (!out.ok) return bail(fail(c, out.status, out.error))
+      return c.json({
+        host: out.host,
+        port: out.port,
+        user: out.user,
+        host_key: out.host_key,
+        tmux_session: SESSION_TMUX,
+      })
+    },
   )
   personAction(
     "/v1/jobs/{id}/retry",
@@ -1048,6 +1142,7 @@ export const jobRoutes = (ctx: AppContext) => {
           agent_name: agent.name,
           // The runner runs this before the harness; a failure spends no model tokens.
           check: parseAgentSandbox(agent.sandbox_json).check ?? null,
+          ...taskOptions(j.meta_json),
         },
         protocol_version: RUNNER_PROTOCOL_VERSION,
         ...(turn

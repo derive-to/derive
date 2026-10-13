@@ -230,6 +230,18 @@ export const codex = {
     })
   },
 
+  /** Arguments for an interactive session in a terminal. Codex takes no separate system
+   *  prompt, so a new session's first message carries it, as a headless turn's does. */
+  sessionArgs({ model, effort, systemPrompt, prompt, resumeSessionId }) {
+    const flags = [
+      "--dangerously-bypass-approvals-and-sandbox",
+      ...(model ? ["-m", model] : []),
+      ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : []),
+    ]
+    if (resumeSessionId) return ["resume", ...flags, resumeSessionId, ...(prompt ? [prompt] : [])]
+    return [...flags, `${systemPrompt}\n\n---\n\n${prompt ?? ""}`.trimEnd()]
+  },
+
   /** Without a structured api status, a nonzero exit that produced no output is
    *  treated as an engine error worth one retry; a spawn failure (code -1) and a
    *  timeout are not. Mirrors the claude-code policy on the signals Codex gives. */

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join, relative } from "node:path"
 import { checkpointFileAllowed as allowed, checkpointProblem } from "./conversation-format.js"
 
@@ -38,6 +38,35 @@ export function restoreConversation(home, previous, provider) {
     mkdirSync(dirname(target), { recursive: true, mode: 0o700 })
     writeFileSync(target, body, { mode: 0o600 })
   }
+}
+
+/** The newest native conversation in a model home: what an interactive session just wrote,
+ *  since the harness picks its own id. Null when there is none. */
+export function latestSessionId(home, provider) {
+  const root = join(home ?? "", provider === "codex" ? "sessions" : "projects")
+  if (!home || !existsSync(root)) return null
+  let newest = null
+  const walk = (dir, depth = 0) => {
+    if (depth > 5) return
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name)
+      if (entry.isDirectory()) walk(full, depth + 1)
+      else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+        const mtime = statSync(full).mtimeMs
+        if (!newest || mtime > newest.mtime) newest = { name: entry.name, mtime }
+      }
+    }
+  }
+  walk(root)
+  if (!newest) return null
+  // Claude names the file by its session id; Codex ends its rollout file with it.
+  const id =
+    provider === "codex"
+      ? /-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/.exec(
+          newest.name,
+        )?.[1]
+      : newest.name.slice(0, -".jsonl".length)
+  return id && SESSION_ID.test(id) ? id : null
 }
 
 export function checkpointConversation(home, provider, session) {

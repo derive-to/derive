@@ -68,6 +68,13 @@ export interface SandboxClient {
   process(sandboxId: string, id: string, identity: Identity): Promise<Process>
   deleteSandbox(id: string, key: string, identity: Identity): Promise<Operation>
   isSandboxDeleted(id: string, identity: Identity): Promise<boolean>
+  /** Authorize an OpenSSH public key on a running sandbox; where to connect, and the host key
+   *  to pin. */
+  sshKey?(
+    id: string,
+    publicKey: string,
+    identity: Identity,
+  ): Promise<{ host: string; port: number; user: string; host_key: string | null }>
   usage?(
     id: string,
     since: string,

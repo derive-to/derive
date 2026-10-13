@@ -1,0 +1,259 @@
+// Cloud sessions from the terminal: start, list, attach to, forward from, and stop tasks that
+// run on Derive machines. Every session is an ordinary Derive task, so the web app shows the
+// same list; this file only drives the API and hands the terminal to ssh.
+//
+//   derive code [owner/name[@ref]] ["first message"] [--agent a] [--codex|--claude]
+//   derive run <agent> "ask" [--repo owner/name[@ref]] [--follow]
+//   derive ls [--team]
+//   derive attach <task>      derive forward <task> <port>      derive stop <task>
+import { spawnSync } from "node:child_process"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
+import { SESSION_RESUME, SESSION_TMUX } from "./conversation-format.js"
+
+const KEY_DIR = () => process.env.DERIVE_CONFIG_DIR ?? join(homedir(), ".derive")
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** A thin authenticated client for the routes sessions use. */
+export function sessionApi({ server, token, workspaceId, fetcher = fetch }) {
+  return async (path, { method = "GET", body } = {}) => {
+    const res = await fetcher(`${server}${path}`, {
+      method,
+      headers: {
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...(workspaceId ? { "x-derive-workspace": workspaceId } : {}),
+        ...(body ? { "content-type": "application/json" } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    })
+    const json = await res.json().catch(() => ({}))
+    if (!res.ok)
+      throw Object.assign(new Error(json.error ?? `${method} ${path} → ${res.status}`), {
+        status: res.status,
+      })
+    return json
+  }
+}
+
+/** The agent a new session runs on: `--agent` by id or name, else the workspace's agent named
+ *  "Coding", else the only cloud agent for the chosen harness. */
+export function pickAgent(agents, { agent, harness } = {}) {
+  const cloud = agents.filter((a) => a.machine === "derive")
+  if (agent) {
+    const want = String(agent).toLowerCase()
+    const found = cloud.find((a) => a.id === agent || a.name.toLowerCase() === want)
+    if (!found) throw new Error(`no cloud agent "${agent}". Cloud agents: ${names(cloud)}`)
+    return found
+  }
+  const fits = harness ? cloud.filter((a) => a.provider === harness) : cloud
+  const coding = fits.find((a) => a.name.toLowerCase() === "coding")
+  if (coding) return coding
+  if (fits.length === 1) return fits[0]
+  throw new Error(
+    fits.length
+      ? `pick an agent with --agent: ${names(fits)}`
+      : "no cloud agent yet. Create one in Derive (Agents → New, machine: Derive).",
+  )
+}
+const names = (agents) => agents.map((a) => a.name).join(", ") || "none"
+
+/** A task by full id or a unique suffix of one, from the list `derive ls` shows. */
+export function pickTask(tasks, ref) {
+  if (!ref) throw new Error("name a task: derive ls shows them")
+  const hits = tasks.filter((t) => t.id === ref || t.id.endsWith(ref))
+  if (hits.length === 1) return hits[0]
+  throw new Error(hits.length ? `"${ref}" matches several tasks` : `no task "${ref}"`)
+}
+
+/** One line per cloud task: id, agent, harness, repository, and where it stands. */
+export function formatTasks(tasks, agents) {
+  const byId = new Map(agents.map((a) => [a.id, a]))
+  const rows = tasks.map((t) => {
+    const agent = byId.get(t.agent_id)
+    return [
+      t.id.slice(-6),
+      agent?.name ?? "?",
+      agent?.provider === "codex" ? "codex" : "claude",
+      t.task?.session ? "session" : t.trigger_id ? "scheduled" : "task",
+      t.task?.repo ?? "-",
+      state(t),
+      ago(t.updated_at),
+    ]
+  })
+  const head = ["id", "agent", "harness", "kind", "repo", "state", "last"]
+  const widths = head.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i].length)))
+  const line = (r) =>
+    r
+      .map((c, i) => c.padEnd(widths[i]))
+      .join("  ")
+      .trimEnd()
+  return [line(head), ...rows.map(line)].join("\n")
+}
+
+const state = (t) => {
+  if (t.status === "needs_you") return "needs you"
+  if (t.machine_phase === "parked") return "paused"
+  if (["creating", "provisioning", "starting", "ready", "launching"].includes(t.machine_phase))
+    return "starting"
+  if (t.machine_phase === "running") return "working"
+  return t.status
+}
+const ago = (iso) => {
+  const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000))
+  return s < 90 ? `${s}s` : s < 5400 ? `${Math.round(s / 60)}m` : `${Math.round(s / 3600)}h`
+}
+
+/** Cloud tasks for `derive ls`: yours (and your agents'), or the whole workspace's. */
+async function cloudTasks(api, { team }) {
+  const [{ jobs }, { agents }] = await Promise.all([
+    api(`/v1/jobs?limit=100${team ? "" : "&mine=1"}`),
+    api("/v1/agents"),
+  ])
+  const cloud = new Set(agents.filter((a) => a.machine === "derive").map((a) => a.id))
+  return { tasks: jobs.filter((j) => cloud.has(j.agent_id)), agents }
+}
+
+/** This machine's session key, made once. Only its public half ever leaves the laptop. */
+function sessionKey() {
+  const dir = KEY_DIR()
+  const key = join(dir, "session_ed25519")
+  if (!existsSync(key)) {
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    const made = spawnSync("ssh-keygen", [
+      "-q",
+      "-t",
+      "ed25519",
+      "-N",
+      "",
+      "-C",
+      "derive-session",
+      "-f",
+      key,
+    ])
+    if (made.status !== 0) throw new Error("could not create an SSH key (is ssh-keygen installed?)")
+  }
+  return { key, publicKey: readFileSync(`${key}.pub`, "utf8").trim() }
+}
+
+/** Wait for a task's machine to be running, resuming a paused session first. */
+async function ensureRunning(api, id, log) {
+  let task = await api(`/v1/jobs/${id}`)
+  if (task.machine_phase !== "running" && !["queued", "running"].includes(task.status)) {
+    log("resuming the session…")
+    await api(`/v1/jobs/${id}/messages`, { method: "POST", body: { body_md: SESSION_RESUME } })
+  }
+  for (let i = 0; i < 90 && task.machine_phase !== "running"; i++) {
+    if (["failed", "cancelled", "lost"].includes(task.status))
+      throw new Error(`the task ${task.status}: ${task.result?.failure?.message ?? "see Derive"}`)
+    if (i % 5 === 0) log(`waiting for the machine (${state(task)})…`)
+    await sleep(2_000)
+    task = await api(`/v1/jobs/${id}`)
+  }
+  if (task.machine_phase !== "running") throw new Error("the machine did not come up in 3 minutes")
+  return task
+}
+
+/** Authorize this laptop's key on the task's machine and pin its host key. */
+async function openShell(api, id) {
+  const { key, publicKey } = sessionKey()
+  const at = await api(`/v1/jobs/${id}/attach`, { method: "POST", body: { public_key: publicKey } })
+  const knownHosts = join(KEY_DIR(), "known_hosts")
+  if (at.host_key)
+    writeFileSync(knownHosts, `[${at.host}]:${at.port} ${at.host_key}\n`, { mode: 0o600 })
+  return {
+    tmux: at.tmux_session ?? SESSION_TMUX,
+    ssh: [
+      "-i",
+      key,
+      "-p",
+      String(at.port),
+      "-o",
+      at.host_key ? `UserKnownHostsFile=${knownHosts}` : "StrictHostKeyChecking=accept-new",
+      ...(at.host_key ? ["-o", "StrictHostKeyChecking=yes"] : []),
+      "-o",
+      "ServerAliveInterval=30",
+      `${at.user}@${at.host}`,
+    ],
+  }
+}
+
+/** Run one session command. Returns the process exit code. */
+export async function sessionCommand(cmd, positional, flags, api, { log = console.error } = {}) {
+  const harness = flags.codex ? "codex" : flags.claude ? "claude-code" : undefined
+  if (cmd === "code" || cmd === "run") {
+    const { agents } = await api("/v1/agents")
+    const session = cmd === "code"
+    const agent = session
+      ? pickAgent(agents, { agent: flags.agent, harness })
+      : pickAgent(agents, { agent: positional[0] })
+    const [repo, ask] = session ? [positional[0], positional[1]] : [flags.repo, positional[1]]
+    if (!session && !ask) throw new Error('usage: derive run <agent> "what to do"')
+    const task = await api("/v1/jobs", {
+      method: "POST",
+      body: {
+        agent_id: agent.id,
+        instruction: ask ?? "Interactive session",
+        ...(session ? { session: true } : {}),
+        ...(repo ? { repo } : {}),
+      },
+    })
+    log(
+      `${session ? "session" : "task"} ${task.id.slice(-6)} on ${agent.name}${repo ? ` · ${repo}` : ""}`,
+    )
+    if (session) return attach(api, task.id, log)
+    console.log(task.id)
+    if (!flags.follow) return 0
+    return follow(api, task.id, log)
+  }
+  if (cmd === "ls") {
+    const { tasks, agents } = await cloudTasks(api, { team: !!flags.team })
+    if (flags.json) console.log(JSON.stringify(tasks))
+    else console.log(tasks.length ? formatTasks(tasks, agents) : "no cloud tasks yet: derive code")
+    return 0
+  }
+  const { tasks } = await cloudTasks(api, { team: true })
+  const task = pickTask(tasks, positional[0])
+  if (cmd === "attach") return attach(api, task.id, log)
+  if (cmd === "stop") {
+    await api(`/v1/jobs/${task.id}/cancel`, { method: "POST" })
+    log(`stopped ${task.id.slice(-6)}; its machine is retired`)
+    return 0
+  }
+  if (cmd === "forward") {
+    const [remote, local = remote] = String(positional[1] ?? "").split(":")
+    if (!/^\d+$/.test(remote) || !/^\d+$/.test(local))
+      throw new Error("usage: derive forward <task> <port>[:<local port>]")
+    await ensureRunning(api, task.id, log)
+    const shell = await openShell(api, task.id)
+    log(`http://localhost:${local} → session ${task.id.slice(-6)}:${remote} (Ctrl-C to stop)`)
+    return (
+      spawnSync("ssh", ["-N", "-L", `${local}:127.0.0.1:${remote}`, ...shell.ssh], {
+        stdio: "inherit",
+      }).status ?? 1
+    )
+  }
+  throw new Error(`unknown command ${cmd}`)
+}
+
+async function attach(api, id, log) {
+  await ensureRunning(api, id, log)
+  const shell = await openShell(api, id)
+  // The runner opens tmux a moment after the machine reports running, so wait briefly for it.
+  // tmux keeps the session when this terminal closes; the machine parks once it sits idle.
+  const join_ = `for i in $(seq 60); do tmux has-session -t ${shell.tmux} 2>/dev/null && exec tmux attach -t ${shell.tmux}; sleep 1; done; echo "the session did not start; see Derive"; exit 1`
+  const out = spawnSync("ssh", ["-t", ...shell.ssh, join_], { stdio: "inherit" })
+  log(`detached from ${id.slice(-6)}. It keeps running; derive attach ${id.slice(-6)} to return.`)
+  return out.status ?? 1
+}
+
+async function follow(api, id, log) {
+  let seen = 0
+  for (;;) {
+    const task = await api(`/v1/jobs/${id}`)
+    for (const m of task.messages.slice(seen)) if (m.author_kind === "agent") log(m.body_md)
+    seen = task.messages.length
+    if (!["queued", "running"].includes(task.status)) return task.status === "succeeded" ? 0 : 1
+    await sleep(5_000)
+  }
+}
