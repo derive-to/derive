@@ -248,7 +248,9 @@ export class BoatClient implements SandboxClient {
       `printf running > ${quote(dir + "/state")}`,
       `trap ${quote(`printf exited > ${quote(dir + "/state")}`)} EXIT`,
       `chmod 600 ${quote(envFile)}`,
-      `node -e ${quote(run)} ${quote(envFile)} ${body.argv.map(quote).join(" ")}`,
+      // The runner's own output stays beside its marker, so a turn that ends without a report
+      // can be read back on the machine.
+      `node -e ${quote(run)} ${quote(envFile)} ${body.argv.map(quote).join(" ")} >> ${quote(dir + "/runner.log")} 2>&1`,
     ].join("\n")
     z.object({ processId: z.number().int(), success: z.literal(true) }).parse(
       await this.request(`/sandboxes/${encodeURIComponent(id)}/commands`, "POST", {

@@ -225,20 +225,25 @@ export const codex = {
 
   /** Arguments for an interactive session in a terminal. Codex takes no separate system
    *  prompt, so a new session's first message carries it, as a headless turn's does. */
-  sessionArgs({ model, effort, systemPrompt, prompt, resumeSessionId }) {
+  sessionArgs({ model, effort, systemPrompt, prompt, resumeSessionId, home }) {
     const flags = [
       "--dangerously-bypass-approvals-and-sandbox",
       ...(model ? ["-m", model] : []),
       ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : []),
     ]
     if (resumeSessionId) return ["resume", ...flags, resumeSessionId, ...(prompt ? [prompt] : [])]
+    // With a private home the instructions live in its AGENTS.md (prepareSession), so the
+    // person sees only the task as the first message; otherwise they lead the prompt.
+    if (home) return [...flags, ...(prompt ? [prompt] : [])]
     return [...flags, `${systemPrompt}\n\n---\n\n${prompt ?? ""}`.trimEnd()]
   },
 
   /** The interactive Codex reads its login only from `auth.json` (CODEX_API_KEY is for
-   *  `exec`), and asks before trusting a folder. The task's private home answers both. */
-  prepareSession({ home, cwd, env }) {
+   *  `exec`), and asks before trusting a folder. The task's private home answers both, and
+   *  carries the task's instructions as Codex's global AGENTS.md. */
+  prepareSession({ home, cwd, env, systemPrompt }) {
     if (!home) return
+    if (systemPrompt) writeFileSync(join(home, "AGENTS.md"), systemPrompt, { mode: 0o600 })
     const auth = join(home, "auth.json")
     if (!existsSync(auth) && env?.CODEX_API_KEY)
       writeFileSync(auth, JSON.stringify({ OPENAI_API_KEY: env.CODEX_API_KEY }), { mode: 0o600 })

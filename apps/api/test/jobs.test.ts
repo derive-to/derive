@@ -3145,6 +3145,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
       home = {
         auth: readFileSync(join(env.CODEX_HOME ?? "", "auth.json"), "utf8"),
         config: readFileSync(join(env.CODEX_HOME ?? "", "config.toml"), "utf8"),
+        agents: readFileSync(join(env.CODEX_HOME ?? "", "AGENTS.md"), "utf8"),
         cwd,
       }
       return "idle"
@@ -3158,7 +3159,9 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
       "-c",
       'model_reasoning_effort="medium"',
     ])
-    expect(first.at(-1)).toContain("Tidy the inbox empty state")
+    // The person sees the task as the first message; the instructions ride AGENTS.md.
+    expect(first.at(-1)).toBe("Tidy the inbox empty state")
+    expect(home.agents).toContain("Derive")
     await until(job.id, "parked")
     expect((await meta.listJobMessages(job.id)).at(-1)?.body_md).toContain("Session paused")
     expect((await attach(ed.email)).status).toBe(409)
