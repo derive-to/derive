@@ -41,7 +41,7 @@ type Process = {
 }
 export interface SandboxCreate {
   name: string
-  size: "small" | "medium" | "default" | "large" | "xlarge"
+  size?: "small" | "medium" | "default" | "large" | "xlarge"
   auto_stop_after_seconds: number
   setup_script: string
   snapshot?: string

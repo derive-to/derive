@@ -217,7 +217,9 @@ export class OrtamClient implements SandboxClient {
       !/^spt_[0-7][0-9abcdefghjkmnpqrstvwxyz]{25}$/.test(body.snapshot)
     )
       throw new SandboxCreateRejected("Ortam snapshots need a snapshot ID")
-    const { snapshot, environment: _environment, env, ...settings } = body
+    if (body.size && !["small", "medium", "default", "large"].includes(body.size))
+      throw new SandboxCreateRejected("Ortam supports small, medium, or large sandboxes")
+    const { snapshot, environment: _environment, env, size, ...settings } = body
     const result = z.object({ sandbox: Sandbox, operation: Operation }).parse(
       await this.request(
         "/sandboxes",
@@ -225,11 +227,20 @@ export class OrtamClient implements SandboxClient {
         "POST",
         {
           ...settings,
+          ...(size && size !== "default" ? { size } : {}),
           ...(snapshot ? { source: { snapshot_id: ortamId("spt", snapshot) } } : {}),
           ...(env ? { variables: env } : {}),
         },
         key,
-      ),
+      ).catch((error) => {
+        if (
+          error instanceof OrtamHttpError &&
+          error.path === "/sandboxes" &&
+          [400, 404, 422].includes(error.status)
+        )
+          throw new SandboxCreateRejected(error.message)
+        throw error
+      }),
     )
     if (result.operation.sandbox_id !== result.sandbox.id || result.operation.kind !== "create")
       throw new Error("Ortam operation mismatch")
@@ -407,7 +418,6 @@ export class OrtamClient implements SandboxClient {
       {
         headers: { ...this.auth(), Upgrade: "websocket" },
         redirect: "manual",
-        signal: AbortSignal.timeout(15_000),
       },
     )
   }
