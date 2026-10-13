@@ -268,7 +268,16 @@ async function attach(api, id, log) {
   // tmux keeps the session when this terminal closes; the machine parks once it sits idle.
   const join_ = `for i in $(seq 60); do tmux has-session -t ${shell.tmux} 2>/dev/null && exec tmux attach -t ${shell.tmux}; sleep 1; done; echo "the session did not start; see Derive"; exit 1`
   const out = spawnSync("ssh", ["-t", ...shell.ssh, join_], { stdio: "inherit" })
-  log(`detached from ${id.slice(-6)}. It keeps running; derive attach ${id.slice(-6)} to return.`)
+  // Detaching leaves the harness running in tmux; quitting it ends the session's turn.
+  const running =
+    spawnSync("ssh", [...shell.ssh, `tmux has-session -t ${shell.tmux}`], { stdio: "ignore" })
+      .status === 0
+  const short = id.slice(-6)
+  log(
+    running
+      ? `detached from ${short}. It keeps running; derive attach ${short} to return.`
+      : `session ${short} ended; its machine pauses with your files. derive attach ${short} resumes it.`,
+  )
   return out.status ?? 1
 }
 

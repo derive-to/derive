@@ -3256,7 +3256,11 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
 
   it("an interrupting follow-up ends the running turn and runs next; a plain one waits", async () => {
     const { app, meta, boat, pass, until, runTurn } = await cloudSetup("jobs-machine-interrupt")
-    const agent = await createAgent(app, { machine: "derive", provider: "codex" })
+    const agent = await createAgent(app, {
+      machine: "derive",
+      provider: "codex",
+      sandbox: { fresh: true },
+    })
     const job = (await (await ask(app, ed.email, agent.id, "Refactor the parser")).json()) as {
       id: string
     }
@@ -3315,6 +3319,10 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     // Nothing had finished before the interrupt, so the next turn starts the conversation
     // from the transcript rather than failing for want of a checkpoint.
     expect(await runTurn("bx_1", "Kept the old API")).toBe("succeeded")
+    // The waiting turn took the running machine: no stop, no resume, no second start.
+    expect(boat.calls.filter((c) => /^(stop|resume|create)/.test(c))).toEqual([
+      "create bx_1 - small",
+    ])
   })
 
   it("a provider start limit makes the task wait, saying why, then start", async () => {

@@ -65,6 +65,9 @@ const WAITING = Symbol("waiting")
 /** How far past the asked stop time a provider's timer may land (it counts from when a resume
  *  finishes) before the turn treats the machine as misconfigured. */
 const TTL_SLACK_SECONDS = 300
+/** How far short of a full turn a running machine's stop timer may be and still take the next
+ *  turn directly (the turn then ends at most this early, and is retried). */
+const RELAUNCH_SLACK_SECONDS = 900
 /** A task's parked sandbox is deleted after this long without a turn. Stopped costs nothing,
  *  so this only bounds storage and lets a session be reopened days later. */
 const PARKED_TTL_MS = 7 * 24 * 60 * 60_000
@@ -517,6 +520,24 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
   const at = iso(deps)
   // The provider is out of starts for now: wait, saying why, instead of asking every pass.
   if (m.waiting && m.waiting.until > at && job.status === "running") return
+  /** The turn's compute on `sandboxId`, from when its machine came up to `stopped`. */
+  const recordCompute = async (sandboxId: string, stopped: string) => {
+    if (!m.active_at) return
+    const usage = await client
+      .usage?.(sandboxId, m.active_at, stopped, state.identity)
+      .catch(() => null)
+    const updated = await meta.jobExecution?.compute(job.id, job.org_id, {
+      turn: m.turn,
+      provider: state.provider ?? "ortam",
+      ...(state.connection_id ? { connection_id: state.connection_id } : {}),
+      sandbox_id: sandboxId,
+      started_at: m.active_at,
+      stopped_at: stopped,
+      billable_seconds: usage?.billable_seconds ?? null,
+      cost_micro_usd: usage?.cost_micro_usd ?? null,
+    })
+    if (updated) wakeSettled(deps, updated)
+  }
   const startOrWait = async <T>(start: () => Promise<T>): Promise<T | typeof WAITING> => {
     try {
       return await start()
@@ -654,8 +675,9 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
     case "starting": {
       if (!m.resume_op) {
         const observed = await client.sandbox(sandbox, state.identity)
+        // Already up (handed over from the previous turn): this turn's compute starts now.
         if (observed.state === "ready") {
-          await move("ready")
+          await move("ready", { active_at: m.active_at ?? at })
           return
         }
         const env = await environment()
@@ -748,6 +770,25 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
           })
         return
       }
+      // The task's next turn is already waiting (a follow-up, or an interrupt that ended this
+      // turn): hand it the running machine instead of stopping and resuming it, which costs a
+      // provider start and minutes. Only while the provider's timer still covers a full turn.
+      if (own && observed.state === "ready" && !m.stop_op) {
+        const after = await meta.getJob(job.id)
+        const next = machineClock(
+          taskOptions(job.meta_json).session ? MAX_RUN_CEILING_MS : agent.max_run_ms,
+          Date.parse(at),
+        )
+        if (
+          after?.status === "queued" &&
+          observed.auto_stop_after_seconds >=
+            ttlFor(new Date(next.deadline).toISOString(), at) - RELAUNCH_SLACK_SECONDS
+        ) {
+          await recordCompute(sandbox, at)
+          await move("parked")
+          return
+        }
+      }
       if (observed.state !== "stopped") {
         if (!m.stop_op) {
           const op = await client.lifecycle(
@@ -767,23 +808,7 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
       }
       // Stopped, files saved. A runner that never reported fails the job so it can retry.
       await failIfOpen(deps, agent, job, "The machine stopped before the job reported back.")
-      if (m.active_at) {
-        const stopped = iso(deps)
-        const usage = await client
-          .usage?.(sandbox, m.active_at, stopped, state.identity)
-          .catch(() => null)
-        const updated = await meta.jobExecution?.compute(job.id, job.org_id, {
-          turn: m.turn,
-          provider: state.provider ?? "ortam",
-          ...(state.connection_id ? { connection_id: state.connection_id } : {}),
-          sandbox_id: sandbox,
-          started_at: m.active_at,
-          stopped_at: stopped,
-          billable_seconds: usage?.billable_seconds ?? null,
-          cost_micro_usd: usage?.cost_micro_usd ?? null,
-        })
-        if (updated) wakeSettled(deps, updated)
-      }
+      await recordCompute(sandbox, iso(deps))
       // A job's own sandbox parks with its files for the next turn, unless the task was
       // stopped for good; a shared one goes back to its agent.
       if (own) {

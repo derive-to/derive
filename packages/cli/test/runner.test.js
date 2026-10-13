@@ -14,7 +14,9 @@ import { basename, join } from "node:path"
 import { describe, expect, it } from "vitest"
 import { loadJobRunnerConfig } from "../src/job-runner.js"
 import { claudeCode } from "../src/providers/claude-code.js"
+import { prepareRepo } from "../src/repo.js"
 import { OUTPUT_CONTRACT, parseAnswer, resolveArtifactHtml, runAgent } from "../src/runner.js"
+import { runSession } from "../src/session.js"
 import { sessionCommand } from "../src/sessions.js"
 import { materializeSkills, skillDigest, skillSlug, writeSkill } from "../src/skills.js"
 
@@ -541,5 +543,77 @@ describe("cloud sessions", () => {
     expect(git(bare, "rev-parse", "fix-copy").toString().trim()).toBe(
       git(work, "rev-parse", "HEAD").toString().trim(),
     )
+  })
+
+  it("a session parks once nobody types and its screen stops changing, even with a dropped client listed", async () => {
+    let clock = 1_000_000
+    let screen = "working 1s"
+    const tmux = (cmd, ...args) => {
+      if (cmd === "has-session") return { status: 0, stdout: "" }
+      // A connection that dropped an hour ago is still listed, with its last keystroke then.
+      if (cmd === "list-clients") return { status: 0, stdout: `${(clock - 3_600_000) / 1000}\n` }
+      if (cmd === "capture-pane") return { status: 0, stdout: screen }
+      return { status: 0, stdout: "", stderr: "", args }
+    }
+    const ticks = []
+    const ended = runSession(
+      { bin: "codex", args: [], cwd: tmpdir(), env: {} },
+      {
+        idleMs: 60_000,
+        pollMs: 1,
+        tmux,
+        now: () => {
+          clock += 10_000
+          ticks.push(clock)
+          // The harness works (the screen changes) for the first few polls, then waits.
+          if (ticks.length < 6) screen = `working ${ticks.length}s`
+          return clock
+        },
+      },
+    )
+    expect(await ended).toBe("idle")
+    // Idle counts from the last change on screen, not from the dropped client's listing.
+    expect(ticks.length).toBeGreaterThan(6)
+  })
+
+  it("a task's checkout reaches GitHub with the renewed token, through git and gh alike", () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-repo-"))
+    const bare = join(root, "origin.git")
+    execSync(`git init -q --bare ${bare}`)
+    const seed = join(root, "seed")
+    execSync(`git init -q -b main ${seed}`)
+    execSync(`git -C ${seed} -c user.email=a@b -c user.name=a commit -q --allow-empty -m first`)
+    execSync(`git -C ${seed} push -q ${bare} main`)
+    // GitHub, as this test reaches it: the bare repository stands in for the remote.
+    const config = join(root, "gitconfig")
+    writeFileSync(
+      config,
+      `[url "${bare}"]\n\tinsteadOf = https://github.com/acme-dev/widgets.git\n`,
+    )
+    const tools = join(root, "tools")
+    mkdirSync(tools)
+    writeFileSync(join(tools, "gh"), '#!/bin/sh\necho "gh sees $GH_TOKEN"\n', { mode: 0o755 })
+    const before = { PATH: process.env.PATH, GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL }
+    process.env.PATH = `${tools}:${process.env.PATH}`
+    process.env.GIT_CONFIG_GLOBAL = config
+    try {
+      const secrets = mkdtempSync(join(tmpdir(), "derive-git-"))
+      const tokenFile = join(secrets, "token")
+      const { dir, env } = prepareRepo(
+        { repo: "acme-dev/widgets", ref: "main", token: "first-token" },
+        { cwd: root, firstTurn: true, tokenFile },
+      )
+      expect(existsSync(join(dir, ".git"))).toBe(true)
+      const gh = () =>
+        execSync("gh auth status", { env: { ...process.env, ...env }, encoding: "utf8" }).trim()
+      expect(gh()).toBe("gh sees first-token")
+      // The runner renews the token in place; the harness's gh picks it up without a restart.
+      writeFileSync(tokenFile, "renewed-token")
+      expect(gh()).toBe("gh sees renewed-token")
+    } finally {
+      process.env.PATH = before.PATH
+      if (before.GIT_CONFIG_GLOBAL === undefined) delete process.env.GIT_CONFIG_GLOBAL
+      else process.env.GIT_CONFIG_GLOBAL = before.GIT_CONFIG_GLOBAL
+    }
   })
 })

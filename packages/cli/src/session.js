@@ -1,8 +1,8 @@
 // An interactive session on a Derive machine: the agent's own harness (Claude Code or Codex) in
 // a tmux session a person attaches to over SSH (`derive attach`). The runner keeps the task's
-// claim alive while the session is in use and ends the turn when the harness exits or nobody has
-// been attached or typed for the idle window; the machine then parks with its files, and the
-// next attach resumes the same conversation.
+// claim alive while the session is in use and ends the turn when the harness exits, or when nobody
+// has typed and its screen has not changed for the idle window; the machine then parks with its
+// files, and the next attach resumes the same conversation.
 import { spawnSync } from "node:child_process"
 import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -13,14 +13,14 @@ import { SESSION_TMUX } from "./conversation-format.js"
 const IDLE_MS = 20 * 60_000
 const POLL_MS = 10_000
 
-const tmux = (...args) => spawnSync("tmux", args, { encoding: "utf8", timeout: 10_000 })
+const realTmux = (...args) => spawnSync("tmux", args, { encoding: "utf8", timeout: 10_000 })
 const shellQuote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`
 
 /** Start the harness in tmux and wait for the session to end. Returns why it ended: `exited`
  *  (the harness quit), `idle`, or `stopped` (the claim was lost or the task cancelled). */
 export async function runSession(
   { bin, args, cwd, env, signal },
-  { idleMs = IDLE_MS, pollMs = POLL_MS, now = Date.now } = {},
+  { idleMs = IDLE_MS, pollMs = POLL_MS, now = Date.now, tmux = realTmux } = {},
 ) {
   tmux("kill-session", "-t", SESSION_TMUX)
   // The model login and job tokens reach the harness through a private file the wrapper
@@ -58,6 +58,7 @@ export async function runSession(
       retryable: false,
     })
   let lastSeen = now()
+  let screen = null
   for (;;) {
     await new Promise((resolve) => setTimeout(resolve, pollMs))
     if (signal?.aborted) {
@@ -65,13 +66,20 @@ export async function runSession(
       return "stopped"
     }
     if (tmux("has-session", "-t", SESSION_TMUX).status !== 0) return "exited"
-    const attached = tmux("list-clients", "-t", SESSION_TMUX).stdout.trim() !== ""
-    const output = Number(
-      tmux("display-message", "-p", "-t", SESSION_TMUX, "#{window_activity}").stdout.trim(),
-    )
-    if (attached) lastSeen = now()
-    if (Number.isFinite(output) && output > 0) lastSeen = Math.max(lastSeen, output * 1000)
-    if (!attached && now() - lastSeen > idleMs) {
+    // In use while someone typed recently (a dropped connection can leave a client listed long
+    // after its person left, so its own last activity counts, not its presence) or while the
+    // screen is still changing (the harness working). A redraw that changes nothing is not use.
+    const typed = tmux("list-clients", "-t", SESSION_TMUX, "-F", "#{client_activity}")
+      .stdout.split("\n")
+      .map((line) => Number(line.trim()) * 1000)
+      .filter((at) => Number.isFinite(at) && at > 0)
+    lastSeen = Math.max(lastSeen, ...typed)
+    const shown = tmux("capture-pane", "-p", "-t", SESSION_TMUX).stdout
+    if (shown !== screen) {
+      screen = shown
+      lastSeen = now()
+    }
+    if (now() - lastSeen > idleMs) {
       tmux("kill-session", "-t", SESSION_TMUX)
       return "idle"
     }

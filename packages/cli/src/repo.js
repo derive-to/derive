@@ -4,9 +4,9 @@
 // machine): git asks a credential helper that reads it there, so nothing secret lands in the
 // checkout the machine's disk keeps.
 import { spawnSync } from "node:child_process"
-import { existsSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 
 const HELPER =
   '!f() { test "$1" = get || exit 0; echo username=x-access-token; echo "password=$(cat "$DERIVE_GIT_TOKEN_FILE")"; }; f'
@@ -32,15 +32,29 @@ const run = (args, { cwd, env, quiet } = {}) => {
 export const githubRepoOf = (url) =>
   /github\.com[/:]([^/]+\/[^/]+?)(\.git)?\/?$/.exec(url ?? "")?.[1]?.toLowerCase() ?? null
 
+/** `gh` reads its token only from GH_TOKEN, which a running harness would keep from the first
+ *  hour. A `gh` placed first on PATH beside the token file reads the renewed token on every
+ *  call instead. Nothing when the machine has no `gh`. */
+function ghThroughFile(tokenFile) {
+  const real = spawnSync("sh", ["-c", "command -v gh"], { encoding: "utf8" }).stdout.trim()
+  if (!real) return {}
+  const bin = join(dirname(tokenFile), "bin")
+  mkdirSync(bin, { recursive: true, mode: 0o700 })
+  writeFileSync(
+    join(bin, "gh"),
+    `#!/bin/sh\nGH_TOKEN="$(cat "$DERIVE_GIT_TOKEN_FILE")" exec ${JSON.stringify(real)} "$@"\n`,
+    { mode: 0o700 },
+  )
+  return { PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}` }
+}
+
 /** Check out the task's repository and return where, plus the environment git and the harness
  *  need. A checkout of the same repository already on the machine (a prepared image's, or an
  *  earlier turn's) is reused; only the first turn moves it to the task's ref, so later turns
  *  keep the work in progress. */
 export function prepareRepo({ repo, ref, token }, { cwd, firstTurn, tokenFile }) {
   writeFileSync(tokenFile, token, { mode: 0o600 })
-  // `gh` reads only GH_TOKEN, which a running harness cannot see renewed: past the first hour
-  // it fails, while git (through the file) and the runner's pull request lookup keep working.
-  const env = { DERIVE_GIT_TOKEN_FILE: tokenFile, GH_TOKEN: token }
+  const env = { DERIVE_GIT_TOKEN_FILE: tokenFile, ...ghThroughFile(tokenFile) }
   const name = repo.split("/")[1]
   const mine = (dir) =>
     existsSync(join(dir, ".git")) &&
