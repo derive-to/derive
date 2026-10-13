@@ -36,6 +36,14 @@ const makeMeta = (): MetaStore => {
   const byId = new Map<string, FakeArtifact>()
   const versions = new Map<string, FakeVersion[]>()
   const meta = {
+    createPublishedArtifact: async (
+      a: NewArtifact,
+      v: NewVersion,
+    ): Promise<{ artifact: FakeArtifact; version: FakeVersion }> => {
+      const artifact = await meta.createArtifact(a)
+      const version = await meta.addVersion(a.id, v)
+      return { artifact, version }
+    },
     createArtifact: async (a: NewArtifact): Promise<FakeArtifact> => {
       // Mirror the store's fail-closed column defaults for omitted access fields
       // (drizzle omits `undefined` keys on insert, so the DB default applies).
