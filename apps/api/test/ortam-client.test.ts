@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import { OrtamClient, ortamId } from "../src/lib/ortam-client"
 import { runtimeSetup } from "../src/lib/runtime-setup"
+import { SandboxCreateRejected } from "../src/lib/sandbox-client"
 
 describe("Ortam IDs", () => {
   it("re-encodes a bare UUID as Ortam's public ID, per the TypeID spec", () => {
@@ -88,6 +89,40 @@ describe("Ortam runner requests", () => {
   ])("rejects unsupported creation settings instead of dropping them", async (body, message) => {
     const client = new OrtamClient("https://ortam.test/v1", "key", "subject", fetcher)
     await expect(client.create(body, "create-turn", identity)).rejects.toThrow(message)
+  })
+
+  it.each([
+    undefined,
+    "default" as const,
+  ])("omits provider size when the requested size is %s", async (size) => {
+    requests.length = 0
+    const client = new OrtamClient("https://ortam.test/v1", "key", "subject", fetcher)
+    await client.create({ ...create, size }, "create-turn", identity)
+    expect(await requests.at(-1)?.json()).not.toHaveProperty("size")
+  })
+
+  it("rejects unsupported Ortam sizes before allocation", async () => {
+    requests.length = 0
+    const client = new OrtamClient("https://ortam.test/v1", "key", "subject", fetcher)
+    await expect(
+      client.create({ ...create, size: "xlarge" }, "create-turn", identity),
+    ).rejects.toBeInstanceOf(SandboxCreateRejected)
+    expect(requests).toHaveLength(0)
+  })
+
+  it.each([
+    400, 404, 422, 409, 500,
+  ])("classifies create HTTP %s without treating an unknown allocation as rejected", async (status) => {
+    const client = new OrtamClient("https://ortam.test/v1", "key", "subject", async (input) =>
+      new URL(String(input)).pathname === "/v1/integration"
+        ? Response.json(identity)
+        : new Response(null, { status }),
+    )
+    const refusal = client.create(create, "create-turn", identity)
+    if ([400, 404, 422].includes(status))
+      await expect(refusal).rejects.toBeInstanceOf(SandboxCreateRejected)
+    else await expect(refusal).rejects.not.toBeInstanceOf(SandboxCreateRejected)
+    await expect(client.sandbox("sbx", identity)).rejects.not.toBeInstanceOf(SandboxCreateRejected)
   })
 
   it("rejects a Boat environment when resuming a saved Ortam sandbox", async () => {

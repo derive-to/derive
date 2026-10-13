@@ -24,7 +24,12 @@ import { signApiToken, verifyApiToken } from "../src/lib/api-token"
 import { signCapabilityToken } from "../src/lib/capability-token"
 import { encryptSecret } from "../src/lib/crypto"
 import { advanceGraph, graphAware, graphPass } from "../src/lib/job-graph"
-import { advanceMachineJob, machineDepsFrom, machinePass } from "../src/lib/job-machine"
+import {
+  advanceMachineJob,
+  advanceSandbox,
+  machineDepsFrom,
+  machinePass,
+} from "../src/lib/job-machine"
 import { HELD_FOR_BUDGET, jobTick, OWNER_LEFT } from "../src/lib/jobs"
 import { catalogOf } from "../src/lib/model-catalog"
 import { bufferedSessionSocket } from "../src/lib/session-transport"
@@ -3387,12 +3392,22 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
   const cloudSetup = async (
     name: string,
     idleSeconds: number,
-    options: { session?: boolean; sessionTransport?: AppDeps["sessionTransport"] } = {},
+    options: {
+      session?: boolean
+      sessionTransport?: AppDeps["sessionTransport"]
+      snapshot?: string
+      reserveOnly?: boolean
+      fresh?: boolean
+    } = {},
   ) => {
     const identity = { organization_id: "ortam-org", user_id: "ortam-user" }
     const processes = new Map<string, { body: string; id: string }>()
     const launches: Array<{ body: Record<string, unknown>; key: string }> = []
     const responseLoss = { next: false }
+    const creates: Array<{ body: Record<string, unknown>; key: string }> = []
+    const created = new Map<string, string>()
+    const createOutcome = { loseNext: false, status: 200 }
+    let deleted = false
     const certificates: Array<unknown> = []
     const certificateExpiry = new Date(Date.now() + 60_000).toISOString()
     let stopped = false
@@ -3415,9 +3430,30 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
         kind,
         state: kind === "create" && !provisioning.ready ? "queued" : "succeeded",
       })
-      if (path === "/sandboxes" && request.method === "POST")
+      if (path === "/sandboxes" && request.method === "POST") {
+        const body = (await request.json()) as Record<string, unknown>
+        const key = request.headers.get("Idempotency-Key") ?? ""
+        creates.push({ body, key })
+        if (createOutcome.status !== 200)
+          return new Response(null, { status: createOutcome.status })
+        const fingerprint = JSON.stringify(body)
+        if (created.has(key) && created.get(key) !== fingerprint)
+          return new Response(null, { status: 409 })
+        created.set(key, fingerprint)
+        if (createOutcome.loseNext) {
+          createOutcome.loseNext = false
+          throw new Error("create response lost")
+        }
         return Response.json({ sandbox, operation: operation("create") })
-      if (path === "/sandboxes/sbx") return Response.json(sandbox)
+      }
+      if (path === "/sandboxes/sbx") {
+        if (request.method === "DELETE") {
+          deleted = true
+          return Response.json(operation("delete"))
+        }
+        if (deleted) return new Response(null, { status: 404 })
+        return Response.json(sandbox)
+      }
       if (path === "/sandboxes/sbx/ssh-certificate") {
         certificates.push(await request.json())
         return Response.json({
@@ -3465,6 +3501,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
       runtimeFetch: fetcher,
       baseUrl: "http://derive.test",
       sessionTransport: options.sessionTransport,
+      detachAfterResponse: options.reserveOnly,
     })
     await made.app.request(
       "/v1/accounts",
@@ -3485,11 +3522,19 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
     const agent = await createAgent(made.app, {
       machine: "derive",
       provider: "codex",
-      sandbox: { fresh: true },
+      sandbox: {
+        fresh: options.fresh ?? true,
+        ...(options.snapshot ? { snapshot: options.snapshot } : {}),
+      },
     })
-    const response = await ask(made.app, ed.email, agent.id, "Fix the parser", {
+    const body = jsonAs(as(ed.email), {
+      agent_id: agent.id,
+      instruction: "Fix the parser",
       session: options.session ?? false,
     })
+    const response = options.reserveOnly
+      ? await made.app.request("/v1/jobs", body, { outgoing: { once: () => {} } })
+      : await made.app.request("/v1/jobs", body)
     expect(response.status).toBe(201)
     const job = (await response.json()) as { id: string }
     const until = async (phase: string) => {
@@ -3498,7 +3543,11 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
         const current = await made.meta.getJob(job.id)
         if (current?.machine_phase === phase) return
         if (current?.machine_phase) await advanceMachineJob(deps, current)
-        else await machinePass(deps, { maxRequests: 400, maxTransitions: 2 })
+        else
+          await machinePass(deps, {
+            maxRequests: 400,
+            maxTransitions: phase === "creating" ? 1 : 2,
+          })
       }
       expect((await made.meta.getJob(job.id))?.machine_phase).toBe(phase)
     }
@@ -3511,10 +3560,255 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
       launches,
       processes,
       responseLoss,
+      creates,
+      createOutcome,
+      provisioning,
       certificates,
       certificateExpiry,
     }
   }
+
+  it("freezes shared creation and retires a lost response after admission is removed", async () => {
+    const fixture = await cloudSetup("jobs-ortam-shared-create-recovery", 2700, {
+      reserveOnly: true,
+      fresh: false,
+    })
+    await machinePass(fixture.deps, { maxRequests: 400, maxTransitions: 1 })
+    const first = await fixture.meta.getAgent(fixture.agent.id)
+    if (!first) throw new Error("missing shared agent")
+    expect(first.sandbox_phase).toBe("creating")
+    fixture.createOutcome.loseNext = true
+    await advanceSandbox(fixture.deps, first).catch(() => null)
+    expect(fixture.creates).toHaveLength(1)
+    const submitted = await fixture.meta.getAgent(fixture.agent.id)
+    const state = JSON.parse(submitted?.sandbox_state_json ?? "{}")
+    expect(state.create_request).toBeDefined()
+    expect(state.create_submitted_at).toBeDefined()
+    await fixture.meta.updateAgent(fixture.agent.id, "default", {
+      paused_at: new Date().toISOString(),
+    })
+    const deps = {
+      ...fixture.deps,
+      config: { ...fixture.deps.config, runnerArchive: "https://derive.test/new-runner.tgz" },
+      now: () => new Date(Date.parse(state.create_submitted_at) + 60_000),
+    }
+    for (let i = 0; i < 6; i++) {
+      const agent = await fixture.meta.getAgent(fixture.agent.id)
+      if (!agent || agent.sandbox_phase === null) break
+      await advanceSandbox(deps, agent)
+    }
+    expect((await fixture.meta.getAgent(fixture.agent.id))?.sandbox_phase).toBeNull()
+    expect(fixture.creates).toHaveLength(2)
+    expect(fixture.creates[1]).toEqual(fixture.creates[0])
+    expect(fixture.launches).toHaveLength(0)
+  })
+
+  it("retains a legacy shared creation without guessing its key's age", async () => {
+    const fixture = await cloudSetup("jobs-ortam-shared-create-legacy", 2700, {
+      reserveOnly: true,
+      fresh: false,
+    })
+    await machinePass(fixture.deps, { maxRequests: 400, maxTransitions: 1 })
+    const first = await fixture.meta.getAgent(fixture.agent.id)
+    if (!first) throw new Error("missing shared agent")
+    const state = JSON.parse(first.sandbox_state_json ?? "{}")
+    delete state.create_request
+    delete state.create_submitted_at
+    const legacy = await fixture.meta.transitionAgentSandbox(
+      first.id,
+      first.org_id,
+      first.sandbox_rev,
+      { phase: "creating", state_json: JSON.stringify(state) },
+    )
+    if (!legacy) throw new Error("could not seed legacy agent")
+    await advanceSandbox(fixture.deps, legacy)
+    const after = await fixture.meta.getAgent(fixture.agent.id)
+    expect(fixture.creates).toHaveLength(0)
+    expect(after?.sandbox_phase).toBe("creating")
+    expect(JSON.parse(after?.sandbox_state_json ?? "{}").generation).toBe(state.generation)
+    expect(JSON.parse(after?.sandbox_state_json ?? "{}").create_problem).toMatch(/manual recovery/)
+  })
+
+  const attemptCreate = async (
+    fixture: Awaited<ReturnType<typeof cloudSetup>>,
+    deps = fixture.deps,
+  ) => {
+    for (let i = 0; i < 4 && fixture.creates.length === 0; i++) {
+      const current = await fixture.meta.getJob(fixture.job.id)
+      if (!current) throw new Error("missing creating job")
+      await advanceMachineJob(deps, current).catch(() => null)
+    }
+    expect(fixture.creates).toHaveLength(1)
+  }
+
+  it("replays the durable create body after response loss and deployment changes", async () => {
+    const fixture = await cloudSetup("jobs-ortam-create-replay", 2700, { reserveOnly: true })
+    await fixture.until("creating")
+    fixture.createOutcome.loseNext = true
+    await attemptCreate(fixture)
+    const first = await fixture.meta.getJob(fixture.job.id)
+    const machine = JSON.parse(first?.machine_json ?? "{}")
+    expect(machine.own.create_request).toBeDefined()
+    expect(machine.own.create_submitted_at).toBeDefined()
+    if (!first) throw new Error("missing submitted job")
+    await advanceMachineJob(
+      {
+        ...fixture.deps,
+        config: { ...fixture.deps.config, runnerArchive: "https://derive.test/new-runner.tgz" },
+        now: () => new Date(Date.parse(machine.own.create_submitted_at) + 60_000),
+      },
+      first,
+    )
+    expect((await fixture.meta.getJob(fixture.job.id))?.machine_phase).toBe("provisioning")
+    expect(fixture.creates[1]).toEqual(fixture.creates[0])
+  })
+
+  it.each([
+    "cancel",
+    "deadline",
+    "lease",
+  ])("recovers a submitted create after %s and deletes without launching", async (stop) => {
+    const fixture = await cloudSetup(`jobs-ortam-create-retire-${stop}`, 2700, {
+      reserveOnly: true,
+    })
+    await fixture.until("creating")
+    fixture.createOutcome.loseNext = true
+    await attemptCreate(fixture)
+    const first = await fixture.meta.getJob(fixture.job.id)
+    const machine = JSON.parse(first?.machine_json ?? "{}")
+    const deps =
+      stop === "cancel"
+        ? fixture.deps
+        : {
+            ...fixture.deps,
+            now: () => new Date(Date.parse(machine.deadline_at) + (stop === "lease" ? 600_001 : 1)),
+          }
+    if (stop === "cancel")
+      await fixture.app.request(`/v1/jobs/${fixture.job.id}/cancel`, {
+        method: "POST",
+        headers: as(ed.email),
+      })
+    if (stop === "lease") await fixture.meta.reclaimStaleJobs(deps.now?.().toISOString() ?? "", 3)
+    for (let i = 0; i < 8; i++) {
+      const current = await fixture.meta.getJob(fixture.job.id)
+      if (!current || current.machine_phase === "released") break
+      await advanceMachineJob(deps, current)
+    }
+    expect((await fixture.meta.getJob(fixture.job.id))?.machine_phase).toBe("released")
+    expect(fixture.creates).toHaveLength(2)
+    expect(fixture.creates[1]).toEqual(fixture.creates[0])
+    expect(fixture.launches).toHaveLength(0)
+  })
+
+  it("does not submit a reserved create once its turn deadline has passed", async () => {
+    const fixture = await cloudSetup("jobs-ortam-create-expired-unsubmitted", 2700, {
+      reserveOnly: true,
+    })
+    await fixture.until("creating")
+    const first = await fixture.meta.getJob(fixture.job.id)
+    const machine = JSON.parse(first?.machine_json ?? "{}")
+    if (!first) throw new Error("missing reserved job")
+    await advanceMachineJob(
+      { ...fixture.deps, now: () => new Date(Date.parse(machine.deadline_at) + 1) },
+      first,
+    )
+    expect(fixture.creates).toHaveLength(0)
+    expect((await fixture.meta.getJob(fixture.job.id))?.machine_phase).toBe("released")
+  })
+
+  it("releases a definitive preallocation refusal without retrying for the entire turn", async () => {
+    const fixture = await cloudSetup("jobs-ortam-create-refused", 2700, { reserveOnly: true })
+    await fixture.until("creating")
+    fixture.createOutcome.status = 422
+    await attemptCreate(fixture)
+    expect((await fixture.meta.getJob(fixture.job.id))?.machine_phase).toBe("released")
+    expect((await fixture.meta.getJob(fixture.job.id))?.status).not.toBe("running")
+  })
+
+  it("retains an unknown allocation if a later retry is refused", async () => {
+    const fixture = await cloudSetup("jobs-ortam-create-uncertain-refused", 2700, {
+      reserveOnly: true,
+    })
+    await fixture.until("creating")
+    fixture.createOutcome.loseNext = true
+    await attemptCreate(fixture)
+    fixture.createOutcome.status = 422
+    const first = await fixture.meta.getJob(fixture.job.id)
+    if (!first) throw new Error("missing uncertain job")
+    const machine = JSON.parse(first.machine_json ?? "{}")
+    await advanceMachineJob(
+      { ...fixture.deps, now: () => new Date(Date.parse(machine.deadline_at) + 1) },
+      first,
+    )
+    const after = await fixture.meta.getJob(fixture.job.id)
+    expect(after?.machine_phase).toBe("creating")
+    expect(after?.status).not.toBe("running")
+    expect(JSON.parse(after?.machine_json ?? "{}").own).toMatchObject({
+      generation: machine.own.generation,
+      create_request: machine.own.create_request,
+      create_submitted_at: machine.own.create_submitted_at,
+    })
+  })
+
+  it("keeps recovery identity without replaying outside Ortam's idempotency window", async () => {
+    const fixture = await cloudSetup("jobs-ortam-create-stale", 2700, { reserveOnly: true })
+    await fixture.until("creating")
+    fixture.createOutcome.loseNext = true
+    await attemptCreate(fixture)
+    const first = await fixture.meta.getJob(fixture.job.id)
+    if (!first) throw new Error("missing uncertain job")
+    const machine = JSON.parse(first.machine_json ?? "{}")
+    await advanceMachineJob(
+      {
+        ...fixture.deps,
+        now: () =>
+          new Date(
+            Date.parse(machine.own.create_submitted_at ?? first.started_at) + 24 * 60 * 60_000,
+          ),
+      },
+      first,
+    )
+    const after = await fixture.meta.getJob(fixture.job.id)
+    expect(fixture.creates).toHaveLength(1)
+    expect(after?.machine_phase).toBe("creating")
+    expect(after?.status).not.toBe("running")
+    expect(JSON.parse(after?.machine_json ?? "{}").own.generation).toBe(machine.own.generation)
+    expect(JSON.parse(after?.machine_json ?? "{}").waiting.reason).toMatch(/manual recovery/)
+  })
+
+  it("does not invent a replay body for a legacy uncertain create", async () => {
+    const fixture = await cloudSetup("jobs-ortam-create-legacy", 2700, { reserveOnly: true })
+    await fixture.until("creating")
+    const first = await fixture.meta.getJob(fixture.job.id)
+    if (!first) throw new Error("missing legacy job")
+    const machine = JSON.parse(first.machine_json ?? "{}")
+    delete machine.own.create_request
+    delete machine.own.create_submitted_at
+    const legacy = await fixture.meta.transitionJobMachine(first.id, first.machine_rev, {
+      phase: "creating",
+      machine_json: JSON.stringify(machine),
+    })
+    if (!legacy) throw new Error("could not seed legacy state")
+    await advanceMachineJob(fixture.deps, legacy)
+    const after = await fixture.meta.getJob(fixture.job.id)
+    expect(fixture.creates).toHaveLength(0)
+    expect(after?.machine_phase).toBe("creating")
+    expect(JSON.parse(after?.machine_json ?? "{}").own.generation).toBe(machine.own.generation)
+    expect(JSON.parse(after?.machine_json ?? "{}").waiting.reason).toMatch(/manual recovery/)
+  })
+
+  it("lets Ortam infer the size of a restored snapshot", async () => {
+    const fixture = await cloudSetup("jobs-ortam-create-snapshot-size", 2700, {
+      snapshot: "spt_01h455vb4pex5vsknk084sn02q",
+      reserveOnly: true,
+    })
+    await fixture.until("creating")
+    await attemptCreate(fixture)
+    expect(fixture.creates[0]?.body.source).toEqual({
+      snapshot_id: "spt_01h455vb4pex5vsknk084sn02q",
+    })
+    expect(fixture.creates[0]?.body).not.toHaveProperty("size")
+  })
 
   it.each([
     60, 86400,
