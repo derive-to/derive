@@ -699,13 +699,8 @@ export async function publish(
     message: input.message ?? "first publish",
     name: input.name ?? null,
   }
-  const artifact = await meta.createArtifact(newArtifact)
-  const version = await meta.addVersion(artifact.id, nextVersion)
-  return {
-    artifact: (await meta.getByShortId(artifact.short_id)) as ArtifactRecord,
-    version,
-    timings,
-  }
+  const saved = await meta.createPublishedArtifact(newArtifact, nextVersion)
+  return { ...saved, timings }
 }
 
 // Name-first ref: the slug reads first, the short id is the final token. parseRef

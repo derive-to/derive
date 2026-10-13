@@ -705,6 +705,11 @@ export interface NewVersionData {
 
 export interface ArtifactStore {
   createArtifact(a: NewArtifact): Promise<ArtifactRecord>
+  /** Commit a new artifact and its first version together. A failed version write leaves no artifact. */
+  createPublishedArtifact(
+    artifact: NewArtifact,
+    first: NewVersion,
+  ): Promise<{ artifact: ArtifactRecord; version: VersionRecord }>
   /** Change an artifact's access: workspace access (member seats vs none), the
    *  world link role, the listing, and the password hash locking the world link
    *  (null clears). See access-model.md. */

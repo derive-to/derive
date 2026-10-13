@@ -257,6 +257,7 @@ import {
   workspace,
   workspaceJoinLink,
 } from "./pg-schema"
+import { publishedArtifactFields } from "./publication-fields"
 import {
   artifactListConditions,
   artifactListOrder,
@@ -719,6 +720,22 @@ export class PgMetaStore implements MetaStore {
     return (await this.getByShortId(a.short_id)) as ArtifactRecord
   }
 
+  async createPublishedArtifact(a: NewArtifact, v: NewVersion) {
+    return this.db.transaction(async (tx) => {
+      const at = new Date().toISOString()
+      const [created] = await tx
+        .insert(artifact)
+        .values(publishedArtifactFields(a, v, at))
+        .returning()
+      const [first] = await tx
+        .insert(version)
+        .values({ ...v, artifact_id: a.id, n: 1, created_at: at })
+        .returning()
+      if (!created || !first) throw new Error("Publication did not create both records")
+      return { artifact: created as ArtifactRecord, version: first as VersionRecord }
+    })
+  }
+
   async setAccess(
     artifactId: string,
     workspaceAccess: WorkspaceAccess,
@@ -1148,6 +1165,7 @@ export class PgMetaStore implements MetaStore {
           size_bytes = ${v.size_bytes ?? 0}, author = ${v.author},
           author_login = ${v.author_login ?? null}, author_avatar = ${v.author_avatar ?? null},
           author_gh_id = ${v.author_gh_id ?? null}, author_id = ${v.author_id ?? null},
+          agent_id = ${v.agent_id ?? null}, agent_name = ${v.agent_name ?? null},
           source = ${v.source ?? null}, message = ${v.message ?? null}, name = ${v.name ?? null},
           preview_key = null, preview_status = null, preview_error = null,
           preview_full_key = null, preview_full_status = null, preview_full_error = null,
@@ -4747,10 +4765,9 @@ export class PgMetaStore implements MetaStore {
     opts: { since: string; limit: number; openOn?: string[] },
   ): Promise<CommentRecord[]> {
     const recent = gte(comment.created_at, opts.since)
-    const open =
-      opts.openOn && opts.openOn.length
-        ? and(eq(comment.state, "open"), inArray(comment.artifact_id, opts.openOn))
-        : null
+    const open = opts.openOn?.length
+      ? and(eq(comment.state, "open"), inArray(comment.artifact_id, opts.openOn))
+      : null
     const rows = await this.db
       .select({ c: comment })
       .from(comment)

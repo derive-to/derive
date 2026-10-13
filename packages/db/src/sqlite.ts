@@ -1,7 +1,9 @@
 import type {
+  ArtifactRecord,
   DynamicWriteOptions,
   GithubUserMapping,
   MetaStore,
+  NewArtifact,
   NewVersion,
   UserDir,
   UserProfile,
@@ -24,6 +26,11 @@ import {
   composeWorkspaceSummary,
   composeWorkspacesAndOauthBinding,
 } from "./list-enrichment"
+import {
+  artifactVersionFields,
+  publishedArtifactFields,
+  replacementVersionFields,
+} from "./publication-fields"
 import { makeRepos, schema } from "./repos"
 import {
   agentMention,
@@ -155,6 +162,55 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         raw.prepare("DELETE FROM template_library WHERE id = ?").run(libraryId)
       })(id)
     },
+
+    createPublishedArtifact: async (a: NewArtifact, v: NewVersion) =>
+      db.transaction((tx) => {
+        const at = new Date().toISOString()
+        const created = tx
+          .insert(artifact)
+          .values(publishedArtifactFields(a, v, at))
+          .returning()
+          .get()
+        const first = tx
+          .insert(version)
+          .values({ ...v, artifact_id: a.id, n: 1, created_at: at })
+          .returning()
+          .get()
+        if (!created || !first) throw new Error("Publication did not create both records")
+        return { artifact: created as ArtifactRecord, version: first as VersionRecord }
+      }),
+
+    replaceCurrentVersion: async (artifactId, expected, v) =>
+      db.transaction((tx) => {
+        const head = tx
+          .select({ n: artifact.current_version })
+          .from(artifact)
+          .where(eq(artifact.id, artifactId))
+          .get()
+        if (head?.n !== expected.n) return null
+        const at = new Date().toISOString()
+        const saved = tx
+          .update(version)
+          .set(replacementVersionFields(v, at))
+          .where(
+            and(
+              eq(version.artifact_id, artifactId),
+              eq(version.n, expected.n),
+              eq(version.blob_key, expected.blobKey),
+            ),
+          )
+          .returning()
+          .get()
+        if (!saved) return null
+        tx.delete(versionData)
+          .where(and(eq(versionData.artifact_id, artifactId), eq(versionData.n, expected.n)))
+          .run()
+        tx.update(artifact)
+          .set(artifactVersionFields(v, expected.n, at))
+          .where(eq(artifact.id, artifactId))
+          .run()
+        return saved as VersionRecord
+      }),
 
     // Synchronous transaction: a concurrent increment can't interleave between
     // the read and the write, so version numbers never collide.
