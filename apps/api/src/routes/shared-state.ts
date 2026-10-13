@@ -1,9 +1,8 @@
 import {
+  artifactCollection,
   isSharedStateKey,
   newId,
   SHARED_STATE_ACTIVITY_LIMIT,
-  SHARED_STATE_MAX_BYTES,
-  SHARED_STATE_MAX_ITEMS,
   SHARED_STATE_MAX_KEYS,
   type SharedStateAction,
   type SharedStateMutation,
@@ -14,17 +13,6 @@ import type { AppContext } from "../context"
 import { fail, readJson } from "../lib/http"
 
 const CAS_ATTEMPTS = 8
-const ACTOR_FIELD = "__derive_actor_id"
-const SLOT_FIELD = "__derive_slot"
-const RESERVED_FIELDS = new Set([
-  "id",
-  ACTOR_FIELD,
-  SLOT_FIELD,
-  "__proto__",
-  "constructor",
-  "prototype",
-])
-
 const JsonObject = z.record(z.string(), z.unknown())
 const Mutation: z.ZodType<SharedStateMutation> = z.discriminatedUnion("op", [
   z.object({
@@ -49,122 +37,20 @@ const Mutation: z.ZodType<SharedStateMutation> = z.discriminatedUnion("op", [
 type Item = Record<string, unknown> & { id: string }
 type MutationBody = z.infer<typeof Mutation>
 
-const collection = (
-  value: unknown,
-  mintMissingIds: boolean,
-  allowActorFields = false,
-): Item[] | string => {
-  if (!Array.isArray(value)) return "shared state must be an array"
-  if (value.length > SHARED_STATE_MAX_ITEMS)
-    return `shared state is limited to ${SHARED_STATE_MAX_ITEMS} items`
-  const items: Item[] = []
-  const ids = new Set<string>()
-  for (const item of value) {
-    if (!item || typeof item !== "object" || Array.isArray(item))
-      return "every shared-state item must be an object"
-    const object = item as Record<string, unknown>
-    for (const key of Object.keys(object)) {
-      const allowedActorField = allowActorFields && (key === ACTOR_FIELD || key === SLOT_FIELD)
-      if (RESERVED_FIELDS.has(key) && key !== "id" && !allowedActorField)
-        return `field "${key}" is reserved`
-    }
-    const actorId = object[ACTOR_FIELD]
-    const slot = object[SLOT_FIELD]
-    if (
-      allowActorFields &&
-      ((actorId === undefined) !== (slot === undefined) ||
-        (actorId !== undefined && typeof actorId !== "string") ||
-        (slot !== undefined && (typeof slot !== "string" || slot.length < 1 || slot.length > 128)))
-    )
-      return "stored actor-scoped state is invalid"
-    let normalized: Item
-    if (!Object.hasOwn(object, "id") && mintMissingIds)
-      normalized = { ...object, id: newId("item") }
-    else if (typeof object.id === "string" && object.id.length >= 1 && object.id.length <= 128)
-      normalized = object as Item
-    else return "every shared-state item id must be a 1-128 character string"
-    if (ids.has(normalized.id)) return "shared-state item ids must be unique"
-    ids.add(normalized.id)
-    items.push(normalized)
-  }
-  return items
-}
+const coreMutation = (body: MutationBody) =>
+  body.op === "set_mine" ? { ...body, op: "setMine" as const } : body
 
-const incrementBy = (value: unknown): number | null => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null
-  const marker = value as Record<string, unknown>
-  if (Object.keys(marker).length !== 1) return null
-  const by = marker.__derive_increment
-  return typeof by === "number" && Number.isFinite(by) && Math.abs(by) <= 1_000_000 ? by : null
-}
-
-const apply = (
-  items: Item[],
-  body: MutationBody,
-  addId: string,
-  actorId: string,
-): { value: Item[]; itemId: string; changed: boolean } | string => {
-  if (body.op === "add") {
-    for (const key of Object.keys(body.value))
-      if (RESERVED_FIELDS.has(key)) return `field "${key}" is reserved`
-    if (items.length >= SHARED_STATE_MAX_ITEMS)
-      return `shared state is limited to ${SHARED_STATE_MAX_ITEMS} items`
-    return { value: [...items, { ...body.value, id: addId }], itemId: addId, changed: true }
-  }
-
-  if (body.op === "set_mine") {
-    if (body.value)
-      for (const key of Object.keys(body.value))
-        if (RESERVED_FIELDS.has(key)) return `field "${key}" is reserved`
-    const at = items.findIndex(
-      (item) => item[ACTOR_FIELD] === actorId && item[SLOT_FIELD] === body.slot,
-    )
-    if (body.value === null) {
-      if (at < 0) return { value: items, itemId: addId, changed: false }
-      const value = items.slice()
-      const removed = value.splice(at, 1)[0]
-      return { value, itemId: removed?.id ?? addId, changed: true }
-    }
-    const id = at < 0 ? addId : (items[at]?.id ?? addId)
-    const item = {
-      ...body.value,
-      id,
-      [ACTOR_FIELD]: actorId,
-      [SLOT_FIELD]: body.slot,
-    }
-    if (at < 0) {
-      if (items.length >= SHARED_STATE_MAX_ITEMS)
-        return `shared state is limited to ${SHARED_STATE_MAX_ITEMS} items`
-      return { value: [...items, item], itemId: id, changed: true }
-    }
-    const value = items.slice()
-    value[at] = item
-    return { value, itemId: id, changed: true }
-  }
-
-  const at = items.findIndex((item) => item.id === body.id)
-  if (at < 0) return "item not found"
-  if (items[at]?.[ACTOR_FIELD] !== undefined)
-    return "actor-scoped items must be changed with set_mine"
-  const next = { ...items[at] } as Item
-  for (const [key, value] of Object.entries(body.patch)) {
-    if (RESERVED_FIELDS.has(key)) return `field "${key}" is reserved`
-    const by = incrementBy(value)
-    next[key] = by === null ? value : (typeof next[key] === "number" ? next[key] : 0) + by
-  }
-  const value = items.slice()
-  value[at] = next
-  return { value, itemId: body.id, changed: true }
+const collection = (value: unknown, mintMissingIds: boolean, stored = false): Item[] | string => {
+  const result = artifactCollection.read(value, {
+    mintId: mintMissingIds ? () => newId("item") : undefined,
+    stored,
+  })
+  return "error" in result ? result.error : result
 }
 
 const publicCollection = (items: Item[], version: number, actorId: string | null) => {
-  const mine: Record<string, string> = {}
-  const value = items.map((item) => {
-    const { [ACTOR_FIELD]: owner, [SLOT_FIELD]: slot, ...visible } = item
-    if (actorId && owner === actorId && typeof slot === "string") mine[slot] = item.id
-    return visible
-  })
-  return { value, version, mine }
+  const result = artifactCollection.snapshot(items, version, actorId)
+  return { value: result.items, version: result.version, mine: result.mine }
 }
 
 const publicState = (row: { json: string; version: number } | null, actorId: string | null) => {
@@ -174,21 +60,9 @@ const publicState = (row: { json: string; version: number } | null, actorId: str
   return publicCollection(parsed, row.version, actorId)
 }
 
-// A public commenter may create an item, set their own actor-scoped value, or
-// apply the tiny atomic counter gesture the server understands. Arbitrary field
-// replacement is source-level authority: hiding a control in artifact HTML is
-// not authorization because callers can use the HTTP endpoint directly.
-const commenterMutation = (body: MutationBody): boolean => {
-  if (body.op === "add" || body.op === "set_mine") return true
-  const values = Object.values(body.patch)
-  return (
-    values.length > 0 &&
-    values.every((value) => {
-      const by = incrementBy(value)
-      return by === -1 || by === 1
-    })
-  )
-}
+// The host assigns COMMENT to counters and own slots. Field replacement requires PUBLISH.
+const commenterMutation = (body: MutationBody): boolean =>
+  artifactCollection.counter(coreMutation(body))
 
 /** Persistent JSON collections for mini-app artifacts. Reads follow artifact
  * visibility. Adds, actor-scoped values, and atomic counter gestures reuse
@@ -260,16 +134,23 @@ export const sharedStateRoutes = (ctx: AppContext) => {
       }
       const items = collection(parsed, !current, !!current)
       if (typeof items === "string") return fail(c, 400, items)
-      const changed = apply(items, body, itemId, actor.id)
-      if (typeof changed === "string")
-        return fail(c, changed === "item not found" ? 404 : 400, changed)
+      const changed = artifactCollection.apply(items, coreMutation(body), actor.id, itemId)
+      if ("error" in changed) {
+        const message =
+          changed.code === "owned"
+            ? "actor-scoped items must be changed with set_mine"
+            : changed.error
+        return fail(
+          c,
+          changed.code === "missing" ? 404 : changed.code === "bytes" ? 413 : 400,
+          message,
+        )
+      }
       if (!changed.changed) {
         if (!current) return c.json({ value: null, version: 0, mine: {} })
-        return c.json(publicCollection(changed.value, current.version, actor.id))
+        return c.json(publicCollection(changed.items, current.version, actor.id))
       }
-      const json = JSON.stringify(changed.value)
-      if (new TextEncoder().encode(json).byteLength > SHARED_STATE_MAX_BYTES)
-        return fail(c, 413, `shared state is limited to ${SHARED_STATE_MAX_BYTES / 1024} KB`)
+      const json = JSON.stringify(changed.items)
       const at = new Date().toISOString()
       const saved = await meta.putSharedState({
         id: stateId,

@@ -1,15 +1,28 @@
+import {
+  createCollectionRules,
+  isStateKey,
+  STATE_KEY_PATTERN,
+  STATE_LIMITS,
+} from "@aniraga/open-artifact-protocol/collection"
+
+/** Keep existing persisted ownership fields, mutation markers, and supplied-id rules. */
+export const artifactCollection = createCollectionRules({
+  actorField: "__derive_actor_id",
+  slotField: "__derive_slot",
+  incrementKey: "__derive_increment",
+  strictIds: true,
+})
+
 /** The one intentionally small contract shared by the artifact runtime, host,
  * API, and stores. Shared state is a collection primitive, not a generic app
  * backend: one key owns one bounded array of JSON objects. */
-export const SHARED_STATE_KEY_PATTERN = "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
-export const SHARED_STATE_MAX_KEYS = 16
-export const SHARED_STATE_MAX_ITEMS = 2_000
-export const SHARED_STATE_MAX_BYTES = 256 * 1024
-export const SHARED_STATE_ACTIVITY_LIMIT = 50
+export const SHARED_STATE_KEY_PATTERN = STATE_KEY_PATTERN
+export const SHARED_STATE_MAX_KEYS = STATE_LIMITS.keys
+export const SHARED_STATE_MAX_ITEMS = STATE_LIMITS.items
+export const SHARED_STATE_MAX_BYTES = STATE_LIMITS.bytes
+export const SHARED_STATE_ACTIVITY_LIMIT = STATE_LIMITS.activity
 
-const SHARED_STATE_KEY = new RegExp(SHARED_STATE_KEY_PATTERN)
-
-export const isSharedStateKey = (key: string): boolean => SHARED_STATE_KEY.test(key)
+export const isSharedStateKey = isStateKey
 
 export type SharedStateAction = "add" | "update" | "set_mine"
 
