@@ -12,10 +12,9 @@ import {
   priceJobRun,
   questionHistory,
   type Selector,
-  type TaskOptions,
   type TriggerRecord,
-  taskOptions,
 } from "@derive/core"
+import { type TaskOptions, taskOptions } from "@derive-to/cli/conversation-format"
 import { log } from "../log"
 import { agentWritesOff } from "./agent-writes"
 import { jobsOverBudget } from "./budget"

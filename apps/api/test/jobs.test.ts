@@ -3236,26 +3236,36 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
   })
 
   it("an interrupting follow-up ends the running turn and runs next; a plain one waits", async () => {
-    const { app, meta, until } = await cloudSetup("jobs-machine-interrupt")
+    const { app, meta, boat, pass, until } = await cloudSetup("jobs-machine-interrupt")
     const agent = await createAgent(app, { machine: "derive", provider: "codex" })
     const job = (await (await ask(app, ed.email, agent.id, "Refactor the parser")).json()) as {
       id: string
     }
     await until(job.id, "running")
-    // The runner has claimed the turn.
-    await meta.updateJob(job.id, { status: "running" })
+    const machineTurn = async () =>
+      JSON.parse((await meta.getJob(job.id))?.machine_json ?? "{}").turn as string
+    const first = await machineTurn()
     const say = (body_md: string, interrupt?: boolean) =>
       app.request(
         `/v1/jobs/${job.id}/messages`,
         jsonAs(as(ed.email), { body_md, ...(interrupt ? { interrupt } : {}) }),
       )
-    expect((await say("Also add tests")).status).toBe(200)
-    expect((await meta.getJob(job.id))?.status).toBe("running")
+    // A plain follow-up waits for the turn in progress.
+    expect(((await (await say("Also add tests")).json()) as { status: string }).status).toBe(
+      "running",
+    )
+    // An interrupting one ends its claim at once: the task is queued again.
     const after = (await (await say("Stop, use the old API", true)).json()) as {
       status: string
       lease_until: string | null
     }
     expect(after).toMatchObject({ status: "queued", lease_until: null })
+    // The runner finds its claim gone and exits; the machine then starts the next turn.
+    boat.exit("bx_1")
+    for (let i = 0; i < 6 && (await machineTurn()) === first; i++) await pass()
+    await until(job.id, "running")
+    expect(await machineTurn()).not.toBe(first)
+    expect((await meta.getJob(job.id))?.status).toBe("running")
   })
 
   it("the workspace machine limit holds the next task until a machine frees", async () => {

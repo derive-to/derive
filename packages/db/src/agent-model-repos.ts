@@ -329,6 +329,17 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
         SELECT * FROM job WHERE machine_phase = 'parked' AND updated_at < ${before}
         ORDER BY updated_at, id LIMIT ${Math.max(1, Math.min(200, limit))}`)
     },
+    async retireAgentMachines(orgId, agentId) {
+      await rows(sql`
+        UPDATE job SET machine_phase = 'deleting', machine_rev = machine_rev + 1,
+          updated_at = ${iso()}
+        WHERE org_id = ${orgId} AND agent_id = ${agentId} AND machine_phase = 'parked'
+        RETURNING id`)
+      const left = await first<{ n: number }>(sql`
+        SELECT count(*)::int AS n FROM job WHERE org_id = ${orgId} AND agent_id = ${agentId}
+          AND machine_phase IS NOT NULL AND machine_phase <> 'released'`)
+      return Number(left?.n ?? 0)
+    },
     listOpenGraphJobs(limit) {
       return rows<JobRecord>(sql`
         SELECT * FROM job WHERE kind = 'graph' AND status IN ('queued', 'running')

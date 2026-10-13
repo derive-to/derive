@@ -6,24 +6,39 @@ import { readFileSync, realpathSync, statSync } from "node:fs"
 import { resolve, sep } from "node:path"
 
 export class DeriveClient {
-  constructor(server, token) {
+  constructor(server, token, { workspaceId = null, fetcher = fetch } = {}) {
     this.server = server
     this.token = token
+    this.workspaceId = workspaceId
+    this.fetch = fetcher
   }
 
+  /** A JSON call. A refusal throws with the route and status in `message`, and the server's
+   *  own sentence in `reason` for a person to read. */
   async call(path, init) {
     // Timeboxed: undici's defaults let a blackholed host sit for minutes, which
     // would stall the poll loop (or doctor) with zero output.
-    const res = await fetch(`${this.server}${path}`, {
+    const res = await this.fetch(`${this.server}${path}`, {
       signal: AbortSignal.timeout(30_000),
       ...init,
       headers: {
-        authorization: `Bearer ${this.token}`,
+        ...(this.token ? { authorization: `Bearer ${this.token}` } : {}),
+        ...(this.workspaceId ? { "x-derive-workspace": this.workspaceId } : {}),
         ...(init?.body ? { "content-type": "application/json" } : {}),
         ...init?.headers,
       },
     })
-    if (!res.ok) throw new Error(`${path} → ${res.status}: ${await res.text()}`)
+    if (!res.ok) {
+      const text = await res.text()
+      let reason = null
+      try {
+        reason = JSON.parse(text).error ?? null
+      } catch {}
+      throw Object.assign(new Error(`${path} → ${res.status}: ${text}`), {
+        status: res.status,
+        reason,
+      })
+    }
     return res.json()
   }
 

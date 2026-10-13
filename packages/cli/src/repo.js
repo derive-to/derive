@@ -1,14 +1,15 @@
 // A task's repository on a Derive machine: checked out before the harness starts, reached with
 // the task's short-lived GitHub token, and read back after the turn for the pull request it
-// opened. The token rides the environment (memory) only: git asks a credential helper that
-// reads it from there, so nothing secret lands in the checkout the machine's disk keeps.
+// opened. The token lives in a private file the runner keeps fresh (on tmpfs on a Derive
+// machine): git asks a credential helper that reads it there, so nothing secret lands in the
+// checkout the machine's disk keeps.
 import { spawnSync } from "node:child_process"
-import { existsSync } from "node:fs"
+import { existsSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
 const HELPER =
-  '!f() { test "$1" = get || exit 0; echo username=x-access-token; echo "password=$DERIVE_GIT_TOKEN"; }; f'
+  '!f() { test "$1" = get || exit 0; echo username=x-access-token; echo "password=$(cat "$DERIVE_GIT_TOKEN_FILE")"; }; f'
 
 const run = (args, { cwd, env, quiet } = {}) => {
   const out = spawnSync("git", args, {
@@ -35,8 +36,9 @@ export const githubRepoOf = (url) =>
  *  need. A checkout of the same repository already on the machine (a prepared image's, or an
  *  earlier turn's) is reused; only the first turn moves it to the task's ref, so later turns
  *  keep the work in progress. */
-export function prepareRepo({ repo, ref, token }, { cwd, firstTurn }) {
-  const env = { DERIVE_GIT_TOKEN: token, GH_TOKEN: token }
+export function prepareRepo({ repo, ref, token }, { cwd, firstTurn, tokenFile }) {
+  writeFileSync(tokenFile, token, { mode: 0o600 })
+  const env = { DERIVE_GIT_TOKEN_FILE: tokenFile, GH_TOKEN: token }
   const name = repo.split("/")[1]
   const mine = (dir) =>
     existsSync(join(dir, ".git")) &&

@@ -132,6 +132,11 @@ export type JobMachinePhase =
   | "stopping"
   | "released"
 
+/** Whether a job's machine still holds (or is returning) compute: set, and neither released
+ *  nor parked, which keeps only files. */
+export const machineHoldsCompute = (phase: JobMachinePhase | null | undefined): boolean =>
+  !!phase && phase !== "released" && phase !== "parked"
+
 export interface JobRecord {
   id: string
   org_id: string
@@ -440,6 +445,9 @@ export interface AgentModelStore<Agent = unknown> {
   listMachineJobs(limit: number): Promise<JobRecord[]>
   /** Jobs whose own sandbox is parked and whose last activity is before `before`. */
   listParkedJobs(before: string, limit: number): Promise<JobRecord[]>
+  /** Move every parked task machine of an agent to deletion and count the agent's task
+   *  machines not yet released (deletion waits for zero). */
+  retireAgentMachines(orgId: string, agentId: string): Promise<number>
   /** Graph jobs the server is walking or about to start (queued or running). */
   listOpenGraphJobs(limit: number): Promise<JobRecord[]>
   addJobMessage(m: NewJobMessage): Promise<JobMessageRecord>

@@ -180,7 +180,6 @@ export class JobClient {
     return this.req(`/v1/jobs/${job.id}/environment`, { claim: job.started_at })
   }
 
-  /** The task's repository and a token for it, minted for this claim. */
   /** The task's repository token. A refusal (no GitHub connection for the owner, or GitHub
    *  said no) is the person's to fix, so it fails the turn plainly instead of retrying. */
   git(job) {
@@ -301,6 +300,24 @@ function writeToolShim(cwd, job) {
 
 /** The model credential for this job as a per-spawn env overlay, plus its cleanup. Throws with
  *  a sentence a person can act on when nothing is connected. */
+/** A private folder for one job's secrets. A cloud stop can interrupt `finally` before the
+ *  provider saves the disk, so on a Derive machine it lives on tmpfs, which a saved disk
+ *  cannot retain. */
+function privateDir(prefix) {
+  let root = tmpdir()
+  if (process.env.DERIVE_RUNNER_ISOLATED === "1") {
+    try {
+      if (statfsSync("/dev/shm").type !== 0x01021994) throw new Error("not tmpfs")
+      root = "/dev/shm"
+    } catch {
+      throw Object.assign(new Error("Cloud login files require memory-backed /dev/shm storage"), {
+        retryable: false,
+      })
+    }
+  }
+  return mkdtempSync(join(root, prefix))
+}
+
 async function modelEnvFor(
   client,
   job,
@@ -330,20 +347,7 @@ async function modelEnvFor(
     throw Object.assign(new Error(`can't use a ${res.credential.kind} credential here`), {
       retryable: false,
     })
-  // A cloud stop can interrupt finally before the provider saves the disk. Keep the
-  // credential and all model-home files on tmpfs, which a saved disk cannot retain.
-  let credentialRoot = tmpdir()
-  if (process.env.DERIVE_RUNNER_ISOLATED === "1") {
-    try {
-      if (statfsSync("/dev/shm").type !== 0x01021994) throw new Error("not tmpfs")
-      credentialRoot = "/dev/shm"
-    } catch {
-      throw Object.assign(new Error("Cloud login files require memory-backed /dev/shm storage"), {
-        retryable: false,
-      })
-    }
-  }
-  const dir = mkdtempSync(join(credentialRoot, "derive-cred-"))
+  const dir = privateDir("derive-cred-")
   for (const [name, content] of Object.entries(spec?.files ?? {}))
     writeFileSync(join(dir, name), content, { mode: 0o600 })
   return {
@@ -441,6 +445,7 @@ async function serveSession(
 }
 
 const CHECK_TIMEOUT_MS = 10 * 60_000
+const GIT_TOKEN_RENEW_MS = 40 * 60_000
 
 /** Run the agent's machine check. A nonzero exit fails the task with the output's tail and
  *  is not retryable: the same machine would fail the same way. Async, so lease ticks continue. */
@@ -536,6 +541,8 @@ export async function serveJob(client, job, cfg, deps = {}) {
   let home = null
   let harnessVersion = null
   let git = null
+  let gitDir = null
+  let renewGit = null
   let checkpoint = null
   let terminal = null
   const report = (body) => {
@@ -575,10 +582,24 @@ export async function serveJob(client, job, cfg, deps = {}) {
       // The task's repository comes first: the check, the harness, and the skill all work in it.
       if (job.execution?.repo) {
         git = await client.git(job)
+        // Git reads the token from a private file the runner renews before it expires (about
+        // an hour), so a long session can still push and open its pull request.
+        gitDir = privateDir("derive-git-")
+        const tokenFile = join(gitDir, "token")
         const checkout = prepareRepo(git, {
           cwd: cfg.cwd,
           firstTurn: (job.turn?.ordinal ?? 1) === 1,
+          tokenFile,
         })
+        renewGit = setInterval(
+          () =>
+            client
+              .git(job)
+              .then((next) => writeFileSync(tokenFile, next.token, { mode: 0o600 }))
+              .catch(() => {}),
+          GIT_TOKEN_RENEW_MS,
+        )
+        renewGit.unref?.()
         cfg = { ...cfg, cwd: checkout.dir }
         Object.assign(environment, checkout.env)
       }
@@ -794,6 +815,8 @@ export async function serveJob(client, job, cfg, deps = {}) {
     return "failed"
   } finally {
     clearInterval(tick)
+    clearInterval(renewGit)
+    if (gitDir) rmSync(gitDir, { recursive: true, force: true })
     cleanup()
     shim?.cleanup()
   }

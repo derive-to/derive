@@ -21,11 +21,19 @@
 /** A Derive-machine turn's budget when its agent sets none. */
 export const RUN_TIMEOUT_MS = 15 * 60_000
 
+const TOKEN_MARGIN_MS = 5 * 60_000
+const LEASE_MARGIN_MS = 10 * 60_000
+if (!(0 < TOKEN_MARGIN_MS && TOKEN_MARGIN_MS < LEASE_MARGIN_MS))
+  throw new Error("machine clock: deadline < token expiry < lease must hold")
+
+/** A machine turn's job token dies this long after its deadline (see the order above). */
+export const tokenExpiryAfter = (deadline: number) => deadline + TOKEN_MARGIN_MS
+
 /** One Derive-machine turn's clock, from its agent's run budget (clamped to
  *  MAX_RUN_CEILING_MS). Times are epoch milliseconds. */
 export const machineClock = (maxRunMs: number | null, now: number) => {
   const deadline = now + Math.min(maxRunMs ?? RUN_TIMEOUT_MS, MAX_RUN_CEILING_MS)
-  return { deadline, tokenExpiry: deadline + 5 * 60_000, lease: deadline + 10 * 60_000 }
+  return { deadline, lease: deadline + LEASE_MARGIN_MS }
 }
 
 /** How many times a job may be reclaimed before it is given up as `lost`. */

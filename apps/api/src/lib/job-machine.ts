@@ -4,11 +4,12 @@ import {
   type JobExecution,
   type JobRecord,
   type MetaStore,
+  machineHoldsCompute,
   newId,
   parseAgentSandbox,
   type SandboxSize,
-  taskOptions,
 } from "@derive/core"
+import { taskOptions } from "@derive-to/cli/conversation-format"
 import { log } from "../log"
 import { agentWritesOff } from "./agent-writes"
 import { sha256 } from "./crypto"
@@ -16,7 +17,7 @@ import { turnProblem } from "./job-command"
 import type { JobDeps } from "./job-policy"
 import { jobOverBudget, noteHeldForBudget, reportJob, wakeClaimed, wakeSettled } from "./jobs"
 import { OrtamClient } from "./ortam-client"
-import { MAX_RUN_CEILING_MS, machineClock } from "./run-lifecycle"
+import { MAX_RUN_CEILING_MS, machineClock, tokenExpiryAfter } from "./run-lifecycle"
 import { signWorkToken } from "./run-token"
 import { cloudEnabled, connectionClient, workspaceRuntime } from "./runtime-connection"
 import { runtimeFailureReason } from "./runtime-diagnostics"
@@ -507,11 +508,10 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
   }
   const client = await clientFor(deps, agent, state)
   const at = iso(deps)
-  const saveOwn = (next: Partial<OwnSandbox>, phase = job.machine_phase ?? "released") =>
-    move(phase, { own: { ...(own as OwnSandbox), ...next } })
-
   // A job's own sandbox comes up before its first turn and is retired after its last.
   if (own) {
+    const saveOwn = (next: Partial<OwnSandbox>, phase = job.machine_phase ?? "released") =>
+      move(phase, { own: { ...own, ...next } })
     const ownKey = `derive-job-${job.id}-${own.generation}`
     if (job.machine_phase === "creating") {
       const created = await createStep(
@@ -557,7 +557,12 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
     }
   }
 
-  const sandbox = (own ? own.sandbox_id : agent.sandbox_id) as string
+  const sandbox = own ? own.sandbox_id : agent.sandbox_id
+  if (!sandbox) {
+    await failIfOpen(deps, agent, job, "The machine for this job is gone.")
+    await move("released", own ? { own: undefined } : {})
+    return
+  }
   const expired = at >= m.deadline_at
   const open = job.status === "running"
   const environment = async () => ({
@@ -567,7 +572,7 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
       `${job.id}~${Date.parse(job.started_at ?? "")}`,
       agent.id,
       agent.org_id,
-      Date.parse(m.deadline_at) + 5 * 60_000,
+      tokenExpiryAfter(Date.parse(m.deadline_at)),
     ),
     DERIVE_SERVER: deps.server,
     DERIVE_JOB_ID: job.id,
@@ -833,10 +838,9 @@ export async function machinePass(
       log.warn("machine step deferred", { what, id, reason: runtimeFailureReason(error) })
     }
   }
-  const settledPhases = new Set(["released", "parked"])
   const advanceJob = async (job: JobRecord) => {
     let current = job
-    while (canWork() && !settledPhases.has(current.machine_phase ?? "released")) {
+    while (canWork() && machineHoldsCompute(current.machine_phase)) {
       transitions++
       await advanceMachineJob(deps, current)
       const next = await meta.getJob(current.id)
@@ -1108,17 +1112,10 @@ export async function retireSandbox(
   agent: AgentRecord,
 ): Promise<boolean> {
   const state = parse<SandboxState>(agent.sandbox_state_json)
-  const parked = deps
-    ? (await deps.meta.listJobs({ orgId: agent.org_id, agentId: agent.id, limit: 200 })).filter(
-        (j) => j.machine_phase !== null && j.machine_phase !== "released",
-      )
-    : []
   const sharedDone = !state?.identity || !!state.retired_at
-  if (sharedDone && parked.length === 0) return true
-  if (!deps) return false
-  for (const job of parked)
-    if (job.machine_phase === "parked")
-      await deps.meta.transitionJobMachine(job.id, job.machine_rev, { phase: "deleting" })
+  if (!deps) return sharedDone
+  const taskMachines = await deps.meta.retireAgentMachines(agent.org_id, agent.id)
+  if (sharedDone && taskMachines === 0) return true
   if (
     sharedDone ||
     agent.sandbox_phase === "busy" ||
@@ -1160,10 +1157,9 @@ export async function attachSession(
     return {
       ok: false,
       status: 409,
-      error:
-        job.machine_phase === "parked" || !job.machine_phase || job.machine_phase === "released"
-          ? "This session is paused. Resume it first."
-          : "This session is still starting.",
+      error: !machineHoldsCompute(job.machine_phase)
+        ? "This session is paused. Resume it first."
+        : "This session is still starting.",
     }
   const client = await clientFor(deps, agent, own)
   if (!client.sshKey) return { ok: false, status: 409, error: "This machine has no SSH access." }

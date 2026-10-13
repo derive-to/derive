@@ -285,20 +285,12 @@ function useNoAccount(agent: AgentDetail, meId: string): boolean {
   )
 }
 
-/** Machine phases that still hold or are returning compute (parked holds only files). */
-const ACTIVE_PHASES = new Set([
-  "creating",
-  "provisioning",
-  "starting",
-  "ready",
-  "launching",
-  "running",
-  "stopping",
-  "deleting",
-])
+/** Mirrors @derive/core machineHoldsCompute (the web imports core types only). */
+const holdsCompute = (phase: string | null | undefined) =>
+  !!phase && phase !== "released" && phase !== "parked"
 
 export function taskStatus(job: Job, agent: Agent): string {
-  const stopping = ACTIVE_PHASES.has(job.machine_phase ?? "")
+  const stopping = holdsCompute(job.machine_phase)
   if (job.status === "succeeded") return stopping ? "Result ready · stopping compute…" : "Done"
   if (job.status === "needs_you") return stopping ? "Needs you · stopping compute…" : "Needs you"
   if (job.status === "failed" || job.status === "lost")

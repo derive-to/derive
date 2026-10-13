@@ -10,33 +10,23 @@ import { spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { SESSION_RESUME, SESSION_TMUX } from "./conversation-format.js"
+import { SESSION_RESUME, SESSION_TMUX, TASK_REPO } from "./conversation-format.js"
 import { githubRepoOf } from "./repo.js"
+import { DeriveClient } from "./runner.js"
 
-/** `owner/name` or `owner/name@ref`; the server holds the authoritative rule. */
-const REPO = /^[\w.-]+\/[\w.-]+(@[\w./-]+)?$/
 const KEY_DIR = () => process.env.DERIVE_CONFIG_DIR ?? join(homedir(), ".derive")
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-/** A thin authenticated client for the routes sessions use. */
-export function sessionApi({ server, token, workspaceId, fetcher = fetch }) {
-  return async (path, { method = "GET", body } = {}) => {
-    const res = await fetcher(`${server}${path}`, {
-      method,
-      headers: {
-        ...(token ? { authorization: `Bearer ${token}` } : {}),
-        ...(workspaceId ? { "x-derive-workspace": workspaceId } : {}),
-        ...(body ? { "content-type": "application/json" } : {}),
-      },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    })
-    const json = await res.json().catch(() => ({}))
-    if (!res.ok)
-      throw Object.assign(new Error(json.error ?? `${method} ${path} → ${res.status}`), {
-        status: res.status,
+/** The session commands' client: the CLI's Derive client, reporting refusals in the
+ *  server's own words. */
+export function sessionApi({ server, token, workspaceId, fetcher }) {
+  const client = new DeriveClient(server, token, { workspaceId, fetcher })
+  return (path, { method = "GET", body } = {}) =>
+    client
+      .call(path, { method, ...(body ? { body: JSON.stringify(body) } : {}) })
+      .catch((error) => {
+        throw Object.assign(new Error(error.reason ?? error.message), { status: error.status })
       })
-    return json
-  }
 }
 
 /** The agent a new session runs on: `--agent` by id or name, else the workspace's agent named
@@ -211,7 +201,7 @@ export async function sessionCommand(cmd, positional, flags, api, { log = consol
       ? pickAgent(agents, { agent: flags.agent, harness })
       : pickAgent(agents, { agent: positional[0] })
     // `derive code owner/name "message"`, `derive code owner/name`, or `derive code "message"`.
-    const named = session && REPO.test(positional[0] ?? "")
+    const named = session && TASK_REPO.test(positional[0] ?? "")
     const repo = flags.here ? hereRepo() : named ? positional[0] : flags.repo
     const ask = session ? positional[named ? 1 : 0] : positional[1]
     if (!session && !ask) throw new Error('usage: derive run <agent> "what to do"')

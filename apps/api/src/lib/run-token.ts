@@ -30,7 +30,7 @@ const PREFIX: Record<WorkKind, string> = {
   jobtool: "dkjtool_",
 }
 
-// A token's expiry belongs to the run lifecycle clock (run-lifecycle.ts machineClock): past the
+// A token's expiry belongs to the run lifecycle clock (run-lifecycle.ts tokenExpiryAfter): past the
 // deadline so an honest job can still write its result, short of the reclaim lease so a
 // requeued item's previous executor is provably powerless before a second one starts.
 
