@@ -4,6 +4,10 @@ Derive uses `@aniraga/open-artifact-runtime/shared` for collection state.
 The shared client owns optimistic values, reconciliation, subscriptions, and rollback.
 It uses the same collection rules as the server.
 
+The kit and Derive use `prependArtifactHead` for runtime insertion.
+The shared scanner skips comments, raw text, templates, and quoted attributes.
+It preserves a leading charset declaration and inserts before authored CSP.
+
 `shared-collection-client.ts` adapts Derive's existing messages to `StateBackend`.
 It preserves `derive.shared`, `derive.increment`, the handle's return values,
 caller slots, and the existing activity fields. It uses Derive's ownership fields.

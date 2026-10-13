@@ -4,6 +4,7 @@
  * can call `derive.shared(...)` synchronously. Authentication stays in the host:
  * this opaque-origin client only speaks postMessage.
  */
+import { prependArtifactHead } from "@aniraga/open-artifact-protocol/source"
 import { SHARED_COLLECTION_CLIENT_JS } from "./shared-collection-client.gen"
 
 export const SHARED_STATE_CLIENT_JS = `(function () {
@@ -341,64 +342,8 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
  * this client uses a short cache so runtime fixes reach already-published work. */
 export const SHARED_STATE_SCRIPT = `<script src="/raw/derive-shared.js"></script>`
 
-/** Find the end of an opening document tag without parsing untrusted HTML. */
-const openingTagEnd = (html: string, name: "head" | "html"): number => {
-  const source = html.toLowerCase()
-  const token = `<${name}`
-  for (let start = source.indexOf(token); start >= 0; start = source.indexOf(token, start + 1)) {
-    const boundary = start + token.length
-    const next = html.charCodeAt(boundary)
-    if (next === 62) return boundary + 1 // >
-    if (next !== 9 && next !== 10 && next !== 12 && next !== 13 && next !== 32) continue
-    const end = html.indexOf(">", boundary + 1)
-    return end < 0 ? -1 : end + 1
-  }
-  return -1
-}
-
-const runtimeInsertionPoint = (html: string): number => {
-  const head = openingTagEnd(html, "head")
-  if (head < 0) return openingTagEnd(html, "html")
-
-  // Preserve a leading charset declaration. Browsers only inspect the first 1024
-  // bytes for it, while a meta CSP must still follow the platform runtime tags.
-  let cursor = head
-  while (cursor < html.length) {
-    const whitespace = html.slice(cursor).match(/^\s+/)?.[0]
-    if (whitespace) {
-      cursor += whitespace.length
-      continue
-    }
-    if (html.startsWith("<!--", cursor)) {
-      const commentEnd = html.indexOf("-->", cursor + 4)
-      if (commentEnd < 0) break
-      cursor = commentEnd + 3
-      continue
-    }
-    break
-  }
-  if (html.slice(cursor, cursor + 5).toLowerCase() !== "<meta") return head
-  const metaEnd = html.indexOf(">", cursor + 5)
-  if (metaEnd < 0) return head
-  return /\bcharset\s*=/i.test(html.slice(cursor, metaEnd + 1)) ? metaEnd + 1 : head
-}
-
-const doctypeEnd = (html: string): number => {
-  const token = "<!doctype"
-  const start = html.toLowerCase().indexOf(token)
-  if (start < 0) return -1
-  const end = html.indexOf(">", start + token.length)
-  return end < 0 ? -1 : end + 1
-}
-
-/** Insert platform runtime tags before any authored head content, including meta CSP. */
-export const injectArtifactRuntimeScripts = (html: string, scripts: string): string => {
-  const points = [runtimeInsertionPoint(html), doctypeEnd(html)]
-  for (const at of points) {
-    if (at >= 0) return `${html.slice(0, at)}${scripts}${html.slice(at)}`
-  }
-  return scripts + html
-}
+/** Insert platform scripts before authored CSP and after a leading charset. */
+export const injectArtifactRuntimeScripts = prependArtifactHead
 
 export const injectSharedStateScript = (html: string): string =>
   injectArtifactRuntimeScripts(html, SHARED_STATE_SCRIPT)
