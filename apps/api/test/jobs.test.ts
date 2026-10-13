@@ -2962,7 +2962,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
       (
         await app.request(
           "/v1/runtime/connection",
-          jsonAs(as(owner.email), { api_key: "boat_key_0001234", provider: "boat" }, "PUT"),
+          jsonAs(as(owner.email), { api_key: "x".repeat(16), provider: "boat" }, "PUT"),
         )
       ).status,
     ).toBe(200)
