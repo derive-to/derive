@@ -12,7 +12,7 @@ import { cloudEnabled, connectionClient, workspaceRuntime } from "./runtime-conn
 import { runtimeFailureReason } from "./runtime-diagnostics"
 import type { RuntimeConfig } from "./runtime-setup"
 import { runnerRunsJobs, runtimeSetup } from "./runtime-setup"
-import type { SandboxClient } from "./sandbox-client"
+import { type SandboxClient, SandboxCreateRejected } from "./sandbox-client"
 
 // THE DERIVE MACHINE: one Ortam sandbox per agent, kept stopped between jobs so its files
 // persist. Two sagas, each a phase plus a revision that fences every transition, advanced a
@@ -256,8 +256,9 @@ export async function advanceSandbox(
   const id = agent.sandbox_id
   // `failed` ends a sandbox's life; only a failed operation counts toward the backoff, not a
   // deliberate delete (an agent moved off Derive, admission withdrawn).
-  const failed = () =>
+  const failed = (failures = state.failures ?? 0) =>
     move("failed", {
+      failures,
       failed_at: iso(deps),
       credential_enc: undefined,
       account_id: undefined,
@@ -270,18 +271,38 @@ export async function advanceSandbox(
       // Always resolve the create, even once admission is gone: a create whose response was
       // lost may have made a sandbox, and only the same key finds it to delete.
       // The same immutable request and key, so a lost response resolves to the same sandbox.
-      const result = await client.create(
-        sandboxRequest(agent, state, deps),
-        `derive-agent-${agent.id}-${state.generation}-create`,
-        state.identity,
-      )
-      return move("provisioning", { create_op: result.operation.id }, result.sandbox.id)
+      try {
+        const result = await client.create(
+          sandboxRequest(agent, state, deps),
+          `derive-agent-${agent.id}-${state.generation}-create`,
+          state.identity,
+        )
+        return move("provisioning", { create_op: result.operation.id }, result.sandbox.id)
+      } catch (error) {
+        if (error instanceof SandboxCreateRejected) return failed(broke())
+        throw error
+      }
     }
     case "provisioning": {
       if (!id || !state.create_op)
         return move("failed", { failures: broke(), failed_at: iso(deps) })
       const op = await client.operation(state.create_op, id, "create", state.identity)
-      if (op.state === "succeeded") return move(allowed ? "stopping" : "deleting")
+      if (op.state === "succeeded") {
+        if (!allowed) return move("deleting")
+        const waiting = await meta.listJobs({
+          orgId: agent.org_id,
+          agentId: agent.id,
+          status: ["queued"],
+          limit: 200,
+        })
+        const due = waiting.some(
+          (job) =>
+            job.attended !== 1 &&
+            job.kind !== "graph" &&
+            (!job.scheduled_for || job.scheduled_for <= iso(deps)),
+        )
+        return move(due ? "ready" : "stopping")
+      }
       // Never race an in-flight create with deletion: a create still going is waited out.
       if (op.state === "failed") return move("deleting", { failures: broke() })
       return agent
@@ -453,6 +474,11 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
   switch (job.machine_phase) {
     case "starting": {
       if (!m.resume_op) {
+        const observed = await client.sandbox(sandbox, state.identity)
+        if (observed.state === "ready") {
+          await move("ready")
+          return
+        }
         const op = await client.lifecycle(
           sandbox,
           "resume",

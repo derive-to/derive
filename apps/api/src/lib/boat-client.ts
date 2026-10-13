@@ -1,7 +1,7 @@
 import { unbound } from "@derive/broker"
 import { z } from "zod"
 import { sha256 } from "./crypto"
-import type { SandboxClient, SandboxCreate } from "./sandbox-client"
+import { type SandboxClient, type SandboxCreate, SandboxCreateRejected } from "./sandbox-client"
 
 const Box = z.object({
   id: z.string(),
@@ -60,7 +60,12 @@ export class BoatClient implements SandboxClient {
     } catch {
       throw new Error("boat.dev request outcome is unknown")
     }
-    if (!response.ok) throw new Error(`boat.dev returned HTTP ${response.status}`)
+    if (!response.ok) {
+      const message = `boat.dev returned HTTP ${response.status}`
+      if (method === "POST" && path === "/sandboxes" && [400, 404, 422].includes(response.status))
+        throw new SandboxCreateRejected(message)
+      throw new Error(message)
+    }
     try {
       return await response.json()
     } catch {

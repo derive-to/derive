@@ -1,3 +1,6 @@
+/** Creation was refused before allocation; transport failures are not this error. */
+export class SandboxCreateRejected extends Error {}
+
 /** Provider adapters own API translation. The controller owns jobs, claims, and
  * retries. A stopped sandbox must mean compute is off and its files are saved. */
 type Identity = { organization_id: string; user_id: string }
