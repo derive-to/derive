@@ -1,7 +1,7 @@
 {
   "repository": "https://github.com/derive-to/open-artifact",
   "baseCommit": "9b6a221ca7ac64dea06c1603426504771aee4dab",
-  "previewVersion": "0.6.0-core.7",
+  "previewVersion": "0.6.0-core.8",
   "sources": {
     "anchors.ts": "a6981a8e44f3004a0fad2814fecc637a1fac92e057d1b8f539b348745080aaa1",
     "collection.ts": "88ed72a13b6039f8dc27753f37ecf26bbb6d3f5bf7781e722448f5f41edd706c",
@@ -23,7 +23,7 @@
     "source-html.ts": "3ea1dd7683a205839b513af6cdd7c7ee581d678ed79de3183b0960d7f49e2458",
     "source-reflow.ts": "1a2bf9ab4623e3e9e8bf9c61eeedff086bdc2a4b6604a325184e12b5c20215bf",
     "source-text-index.ts": "47a483046f51467f9f84322a2cb3a6338f8efd76d1ea8d43685670380ed4c7fe",
-    "source-text-range.ts": "6b7a0f51e178a0b87ee51df75745bad12c91f1762b41f149216e01411df619c9",
+    "source-text-range.ts": "dd219b00db2399a0261b43baa18baebc123c1347e04a5c8d5de1c405767f94b6",
     "source-text-segments.ts": "97f6a1bc48ca12a35b9082f1be2cb7e5b5ff76039eda7a241820844d1f5c9ea9",
     "source-text.ts": "8192554896e5e847fd1b304c22c53b3516398f7c441b6e06aa112dd79000dda3",
     "source.ts": "5d1b1cca31985dea45c919f525f58aaa93640e736d3f4b67a2e7c33aaabff1c3",
@@ -34,7 +34,7 @@
     "tools.ts": "a83f4d194b0fcf7f56f37753fbd1f4b1a48d32f1aaafebb98fea2584bf996611",
     "viewer.ts": "e7c87eda4dbbbf8a02f7e25aff70139df90f7375967086be0f9a740f8ea64f41"
   },
-  "tarballSha256": "7c82d913fb0ea0afddd30b3750446112391866f4bb23f9dc77d5ef81511b5777",
+  "tarballSha256": "16f190ca44fc1b8036c98227d7bb2accb1395a02a1a7793a14d1dd09216564ad",
   "note": "Packed source preview for the first Derive consumer. This is not a published npm release.",
-  "sourceCommit": "c5db3cb5ae1de54ae5e0e169d2cdb5f107fe3056"
+  "sourceCommit": "1e2353333fe4e61cebf6da4d71fb27ccd96678b1"
 }
