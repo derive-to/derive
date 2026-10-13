@@ -1578,7 +1578,8 @@ export const buildPgSchemaStatements = (): string[] => {
     ...ddl.addColumns,
     ...ddl.createIndexes,
     ...PERF_INDEXES,
-    "DROP INDEX IF EXISTS job_machine_capacity",
+    // Kept while released builds still count machines by it (PR previews share this database).
+    "CREATE INDEX IF NOT EXISTS job_machine_capacity ON job (org_id) WHERE machine_phase IS NOT NULL AND machine_phase <> 'released'",
     "CREATE INDEX IF NOT EXISTS job_machine_active ON job (org_id) WHERE machine_phase IS NOT NULL AND machine_phase NOT IN ('released', 'parked')",
     "CREATE INDEX IF NOT EXISTS job_machine_parked ON job (updated_at) WHERE machine_phase = 'parked'",
     "CREATE INDEX IF NOT EXISTS agent_compute_capacity ON agent (org_id) WHERE sandbox_phase IN ('creating', 'provisioning', 'stopping', 'deleting')",
