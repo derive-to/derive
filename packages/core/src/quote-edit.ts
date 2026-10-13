@@ -27,7 +27,7 @@ import {
   type MarkdownTextSegment,
   markdownTextParts,
 } from "./markdown-text"
-import { sanitizeInline } from "./md"
+import { escapeHtml, sanitizeInline } from "./md"
 import type { StructuralUserEdit } from "./structural-edit"
 import type { SceneEdit } from "./videos"
 
@@ -817,7 +817,9 @@ export function applyQuoteEdits(
       newHtml !== undefined
         ? sanitizeInline(newHtml)
         : isHtml
-          ? serializeSourceText(newText ?? "", literal)
+          ? literal
+            ? serializeSourceText(newText ?? "", true)
+            : escapeHtml(newText ?? "")
           : isLatex
             ? escapeLatex(newText ?? "")
             : (newText ?? "")
