@@ -1355,7 +1355,7 @@ export const jobRoutes = (ctx: AppContext) => {
     const repo = taskOptions(job.meta_json).repo
     if (!repo) return fail(c, 404, "This task has no repository")
     if (!deps.encryptionKey) return fail(c, 503, "Secret encryption is not configured")
-    const [full, ref = null] = repo.split("@")
+    const [full = "", ref = null] = repo.split("@")
     const [owner = "", name = ""] = full.split("/")
     const github = (
       await spendableConnections(meta, agent.org_id, parseConnectionIds(agent.connection_ids_json))

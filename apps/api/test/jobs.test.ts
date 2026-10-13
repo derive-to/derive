@@ -6,6 +6,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
 import { newId } from "@derive/core"
+import { sessionApi, sessionCommand } from "@derive-to/cli/sessions"
 import { SignJWT } from "jose"
 import { describe, expect, it, vi } from "vitest"
 import {
@@ -15,7 +16,6 @@ import {
   runOneJob,
   serveJob,
 } from "../../../packages/cli/src/job-runner.js"
-import { sessionApi, sessionCommand } from "../../../packages/cli/src/sessions.js"
 import type { AppDeps } from "../src/context"
 import { purgeUserDataAndSyncSeats } from "../src/lib/account"
 import type { ModelTurn } from "../src/lib/agent-loop"
@@ -3007,14 +3007,14 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
         ...loadJobRunnerConfig(
           {},
           {
-            token: env.DERIVE_TOKEN,
+            token: env.DERIVE_TOKEN ?? "",
             agent: "from-job",
             server: "http://derive.test",
             "agent-bin": harness,
           },
         ),
         localLogin: false,
-        jobId: env.DERIVE_JOB_ID,
+        jobId: env.DERIVE_JOB_ID ?? "",
       }
       const client = new JobClient(cfg, (url, init) => Promise.resolve(app.request(url, init)))
       const out = await runOneJob(cfg, client, {
@@ -3180,9 +3180,12 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
       server: "http://derive.test",
       token: null,
       workspaceId: null,
-      fetcher: (url, init) =>
+      fetcher: (url: RequestInfo | URL, init?: RequestInit) =>
         Promise.resolve(
-          app.request(String(url), { ...init, headers: { ...init?.headers, ...as(ed.email) } }),
+          app.request(String(url), {
+            ...init,
+            headers: { ...(init?.headers as Record<string, string>), ...as(ed.email) },
+          }),
         ),
     })
     expect(await sessionCommand("ls", [], {}, cli)).toBe(0)

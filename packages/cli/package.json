@@ -34,6 +34,10 @@
       "types": "./src/conversation-format.d.ts",
       "default": "./src/conversation-format.js"
     },
+    "./sessions": {
+      "types": "./src/sessions.d.ts",
+      "default": "./src/sessions.js"
+    },
     "./config": {
       "types": "./src/config.d.ts",
       "default": "./src/config.js"

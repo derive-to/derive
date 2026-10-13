@@ -910,7 +910,7 @@ export async function machinePass(
     await guard("repair", agent.id, async () => {
       const holder = parse<SandboxState>(agent.sandbox_state_json)?.holder
       const job = holder ? await meta.getJob(holder) : null
-      if (job && job.machine_phase !== null && !settledPhases.has(job.machine_phase)) return
+      if (job && machineHoldsCompute(job.machine_phase)) return
       await meta.transitionAgentSandbox(agent.id, agent.org_id, agent.sandbox_rev, {
         phase: "ready",
         state_json: JSON.stringify({
