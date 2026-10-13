@@ -18,6 +18,12 @@ import { dir } from "./helpers"
 const SECRET = "test-signing-secret"
 
 describe("api token — signing and verification", () => {
+  it("returns the verified expiry for a connection's authorization deadline", async () => {
+    const expiresAt = Date.now() + API_TOKEN_TTL_MS
+    const token = await signApiToken(SECRET, "u_1", "ws_1", "editor", "cli", expiresAt)
+    expect(await verifyApiToken(SECRET, token, Date.now())).toMatchObject({ expiresAt })
+  })
+
   it("refuses to sign an id containing the payload delimiter", async () => {
     // The payload is dot-delimited and parsed from the left, so a dot inside userId
     // shifts every field after it. Signing `u_a.ws_other.owner` as the user would mint a
