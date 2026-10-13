@@ -67,3 +67,8 @@ Structural editing and inverse receipts come from the shared protocol.
 The shared inspector validates source ranges, region owners, and node identities.
 Legacy deck backfill uses the same source rules for serving and saved edits.
 Unsafe slides keep navigation identities without receiving structural handles.
+
+Open-artifact owns video source classification and scene operations.
+Timing edits change actual attributes. Scene copies receive fresh DOM and structural identities.
+The editor records explicit copy origins. Redo keeps working after an undo save removes a copy.
+The original must remain in the current source. Other deleted blocks still require safe recovery through History.

@@ -24,6 +24,7 @@
  * Keep its imports DOM-free + pure so it bundles into one small self-contained script.
  */
 
+import { recordSourceCopy, sourceCopyId } from "@aniraga/open-artifact-runtime/source"
 import {
   BLOCK_TEXT_ELEMENTS,
   findQuoteMatches,
@@ -4196,6 +4197,7 @@ interface ElReg {
   let blockClip: { el: HTMLElement; copy: boolean } | null = null
   /** Blocks this session copied (Duplicate, a pasted copy). */
   const copies = new WeakSet<Element>()
+  const copyOrigins = new WeakMap<Element, Element>()
   interface BlockDrag {
     el: HTMLElement
     pointerId: number
@@ -4518,6 +4520,7 @@ interface ElReg {
    *  snapshot, but the save compares it with its original's (source-tokens). */
   const copyOf = (el: HTMLElement): HTMLElement => {
     const copy = el.cloneNode(true) as HTMLElement
+    recordSourceCopy(el, copy, copyOrigins)
     copy.classList.remove("derive-edited", "derive-edit-hover", "derive-block-dragging")
     // The block itself may be armed too: a copy is armed when it is typed in.
     const armed = Array.from(copy.querySelectorAll("[data-derive-editable]"))
@@ -6784,11 +6787,13 @@ interface ElReg {
                 !!c && !unresolved.has(c) && srcOf(c) !== null && openingOf(c) === openingOf(el),
             )
           : undefined
-        const like = /^(?:b|strong|i|em|br|a)$/.test(el.localName)
-          ? undefined
-          : el.isConnected
-            ? sibling && (srcOf(sibling) ?? undefined)
-            : opening(el)
+        const like =
+          sourceCopyId(el, copyOrigins) ??
+          (/^(?:b|strong|i|em|br|a)$/.test(el.localName)
+            ? undefined
+            : el.isConnected
+              ? sibling && (srcOf(sibling) ?? undefined)
+              : opening(el))
         if (like !== undefined) standIns.add(el)
         else cleared.add(el)
         renumber(el, like ?? null)
