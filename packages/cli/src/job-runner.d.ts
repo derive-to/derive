@@ -70,8 +70,17 @@ export declare function loadOneJobConfig(
   env?: Record<string, string | undefined>,
   flags?: Record<string, string>,
 ): JobRunnerCfg & { jobId: string }
+/** Runs an interactive session's harness and says why it ended (session.js runSession). */
+export type RunSession = (opts: {
+  bin: string
+  args: string[]
+  cwd: string
+  env: Record<string, string>
+  signal?: AbortSignal
+}) => Promise<"exited" | "idle" | "stopped">
+
 export declare function runOneJob(
   cfg: JobRunnerCfg & { jobId: string },
   client?: JobClient,
-  deps?: { runAgent?: RunAgent },
+  deps?: { runAgent?: RunAgent; runSession?: RunSession },
 ): Promise<"succeeded" | "failed" | "needs_you" | "lost">

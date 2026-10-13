@@ -2999,7 +2999,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
         args: string[]
         env: Record<string, string>
         cwd: string
-      }) => Promise<string>,
+      }) => Promise<"exited" | "idle" | "stopped">,
     ) => {
       const env = boat.boxes.get(sandboxId)?.env
       if (!env) throw new Error(`nothing launched on ${sandboxId}`)
@@ -3020,10 +3020,8 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
       const out = await runOneJob(cfg, client, {
         // A model turn as Codex leaves it: an answer plus its session file in CODEX_HOME,
         // which the runner checkpoints so the next turn continues the conversation.
-        runAgent: async (
-          _p: unknown,
-          opts: { env: Record<string, string>; meter: { sessionId?: string } },
-        ) => {
+        runAgent: async (_p, raw) => {
+          const opts = raw as { env: Record<string, string>; meter: { sessionId?: string } }
           const day = join(opts.env.CODEX_HOME ?? "", "sessions", "2026", "10", "13")
           mkdirSync(day, { recursive: true })
           writeFileSync(
@@ -3037,6 +3035,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
         ...(runSession
           ? {
               runSession: async (opts: {
+                bin: string
                 args: string[]
                 env: Record<string, string>
                 cwd: string
