@@ -19,7 +19,7 @@
     "test:coverage": "vitest run --coverage --passWithNoTests"
   },
   "dependencies": {
-    "@aniraga/open-artifact-protocol": "file:../../vendor/aniraga-open-artifact-protocol-0.6.0-core.6.tgz",
+    "@aniraga/open-artifact-protocol": "file:../../vendor/aniraga-open-artifact-protocol-0.6.0-core.7.tgz",
     "@derive/facts": "workspace:*",
     "entities": "^6.0.1",
     "fflate": "^0.8.2",

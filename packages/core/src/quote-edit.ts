@@ -365,7 +365,10 @@ const spanToRaw = (
   // boundary repair below.
   let crossesMarkup = false
   for (let i = firstIdx; i <= lastIdx; i++) {
-    if ((segments[i] as PageTextSegment).kind === "gap") crossesMarkup = true
+    const segment = segments[i] as PageTextSegment
+    if (segment.kind === "literal")
+      throw new EditError(`${label} failed: literal HTML text requires a source edit.`)
+    if (segment.kind === "gap") crossesMarkup = true
   }
   const first = segments[firstIdx] as PageTextSegment
   const lastSeg = segments[lastIdx] as PageTextSegment
