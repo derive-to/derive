@@ -18,7 +18,9 @@ import {
   getUserInstallation,
   githubWebhookSecret,
   githubWebhookSignature,
+  installationToken,
   listAppInstallations,
+  listInstallationRepositories,
   listUserInstallations,
 } from "../lib/github-app"
 import { upsertGithubConnection } from "../lib/github-connection"
@@ -79,11 +81,11 @@ export const githubRoutes = (ctx: AppContext) => {
   }
 
   const settingsRedirect = (
-    result: "connected" | "canceled" | "expired" | "config" | "save",
+    result: "connected" | "canceled" | "requested" | "expired" | "config" | "save",
   ): string =>
     result === "connected"
-      ? "/settings/integrations?github_connected=1"
-      : `/settings/integrations?github_error=${result}`
+      ? "/settings/sources?github_connected=1"
+      : `/settings/sources?github_error=${result}`
 
   const loginRedirect = (url: string): string => {
     const here = new URL(url)
@@ -112,6 +114,19 @@ export const githubRoutes = (ctx: AppContext) => {
     authorize.searchParams.set("code_challenge_method", "S256")
     authorize.searchParams.set("prompt", "select_account")
     return authorize.toString()
+  }
+
+  const saveConnection = async (input: {
+    orgId: string
+    userId: string
+    installationId: string
+    accountLogin: string | null
+  }) => {
+    const loaded = await loadApp()
+    if (!loaded) throw new Error("GitHub is not configured")
+    const token = await installationToken(loaded.app.app_id, loaded.pem, input.installationId)
+    await listInstallationRepositories(token, 1)
+    return upsertGithubConnection(meta, input)
   }
 
   const selectionPage = (
@@ -143,6 +158,7 @@ export const githubRoutes = (ctx: AppContext) => {
     state: z.enum(["active", "disconnected", "needs_reauth"]),
     permissions_state: z.enum(["ready", "approval_required", "unknown"]),
     permissions_url: z.string().nullable(),
+    installation_url: z.string().nullable(),
   })
   const GithubStatus = z
     .object({
@@ -236,7 +252,7 @@ export const githubRoutes = (ctx: AppContext) => {
       const staleInstallations = new Set<string>()
       const installationPermissions = new Map<
         string,
-        { state: "ready" | "approval_required"; url: string | null }
+        { state: "ready" | "approval_required"; url: string | null; installationUrl: string | null }
       >()
       if (loaded && available) {
         await Promise.all(
@@ -247,6 +263,7 @@ export const githubRoutes = (ctx: AppContext) => {
                 loaded.pem,
                 connection.broker_ref,
               )
+              if (live.suspended) staleInstallations.add(connection.broker_ref)
               const permissionsReady = Object.entries(MANIFEST_PERMISSIONS).every(
                 ([permission, level]) =>
                   !!live.permissions[permission] &&
@@ -255,11 +272,14 @@ export const githubRoutes = (ctx: AppContext) => {
               installationPermissions.set(connection.broker_ref, {
                 state: permissionsReady ? "ready" : "approval_required",
                 url: permissionsReady ? null : live.htmlUrl,
+                installationUrl: live.htmlUrl,
               })
             } catch (err) {
               if (
                 err instanceof GitHubError &&
-                (err.status === 401 || err.status === 403 || err.status === 404)
+                (err.status === 401 ||
+                  (err.status === 403 && err.rateLimitRemaining !== "0") ||
+                  err.status === 404)
               )
                 staleInstallations.add(connection.broker_ref)
             }
@@ -273,6 +293,7 @@ export const githubRoutes = (ctx: AppContext) => {
         state: "active" | "disconnected" | "needs_reauth"
         permissions_state: "ready" | "approval_required" | "unknown"
         permissions_url: string | null
+        installation_url: string | null
       }[] = githubConnections.map((connection) => {
         const permissions = installationPermissions.get(connection.broker_ref)
         const usable =
@@ -286,6 +307,7 @@ export const githubRoutes = (ctx: AppContext) => {
           connection_id: connection.id,
           permissions_state: permissions?.state ?? "unknown",
           permissions_url: permissions?.url ?? null,
+          installation_url: permissions?.installationUrl ?? null,
           state: usable
             ? ("active" as const)
             : connection.status === "active"
@@ -308,6 +330,77 @@ export const githubRoutes = (ctx: AppContext) => {
         can_manage_app: canManageApp,
         accounts,
       })
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/github/connections/{id}/repositories",
+      tags: ["GitHub"],
+      summary: "Read repositories available to this workspace's GitHub installation.",
+      request: {
+        params: z.object({ id: z.string() }),
+        query: z.object({ page: z.coerce.number().int().min(1).max(10000).default(1) }),
+      },
+      responses: {
+        200: {
+          description: "One page of accessible repositories, verified with an installation token.",
+          content: {
+            "application/json": {
+              schema: z
+                .object({
+                  total_count: z.number(),
+                  repositories: z.array(
+                    z.object({
+                      id: z.number(),
+                      full_name: z.string(),
+                      private: z.boolean(),
+                      html_url: z.string(),
+                    }),
+                  ),
+                  has_more: z.boolean(),
+                })
+                .openapi("GithubRepositories"),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const me = await requireUser(c)
+      if (me instanceof Response) return bail(me)
+      const org = await requireWorkspace(c, "read")
+      if (org instanceof Response) return bail(org)
+      const connection = await meta.getConnection(c.req.valid("param").id)
+      if (
+        !connection ||
+        connection.org_id !== org ||
+        connection.scope !== "workspace" ||
+        connection.kind !== "github_app" ||
+        connection.status !== "active"
+      )
+        return bail(fail(c, 404, "GitHub connection not found"))
+      const loaded = await loadApp()
+      if (!loaded) return bail(fail(c, 503, "GitHub is not configured"))
+      try {
+        const token = await installationToken(loaded.app.app_id, loaded.pem, connection.broker_ref)
+        return c.json(await listInstallationRepositories(token, c.req.valid("query").page))
+      } catch (error) {
+        if (
+          error instanceof GitHubError &&
+          [401, 403, 404].includes(error.status) &&
+          error.rateLimitRemaining !== "0"
+        )
+          return bail(
+            fail(
+              c,
+              403,
+              "GitHub access could not be verified. Reconnect or review repository access on GitHub.",
+            ),
+          )
+        return bail(fail(c, 503, "GitHub repositories could not be loaded. Try again later."))
+      }
     },
   )
 
@@ -358,7 +451,7 @@ export const githubRoutes = (ctx: AppContext) => {
         if (installations.length === 1) {
           const installation = installations[0]
           if (!installation) return c.redirect(settingsRedirect("save"))
-          await upsertGithubConnection(meta, {
+          await saveConnection({
             orgId: org,
             userId: me.id,
             installationId: String(installation.id),
@@ -403,7 +496,7 @@ export const githubRoutes = (ctx: AppContext) => {
   const handleInstallCallback: Handler<BlankEnv> = async (c) => {
     const installationId = c.req.query("installation_id")
     const stateRaw = c.req.query("state") ?? ""
-    if (c.req.query("setup_action") === "request") return c.redirect(settingsRedirect("canceled"))
+    if (c.req.query("setup_action") === "request") return c.redirect(settingsRedirect("requested"))
     if (!deps.encryptionKey || !installationIdIsValid(installationId))
       return c.redirect(settingsRedirect("config"))
 
@@ -498,7 +591,7 @@ export const githubRoutes = (ctx: AppContext) => {
         if (installations.length === 1) {
           const installation = installations[0]
           if (!installation) return c.redirect(settingsRedirect("save"))
-          await upsertGithubConnection(meta, {
+          await saveConnection({
             orgId: state.org,
             userId: me.id,
             installationId: String(installation.id),
@@ -517,7 +610,7 @@ export const githubRoutes = (ctx: AppContext) => {
         return c.redirect(settingsRedirect("save"))
       }
       const accountLogin = installation.account?.login ?? null
-      await upsertGithubConnection(meta, {
+      await saveConnection({
         orgId: state.org,
         userId: me.id,
         installationId: state.installationId,
@@ -558,7 +651,7 @@ export const githubRoutes = (ctx: AppContext) => {
         loaded.pem,
         state.installationId,
       )
-      await upsertGithubConnection(meta, {
+      await saveConnection({
         orgId: org,
         userId: me.id,
         installationId: state.installationId,

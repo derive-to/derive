@@ -4234,6 +4234,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/github/connections/{id}/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read repositories available to this workspace's GitHub installation. */
+        get: {
+            parameters: {
+                query?: {
+                    page?: number;
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description One page of accessible repositories, verified with an installation token. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GithubRepositories"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/github/connections/{id}": {
         parameters: {
             query?: never;
@@ -7977,7 +8017,18 @@ export interface components {
                 /** @enum {string} */
                 permissions_state: "ready" | "approval_required" | "unknown";
                 permissions_url: string | null;
+                installation_url: string | null;
             }[];
+        };
+        GithubRepositories: {
+            total_count: number;
+            repositories: {
+                id: number;
+                full_name: string;
+                private: boolean;
+                html_url: string;
+            }[];
+            has_more: boolean;
         };
         SlackStatus: {
             /** @description True if this instance has Slack configured at all */

@@ -116,6 +116,8 @@ export async function getAppInfo(
 }> {
   const res = await fetch(`${API}/app`, {
     headers: ghHeaders(`Bearer ${appJwt(appId, privateKeyPem)}`),
+    redirect: "error",
+    signal: AbortSignal.timeout(20_000),
   })
   if (!res.ok) return raise(res, "reading the GitHub App")
   const d = (await res.json()) as {
@@ -210,9 +212,11 @@ export async function getAppInstallation(
   appId: string,
   privateKeyPem: string,
   installationId: string,
-): Promise<AppInstallation> {
+): Promise<AppInstallation & { suspended: boolean }> {
   const res = await fetch(`${API}/app/installations/${encodeURIComponent(installationId)}`, {
     headers: ghHeaders(`Bearer ${appJwt(appId, privateKeyPem)}`),
+    redirect: "error",
+    signal: AbortSignal.timeout(20_000),
   })
   if (!res.ok) return raise(res, "reading the GitHub App installation")
   const data = (await res.json()) as {
@@ -220,8 +224,10 @@ export async function getAppInstallation(
     account?: { login?: string; type?: string }
     html_url?: string
     permissions?: Record<string, string>
+    suspended_at?: string | null
   }
   return {
+    suspended: !!data.suspended_at,
     id: data.id ?? Number(installationId),
     account: data.account
       ? { login: data.account.login ?? "", type: data.account.type ?? "" }
@@ -342,6 +348,30 @@ export interface AppInstallation {
   account: { login: string; type: string } | null
   htmlUrl: string | null
   permissions: Record<string, string>
+}
+
+/** One explicit page, never a background crawl of the account's repositories. */
+export async function listInstallationRepositories(token: string, page: number) {
+  const res = await fetch(`${API}/installation/repositories?per_page=100&page=${page}`, {
+    headers: ghHeaders(`Bearer ${token}`),
+    redirect: "error",
+    signal: AbortSignal.timeout(20_000),
+  })
+  if (!res.ok) return raise(res, "reading available GitHub repositories")
+  const data = (await res.json()) as {
+    total_count: number
+    repositories: { id: number; full_name: string; private: boolean; html_url: string }[]
+  }
+  return {
+    total_count: data.total_count,
+    repositories: data.repositories.map((repo) => ({
+      id: repo.id,
+      full_name: repo.full_name,
+      private: repo.private,
+      html_url: repo.html_url,
+    })),
+    has_more: page * 100 < data.total_count,
+  }
 }
 
 export interface ManifestConversion {

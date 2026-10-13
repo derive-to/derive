@@ -3286,6 +3286,10 @@
                 "permissions_url": {
                   "type": "string",
                   "nullable": true
+                },
+                "installation_url": {
+                  "type": "string",
+                  "nullable": true
                 }
               },
               "required": [
@@ -3294,7 +3298,8 @@
                 "connection_id",
                 "state",
                 "permissions_state",
-                "permissions_url"
+                "permissions_url",
+                "installation_url"
               ]
             }
           }
@@ -3308,6 +3313,48 @@
           "app_settings_url",
           "can_manage_app",
           "accounts"
+        ]
+      },
+      "GithubRepositories": {
+        "type": "object",
+        "properties": {
+          "total_count": {
+            "type": "number"
+          },
+          "repositories": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "number"
+                },
+                "full_name": {
+                  "type": "string"
+                },
+                "private": {
+                  "type": "boolean"
+                },
+                "html_url": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "full_name",
+                "private",
+                "html_url"
+              ]
+            }
+          },
+          "has_more": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "total_count",
+          "repositories",
+          "has_more"
         ]
       },
       "SlackStatus": {
@@ -9635,6 +9682,47 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/GithubStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/github/connections/{id}/repositories": {
+      "get": {
+        "tags": [
+          "GitHub"
+        ],
+        "summary": "Read repositories available to this workspace's GitHub installation.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000,
+              "default": 1
+            },
+            "required": false,
+            "name": "page",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of accessible repositories, verified with an installation token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GithubRepositories"
                 }
               }
             }
