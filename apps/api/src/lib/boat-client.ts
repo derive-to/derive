@@ -188,7 +188,7 @@ export class BoatClient implements SandboxClient {
     if (existing.status !== "starting") return existing
     const dir = `/home/ortam/.derive/operations/${sha256(key)}`
     const envDir = `/home/user/.derive/operations/${sha256(key)}`
-    const envFile = `${envDir}/environment.json`
+    const envFile = `${envDir}/environment-${crypto.randomUUID()}.json`
     // Boat keeps command history. Send credentials as a private file, never shell text.
     z.object({ success: z.literal(true) }).parse(
       await this.request(`/sandboxes/${encodeURIComponent(id)}/commands`, "POST", {
@@ -216,7 +216,7 @@ export class BoatClient implements SandboxClient {
     const command = [
       "set -eu",
       `mkdir -p ${quote(dir)}`,
-      `if ! mkdir ${quote(dir + "/claim")} 2>/dev/null; then exit 0; fi`,
+      `if ! mkdir ${quote(dir + "/claim")} 2>/dev/null; then rm -f ${quote(envFile)}; exit 0; fi`,
       `printf '%s\\n' \"$$\" > ${quote(dir + "/pid")}`,
       `cat /proc/sys/kernel/random/boot_id > ${quote(dir + "/boot")}`,
       `awk '{print $22}' /proc/$$/stat > ${quote(dir + "/started")}`,
