@@ -11,6 +11,13 @@ actor attribution, live broadcasts, and the activity ledger.
 The module reports whether a result is saved. A changed result identifies its item.
 The host sends side effects only after the write succeeds.
 
+Derive publication uses `@aniraga/open-artifact-server/source`.
+The shared kernel keeps original source bytes separate from rendered HTML.
+The host adapter preserves Derive's IDs, bylines, access, formats, and storage quotas.
+It uses the existing native atomic writes for creation, conditional saves, autosave replacement, and unconditional append.
+The adapter reuses the prepared source blob. It refuses a different content hash before metadata changes.
+The host keeps format classification, Skill relations, titles, and publish notifications.
+
 The kit and Derive use `prependArtifactHead` for runtime insertion.
 The shared scanner skips comments, raw text, templates, and quoted attributes.
 It preserves a leading charset declaration and inserts before authored CSP.
