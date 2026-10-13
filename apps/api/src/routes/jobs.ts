@@ -867,8 +867,10 @@ export const jobRoutes = (ctx: AppContext) => {
       if (job instanceof Response) return bail(job)
       const who = await personFor(c)
       if (who instanceof Response) return bail(who)
-      // A session's machine holds its starter's files and model login: only they get a shell.
-      if (job.asked_by !== who.id || (await agentFor(c)))
+      // A session's machine holds its starter's files and model login: only they get a shell,
+      // from their browser session or their own CLI login, never through an agent's key.
+      const viaAgentKey = !!(await agentFor(c)) && !(await ctx.oauthGrant(c))
+      if (job.asked_by !== who.id || viaAgentKey)
         return bail(fail(c, 403, "Only the person who started this session can attach to it"))
       const machine = machineDepsFrom(meta, {
         secret: deps.encryptionKey,

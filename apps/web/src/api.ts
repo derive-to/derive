@@ -1439,6 +1439,8 @@ export const api = {
       base_version?: number
       model_id?: string | null
       dedupe_key?: string
+      /** Cloud agents: the repository to work in, `owner/name[@ref]`. */
+      repo?: string
     },
   ): Promise<JobDetail> =>
     f(
@@ -1462,8 +1464,16 @@ export const api = {
       },
     }).then(j),
   /** Write to a job: a follow-up. A settled built-in Derive page ask answers it as another turn. */
-  writeJob: (id: string, body_md: string, dedupe_key?: string): Promise<JobDetail> =>
-    f(`/v1/jobs/${id}/messages`, opts({ body_md, dedupe_key })).then(j),
+  writeJob: (
+    id: string,
+    body_md: string,
+    dedupe_key?: string,
+    interrupt?: boolean,
+  ): Promise<JobDetail> =>
+    f(
+      `/v1/jobs/${id}/messages`,
+      opts({ body_md, dedupe_key, ...(interrupt ? { interrupt } : {}) }),
+    ).then(j),
   answerJob: (
     id: string,
     answer: { text?: string; option?: string; question_id?: string; dedupe_key?: string },

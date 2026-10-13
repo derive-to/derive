@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link, useNavigate } from "@tanstack/react-router"
-import { useRef } from "react"
+import { useRef, useState } from "react"
 import { ApiError, api } from "@/api"
 import { LoadError } from "@/components/shared/load-error"
 import { PageHeader } from "@/components/shared/page-header"
@@ -17,6 +17,7 @@ import { useJobEvents } from "@/lib/use-job-events"
 import { useTaskDraft } from "@/lib/use-task-draft"
 import { taskStatus, useCanSteer } from "./agent-jobs"
 import { firstLine } from "./format"
+import { Segmented } from "./rows"
 import { TaskConversation } from "./task-conversation"
 import { TaskSchedule } from "./task-schedule"
 import { useMemberNames } from "./use-member-names"
@@ -48,6 +49,7 @@ export function TaskPage({ id }: { id: string }) {
   const names = useMemberNames()
   const canSteer = useCanSteer(job.data, me?.id)
   const draft = useTaskDraft(id, me?.id)
+  const [interrupt, setInterrupt] = useState(false)
   const { text } = draft
   const answering = draft.action ? draft.action === "answer" : job.data?.status === "needs_you"
   const composer = useRef<HTMLTextAreaElement>(null)
@@ -66,7 +68,7 @@ export function TaskPage({ id }: { id: string }) {
             question_id: request.questionId ?? undefined,
             dedupe_key: request.key,
           })
-        : api.writeJob(id, request.text.trim(), request.key)
+        : api.writeJob(id, request.text.trim(), request.key, interrupt)
     },
     invalidate: [["jobs"], ["agents"]],
     onSuccess: () => {
@@ -170,6 +172,7 @@ export function TaskPage({ id }: { id: string }) {
           </Button>
         )}
       </div>
+      {task.task.session && task.asked_by === me?.id && active && <SessionAttach jobId={task.id} />}
       <TaskConversation job={task} agentName={agentName} names={names} />
       {task.needs && (
         <div className="rounded-xl border border-border bg-card p-4" data-testid="task-question">
@@ -233,10 +236,17 @@ export function TaskPage({ id }: { id: string }) {
                 This draft may already be sent. You can retry safely.
               </p>
             ) : (
-              task.status === "running" && (
-                <p className="text-xs text-muted-foreground">
-                  Your follow-up waits for this turn to finish.
-                </p>
+              task.status === "running" &&
+              !answering && (
+                <Segmented
+                  testId="task-send-when"
+                  value={interrupt ? "now" : "after"}
+                  onChange={(v) => setInterrupt(v === "now")}
+                  options={[
+                    { value: "after", label: "After this turn" },
+                    { value: "now", label: "Interrupt" },
+                  ]}
+                />
               )
             )}
           </div>
@@ -300,5 +310,35 @@ export function TaskPage({ id }: { id: string }) {
         </div>
       )}
     </PageShell>
+  )
+}
+
+/** An interactive session's way back in: the terminal command that attaches to it. */
+function SessionAttach({ jobId }: { jobId: string }) {
+  const command = `derive attach ${jobId.slice(-6)}`
+  const [copied, setCopied] = useState(false)
+  return (
+    <div
+      data-testid="task-session-attach"
+      className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3"
+    >
+      <div className="min-w-0">
+        <p className="text-sm font-medium">Interactive session</p>
+        <p className="text-sm text-muted-foreground">
+          Open it in your terminal. It keeps running when you detach.
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        <code className="rounded-md bg-secondary px-2 py-1 font-mono text-sm">{command}</code>
+        <Button
+          variant="ghost"
+          size="sm"
+          data-testid="task-session-copy"
+          onClick={() => void navigator.clipboard.writeText(command).then(() => setCopied(true))}
+        >
+          {copied ? "Copied" : "Copy"}
+        </Button>
+      </div>
+    </div>
   )
 }

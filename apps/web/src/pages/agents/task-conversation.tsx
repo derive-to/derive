@@ -22,8 +22,26 @@ export function TaskConversation({
   }
   const effects = job.result.effects ?? []
   const id = job.id
+  const events = job.events ?? []
+  const line = (event: (typeof events)[number]) =>
+    event.label
+      ? `${labels[event.kind] ?? "Worked"}: ${event.label}`
+      : (labels[event.kind] ?? "Worked on this task")
   return (
     <div data-testid={`task-conversation-${job.id}`} className="flex flex-col gap-6">
+      {job.status === "running" && events.length > 0 && (
+        <section data-testid="task-live" aria-live="polite" className="flex flex-col gap-1">
+          <p className="text-xs font-medium text-muted-foreground">Now</p>
+          {events.slice(-6).map((event) => (
+            <p
+              key={`live-${event.turn_id}:${event.seq}`}
+              className="truncate font-mono text-xs text-muted-foreground"
+            >
+              {line(event)}
+            </p>
+          ))}
+        </section>
+      )}
       {job.result.failure && (job.status === "failed" || job.status === "lost") && (
         <div
           role="alert"
@@ -120,9 +138,12 @@ export function TaskConversation({
         <div className="mt-4">
           <TaskReceipt job={job} />
         </div>
-        {(job.events ?? []).map((event) => (
-          <p key={`${event.turn_id}:${event.seq}`} className="mt-2 text-xs text-muted-foreground">
-            {labels[event.kind] ?? "Worked on this task"}
+        {events.map((event) => (
+          <p
+            key={`${event.turn_id}:${event.seq}`}
+            className="mt-2 truncate text-xs text-muted-foreground"
+          >
+            {line(event)}
           </p>
         ))}
         {job.messages

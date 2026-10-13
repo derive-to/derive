@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link, useNavigate } from "@tanstack/react-router"
+import { useState } from "react"
 import { type Agent, ApiError, api } from "@/api"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
 import { useApiMutation } from "@/lib/use-api-mutation"
@@ -14,6 +16,7 @@ export function TaskComposer({ agents }: { agents: (Agent & { can_ask: boolean }
   const available = agents.filter((a) => a.can_ask)
   const { me } = useAuth()
   const draft = useTaskDraft("start", me?.id)
+  const [repo, setRepo] = useState("")
   const { text } = draft
   const agent = available.find((a) => a.id === draft.agentId) ?? available[0]
   const runtime = useQuery({
@@ -27,6 +30,7 @@ export function TaskComposer({ agents }: { agents: (Agent & { can_ask: boolean }
       if (!agent) throw new Error("Choose an agent first")
       return api.askAgent(agent.id, text.trim(), undefined, {
         dedupe_key: `${draft.key}:${agent.id}`,
+        ...(agent.machine === "derive" && repo.trim() ? { repo: repo.trim() } : {}),
       })
     },
     invalidate: [["jobs"], ["agents"]],
@@ -95,6 +99,17 @@ export function TaskComposer({ agents }: { agents: (Agent & { can_ask: boolean }
             <span>We’ll make an agent for this.</span>
           )}
           {agent?.paused && <span>Paused · this task will wait</span>}
+          {agent?.machine === "derive" && (
+            <Input
+              aria-label="Repository"
+              data-testid="task-composer-repo"
+              placeholder="owner/repo (optional)"
+              value={repo}
+              disabled={ask.isPending}
+              onChange={(event) => setRepo(event.target.value)}
+              className="h-8 w-52 font-mono text-sm"
+            />
+          )}
           {available.length > 0 && (
             <Link
               to="/agents/new"
