@@ -186,7 +186,7 @@ export const sharedStateRoutes = (ctx: AppContext) => {
       // retention-delete before the response; on Node/tests background() awaits it.
       // A ledger outage must never make a client retry an already-applied mutation.
       await background(meta.appendSharedStateActivity(activity))
-      return c.json(response)
+      return c.json({ ...response, itemId: changed.itemId })
     }
     return fail(c, 409, "shared state changed; try again")
   })

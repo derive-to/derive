@@ -42,6 +42,8 @@ export interface SharedStateResult {
   /** Item ids owned by the caller, keyed by the artifact-defined slot. The
    * server never exposes another actor's ownership metadata. */
   mine: Record<string, string>
+  /** Present after a mutation; identifies the item changed by this request. */
+  itemId?: string
 }
 
 export interface SharedStateActivity {

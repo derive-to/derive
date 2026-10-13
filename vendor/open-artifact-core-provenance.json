@@ -1,7 +1,7 @@
 {
   "repository": "https://github.com/derive-to/open-artifact",
   "baseCommit": "9b6a221ca7ac64dea06c1603426504771aee4dab",
-  "previewVersion": "0.6.0-core.10",
+  "previewVersion": "0.6.0-core.12",
   "sources": {
     "anchors.ts": "a6981a8e44f3004a0fad2814fecc637a1fac92e057d1b8f539b348745080aaa1",
     "collection.ts": "a2b3e15154bc80ee338f57d4d7a0123662c415f7e8ff666fcb37be98e972d626",
@@ -14,6 +14,7 @@
     "methods.ts": "7f1d6d7010a05af13ef471cf132b8f9c3b5df53b430d5b8bc6219d056add4562",
     "presentation.ts": "7e27d3da8a72faa8d1964c5289c24855c59112572377f5115215a16457becb4c",
     "quote-match.ts": "1652cf7b904aa9afb301850ec78df4c767476d63fdb1d8c9c4b3b6118c3e469a",
+    "slot-map.ts": "96586fc021c7f191a5659573ba0b388e2f3e73850748c1c209b30daa73bdf5ea",
     "source-anchors.ts": "529fc45bec055ad20bfaffb342bdb344ddb4de1440759efa48b1a30bbe2027b2",
     "source-edits.ts": "5688cdfc79445479b2a77509fd165990f4578b6b523926f65ca5e0f1935d8b8f",
     "source-entities.ts": "5d20bc5d176ce35f21a5916ba9e988877af35a561bc2068f2df79dd2966ae4f7",
@@ -29,14 +30,14 @@
     "source.ts": "5d1b1cca31985dea45c919f525f58aaa93640e736d3f4b67a2e7c33aaabff1c3",
     "state-apply.ts": "dfc173017d93ae6ea5b7f0092e9f64d5e13f7f04764dd79e597bb46044ee8ecc",
     "state-limits.ts": "d9ba463e9d219dfe02b6529dd4de67124a9feb1238a08b5d82ba4f0cc6265092",
-    "state.ts": "87d86ed02f1e64ef56184404adc1249d9339419db33763b47b4edc4eeecb9bd7",
+    "state.ts": "71d110ce032da3b3bde8671d8fb5f1fc5abb6293aac965d6128014010a429c39",
     "text.ts": "a81fba971a48c9ad544d4f5f53c63378441e65684c5e1a4f5be4c959590fb2c0",
     "tools.ts": "a83f4d194b0fcf7f56f37753fbd1f4b1a48d32f1aaafebb98fea2584bf996611",
     "viewer.ts": "e7c87eda4dbbbf8a02f7e25aff70139df90f7375967086be0f9a740f8ea64f41"
   },
-  "tarballSha256": "10fb0aa5c705637fc2e0b5a7a15b303bd3cc2d5b52f45021d53ac124b2d3caf3",
+  "tarballSha256": "9b8289ee9cd7e343d83041aa3345ac371abb8273dfefd58ce61710b147138e6a",
   "note": "Packed source preview for the first Derive consumer. This is not a published npm release.",
-  "sourceCommit": "84e4b818b1c5110fe22e9a10667b927ffca4e806",
+  "sourceCommit": "5f8f72fa299a7804da67aacc71c9aa4c4636f84d",
   "runtimeSources": {
     "anchoring.ts": "138f9789b3ec2fbc4aec410adbcee348000148fce615763db5b8d0039673204a",
     "connection.ts": "ebb1704972a86e554f065c7e635f40e421716831120dd8bf1a541913fab7a953",
@@ -50,17 +51,18 @@
     "runtime.entry.ts": "840035f2d16e5ee4bab1698f692504b86a03afa8260c34877a2fddd44b538d28",
     "runtime.ts": "c4dca5dbc4f0d25a050c06861956e04f6ff74db17f17780b4f25de3e20c80745",
     "sandbox.entry.ts": "e8864a20ae0ce50ad08b13636717ae20e2773defc0174fab5179fe1d3f8f70b0",
-    "shared.ts": "1ca727f7fe78b4390c42894fe6d3060dcba580d5243a21d6117609b16d9fffd8",
+    "shared.ts": "7f9d12e4677310895c63e71676eb58eac2cf8088b11b34cfccda5667d7dba40a",
     "slides.ts": "7352609373e1072e92b4bec9980725ce5efd84f571665860a70f0dfb28058cb5",
-    "state-backend.ts": "0eae651f0a73c4318d231e5e6c034b4970b080445c2d96c397680f32d67799e6",
+    "state-backend.ts": "00c24517ec1865f93d873238634d260c4b7b91b49342c7363c066bed9fb9958b",
     "text-index.ts": "b03514540909f94a08c83074687151b7b0bc907061e12cccf53748416d78798e",
     "theme.ts": "d6e31b99487bf70b3bcae129f3846fb725e851689ceed0f7c40d47cdb62d8577",
     "viewer.entry.ts": "ba030f8c1483ba6c741284e498fa47b7798b9bd27d682b0fe36fc9457e7252b4",
     "viewer.ts": "2855a1bc365c0fc2af552fa3d3c7da2da598f13d2ca4824290587501685ceed5"
   },
-  "runtimeTarballSha256": "e1fc89d402496e652319607b40e01211d2d626ead8848740bd4b0261f85505f5",
+  "runtimeTarballSha256": "81dd4049db946b7bb49aff2d706ce6123e5b6d61e310f5fe8a86156c180bafe6",
   "runtimeDeclarationBase": {
     "version": "0.5.2",
     "sha256": "d02d2797c94147df26ba1f3e7e1746d617022f61f01718bca218b456a5b052ef"
-  }
+  },
+  "declarationGeneration": "Changed protocol, snapshot, and runtime declarations come from source. App tool outputs reference the source snapshot schema. Unchanged declarations use the verified 0.5.2 packages."
 }

@@ -33,13 +33,15 @@ const snapshotOf = (value: unknown, previousMine: Record<string, string>): Snaps
     (items !== null &&
       (!Array.isArray(items) || items.some((item) => typeof recordOf(item)?.id !== "string"))) ||
     !mine ||
-    Object.values(mine).some((id) => typeof id !== "string")
+    Object.values(mine).some((id) => typeof id !== "string") ||
+    (data.itemId !== undefined && typeof data.itemId !== "string")
   )
     throw new Error("Invalid shared-state response")
   return {
     items: items as StateItem[] | null,
     version: Number(data.version),
     mine: mine as Record<string, string>,
+    ...(typeof data.itemId === "string" ? { itemId: data.itemId } : {}),
   }
 }
 
