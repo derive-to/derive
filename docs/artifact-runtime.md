@@ -4,6 +4,13 @@ Derive uses `@aniraga/open-artifact-runtime/shared` for collection state.
 The shared client owns optimistic values, reconciliation, subscriptions, and rollback.
 It uses the same collection rules as the server.
 
+The kit and Derive use `@aniraga/open-artifact-server/collections` for saved mutations.
+The module reads, applies the mutation, and retries a lost compare-and-swap.
+Derive adapts its existing metadata store. It keeps access checks, rate limits,
+actor attribution, live broadcasts, and the activity ledger.
+The module reports whether a result is saved. A changed result identifies its item.
+The host sends side effects only after the write succeeds.
+
 The kit and Derive use `prependArtifactHead` for runtime insertion.
 The shared scanner skips comments, raw text, templates, and quoted attributes.
 It preserves a leading charset declaration and inserts before authored CSP.

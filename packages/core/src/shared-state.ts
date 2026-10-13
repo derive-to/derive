@@ -1,3 +1,5 @@
+export { commitCollection } from "@aniraga/open-artifact-server/collections"
+
 import {
   createCollectionRules,
   isStateKey,

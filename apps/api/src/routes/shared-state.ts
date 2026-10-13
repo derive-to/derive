@@ -1,5 +1,6 @@
 import {
   artifactCollection,
+  commitCollection,
   isSharedStateKey,
   newId,
   SHARED_STATE_ACTIVITY_LIMIT,
@@ -12,7 +13,6 @@ import { Hono } from "hono"
 import type { AppContext } from "../context"
 import { fail, readJson } from "../lib/http"
 
-const CAS_ATTEMPTS = 8
 const JsonObject = z.record(z.string(), z.unknown())
 const Mutation: z.ZodType<SharedStateMutation> = z.discriminatedUnion("op", [
   z.object({
@@ -40,14 +40,6 @@ type MutationBody = z.infer<typeof Mutation>
 const coreMutation = (body: MutationBody) =>
   body.op === "set_mine" ? { ...body, op: "setMine" as const } : body
 
-const collection = (value: unknown, mintMissingIds: boolean, stored = false): Item[] | string => {
-  const result = artifactCollection.read(value, {
-    mintId: mintMissingIds ? () => newId("item") : undefined,
-    stored,
-  })
-  return "error" in result ? result.error : result
-}
-
 const publicCollection = (items: Item[], version: number, actorId: string | null) => {
   const result = artifactCollection.snapshot(items, version, actorId)
   return { value: result.items, version: result.version, mine: result.mine }
@@ -55,8 +47,8 @@ const publicCollection = (items: Item[], version: number, actorId: string | null
 
 const publicState = (row: { json: string; version: number } | null, actorId: string | null) => {
   if (!row) return { value: null, version: 0, mine: {} }
-  const parsed = collection(JSON.parse(row.json), false, true)
-  if (typeof parsed === "string") throw new Error(parsed)
+  const parsed = artifactCollection.read(JSON.parse(row.json), { stored: true })
+  if ("error" in parsed) throw new Error(parsed.error)
   return publicCollection(parsed, row.version, actorId)
 }
 
@@ -113,82 +105,79 @@ export const sharedStateRoutes = (ctx: AppContext) => {
     const stateId = newId("state")
     const itemId = body.op === "update" ? body.id : newId("item")
 
-    for (let attempt = 0; attempt < CAS_ATTEMPTS; attempt++) {
-      let current = await meta.getSharedState(artifact.id, key)
-      if (!current && (await meta.countSharedStateKeys(artifact.id)) >= SHARED_STATE_MAX_KEYS) {
-        // A same-key create may have won between the first read and the count. It
-        // should become an ordinary CAS update, not a false capacity rejection.
-        current = await meta.getSharedState(artifact.id, key)
-        if (!current)
-          return fail(
-            c,
-            413,
-            `shared state is limited to ${SHARED_STATE_MAX_KEYS} keys per artifact`,
-          )
-      }
-      let parsed: unknown
-      try {
-        parsed = current ? JSON.parse(current.json) : body.initial
-      } catch {
-        return fail(c, 500, "stored shared state is invalid")
-      }
-      const items = collection(parsed, !current, !!current)
-      if (typeof items === "string") return fail(c, 400, items)
-      const changed = artifactCollection.apply(items, coreMutation(body), actor.id, itemId)
-      if ("error" in changed) {
-        const message =
-          changed.code === "owned"
-            ? "actor-scoped items must be changed with set_mine"
-            : changed.error
-        return fail(
-          c,
-          changed.code === "missing" ? 404 : changed.code === "bytes" ? 413 : 400,
-          message,
-        )
-      }
-      if (!changed.changed) {
-        if (!current) return c.json({ value: null, version: 0, mine: {} })
-        return c.json(publicCollection(changed.items, current.version, actor.id))
-      }
-      const json = JSON.stringify(changed.items)
-      const at = new Date().toISOString()
-      const saved = await meta.putSharedState({
-        id: stateId,
-        artifact_id: artifact.id,
-        key,
-        json,
-        expected_version: current?.version ?? 0,
-        updated_by_id: actor.id,
-        updated_by_name: actor.name,
-        updated_at: at,
-      })
-      if (!saved) continue
-
-      const activity = {
-        id: newId("activity"),
-        artifact_id: artifact.id,
-        key,
-        version: saved.version,
-        action: body.op as SharedStateAction,
-        item_id: changed.itemId,
-        actor_id: actor.id,
-        actor_name: actor.name,
-        created_at: at,
-      }
-      const response = publicState(saved, actor.id)
-      bus.publish(artifact.id, {
-        type: "artifact.state.updated",
-        key,
-        ...publicState(saved, null),
-      })
-      // State correctness and its live broadcast are the hot path. The activity
-      // ledger is best-effort: on Workers it rides waitUntil, avoiding an insert +
-      // retention-delete before the response; on Node/tests background() awaits it.
-      // A ledger outage must never make a client retry an already-applied mutation.
-      await background(meta.appendSharedStateActivity(activity))
-      return c.json({ ...response, itemId: changed.itemId })
+    const at = new Date().toISOString()
+    const saved = await commitCollection(
+      {
+        read: async () => {
+          const row = await meta.getSharedState(artifact.id, key)
+          if (!row) return null
+          let items: unknown
+          try {
+            items = JSON.parse(row.json)
+          } catch {
+            items = null
+          }
+          return { items, version: row.version }
+        },
+        countKeys: () => meta.countSharedStateKeys(artifact.id),
+        put: async (items, expected) =>
+          !!(await meta.putSharedState({
+            id: stateId,
+            artifact_id: artifact.id,
+            key,
+            json: JSON.stringify(items),
+            expected_version: expected,
+            updated_by_id: actor.id,
+            updated_by_name: actor.name,
+            updated_at: at,
+          })),
+      },
+      {
+        rules: artifactCollection,
+        actorId: actor.id,
+        mutation: coreMutation(body),
+        initial: body.initial,
+        mintId: () => newId("item"),
+        itemId,
+      },
+    )
+    if ("error" in saved) {
+      if (saved.code === "keys")
+        return fail(c, 413, `shared state is limited to ${SHARED_STATE_MAX_KEYS} keys per artifact`)
+      if (saved.code === "race") return fail(c, 409, "shared state changed; try again")
+      if (saved.code === "stored") return fail(c, 500, "stored shared state is invalid")
+      const message =
+        saved.code === "owned" ? "actor-scoped items must be changed with set_mine" : saved.error
+      return fail(c, saved.code === "missing" ? 404 : saved.code === "bytes" ? 413 : 400, message)
     }
-    return fail(c, 409, "shared state changed; try again")
+    if (!saved.changed)
+      return c.json(
+        saved.persisted
+          ? publicCollection(saved.items, saved.version, actor.id)
+          : { value: null, version: 0, mine: {} },
+      )
+    const activity = {
+      id: newId("activity"),
+      artifact_id: artifact.id,
+      key,
+      version: saved.version,
+      action: body.op as SharedStateAction,
+      item_id: saved.itemId,
+      actor_id: actor.id,
+      actor_name: actor.name,
+      created_at: at,
+    }
+    bus.publish(artifact.id, {
+      type: "artifact.state.updated",
+      key,
+      ...publicCollection(saved.items, saved.version, null),
+    })
+    // The ledger runs after commit. It cannot make a client retry a saved mutation.
+    await background(meta.appendSharedStateActivity(activity))
+    return c.json({
+      ...publicCollection(saved.items, saved.version, actor.id),
+      itemId: saved.itemId,
+    })
   })
 
   return app
