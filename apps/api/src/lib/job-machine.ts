@@ -287,7 +287,22 @@ export async function advanceSandbox(
       if (!id || !state.create_op)
         return move("failed", { failures: broke(), failed_at: iso(deps) })
       const op = await client.operation(state.create_op, id, "create", state.identity)
-      if (op.state === "succeeded") return move(allowed ? "stopping" : "deleting")
+      if (op.state === "succeeded") {
+        if (!allowed) return move("deleting")
+        const waiting = await meta.listJobs({
+          orgId: agent.org_id,
+          agentId: agent.id,
+          status: ["queued"],
+          limit: 200,
+        })
+        const due = waiting.some(
+          (job) =>
+            job.attended !== 1 &&
+            job.kind !== "graph" &&
+            (!job.scheduled_for || job.scheduled_for <= iso(deps)),
+        )
+        return move(due ? "ready" : "stopping")
+      }
       // Never race an in-flight create with deletion: a create still going is waited out.
       if (op.state === "failed") return move("deleting", { failures: broke() })
       return agent
@@ -459,6 +474,11 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
   switch (job.machine_phase) {
     case "starting": {
       if (!m.resume_op) {
+        const observed = await client.sandbox(sandbox, state.identity)
+        if (observed.state === "ready") {
+          await move("ready")
+          return
+        }
         const op = await client.lifecycle(
           sandbox,
           "resume",
