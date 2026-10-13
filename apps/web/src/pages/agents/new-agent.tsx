@@ -91,7 +91,13 @@ export function NewAgent() {
   const created = useRef<Agent | null>(null)
   const [savedSkill, setSavedSkill] = useState<string | null>(null)
   const latestSkill = useQuery({ ...artifactQuery(savedSkill ?? ""), enabled: !!savedSkill })
-  const skillChats = useQuery({ ...pageAsksQuery(savedSkill ?? ""), enabled: !!savedSkill })
+  const skillChats = useQuery({
+    ...pageAsksQuery(savedSkill ?? ""),
+    enabled: !!savedSkill,
+    refetchIntervalInBackground: true,
+    refetchInterval: (query) =>
+      query.state.data?.some((job) => ["queued", "running"].includes(job.status)) ? 2000 : false,
+  })
   const writing =
     skillChats.data?.some((job) => ["queued", "running", "needs_you"].includes(job.status)) ?? false
   const firstTaskKey = useRef(crypto.randomUUID())
