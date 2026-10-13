@@ -3305,14 +3305,16 @@ export function runStoreContract(
       })
       expect(held).toMatchObject({ machine_phase: "starting", machine_rev: 1 })
       expect(await store.transitionJobMachine(j.id, 0, { phase: "ready" })).toBeNull()
-      // One sandbox per agent: a second job cannot hold it while the first does.
-      await expect(store.transitionJobMachine(k.id, 0, { phase: "starting" })).rejects.toThrow()
-      expect((await store.listMachineJobs(10)).map((x) => x.id)).toEqual([j.id])
+      // Each task may hold its own machine at once; the shared sandbox's one-at-a-time rule is
+      // the agent row's revision, not the job rows.
+      expect(await store.transitionJobMachine(k.id, 0, { phase: "creating" })).toMatchObject({
+        machine_phase: "creating",
+      })
+      expect((await store.listMachineJobs(10)).map((x) => x.id).sort()).toEqual([j.id, k.id].sort())
+      // A parked machine holds no compute, so the machine pass no longer walks it.
+      await store.transitionJobMachine(k.id, 1, { phase: "parked" })
       await store.transitionJobMachine(j.id, 1, { phase: "released" })
       expect(await store.listMachineJobs(10)).toEqual([])
-      expect(await store.transitionJobMachine(k.id, 0, { phase: "starting" })).toMatchObject({
-        machine_phase: "starting",
-      })
     })
 
     it("keeps one open job per dedupe key and one job per trigger window", async () => {

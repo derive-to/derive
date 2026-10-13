@@ -27,7 +27,7 @@ export interface JobEventRecord {
   turn_id: string
   seq: number
   kind: string
-  label?: string | null
+  label: string | null
   created_at: string
 }
 
