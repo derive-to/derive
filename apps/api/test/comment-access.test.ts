@@ -253,6 +253,7 @@ describe("comment access via the general-access link", () => {
       value: [{ id: bobItem, option: "a" }],
       version: 1,
       mine: { answer: bobItem },
+      itemId: bobItem,
     })
     expect(JSON.stringify(firstBody)).not.toContain("__derive_")
     expect(
@@ -288,6 +289,7 @@ describe("comment access via the general-access link", () => {
       value: [{ id: bobItem, option: "b" }],
       version: 2,
       mine: { answer: bobItem },
+      itemId: bobItem,
     })
 
     // Two tabs racing for the same actor slot may replace one another, but they
