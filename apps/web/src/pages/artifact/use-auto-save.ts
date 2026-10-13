@@ -524,8 +524,13 @@ export function useAutoSave(p: {
       const y = s.current
       window.clearTimeout(y.timer)
       window.clearTimeout(y.remoteTimer)
-      if (y.session && y.savedRev > 0)
-        api.finishEditSession(pr.current.shortId, y.session).catch(() => {})
+      if (y.session && y.savedRev > 0) {
+        const page = pr.current
+        api
+          .finishEditSession(page.shortId, y.session)
+          .then(page.load)
+          .catch(() => {})
+      }
       y.session = ""
       y.frame++
     },
