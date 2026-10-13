@@ -7,6 +7,7 @@ import {
   SandboxCreateRejected,
   type SandboxLaunch,
   type SandboxMachine,
+  type SandboxSshAccess,
 } from "./sandbox-client"
 
 const Sandbox = z.object({
@@ -360,5 +361,54 @@ export class OrtamClient implements SandboxClient {
     )
     if (process.id !== id) throw new Error("Ortam process mismatch")
     return process
+  }
+
+  async sshKey(
+    id: string,
+    publicKey: string,
+    identity: { organization_id: string; user_id: string },
+  ): Promise<SandboxSshAccess> {
+    const result = z
+      .object({
+        certificate: z
+          .string()
+          .regex(
+            /^(?:ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256)-cert-v01@openssh\.com [A-Za-z0-9+/=]+(?: [^\r\n]+)?$/,
+          ),
+        principal: z.string().min(1),
+        valid_before: z.iso.datetime(),
+        host_public_key: z.string().regex(/^ssh-ed25519 [A-Za-z0-9+/=]+(?: [^\r\n]+)?$/),
+      })
+      .parse(
+        await this.request(
+          `/sandboxes/${encodeURIComponent(ortamId("sbx", id))}/ssh-certificate`,
+          identity,
+          "POST",
+          { public_key: publicKey },
+        ),
+      )
+    if (Date.parse(result.valid_before) <= Date.now())
+      throw new Error("Ortam SSH certificate expired")
+    return {
+      transport: "websocket",
+      user: "ortam",
+      host_key: result.host_public_key,
+      certificate: result.certificate,
+      certificate_expires_at: result.valid_before,
+    }
+  }
+
+  async sshTunnel(id: string, identity: { organization_id: string; user_id: string }) {
+    const auth = await this.authenticate()
+    if (auth.organization_id !== identity.organization_id || auth.user_id !== identity.user_id)
+      throw new Error("Ortam credential ownership changed")
+    return new Request(
+      `${this.base}/sandboxes/${encodeURIComponent(ortamId("sbx", id))}/ssh-tunnel`,
+      {
+        headers: { ...this.auth(), Upgrade: "websocket" },
+        redirect: "manual",
+        signal: AbortSignal.timeout(15_000),
+      },
+    )
   }
 }

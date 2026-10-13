@@ -143,6 +143,7 @@ export interface SessionUser {
 export interface AppDeps {
   runtime?: RuntimeConfig
   runtimeFetch?: typeof fetch
+  sessionTransport?: import("./lib/session-transport").SessionTransport
 
   meta: MetaStore
   blobs: BlobStore

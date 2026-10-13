@@ -1879,6 +1879,19 @@ export interface paths {
                             /** @description Pin this in known_hosts. */
                             host_key: string | null;
                             tmux_session: string;
+                        } | {
+                            /** @enum {string} */
+                            transport: "websocket";
+                            /** @enum {string} */
+                            user: "ortam";
+                            host_key: string;
+                            certificate: string;
+                            /** Format: date-time */
+                            certificate_expires_at: string;
+                            tunnel_path: string;
+                            /** Format: date-time */
+                            claim: string;
+                            tmux_session: string;
                         };
                     };
                 };

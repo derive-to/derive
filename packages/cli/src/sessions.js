@@ -7,12 +7,14 @@
 //   derive ls [--team]
 //   derive attach <task>      derive forward <task> <port>      derive stop <task>
 import { spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { SESSION_RESUME, SESSION_TMUX, TASK_REPO } from "./conversation-format.js"
+import WebSocket from "ws"
+import { SESSION_RESUME, TASK_REPO } from "./conversation-format.js"
 import { githubRepoOf } from "./repo.js"
 import { DeriveClient } from "./runner.js"
+import { sessionShell } from "./session-shell.js"
 
 const KEY_DIR = () => process.env.DERIVE_CONFIG_DIR ?? join(homedir(), ".derive")
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -21,12 +23,35 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
  *  server's own words. */
 export function sessionApi({ server, token, workspaceId, fetcher }) {
   const client = new DeriveClient(server, token, { workspaceId, fetcher })
-  return (path, { method = "GET", body } = {}) =>
+  const api = (path, { method = "GET", body } = {}) =>
     client
       .call(path, { method, ...(body ? { body: JSON.stringify(body) } : {}) })
       .catch((error) => {
         throw Object.assign(new Error(error.reason ?? error.message), { status: error.status })
       })
+  api.openSshTunnel = (path, claim) => {
+    if (!/^\/v1\/jobs\/[A-Za-z0-9_-]+\/ssh$/.test(path) || !Number.isFinite(Date.parse(claim)))
+      throw new Error("invalid SSH tunnel request")
+    const url = new URL(server)
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password)
+      throw new Error("invalid Derive server URL")
+    url.pathname = path
+    url.search = ""
+    url.hash = ""
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:"
+    return new WebSocket(url, {
+      followRedirects: false,
+      perMessageDeflate: false,
+      maxPayload: 1_048_576,
+      handshakeTimeout: 15_000,
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(workspaceId ? { "x-derive-workspace": workspaceId } : {}),
+        "x-derive-job-claim": claim,
+      },
+    })
+  }
+  return api
 }
 
 /** The agent a new session runs on: `--agent` by id or name, else the workspace's agent named
@@ -180,24 +205,7 @@ async function ensureRunning(api, id, log) {
 async function openShell(api, id) {
   const { key, publicKey } = sessionKey()
   const at = await api(`/v1/jobs/${id}/attach`, { method: "POST", body: { public_key: publicKey } })
-  const knownHosts = join(KEY_DIR(), "known_hosts")
-  if (at.host_key)
-    writeFileSync(knownHosts, `[${at.host}]:${at.port} ${at.host_key}\n`, { mode: 0o600 })
-  return {
-    tmux: at.tmux_session ?? SESSION_TMUX,
-    ssh: [
-      "-i",
-      key,
-      "-p",
-      String(at.port),
-      "-o",
-      at.host_key ? `UserKnownHostsFile=${knownHosts}` : "StrictHostKeyChecking=accept-new",
-      ...(at.host_key ? ["-o", "StrictHostKeyChecking=yes"] : []),
-      "-o",
-      "ServerAliveInterval=30",
-      `${at.user}@${at.host}`,
-    ],
-  }
+  return sessionShell(at, { key, id, openSshTunnel: api.openSshTunnel })
 }
 
 /** Run one session command. Returns the process exit code. */
@@ -252,11 +260,7 @@ export async function sessionCommand(cmd, positional, flags, api, { log = consol
     await ensureRunning(api, task.id, log)
     const shell = await openShell(api, task.id)
     log(`http://localhost:${local} → session ${task.id.slice(-6)}:${remote} (Ctrl-C to stop)`)
-    return (
-      spawnSync("ssh", ["-N", "-L", `${local}:127.0.0.1:${remote}`, ...shell.ssh], {
-        stdio: "inherit",
-      }).status ?? 1
-    )
+    return shell.run(["-N", "-o", "ExitOnForwardFailure=yes", "-L", `${local}:127.0.0.1:${remote}`])
   }
   throw new Error(`unknown command ${cmd}`)
 }
@@ -267,9 +271,9 @@ async function attach(api, id, log) {
   // The runner opens tmux a moment after the machine reports running, so wait briefly for it.
   // tmux keeps the session when this terminal closes; the machine parks once it sits idle.
   const join_ = `for i in $(seq 60); do tmux has-session -t ${shell.tmux} 2>/dev/null && exec tmux attach -t ${shell.tmux}; sleep 1; done; echo "the session did not start; see Derive"; exit 1`
-  const out = spawnSync("ssh", ["-t", ...shell.ssh, join_], { stdio: "inherit" })
+  const out = await shell.run(["-t"], join_)
   log(`detached from ${id.slice(-6)}. It keeps running; derive attach ${id.slice(-6)} to return.`)
-  return out.status ?? 1
+  return out
 }
 
 async function follow(api, id, log) {

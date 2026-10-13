@@ -185,3 +185,107 @@ esac
     }
   })
 })
+
+describe("managed Ortam SSH access", () => {
+  const identity = { organization_id: "org", user_id: "usr" }
+  const sandbox = "sbx_01h455vb4pex5vsknk084sn02q"
+  it("issues a certificate for the owned key and builds the fixed authenticated tunnel request", async () => {
+    const requests: Request[] = []
+    const before = new Date(Date.now() + 300_000).toISOString()
+    const client = new OrtamClient(
+      "https://ortam.test/v1",
+      "fixture-key",
+      "agent-subject",
+      async (input, init) => {
+        const request = new Request(input, init)
+        requests.push(request)
+        if (new URL(request.url).pathname === "/v1/integration") return Response.json(identity)
+        return Response.json({
+          certificate: "ssh-ed25519-cert-v01@openssh.com AAAAcert",
+          principal: "ortam-integration-identity",
+          valid_before: before,
+          host_public_key: "ssh-ed25519 AAAAhost",
+        })
+      },
+    )
+    expect(await client.sshKey(sandbox, "ssh-ed25519 AAAAclient", identity)).toEqual({
+      transport: "websocket",
+      user: "ortam",
+      host_key: "ssh-ed25519 AAAAhost",
+      certificate: "ssh-ed25519-cert-v01@openssh.com AAAAcert",
+      certificate_expires_at: before,
+    })
+    const issue = requests.at(-1)
+    expect(issue?.url).toBe(`https://ortam.test/v1/sandboxes/${sandbox}/ssh-certificate`)
+    expect(issue?.method).toBe("POST")
+    expect(await issue?.json()).toEqual({ public_key: "ssh-ed25519 AAAAclient" })
+    const tunnel = await client.sshTunnel("01890a5d-ac96-774b-bcce-b302099a8057", identity)
+    expect(tunnel.url).toBe(`https://ortam.test/v1/sandboxes/${sandbox}/ssh-tunnel`)
+    expect(tunnel.method).toBe("GET")
+    expect(tunnel.headers.get("Authorization")).toBe("Bearer fixture-key")
+    expect(tunnel.headers.get("X-Ortam-Integration-Subject")).toBe("agent-subject")
+    expect(tunnel.redirect).toBe("manual")
+    expect(tunnel.headers.get("Upgrade")).toBe("websocket")
+  })
+
+  it.each([
+    "ssh-rsa",
+    "ecdsa-sha2-nistp256",
+  ])("returns the provider's %s certificate for that public-key algorithm", async (algorithm) => {
+    const certificate = `${algorithm}-cert-v01@openssh.com AAAAcert`
+    const client = new OrtamClient(
+      "https://ortam.test/v1",
+      "fixture-key",
+      "subject",
+      async (input) =>
+        new URL(String(input)).pathname === "/v1/integration"
+          ? Response.json(identity)
+          : Response.json({
+              certificate,
+              principal: "identity",
+              valid_before: new Date(Date.now() + 300_000).toISOString(),
+              host_public_key: "ssh-ed25519 AAAAhost",
+            }),
+    )
+    expect(await client.sshKey(sandbox, `${algorithm} AAAAclient`, identity)).toMatchObject({
+      transport: "websocket",
+      certificate,
+    })
+  })
+
+  it("refuses changed provider ownership before opening a tunnel", async () => {
+    const client = new OrtamClient("https://ortam.test/v1", "fixture-key", "subject", async () =>
+      Response.json({ organization_id: "other", user_id: "usr" }),
+    )
+    await expect(client.sshTunnel(sandbox, identity)).rejects.toThrow("ownership changed")
+  })
+
+  it.each([
+    [
+      "ssh-ed25519 AAAAhost\nssh-ed25519 injected",
+      "ssh-ed25519-cert-v01@openssh.com AAAAcert",
+      new Date(Date.now() + 300_000).toISOString(),
+    ],
+    [
+      "ssh-ed25519 AAAAhost",
+      "ssh-ed25519-cert-v01@openssh.com AAAAcert\noption",
+      new Date(Date.now() + 300_000).toISOString(),
+    ],
+    [
+      "ssh-ed25519 AAAAhost",
+      "ssh-ed25519-cert-v01@openssh.com AAAAcert",
+      new Date(Date.now() - 1000).toISOString(),
+    ],
+  ])("refuses unsafe or expired certificate responses", async (host_public_key, certificate, valid_before) => {
+    const client = new OrtamClient(
+      "https://ortam.test/v1",
+      "fixture-key",
+      "subject",
+      async (input) =>
+        new URL(String(input)).pathname === "/v1/integration"
+          ? Response.json(identity)
+          : Response.json({ host_public_key, certificate, valid_before, principal: "identity" }),
+    )
+    await expect(client.sshKey(sandbox, "ssh-ed25519 AAAAclient", identity)).rejects.toThrow()
+  })
+})

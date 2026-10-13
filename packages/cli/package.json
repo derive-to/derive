@@ -1,6 +1,6 @@
 {
   "name": "@derive-to/cli",
-  "version": "0.8.8",
+  "version": "0.8.9",
   "type": "module",
   "description": "CLI for Derive — create projects and publish durable, versioned artifacts from the terminal.",
   "keywords": [
@@ -63,7 +63,8 @@
   },
   "dependencies": {
     "fflate": "^0.8.2",
-    "proper-lockfile": "4.1.2"
+    "proper-lockfile": "4.1.2",
+    "ws": "^8.21.1"
   },
   "devDependencies": {
     "vitest": "^4.1.11"

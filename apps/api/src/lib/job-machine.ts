@@ -1180,14 +1180,14 @@ export async function attachSession(
   job: JobRecord,
   publicKey: string,
 ): Promise<
-  | { ok: true; host: string; port: number; user: string; host_key: string | null }
+  | ({ ok: true } & import("./sandbox-client").SandboxSshAccess)
   | { ok: false; status: 404 | 409; error: string }
 > {
   const agent = await deps.meta.getAgent(job.agent_id)
   const own = parse<MachineState>(job.machine_json)?.own
   if (!agent || !taskOptions(job.meta_json).session)
     return { ok: false, status: 404, error: "This task is not an interactive session." }
-  if (job.machine_phase !== "running" || !own?.sandbox_id)
+  if (job.status !== "running" || job.machine_phase !== "running" || !own?.sandbox_id)
     return {
       ok: false,
       status: 409,
@@ -1198,6 +1198,39 @@ export async function attachSession(
   const client = await clientFor(deps, agent, own)
   if (!client.sshKey) return { ok: false, status: 409, error: "This machine has no SSH access." }
   return { ok: true, ...(await client.sshKey(own.sandbox_id, publicKey, own.identity)) }
+}
+
+export function sessionClaim(job: JobRecord) {
+  const state = parse<MachineState>(job.machine_json)
+  if (
+    job.status !== "running" ||
+    job.machine_phase !== "running" ||
+    !job.started_at ||
+    !taskOptions(job.meta_json).session ||
+    !state?.own?.sandbox_id ||
+    !state.turn ||
+    !Number.isFinite(Date.parse(state.deadline_at)) ||
+    Date.parse(state.deadline_at) <= Date.now()
+  )
+    return null
+  return {
+    startedAt: job.started_at,
+    turn: state.turn,
+    sandboxId: state.own.sandbox_id,
+    deadlineAt: state.deadline_at,
+    identity: state.own.identity,
+    provider: state.own.provider,
+    connectionId: state.own.connection_id,
+    apiUrl: state.own.api_url,
+  }
+}
+
+export async function sessionTunnelRequest(deps: MachineDeps, job: JobRecord) {
+  const agent = await deps.meta.getAgent(job.agent_id)
+  const own = parse<MachineState>(job.machine_json)?.own
+  if (!agent || !own?.sandbox_id || !sessionClaim(job)) return null
+  const client = await clientFor(deps, agent, own)
+  return client.sshTunnel ? client.sshTunnel(own.sandbox_id, own.identity) : null
 }
 
 /** For the tick's callers: the pass, or nothing when this deploy has no Derive machines. */
