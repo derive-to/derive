@@ -3181,6 +3181,63 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     expect(second.at(-1)).toBe(SESSION_UUID)
   })
 
+  it("a code task carries its repository, and fails plainly with no GitHub connection for it", async () => {
+    const { app, meta, until, runTurn } = await cloudSetup("jobs-machine-repo")
+    const agent = await createAgent(app, { machine: "derive", provider: "codex" })
+    const res = await app.request(
+      "/v1/jobs",
+      jsonAs(as(ed.email), {
+        agent_id: agent.id,
+        instruction: "Fix the flaky test",
+        repo: "acme-dev/widgets@main",
+      }),
+    )
+    const job = (await res.json()) as { id: string; task: { repo: string } }
+    expect(job.task.repo).toBe("acme-dev/widgets@main")
+    await until(job.id, "running")
+    // The runner asks for the repository's token before any model runs, and is told why not.
+    expect(await runTurn("bx_1", "unused")).toBe("failed")
+    const failed = (await (
+      await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
+    ).json()) as {
+      result: { failure: { reason: string; retryable: boolean } }
+    }
+    expect(failed.result.failure).toEqual({
+      reason: "Bind a GitHub connection for acme-dev to this agent to work in acme-dev/widgets.",
+      retryable: false,
+    })
+    // A repository is only for cloud agents.
+    const local = await createAgent(app, { provider: "codex" })
+    const refused = await app.request(
+      "/v1/jobs",
+      jsonAs(as(ed.email), { agent_id: local.id, instruction: "x", repo: "acme-dev/widgets" }),
+    )
+    expect(refused.status).toBe(400)
+  })
+
+  it("an interrupting follow-up ends the running turn and runs next; a plain one waits", async () => {
+    const { app, meta, until } = await cloudSetup("jobs-machine-interrupt")
+    const agent = await createAgent(app, { machine: "derive", provider: "codex" })
+    const job = (await (await ask(app, ed.email, agent.id, "Refactor the parser")).json()) as {
+      id: string
+    }
+    await until(job.id, "running")
+    // The runner has claimed the turn.
+    await meta.updateJob(job.id, { status: "running" })
+    const say = (body_md: string, interrupt?: boolean) =>
+      app.request(
+        `/v1/jobs/${job.id}/messages`,
+        jsonAs(as(ed.email), { body_md, ...(interrupt ? { interrupt } : {}) }),
+      )
+    expect((await say("Also add tests")).status).toBe(200)
+    expect((await meta.getJob(job.id))?.status).toBe("running")
+    const after = (await (await say("Stop, use the old API", true)).json()) as {
+      status: string
+      lease_until: string | null
+    }
+    expect(after).toMatchObject({ status: "queued", lease_until: null })
+  })
+
   it("the workspace machine limit holds the next task until a machine frees", async () => {
     const { app, meta, pass, runTurn, boat } = await cloudSetup("jobs-machine-limit", {
       global: 100,

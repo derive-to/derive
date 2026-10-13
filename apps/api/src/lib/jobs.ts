@@ -569,7 +569,7 @@ export const reportJob = async (
           ? {
               failure: r.result?.failure ?? {
                 reason: r.body_md || "This turn failed. Try again or start a fresh task.",
-                retryable: true,
+                retryable: r.retryable !== false,
               },
             }
           : {}),

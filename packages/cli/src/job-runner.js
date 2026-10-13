@@ -104,6 +104,8 @@ export class JobClient {
         `${method} ${path} → ${res.status}: ${parsed?.error ?? text.slice(0, 200)}`,
       )
       err.status = res.status
+      // What the server said, for a failure the person reads; the route stays in `message`.
+      err.reason = parsed?.error ?? null
       throw err
     }
     return parsed
@@ -179,8 +181,13 @@ export class JobClient {
   }
 
   /** The task's repository and a token for it, minted for this claim. */
+  /** The task's repository token. A refusal (no GitHub connection for the owner, or GitHub
+   *  said no) is the person's to fix, so it fails the turn plainly instead of retrying. */
   git(job) {
-    return this.req(`/v1/jobs/${job.id}/git`, { claim: job.started_at })
+    return this.req(`/v1/jobs/${job.id}/git`, { claim: job.started_at }).catch((error) => {
+      if (error.status !== 404 && error.status !== 409) throw error
+      throw Object.assign(new Error(error.reason ?? error.message), { retryable: false })
+    })
   }
 }
 
