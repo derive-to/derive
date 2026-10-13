@@ -15,6 +15,11 @@ The kit and Derive use `prependArtifactHead` for runtime insertion.
 The shared scanner skips comments, raw text, templates, and quoted attributes.
 It preserves a leading charset declaration and inserts before authored CSP.
 
+Element selectors and saved-version recovery use the shared protocol source entry.
+Derive supplies stored versions, access checks, and comment state changes.
+The shared scanner excludes inert markup and decodes attributes as the browser does.
+Saved selectors and original snapshots retain their existing fields.
+
 `shared-collection-client.ts` adapts Derive's existing messages to `StateBackend`.
 It preserves `derive.shared`, `derive.increment`, the handle's return values,
 caller slots, and the existing activity fields. It uses Derive's ownership fields.

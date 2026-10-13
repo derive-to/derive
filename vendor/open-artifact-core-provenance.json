@@ -1,7 +1,7 @@
 {
   "repository": "https://github.com/derive-to/open-artifact",
   "baseCommit": "9b6a221ca7ac64dea06c1603426504771aee4dab",
-  "previewVersion": "0.6.0-core.20",
+  "previewVersion": "0.6.0-core.21",
   "sources": {
     "anchors.ts": "a6981a8e44f3004a0fad2814fecc637a1fac92e057d1b8f539b348745080aaa1",
     "collection.ts": "a2b3e15154bc80ee338f57d4d7a0123662c415f7e8ff666fcb37be98e972d626",
@@ -17,6 +17,14 @@
     "slot-map.ts": "96586fc021c7f191a5659573ba0b388e2f3e73850748c1c209b30daa73bdf5ea",
     "source-anchors.ts": "529fc45bec055ad20bfaffb342bdb344ddb4de1440759efa48b1a30bbe2027b2",
     "source-edits.ts": "5688cdfc79445479b2a77509fd165990f4578b6b523926f65ca5e0f1935d8b8f",
+    "source-element-match.ts": "71f04c626c0b21f3887b9bb7c1f5fb7f7173af322863ffce0792d429e849b2d0",
+    "source-element-neighbors.ts": "528529188e3eb7b4170db3b95ea71a73d3abcc772c3176231233c3e87f2ff57e",
+    "source-element-properties.ts": "db6da2d6bb8af4436e3466d615e1c77ed490a50c69e6cfb49731ce8b99b12a5e",
+    "source-element-scan.ts": "c4cd4f2d70bea80b75d68c6d2fba397b6c7c744dfa0d53d806b40deb007b2dd6",
+    "source-element-score.ts": "b26b269ab49d49624d16165d1381a3ff276f58ea49fc80942a8afcc1fdf97ba2",
+    "source-element-selector.ts": "646d103f2f98a20dac0d8c1c97d612d032ab1ef775527399b3b294510c49fc29",
+    "source-element-types.ts": "17d482e14c573f7738fe7935fcfc30d60f0c3c094c4b9caa12911b64747b13ae",
+    "source-elements.ts": "0ce7ae9f74dd31e13bacf98ad280eee07c364d0e00246fc1b102d506e2665c66",
     "source-entities.ts": "5d20bc5d176ce35f21a5916ba9e988877af35a561bc2068f2df79dd2966ae4f7",
     "source-hash.ts": "8e2685e0f2f30576a5b1ad63d734ca3f7f6bae7205bde4f48f8734c4841d7072",
     "source-head.ts": "1eaff8e9d9715e4b6dd9f3695670d400270b3dda50d4f8b06e8857d3f8495fbb",
@@ -28,7 +36,7 @@
     "source-text-range.ts": "dd219b00db2399a0261b43baa18baebc123c1347e04a5c8d5de1c405767f94b6",
     "source-text-segments.ts": "97f6a1bc48ca12a35b9082f1be2cb7e5b5ff76039eda7a241820844d1f5c9ea9",
     "source-text.ts": "8192554896e5e847fd1b304c22c53b3516398f7c441b6e06aa112dd79000dda3",
-    "source.ts": "06178d3c3573e508cf09b09bf7f2f48992f3f44e63f6eb39fc38a96e388307bc",
+    "source.ts": "603238b6763e9ca79d0361b59b24c32b4c584ad5b1cf0f1c10f4e78b968be912",
     "state-apply.ts": "dfc173017d93ae6ea5b7f0092e9f64d5e13f7f04764dd79e597bb46044ee8ecc",
     "state-limits.ts": "d9ba463e9d219dfe02b6529dd4de67124a9feb1238a08b5d82ba4f0cc6265092",
     "state.ts": "71d110ce032da3b3bde8671d8fb5f1fc5abb6293aac965d6128014010a429c39",
@@ -36,9 +44,9 @@
     "tools.ts": "a83f4d194b0fcf7f56f37753fbd1f4b1a48d32f1aaafebb98fea2584bf996611",
     "viewer.ts": "e7c87eda4dbbbf8a02f7e25aff70139df90f7375967086be0f9a740f8ea64f41"
   },
-  "tarballSha256": "ace06622b52aabb8d82afcc27f9e8fbf5c97303a6d1d0e65a1a94f43f3b08345",
+  "tarballSha256": "77233e97e81f696eb938869d1df9ed7894b7d19e8ae269fe5a65ed1283ab0b73",
   "note": "Packed source preview for the first Derive consumer. This is not a published npm release.",
-  "sourceCommit": "ff2bd736a7efb3a7f2f35e5a61840ddbf8c93ffd",
+  "sourceCommit": "d591efde37d3a176129941bdc65a789024faeb03",
   "runtimeSources": {
     "anchoring.ts": "138f9789b3ec2fbc4aec410adbcee348000148fce615763db5b8d0039673204a",
     "connection.ts": "ebb1704972a86e554f065c7e635f40e421716831120dd8bf1a541913fab7a953",
@@ -61,7 +69,7 @@
     "viewer.entry.ts": "ba030f8c1483ba6c741284e498fa47b7798b9bd27d682b0fe36fc9457e7252b4",
     "viewer.ts": "2855a1bc365c0fc2af552fa3d3c7da2da598f13d2ca4824290587501685ceed5"
   },
-  "runtimeTarballSha256": "c2d77d36fe5e4efb30c6b1c0f1c5bdda88a2e4914e9c28dabb55b5b47c7ee4d1",
+  "runtimeTarballSha256": "866d6bf5698b69f65102f0ed4bee2d28a852e0c4cdb37e17035fc2bd890e71c6",
   "runtimeDeclarationBase": {
     "version": "0.5.2",
     "sha256": "d02d2797c94147df26ba1f3e7e1746d617022f61f01718bca218b456a5b052ef"
@@ -140,7 +148,7 @@
     "sandbox/server.ts": "e9469f0c6feae086347b830cd1829634dd4736c6d2863498526e48642627cdf0",
     "testing.ts": "cedbc1dd20a8a6c796a3751032a0e5f1a51c8b16cd460a1a4ad744b9b76a08b4"
   },
-  "serverTarballSha256": "be19658b16d440d4eb57b6ad01bc1c8c328713e5b768c7e8bdff825d48682831",
+  "serverTarballSha256": "29d23c6dc209d379c1b22cda0c9e46ec66975d0759474f40d362707951480867",
   "serverDeclarationBase": {
     "version": "0.5.2",
     "sha256": "64caa1af433ede4c9b565d54c2d2a998880f3e8c88c5efc10b2f24bf32d3cac2"
