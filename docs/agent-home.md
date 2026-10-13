@@ -119,9 +119,10 @@ The live pilot installs current branch files over the pinned CLI for verificatio
 
 ## Preview setup
 
-The current PR preview does not pass the Boat runtime settings. It shares production D1,
-Hyperdrive, and R2. Do not use that preview for account or task writes.
-Use an isolated preview database and storage first. Configure the runner path and connect the company Boat key in the isolated workspace. Keep `DERIVE_AUTH_SECRET` stable; it encrypts accounts and signs callbacks.
+Each PR preview owns a D1 database and R2 bucket. It has no production Hyperdrive binding.
+The preview does not pass the Boat runtime settings. Configure the runner path and connect
+the company Boat key in the isolated workspace before checking task writes.
+Keep `DERIVE_AUTH_SECRET` stable; it encrypts accounts and signs callbacks.
 The existing secret names cover this connection flow. Each person supplies their own plan approval
 or provider key. A workspace owner supplies the company Boat key.
 

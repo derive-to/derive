@@ -17,9 +17,8 @@
 //                         table and then be served by PRODUCTION — the opposite of the
 //                         self-served bytes this config is arranging.
 //
-// WHAT IT KEEPS: the D1 / Hyperdrive / R2 bindings, so the preview reads and writes the same
-// data production does. Weigh that before opening previews to untrusted PRs — see the fork guard
-// in .github/workflows/pr-preview.yml.
+// PR previews replace D1 and R2 with their own resources and remove Hyperdrive.
+// The legacy three-argument form retains the caller's configured data bindings.
 //
 // WHAT IT UNSETS: DERIVE_SANDBOX_URL. Production serves artifact bytes from a separate
 // registrable domain (raw.derive.page) and 302s /raw/* there from the app host. A preview
@@ -47,7 +46,7 @@
 // unauthenticated, so treat a preview like any other place you would not enter a password
 // after following a link.
 //
-//   node scripts/preview-config.mjs <name> <base-url> > wrangler.preview.toml
+//   node scripts/preview-config.mjs <name> <base-url> <bindings.json> > wrangler.preview.toml
 import { readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"

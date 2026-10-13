@@ -572,7 +572,8 @@ Extract another package only when a second caller needs the same module.
 ## Release proof
 
 Use an isolated deployed Derive with owned storage and company connections.
-The ordinary PR preview currently shares production storage and is unsuitable for task writes.
+Each PR preview owns a D1 database and R2 bucket. It has no production Hyperdrive binding.
+Configure company connections and the runner in that isolated workspace before checking task writes.
 All fixtures and test credentials stay outside production.
 
 | Case | Expected evidence |

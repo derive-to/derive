@@ -52,8 +52,8 @@ permissions:
 
 jobs:
   preview:
-    # SAME-REPO PULL REQUESTS ONLY. A preview holds production's bindings and secrets, so a fork
-    # PR could read and write real data by editing this workflow. GitHub does not expose secrets
+    # SAME-REPO PULL REQUESTS ONLY. A preview uses deployment credentials, so a fork
+    # PR could reach real resources by editing this workflow. GitHub does not expose secrets
     # to fork PRs by default; this makes the intent explicit rather than relying on that.
     if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
