@@ -628,7 +628,7 @@ export async function serveJob(client, job, cfg, deps = {}) {
           })
         restoreConversation(home, job.turn.previous, providerName)
       }
-      if (job.turn?.ordinal > 1 && !job.turn.previous)
+      if (job.turn?.ordinal > 1 && !job.turn.previous && !job.turn.fresh)
         throw Object.assign(
           new Error("The original conversation checkpoint is unavailable. Start a fresh task."),
           { retryable: false },
@@ -687,7 +687,9 @@ export async function serveJob(client, job, cfg, deps = {}) {
             effort: job.execution?.effort ?? null,
             timeoutMs: cfg.timeoutMs,
             systemPrompt: jobSystemPrompt(job, { shim: shim?.rel }),
-            prompt: job.turn ? job.turn.body_md : buildPrompt(job.messages ?? []),
+            // A turn with nothing to continue reads the whole exchange so far.
+            prompt:
+              job.turn && !job.turn.fresh ? job.turn.body_md : buildPrompt(job.messages ?? []),
             resumeSessionId: job.turn?.previous?.session_id ?? null,
             env,
             signal: abort.signal,

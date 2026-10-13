@@ -274,8 +274,18 @@ async function attach(api, id, log) {
 
 async function follow(api, id, log) {
   let seen = 0
+  let misses = 0
   for (;;) {
-    const task = await api(`/v1/jobs/${id}`)
+    // A dropped connection (a server restart, a network blip) is waited out, not fatal.
+    const task = await api(`/v1/jobs/${id}`).catch((error) => {
+      if (error.status || ++misses > 12) throw error
+      return null
+    })
+    if (!task) {
+      await sleep(5_000)
+      continue
+    }
+    misses = 0
     for (const m of task.messages.slice(seen)) if (m.author_kind === "agent") log(m.body_md)
     seen = task.messages.length
     if (!["queued", "running"].includes(task.status)) return task.status === "succeeded" ? 0 : 1

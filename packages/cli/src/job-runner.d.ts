@@ -25,6 +25,8 @@ export interface PulledJob {
     id: string
     ordinal: number
     body_md: string
+    /** No earlier turn finished, so this one starts the conversation from the transcript. */
+    fresh?: boolean
     previous: {
       session_id: string
       checkpoint: import("./conversation-format.js").ConversationCheckpoint

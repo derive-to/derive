@@ -1167,6 +1167,15 @@ export const jobRoutes = (ctx: AppContext) => {
                 id: turn.id,
                 ordinal: turn.ordinal,
                 body_md: turn.body_md,
+                // No earlier turn finished (each was interrupted or failed before answering),
+                // so there is no conversation to continue: the runner starts one.
+                fresh:
+                  turn.ordinal > 1 &&
+                  !(await meta.jobExecution?.turns(j.id, j.org_id))?.some(
+                    (t) =>
+                      t.ordinal < turn.ordinal &&
+                      (t.has_checkpoint || t.status === "succeeded" || t.status === "needs_you"),
+                  ),
                 previous: await (async () => {
                   const previous = await meta.jobExecution?.checkpoint(j.id, j.org_id, turn.ordinal)
                   if (!previous?.session_id || !previous.checkpoint_enc || !deps.encryptionKey)

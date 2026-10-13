@@ -3009,6 +3009,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
         env: Record<string, string>
         cwd: string
       }) => Promise<"exited" | "idle" | "stopped">,
+      hold?: Promise<void>,
     ) => {
       const env = boat.boxes.get(sandboxId)?.env
       if (!env) throw new Error(`nothing launched on ${sandboxId}`)
@@ -3038,6 +3039,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
             `{"answer":"${answer}"}\n`,
           )
           opts.meter.sessionId = `${sandboxId}-thread`
+          await hold
           return { ok: true, answer: { body_md: answer, escalate: false } }
         },
         // An interactive harness leaves its own session file, named by the id it chose.
@@ -3253,12 +3255,31 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
   })
 
   it("an interrupting follow-up ends the running turn and runs next; a plain one waits", async () => {
-    const { app, meta, boat, pass, until } = await cloudSetup("jobs-machine-interrupt")
+    const { app, meta, boat, pass, until, runTurn } = await cloudSetup("jobs-machine-interrupt")
     const agent = await createAgent(app, { machine: "derive", provider: "codex" })
     const job = (await (await ask(app, ed.email, agent.id, "Refactor the parser")).json()) as {
       id: string
     }
     await until(job.id, "running")
+    // The runner is mid-turn when the interrupt arrives.
+    let release = () => {}
+    const inFlight = runTurn(
+      "bx_1",
+      "Half done",
+      undefined,
+      new Promise<void>((resolve) => {
+        release = resolve
+      }),
+    )
+    const turnRunning = async () =>
+      (
+        (await (await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })).json()) as {
+          turns: { status: string }[]
+        }
+      ).turns[0]?.status === "running"
+    for (let i = 0; i < 250 && !(await turnRunning()); i++)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(await turnRunning()).toBe(true)
     const machineTurn = async () =>
       JSON.parse((await meta.getJob(job.id))?.machine_json ?? "{}").turn as string
     const first = await machineTurn()
@@ -3277,12 +3298,23 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
       lease_until: string | null
     }
     expect(after).toMatchObject({ status: "queued", lease_until: null })
-    // The runner finds its claim gone and exits; the machine then starts the next turn.
-    boat.exit("bx_1")
+    // The runner's late answer counts its usage but cannot settle the cancelled turn. The
+    // runner exits; the next turn starts.
+    release()
+    await inFlight
+    const interrupted = (
+      (await (await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })).json()) as {
+        turns: { status: string; body_result_md: string | null }[]
+      }
+    ).turns[0]
+    expect(interrupted).toMatchObject({ status: "cancelled", body_result_md: null })
     for (let i = 0; i < 6 && (await machineTurn()) === first; i++) await pass()
     await until(job.id, "running")
     expect(await machineTurn()).not.toBe(first)
     expect((await meta.getJob(job.id))?.status).toBe("running")
+    // Nothing had finished before the interrupt, so the next turn starts the conversation
+    // from the transcript rather than failing for want of a checkpoint.
+    expect(await runTurn("bx_1", "Kept the old API")).toBe("succeeded")
   })
 
   it("a provider start limit makes the task wait, saying why, then start", async () => {
