@@ -4162,6 +4162,10 @@
           "snapshot": {
             "type": "string",
             "nullable": true
+          },
+          "managed": {
+            "type": "boolean",
+            "description": "Cloud work runs on the deployment's own machines when nothing is connected."
           }
         },
         "required": [
@@ -4170,7 +4174,8 @@
           "connected",
           "account_id",
           "can_manage",
-          "snapshot"
+          "snapshot",
+          "managed"
         ]
       },
       "ContextInfo": {

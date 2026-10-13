@@ -3473,6 +3473,9 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
       managed: { apiKey: "x".repeat(20), workspaceIds: workspaceIdsFromEnv("*") },
     }
     const { app } = await setup("jobs-machine-managed-all", { runtime })
+    // Settings says so: Derive cloud is included, nothing connected.
+    const compute = await app.request("/v1/runtime/connection", { headers: as(owner.email) })
+    expect(await compute.json()).toMatchObject({ connected: false, managed: true })
     const made = await app.request(
       "/v1/agents",
       jsonAs(as(owner.email), { name: "Anywhere", machine: "derive", provider: "codex" }),

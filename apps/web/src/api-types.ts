@@ -8366,6 +8366,8 @@ export interface components {
             account_id: string | null;
             can_manage: boolean;
             snapshot: string | null;
+            /** @description Cloud work runs on the deployment's own machines when nothing is connected. */
+            managed: boolean;
         };
         ContextInfo: {
             id: string;

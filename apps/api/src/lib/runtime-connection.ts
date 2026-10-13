@@ -72,6 +72,14 @@ export const workspaceRuntime = async (
       }
 }
 
+/** Does this deployment run this workspace's cloud work on its own managed machines (when the
+ *  workspace has no sandbox connection of its own)? */
+export const managedFor = (config: RuntimeConfig | undefined, org: string): boolean =>
+  !!config &&
+  config.provider !== "boat" &&
+  !!config.managed?.apiKey &&
+  (config.managed.workspaceIds.has("*") || config.managed.workspaceIds.has(org))
+
 export const cloudEnabled = async (
   meta: MetaStore,
   config: RuntimeConfig | undefined,
@@ -81,9 +89,5 @@ export const cloudEnabled = async (
   if (!config || !runnerRunsJobs(config.runnerPath, config.runnerVersion)) return false
   const cn = await runtimeConnection(meta, org)
   if (cn) return cn.status === "active"
-  return (
-    config.provider !== "boat" &&
-    !!config.managed?.apiKey &&
-    (config.managed.workspaceIds.has("*") || config.managed.workspaceIds.has(org))
-  )
+  return managedFor(config, org)
 }
