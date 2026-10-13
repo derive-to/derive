@@ -24,7 +24,11 @@
  * Keep its imports DOM-free + pure so it bundles into one small self-contained script.
  */
 
-import { recordSourceCopy, sourceCopyId } from "@aniraga/open-artifact-runtime/source"
+import {
+  ensureVideoSceneVisibility,
+  recordSourceCopy,
+  sourceCopyId,
+} from "@aniraga/open-artifact-runtime/source"
 import {
   BLOCK_TEXT_ELEMENTS,
   findQuoteMatches,
@@ -1751,6 +1755,8 @@ interface ElReg {
   const showVideoScene = (index: number) => {
     const scenes = videoScenes()
     if (!scenes.length) return
+    const root = videoRoot()
+    if (root) ensureVideoSceneVisibility(root)
     videoAt = Math.max(0, Math.min(scenes.length - 1, index))
     for (let i = 0; i < scenes.length; i++) {
       const scene = scenes[i] as HTMLElement

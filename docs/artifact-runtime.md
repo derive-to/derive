@@ -70,5 +70,7 @@ Unsafe slides keep navigation identities without receiving structural handles.
 
 Open-artifact owns video source classification and scene operations.
 Timing edits change actual attributes. Scene copies receive fresh DOM and structural identities.
+The shared runtime keeps inactive video scenes hidden when authored CSS sets their display.
+Its visibility rule never enters stored source.
 The editor records explicit copy origins. Redo keeps working after an undo save removes a copy.
 The original must remain in the current source. Other deleted blocks still require safe recovery through History.
