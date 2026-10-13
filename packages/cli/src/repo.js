@@ -38,6 +38,8 @@ export const githubRepoOf = (url) =>
  *  keep the work in progress. */
 export function prepareRepo({ repo, ref, token }, { cwd, firstTurn, tokenFile }) {
   writeFileSync(tokenFile, token, { mode: 0o600 })
+  // `gh` reads only GH_TOKEN, which a running harness cannot see renewed: past the first hour
+  // it fails, while git (through the file) and the runner's pull request lookup keep working.
   const env = { DERIVE_GIT_TOKEN_FILE: tokenFile, GH_TOKEN: token }
   const name = repo.split("/")[1]
   const mine = (dir) =>

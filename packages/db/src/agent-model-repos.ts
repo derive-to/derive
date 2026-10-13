@@ -336,7 +336,7 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
         WHERE org_id = ${orgId} AND agent_id = ${agentId} AND machine_phase = 'parked'
         RETURNING id`)
       const left = await first<{ n: number }>(sql`
-        SELECT count(*)::int AS n FROM job WHERE org_id = ${orgId} AND agent_id = ${agentId}
+        SELECT count(*) AS n FROM job WHERE org_id = ${orgId} AND agent_id = ${agentId}
           AND machine_phase IS NOT NULL AND machine_phase <> 'released'`)
       return Number(left?.n ?? 0)
     },

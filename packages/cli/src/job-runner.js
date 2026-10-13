@@ -298,8 +298,6 @@ function writeToolShim(cwd, job) {
   }
 }
 
-/** The model credential for this job as a per-spawn env overlay, plus its cleanup. Throws with
- *  a sentence a person can act on when nothing is connected. */
 /** A private folder for one job's secrets. A cloud stop can interrupt `finally` before the
  *  provider saves the disk, so on a Derive machine it lives on tmpfs, which a saved disk
  *  cannot retain. */
@@ -318,6 +316,8 @@ function privateDir(prefix) {
   return mkdtempSync(join(root, prefix))
 }
 
+/** The model credential for this job as a per-spawn env overlay, plus its cleanup. Throws with
+ *  a sentence a person can act on when nothing is connected. */
 async function modelEnvFor(
   client,
   job,
@@ -595,8 +595,13 @@ export async function serveJob(client, job, cfg, deps = {}) {
           () =>
             client
               .git(job)
-              .then((next) => writeFileSync(tokenFile, next.token, { mode: 0o600 }))
-              .catch(() => {}),
+              .then((next) => {
+                writeFileSync(tokenFile, next.token, { mode: 0o600 })
+                git = { ...git, token: next.token }
+              })
+              .catch((error) =>
+                console.error(`[runner] could not renew the repository token: ${error.message}`),
+              ),
           GIT_TOKEN_RENEW_MS,
         )
         renewGit.unref?.()
