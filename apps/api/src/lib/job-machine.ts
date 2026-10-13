@@ -529,6 +529,10 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
         return
       }
       const process = await client.process(sandbox, m.process_id, state.identity)
+      if (process.status === "starting") {
+        await launch(job)
+        return
+      }
       if (!["starting", "running"].includes(process.status)) await move("stopping")
       return
     }

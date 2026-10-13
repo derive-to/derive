@@ -144,18 +144,12 @@ export class BoatClient implements SandboxClient {
   async sandbox(id: string, identity: Identity) {
     return this.normalize(await this.read(id, identity))
   }
-  async lifecycle(
-    id: string,
-    action: "resume" | "stop",
-    key: string,
-    identity: Identity,
-    env?: Record<string, string>,
-  ) {
+  async lifecycle(id: string, action: "resume" | "stop", key: string, identity: Identity) {
     await this.read(id, identity)
     await this.request(
       `/sandboxes/${encodeURIComponent(id)}/${action}`,
       "POST",
-      action === "resume" ? { ttlSeconds: 1200, noEnv: true, type: "small", env } : {},
+      action === "resume" ? { ttlSeconds: 1200, noEnv: true, type: "small" } : {},
       key,
     )
     return op(action, id)
@@ -193,9 +187,34 @@ export class BoatClient implements SandboxClient {
     const existing = await this.process(id, processId, identity)
     if (existing.status !== "starting") return existing
     const dir = `/home/ortam/.derive/operations/${sha256(key)}`
+    const envDir = `/home/user/.derive/operations/${sha256(key)}`
+    const envFile = `${envDir}/environment.json`
+    // Boat keeps command history. Send credentials as a private file, never shell text.
+    z.object({ success: z.literal(true) }).parse(
+      await this.request(`/sandboxes/${encodeURIComponent(id)}/commands`, "POST", {
+        command: `mkdir -p ${quote(envDir)} && chmod 700 ${quote(envDir)}`,
+        timeoutSeconds: 10,
+      }),
+    )
+    z.object({ success: z.literal(true) }).parse(
+      await this.request(`/sandboxes/${encodeURIComponent(id)}/files`, "PUT", {
+        path: envFile,
+        content: JSON.stringify(body.env),
+        encoding: "utf8",
+      }),
+    )
+    const run = [
+      'const fs = require("node:fs")',
+      'const { spawnSync } = require("node:child_process")',
+      "const file = process.argv[1]",
+      'const env = JSON.parse(fs.readFileSync(file, "utf8"))',
+      "fs.rmSync(file)",
+      'const result = spawnSync(process.argv[2], process.argv.slice(3), { env: { ...process.env, ...env }, stdio: "inherit" })',
+      "if (result.error) throw result.error",
+      "process.exit(result.status ?? 1)",
+    ].join("; ")
     const command = [
       "set -eu",
-      'test -n "$DERIVE_TOKEN"',
       `mkdir -p ${quote(dir)}`,
       `if ! mkdir ${quote(dir + "/claim")} 2>/dev/null; then exit 0; fi`,
       `printf '%s\\n' \"$$\" > ${quote(dir + "/pid")}`,
@@ -203,7 +222,8 @@ export class BoatClient implements SandboxClient {
       `awk '{print $22}' /proc/$$/stat > ${quote(dir + "/started")}`,
       `printf running > ${quote(dir + "/state")}`,
       `trap ${quote(`printf exited > ${quote(dir + "/state")}`)} EXIT`,
-      `${body.argv.map(quote).join(" ")}`,
+      `chmod 600 ${quote(envFile)}`,
+      `node -e ${quote(run)} ${quote(envFile)} ${body.argv.map(quote).join(" ")}`,
     ].join("\n")
     z.object({ processId: z.number().int(), success: z.literal(true) }).parse(
       await this.request(`/sandboxes/${encodeURIComponent(id)}/commands`, "POST", {

@@ -74,6 +74,8 @@ Model accounts remain separate. Choose the model account on the agent.
 
 The first sandbox can take a few minutes. Tasks show **Getting ready** during setup.
 The first task uses the running sandbox directly, without an extra stop and resume.
+Boat receives each task's environment through a private file. The runner removes it before
+starting the task. Credentials do not appear in Boat command history.
 After a task finishes, Derive stops compute and collects its receipt.
 A missing model charge stays **Unknown**. API estimates do not price a subscription plan.
 
