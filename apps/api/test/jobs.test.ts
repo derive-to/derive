@@ -2854,7 +2854,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
   const fakeBoat = () => {
     const boxes = new Map<
       string,
-      { state: string; stopped: boolean; env?: Record<string, string> }
+      { state: string; stopped: boolean; archiveAt: number; env?: Record<string, string> }
     >()
     // The runner's state per launch, keyed by its operation directory, as the runner's marker is.
     const launches = new Map<string, { box: string; state: "running" | "exited" }>()
@@ -2870,7 +2870,11 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
       if (path === "/me") return json({ user: { id: "boat-user" } })
       if (path === "/sandboxes" && method === "POST") {
         const id = `bx_${++next}`
-        boxes.set(id, { state: "idle", stopped: false })
+        boxes.set(id, {
+          state: "idle",
+          stopped: false,
+          archiveAt: Date.now() + (body.ttlSeconds ?? 1800) * 1000,
+        })
         calls.push(`create ${id} ${body.from ?? "-"} ${body.type}`)
         return json({ sandbox: { id, state: "provisioned" } })
       }
@@ -2882,7 +2886,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
         state: box.stopped ? "archived" : box.state,
         setupStatus: "done",
         hydrated: true,
-        archiveAfter: new Date(Date.now() + 1800_000).toISOString(),
+        archiveAfter: new Date(box.archiveAt).toISOString(),
         ...(box.stopped ? { stop: { id: `stop-${id}`, status: "completed" } } : {}),
       })
       if (!action) return json({ sandbox: sandbox() })
@@ -2894,6 +2898,8 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
       if (action === "resume") {
         calls.push(`resume ${id}`)
         box.stopped = false
+        // boat.dev starts the stop timer when the resume finishes, a little after it was asked.
+        box.archiveAt = Date.now() + (body.ttlSeconds + 20) * 1000
         return json({})
       }
       if (action === "files") {

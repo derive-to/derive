@@ -60,6 +60,9 @@ const RETRY_BACKOFF_MS = 10 * 60_000
 const MAX_SANDBOX_FAILURES = 3
 /** A shared sandbox's provider-side stop timer at creation, before any job sets its own. */
 const CREATE_TTL_SECONDS = 2700
+/** How far past the asked stop time a provider's timer may land (it counts from when a resume
+ *  finishes) before the turn treats the machine as misconfigured. */
+const TTL_SLACK_SECONDS = 300
 /** A task's parked sandbox is deleted after this long without a turn. Stopped costs nothing,
  *  so this only bounds storage and lets a session be reopened days later. */
 const PARKED_TTL_MS = 7 * 24 * 60 * 60_000
@@ -653,11 +656,14 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
     }
     case "ready": {
       const observed = await client.sandbox(sandbox, state.identity)
-      // The provider's own stop timer must be set and must not outlive this turn by much.
+      // The provider's own stop timer must be set and must not outlive this turn by much. It
+      // starts when a resume finishes rather than when it was asked for, so it may run a little
+      // past the asked time.
       if (
         observed.state !== "ready" ||
         observed.auto_stop_after_seconds <= 0 ||
-        observed.auto_stop_after_seconds > Math.max(CREATE_TTL_SECONDS, ttlFor(m.deadline_at, at))
+        observed.auto_stop_after_seconds >
+          Math.max(CREATE_TTL_SECONDS, ttlFor(m.deadline_at, at)) + TTL_SLACK_SECONDS
       ) {
         await move("stopping")
         return
