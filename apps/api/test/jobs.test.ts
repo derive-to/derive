@@ -22,7 +22,7 @@ import type { ModelTurn } from "../src/lib/agent-loop"
 import { signCapabilityToken } from "../src/lib/capability-token"
 import { encryptSecret } from "../src/lib/crypto"
 import { advanceGraph, graphAware, graphPass } from "../src/lib/job-graph"
-import { machineDepsFrom, machinePass } from "../src/lib/job-machine"
+import { advanceMachineJob, machineDepsFrom, machinePass } from "../src/lib/job-machine"
 import { HELD_FOR_BUDGET, jobTick, OWNER_LEFT } from "../src/lib/jobs"
 import { catalogOf } from "../src/lib/model-catalog"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
@@ -3377,5 +3377,198 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     expect((await meta.getJob(a.id))?.machine_phase).toBe("parked")
     expect((await meta.getJob(b.id))?.machine_phase).toBe("running")
     expect(boat.calls.filter((c) => c.startsWith("create"))).toHaveLength(2)
+  })
+})
+
+describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machines", () => {
+  const cloudSetup = async (name: string, idleSeconds: number) => {
+    const identity = { organization_id: "ortam-org", user_id: "ortam-user" }
+    const processes = new Map<string, { body: string; id: string }>()
+    const launches: Array<{ body: Record<string, unknown>; key: string }> = []
+    const responseLoss = { next: false }
+    let stopped = false
+    const provisioning = { ready: false }
+    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init)
+      const path = new URL(request.url).pathname.replace("/v1", "")
+      expect(request.headers.get("Authorization")).toBe("Bearer managed-ortam-key")
+      expect(request.headers.get("X-Ortam-Integration-Subject")).toMatch(/^[a-f0-9]{64}$/)
+      if (path === "/integration") return Response.json(identity)
+      const sandbox = {
+        id: "sbx",
+        state: stopped ? "stopped" : "ready",
+        current_operation_id: null,
+        auto_stop_after_seconds: idleSeconds,
+      }
+      const operation = (kind: string) => ({
+        id: `op-${kind}`,
+        sandbox_id: "sbx",
+        kind,
+        state: kind === "create" && !provisioning.ready ? "queued" : "succeeded",
+      })
+      if (path === "/sandboxes" && request.method === "POST")
+        return Response.json({ sandbox, operation: operation("create") })
+      if (path === "/sandboxes/sbx") return Response.json(sandbox)
+      if (path.startsWith("/operations/"))
+        return Response.json(operation(path.slice("/operations/op-".length)))
+      if (path === "/sandboxes/sbx/stop") {
+        stopped = true
+        return Response.json(operation("stop"))
+      }
+      if (path === "/sandboxes/sbx/processes" && request.method === "POST") {
+        const body = (await request.json()) as Record<string, unknown>
+        const key = request.headers.get("Idempotency-Key") ?? ""
+        launches.push({ body, key })
+        const { env: _env, ...immutable } = body
+        const fingerprint = JSON.stringify(immutable)
+        const old = processes.get(key)
+        if (old && old.body !== fingerprint) return new Response(null, { status: 409 })
+        const process = old ?? { body: fingerprint, id: `process-${processes.size + 1}` }
+        processes.set(key, process)
+        if (responseLoss.next) {
+          responseLoss.next = false
+          throw new Error("process response lost")
+        }
+        return Response.json({ id: process.id, status: "running" })
+      }
+      if (path.startsWith("/sandboxes/sbx/processes/"))
+        return Response.json({ id: path.split("/").at(-1), status: "running" })
+      throw new Error(`Unexpected Ortam request: ${request.method} ${path}`)
+    }) as typeof fetch
+    const runtime = {
+      provider: "ortam" as const,
+      apiUrl: "https://ortam.test/v1",
+      runnerPath: "/opt/derive/bin/derive.js",
+      limits: { global: 100, workspace: 20 },
+      managed: { apiKey: "managed-ortam-key", workspaceIds: new Set(["default"]) },
+    }
+    const made = await setup(name, {
+      runtime,
+      runtimeFetch: fetcher,
+      baseUrl: "http://derive.test",
+    })
+    await made.app.request(
+      "/v1/accounts",
+      jsonAs(as(owner.email), {
+        provider: "codex",
+        kind: "api_key",
+        secret: "sk-codex-0001234",
+        shared: true,
+      }),
+    )
+    const deps = machineDepsFrom(made.meta, {
+      secret: "test-encryption-key",
+      server: "http://derive.test",
+      config: runtime,
+      fetcher,
+    })
+    if (!deps) throw new Error("no managed Ortam machine deps")
+    const agent = await createAgent(made.app, {
+      machine: "derive",
+      provider: "codex",
+      sandbox: { fresh: true },
+    })
+    const response = await ask(made.app, ed.email, agent.id, "Fix the parser", {
+      session: false,
+    })
+    expect(response.status).toBe(201)
+    const job = (await response.json()) as { id: string }
+    const until = async (phase: string) => {
+      provisioning.ready = true
+      for (let i = 0; i < 12; i++) {
+        const current = await made.meta.getJob(job.id)
+        if (current?.machine_phase === phase) return
+        if (current?.machine_phase) await advanceMachineJob(deps, current)
+        else await machinePass(deps, { maxRequests: 400, maxTransitions: 2 })
+      }
+      expect((await made.meta.getJob(job.id))?.machine_phase).toBe(phase)
+    }
+    return {
+      ...made,
+      deps,
+      job,
+      agent,
+      until,
+      launches,
+      processes,
+      responseLoss,
+    }
+  }
+
+  it.each([
+    60, 86400,
+  ])("runs with a %s-second idle timer and keeps a separate turn deadline", async (idleSeconds) => {
+    const { meta, deps, job, until, launches } = await cloudSetup(
+      `jobs-ortam-idle-${idleSeconds}`,
+      idleSeconds,
+    )
+    await until("running")
+    const running = await meta.getJob(job.id)
+    const machine = JSON.parse(running?.machine_json ?? "{}")
+    expect(launches[0]?.body).toMatchObject({ cwd: "/home/ortam", keep_awake: true })
+    expect(launches[0]?.body.timeout_seconds).toBeGreaterThan(60)
+    expect(launches[0]?.body.timeout_seconds).toBeLessThanOrEqual(21600)
+    expect(machine.launch_keep_awake).toBe(true)
+    if (!running) throw new Error("missing running Ortam job")
+    await advanceMachineJob(
+      { ...deps, now: () => new Date(Date.parse(machine.deadline_at) + 1) },
+      running,
+    )
+    expect((await meta.getJob(job.id))?.machine_phase).toBe("stopping")
+    await until("parked")
+    expect((await meta.getJob(job.id))?.machine_phase).toBe("parked")
+  })
+
+  it("replays a saved launch from before keep-awake support after losing its response", async () => {
+    const { meta, deps, job, until, launches, processes, responseLoss } = await cloudSetup(
+      "jobs-ortam-legacy-launch",
+      2700,
+    )
+    await until("ready")
+    const ready = await meta.getJob(job.id)
+    if (!ready) throw new Error("missing ready Ortam job")
+    const machine = JSON.parse(ready.machine_json ?? "{}")
+    delete machine.launch_keep_awake
+    machine.launch_timeout_seconds = Math.ceil(
+      (Date.parse(machine.deadline_at) - Date.now()) / 1000,
+    )
+    const launching = await meta.transitionJobMachine(job.id, ready.machine_rev, {
+      phase: "launching",
+      machine_json: JSON.stringify(machine),
+    })
+    if (!launching) throw new Error("legacy launch reservation lost")
+    responseLoss.next = true
+    await expect(advanceMachineJob(deps, launching)).rejects.toThrow(
+      "Ortam request outcome is unknown",
+    )
+    expect((await meta.getJob(job.id))?.machine_phase).toBe("launching")
+    const replay = await meta.getJob(job.id)
+    if (!replay) throw new Error("missing legacy launch for replay")
+    await advanceMachineJob(deps, replay)
+    const running = await meta.getJob(job.id)
+    expect(running?.machine_phase).toBe("running")
+    expect(processes.size).toBe(1)
+    expect(
+      launches.map(({ body, key }) => ({
+        key,
+        cwd: body.cwd,
+        keep_awake: body.keep_awake,
+        timeout: body.timeout_seconds,
+      })),
+    ).toEqual([
+      {
+        key: `derive-job-${machine.turn}-launch`,
+        cwd: "/home/ortam",
+        keep_awake: undefined,
+        timeout: machine.launch_timeout_seconds,
+      },
+      {
+        key: `derive-job-${machine.turn}-launch`,
+        cwd: "/home/ortam",
+        keep_awake: undefined,
+        timeout: machine.launch_timeout_seconds,
+      },
+    ])
+    expect(JSON.parse(running?.machine_json ?? "{}").process_id).toBe("process-1")
   })
 })

@@ -47,7 +47,16 @@ export interface SandboxMachine {
   /** Provider stop timer for the resumed turn. */
   ttl_seconds?: number
 }
+export interface SandboxLaunch {
+  argv: string[]
+  cwd: string
+  env: Record<string, string>
+  timeout_seconds: number
+  /** Frozen per turn; false preserves Ortam launches claimed before keep-awake support. */
+  keep_awake?: boolean
+}
 export interface SandboxClient {
+  readonly stopTimer: "idle" | "deadline"
   authenticate(): Promise<Identity>
   create(
     body: SandboxCreate,
@@ -69,12 +78,7 @@ export interface SandboxClient {
     env?: Record<string, string>,
     machine?: SandboxMachine,
   ): Promise<Operation>
-  launch(
-    id: string,
-    body: { argv: string[]; cwd: string; env: Record<string, string>; timeout_seconds: number },
-    key: string,
-    identity: Identity,
-  ): Promise<Process>
+  launch(id: string, body: SandboxLaunch, key: string, identity: Identity): Promise<Process>
   process(sandboxId: string, id: string, identity: Identity): Promise<Process>
   deleteSandbox(id: string, key: string, identity: Identity): Promise<Operation>
   isSandboxDeleted(id: string, identity: Identity): Promise<boolean>

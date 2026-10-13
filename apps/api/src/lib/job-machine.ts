@@ -110,6 +110,7 @@ interface MachineState {
   stop_op?: string
   process_id?: string
   launch_timeout_seconds?: number
+  launch_keep_awake?: boolean
   runner_path?: string
   runner_setup?: string
   /** Present when the job runs on its own sandbox rather than its agent's shared one. */
@@ -633,6 +634,7 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
         cwd: "/home/ortam",
         env: await environment(),
         timeout_seconds: claim.launch_timeout_seconds,
+        keep_awake: claim.launch_keep_awake ?? false,
       },
       `derive-job-${m.turn}-launch`,
       state.identity,
@@ -681,19 +683,20 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
     }
     case "ready": {
       const observed = await client.sandbox(sandbox, state.identity)
-      // The provider's own stop timer must be set and must not outlive this turn by much. It
-      // starts when a resume finishes rather than when it was asked for, so it may run a little
-      // past the asked time.
+      // Deadline timers bound compute after resume; idle timers reset with activity and are
+      // held by the runner process. Both keep the controller deadline and process timeout.
       if (
         observed.state !== "ready" ||
         observed.auto_stop_after_seconds <= 0 ||
-        observed.auto_stop_after_seconds >
-          Math.max(CREATE_TTL_SECONDS, ttlFor(m.deadline_at, at)) + TTL_SLACK_SECONDS
+        (client.stopTimer === "deadline" &&
+          observed.auto_stop_after_seconds >
+            Math.max(CREATE_TTL_SECONDS, ttlFor(m.deadline_at, at)) + TTL_SLACK_SECONDS)
       ) {
         await move("stopping")
         return
       }
       const launching = await move("launching", {
+        launch_keep_awake: client.stopTimer === "idle",
         launch_timeout_seconds: Math.max(
           1,
           Math.ceil((Date.parse(m.deadline_at) - Date.parse(at)) / 1000),

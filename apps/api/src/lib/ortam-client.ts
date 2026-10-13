@@ -1,6 +1,13 @@
 import { unbound } from "@derive/broker"
 import { decodeJwt } from "jose"
 import { z } from "zod"
+import {
+  type SandboxClient,
+  type SandboxCreate,
+  SandboxCreateRejected,
+  type SandboxLaunch,
+  type SandboxMachine,
+} from "./sandbox-client"
 
 const Sandbox = z.object({
   id: z.string(),
@@ -37,11 +44,11 @@ const PUBLIC_RUNNER_SETUP = [
   "    aarch64) arch=arm64; checksum=e7adfca03d9173276114a6f2219df1a7d25e1bfd6bbd771d3f839118a2053094 ;;",
   "    *) exit 1 ;;",
   "  esac",
-  "  node_dir=/workspace/.derive-node/node-v24.14.0-linux-$arch",
+  "  node_dir=/home/ortam/.derive-node/node-v24.14.0-linux-$arch",
   '  if [ ! -x "$node_dir/bin/node" ]; then',
   '    test ! -e "$node_dir"',
-  "    mkdir -p /workspace/.derive-node",
-  "    node_stage=$(mktemp -d /workspace/.derive-node/.install-XXXXXX)",
+  "    mkdir -p /home/ortam/.derive-node",
+  "    node_stage=$(mktemp -d /home/ortam/.derive-node/.install-XXXXXX)",
   "    trap 'rm -rf \"$node_stage\"' EXIT",
   '    curl -fsSL --max-time 120 "https://nodejs.org/dist/v24.14.0/node-v24.14.0-linux-$arch.tar.xz" -o "$node_stage/node.tar.xz"',
   '    printf \'%s  %s\\n\' "$checksum" "$node_stage/node.tar.xz" | sha256sum -c -',
@@ -64,7 +71,7 @@ const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz"
  * sandbox or operation Derive saved before that change is the same resource under its old
  * spelling, so it is re-encoded on the way out; an ID already in the new form passes through.
  */
-export const ortamId = (kind: "sbx" | "op", id: string): string => {
+export const ortamId = (kind: "sbx" | "op" | "spt", id: string): string => {
   if (!UUID.test(id)) return id
   let n = BigInt(`0x${id.replaceAll("-", "")}`)
   let out = ""
@@ -85,7 +92,8 @@ class OrtamHttpError extends Error {
 }
 
 /** Operator-configured API only. Redirects and response bodies never enter errors/logs. */
-export class OrtamClient {
+export class OrtamClient implements SandboxClient {
+  readonly stopTimer = "idle"
   private readonly fetcher: typeof fetch
 
   constructor(
@@ -195,21 +203,30 @@ export class OrtamClient {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
   }
-  async create(body: unknown, key: string, identity: { organization_id: string; user_id: string }) {
+  async create(
+    body: SandboxCreate,
+    key: string,
+    identity: { organization_id: string; user_id: string },
+  ) {
+    if (body.environment)
+      throw new SandboxCreateRejected("Ortam does not support Boat environments")
+    if (
+      body.snapshot &&
+      !UUID.test(body.snapshot) &&
+      !/^spt_[0-7][0-9abcdefghjkmnpqrstvwxyz]{25}$/.test(body.snapshot)
+    )
+      throw new SandboxCreateRejected("Ortam snapshots need a snapshot ID")
+    const { snapshot, environment: _environment, env, ...settings } = body
     const result = z.object({ sandbox: Sandbox, operation: Operation }).parse(
       await this.request(
         "/sandboxes",
         identity,
         "POST",
-        this.mode === "api_key"
-          ? z
-              .object({
-                name: z.string(),
-                size: z.string(),
-                auto_stop_after_seconds: z.number(),
-              })
-              .parse(body)
-          : body,
+        {
+          ...settings,
+          ...(snapshot ? { source: { snapshot_id: ortamId("spt", snapshot) } } : {}),
+          ...(env ? { variables: env } : {}),
+        },
         key,
       ),
     )
@@ -281,7 +298,10 @@ export class OrtamClient {
     key: string,
     identity: { organization_id: string; user_id: string },
     _env?: Record<string, string>,
+    machine: SandboxMachine = {},
   ) {
+    if (action === "resume" && machine.environment)
+      throw new Error("Ortam does not support Boat environments")
     id = ortamId("sbx", id)
     const op = Operation.parse(
       await this.request(
@@ -297,32 +317,35 @@ export class OrtamClient {
   }
   async launch(
     id: string,
-    body: { argv: string[]; cwd: string; env: Record<string, string>; timeout_seconds: number },
+    body: SandboxLaunch,
     key: string,
     identity: { organization_id: string; user_id: string },
   ) {
     id = ortamId("sbx", id)
+    const { keep_awake = true, ...launch } = body
     return Process.parse(
       await this.request(
         `/sandboxes/${encodeURIComponent(id)}/processes`,
         identity,
         "POST",
-        this.mode === "api_key"
-          ? {
-              ...body,
-              cwd: "/workspace",
-              argv: body.argv.map((arg, index) => {
-                const mapped = arg.replaceAll("/home/ortam", "/workspace")
-                return index === 2 && body.argv[0] === "sh" && body.argv[1] === "-c"
-                  ? `${PUBLIC_RUNNER_SETUP}\n${mapped}`
-                  : mapped
-              }),
-            }
-          : body,
+        {
+          ...launch,
+          ...(keep_awake ? { keep_awake: true } : {}),
+          ...(this.mode === "api_key"
+            ? {
+                argv: launch.argv.map((arg, index) =>
+                  index === 2 && launch.argv[0] === "sh" && launch.argv[1] === "-c"
+                    ? `${PUBLIC_RUNNER_SETUP}\n${arg}`
+                    : arg,
+                ),
+              }
+            : {}),
+        },
         key,
       ),
     )
   }
+
   async process(
     sandboxId: string,
     id: string,

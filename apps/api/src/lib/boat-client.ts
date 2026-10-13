@@ -5,6 +5,7 @@ import {
   type SandboxClient,
   type SandboxCreate,
   SandboxCreateRejected,
+  type SandboxLaunch,
   type SandboxMachine,
   SandboxRateLimited,
 } from "./sandbox-client"
@@ -31,6 +32,7 @@ const op = (kind: string, id: string, state: "running" | "succeeded" | "failed" 
 /** boat.dev: the same Agent/Job lifecycle through its public v1 API. Creates are
  * idempotent. Commands submit once. A stop is complete only after its saved-disk receipt. */
 export class BoatClient implements SandboxClient {
+  readonly stopTimer = "deadline"
   private readonly fetcher: typeof fetch
   constructor(
     readonly base: string,
@@ -208,12 +210,7 @@ export class BoatClient implements SandboxClient {
       box.state === "error" || box.state === "cancelled" || box.setupStatus === "failed"
     return op(kind, sandboxId, done ? "succeeded" : failed ? "failed" : "running")
   }
-  async launch(
-    id: string,
-    body: { argv: string[]; cwd: string; env: Record<string, string>; timeout_seconds: number },
-    key: string,
-    identity: Identity,
-  ) {
+  async launch(id: string, body: SandboxLaunch, key: string, identity: Identity) {
     await this.read(id, identity)
     // Boat command submission has no idempotency contract. The owned runner's disk marker
     // supplies it. Two accepted commands can race, but only one can own this operation.
