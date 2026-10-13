@@ -65,6 +65,8 @@ export interface JobResult {
   claim_ledger_version?: 1
   /** Server-owned baseline for receipt indexes across manual retry cycles. */
   attempt_offset?: number
+  /** Where the latest turn left the task's repository: the branch it was on and its commit. */
+  git?: { repo: string; branch: string | null; commit: string | null }
   compute?: {
     turn: string
     provider: "ortam" | "boat"

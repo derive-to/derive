@@ -21,11 +21,16 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve, sep } from "node:path"
-import { checkpointConversation, latestSessionId, restoreConversation } from "./conversation.js"
+import {
+  checkpointConversation,
+  latestSessionId,
+  restoreConversation,
+  sessionDigest,
+} from "./conversation.js"
 import { RUNNER_PROTOCOL_VERSION, SESSION_RESUME } from "./conversation-format.js"
 import { selectProvider } from "./providers/index.js"
-import { terminateProcess } from "./providers/process.js"
-import { prepareRepo, pullRequestFor } from "./repo.js"
+import { redactSecrets, safeCommand, terminateProcess } from "./providers/process.js"
+import { gitState, prepareRepo, pullRequestFor } from "./repo.js"
 import {
   buildPrompt,
   DeriveClient,
@@ -423,25 +428,75 @@ export async function stageLocalImages(client, html, cwd, notes = [], page = "."
  *  typed in as the session's next message. */
 async function serveSession(
   start,
-  { provider, providerName, bin, cwd, model, effort, systemPrompt, turn, env, home, signal, meter },
+  {
+    provider,
+    providerName,
+    bin,
+    cwd,
+    model,
+    effort,
+    systemPrompt,
+    turn,
+    env,
+    home,
+    signal,
+    meter,
+    onEvent,
+  },
 ) {
+  const since = new Date().toISOString()
   const resumeSessionId = turn?.previous?.session_id ?? null
   const prompt = resumeSessionId && turn?.body_md === SESSION_RESUME ? null : turn?.body_md
   const args = provider.sessionArgs({ model, effort, systemPrompt, prompt, resumeSessionId, home })
   provider.prepareSession?.({ home, cwd, env, systemPrompt })
-  const ended = await start({ bin, args, cwd, env, signal })
+  // What the session does reaches Derive as it happens: its actions, read from the harness's
+  // own conversation file, join the turn's live activity.
+  let shown = 0
+  const follow = () => {
+    if (!home) return
+    try {
+      const { actions } = sessionDigest(home, providerName, since)
+      for (const a of actions.slice(shown)) onEvent?.({ kind: a.kind, label: safeCommand(a.label) })
+      shown = actions.length
+    } catch {}
+  }
+  const watching = setInterval(follow, SESSION_FOLLOW_MS)
+  watching.unref?.()
+  let ended
+  try {
+    ended = await start({ bin, args, cwd, env, signal })
+  } finally {
+    clearInterval(watching)
+  }
+  follow()
   meter.sessionId = latestSessionId(home, providerName) ?? resumeSessionId
   if (ended === "stopped") return { ok: false, error: "The session was stopped.", retryable: false }
+  const closing =
+    ended === "idle"
+      ? "Session paused while idle. `derive attach` picks it up where it left off."
+      : "Session ended."
   return {
     ok: true,
-    answer: {
-      body_md:
-        ended === "idle"
-          ? "Session paused while idle. `derive attach` picks it up where it left off."
-          : "Session ended.",
-      escalate: false,
-    },
+    answer: { body_md: sessionRecord(home, providerName, since, closing), escalate: false },
   }
+}
+
+const SESSION_FOLLOW_MS = 10_000
+const SESSION_RECORD_CHARS = 12_000
+
+/** A session turn's answer: what was said in it, newest kept when long, then how it ended. */
+function sessionRecord(home, providerName, since, closing) {
+  let exchanges = []
+  try {
+    if (home) exchanges = sessionDigest(home, providerName, since).exchanges
+  } catch {}
+  const name = providerName === "codex" ? "Codex" : "Claude"
+  const said = exchanges.map(
+    (e) =>
+      `**${e.role === "you" ? "You" : name}:** ${redactSecrets(e.text).trim().slice(0, 1_500)}`,
+  )
+  while (said.join("\n\n").length > SESSION_RECORD_CHARS && said.length > 1) said.shift()
+  return [...said, closing].join("\n\n")
 }
 
 const CHECK_TIMEOUT_MS = 10 * 60_000
@@ -681,6 +736,14 @@ export async function serveJob(client, job, cfg, deps = {}) {
             home,
             signal: abort.signal,
             meter,
+            onEvent: (event) => {
+              if (eventSeq < 500)
+                events.push({
+                  seq: ++eventSeq,
+                  kind: event.kind,
+                  ...(event.label ? { label: String(event.label).slice(0, 160) } : {}),
+                })
+            },
           })
         : await run(provider, {
             bin: cfg.agentBin ?? provider.binFrom({}, process.env),
@@ -789,7 +852,11 @@ export async function serveJob(client, job, cfg, deps = {}) {
       ...(pr ? [pr] : []),
     ]
     const common = {
-      result: { ...receipt, ...(effects.length ? { effects } : {}) },
+      result: {
+        ...receipt,
+        ...(effects.length ? { effects } : {}),
+        ...(git && !cfg.mock ? { git: gitState(git.repo, cfg.cwd) } : {}),
+      },
       body_md: [
         a.body_md,
         ...(a.query ? [`Evidence: ${a.query}`] : []),

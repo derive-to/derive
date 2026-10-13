@@ -165,7 +165,7 @@ export function AgentsHome() {
                   params={{ id: agent.id }}
                   search={{}}
                   data-testid={`agents-needs-${job.id}`}
-                  className={rowClass("warning")}
+                  className={rowClass()}
                 >
                   <RowLine
                     icon="job-needs-you"

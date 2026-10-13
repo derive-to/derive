@@ -3058,9 +3058,30 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
               }) => {
                 const day = join(opts.env.CODEX_HOME ?? "", "sessions", "2026", "10", "13")
                 mkdirSync(day, { recursive: true })
+                // What a person and Codex did in the session, as Codex records it.
+                const at = new Date(Date.now() + 1000).toISOString()
                 writeFileSync(
                   join(day, `rollout-2026-10-13T00-00-00-${SESSION_UUID}.jsonl`),
-                  "{}\n",
+                  [
+                    { type: "event_msg", payload: { type: "user_message", message: "Tidy it" } },
+                    {
+                      type: "response_item",
+                      payload: {
+                        type: "function_call",
+                        name: "shell",
+                        arguments: JSON.stringify({ command: ["pnpm", "test", "inbox"] }),
+                      },
+                    },
+                    {
+                      type: "event_msg",
+                      payload: {
+                        type: "agent_message",
+                        message: "Done. Token sk-live0123456789abcdef stays out of it.",
+                      },
+                    },
+                  ]
+                    .map((item) => JSON.stringify({ timestamp: at, ...item }))
+                    .join("\n"),
                 )
                 return runSession(opts)
               },
@@ -3149,6 +3170,10 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     expect((await attach(owner.email)).status).toBe(403)
     const opened = await attach(ed.email)
     expect(opened.status).toBe(200)
+    // The task keeps who opened a terminal on it.
+    expect((await meta.listJobMessages(job.id)).at(-1)?.body_md).toMatch(
+      /opened a terminal on this session\.$/,
+    )
     expect(await opened.json()).toEqual({
       host: "203.0.113.10",
       port: 22,
@@ -3184,7 +3209,17 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     expect(first.at(-1)).toBe("Tidy the inbox empty state")
     expect(home.agents).toContain("Derive")
     await until(job.id, "parked")
-    expect((await meta.listJobMessages(job.id)).at(-1)?.body_md).toContain("Session paused")
+    // The session's conversation lands in the task, credentials masked, then how it ended.
+    const record = (await meta.listJobMessages(job.id)).at(-1)?.body_md ?? ""
+    expect(record).toContain("**You:** Tidy it")
+    expect(record).toContain("**Codex:** Done. Token [redacted] stays out of it.")
+    expect(record).toContain("Session paused")
+    const view = (await (
+      await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
+    ).json()) as {
+      events: { label?: string }[]
+    }
+    expect(view.events.map((e) => e.label)).toContain("pnpm test inbox")
     expect((await attach(ed.email)).status).toBe(409)
     // `derive ls` lists it as a paused session.
     const printed: string[] = []

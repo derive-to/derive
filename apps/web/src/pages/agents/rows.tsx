@@ -67,12 +67,10 @@ export function RowLine({
   )
 }
 
-/** Row spacing, separators and the needs-you wash. */
-export const rowClass = (tone?: "warning") =>
-  cn(
-    "flex min-h-18 items-center gap-3.5 border-b border-border py-3 text-base last:border-b-0 hover:bg-secondary/40",
-    tone === "warning" && "-mx-3 rounded-lg border-b-0 bg-warning/10 px-3",
-  )
+/** Row spacing and separators. A row that needs someone says so with its icon and words, not
+ *  a wash of colour. */
+export const rowClass = () =>
+  "flex min-h-18 items-center gap-3.5 border-b border-border py-3 text-base last:border-b-0 hover:bg-secondary/40"
 
 /** The right-hand cluster: small grey words, times in mono. */
 export function Meta({ children }: { children: ReactNode }) {

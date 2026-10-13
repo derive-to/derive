@@ -124,6 +124,18 @@ function retireOldWorktrees(dir, tasks) {
   run(["worktree", "prune"], { cwd: dir, quiet: true })
 }
 
+/** Where a turn left the checkout: its branch (null when detached) and commit, for the task's
+ *  record. */
+export function gitState(repo, dir) {
+  const branch = run(["rev-parse", "--abbrev-ref", "HEAD"], { cwd: dir, quiet: true }).stdout.trim()
+  const commit = run(["rev-parse", "HEAD"], { cwd: dir, quiet: true }).stdout.trim()
+  return {
+    repo,
+    branch: branch && branch !== "HEAD" ? branch : null,
+    commit: /^[0-9a-f]{40}$/.test(commit) ? commit : null,
+  }
+}
+
 /** The pull request the turn's branch has open (or had), for the task's result. */
 export async function pullRequestFor({ repo, token }, dir, fetcher = fetch) {
   const branch = run(["rev-parse", "--abbrev-ref", "HEAD"], { cwd: dir, quiet: true }).stdout.trim()

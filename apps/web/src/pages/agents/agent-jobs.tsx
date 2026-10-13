@@ -206,7 +206,7 @@ export function NeedsRow({
     <div
       data-testid={`job-${job.id}`}
       data-status={job.status}
-      className="-mx-3 my-0.5 flex flex-col gap-3 rounded-lg bg-warning/10 px-3 py-3"
+      className="flex flex-col gap-3 border-b border-border py-3 last:border-b-0"
     >
       <div className="flex items-center gap-3.5">
         <button
@@ -385,10 +385,7 @@ export function JobRow({
     <div
       data-testid={`job-${job.id}`}
       data-status={job.status}
-      className={cn(
-        "border-b border-border transition-colors motion-reduce:transition-none last:border-b-0",
-        needs && "-mx-3 my-0.5 rounded-lg border-b-0 bg-warning/10 px-3",
-      )}
+      className="border-b border-border transition-colors motion-reduce:transition-none last:border-b-0"
     >
       <div className="flex min-h-18 flex-wrap items-center gap-x-3.5 gap-y-2 py-3 text-base">
         <button
@@ -543,7 +540,10 @@ export function AnswerBox({ job }: { job: Job }) {
   }
   const options = job.needs?.options ?? []
   return (
-    <form onSubmit={submit} className="flex flex-wrap items-center gap-2 pb-3 pl-8">
+    <form
+      onSubmit={submit}
+      className="mb-3 ml-8 flex flex-wrap items-center gap-2 border-l-2 border-warning/50 pl-3"
+    >
       {options.map((o, i) => (
         <Button
           key={o}
@@ -553,7 +553,6 @@ export function AnswerBox({ job }: { job: Job }) {
           data-testid={`job-option-${job.id}-${i}`}
           disabled={answer.isPending}
           onClick={() => answer.mutate({ option: o })}
-          className="bg-card"
         >
           {o}
         </Button>
@@ -564,7 +563,7 @@ export function AnswerBox({ job }: { job: Job }) {
         placeholder={options.length ? "Or answer in words" : "Answer"}
         aria-label="Answer"
         data-testid={`job-answer-${job.id}`}
-        className="h-8 max-w-sm min-w-48 flex-1 bg-card"
+        className="h-8 max-w-sm min-w-48 flex-1"
       />
       <Button
         type="submit"

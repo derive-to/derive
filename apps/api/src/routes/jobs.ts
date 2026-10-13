@@ -5,6 +5,7 @@ import {
   DERIVE_AGENT_ID,
   type JobNeeds,
   type JobRecord,
+  newId,
   normalizeSelectors,
   parseAgentSandbox,
   roleAllows,
@@ -111,6 +112,14 @@ const JobEffectSchema = z.object({
 const JobResultSchema = z.object({
   claim_ledger_version: z.literal(1).optional(),
   attempt_offset: z.number().int().nonnegative().optional(),
+  git: z
+    .object({
+      repo: z.string().max(300),
+      branch: z.string().max(300).nullable(),
+      commit: z.string().max(64).nullable(),
+    })
+    .optional()
+    .describe("Where the latest turn left the task's repository."),
   compute: z
     .array(
       z.object({
@@ -888,6 +897,15 @@ export const jobRoutes = (ctx: AppContext) => {
       if (!machine) return bail(fail(c, 503, "Cloud compute is not enabled on this server"))
       const out = await attachSession(machine, job, c.req.valid("json").public_key)
       if (!out.ok) return bail(fail(c, out.status, out.error))
+      // Who opened a terminal on the session, and when, stays on the task.
+      await meta.addJobMessage({
+        id: newId("jm"),
+        job_id: job.id,
+        author_kind: "agent",
+        author_id: job.agent_id,
+        body_md: `${(await meta.getUsers([who.id]))[0]?.name ?? "Its starter"} opened a terminal on this session.`,
+        meta_json: JSON.stringify({ progress: true, server: true, attached_by: who.id }),
+      })
       return c.json({
         host: out.host,
         port: out.port,

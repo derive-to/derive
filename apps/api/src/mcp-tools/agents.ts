@@ -261,11 +261,10 @@ export function registerAskTool(tc: ToolContext): void {
         agent: z.string().optional().describe("Agent id."),
         instruction: z.string(),
         job_id: z.string().optional().describe("Follow up on this job."),
+        repo: z.string().optional().describe("owner/name[@ref]"),
+        interrupt: z.boolean().optional().describe("Cut its turn."),
         subject: SubjectArg,
-        dedupe_key: z
-          .string()
-          .optional()
-          .describe("Returns the open job with this key instead of a new one."),
+        dedupe_key: z.string().optional().describe("Reuse the open job with this key."),
         wait: tc
           .num("wait", { int: true, min: 0, max: 50 })
           .optional()
@@ -281,6 +280,7 @@ export function registerAskTool(tc: ToolContext): void {
       if (a.job_id) {
         r = await call(tc, t.org, `/v1/jobs/${encodeURIComponent(a.job_id)}/messages`, "POST", {
           body_md: a.instruction,
+          ...(a.interrupt ? { interrupt: true } : {}),
         })
       } else {
         if (!a.agent) return err("ask needs agent (an id from agents list) or job_id.")
@@ -294,6 +294,7 @@ export function registerAskTool(tc: ToolContext): void {
           instruction: a.instruction,
           subject,
           dedupe_key: a.dedupe_key,
+          ...(a.repo ? { repo: a.repo } : {}),
         })
       }
       if (!r.ok) return err(r.error)

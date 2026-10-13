@@ -7778,6 +7778,12 @@ export interface components {
                 /** @enum {number} */
                 claim_ledger_version?: 1;
                 attempt_offset?: number;
+                /** @description Where the latest turn left the task's repository. */
+                git?: {
+                    repo: string;
+                    branch: string | null;
+                    commit: string | null;
+                };
                 compute?: {
                     turn: string;
                     /** @enum {string} */
