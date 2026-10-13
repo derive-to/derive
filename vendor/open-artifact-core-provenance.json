@@ -1,7 +1,7 @@
 {
   "repository": "https://github.com/derive-to/open-artifact",
   "baseCommit": "9b6a221ca7ac64dea06c1603426504771aee4dab",
-  "previewVersion": "0.6.0-core.25",
+  "previewVersion": "0.6.0-core.26",
   "sources": {
     "anchors.ts": "a6981a8e44f3004a0fad2814fecc637a1fac92e057d1b8f539b348745080aaa1",
     "collection.ts": "a2b3e15154bc80ee338f57d4d7a0123662c415f7e8ff666fcb37be98e972d626",
@@ -32,13 +32,14 @@
     "source-html-attributes.ts": "4066455cf14e23cedf7a7dbe0bb5e50d2d6d895d79fd7483717714e291d51444",
     "source-html-elements.ts": "50126672f48078ecf15779a8d2ed5fbcedad74014418b7da72a65fa0b4abf708",
     "source-html.ts": "3ea1dd7683a205839b513af6cdd7c7ee581d678ed79de3183b0960d7f49e2458",
+    "source-op-types.ts": "f037098a7aa625bfc996565076b4b091160f1b34512bbc9a95861ba9208e12da",
     "source-reflow.ts": "5415af7fcf4ed75a8d176a3e8037daca1350e1a1061866c9031979f97174fcaf",
     "source-style.ts": "2230d06be2362f0115942b2e81321ec720a44510bd2fa8e7e799899440b4c9b3",
     "source-text-index.ts": "47a483046f51467f9f84322a2cb3a6338f8efd76d1ea8d43685670380ed4c7fe",
     "source-text-range.ts": "dd219b00db2399a0261b43baa18baebc123c1347e04a5c8d5de1c405767f94b6",
     "source-text-segments.ts": "97f6a1bc48ca12a35b9082f1be2cb7e5b5ff76039eda7a241820844d1f5c9ea9",
     "source-text.ts": "8192554896e5e847fd1b304c22c53b3516398f7c441b6e06aa112dd79000dda3",
-    "source.ts": "9bdb917c7a29455db9e3c78f66cffa0f2a3b76aca145c50dc5105747cb0415a6",
+    "source.ts": "5f66a61bb2d0f489513671da6ae9e30e498911ba459d3e652b72665e6b885354",
     "state-apply.ts": "dfc173017d93ae6ea5b7f0092e9f64d5e13f7f04764dd79e597bb46044ee8ecc",
     "state-limits.ts": "d9ba463e9d219dfe02b6529dd4de67124a9feb1238a08b5d82ba4f0cc6265092",
     "state.ts": "71d110ce032da3b3bde8671d8fb5f1fc5abb6293aac965d6128014010a429c39",
@@ -46,9 +47,9 @@
     "tools.ts": "a83f4d194b0fcf7f56f37753fbd1f4b1a48d32f1aaafebb98fea2584bf996611",
     "viewer.ts": "e7c87eda4dbbbf8a02f7e25aff70139df90f7375967086be0f9a740f8ea64f41"
   },
-  "tarballSha256": "c13e348a65b3673fd89f8688feb0c42626bb75ab93b34e39d9a9cd31b4646d6c",
+  "tarballSha256": "724da95108d67f7a21c8ef9d656b63457b9ccc6492e1161a226847c1b8262f07",
   "note": "Packed source preview for the first Derive consumer. This is not a published npm release.",
-  "sourceCommit": "684abbcce7bbf3732af51e0fc057f667eb1c0da4",
+  "sourceCommit": "f2a0320a8fe1c2bc1dbc5b2868cb7f295d25ccad",
   "runtimeSources": {
     "anchoring.ts": "138f9789b3ec2fbc4aec410adbcee348000148fce615763db5b8d0039673204a",
     "connection.ts": "ebb1704972a86e554f065c7e635f40e421716831120dd8bf1a541913fab7a953",
@@ -65,13 +66,20 @@
     "sandbox.entry.ts": "e8864a20ae0ce50ad08b13636717ae20e2773defc0174fab5179fe1d3f8f70b0",
     "shared.ts": "cd3034336432d9ae26002acb8b016d2b4354a02bac4c1bdcbd4de0b394a70477",
     "slides.ts": "7352609373e1072e92b4bec9980725ce5efd84f571665860a70f0dfb28058cb5",
+    "source-align.ts": "b92a8a1ba5115101c3be847b6f3540c9759205e1b7dffe2c495755215b815725",
+    "source-attributes.ts": "f40038b800687d0406a26d401829b3743fad4f28c322ac901f3471506cf18156",
+    "source-page.ts": "c73096bf2a6205dcecb05d7bc654a22c795132431829f77453cb45dbcec2e464",
+    "source-patch.ts": "d582b2a7bb12d74b67fe71cd03ca6c715b974cd8b3327faae472d29bb63d15c6",
+    "source-serialize.ts": "5149f3b5f689bf2f25fd6387ec1f52e396c8fc8b71add1fc4fe293c2d4e3a695",
+    "source-tokens.ts": "f488b38706b91b99ece4be215a506d69274ea81644917c495a83672573fba147",
+    "source.ts": "0782975c657cc911e8e619ca3635af594ed6adc38790022d52e0b8e98c996cde",
     "state-backend.ts": "00c24517ec1865f93d873238634d260c4b7b91b49342c7363c066bed9fb9958b",
     "text-index.ts": "b03514540909f94a08c83074687151b7b0bc907061e12cccf53748416d78798e",
     "theme.ts": "d6e31b99487bf70b3bcae129f3846fb725e851689ceed0f7c40d47cdb62d8577",
     "viewer.entry.ts": "ba030f8c1483ba6c741284e498fa47b7798b9bd27d682b0fe36fc9457e7252b4",
     "viewer.ts": "2855a1bc365c0fc2af552fa3d3c7da2da598f13d2ca4824290587501685ceed5"
   },
-  "runtimeTarballSha256": "d05683508838a444caa6f5b41b3edb0fb3a2af1ebd1ad545dbe5f93b15fc6995",
+  "runtimeTarballSha256": "9ffad922d0fe89aa25a49227202c538886cd8157163f1e7fb7a6c7782b81f509",
   "runtimeDeclarationBase": {
     "version": "0.5.2",
     "sha256": "d02d2797c94147df26ba1f3e7e1746d617022f61f01718bca218b456a5b052ef"
@@ -154,7 +162,7 @@
     "source.ts": "25e5f94cbab7612d41713eb857864b60c402710ad743fd09b92518249714bcb6",
     "testing.ts": "cedbc1dd20a8a6c796a3751032a0e5f1a51c8b16cd460a1a4ad744b9b76a08b4"
   },
-  "serverTarballSha256": "8ed01d8cc0ebaf31660ba359160b664f3fc4069dbb6aa66ee75679aeb6e07dd4",
+  "serverTarballSha256": "dc76933eff506baa7e950e595cd4451e0714f5ca2981b445ae3598ddfaafb674",
   "serverDeclarationBase": {
     "version": "0.5.2",
     "sha256": "64caa1af433ede4c9b565d54c2d2a998880f3e8c88c5efc10b2f24bf32d3cac2"

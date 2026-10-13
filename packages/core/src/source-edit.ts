@@ -16,6 +16,14 @@
  * kept element's bytes are its stored bytes.
  */
 
+import type {
+  SourceHash,
+  SourceInlineTag,
+  SourceOp,
+  SourceToken,
+  StampedSync,
+} from "@aniraga/open-artifact-protocol/source"
+
 import { DECK_CONTENT_TYPE, HTML_CONTENT_TYPE, isMarkdownLike } from "./content-types"
 import {
   type CopyIdentities,
@@ -33,30 +41,14 @@ import { setLayoutAttributes, sourceElements } from "./structural-edit"
 import { setOpeningTagStyle } from "./style-attribute"
 
 /** First 16 hex digits of the sha256 of an element's full outer source bytes (UTF-8). */
-export type SourceHash = string
-
-export type SourceInlineTag = "b" | "strong" | "i" | "em" | "a" | "br"
-
-export type SourceToken =
-  | { text: string }
-  /** A DOM Comment node's data, verbatim: the source's `<!--data-->` round-trips exactly. */
-  | { comment: string }
-  | { keep: number; hash: SourceHash; children?: SourceToken[] }
-  | { tag: SourceInlineTag; href?: string; children?: SourceToken[] }
-
-export type SourceOp =
-  | { op: "content"; src: number; hash: SourceHash; children: SourceToken[] }
-  /** Set (a string) or remove (null) the style attribute and the structural layout
-   *  attributes the editor writes (data-derive-size|width|height|align|gap), checked by
-   *  the structural contract. An omitted field stays as it is. */
-  | {
-      op: "attrs"
-      src: number
-      hash: SourceHash
-      style?: string | null
-      attrs?: Record<string, string | null>
-    }
-
+export type {
+  SourceHash,
+  SourceInlineTag,
+  SourceOp,
+  SourceToken,
+  StampedSync,
+  SyncReply,
+} from "@aniraga/open-artifact-protocol/source"
 /** Someone changed a referenced element since the page was served. `conflicts` lists the
  *  source ids, so the editor can say which edits need redoing. */
 export class SourceConflictError extends EditError {
@@ -669,17 +661,6 @@ export const applySourceOps = async (html: string, raw: unknown): Promise<Applie
  *  doesn't state): `patches` is then empty and the page must be swapped whole. Inside a
  *  patch root, `remap[old] ≥ 0` names the new element with identical content, so a caller
  *  may keep its live node instead of the parsed copy. */
-export interface StampedSync {
-  remap: number[]
-  patches: { old: number; html: string }[]
-  head: boolean
-}
-/** What `/sync` answers an editor's page: the sync, and the new version's source map. */
-export interface SyncReply extends StampedSync {
-  version: number
-  sha: string
-  hashes: string[]
-}
 
 interface StampedEl {
   id: number

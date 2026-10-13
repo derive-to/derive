@@ -18,6 +18,11 @@ It uses the existing native atomic writes for creation, conditional saves, autos
 The adapter reuses the prepared source blob. It refuses a different content hash before metadata changes.
 The host keeps format classification, Skill relations, titles, and publish notifications.
 
+The editor captures source operations through `@aniraga/open-artifact-runtime/source`.
+The shared runtime omits generated page content and preserves the live caret during sync.
+Source operation and sync response types come from the shared protocol.
+Derive's frame adapter retains the existing messages and editor controls.
+
 The kit and Derive use `prependArtifactHead` for runtime insertion.
 The shared scanner skips comments, raw text, templates, and quoted attributes.
 It preserves a leading charset declaration and inserts before authored CSP.
