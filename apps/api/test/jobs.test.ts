@@ -7,7 +7,7 @@ import { join } from "node:path"
 import { promisify } from "node:util"
 import { newId } from "@derive/core"
 import { sessionApi, sessionCommand } from "@derive-to/cli/sessions"
-import { SignJWT } from "jose"
+import { exportJWK, generateKeyPair, SignJWT } from "jose"
 import { describe, expect, it, vi } from "vitest"
 import {
   JobClient,
@@ -20,6 +20,7 @@ import { createApp } from "../src/app"
 import type { AppDeps } from "../src/context"
 import { purgeUserDataAndSyncSeats } from "../src/lib/account"
 import type { ModelTurn } from "../src/lib/agent-loop"
+import { signApiToken, verifyApiToken } from "../src/lib/api-token"
 import { signCapabilityToken } from "../src/lib/capability-token"
 import { encryptSecret } from "../src/lib/crypto"
 import { advanceGraph, graphAware, graphPass } from "../src/lib/job-graph"
@@ -3692,6 +3693,140 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
         { timeout: 6000, interval: 25 },
       )
       expect((await meta.getJob(job.id))?.status).toBe("cancelled")
+    } finally {
+      upstream.close()
+      downstream.close()
+    }
+  })
+
+  it("caps an older signed publish JWT by current OAuth consent before SSH admission", async () => {
+    const connect = vi.fn(async () => {
+      throw new Error("read-only consent must not dial a provider")
+    })
+    const made = await cloudSetup("jobs-ortam-current-consent", 2700, {
+      session: true,
+      sessionTransport: { connect, accept: async () => new Response("unexpected tunnel") },
+    })
+    await made.until("running")
+    const { publicKey, privateKey } = await generateKeyPair("EdDSA")
+    const jwk = { ...(await exportJWK(publicKey)), kid: "session-consent-key", alg: "EdDSA" }
+    if (!made.ctx.deps.auth) throw new Error("missing test auth")
+    Object.assign(made.ctx.deps.auth.api, { getJwks: async () => ({ keys: [jwk] }) })
+    const scopes = { value: ["derive:read"] }
+    const grantedAt = new Date().toISOString()
+    const meta = new Proxy(made.ctx.meta, {
+      get(target, prop, receiver) {
+        if (prop === "oauthGrantWithWorkspaces" || prop === "getOAuthGrant") return async () => null
+        if (prop === "listUserGrants")
+          return async () => [
+            {
+              clientId: "session-cli",
+              clientName: "Session CLI",
+              scopes: scopes.value,
+              grantedAt,
+            },
+          ]
+        return Reflect.get(target, prop, receiver)
+      },
+    })
+    const app = createApp({ ...made.ctx.deps, meta })
+    const token = await new SignJWT({ scope: "derive:read derive:publish", azp: "session-cli" })
+      .setProtectedHeader({ alg: "EdDSA", kid: jwk.kid })
+      .setSubject(ed.id)
+      .setIssuer("http://derive.test")
+      .setAudience("http://derive.test")
+      .setIssuedAt(Math.floor(Date.now() / 1000) - 60)
+      .setExpirationTime("5m")
+      .sign(privateKey)
+    const current = await made.meta.getJob(made.job.id)
+    const headers = { ...bearer(token), "x-derive-workspace": "default" }
+    for (const currentScopes of [["derive:read"], ["derive:read", "derive:comment"]]) {
+      scopes.value = currentScopes
+      expect(
+        (
+          await app.request(
+            `/v1/jobs/${made.job.id}/attach`,
+            jsonAs(headers, {
+              public_key: "ssh-ed25519 AAAAclient",
+            }),
+          )
+        ).status,
+      ).toBe(403)
+      expect(
+        (
+          await app.request(`/v1/jobs/${made.job.id}/ssh`, {
+            headers: {
+              ...headers,
+              upgrade: "websocket",
+              "x-derive-job-claim": current?.started_at ?? "",
+            },
+          })
+        ).status,
+      ).toBe(403)
+    }
+    expect(made.certificates).toEqual([])
+    expect(connect).not.toHaveBeenCalled()
+  })
+
+  it("ends a minted API token's SSH tunnel at its verified expiry without parent consent", async () => {
+    const upstreamClosed = vi.fn()
+    const downstreamClosed = vi.fn()
+    const forwarded = vi.fn(async (_bytes: Uint8Array) => {})
+    const upstream = bufferedSessionSocket(forwarded, upstreamClosed)
+    const downstream = bufferedSessionSocket(async () => {}, downstreamClosed)
+    const made = await cloudSetup("jobs-ortam-minted-expiry", 2700, {
+      session: true,
+      sessionTransport: {
+        connect: async () => upstream.socket,
+        accept: async (_context, ready) => {
+          ready(downstream.socket)
+          return new Response("tunnel-open")
+        },
+      },
+    })
+    await made.until("running")
+    const consentReads = vi.fn(async () => [])
+    const meta = new Proxy(made.ctx.meta, {
+      get(target, prop, receiver) {
+        if (prop === "listUserGrants") return consentReads
+        return Reflect.get(target, prop, receiver)
+      },
+    })
+    const app = createApp({ ...made.ctx.deps, meta })
+    const expiresAt = Date.now() + 1000
+    const token = await signApiToken(
+      "test-encryption-key",
+      ed.id,
+      "default",
+      "editor",
+      "session-cli",
+      expiresAt,
+    )
+    const current = await made.meta.getJob(made.job.id)
+    try {
+      const response = await app.request(`/v1/jobs/${made.job.id}/ssh`, {
+        headers: {
+          ...bearer(token),
+          upgrade: "websocket",
+          "x-derive-job-claim": current?.started_at ?? "",
+        },
+      })
+      expect(await response.text()).toBe("tunnel-open")
+      downstream.message(new Uint8Array([0, 255]))
+      await vi.waitFor(() => expect(forwarded).toHaveBeenCalledOnce())
+      await vi.waitFor(
+        () => {
+          expect(Date.now()).toBeGreaterThanOrEqual(expiresAt)
+          expect(upstreamClosed).toHaveBeenCalledOnce()
+          expect(downstreamClosed).toHaveBeenCalledOnce()
+        },
+        { timeout: 1500, interval: 20 },
+      )
+      expect(await verifyApiToken("test-encryption-key", token, Date.now())).toBeNull()
+      downstream.message(new Uint8Array([42]))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(forwarded).toHaveBeenCalledOnce()
+      expect(consentReads).not.toHaveBeenCalled()
     } finally {
       upstream.close()
       downstream.close()
