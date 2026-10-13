@@ -3311,6 +3311,17 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     await new Promise((resolve) => setTimeout(resolve, 1100))
     await until(job.id, "running")
     expect((await view()).machine_waiting).toBeNull()
+
+    // A task stopped while it waits is released without a machine ever being built.
+    boat.limited.starts = 1
+    const other = (await (await ask(app, ed.email, agent.id, "Bump deps")).json()) as {
+      id: string
+    }
+    for (let i = 0; i < 3; i++) await pass()
+    await app.request(`/v1/jobs/${other.id}/cancel`, { method: "POST", headers: as(ed.email) })
+    await new Promise((resolve) => setTimeout(resolve, 1100))
+    await until(other.id, "released")
+    expect(boat.calls.filter((c) => c.startsWith("create"))).toHaveLength(1)
   })
 
   it("the workspace machine limit holds the next task until a machine frees", async () => {

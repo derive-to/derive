@@ -533,6 +533,11 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
       move(phase, { own: { ...own, ...next } })
     const ownKey = `derive-job-${job.id}-${own.generation}`
     if (job.machine_phase === "creating") {
+      // Stopped before its machine existed: nothing to build or retire.
+      if (job.status !== "running") {
+        await move("released", { own: undefined, waiting: undefined })
+        return
+      }
       const created = await startOrWait(() =>
         createStep(
           client,
