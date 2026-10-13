@@ -23,7 +23,12 @@ import { cloudEnabled, connectionClient, workspaceRuntime } from "./runtime-conn
 import { runtimeFailureReason } from "./runtime-diagnostics"
 import type { RuntimeConfig } from "./runtime-setup"
 import { runnerRunsJobs, runtimeSetup } from "./runtime-setup"
-import { type SandboxClient, SandboxCreateRejected, SandboxRateLimited } from "./sandbox-client"
+import {
+  type SandboxClient,
+  SandboxCreateRejected,
+  SandboxRateLimited,
+  SandboxRefused,
+} from "./sandbox-client"
 
 // THE DERIVE MACHINE: a sandbox the job's runner works in. An agent that keeps files shares one
 // sandbox across its tasks; an agent that starts fresh gives each task its own, which stays
@@ -62,6 +67,8 @@ const MAX_SANDBOX_FAILURES = 3
 const CREATE_TTL_SECONDS = 2700
 /** A start the provider refused for now (see SandboxRateLimited). */
 const WAITING = Symbol("waiting")
+/** A start the provider refused outright (see SandboxRefused). */
+const REFUSED = Symbol("refused")
 /** How far past the asked stop time a provider's timer may land (it counts from when a resume
  *  finishes) before the turn treats the machine as misconfigured. */
 const TTL_SLACK_SECONDS = 300
@@ -538,10 +545,17 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
     })
     if (updated) wakeSettled(deps, updated)
   }
-  const startOrWait = async <T>(start: () => Promise<T>): Promise<T | typeof WAITING> => {
+  const startOrWait = async <T>(
+    start: () => Promise<T>,
+  ): Promise<T | typeof WAITING | typeof REFUSED> => {
     try {
       return await start()
     } catch (error) {
+      if (error instanceof SandboxRefused) {
+        const why = `boat.dev would not start a machine: ${error.message}`
+        await failIfOpen(deps, agent, job, why, false)
+        return REFUSED
+      }
       if (!(error instanceof SandboxRateLimited)) throw error
       const until = new Date(Date.parse(at) + error.retryAfterSeconds * 1000).toISOString()
       await move(job.machine_phase ?? "starting", { waiting: { reason: error.message, until } })
@@ -573,6 +587,10 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
         ),
       )
       if (created === WAITING) return
+      if (created === REFUSED) {
+        await move("released", { own: undefined, waiting: undefined })
+        return
+      }
       if (!created) {
         await failIfOpen(deps, agent, job, "Derive could not start a machine for this task.")
         await move("released", { own: undefined })
@@ -689,6 +707,11 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
           }),
         )
         if (op === WAITING) return
+        // Refused: a task's own machine stays parked with its files; a shared one goes back.
+        if (op === REFUSED) {
+          await move(own ? "parked" : "stopping", { waiting: undefined })
+          return
+        }
         await move("starting", {
           resume_op: op.id,
           active_at: m.active_at ?? at,
@@ -838,6 +861,7 @@ async function failIfOpen(
   agent: AgentRecord | null,
   job: JobRecord,
   why: string,
+  retryable = true,
 ) {
   const fresh = await deps.meta.getJob(job.id)
   if (!agent || fresh?.status !== "running") return
@@ -847,7 +871,7 @@ async function failIfOpen(
     started_at: fresh.started_at,
     status: "failed",
     body_md: why,
-    retryable: true,
+    retryable,
   }).catch(() => null)
 }
 

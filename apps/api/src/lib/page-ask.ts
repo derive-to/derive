@@ -15,7 +15,7 @@ import type { AppContext } from "../context"
 import { log } from "../log"
 import { buildChatTools } from "./chat-tools"
 import { runChatTurn } from "./chat-turn"
-import { type JobDeps } from "./job-policy"
+import type { JobDeps } from "./job-policy"
 import { isServerNote, wakeSettled } from "./jobs"
 import type { ResolvedChatModel } from "./model-catalog"
 

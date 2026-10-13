@@ -2861,7 +2861,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     const operation = (command: string) => /operations\/([a-f0-9]{64})/.exec(command)?.[1] ?? ""
     const calls: string[] = []
     // Starts boat.dev refuses next, as a plan's start limit does.
-    const limited = { starts: 0 }
+    const limited = { starts: 0, refuse: false }
     let next = 0
     const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input))
@@ -2871,6 +2871,11 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
       const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200 })
       if (path === "/me") return json({ user: { id: "boat-user" } })
       if (path === "/sandboxes" && method === "POST") {
+        if (limited.refuse)
+          return new Response(
+            JSON.stringify({ message: "Add a payment method to keep starting sandboxes." }),
+            { status: 402 },
+          )
         if (limited.starts > 0) {
           limited.starts--
           return new Response(
@@ -3362,6 +3367,27 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     await new Promise((resolve) => setTimeout(resolve, 1100))
     await until(other.id, "released")
     expect(boat.calls.filter((c) => c.startsWith("create"))).toHaveLength(1)
+  })
+
+  it("a provider that refuses to start a machine fails the task once, in its own words", async () => {
+    const { app, meta, boat, until } = await cloudSetup("jobs-machine-refused")
+    const agent = await createAgent(app, {
+      machine: "derive",
+      provider: "codex",
+      sandbox: { fresh: true },
+    })
+    boat.limited.refuse = true
+    const job = (await (await ask(app, ed.email, agent.id, "Fix the copy")).json()) as {
+      id: string
+    }
+    await until(job.id, "released")
+    const failed = await meta.getJob(job.id)
+    expect(failed?.status).toBe("failed")
+    expect(JSON.parse(failed?.result_json ?? "{}").failure).toEqual({
+      reason:
+        "boat.dev would not start a machine: Add a payment method to keep starting sandboxes.",
+      retryable: false,
+    })
   })
 
   it("the workspace machine limit holds the next task until a machine frees", async () => {

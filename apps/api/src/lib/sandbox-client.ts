@@ -11,6 +11,11 @@ export class SandboxRateLimited extends Error {
   }
 }
 
+/** The provider will not start a machine for this account at all (billing, permission): a
+ *  person has to fix it there, so the task fails plainly instead of retrying. `message` says
+ *  what the provider said. */
+export class SandboxRefused extends Error {}
+
 /** Provider adapters own API translation. The controller owns jobs, claims, and
  * retries. A stopped sandbox must mean compute is off and its files are saved. */
 type Identity = { organization_id: string; user_id: string }

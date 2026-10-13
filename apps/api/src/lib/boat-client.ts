@@ -7,6 +7,7 @@ import {
   SandboxCreateRejected,
   type SandboxMachine,
   SandboxRateLimited,
+  SandboxRefused,
 } from "./sandbox-client"
 
 const Box = z.object({
@@ -74,6 +75,15 @@ export class BoatClient implements SandboxClient {
       throw new SandboxRateLimited(
         typeof body?.message === "string" ? body.message : "boat.dev rate limit reached",
         Number.isFinite(after) && after > 0 ? after : 60,
+      )
+    }
+    const starts = method === "POST" && (path === "/sandboxes" || path.endsWith("/resume"))
+    if (starts && [401, 402, 403].includes(response.status)) {
+      const body = (await response.json().catch(() => null)) as { message?: unknown } | null
+      throw new SandboxRefused(
+        typeof body?.message === "string"
+          ? body.message
+          : `boat.dev refused with HTTP ${response.status}`,
       )
     }
     if (!response.ok) {
