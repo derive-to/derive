@@ -3811,6 +3811,30 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
     }
   })
 
+  it("settles a persisted recovery diagnostic after interruption before job failure", async () => {
+    const fixture = await cloudSetup("jobs-ortam-create-held-interruption", 2700, {
+      reserveOnly: true,
+    })
+    await fixture.until("creating")
+    const first = await fixture.meta.getJob(fixture.job.id)
+    if (!first) throw new Error("missing reserved job")
+    const machine = JSON.parse(first.machine_json ?? "{}")
+    const reason = "This machine creation needs manual recovery: its result is unknown."
+    machine.own.create_problem = reason
+    machine.waiting = { reason, until: "9999-12-31T23:59:59.999Z" }
+    const interrupted = await fixture.meta.transitionJobMachine(first.id, first.machine_rev, {
+      phase: "creating",
+      machine_json: JSON.stringify(machine),
+    })
+    if (!interrupted) throw new Error("could not persist interrupted recovery diagnostic")
+    await advanceMachineJob(fixture.deps, interrupted)
+    const after = await fixture.meta.getJob(fixture.job.id)
+    expect(after?.status).not.toBe("running")
+    expect(after?.machine_phase).toBe("creating")
+    expect(JSON.parse(after?.machine_json ?? "{}").own.generation).toBe(machine.own.generation)
+    expect(fixture.creates).toHaveLength(0)
+  })
+
   it("does not submit a reserved create once its turn deadline has passed", async () => {
     const fixture = await cloudSetup("jobs-ortam-create-expired-unsubmitted", 2700, {
       reserveOnly: true,
