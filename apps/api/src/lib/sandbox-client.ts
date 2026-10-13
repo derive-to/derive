@@ -1,5 +1,15 @@
 /** Creation was refused before allocation; transport failures are not this error. */
 export class SandboxCreateRejected extends Error {}
+/** The provider is out of starts for now (a plan's hourly or daily limit). Nothing was
+ *  started; try again after `retryAfterSeconds`. `message` is the provider's own sentence. */
+export class SandboxRateLimited extends Error {
+  constructor(
+    message: string,
+    readonly retryAfterSeconds: number,
+  ) {
+    super(message)
+  }
+}
 
 /** Provider adapters own API translation. The controller owns jobs, claims, and
  * retries. A stopped sandbox must mean compute is off and its files are saved. */

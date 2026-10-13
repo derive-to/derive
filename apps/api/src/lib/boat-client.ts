@@ -6,6 +6,7 @@ import {
   type SandboxCreate,
   SandboxCreateRejected,
   type SandboxMachine,
+  SandboxRateLimited,
 } from "./sandbox-client"
 
 const Box = z.object({
@@ -66,6 +67,14 @@ export class BoatClient implements SandboxClient {
       })
     } catch {
       throw new Error("boat.dev request outcome is unknown")
+    }
+    if (response.status === 429) {
+      const body = (await response.json().catch(() => null)) as { message?: unknown } | null
+      const after = Number(response.headers.get("retry-after"))
+      throw new SandboxRateLimited(
+        typeof body?.message === "string" ? body.message : "boat.dev rate limit reached",
+        Number.isFinite(after) && after > 0 ? after : 60,
+      )
     }
     if (!response.ok) {
       const message = `boat.dev returned HTTP ${response.status}`

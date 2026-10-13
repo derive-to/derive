@@ -196,6 +196,11 @@ const Job = z
       .nullable()
       .optional()
       .describe("Where the task's cloud machine is. `parked`: stopped with its files, resumable."),
+    machine_waiting: z
+      .string()
+      .nullable()
+      .optional()
+      .describe("Why the machine is waiting to start, in the provider's words (a start limit)."),
     task: z
       .object({ session: z.boolean().optional(), repo: z.string().optional() })
       .describe("How the task runs: an interactive session, and the repository it works in."),

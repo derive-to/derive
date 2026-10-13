@@ -2860,6 +2860,8 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     const launches = new Map<string, { box: string; state: "running" | "exited" }>()
     const operation = (command: string) => /operations\/([a-f0-9]{64})/.exec(command)?.[1] ?? ""
     const calls: string[] = []
+    // Starts boat.dev refuses next, as a plan's start limit does.
+    const limited = { starts: 0 }
     let next = 0
     const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input))
@@ -2869,6 +2871,13 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
       const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200 })
       if (path === "/me") return json({ user: { id: "boat-user" } })
       if (path === "/sandboxes" && method === "POST") {
+        if (limited.starts > 0) {
+          limited.starts--
+          return new Response(
+            JSON.stringify({ message: "Rate limit hit: 210 sandbox starts per hour." }),
+            { status: 429, headers: { "retry-after": "1" } },
+          )
+        }
         const id = `bx_${++next}`
         boxes.set(id, {
           state: "idle",
@@ -2936,7 +2945,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
       const last = [...launches.values()].filter((l) => l.box === id).at(-1)
       if (last) last.state = "exited"
     }
-    return { fetcher, boxes, calls, exit }
+    return { fetcher, boxes, calls, exit, limited }
   }
 
   const SESSION_UUID = "0b6f2a1e-3c4d-4e5f-8a9b-0c1d2e3f4a5b"
@@ -3274,6 +3283,34 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     await until(job.id, "running")
     expect(await machineTurn()).not.toBe(first)
     expect((await meta.getJob(job.id))?.status).toBe("running")
+  })
+
+  it("a provider start limit makes the task wait, saying why, then start", async () => {
+    const { app, boat, pass, until } = await cloudSetup("jobs-machine-start-limit")
+    const agent = await createAgent(app, {
+      machine: "derive",
+      provider: "codex",
+      sandbox: { fresh: true },
+    })
+    boat.limited.starts = 1
+    const job = (await (await ask(app, ed.email, agent.id, "Fix the copy")).json()) as {
+      id: string
+    }
+    for (let i = 0; i < 3; i++) await pass()
+    const view = async () =>
+      (await (await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })).json()) as {
+        machine_phase: string
+        machine_waiting: string | null
+      }
+    expect(await view()).toMatchObject({
+      machine_phase: "creating",
+      machine_waiting: "Rate limit hit: 210 sandbox starts per hour.",
+    })
+    // It does not ask again until the provider's window passes.
+    expect(boat.calls.filter((c) => c.startsWith("create"))).toEqual([])
+    await new Promise((resolve) => setTimeout(resolve, 1100))
+    await until(job.id, "running")
+    expect((await view()).machine_waiting).toBeNull()
   })
 
   it("the workspace machine limit holds the next task until a machine frees", async () => {

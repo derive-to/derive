@@ -904,6 +904,18 @@ export const chatContext = (j: JobRecord) => {
     : null
 }
 
+/** Why a task's machine is waiting to start, while it still is (job-machine.ts `waiting`). */
+const machineWaiting = (j: JobRecord): string | null => {
+  if (j.status !== "running" || !j.machine_json) return null
+  try {
+    const w = (JSON.parse(j.machine_json) as { waiting?: { reason: string; until: string } })
+      .waiting
+    return w && w.until > new Date().toISOString() ? w.reason : null
+  } catch {
+    return null
+  }
+}
+
 export const jobJson = (j: JobRecord) => ({
   chat_context: chatContext(j),
   id: j.id,
@@ -911,6 +923,7 @@ export const jobJson = (j: JobRecord) => ({
   kind: j.kind,
   status: j.status,
   machine_phase: j.machine_phase,
+  machine_waiting: machineWaiting(j),
   task: taskOptions(j.meta_json),
   instruction: j.instruction,
   asked_by: j.asked_by,

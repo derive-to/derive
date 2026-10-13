@@ -23,7 +23,7 @@ import { cloudEnabled, connectionClient, workspaceRuntime } from "./runtime-conn
 import { runtimeFailureReason } from "./runtime-diagnostics"
 import type { RuntimeConfig } from "./runtime-setup"
 import { runnerRunsJobs, runtimeSetup } from "./runtime-setup"
-import { type SandboxClient, SandboxCreateRejected } from "./sandbox-client"
+import { type SandboxClient, SandboxCreateRejected, SandboxRateLimited } from "./sandbox-client"
 
 // THE DERIVE MACHINE: a sandbox the job's runner works in. An agent that keeps files shares one
 // sandbox across its tasks; an agent that starts fresh gives each task its own, which stays
@@ -60,6 +60,8 @@ const RETRY_BACKOFF_MS = 10 * 60_000
 const MAX_SANDBOX_FAILURES = 3
 /** A shared sandbox's provider-side stop timer at creation, before any job sets its own. */
 const CREATE_TTL_SECONDS = 2700
+/** A start the provider refused for now (see SandboxRateLimited). */
+const WAITING = Symbol("waiting")
 /** How far past the asked stop time a provider's timer may land (it counts from when a resume
  *  finishes) before the turn treats the machine as misconfigured. */
 const TTL_SLACK_SECONDS = 300
@@ -112,6 +114,8 @@ interface MachineState {
   runner_setup?: string
   /** Present when the job runs on its own sandbox rather than its agent's shared one. */
   own?: OwnSandbox
+  /** The provider refused to start a machine for now; the step waits until `until`. */
+  waiting?: { reason: string; until: string }
 }
 
 const parse = <T>(s: string | null): T | null => {
@@ -511,29 +515,44 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
   }
   const client = await clientFor(deps, agent, state)
   const at = iso(deps)
+  // The provider is out of starts for now: wait, saying why, instead of asking every pass.
+  if (m.waiting && m.waiting.until > at && job.status === "running") return
+  const startOrWait = async <T>(start: () => Promise<T>): Promise<T | typeof WAITING> => {
+    try {
+      return await start()
+    } catch (error) {
+      if (!(error instanceof SandboxRateLimited)) throw error
+      const until = new Date(Date.parse(at) + error.retryAfterSeconds * 1000).toISOString()
+      await move(job.machine_phase ?? "starting", { waiting: { reason: error.message, until } })
+      return WAITING
+    }
+  }
   // A job's own sandbox comes up before its first turn and is retired after its last.
   if (own) {
     const saveOwn = (next: Partial<OwnSandbox>, phase = job.machine_phase ?? "released") =>
       move(phase, { own: { ...own, ...next } })
     const ownKey = `derive-job-${job.id}-${own.generation}`
     if (job.machine_phase === "creating") {
-      const created = await createStep(
-        client,
-        sandboxRequest(
-          `derive-${job.id.replaceAll("_", "-")}`,
+      const created = await startOrWait(() =>
+        createStep(
+          client,
+          sandboxRequest(
+            `derive-${job.id.replaceAll("_", "-")}`,
+            own,
+            deps,
+            ttlFor(m.deadline_at, at),
+          ),
+          `${ownKey}-create`,
           own,
-          deps,
-          ttlFor(m.deadline_at, at),
         ),
-        `${ownKey}-create`,
-        own,
       )
+      if (created === WAITING) return
       if (!created) {
         await failIfOpen(deps, agent, job, "Derive could not start a machine for this task.")
         await move("released", { own: undefined })
         return
       }
-      await saveOwn(created, "provisioning")
+      await move("provisioning", { own: { ...own, ...created }, waiting: undefined })
       return
     }
     if (job.machine_phase === "provisioning") {
@@ -634,19 +653,20 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
           await move("ready")
           return
         }
-        const op = await client.lifecycle(
-          sandbox,
-          "resume",
-          `derive-job-${m.turn}-resume`,
-          state.identity,
-          await environment(),
-          {
+        const env = await environment()
+        const op = await startOrWait(() =>
+          client.lifecycle(sandbox, "resume", `derive-job-${m.turn}-resume`, state.identity, env, {
             size: state.size,
             environment: state.environment,
             ttl_seconds: ttlFor(m.deadline_at, at),
-          },
+          }),
         )
-        await move("starting", { resume_op: op.id, active_at: m.active_at ?? at })
+        if (op === WAITING) return
+        await move("starting", {
+          resume_op: op.id,
+          active_at: m.active_at ?? at,
+          waiting: undefined,
+        })
         return
       }
       const op = await client.operation(m.resume_op, sandbox, "resume", state.identity)

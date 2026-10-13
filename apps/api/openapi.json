@@ -2042,6 +2042,11 @@
             ],
             "description": "Where the task's cloud machine is. `parked`: stopped with its files, resumable."
           },
+          "machine_waiting": {
+            "type": "string",
+            "nullable": true,
+            "description": "Why the machine is waiting to start, in the provider's words (a start limit)."
+          },
           "task": {
             "type": "object",
             "properties": {

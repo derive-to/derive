@@ -87,6 +87,7 @@ export function formatTasks(tasks, agents) {
 const state = (t) => {
   if (t.status === "needs_you") return "needs you"
   if (t.machine_phase === "parked") return "paused"
+  if (t.machine_waiting) return "waiting (provider start limit)"
   if (["creating", "provisioning", "starting", "ready", "launching"].includes(t.machine_phase))
     return "starting"
   if (t.machine_phase === "running") return "working"

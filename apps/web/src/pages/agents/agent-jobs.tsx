@@ -323,6 +323,8 @@ function detailOf(job: Job, agent: Agent): string | undefined {
     return "Sandbox setup did not finish. Derive will try again."
   if (job.status === "queued")
     return agent.paused ? "Resume this agent in Settings to start" : "Waiting for its turn"
+  if (job.status === "running" && job.machine_waiting)
+    return `Waiting to start: ${job.machine_waiting}`
   if (job.status === "running" && job.machine_phase === "creating")
     return "Building its own machine from the agent's image…"
   if (job.status === "running" && job.machine_phase === "provisioning")

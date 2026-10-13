@@ -7736,6 +7736,8 @@ export interface components {
              * @enum {string|null}
              */
             machine_phase?: "creating" | "provisioning" | "starting" | "ready" | "launching" | "running" | "stopping" | "parked" | "deleting" | "released" | null;
+            /** @description Why the machine is waiting to start, in the provider's words (a start limit). */
+            machine_waiting?: string | null;
             /** @description How the task runs: an interactive session, and the repository it works in. */
             task: {
                 session?: boolean;
