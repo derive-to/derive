@@ -1,7 +1,7 @@
 {
   "repository": "https://github.com/derive-to/open-artifact",
   "baseCommit": "9b6a221ca7ac64dea06c1603426504771aee4dab",
-  "previewVersion": "0.6.0-core.19",
+  "previewVersion": "0.6.0-core.20",
   "sources": {
     "anchors.ts": "a6981a8e44f3004a0fad2814fecc637a1fac92e057d1b8f539b348745080aaa1",
     "collection.ts": "a2b3e15154bc80ee338f57d4d7a0123662c415f7e8ff666fcb37be98e972d626",
@@ -36,9 +36,9 @@
     "tools.ts": "a83f4d194b0fcf7f56f37753fbd1f4b1a48d32f1aaafebb98fea2584bf996611",
     "viewer.ts": "e7c87eda4dbbbf8a02f7e25aff70139df90f7375967086be0f9a740f8ea64f41"
   },
-  "tarballSha256": "f0d1e1018061bb4c2cbefc611dc747deefe0b8a228b3798ad2a75b06d71eb30c",
+  "tarballSha256": "ace06622b52aabb8d82afcc27f9e8fbf5c97303a6d1d0e65a1a94f43f3b08345",
   "note": "Packed source preview for the first Derive consumer. This is not a published npm release.",
-  "sourceCommit": "ffa49c80e94fb8f5d226236d7c7131293c62db06",
+  "sourceCommit": "ff2bd736a7efb3a7f2f35e5a61840ddbf8c93ffd",
   "runtimeSources": {
     "anchoring.ts": "138f9789b3ec2fbc4aec410adbcee348000148fce615763db5b8d0039673204a",
     "connection.ts": "ebb1704972a86e554f065c7e635f40e421716831120dd8bf1a541913fab7a953",
@@ -61,12 +61,12 @@
     "viewer.entry.ts": "ba030f8c1483ba6c741284e498fa47b7798b9bd27d682b0fe36fc9457e7252b4",
     "viewer.ts": "2855a1bc365c0fc2af552fa3d3c7da2da598f13d2ca4824290587501685ceed5"
   },
-  "runtimeTarballSha256": "709348edfbdd186dfe2cb70f693c049dd53027a46cf16c163661db4b386bcf3a",
+  "runtimeTarballSha256": "c2d77d36fe5e4efb30c6b1c0f1c5bdda88a2e4914e9c28dabb55b5b47c7ee4d1",
   "runtimeDeclarationBase": {
     "version": "0.5.2",
     "sha256": "d02d2797c94147df26ba1f3e7e1746d617022f61f01718bca218b456a5b052ef"
   },
-  "declarationGeneration": "Changed protocol, snapshot, runtime, and collection storage declarations come from source. App tool outputs reference the source snapshot schema. Unchanged declarations use verified 0.5.2 packages.",
+  "declarationGeneration": "Changed protocol, snapshot, runtime, collection storage, and kit event declarations come from source. App tool outputs reference the source snapshot schema. Unchanged declarations use verified 0.5.2 packages.",
   "serverSources": {
     "adapters/activity.ts": "a42be2e22a721052f0860190d87c544f29c1349a0bbc9a8f6b2c059e82a762f0",
     "adapters/memory-bus.ts": "3cc129263f005d6fbecc1574375c0ea75c5b57314158c6b384238ee27d5598d2",
@@ -85,7 +85,7 @@
     "adapters/sqlite/store.ts": "d4f2a68cfd31f1d96b1ac4845582ba0b8759dd8a2c57061a4f5924ea36b364fa",
     "collection-storage.ts": "3a1ecafa6b8923ef78be4f435bc480b83edbdd02cb33c566608cb97969ef17b1",
     "core/access.ts": "f9749256f4a130daee8cdc22b53be86cddf2dfa578db7b876216a7cf26ea74ef",
-    "core/artifacts.ts": "7290757b0ed5424b5e27d589b9b279c78813c619642ec75a44cf1fa5a50a6675",
+    "core/artifacts.ts": "44f255633c40b4f04c2ba7a4ef7fe959923cc5dc198a4587a2fc76d3daf2ae15",
     "core/assets.ts": "32959a646a59f16a178e9cb694fecf35487d856ce25b3fc1154a9774f1885896",
     "core/base64.ts": "e7dfd23bbb173edf7158153cbff6c00787be799ea79a40d4f536edd024c3845c",
     "core/blobs.ts": "1926dc8a113e71753c3acc9c62731c20db9f5c65ba264e2011dc09dba6df1cc6",
@@ -97,14 +97,15 @@
     "core/live.ts": "d140eba9280a1c873a93bc23a6055ba6941174745a5445622d973d32394f155c",
     "core/summary.ts": "eb0ee2bdb3b096f448a6bc5dd4dca8c021dbe5028bc49ae59759469d06e3ad97",
     "core/views.ts": "ae5f92bb5ced292f0121609624ae872b0de19713a8dda01b3da5de6858219725",
-    "http/app.ts": "14a8b5af6717648e750f19b7d938fa438fb55e8bed7e78aaa10c6a6538956912",
+    "http/app.ts": "f8c5afccea9b508c7516718d6a8244e81489e413a1c5464d153a9d85bb843276",
     "http/body.ts": "a688c04407cdf0600b7e1cb6e6daa443b18ed216e7c73d797c5cba6484305a5d",
     "http/gates.ts": "8cc76ac63c5e397b0e6e5904b50e36d778414c8c09db53cd9ee5a8ece3680a29",
     "http/routes/artifacts.ts": "4109353b1b4cfefba7dc870746bc359e002864d91faa5784bf244cca267931e3",
     "http/routes/events.ts": "2b13227ab2a74e62bdb532bc35f40545e06df5ae1ea1bbc753c7ce31bebec850",
     "http/routes/mcp.ts": "eec1c463db3f60626800f023fd782283880084144a887aee2e7a9f2c9b7487ef",
     "index.ts": "df481a44e3d19776be5caafd8088fe0f0a3e42d05919e77597064de2200324ec",
-    "kit/events.ts": "7fe8748054882bb2b14d3643fb7e9d4d95a4a488c14d1d1a0985c743476d1f0c",
+    "kit/broadcasts.ts": "a475e08e65024fde7654181807a142cd1ed193348c9a0a6aa0b91c08342bfb5e",
+    "kit/events.ts": "57c7e28fd5113df80357cd94255100761b19b3f9e86eb8ff875dcda7d90271b8",
     "kit/observe.ts": "c1f4bebc8770b50a920d43a7e28e382b4a1c302367f621644b1229789c34f16a",
     "kit/plugin.ts": "8c2246ccd56246b807b38c3e08033f26b5b8557098489d2c641dfdf0f552fbfe",
     "kit/tool.ts": "2183b804eeac759b0cc2bfc9195556b4560f4ceacd90fca0448630f5547a4c40",
@@ -114,7 +115,7 @@
     "mcp/viewer.ts": "34b6a6b59ee18127a88315b7c9d4491f7af14459d26bcfc77120c10554371a5d",
     "plugins/comments/index.ts": "8ca686d848059aaebab6892aef804642cee85561e48822cec22a0c7b3e59be73",
     "plugins/comments/routes.ts": "4b7350b866d1cf2e0a4cf916c02c30f66e02a7442dabf73de007504174ccabd7",
-    "plugins/comments/service.ts": "d3683c7d248fa18466e5c11927e90cf38a8f55bc0382296ccb0294bf424e7699",
+    "plugins/comments/service.ts": "20f73e19a0d7cf129e29f16cdcce681173b9327718c5503423813b8ee441d391",
     "plugins/components/catalog.ts": "077fb3362263b996780febc770b0b6896375fb8236bbb3c4c952371739c26e49",
     "plugins/components/index.ts": "cb8055d31e59703e4e032487c621d61b734a567b7431c8f5fc30faaebf28363d",
     "plugins/components/tags.ts": "8b9c96f99029afb26c94303f26f4cf7e7c561407eac2945cb7ec656f8ea41518",
@@ -129,8 +130,8 @@
     "plugins/notifications.ts": "7463f845a36cdb1acd427b4f1b022dce18b06235ae165c5ee9242fdd6a38e36e",
     "plugins/presence.ts": "69bb92d9c608db9aa9d3ad1affd8014838eaa670f91183cb61c9ef9534c36848",
     "plugins/rate-limit.ts": "029c8334fe7f79f45ae1679ae5c492579265af922576d603521e0083913adbf7",
-    "plugins/state/index.ts": "4fc59d4502f0dee1be4ae51c86a63b9fc5b820692129f780410e2f56da2dac89",
-    "plugins/state/service.ts": "73a7fb5a1adc433e47a74f268a406e5692b48d7f1a69ef618b5b16870129e45a",
+    "plugins/state/index.ts": "4812edbec4087fff8b4aac8023924ed00d34fd524b2d58ca75a5b1937d9fe016",
+    "plugins/state/service.ts": "ac760c29b0f06d5478143537dfaa02a0e6876a1843456a6f82107f8aa88c0a4d",
     "plugins/webhook.ts": "774833e7212801bf0251fcb2d5af780836251256e0c2a01ba8b3da9bb37e4fda",
     "ports.ts": "836823819a1200091290dda5229556d4959a560aad011adb96c201e0371e1c0f",
     "sandbox/assets.ts": "fca496b7585d6f7317d270dc07b46f7b4c4151ee6519711f8f24768e7f04b639",
@@ -139,7 +140,7 @@
     "sandbox/server.ts": "e9469f0c6feae086347b830cd1829634dd4736c6d2863498526e48642627cdf0",
     "testing.ts": "cedbc1dd20a8a6c796a3751032a0e5f1a51c8b16cd460a1a4ad744b9b76a08b4"
   },
-  "serverTarballSha256": "dfdd76a75c22968eae763eb2f7f91964fb18ab92b2688b5ce8233d145fc22d63",
+  "serverTarballSha256": "be19658b16d440d4eb57b6ad01bc1c8c328713e5b768c7e8bdff825d48682831",
   "serverDeclarationBase": {
     "version": "0.5.2",
     "sha256": "64caa1af433ede4c9b565d54c2d2a998880f3e8c88c5efc10b2f24bf32d3cac2"
