@@ -27,6 +27,7 @@ export interface JobEventRecord {
   turn_id: string
   seq: number
   kind: string
+  label?: string | null
   created_at: string
 }
 
@@ -83,7 +84,8 @@ export type JobCommand = {
 
 export type JobCommandIntent =
   | { intent: "start"; job: NewJob; body: string }
-  | { intent: "follow_up" | "retry"; job_id: string; body: string }
+  | { intent: "follow_up"; job_id: string; body: string; interrupt?: boolean }
+  | { intent: "retry"; job_id: string; body: string }
   | { intent: "answer"; job_id: string; body: string; question_id: string | null }
   | { intent: "cancel"; job_id: string }
 
@@ -113,7 +115,7 @@ export interface JobExecutionStore<Agent> {
     orgId: string,
     turnId: string,
     startedAt: string,
-    events: { seq: number; kind: string }[],
+    events: { seq: number; kind: string; label?: string }[],
   ): Promise<boolean>
   reserve(input: {
     agent_id: string

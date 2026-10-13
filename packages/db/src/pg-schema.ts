@@ -750,6 +750,8 @@ export const jobEvent = pgTable(
       .references(() => jobTurn.id),
     seq: integer("seq").notNull(),
     kind: text("kind").notNull(),
+    /** What a watching person reads: a redacted command, a file path, or a tool name. */
+    label: text("label"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   (t) => [uniqueIndex("job_event_sequence").on(t.turn_id, t.seq)],

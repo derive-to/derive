@@ -6,7 +6,7 @@
 // ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN from the inherited env, so a plan
 // token "just works" through the sanctioned client, no reimplementation here.
 import { spawn } from "node:child_process"
-import { terminateProcess } from "./process.js"
+import { safeCommand, terminateProcess } from "./process.js"
 
 /** Log one stream event; returns the assistant text it carried (if any), which
  *  the caller keeps as the run's last words for diagnostics. */
@@ -70,7 +70,13 @@ function spawnClaude({ bin, cwd, args, timeoutMs, env, signal, onEvent }) {
         const event = JSON.parse(line)
         lastText = logEvent(event) || lastText
         for (const c of event.message?.content ?? [])
-          if (c.type === "tool_use") onEvent?.({ kind: "tool_use" })
+          if (c.type === "tool_use")
+            onEvent?.({
+              kind: "tool_use",
+              label: safeCommand(
+                `${c.name} ${c.input?.command ?? c.input?.file_path ?? c.input?.pattern ?? ""}`,
+              ),
+            })
         if (!sessionId && typeof event.session_id === "string") sessionId = event.session_id
         if (event.type === "result") {
           if (event.usage)

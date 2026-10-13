@@ -7,7 +7,7 @@
 // it gives the run a durable action receipt (commands, file changes, MCP calls, plan updates)
 // while leaving the final answer contract provider-agnostic.
 import { spawn } from "node:child_process"
-import { terminateProcess } from "./process.js"
+import { clipped, safeCommand, terminateProcess } from "./process.js"
 
 const ACTION_TYPES = new Set([
   "command_execution",
@@ -16,18 +16,6 @@ const ACTION_TYPES = new Set([
   "web_search",
   "plan_update",
 ])
-
-const clipped = (value, max = 300) =>
-  String(value ?? "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, max)
-
-const safeCommand = (value) =>
-  clipped(value, 200)
-    .replace(/\b(dk(?:run|sess|_agt)?_[A-Za-z0-9_-]{12,}|sk-[A-Za-z0-9_-]{12,})\b/g, "[redacted]")
-    .replace(/\b([A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD))=\S+/g, "$1=[redacted]")
-    .replace(/(authorization\s*[:=]?\s*bearer)\s+\S+/gi, "$1 [redacted]")
 
 /** Keep evidence useful without persisting command output, absolute temp roots, or secrets. */
 function actionOf(item, cwd) {
@@ -54,6 +42,9 @@ function actionOf(item, cwd) {
     name: clipped(item.name ?? item.tool ?? item.query ?? item.text, 160),
   }
 }
+
+/** One line a person watching the task can read: the command, the first file, or the tool. */
+const actionLabel = (action) => action.command ?? action.changes?.[0]?.path ?? action.name ?? null
 
 /** Spawn `codex exec --json` once and normalize its event stream. */
 function spawnCodex({ bin, cwd, args, prompt, timeoutMs, env, signal, onEvent }) {
@@ -108,7 +99,7 @@ function spawnCodex({ bin, cwd, args, prompt, timeoutMs, env, signal, onEvent })
             JSON.stringify([...actions, action]).length <= 4_000
           ) {
             actions.push(action)
-            onEvent?.({ kind: action.type })
+            onEvent?.({ kind: action.type, label: actionLabel(action) })
             console.log(`[codex] → ${action.type}`)
           }
         }

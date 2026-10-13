@@ -22,6 +22,7 @@ import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import {
+  bearerFor,
   brokerFor,
   callTool,
   mcpAuthFor,
@@ -264,7 +265,13 @@ const JobDetail = Job.extend({
   turns: z.array(JobTurn).optional(),
   events: z
     .array(
-      z.object({ turn_id: z.string(), seq: z.number(), kind: z.string(), created_at: z.string() }),
+      z.object({
+        turn_id: z.string(),
+        seq: z.number(),
+        kind: z.string(),
+        label: z.string().nullable().optional(),
+        created_at: z.string(),
+      }),
     )
     .optional(),
 }).openapi("JobDetail")
@@ -736,10 +743,12 @@ export const jobRoutes = (ctx: AppContext) => {
         z.object({
           body_md: z.string().trim().min(1).max(20_000),
           dedupe_key: z.string().max(200).optional(),
+          // Cloud tasks: stop the running turn and take this message now, instead of after it.
+          interrupt: z.boolean().optional(),
         }),
       )
       if (b instanceof Response) return bail(b)
-      const next = await followUpJob(jobDeps, job, who.id, b.body_md, b.dedupe_key)
+      const next = await followUpJob(jobDeps, job, who.id, b.body_md, b.dedupe_key, b.interrupt)
       await wakeCloud(c, next)
       const messages = (await meta.listJobMessages(job.id)).map(messageJson)
       return c.json({
@@ -1226,6 +1235,7 @@ export const jobRoutes = (ctx: AppContext) => {
                 "plan_update",
                 "tool_use",
               ]),
+              label: z.string().max(160).optional(),
             }),
           )
           .max(100)
@@ -1330,6 +1340,34 @@ export const jobRoutes = (ctx: AppContext) => {
       environment[name] = value
     }
     return c.json({ environment })
+  })
+
+  // The task's repository credential: an installation token for that one repository, minted
+  // from a GitHub connection bound to the agent whose account owns it. It lives about an hour
+  // and only for this claim; the runner hands it to git and the harness, never to disk.
+  app.get("/v1/jobs/:id/git", async (c) => {
+    c.header("Cache-Control", "no-store")
+    const held = await heldJob(c)
+    if (held instanceof Response) return held
+    const { agent, job } = held
+    const repo = taskOptions(job.meta_json).repo
+    if (!repo) return fail(c, 404, "This task has no repository")
+    if (!deps.encryptionKey) return fail(c, 503, "Secret encryption is not configured")
+    const [full, ref = null] = repo.split("@")
+    const [owner = "", name = ""] = full.split("/")
+    const github = (
+      await spendableConnections(meta, agent.org_id, parseConnectionIds(agent.connection_ids_json))
+    ).find(
+      (cn) => cn.kind === "github_app" && cn.scopes_label?.toLowerCase() === owner.toLowerCase(),
+    )
+    if (!github)
+      return fail(c, 409, `Bind a GitHub connection for ${owner} to this agent to work in ${full}.`)
+    try {
+      const token = await bearerFor(meta, github, deps.encryptionKey, "code-write", name)
+      return c.json({ repo: full, ref, token })
+    } catch (error) {
+      return fail(c, 409, `GitHub refused a token for ${full}: ${(error as Error).message}`)
+    }
   })
 
   app.get("/v1/jobs/:id/account", async (c) => {

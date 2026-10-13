@@ -25,6 +25,7 @@ import { checkpointConversation, latestSessionId, restoreConversation } from "./
 import { RUNNER_PROTOCOL_VERSION, SESSION_RESUME } from "./conversation-format.js"
 import { selectProvider } from "./providers/index.js"
 import { terminateProcess } from "./providers/process.js"
+import { prepareRepo, pullRequestFor } from "./repo.js"
 import {
   buildPrompt,
   DeriveClient,
@@ -175,6 +176,11 @@ export class JobClient {
 
   environment(job) {
     return this.req(`/v1/jobs/${job.id}/environment`, { claim: job.started_at })
+  }
+
+  /** The task's repository and a token for it, minted for this claim. */
+  git(job) {
+    return this.req(`/v1/jobs/${job.id}/git`, { claim: job.started_at })
   }
 }
 
@@ -521,6 +527,7 @@ export async function serveJob(client, job, cfg, deps = {}) {
   let shim = null
   let home = null
   let harnessVersion = null
+  let git = null
   let checkpoint = null
   let terminal = null
   const report = (body) => {
@@ -557,6 +564,16 @@ export async function serveJob(client, job, cfg, deps = {}) {
     if (!cfg.mock) {
       // One after the other, so a credential file written for this job is always cleaned up.
       const { environment = {} } = (await client.environment(job)) ?? {}
+      // The task's repository comes first: the check, the harness, and the skill all work in it.
+      if (job.execution?.repo) {
+        git = await client.git(job)
+        const checkout = prepareRepo(git, {
+          cwd: cfg.cwd,
+          firstTurn: (job.turn?.ordinal ?? 1) === 1,
+        })
+        cfg = { ...cfg, cwd: checkout.dir }
+        Object.assign(environment, checkout.env)
+      }
       // The machine must be ready before a model credential or token is spent on it.
       if (job.execution?.check)
         await (deps.checkMachine ?? checkMachine)(
@@ -641,7 +658,12 @@ export async function serveJob(client, job, cfg, deps = {}) {
             env,
             signal: abort.signal,
             onEvent: (event) => {
-              if (eventSeq < 500) events.push({ seq: ++eventSeq, kind: event.kind })
+              if (eventSeq < 500)
+                events.push({
+                  seq: ++eventSeq,
+                  kind: event.kind,
+                  ...(event.label ? { label: String(event.label).slice(0, 160) } : {}),
+                })
             },
             meter,
           })
@@ -722,19 +744,14 @@ export async function serveJob(client, job, cfg, deps = {}) {
         flagged.push(`The page it made could not be published: ${e.message}`)
       }
     }
+    // A turn in a repository reports the pull request its branch has, if any.
+    const pr = git && !cfg.mock ? await (deps.pullRequestFor ?? pullRequestFor)(git, cfg.cwd) : null
+    const effects = [
+      ...made.map((page) => ({ kind: "page", label: page.title, ref: page.short_id })),
+      ...(pr ? [pr] : []),
+    ]
     const common = {
-      result: {
-        ...receipt,
-        ...(made.length
-          ? {
-              effects: made.map((page) => ({
-                kind: "page",
-                label: page.title,
-                ref: page.short_id,
-              })),
-            }
-          : {}),
-      },
+      result: { ...receipt, ...(effects.length ? { effects } : {}) },
       body_md: [
         a.body_md,
         ...(a.query ? [`Evidence: ${a.query}`] : []),

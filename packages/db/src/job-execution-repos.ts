@@ -191,7 +191,18 @@ export const jobExecutionRepos = (
             body_md: input.body,
             meta_json: JSON.stringify({ turn_id: turnId, source: input.source }),
           })
-          if (job.status !== "queued" && job.status !== "running")
+          // An interrupting follow-up ends the running turn: its claim dies, the machine stops
+          // that work, and this turn runs next on the same task.
+          if (input.intent === "follow_up" && input.interrupt && job.status === "running") {
+            await tx.execute(sql`UPDATE job_turn SET status = 'cancelled', finished_at = ${now}
+              WHERE job_id = ${job.id} AND status = 'running'`)
+            job = await repos.updateJob(job.id, {
+              status: "queued",
+              lease_until: null,
+              started_at: null,
+              attempt: 0,
+            })
+          } else if (job.status !== "queued" && job.status !== "running")
             job = await repos.updateJob(job.id, {
               status: "queued",
               needs_json: null,
@@ -263,8 +274,8 @@ export const jobExecutionRepos = (
       ).rows[0]
       if (!turn) return false
       for (const event of events)
-        await tx.execute(sql`INSERT INTO job_event (turn_id, seq, kind)
-        VALUES (${turnId}, ${event.seq}, ${event.kind}) ON CONFLICT DO NOTHING`)
+        await tx.execute(sql`INSERT INTO job_event (turn_id, seq, kind, label)
+        VALUES (${turnId}, ${event.seq}, ${event.kind}, ${event.label ?? null}) ON CONFLICT DO NOTHING`)
       return true
     })
   },

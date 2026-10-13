@@ -7880,6 +7880,7 @@ export interface components {
                 turn_id: string;
                 seq: number;
                 kind: string;
+                label?: string | null;
                 created_at: string;
             }[];
         };

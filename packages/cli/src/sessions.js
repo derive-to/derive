@@ -12,6 +12,8 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { SESSION_RESUME, SESSION_TMUX } from "./conversation-format.js"
 
+/** `owner/name` or `owner/name@ref`; the server holds the authoritative rule. */
+const REPO = /^[\w.-]+\/[\w.-]+(@[\w./-]+)?$/
 const KEY_DIR = () => process.env.DERIVE_CONFIG_DIR ?? join(homedir(), ".derive")
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -187,7 +189,10 @@ export async function sessionCommand(cmd, positional, flags, api, { log = consol
     const agent = session
       ? pickAgent(agents, { agent: flags.agent, harness })
       : pickAgent(agents, { agent: positional[0] })
-    const [repo, ask] = session ? [positional[0], positional[1]] : [flags.repo, positional[1]]
+    // `derive code owner/name "message"`, `derive code owner/name`, or `derive code "message"`.
+    const named = session && REPO.test(positional[0] ?? "")
+    const repo = session ? (named ? positional[0] : flags.repo) : flags.repo
+    const ask = session ? positional[named ? 1 : 0] : positional[1]
     if (!session && !ask) throw new Error('usage: derive run <agent> "what to do"')
     const task = await api("/v1/jobs", {
       method: "POST",

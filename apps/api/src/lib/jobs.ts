@@ -272,6 +272,7 @@ export const followUpJob = async (
   authorId: string,
   body: string,
   key?: string,
+  interrupt = false,
 ): Promise<JobRecord> => {
   const { meta } = deps
   const agent = await meta.getAgent(job.agent_id)
@@ -282,6 +283,7 @@ export const followUpJob = async (
       key: commandKey(key),
       job_id: job.id,
       body,
+      ...(interrupt ? { interrupt: true } : {}),
     })
     wake(deps, job.agent_id, "job.queued", out.job)
     return out.job

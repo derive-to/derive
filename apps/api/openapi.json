@@ -2674,6 +2674,10 @@
                     "kind": {
                       "type": "string"
                     },
+                    "label": {
+                      "type": "string",
+                      "nullable": true
+                    },
                     "created_at": {
                       "type": "string"
                     }
