@@ -1,16 +1,16 @@
 {
   "repository": "https://github.com/derive-to/open-artifact",
   "baseCommit": "9b6a221ca7ac64dea06c1603426504771aee4dab",
-  "previewVersion": "0.6.0-core.0",
+  "previewVersion": "0.6.0-core.2",
   "sources": {
-    "quote-match.ts": "d44ddb905061b8db8aee3d3341e571214582011e5f21e9d37d3cd1fee72ec8d4",
-    "source-anchors.ts": "9f9284d5885d53f2c701c5817a27eb7b88a3393f578ac97047aa0b6f41d7ec29",
-    "source-edits.ts": "b3afbd9e7de0c9552f167ef5c408efce0291f2fe6995c3945b87709662b7a201",
+    "quote-match.ts": "1652cf7b904aa9afb301850ec78df4c767476d63fdb1d8c9c4b3b6118c3e469a",
+    "source-anchors.ts": "529fc45bec055ad20bfaffb342bdb344ddb4de1440759efa48b1a30bbe2027b2",
+    "source-edits.ts": "5688cdfc79445479b2a77509fd165990f4578b6b523926f65ca5e0f1935d8b8f",
     "source-hash.ts": "8e2685e0f2f30576a5b1ad63d734ca3f7f6bae7205bde4f48f8734c4841d7072",
     "source-reflow.ts": "ad7aee6f332f54d128b84c618d2a2aaf2c87e786381545603cf8a19d50f0992e",
     "source.ts": "427594aaf12447c48815095cd50c07d2bee8716c28464efdbd9f2d8b09f41cda"
   },
-  "tarballSha256": "d140d876a00cd4e94db153ea07a84d48eea43ca4082e7f0e8eab745bd77890f2",
+  "tarballSha256": "2d204c9867e2252d828d247dddf78325d47445dc098e1ac6e91b6205558a50b9",
   "note": "Packed source preview for the first Derive consumer. This is not a published npm release.",
-  "sourceCommit": "f2fe3b12568ca4f487f5ec727f87e7e50696f94c"
+  "sourceCommit": "b59cb5b71efd75f6dc923a5c7f798e8a55651450"
 }

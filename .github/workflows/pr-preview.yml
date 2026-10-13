@@ -139,8 +139,8 @@ jobs:
           # the chat model picker, which does not render when there is only one model to pick.
           MODEL_NAMES: ${{ vars.DERIVE_MODEL_NAMES }}
         run: |
-          : "${AUTH_SECRET:?DERIVE_AUTH_SECRET is unset. Add it as a repo secret with the SAME
-             value the production Worker uses, or every signed-in page of the preview 500s.}"
+          : "${AUTH_SECRET:?DERIVE_AUTH_SECRET is unset. Configure the existing signing secret distribution,
+             or signed-in preview routes cannot start.}"
           put() { printf '%s' "$2" | pnpm --filter @derive/api exec wrangler secret put "$1" --config wrangler.preview.toml; }
           put DERIVE_AUTH_SECRET "$AUTH_SECRET"
           # `if`, not `[ -n "$X" ] && put ...`. Actions runs `bash -e`, so a false test is a

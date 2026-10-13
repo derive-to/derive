@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 // Derive a PREVIEW Worker config from wrangler.toml.
 //
-// A preview is the same Worker under a different name, on its own workers.dev URL, sharing
-// production's data. That last part is the point — a preview you cannot sign into, or that
-// shows an empty database, tells you nothing about a change — and it is also the reason this
-// script is careful about what it strips.
+// A preview is the same Worker under a different name. PR deployments pass owned
+// D1 and R2 bindings as the fourth argument. The legacy three-argument form keeps
+// its existing bindings for callers that already own their target configuration.
 //
 // WHAT IT REMOVES, and why each one would otherwise reach production:
 //   [[routes]]            derive.to / app.derive.to / derive.page → the preview would SERVE the
