@@ -63,6 +63,8 @@ const AGENT_FIELDS = [
   "max_concurrency",
   "provider",
   "model",
+  "effort",
+  "sandbox_json",
 ] as const satisfies readonly (keyof AgentPatch)[]
 
 const JOB_FIELDS = [

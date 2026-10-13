@@ -196,6 +196,7 @@ export const codex = {
     bin,
     cwd,
     model,
+    effort,
     systemPrompt,
     prompt,
     timeoutMs,
@@ -214,6 +215,7 @@ export const codex = {
         ? ["--dangerously-bypass-approvals-and-sandbox"]
         : ["--sandbox", "workspace-write"]),
       ...(model ? ["--model", model] : []),
+      ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : []),
       ...(resumeSessionId ? ["resume", resumeSessionId, "-"] : ["--", "-"]),
     ]
     return spawnCodex({

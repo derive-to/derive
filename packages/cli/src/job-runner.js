@@ -7,20 +7,24 @@
 // so a report from a claim the server already handed to another runner is refused. And a long
 // job reports `progress` at a third of its lease, which renews the lease; a runner that stops
 // ticking (a closed laptop) loses the job to the server's reclaim instead of holding it forever.
+
+import { spawn } from "node:child_process"
 import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmdirSync,
   rmSync,
   statfsSync,
   writeFileSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve, sep } from "node:path"
 import { checkpointConversation, restoreConversation } from "./conversation.js"
 import { RUNNER_PROTOCOL_VERSION } from "./conversation-format.js"
 import { selectProvider } from "./providers/index.js"
+import { terminateProcess } from "./providers/process.js"
 import {
   buildPrompt,
   DeriveClient,
@@ -101,6 +105,19 @@ export class JobClient {
       throw err
     }
     return parsed
+  }
+
+  /** Stage one image as a workspace asset; returns its permanent URL. */
+  async uploadAsset(bytes, type) {
+    const res = await this.fetch(`${this.cfg.server}/v1/assets`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${this.cfg.token}`, "content-type": type },
+      body: bytes,
+    })
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok || typeof body.url !== "string")
+      throw new Error(`image upload failed (${res.status})`)
+    return body.url
   }
 
   /** Publish a new page through the ordinary publish route, as the agent. `access` sets a new
@@ -349,6 +366,91 @@ async function modelEnvFor(
   }
 }
 
+const IMAGE_TYPES = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+  gif: "image/gif",
+}
+
+/** A page's `<img src="shots/a.png">` names a file in the working directory, which no reader
+ *  can open. Stage each such image as a workspace asset and point the page at its permanent
+ *  URL, so a report can carry real screenshots without inlining megabytes of base64. */
+export async function stageLocalImages(client, html, cwd, notes = []) {
+  const root = realpathSync(cwd)
+  const staged = new Map()
+  for (const [, path] of html.matchAll(/<img\b[^>]*?\ssrc=["']([^"':]+?)["']/gi)) {
+    if (staged.has(path) || path.startsWith("/") || path.startsWith("//")) continue
+    const type = IMAGE_TYPES[path.split(".").pop()?.toLowerCase() ?? ""]
+    if (!type) continue
+    try {
+      const full = realpathSync(resolve(root, path))
+      if (!full.startsWith(root + sep)) throw new Error("outside the working directory")
+      staged.set(path, await client.uploadAsset(readFileSync(full), type))
+    } catch (e) {
+      notes.push(`Image ${path} could not be attached: ${e.message}`)
+    }
+  }
+  let out = html
+  for (const [path, url] of staged)
+    out = out.replaceAll(`"${path}"`, `"${url}"`).replaceAll(`'${path}'`, `'${url}'`)
+  return out
+}
+
+const CHECK_TIMEOUT_MS = 10 * 60_000
+
+/** Run the agent's machine check. A nonzero exit fails the task with the output's tail and
+ *  is not retryable: the same machine would fail the same way. Async, so lease ticks continue. */
+export async function checkMachine(command, cwd, environment = {}, signal) {
+  console.log("[runner] checking the machine")
+  let output = ""
+  const { code, timedOut } = await new Promise((resolve) => {
+    const child = spawn("bash", ["-lc", command], {
+      cwd,
+      env: { ...runnerFreeEnv(process.env), ...environment },
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
+    })
+    const keep = (b) => {
+      output = (output + b.toString()).slice(-16_000)
+    }
+    child.stdout.on("data", keep)
+    child.stderr.on("data", keep)
+    let late = false
+    const stop = () => terminateProcess(child, "SIGKILL")
+    const timer = setTimeout(() => {
+      late = true
+      stop()
+    }, CHECK_TIMEOUT_MS)
+    signal?.addEventListener("abort", stop, { once: true })
+    child.on("error", (e) => {
+      keep(String(e))
+      resolve({ code: -1, timedOut: false })
+    })
+    child.on("close", (exit, sig) => {
+      clearTimeout(timer)
+      signal?.removeEventListener("abort", stop)
+      resolve({ code: exit ?? sig, timedOut: late })
+    })
+  })
+  if (code === 0) return
+  const tail = output
+    .replace(/\b([A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD))=\S+/g, "$1=[redacted]")
+    .trim()
+    .split("\n")
+    .slice(-30)
+    .join("\n")
+    .slice(-3_000)
+  const how = timedOut ? "timed out" : `exited ${code}`
+  throw Object.assign(
+    new Error(
+      `The machine is not ready: its check ${how}. No model ran.${tail ? `\n\n\`\`\`\n${tail}\n\`\`\`` : ""}`,
+    ),
+    { retryable: false },
+  )
+}
+
 /** Do one claimed job and report it. Never throws: every failure becomes a report. */
 export async function serveJob(client, job, cfg, deps = {}) {
   const began = Date.now()
@@ -427,6 +529,14 @@ export async function serveJob(client, job, cfg, deps = {}) {
     if (!cfg.mock) {
       // One after the other, so a credential file written for this job is always cleaned up.
       const { environment = {} } = (await client.environment(job)) ?? {}
+      // The machine must be ready before a model credential or token is spent on it.
+      if (job.execution?.check)
+        await (deps.checkMachine ?? checkMachine)(
+          job.execution.check,
+          cfg.cwd,
+          environment,
+          abort.signal,
+        )
       const cred = await modelEnvFor(client, job, provider, providerName, cfg.server, {
         localLogin: cfg.localLogin,
       })
@@ -480,6 +590,7 @@ export async function serveJob(client, job, cfg, deps = {}) {
           bin: cfg.agentBin ?? provider.binFrom({}, process.env),
           cwd: cfg.cwd,
           model,
+          effort: job.execution?.effort ?? null,
           timeoutMs: cfg.timeoutMs,
           systemPrompt: jobSystemPrompt(job, { shim: shim?.rel }),
           prompt: job.turn ? job.turn.body_md : buildPrompt(job.messages ?? []),
@@ -561,7 +672,7 @@ export async function serveJob(client, job, cfg, deps = {}) {
           title: a.artifact.title,
           filename: "page.html",
           type: "text/html",
-          body: src.html,
+          body: await stageLocalImages(client, src.html, cfg.cwd, flagged),
         })
         made.push({ title: a.artifact.title, short_id: pub.short_id })
       } catch (e) {

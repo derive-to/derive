@@ -100,6 +100,7 @@ export const commandJob = async (
       agent_name: agent.name,
       provider: agent.provider,
       model: agent.model ?? (agent.provider === "codex" ? "gpt-6-luna" : "sonnet"),
+      effort: agent.effort,
       account_id: account.credential ? account.account_id : null,
       connection_ids: parseConnectionIds(agent.connection_ids_json),
       repositories_json: agent.repositories_json ?? "[]",
@@ -109,6 +110,7 @@ export const commandJob = async (
         provider: runtime.provider,
         connection_id: runtime.connection?.id ?? null,
         account_id: runtime.connection?.broker_ref ?? null,
+        spec_json: agent.sandbox_json,
       },
     }
     const problem = await turnProblem(deps, agent, actor, selection)
@@ -189,6 +191,10 @@ export const turnAgent = (agent: AgentRecord, execution: JobExecution): AgentRec
   ...agent,
   provider: execution.provider,
   model: execution.model,
+  // Turns admitted before these were frozen keep the agent's current values.
+  effort: execution.effort === undefined ? agent.effort : execution.effort,
+  sandbox_json:
+    execution.sandbox?.spec_json === undefined ? agent.sandbox_json : execution.sandbox.spec_json,
   account_id: execution.account_id,
   connection_ids_json: JSON.stringify(execution.connection_ids),
   repositories_json: execution.repositories_json,

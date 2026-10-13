@@ -1301,6 +1301,9 @@ export interface paths {
                         /** @enum {string} */
                         provider?: "claude-code" | "codex";
                         model?: string | null;
+                        /** @enum {string|null} */
+                        effort?: "minimal" | "low" | "medium" | "high" | "xhigh" | null;
+                        sandbox?: components["schemas"]["AgentSandbox"];
                         /** @enum {string} */
                         ask_policy?: "workspace" | "invited";
                         /** @enum {string} */
@@ -7541,6 +7544,22 @@ export interface components {
             /** @description True when the caller was already a member; their role is never changed. */
             already_member: boolean;
         };
+        /** @description The machine its Derive jobs run on. Empty uses the workspace default. */
+        AgentSandbox: {
+            /** @description A prepared provider image, such as a Boat named snapshot. */
+            snapshot?: string;
+            /** @description A provider environment to attach, with its repositories and secrets. Absent: none of the account's secrets. */
+            environment?: string;
+            /**
+             * @description Machine size.
+             * @enum {string}
+             */
+            size?: "small" | "default" | "large" | "xlarge";
+            /** @description Build a new machine from the snapshot for every task instead of resuming. */
+            fresh?: boolean;
+            /** @description Shell command run before the harness starts. A nonzero exit ends the task with its output and spends no model tokens. */
+            check?: string;
+        };
         AgentSource: {
             id: string;
             /** @description The source's name, or a secret's label. Never a value. */
@@ -7613,6 +7632,9 @@ export interface components {
                 phase: "creating" | "provisioning" | "stopping" | "ready" | "busy" | "deleting" | "failed" | null;
             } | null;
             model: string | null;
+            /** @description Harness reasoning level. Null is its default. */
+            effort: string | null;
+            sandbox: components["schemas"]["AgentSandbox"];
             /** @enum {string} */
             ask_policy: "workspace" | "invited";
             /**
@@ -7779,6 +7801,7 @@ export interface components {
                     /** @enum {string} */
                     provider: "codex" | "claude-code";
                     model: string | null;
+                    effort?: string | null;
                     account_id: string | null;
                     agent_name?: string;
                     skill: {

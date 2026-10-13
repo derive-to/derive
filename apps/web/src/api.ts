@@ -475,6 +475,8 @@ export type AgentPatch = Partial<
     | "environment"
     | "account_id"
     | "model"
+    | "effort"
+    | "sandbox"
     | "paused"
     | "machine"
   >

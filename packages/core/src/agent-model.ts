@@ -294,6 +294,8 @@ export interface AgentPatch {
   max_concurrency?: number
   provider?: import("./execution").ExecutionProvider
   model?: string | null
+  effort?: string | null
+  sandbox_json?: string | null
 }
 
 export interface JobQuery {

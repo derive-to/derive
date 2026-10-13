@@ -116,11 +116,40 @@ export function AgentSettings({ agent, names, isWorkspaceOwner }: Props) {
             </Sub>
           )}
           {agent.machine === "derive" && (
-            <Sub>A Derive sandbox that keeps its files between tasks.</Sub>
+            <Sub>
+              {agent.sandbox.fresh
+                ? "A Derive sandbox, new for each task."
+                : "A Derive sandbox that keeps its files between tasks."}
+            </Sub>
           )}
         </Field>
         <AccountField agent={agent} edit={edit} onSave={set} />
         <ModelField agent={agent} edit={edit} onSave={set} />
+        {agent.provider === "codex" && (
+          <Field label="Effort">
+            <Segmented
+              testId="agent-effort"
+              value={agent.effort ?? DEFAULT}
+              disabled={!edit}
+              onChange={(v) => set({ effort: v === DEFAULT ? null : (v as AgentPatch["effort"]) })}
+              options={[
+                { value: DEFAULT, label: "Default" },
+                { value: "low", label: "Low" },
+                { value: "medium", label: "Medium" },
+                { value: "high", label: "High" },
+              ]}
+            />
+          </Field>
+        )}
+        {agent.machine === "derive" && (
+          <SandboxFields
+            agent={agent}
+            edit={edit}
+            isWorkspaceOwner={isWorkspaceOwner}
+            onSave={set}
+            saving={update.isPending}
+          />
+        )}
       </Group>
 
       <Group label="Sources" testId="agent-sources">
@@ -685,6 +714,146 @@ function ModelField({
         <span>{shown}</span>
       )}
     </Field>
+  )
+}
+
+/** The machine a Derive agent runs on: its prepared image, size, whether each task gets a new
+ *  one, and the check that must pass before the model starts. */
+function SandboxFields({
+  agent,
+  edit,
+  isWorkspaceOwner,
+  onSave,
+  saving,
+}: {
+  agent: AgentDetail
+  edit: boolean
+  isWorkspaceOwner: boolean
+  onSave: (p: AgentPatch) => void
+  saving: boolean
+}) {
+  const spec = agent.sandbox
+  const [snapshot, setSnapshot] = useState(spec.snapshot ?? "")
+  const [environment, setEnvironment] = useState(spec.environment ?? "")
+  const [check, setCheck] = useState(spec.check ?? "")
+  const dirty =
+    snapshot.trim() !== (spec.snapshot ?? "") ||
+    environment.trim() !== (spec.environment ?? "") ||
+    check !== (spec.check ?? "")
+  const save = (patch: Partial<AgentDetail["sandbox"]>) => {
+    const next = { ...spec, ...patch }
+    onSave({
+      sandbox: Object.fromEntries(
+        Object.entries(next).filter(([, v]) => v !== undefined && v !== "" && v !== false),
+      ),
+    })
+  }
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    save({
+      snapshot: snapshot.trim() || undefined,
+      environment: environment.trim() || undefined,
+      check: check.trim() ? check : undefined,
+    })
+  }
+  return (
+    <>
+      <Field label="Size">
+        <Segmented
+          testId="agent-sandbox-size"
+          value={spec.size ?? "small"}
+          disabled={!edit}
+          onChange={(v) => save({ size: v as NonNullable<AgentDetail["sandbox"]["size"]> })}
+          options={[
+            { value: "small", label: "Small" },
+            { value: "default", label: "Standard" },
+            { value: "large", label: "Large" },
+          ]}
+        />
+      </Field>
+      <Field label="Each task">
+        <Segmented
+          testId="agent-sandbox-fresh"
+          value={spec.fresh ? "fresh" : "resume"}
+          disabled={!edit}
+          onChange={(v) => save({ fresh: v === "fresh" })}
+          options={[
+            { value: "resume", label: "Keeps files" },
+            { value: "fresh", label: "Starts fresh" },
+          ]}
+        />
+        <Sub>
+          {spec.fresh
+            ? "Every task gets a new machine built from the snapshot."
+            : "Tasks reuse one machine and its files."}
+        </Sub>
+      </Field>
+      {edit ? (
+        <form onSubmit={submit} data-testid="agent-sandbox">
+          <Field label="Snapshot">
+            <Input
+              aria-label="Snapshot"
+              data-testid="agent-sandbox-snapshot"
+              placeholder="Workspace default"
+              value={snapshot}
+              disabled={!isWorkspaceOwner}
+              onChange={(e) => setSnapshot(e.target.value)}
+              className="w-64 font-mono"
+            />
+            {!isWorkspaceOwner && <Sub>A workspace owner chooses the snapshot.</Sub>}
+          </Field>
+          <Field label="Environment">
+            <Input
+              aria-label="Environment"
+              data-testid="agent-sandbox-environment"
+              placeholder="None"
+              value={environment}
+              disabled={!isWorkspaceOwner}
+              onChange={(e) => setEnvironment(e.target.value)}
+              className="w-64 font-mono"
+            />
+            <Sub>
+              The provider environment, with its repositories and secrets. Empty gives the machine
+              none of the account's secrets.
+            </Sub>
+          </Field>
+          <Field
+            label="Ready check"
+            action={
+              <Button
+                type="submit"
+                variant="ghost"
+                size="sm"
+                data-testid="agent-sandbox-save"
+                disabled={!dirty || saving}
+              >
+                Save
+              </Button>
+            }
+          >
+            <Textarea
+              aria-label="Ready check"
+              data-testid="agent-sandbox-check"
+              placeholder="test -d ~/app"
+              value={check}
+              onChange={(e) => setCheck(e.target.value)}
+              className="min-h-16 font-mono text-sm"
+            />
+            <Sub>Runs before the model. If it fails, the task stops and no tokens are spent.</Sub>
+          </Field>
+        </form>
+      ) : (
+        <>
+          <Field label="Snapshot">{spec.snapshot ?? "Workspace default"}</Field>
+          <Field label="Environment">{spec.environment ?? "None"}</Field>
+          {spec.check && (
+            <Field label="Ready check">
+              <code className="font-mono text-sm">{spec.check}</code>
+            </Field>
+          )}
+        </>
+      )}
+    </>
   )
 }
 

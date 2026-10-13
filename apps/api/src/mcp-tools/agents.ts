@@ -1,3 +1,4 @@
+import { EXECUTION_EFFORTS, SANDBOX_SIZES } from "@derive/core"
 import { z } from "zod"
 import type { ToolContext } from "../mcp-tool-context"
 import { err, json } from "../mcp-util"
@@ -77,6 +78,23 @@ export function registerAgentsTool(tc: ToolContext): void {
         machine: z.enum(["owner", "derive"]).optional(),
         provider: z.enum(["claude-code", "codex"]).optional(),
         model: z.string().nullable().optional(),
+        effort: z
+          .enum(EXECUTION_EFFORTS)
+          .nullable()
+          .optional()
+          .describe("Harness reasoning level; null is its default."),
+        sandbox: z
+          .object({
+            snapshot: z.string().optional(),
+            environment: z.string().optional(),
+            size: z.enum(SANDBOX_SIZES).optional(),
+            fresh: z.boolean().optional(),
+            check: z.string().optional(),
+          })
+          .optional()
+          .describe(
+            "Machine for Derive jobs: snapshot, environment (provider environment with its secrets; owner only), size, fresh (new machine per task), check (command run before the model; failure spends no tokens). {} clears.",
+          ),
         schedule: ScheduleArg,
         sources: z.array(z.string()).optional().describe("Connection ids."),
         environment: z
@@ -152,6 +170,8 @@ export function registerAgentsTool(tc: ToolContext): void {
           machine: a.machine,
           provider: a.provider,
           model: a.model ?? undefined,
+          effort: a.effort ?? undefined,
+          sandbox: a.sandbox,
           ask_policy: a.ask_policy,
           write_policy: a.write_policy,
           connection_ids: a.sources,
@@ -197,6 +217,8 @@ export function registerAgentsTool(tc: ToolContext): void {
         machine: a.machine,
         provider: a.provider,
         model: a.model,
+        effort: a.effort,
+        sandbox: a.sandbox,
         ask_policy: a.ask_policy,
         write_policy: a.write_policy,
         connection_ids: a.sources,

@@ -6,6 +6,7 @@ import {
   type JobNeeds,
   type JobRecord,
   normalizeSelectors,
+  parseAgentSandbox,
   roleAllows,
   type Selector,
 } from "@derive/core"
@@ -224,6 +225,7 @@ const JobTurn = z.object({
   execution: z.object({
     provider: z.enum(["codex", "claude-code"]),
     model: z.string().nullable(),
+    effort: z.string().nullable().optional(),
     account_id: z.string().nullable(),
     agent_name: z.string().optional(),
     skill: z.object({ artifact_id: z.string(), version: z.number() }).nullable(),
@@ -297,6 +299,7 @@ export const jobRoutes = (ctx: AppContext) => {
         execution: {
           provider: choice.provider,
           model: choice.model,
+          effort: choice.effort ?? null,
           account_id: choice.account_id,
           agent_name: choice.agent_name,
           skill: choice.skill,
@@ -1038,7 +1041,14 @@ export const jobRoutes = (ctx: AppContext) => {
           .filter((m) => !isServerNote(m))
           .map(messageJson),
         instructions,
-        execution: { provider: agent.provider, model: agent.model, agent_name: agent.name },
+        execution: {
+          provider: agent.provider,
+          model: agent.model,
+          effort: agent.effort,
+          agent_name: agent.name,
+          // The runner runs this before the harness; a failure spends no model tokens.
+          check: parseAgentSandbox(agent.sandbox_json).check ?? null,
+        },
         protocol_version: RUNNER_PROTOCOL_VERSION,
         ...(turn
           ? {

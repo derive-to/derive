@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process"
-import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import type { AddressInfo } from "node:net"
 import { tmpdir } from "node:os"
@@ -2025,6 +2025,107 @@ describe("jobs: the CLI runner (derive runner serve --agent)", () => {
       attempt: number
     }
     expect(after).toMatchObject({ status: "queued", attempt: 1 })
+  })
+
+  it("a machine check that fails ends the task before any model runs; effort reaches the harness", async () => {
+    const { app } = await setup("jobs-cli-machine-check")
+    const agent = await createAgent(app, {
+      effort: "medium",
+      sandbox: { check: "echo 'no checkout at ~/app'; exit 3" },
+    })
+    const shown = (await (
+      await app.request(`/v1/agents/${agent.id}`, { headers: as(owner.email) })
+    ).json()) as { effort: string | null; sandbox: Record<string, unknown> }
+    expect(shown).toMatchObject({
+      effort: "medium",
+      sandbox: { check: "echo 'no checkout at ~/app'; exit 3" },
+    })
+    const job = (await (await ask(app, ed.email, agent.id, "Go")).json()) as { id: string }
+    const { cfg, client } = runnerFor(app, agent)
+    const [pulled] = (await client.pull()).jobs
+    if (!pulled) throw new Error("nothing pulled")
+    expect(pulled.execution).toMatchObject({ effort: "medium" })
+    let modelRan = false
+    const out = await serveJob(client, pulled, cfg, {
+      runAgent: async () => {
+        modelRan = true
+        return { ok: true, answer: { body_md: "done", escalate: false } }
+      },
+    })
+    expect(out).toBe("failed")
+    expect(modelRan).toBe(false)
+    const after = (await (
+      await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
+    ).json()) as { status: string; messages: { body_md: string }[] }
+    expect(after.status).toBe("failed")
+    expect(after.messages.at(-1)?.body_md).toContain("The machine is not ready")
+    expect(after.messages.at(-1)?.body_md).toContain("no checkout at ~/app")
+
+    // A passing check lets the same agent's next task run with its effort.
+    await app.request(
+      `/v1/agents/${agent.id}`,
+      jsonAs(as(owner.email), { sandbox: { check: "true" } }, "PATCH"),
+    )
+    await ask(app, ed.email, agent.id, "Go again")
+    const [next] = (await client.pull()).jobs
+    if (!next) throw new Error("nothing pulled")
+    let effort: unknown = null
+    expect(
+      await serveJob(client, next, cfg, {
+        runAgent: async (_p, opts) => {
+          effort = opts.effort
+          return { ok: true, answer: { body_md: "done", escalate: false } }
+        },
+      }),
+    ).toBe("succeeded")
+    expect(effort).toBe("medium")
+  })
+
+  it("a report's local screenshots are staged as assets, so the published page shows them", async () => {
+    const { app } = await setup("jobs-cli-report-images")
+    const agent = await createAgent(app)
+    await ask(app, ed.email, agent.id, "Check the page and show me")
+    const cwd = mkdtempSync(join(tmpdir(), "jobs-cli-images-"))
+    mkdirSync(join(cwd, "shots"))
+    writeFileSync(
+      join(cwd, "shots", "home.png"),
+      Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+        "base64",
+      ),
+    )
+    writeFileSync(
+      join(cwd, "report.html"),
+      '<h1>PASS</h1><img src="shots/home.png" alt="Home"><img src="https://example.test/x.png">',
+    )
+    const { cfg, client } = runnerFor(app, agent, { cwd })
+    const [pulled] = (await client.pull()).jobs
+    if (!pulled) throw new Error("nothing pulled")
+    expect(
+      await serveJob(client, pulled, cfg, {
+        runAgent: async () => ({
+          ok: true,
+          answer: {
+            body_md: "PASS",
+            escalate: false,
+            artifact: { title: "Proof", path: "report.html" },
+          },
+        }),
+      }),
+    ).toBe("succeeded")
+    const done = (await (
+      await app.request(`/v1/jobs/${pulled.id}`, { headers: as(ed.email) })
+    ).json()) as { result: { effects?: { ref: string }[] }; messages: { body_md: string }[] }
+    const ref = done.result.effects?.[0]?.ref
+    expect(ref).toBeTruthy()
+    const page = await (
+      await app.request(`/v1/artifacts/${ref}/content`, { headers: as(owner.email) })
+    ).text()
+    expect(page).not.toContain('src="shots/home.png"')
+    expect(page).toMatch(/src="[^"]*\/blob\/[0-9a-f]{64}/)
+    // Remote images are left alone.
+    expect(page).toContain('src="https://example.test/x.png"')
+    expect(done.messages.at(-1)?.body_md).not.toContain("could not be attached")
   })
 
   it("with no stored account, a laptop runner uses its own model login; opted out, it fails plainly", async () => {
