@@ -2,7 +2,7 @@ import { spawn } from "node:child_process"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import { SESSION_TMUX } from "./conversation-format.js"
 
 const MAX_FRAME = 1_048_576
@@ -74,7 +74,7 @@ export async function sessionShell(access, { key, id, openSshTunnel }) {
     const ssh = [
       ...(access.host_key ? ["-F", "/dev/null"] : []),
       "-i",
-      key,
+      resolve(key),
       "-o",
       "BatchMode=yes",
       "-o",
@@ -82,7 +82,7 @@ export async function sessionShell(access, { key, id, openSshTunnel }) {
       ...(access.host_key
         ? [
             "-o",
-            `UserKnownHostsFile=${knownHosts}`,
+            "UserKnownHostsFile=known_hosts",
             "-o",
             "GlobalKnownHostsFile=/dev/null",
             "-o",
@@ -99,7 +99,7 @@ export async function sessionShell(access, { key, id, openSshTunnel }) {
     if (relay) {
       const certificate = join(dir, "certificate.pub")
       writeFileSync(certificate, `${access.certificate}\n`, { mode: 0o600 })
-      ssh.push("-o", `CertificateFile=${certificate}`)
+      ssh.push("-o", "CertificateFile=certificate.pub")
       listener = createServer((incoming) => {
         if (socket || closed) {
           incoming.destroy()
@@ -182,6 +182,7 @@ export async function sessionShell(access, { key, id, openSshTunnel }) {
           const result = await new Promise((resolve, reject) => {
             child = spawn("ssh", [...args, ...ssh, ...(command ? [command] : [])], {
               stdio: "inherit",
+              ...(access.host_key ? { cwd: dir } : {}),
             })
             child.once("error", reject)
             child.once("exit", (code, stopped) => {
