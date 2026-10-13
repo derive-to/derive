@@ -19,6 +19,8 @@ Element selectors and saved-version recovery use the shared protocol source entr
 Derive supplies stored versions, access checks, and comment state changes.
 The shared scanner excludes inert markup and decodes attributes as the browser does.
 Saved selectors and original snapshots retain their existing fields.
+Element resize and style edits also use the shared source entry.
+The editor changes actual style attributes. It preserves quoted examples and encoded CSS strings.
 
 `shared-collection-client.ts` adapts Derive's existing messages to `StateBackend`.
 It preserves `derive.shared`, `derive.increment`, the handle's return values,
