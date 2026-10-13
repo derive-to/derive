@@ -210,6 +210,7 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "--claude") flags.claude = "true"
   else if (a === "--team") flags.team = "true"
   else if (a === "--follow") flags.follow = "true"
+  else if (a === "--here") flags.here = "true"
   // Repeatable: `--env-file a --env-file b` stacks (equivalent to --env-file a,b).
   else if (a === "--env-file")
     flags["env-file"] = flags["env-file"] ? `${flags["env-file"]},${args[++i]}` : args[++i]
@@ -2110,7 +2111,8 @@ if (cmd !== "publish") {
   derive code [owner/name[@ref]] ["first message"] [--agent a] [--codex|--claude]
                                             open a Claude Code or Codex session on its own cloud
                                             machine and attach this terminal to it
-  derive run <agent> "ask" [--repo owner/name[@ref]] [--follow]   start a cloud task
+                                            --here: push this branch and continue it there
+  derive run <agent> "ask" [--repo owner/name[@ref] | --here] [--follow]   start a cloud task
   derive ls [--team] [--json]              your cloud sessions and tasks (--team: everyone's)
   derive attach <task>                     reattach to a session (resumes a paused one)
   derive forward <task> <port>[:<local>]   open a session's dev server on localhost

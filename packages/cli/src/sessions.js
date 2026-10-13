@@ -2,8 +2,8 @@
 // run on Derive machines. Every session is an ordinary Derive task, so the web app shows the
 // same list; this file only drives the API and hands the terminal to ssh.
 //
-//   derive code [owner/name[@ref]] ["first message"] [--agent a] [--codex|--claude]
-//   derive run <agent> "ask" [--repo owner/name[@ref]] [--follow]
+//   derive code [owner/name[@ref]] ["first message"] [--agent a] [--codex|--claude] [--here]
+//   derive run <agent> "ask" [--repo owner/name[@ref]] [--here] [--follow]
 //   derive ls [--team]
 //   derive attach <task>      derive forward <task> <port>      derive stop <task>
 import { spawnSync } from "node:child_process"
@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { SESSION_RESUME, SESSION_TMUX } from "./conversation-format.js"
+import { githubRepoOf } from "./repo.js"
 
 /** `owner/name` or `owner/name@ref`; the server holds the authoritative rule. */
 const REPO = /^[\w.-]+\/[\w.-]+(@[\w./-]+)?$/
@@ -116,6 +117,26 @@ async function cloudTasks(api, { team }) {
   return { tasks: jobs.filter((j) => cloud.has(j.agent_id)), agents }
 }
 
+/** `--here`: the checkout this terminal is in, as the task's repository at its current branch.
+ *  The branch is pushed first so the cloud machine starts from exactly these commits; work not
+ *  yet committed stays here, and the command says so rather than guessing what to do with it. */
+export function hereRepo(cwd = process.cwd(), git = gitIn) {
+  const repo = githubRepoOf(git(cwd, ["remote", "get-url", "origin"]))
+  if (!repo) throw new Error("--here needs a checkout whose origin is on GitHub")
+  const branch = git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])
+  if (!branch || branch === "HEAD") throw new Error("--here needs a branch, not a detached HEAD")
+  if (git(cwd, ["status", "--porcelain", "--untracked-files=no"]))
+    throw new Error("commit your changes first: --here hands over the branch as pushed")
+  git(cwd, ["push", "--quiet", "-u", "origin", `HEAD:refs/heads/${branch}`])
+  return `${repo}@${branch}`
+}
+const gitIn = (cwd, args) => {
+  const out = spawnSync("git", args, { cwd, encoding: "utf8" })
+  if (out.status !== 0)
+    throw new Error(`git ${args[0]} failed: ${(out.stderr || out.stdout).trim().slice(-300)}`)
+  return out.stdout.trim()
+}
+
 /** This machine's session key, made once. Only its public half ever leaves the laptop. */
 function sessionKey() {
   const dir = KEY_DIR()
@@ -191,7 +212,7 @@ export async function sessionCommand(cmd, positional, flags, api, { log = consol
       : pickAgent(agents, { agent: positional[0] })
     // `derive code owner/name "message"`, `derive code owner/name`, or `derive code "message"`.
     const named = session && REPO.test(positional[0] ?? "")
-    const repo = session ? (named ? positional[0] : flags.repo) : flags.repo
+    const repo = flags.here ? hereRepo() : named ? positional[0] : flags.repo
     const ask = session ? positional[named ? 1 : 0] : positional[1]
     if (!session && !ask) throw new Error('usage: derive run <agent> "what to do"')
     const task = await api("/v1/jobs", {

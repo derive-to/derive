@@ -117,6 +117,30 @@ The old forms (`runner serve <ctx_id>`, `runner run` with a `dkrun_`, `dksess_` 
 token, `runner install`, `runner doctor`, `derive context`, `derive workflow`) are gone; each
 prints one line pointing at `runner serve --agent`.
 
+## Work in cloud sessions
+
+A cloud agent (machine: Derive) can give each session its own machine, so your laptop only holds
+a terminal. Run ten at once; each keeps its files when it pauses.
+
+```sh
+derive code acme/app "Fix the flaky inbox test"   # Claude Code or Codex on a fresh machine, attached here
+derive code --here                                # push this branch and continue it in the cloud
+derive run Coding "Bump the bundler" --repo acme/app --follow   # a task with no terminal
+derive ls                                         # your sessions and tasks (--team: everyone's)
+derive attach <id>                                # back in; a paused session resumes first
+derive forward <id> 3000                          # the session's dev server on localhost:3000
+derive stop <id>                                  # end it and retire its machine
+```
+
+`derive code` picks the workspace's agent named "Coding" (or the only cloud agent; `--agent`,
+`--codex`, `--claude` choose). The harness runs in tmux on the machine, so closing the terminal
+leaves it working; after 20 minutes detached and quiet it pauses (stopped, files kept, no
+compute) and the next `attach` or message resumes the same conversation. A task with a
+repository checks it out with a short-lived token from a GitHub connection bound to the agent;
+the pull request it opens shows on the task in Derive. Only the person who started a session
+can attach to it. Sessions, scheduled runs, and teammates' tasks share one list under
+Agents → Tasks.
+
 ## Save a secret for an agent
 
 ```bash
