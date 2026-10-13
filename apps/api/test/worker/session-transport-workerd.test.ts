@@ -1,3 +1,4 @@
+import { env } from "cloudflare:test"
 import type { WebSocket as EdgeSocket } from "@cloudflare/workers-types"
 import { Hono } from "hono"
 import { describe, expect, it } from "vitest"
@@ -14,6 +15,36 @@ const closed = (socket: EdgeSocket) =>
   new Promise<void>((resolve) => socket.addEventListener("close", () => resolve(), { once: true }))
 
 describe("SSH relay in workerd", () => {
+  it("keeps the native fetch upgrade alive after caller cancellation and the handshake window", async () => {
+    const transport = workerSessionTransport({
+      dial: (request) => env.SSH_PROVIDER.fetch(request),
+      pair: () => new WebSocketPair(),
+      response(webSocket) {
+        const init = { status: 101, webSocket }
+        return new Response(null, init)
+      },
+    })
+    const controller = new AbortController()
+    const socket = await transport.connect(
+      new Request("https://ortam.test/ssh", {
+        headers: { Upgrade: "websocket" },
+        signal: controller.signal,
+      }),
+    )
+    const echoed = new Promise<Uint8Array | string>((resolve, reject) => {
+      socket.listen({ message: resolve, close: () => reject(new Error("upgraded tunnel closed")) })
+    })
+    void echoed.catch(() => {})
+    try {
+      controller.abort()
+      await new Promise((resolve) => setTimeout(resolve, 16_000))
+      await socket.send(new Uint8Array([0, 255, 128]))
+      expect(await echoed).toEqual(new Uint8Array([0, 255, 128]))
+    } finally {
+      socket.close()
+    }
+  }, 20_000)
+
   it("runs binary traffic through actual upgraded sockets and preserves provider headers", async () => {
     expect(navigator.userAgent).toBe("Cloudflare-Workers")
     const upstream = new WebSocketPair()

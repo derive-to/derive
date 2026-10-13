@@ -1,6 +1,14 @@
 import assert from "node:assert/strict"
 import { spawn, spawnSync } from "node:child_process"
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { createServer as httpServer } from "node:http"
 import { connect, createServer as tcpServer } from "node:net"
 import { tmpdir, userInfo } from "node:os"
@@ -198,6 +206,26 @@ LogLevel VERBOSE
   process.stdout.write(
     "PASS native certificate admission, remote command and private-file cleanup\n",
   )
+
+  const previousTmp = process.env.TMPDIR
+  const literalTmp = join(dir, 'private spaces "quote" \\slash %tokens ${UNSET_SSH_VARIABLE}')
+  mkdirSync(literalTmp)
+  process.env.TMPDIR = literalTmp
+  try {
+    const literal = await makeShell()
+    assert.equal(
+      await literal.shell.run(["-l", username], `printf literal-path > ${quote(marker)}`),
+      0,
+    )
+    assert.equal(readFileSync(marker, "utf8"), "literal-path")
+    literal.assertClean()
+    process.stdout.write(
+      "PASS native SSH with literal spaces, quotes, backslashes and expansion tokens in TMPDIR\n",
+    )
+  } finally {
+    if (previousTmp === undefined) delete process.env.TMPDIR
+    else process.env.TMPDIR = previousTmp
+  }
 
   const persistentHosts = join(dir, "persistent_known_hosts")
   const directCertificate = join(dir, "direct-certificate.pub")

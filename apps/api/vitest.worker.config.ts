@@ -25,6 +25,22 @@ export default defineConfig({
         compatibilityDate: "2025-05-01",
         compatibilityFlags: ["nodejs_compat", "nodejs_compat_populate_process_env"],
         workerLoaders: { LOADER: {} },
+        serviceBindings: { SSH_PROVIDER: "ssh-provider" },
+        workers: [
+          {
+            name: "ssh-provider",
+            compatibilityDate: "2024-11-01",
+            modules: true,
+            script: `export default {
+            fetch(request) {
+              const pair = new WebSocketPair();
+              pair[1].accept();
+              pair[1].addEventListener("message", event => pair[1].send(event.data));
+              return new Response(null, { status: 101, webSocket: pair[0] });
+            }
+          }`,
+          },
+        ],
       },
     }),
   ],

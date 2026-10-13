@@ -550,8 +550,18 @@ describe("cloud session SSH transport", () => {
   const bin = join(import.meta.dirname, "..", "bin", "derive.js")
   const payload = Buffer.from(Array.from({ length: 153_600 }, (_, i) => i % 256))
   const claim = "2026-01-01T00:00:00.000Z"
-  const fixture = async ({ access = {}, peer = "echo", direct = false, hold = false } = {}) => {
+  const fixture = async ({
+    access = {},
+    peer = "echo",
+    direct = false,
+    hold = false,
+    specialPaths = false,
+  } = {}) => {
     const dir = mkdtempSync(join(tmpdir(), "derive-ssh-test-"))
+    const sessionTmp = specialPaths
+      ? join(dir, 'private spaces "quote" \\slash %tokens ${UNSET_SSH_VARIABLE}')
+      : dir
+    mkdirSync(sessionTmp, { recursive: true })
     const key = join(dir, "session_ed25519")
     for (const file of [key, join(dir, "ca")]) {
       const made = spawnSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", file])
@@ -581,10 +591,16 @@ describe("cloud session SSH transport", () => {
       `#!${process.execPath}
 import { writeFileSync, readFileSync, statSync } from 'node:fs'
 import { connect } from 'node:net'
+import { spawnSync } from 'node:child_process'
+import { resolve } from 'node:path'
 const args = process.argv.slice(2)
 const option = prefix => args.find(a => a.startsWith(prefix))?.slice(prefix.length)
-const known = option('UserKnownHostsFile=')
-const certificate = option('CertificateFile=')
+const configuration = spawnSync('/usr/bin/ssh', ['-G', ...args], {encoding:'utf8'})
+if (configuration.status !== 0) { process.stderr.write(configuration.stderr); process.exit(configuration.status ?? 1) }
+const knownOption = option('UserKnownHostsFile=')
+const certificateOption = option('CertificateFile=')
+const known = knownOption && resolve(knownOption)
+const certificate = certificateOption && resolve(certificateOption)
 writeFileSync(process.env.SSH_RECORD, JSON.stringify({ args, known, certificate, hostKey: known && readFileSync(known, 'utf8'), cert: certificate && readFileSync(certificate, 'utf8'), mode: known && (statSync(known).mode & 511), certMode: certificate && (statSync(certificate).mode & 511), dirMode: known && (statSync(known.slice(0, known.lastIndexOf('/'))).mode & 511) }))
 if (process.env.SSH_DIRECT === '1') process.exit(0)
 const expected = Buffer.from(Array.from({length:153600}, (_,i)=>i%256))
@@ -699,6 +715,7 @@ socket.on('end', () => process.exit(7))
             DERIVE_SERVER: url,
             PATH: `${dir}:${process.env.PATH}`,
             SSH_RECORD: record,
+            TMPDIR: sessionTmp,
             SSH_DIRECT: direct ? "1" : "",
             SSH_HOLD: hold ? "1" : "",
           },
@@ -785,6 +802,23 @@ socket.on('end', () => process.exit(7))
         expect(request.headers["x-derive-workspace"]).toBe("org_cli")
         expect(request.headers["x-derive-job-claim"]).toBe(claim)
       }
+    } finally {
+      await f.close()
+    }
+  })
+
+  it("uses literal private paths containing spaces, quotes, backslashes and SSH expansion tokens", async () => {
+    const f = await fixture({ specialPaths: true })
+    try {
+      const result = await f.run().done
+      expect(result.code, result.stderr).toBe(0)
+      const record = JSON.parse(readFileSync(f.record, "utf8"))
+      expect(record.cert.trim()).toBe(f.certificate)
+      expect(record.hostKey).toBe(`derive-session ${f.hostKey}\n`)
+      expect(record.known).toContain('private spaces "quote" \\slash %tokens ${UNSET_SSH_VARIABLE}')
+      expect(existsSync(record.known)).toBe(false)
+      expect(existsSync(record.certificate)).toBe(false)
+      expect(Buffer.concat(f.frames.map((frame) => frame.data))).toEqual(payload)
     } finally {
       await f.close()
     }
