@@ -326,8 +326,8 @@ function detailOf(job: Job, agent: Agent): string | undefined {
   if (job.status === "running" && job.machine_phase === "creating")
     return "Building its own machine from the agent's image…"
   if (job.status === "running" && job.machine_phase === "provisioning")
-    return "Restoring its machine. The first start takes a minute or two."
-  if (job.status === "running" && job.machine_phase === "starting") return "Starting its sandbox…"
+    return "Setting up its machine. The first start takes a minute or two."
+  if (job.status === "running" && job.machine_phase === "starting") return "Waking its machine…"
   if (job.status === "running" && ["ready", "launching"].includes(job.machine_phase ?? ""))
     return "Starting the task…"
   if (job.status === "running" && job.machine_phase === "stopping") return "Saving its files…"
