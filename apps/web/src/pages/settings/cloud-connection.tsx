@@ -16,6 +16,7 @@ export function CloudConnection() {
   const [provider, setProvider] = useState<"boat" | "ortam">("boat")
   const [value, setValue] = useState("")
   const [snapshot, setSnapshot] = useState<string | null>(null)
+  const [environment, setEnvironment] = useState<string | null>(null)
   const invalidate = [["compute-connection"], ["agents"], ["account-login-options"]]
   const connect = useApiMutation({
     mutationFn: () => api.connectCompute(value.trim(), provider),
@@ -27,9 +28,16 @@ export function CloudConnection() {
   })
   const disconnect = useApiMutation({ mutationFn: api.disconnectCompute, invalidate })
   const setup = useApiMutation({
-    mutationFn: () => api.configureCompute(snapshot?.trim() || null),
+    mutationFn: () =>
+      api.configureCompute(
+        snapshot === null ? (connection.data?.snapshot ?? null) : snapshot.trim() || null,
+        environment === null ? (connection.data?.environment ?? null) : environment.trim() || null,
+      ),
     invalidate,
-    onSuccess: () => setSnapshot(null),
+    onSuccess: () => {
+      setSnapshot(null)
+      setEnvironment(null)
+    },
   })
   if (connection.isPending)
     return <p className="text-sm text-muted-foreground">Loading cloud compute…</p>
@@ -111,7 +119,10 @@ export function CloudConnection() {
               {label} account: {cn.account_id}
             </p>
             {cn.provider === "boat" && (
-              <p className="mt-1">Runner snapshot: {cn.snapshot ?? "Plain sandbox"}</p>
+              <div className="mt-1">
+                <p>Runner snapshot: {cn.snapshot ?? "Plain sandbox"}</p>
+                <p>Saved environment: {cn.environment ?? "None"}</p>
+              </div>
             )}
           </details>
         )}
@@ -138,6 +149,22 @@ export function CloudConnection() {
                 disabled={setup.isPending}
                 placeholder="Leave blank for a plain sandbox"
               />
+              <Label htmlFor="boat-environment">Saved Boat environment (optional)</Label>
+              <Input
+                id="boat-environment"
+                data-testid="compute-environment"
+                value={environment ?? cn.environment ?? ""}
+                onChange={(event) => {
+                  setEnvironment(event.target.value)
+                  setup.reset()
+                }}
+                disabled={setup.isPending}
+                placeholder="Leave blank for an isolated environment"
+              />
+              <p className="text-xs text-muted-foreground">
+                A saved environment uses its code, tools, secrets, and logins. Choose only an
+                environment your workspace may use. Leave this blank to keep inherited logins off.
+              </p>
               <p className="text-xs text-muted-foreground">
                 Use your company’s snapshot to include its code and tools. New agents use this
                 setup. Existing agents keep their files. Use only a snapshot this workspace may
@@ -153,7 +180,7 @@ export function CloudConnection() {
                 size="sm"
                 data-testid="compute-runner-save"
                 loading={setup.isPending}
-                disabled={snapshot === null || setup.isPending}
+                disabled={(snapshot === null && environment === null) || setup.isPending}
               >
                 Save setup
               </Button>

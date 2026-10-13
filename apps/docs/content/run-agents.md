@@ -376,3 +376,9 @@ unknown until a task-specific usage receipt is available. Model usage still appe
 
 Codex device sign-in currently runs through Boat. A saved model API key or imported plan login
 can run on either provider. No new server secret or database migration is required.
+
+## Boat snapshots and saved environments
+
+In Settings → Sources → Cloud compute → Runner setup, choose a workspace-owned snapshot. Select a saved Boat environment when the task needs its code and tools. Leave the environment blank for an isolated sandbox without inherited logins. A saved environment includes its secrets and logins. Select only one that this workspace may use.
+
+Boat login cleanup can remove a snapshot checkout and its browser package. A snapshot name alone does not prove those files survive. Sift code reviews use `sift-ready-t3` with `base`. Use that explicit setup for Sift tasks. New agents pin the chosen setup. Resumes retain it. Existing agents keep their earlier sandbox setup. Connect the Codex plan separately. Each task still uses its selected model account.

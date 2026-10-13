@@ -24,6 +24,7 @@ const Connection = z
     account_id: z.string().nullable(),
     can_manage: z.boolean(),
     snapshot: z.string().nullable(),
+    environment: z.string().nullable(),
   })
   .openapi("ComputeConnection")
 const response = {
@@ -45,6 +46,8 @@ export const runtimeConnectionRoutes = (ctx: AppContext) => {
       connected: cn?.status === "active",
       account_id: cn?.status === "active" ? cn.broker_ref : null,
       can_manage: canManage,
+      environment:
+        cn?.toolkit === "boat" ? ((await meta.getOrgSettings(org)).boatEnvironment ?? null) : null,
       snapshot:
         cn?.toolkit === "boat" ? ((await meta.getOrgSettings(org)).boatSnapshot ?? null) : null,
     }
@@ -204,6 +207,14 @@ export const runtimeConnectionRoutes = (ctx: AppContext) => {
                   .max(120)
                   .regex(/^[a-zA-Z0-9_-]+$/)
                   .nullable(),
+                environment: z
+                  .string()
+                  .trim()
+                  .min(1)
+                  .max(120)
+                  .regex(/^[a-zA-Z0-9_-]+$/)
+                  .nullable()
+                  .optional(),
               }),
             },
           },
@@ -220,7 +231,8 @@ export const runtimeConnectionRoutes = (ctx: AppContext) => {
       const cn = await runtimeConnection(meta, org)
       if (cn?.status !== "active" || cn.toolkit !== "boat")
         return bail(fail(c, 409, "Connect boat.dev to choose a Boat snapshot"))
-      await meta.setBoatSnapshot(org, c.req.valid("json").snapshot)
+      const input = c.req.valid("json")
+      await meta.setBoatSnapshot(org, input.snapshot, input.environment)
       return c.json(await view(org, true))
     },
   )

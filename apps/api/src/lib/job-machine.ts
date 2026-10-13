@@ -55,6 +55,7 @@ interface Identity {
 interface SandboxState {
   api_url: string
   snapshot?: string
+  environment?: string
   setup_script?: string
   provider?: "ortam" | "boat"
   connection_id?: string
@@ -118,6 +119,7 @@ const sandboxRequest = (agent: AgentRecord, state: SandboxState, deps: MachineDe
   auto_stop_after_seconds: 1200,
   setup_script: state.setup_script ?? runtimeSetup(deps.config.runnerArchive),
   ...(state.snapshot ? { snapshot: state.snapshot } : {}),
+  ...(state.environment ? { environment: state.environment } : {}),
 })
 
 /** The sandbox keeps cleanup authority even if provider replacement races creation.
@@ -222,6 +224,7 @@ export async function advanceSandbox(
     const auth = await client.authenticate()
     const prior = parse<SandboxState>(agent.sandbox_state_json)
     if (!meta.jobExecution) return null
+    const settings = runtime.provider === "boat" ? await meta.getOrgSettings(agent.org_id) : null
     return meta.jobExecution.reserve({
       agent_id: agent.id,
       org_id: agent.org_id,
@@ -242,7 +245,7 @@ export async function advanceSandbox(
           : {}),
         identity: { organization_id: auth.organization_id, user_id: auth.user_id },
         ...(runtime.provider === "boat"
-          ? { snapshot: (await meta.getOrgSettings(agent.org_id)).boatSnapshot }
+          ? { snapshot: settings?.boatSnapshot, environment: settings?.boatEnvironment }
           : {}),
         generation: newId("sbg"),
         failures: prior?.failures ?? 0,
@@ -485,6 +488,7 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
           `derive-job-${m.turn}-resume`,
           state.identity,
           await environment(),
+          state.environment,
         )
         await move("starting", { resume_op: op.id, active_at: m.active_at ?? at })
         return

@@ -3347,13 +3347,20 @@ export function makeRepos(db: SqliteDb) {
       })
       .run()
   }
-  const setBoatSnapshot = async (orgId: string, snapshot: string | null): Promise<void> => {
-    const patch = JSON.stringify({ boatSnapshot: snapshot })
+  const setBoatSnapshot = async (
+    orgId: string,
+    snapshot: string | null,
+    environment?: string | null,
+  ): Promise<void> => {
+    const patch = JSON.stringify({
+      boatSnapshot: snapshot,
+      ...(environment !== undefined ? { boatEnvironment: environment } : {}),
+    })
     await db
       .insert(orgSettings)
       .values({
         org_id: orgId,
-        settings: JSON.stringify(snapshot ? { boatSnapshot: snapshot } : {}),
+        settings: patch,
       })
       .onConflictDoUpdate({
         target: orgSettings.org_id,

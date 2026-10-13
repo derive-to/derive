@@ -4061,6 +4061,10 @@
           "snapshot": {
             "type": "string",
             "nullable": true
+          },
+          "environment": {
+            "type": "string",
+            "nullable": true
           }
         },
         "required": [
@@ -4069,7 +4073,8 @@
           "connected",
           "account_id",
           "can_manage",
-          "snapshot"
+          "snapshot",
+          "environment"
         ]
       },
       "ContextInfo": {
@@ -10586,6 +10591,13 @@
                 "type": "object",
                 "properties": {
                   "snapshot": {
+                    "type": "string",
+                    "nullable": true,
+                    "minLength": 1,
+                    "maxLength": 120,
+                    "pattern": "^[a-zA-Z0-9_-]+$"
+                  },
+                  "environment": {
                     "type": "string",
                     "nullable": true,
                     "minLength": 1,

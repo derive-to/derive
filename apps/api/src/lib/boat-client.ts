@@ -103,6 +103,7 @@ export class BoatClient implements SandboxClient {
         auto_stop_after_seconds: z.number(),
         env: z.record(z.string(), z.string()).optional(),
         snapshot: z.string().optional(),
+        environment: z.string().optional(),
       })
       .parse(body)
     const { sandbox } = z.object({ sandbox: Box }).parse(
@@ -113,7 +114,7 @@ export class BoatClient implements SandboxClient {
           name: body.name,
           type: body.size,
           ttlSeconds: input.auto_stop_after_seconds,
-          noEnv: true,
+          ...(input.environment ? { environment: input.environment } : { noEnv: true }),
           ...(input.snapshot ? { from: input.snapshot } : {}),
           ...(input.env ? { env: input.env } : {}),
           snapshots: true,
@@ -144,12 +145,21 @@ export class BoatClient implements SandboxClient {
   async sandbox(id: string, identity: Identity) {
     return this.normalize(await this.read(id, identity))
   }
-  async lifecycle(id: string, action: "resume" | "stop", key: string, identity: Identity) {
+  async lifecycle(
+    id: string,
+    action: "resume" | "stop",
+    key: string,
+    identity: Identity,
+    _env?: Record<string, string>,
+    environment?: string,
+  ) {
     await this.read(id, identity)
     await this.request(
       `/sandboxes/${encodeURIComponent(id)}/${action}`,
       "POST",
-      action === "resume" ? { ttlSeconds: 1200, noEnv: true, type: "small" } : {},
+      action === "resume"
+        ? { ttlSeconds: 1200, ...(environment ? { environment } : { noEnv: true }), type: "small" }
+        : {},
       key,
     )
     return op(action, id)

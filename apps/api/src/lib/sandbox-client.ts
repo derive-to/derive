@@ -26,6 +26,7 @@ export interface SandboxCreate {
   auto_stop_after_seconds: number
   setup_script: string
   snapshot?: string
+  environment?: string
   env?: Record<string, string>
 }
 export interface SandboxClient {
@@ -48,6 +49,7 @@ export interface SandboxClient {
     key: string,
     identity: Identity,
     env?: Record<string, string>,
+    environment?: string,
   ): Promise<Operation>
   launch(
     id: string,

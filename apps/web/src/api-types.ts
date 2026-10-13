@@ -5141,6 +5141,7 @@ export interface paths {
                 content: {
                     "application/json": {
                         snapshot: string | null;
+                        environment?: string | null;
                     };
                 };
             };
@@ -8261,6 +8262,7 @@ export interface components {
             account_id: string | null;
             can_manage: boolean;
             snapshot: string | null;
+            environment: string | null;
         };
         ContextInfo: {
             id: string;

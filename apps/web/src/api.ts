@@ -1370,8 +1370,8 @@ export const api = {
   connectCompute: (api_key: string, provider: "boat" | "ortam") =>
     f("/v1/runtime/connection", { ...opts({ api_key, provider }), method: "PUT" }).then(j),
   disconnectCompute: () => f("/v1/runtime/connection", { ...opts(), method: "DELETE" }).then(j),
-  configureCompute: (snapshot: string | null) =>
-    f("/v1/runtime/connection", { ...opts({ snapshot }), method: "PATCH" }).then(j),
+  configureCompute: (snapshot: string | null, environment?: string | null) =>
+    f("/v1/runtime/connection", { ...opts({ snapshot, environment }), method: "PATCH" }).then(j),
   agentRuntime: () =>
     f("/v1/agents/runtime", opts()).then(j) as Promise<
       paths["/v1/agents/runtime"]["get"]["responses"][200]["content"]["application/json"]

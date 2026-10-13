@@ -4380,15 +4380,22 @@ export class PgMetaStore implements MetaStore {
         set: { settings: JSON.stringify(settings) },
       })
   }
-  async setBoatSnapshot(orgId: string, snapshot: string | null): Promise<void> {
-    const patch = JSON.stringify(snapshot ? { boatSnapshot: snapshot } : {})
+  async setBoatSnapshot(
+    orgId: string,
+    snapshot: string | null,
+    environment?: string | null,
+  ): Promise<void> {
+    const patch = JSON.stringify({
+      ...(snapshot ? { boatSnapshot: snapshot } : {}),
+      ...(environment ? { boatEnvironment: environment } : {}),
+    })
     await this.db
       .insert(orgSettings)
       .values({ org_id: orgId, settings: patch })
       .onConflictDoUpdate({
         target: orgSettings.org_id,
         set: {
-          settings: sql`((${orgSettings.settings}::jsonb - 'boatSnapshot') || ${patch}::jsonb)::text`,
+          settings: sql`((${orgSettings.settings}::jsonb - 'boatSnapshot' ${environment !== undefined ? sql`- 'boatEnvironment'` : sql``}) || ${patch}::jsonb)::text`,
         },
       })
   }
