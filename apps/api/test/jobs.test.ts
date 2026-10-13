@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process"
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import type { AddressInfo } from "node:net"
 import { tmpdir } from "node:os"
@@ -2989,7 +2989,11 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     const runTurn = async (
       sandboxId: string,
       answer: string,
-      runSession?: (opts: { args: string[] }) => Promise<string>,
+      runSession?: (opts: {
+        args: string[]
+        env: Record<string, string>
+        cwd: string
+      }) => Promise<string>,
     ) => {
       const env = boat.boxes.get(sandboxId)?.env
       if (!env) throw new Error(`nothing launched on ${sandboxId}`)
@@ -3026,7 +3030,11 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
         // An interactive harness leaves its own session file, named by the id it chose.
         ...(runSession
           ? {
-              runSession: async (opts: { args: string[]; env: Record<string, string> }) => {
+              runSession: async (opts: {
+                args: string[]
+                env: Record<string, string>
+                cwd: string
+              }) => {
                 const day = join(opts.env.CODEX_HOME ?? "", "sessions", "2026", "10", "13")
                 mkdirSync(day, { recursive: true })
                 writeFileSync(
@@ -3130,10 +3138,19 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
 
     // The runner starts the harness interactively with the task's model and effort.
     let first: string[] = []
-    await runTurn(box, "", async ({ args }) => {
+    let home: Record<string, string> = {}
+    await runTurn(box, "", async ({ args, env, cwd }) => {
       first = args
+      // The private model home answers the interactive harness's first-run questions.
+      home = {
+        auth: readFileSync(join(env.CODEX_HOME ?? "", "auth.json"), "utf8"),
+        config: readFileSync(join(env.CODEX_HOME ?? "", "config.toml"), "utf8"),
+        cwd,
+      }
       return "idle"
     })
+    expect(JSON.parse(home.auth ?? "{}")).toEqual({ OPENAI_API_KEY: "sk-codex-0001234" })
+    expect(home.config).toContain(`[projects.${JSON.stringify(home.cwd)}]\ntrust_level = "trusted"`)
     expect(first.slice(0, 5)).toEqual([
       "--dangerously-bypass-approvals-and-sandbox",
       "-m",

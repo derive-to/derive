@@ -7,6 +7,8 @@
 // it gives the run a durable action receipt (commands, file changes, MCP calls, plan updates)
 // while leaving the final answer contract provider-agnostic.
 import { spawn } from "node:child_process"
+import { appendFileSync, existsSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import { clipped, safeCommand, terminateProcess } from "./process.js"
 
 const ACTION_TYPES = new Set([
@@ -231,6 +233,19 @@ export const codex = {
     ]
     if (resumeSessionId) return ["resume", ...flags, resumeSessionId, ...(prompt ? [prompt] : [])]
     return [...flags, `${systemPrompt}\n\n---\n\n${prompt ?? ""}`.trimEnd()]
+  },
+
+  /** The interactive Codex reads its login only from `auth.json` (CODEX_API_KEY is for
+   *  `exec`), and asks before trusting a folder. The task's private home answers both. */
+  prepareSession({ home, cwd, env }) {
+    if (!home) return
+    const auth = join(home, "auth.json")
+    if (!existsSync(auth) && env?.CODEX_API_KEY)
+      writeFileSync(auth, JSON.stringify({ OPENAI_API_KEY: env.CODEX_API_KEY }), { mode: 0o600 })
+    appendFileSync(
+      join(home, "config.toml"),
+      `\n[projects.${JSON.stringify(cwd)}]\ntrust_level = "trusted"\n`,
+    )
   },
 
   /** Without a structured api status, a nonzero exit that produced no output is

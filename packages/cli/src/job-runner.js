@@ -424,6 +424,7 @@ async function serveSession(
   const resumeSessionId = turn?.previous?.session_id ?? null
   const prompt = resumeSessionId && turn?.body_md === SESSION_RESUME ? null : turn?.body_md
   const args = provider.sessionArgs({ model, effort, systemPrompt, prompt, resumeSessionId })
+  provider.prepareSession?.({ home, cwd, env })
   const ended = await start({ bin, args, cwd, env, signal })
   meter.sessionId = latestSessionId(home, providerName) ?? resumeSessionId
   if (ended === "stopped") return { ok: false, error: "The session was stopped.", retryable: false }

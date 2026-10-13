@@ -6,6 +6,8 @@
 // ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN from the inherited env, so a plan
 // token "just works" through the sanctioned client, no reimplementation here.
 import { spawn } from "node:child_process"
+import { existsSync, readFileSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import { safeCommand, terminateProcess } from "./process.js"
 
 /** Log one stream event; returns the assistant text it carried (if any), which
@@ -213,15 +215,41 @@ export const claudeCode = {
 
   /** Arguments for an interactive session in a terminal. The person at the terminal approves
    *  nothing: the cloud machine is the boundary, as for a headless turn. */
-  sessionArgs({ model, systemPrompt, prompt, resumeSessionId }) {
+  sessionArgs({ model, effort, systemPrompt, prompt, resumeSessionId }) {
     return [
       "--dangerously-skip-permissions",
       "--append-system-prompt",
       systemPrompt,
       ...(model ? ["--model", model] : []),
+      ...(effort ? ["--effort", effort] : []),
       ...(resumeSessionId ? ["--resume", resumeSessionId] : []),
       ...(prompt ? [prompt] : []),
     ]
+  },
+
+  /** A fresh Claude home stops an interactive session at first-run screens (theme, the
+   *  bypass-mode warning, folder trust, approving an API key from the environment) before the
+   *  task's prompt is sent. The task's private home answers them up front. */
+  prepareSession({ home, cwd, env }) {
+    if (!home) return
+    const file = join(home, ".claude.json")
+    const prior = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {}
+    const key = env?.ANTHROPIC_API_KEY
+    writeFileSync(
+      file,
+      JSON.stringify({
+        ...prior,
+        hasCompletedOnboarding: true,
+        theme: prior.theme ?? "dark",
+        bypassPermissionsModeAccepted: true,
+        ...(key ? { customApiKeyResponses: { approved: [key.slice(-20)], rejected: [] } } : {}),
+        projects: {
+          ...prior.projects,
+          [cwd]: { hasTrustDialogAccepted: true, hasCompletedProjectOnboarding: true },
+        },
+      }),
+      { mode: 0o600 },
+    )
   },
 
   /** Is this run worth a second attempt? Only when the SERVICE failed, never
