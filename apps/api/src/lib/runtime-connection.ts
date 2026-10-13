@@ -82,6 +82,8 @@ export const cloudEnabled = async (
   const cn = await runtimeConnection(meta, org)
   if (cn) return cn.status === "active"
   return (
-    config.provider !== "boat" && !!config.managed?.apiKey && config.managed.workspaceIds.has(org)
+    config.provider !== "boat" &&
+    !!config.managed?.apiKey &&
+    (config.managed.workspaceIds.has("*") || config.managed.workspaceIds.has(org))
   )
 }

@@ -455,7 +455,7 @@ const CONFIG_VARS: ConfigVar[] = [
   {
     name: "DERIVE_MANAGED_RUNS_ALLOWLIST",
     group: "advanced",
-    doc: "Workspace IDs whose agents may run on a Derive machine, comma-separated. Empty keeps\nthem off.",
+    doc: "Workspace IDs whose agents may run on a Derive machine, comma-separated; `*` allows\nevery workspace. Empty keeps them off. A workspace with its own sandbox connection uses that.",
     active: true,
   },
   {

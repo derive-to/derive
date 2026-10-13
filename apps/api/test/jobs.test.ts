@@ -21,6 +21,7 @@ import { purgeUserDataAndSyncSeats } from "../src/lib/account"
 import type { ModelTurn } from "../src/lib/agent-loop"
 import { signCapabilityToken } from "../src/lib/capability-token"
 import { encryptSecret } from "../src/lib/crypto"
+import { workspaceIdsFromEnv } from "../src/lib/env"
 import { advanceGraph, graphAware, graphPass } from "../src/lib/job-graph"
 import { machineDepsFrom, machinePass } from "../src/lib/job-machine"
 import { HELD_FOR_BUDGET, jobTick, OWNER_LEFT } from "../src/lib/jobs"
@@ -3459,6 +3460,22 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
         "boat.dev would not start a machine: Add a payment method to keep starting sandboxes.",
       retryable: false,
     })
+  })
+
+  it("a managed allowlist of * gives every workspace Derive machines on the deployment's key", async () => {
+    const runtime = {
+      provider: "ortam" as const,
+      apiUrl: "https://api.ortam.dev/v1",
+      runnerPath: "/opt/derive/bin/derive.js",
+      limits: { global: 100, workspace: 20 },
+      managed: { apiKey: "x".repeat(20), workspaceIds: workspaceIdsFromEnv("*") },
+    }
+    const { app } = await setup("jobs-machine-managed-all", { runtime })
+    const made = await app.request(
+      "/v1/agents",
+      jsonAs(as(owner.email), { name: "Anywhere", machine: "derive", provider: "codex" }),
+    )
+    expect(made.status).toBe(201)
   })
 
   it("the workspace machine limit holds the next task until a machine frees", async () => {
