@@ -3611,9 +3611,13 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
     })
     const deps = {
       ...fixture.deps,
-      config: { ...fixture.deps.config, runnerArchive: "https://derive.test/new-runner.tgz" },
+      config: {
+        ...fixture.deps.config,
+        runnerArchive: { url: "https://derive.test/new-runner.tgz", sha256: "a".repeat(64) },
+      },
       now: () => new Date(Date.parse(state.create_submitted_at) + 60_000),
     }
+    fixture.provisioning.ready = true
     for (let i = 0; i < 6; i++) {
       const agent = await fixture.meta.getAgent(fixture.agent.id)
       if (!agent || agent.sandbox_phase === null) break
@@ -3678,7 +3682,10 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
     await advanceMachineJob(
       {
         ...fixture.deps,
-        config: { ...fixture.deps.config, runnerArchive: "https://derive.test/new-runner.tgz" },
+        config: {
+          ...fixture.deps.config,
+          runnerArchive: { url: "https://derive.test/new-runner.tgz", sha256: "a".repeat(64) },
+        },
         now: () => new Date(Date.parse(machine.own.create_submitted_at) + 60_000),
       },
       first,
