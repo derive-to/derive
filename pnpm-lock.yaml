@@ -441,8 +441,8 @@ importers:
   packages/core:
     dependencies:
       '@aniraga/open-artifact-protocol':
-        specifier: file:../../vendor/aniraga-open-artifact-protocol-0.6.0-core.3.tgz
-        version: file:vendor/aniraga-open-artifact-protocol-0.6.0-core.3.tgz
+        specifier: file:../../vendor/aniraga-open-artifact-protocol-0.6.0-core.4.tgz
+        version: file:vendor/aniraga-open-artifact-protocol-0.6.0-core.4.tgz
       '@derive/facts':
         specifier: workspace:*
         version: link:../facts
@@ -604,9 +604,9 @@ packages:
     resolution: {integrity: sha512-tbHKNLirllUNF3ZlkCsXnwab2ZV1Sl4b1H/Cp9ruCce15IBmskE8Gwkk0yo9xDWY+jho2of7lVXtwSsyrq7cwQ==}
     engines: {node: '>=22'}
 
-  '@aniraga/open-artifact-protocol@file:vendor/aniraga-open-artifact-protocol-0.6.0-core.3.tgz':
-    resolution: {integrity: sha512-ORjQkByyMB2Drm0djMeM1Aj55e6Y8Z6acCu23CSgmEJvJWzrgY5xqMQ6NQplV5c1ygg4vfmMw8UFJ3d7LAITrA==, tarball: file:vendor/aniraga-open-artifact-protocol-0.6.0-core.3.tgz}
-    version: 0.6.0-core.3
+  '@aniraga/open-artifact-protocol@file:vendor/aniraga-open-artifact-protocol-0.6.0-core.4.tgz':
+    resolution: {integrity: sha512-J823wPjBENA5aBJwsdTcdNIDYNvsO7crDMwMtrZU+H7crfckTENCRlMl5gatlvQtTfVtC1nQoLFyHkxNHX9hmQ==, tarball: file:vendor/aniraga-open-artifact-protocol-0.6.0-core.4.tgz}
+    version: 0.6.0-core.4
     engines: {node: '>=20'}
 
   '@antfu/install-pkg@2.1.0':
@@ -8205,7 +8205,7 @@ snapshots:
     dependencies:
       json-schema: 0.4.0
 
-  '@aniraga/open-artifact-protocol@file:vendor/aniraga-open-artifact-protocol-0.6.0-core.3.tgz':
+  '@aniraga/open-artifact-protocol@file:vendor/aniraga-open-artifact-protocol-0.6.0-core.4.tgz':
     dependencies:
       zod: 4.6.5
 
