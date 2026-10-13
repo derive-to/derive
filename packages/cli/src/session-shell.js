@@ -74,7 +74,7 @@ export async function sessionShell(access, { key, id, openSshTunnel }) {
     const ssh = [
       ...(access.host_key ? ["-F", "/dev/null"] : []),
       "-i",
-      resolve(key),
+      access.host_key ? resolve(key) : key,
       "-o",
       "BatchMode=yes",
       "-o",
