@@ -78,11 +78,7 @@ export function registerAgentsTool(tc: ToolContext): void {
         machine: z.enum(["owner", "derive"]).optional(),
         provider: z.enum(["claude-code", "codex"]).optional(),
         model: z.string().nullable().optional(),
-        effort: z
-          .enum(EXECUTION_EFFORTS)
-          .nullable()
-          .optional()
-          .describe("Harness reasoning level; null is its default."),
+        effort: z.enum(EXECUTION_EFFORTS).nullable().optional(),
         sandbox: z
           .object({
             snapshot: z.string().optional(),
@@ -91,10 +87,7 @@ export function registerAgentsTool(tc: ToolContext): void {
             fresh: z.boolean().optional(),
             check: z.string().optional(),
           })
-          .optional()
-          .describe(
-            "Machine for Derive jobs: snapshot, environment (provider environment with its secrets; owner only), size, fresh (new machine per task), check (command run before the model; failure spends no tokens). {} clears.",
-          ),
+          .optional(),
         schedule: ScheduleArg,
         sources: z.array(z.string()).optional().describe("Connection ids."),
         environment: z
