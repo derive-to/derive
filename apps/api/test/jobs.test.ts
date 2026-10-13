@@ -3285,6 +3285,36 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
       reason: "Bind a GitHub connection for acme-dev to this agent to work in acme-dev/widgets.",
       retryable: false,
     })
+    // From a laptop: `derive show` says where it ran, its repository and why it stopped, and
+    // `derive send` follows up on it.
+    const cli = sessionApi({
+      server: "http://derive.test",
+      token: null,
+      workspaceId: null,
+      fetcher: (url: RequestInfo | URL, init?: RequestInit) =>
+        Promise.resolve(
+          app.request(String(url), {
+            ...init,
+            headers: { ...(init?.headers as Record<string, string>), ...as(ed.email) },
+          }),
+        ),
+    })
+    const printed: string[] = []
+    const log = vi
+      .spyOn(console, "log")
+      .mockImplementation((line) => void printed.push(String(line)))
+    expect(await sessionCommand("show", [job.id.slice(-6)], {}, cli)).toBe(0)
+    log.mockRestore()
+    const shown = printed.join("\n")
+    expect(shown).toMatch(/runs on\s+Derive cloud/)
+    expect(shown).toMatch(/repository\s+acme-dev\/widgets@main/)
+    expect(shown).toMatch(/failed\s+Bind a GitHub connection for acme-dev/)
+    expect(
+      await sessionCommand("send", [job.id.slice(-6), "Try again with the token"], {}, cli, {
+        log: () => {},
+      }),
+    ).toBe(0)
+    expect((await meta.listJobMessages(job.id)).at(-1)?.body_md).toBe("Try again with the token")
     // A team's own box takes repository tasks too; interactive sessions stay on Derive machines.
     const box = await createAgent(app, { provider: "codex" })
     const onBox = await app.request(

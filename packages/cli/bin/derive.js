@@ -210,6 +210,7 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "--claude") flags.claude = "true"
   else if (a === "--team") flags.team = "true"
   else if (a === "--follow") flags.follow = "true"
+  else if (a === "--interrupt") flags.interrupt = "true"
   else if (a === "--here") flags.here = "true"
   // Repeatable: `--env-file a --env-file b` stacks (equivalent to --env-file a,b).
   else if (a === "--env-file")
@@ -1013,7 +1014,7 @@ if (cmd === "runner") {
 }
 
 // ---- Cloud sessions (code / run / ls / attach / forward / stop) ------------
-if (["code", "run", "ls", "attach", "forward", "stop"].includes(cmd)) {
+if (["code", "run", "ls", "attach", "forward", "stop", "send", "follow", "show"].includes(cmd)) {
   let cfg = null
   try {
     cfg = loadConfig(".")
@@ -2115,6 +2116,9 @@ if (cmd !== "publish") {
   derive run <agent> "ask" [--repo owner/name[@ref] | --here] [--follow]   start a cloud task
   derive ls [--team] [--json]              your cloud sessions and tasks (--team: everyone's)
   derive attach <task>                     reattach to a session (resumes a paused one)
+  derive send <task> "msg" [--interrupt]   follow up on a task (--interrupt stops its turn)
+  derive follow <task>                     stream a task's actions and answers until it settles
+  derive show <task>                       where it runs, its repository, branch, PR, activity
   derive forward <task> <port>[:<local>]   open a session's dev server on localhost
   derive stop <task>                       stop a task and retire its machine
   derive runner serve|once --agent <id>    work an agent's jobs on this machine (\`derive runner\` for flags)
