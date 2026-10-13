@@ -2869,7 +2869,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     const operation = (command: string) => /operations\/([a-f0-9]{64})/.exec(command)?.[1] ?? ""
     const calls: string[] = []
     // Starts boat.dev refuses next, as a plan's start limit does.
-    const limited = { starts: 0 }
+    const limited = { starts: 0, refusals: 0 }
     let next = 0
     const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input))
@@ -2879,6 +2879,10 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
       const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200 })
       if (path === "/me") return json({ user: { id: "boat-user" } })
       if (path === "/sandboxes" && method === "POST") {
+        if (limited.refusals > 0) {
+          limited.refusals--
+          return new Response(null, { status: 422 })
+        }
         if (limited.starts > 0) {
           limited.starts--
           return new Response(
@@ -3364,6 +3368,22 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     expect(boat.calls.filter((c) => c.startsWith("create"))).toHaveLength(1)
   })
 
+  it("releases a refused shared create after a provider rate limit proved no allocation", async () => {
+    const { app, meta, boat, pass } = await cloudSetup("jobs-machine-shared-rate-refusal")
+    const agent = await createAgent(app, { machine: "derive", provider: "codex" })
+    boat.limited.starts = 1
+    await ask(app, ed.email, agent.id, "Fix the copy")
+    const waiting = await meta.getAgent(agent.id)
+    expect(waiting?.sandbox_phase).toBe("creating")
+    expect(JSON.parse(waiting?.sandbox_state_json ?? "{}").create_submitted_at).toBeUndefined()
+    boat.limited.refusals = 1
+    await pass()
+    const after = await meta.getAgent(agent.id)
+    expect(after?.sandbox_phase).toBe("failed")
+    expect(JSON.parse(after?.sandbox_state_json ?? "{}").create_problem).toBeUndefined()
+    expect(boat.calls.filter((call) => call.startsWith("create"))).toHaveLength(0)
+  })
+
   it("the workspace machine limit holds the next task until a machine frees", async () => {
     const { app, meta, pass, runTurn, boat } = await cloudSetup("jobs-machine-limit", {
       global: 100,
@@ -3573,7 +3593,9 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
       reserveOnly: true,
       fresh: false,
     })
-    await machinePass(fixture.deps, { maxRequests: 400, maxTransitions: 1 })
+    const unreserved = await fixture.meta.getAgent(fixture.agent.id)
+    if (!unreserved) throw new Error("missing unreserved agent")
+    await advanceSandbox(fixture.deps, unreserved, ed.id)
     const first = await fixture.meta.getAgent(fixture.agent.id)
     if (!first) throw new Error("missing shared agent")
     expect(first.sandbox_phase).toBe("creating")
@@ -3608,7 +3630,9 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
       reserveOnly: true,
       fresh: false,
     })
-    await machinePass(fixture.deps, { maxRequests: 400, maxTransitions: 1 })
+    const unreserved = await fixture.meta.getAgent(fixture.agent.id)
+    if (!unreserved) throw new Error("missing unreserved agent")
+    await advanceSandbox(fixture.deps, unreserved, ed.id)
     const first = await fixture.meta.getAgent(fixture.agent.id)
     if (!first) throw new Error("missing shared agent")
     const state = JSON.parse(first.sandbox_state_json ?? "{}")
@@ -3697,6 +3721,33 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
     expect((await fixture.meta.getJob(fixture.job.id))?.machine_phase).toBe("released")
     expect(fixture.creates).toHaveLength(2)
     expect(fixture.creates[1]).toEqual(fixture.creates[0])
+    expect(fixture.launches).toHaveLength(0)
+  })
+
+  it("settles the turn deadline while a submitted create operation is still queued", async () => {
+    const fixture = await cloudSetup("jobs-ortam-create-deadline-queued", 2700, {
+      reserveOnly: true,
+    })
+    await fixture.until("creating")
+    fixture.provisioning.ready = false
+    await attemptCreate(fixture)
+    const first = await fixture.meta.getJob(fixture.job.id)
+    if (!first) throw new Error("missing provisioning job")
+    expect(first.machine_phase).toBe("provisioning")
+    const machine = JSON.parse(first.machine_json ?? "{}")
+    const deps = { ...fixture.deps, now: () => new Date(Date.parse(machine.deadline_at) + 1) }
+    await advanceMachineJob(deps, first)
+    const queued = await fixture.meta.getJob(fixture.job.id)
+    expect(queued?.status).not.toBe("running")
+    expect(queued?.machine_phase).toBe("provisioning")
+    expect(JSON.parse(queued?.machine_json ?? "{}").own.sandbox_id).toBe("sbx")
+    fixture.provisioning.ready = true
+    for (let i = 0; i < 6; i++) {
+      const current = await fixture.meta.getJob(fixture.job.id)
+      if (!current || current.machine_phase === "released") break
+      await advanceMachineJob(deps, current)
+    }
+    expect((await fixture.meta.getJob(fixture.job.id))?.machine_phase).toBe("released")
     expect(fixture.launches).toHaveLength(0)
   })
 
