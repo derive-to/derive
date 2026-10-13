@@ -34,6 +34,8 @@ export interface SandboxCreate {
 export interface SandboxMachine {
   size?: SandboxCreate["size"]
   environment?: string
+  /** Provider stop timer for the resumed turn. */
+  ttl_seconds?: number
 }
 export interface SandboxClient {
   authenticate(): Promise<Identity>

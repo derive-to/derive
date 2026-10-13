@@ -12,6 +12,7 @@ import {
   JobClient,
   jobDrainPass,
   loadJobRunnerConfig,
+  runOneJob,
   serveJob,
 } from "../../../packages/cli/src/job-runner.js"
 import type { AppDeps } from "../src/context"
@@ -20,6 +21,7 @@ import type { ModelTurn } from "../src/lib/agent-loop"
 import { signCapabilityToken } from "../src/lib/capability-token"
 import { encryptSecret } from "../src/lib/crypto"
 import { advanceGraph, graphAware, graphPass } from "../src/lib/job-graph"
+import { machineDepsFrom, machinePass } from "../src/lib/job-machine"
 import { HELD_FOR_BUDGET, jobTick, OWNER_LEFT } from "../src/lib/jobs"
 import { catalogOf } from "../src/lib/model-catalog"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
@@ -2841,5 +2843,251 @@ describe("jobs: graphs (a workflow on an agent's instructions page)", () => {
     expect(done?.status).toBe("failed")
     const last = (await meta.listJobMessages(asked.id)).at(-1)?.body_md
     expect(last).toMatch(/limit of 2 tries/)
+  })
+})
+
+// Derive machines need the Postgres execution store; `pnpm test:pg` runs these.
+describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on boat.dev", () => {
+  /** boat.dev as the BoatClient sees it: sandboxes that come up, stop, resume, and run the
+   *  launched runner as a detached command whose state the test drives. */
+  const fakeBoat = () => {
+    const boxes = new Map<
+      string,
+      { state: string; stopped: boolean; env?: Record<string, string> }
+    >()
+    // The runner's state per launch, keyed by its operation directory, as the runner's marker is.
+    const launches = new Map<string, { box: string; state: "running" | "exited" }>()
+    const operation = (command: string) => /operations\/([a-f0-9]{64})/.exec(command)?.[1] ?? ""
+    const calls: string[] = []
+    let next = 0
+    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input))
+      const path = url.pathname.replace("/api/v1", "")
+      const method = init?.method ?? "GET"
+      const body = init?.body ? JSON.parse(String(init.body)) : {}
+      const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200 })
+      if (path === "/me") return json({ user: { id: "boat-user" } })
+      if (path === "/sandboxes" && method === "POST") {
+        const id = `bx_${++next}`
+        boxes.set(id, { state: "idle", stopped: false })
+        calls.push(`create ${id} ${body.from ?? "-"} ${body.type}`)
+        return json({ sandbox: { id, state: "provisioned" } })
+      }
+      const [, , id, action] = path.split("/")
+      const box = id ? boxes.get(id) : undefined
+      if (!id || !box) return new Response("{}", { status: 404 })
+      const sandbox = () => ({
+        id,
+        state: box.stopped ? "archived" : box.state,
+        setupStatus: "done",
+        hydrated: true,
+        archiveAfter: new Date(Date.now() + 1800_000).toISOString(),
+        ...(box.stopped ? { stop: { id: `stop-${id}`, status: "completed" } } : {}),
+      })
+      if (!action) return json({ sandbox: sandbox() })
+      if (action === "stop") {
+        calls.push(`stop ${id}`)
+        box.stopped = true
+        return json({})
+      }
+      if (action === "resume") {
+        calls.push(`resume ${id}`)
+        box.stopped = false
+        return json({})
+      }
+      if (action === "files") {
+        box.env = JSON.parse(body.content)
+        return json({ success: true })
+      }
+      if (action === "commands") {
+        if (body.detached) {
+          launches.set(operation(body.command), { box: id, state: "running" })
+          return json({ processId: 1, success: true })
+        }
+        return json({
+          success: true,
+          stdout: body.command.includes("claim")
+            ? (launches.get(operation(body.command))?.state ?? "starting")
+            : "",
+        })
+      }
+      if (action === "usage")
+        return json({ sandboxId: id, seconds: 30, dollars: 0.0006, running: false })
+      return new Response("{}", { status: 404 })
+    }) as typeof fetch
+    /** The runner process on a sandbox finished (its newest launch). */
+    const exit = (id: string) => {
+      const last = [...launches.values()].filter((l) => l.box === id).at(-1)
+      if (last) last.state = "exited"
+    }
+    return { fetcher, boxes, calls, exit }
+  }
+
+  const harness = join(mkdtempSync(join(tmpdir(), "derive-machine-codex-")), "codex")
+  writeFileSync(harness, "#!/bin/sh\nprintf 'codex-cli 0.162.1\\n'\n")
+  chmodSync(harness, 0o755)
+
+  const cloudSetup = async (name: string, limits = { global: 100, workspace: 20 }) => {
+    const boat = fakeBoat()
+    const runtime = {
+      provider: "boat" as const,
+      apiUrl: "https://boat.dev/api/v1",
+      runnerPath: "/opt/derive/bin/derive.js",
+      limits,
+    }
+    const made = await setup(name, {
+      runtime,
+      runtimeFetch: boat.fetcher,
+      baseUrl: "http://derive.test",
+    })
+    const { app, meta } = made
+    expect(
+      (
+        await app.request(
+          "/v1/runtime/connection",
+          jsonAs(as(owner.email), { api_key: "boat_key_0001234", provider: "boat" }, "PUT"),
+        )
+      ).status,
+    ).toBe(200)
+    await app.request(
+      "/v1/accounts",
+      jsonAs(as(owner.email), {
+        provider: "codex",
+        kind: "api_key",
+        secret: "sk-codex-0001234",
+        shared: true,
+      }),
+    )
+    const deps = machineDepsFrom(meta, {
+      secret: "test-encryption-key",
+      server: "http://derive.test",
+      config: runtime,
+      fetcher: boat.fetcher,
+    })
+    if (!deps) throw new Error("no machine deps")
+    const pass = () => machinePass(deps, { maxRequests: 400, maxTransitions: 200 })
+    /** Run passes until the job's machine reaches `phase` (or fail after a few). */
+    const until = async (jobId: string, phase: string) => {
+      for (let i = 0; i < 8; i++) {
+        if ((await meta.getJob(jobId))?.machine_phase === phase) return
+        await pass()
+      }
+      expect((await meta.getJob(jobId))?.machine_phase).toBe(phase)
+    }
+    /** Act as the runner the machine launched: claim the job with its token and report. */
+    const runTurn = async (sandboxId: string, answer: string) => {
+      const env = boat.boxes.get(sandboxId)?.env
+      if (!env) throw new Error(`nothing launched on ${sandboxId}`)
+      const cfg = {
+        ...loadJobRunnerConfig(
+          {},
+          {
+            token: env.DERIVE_TOKEN,
+            agent: "from-job",
+            server: "http://derive.test",
+            "agent-bin": harness,
+          },
+        ),
+        localLogin: false,
+        jobId: env.DERIVE_JOB_ID,
+      }
+      const client = new JobClient(cfg, (url, init) => Promise.resolve(app.request(url, init)))
+      const out = await runOneJob(cfg, client, {
+        // A model turn as Codex leaves it: an answer plus its session file in CODEX_HOME,
+        // which the runner checkpoints so the next turn continues the conversation.
+        runAgent: async (
+          _p: unknown,
+          opts: { env: Record<string, string>; meter: { sessionId?: string } },
+        ) => {
+          const day = join(opts.env.CODEX_HOME ?? "", "sessions", "2026", "10", "13")
+          mkdirSync(day, { recursive: true })
+          writeFileSync(
+            join(day, `rollout-1-${sandboxId}-thread.jsonl`),
+            `{"answer":"${answer}"}\n`,
+          )
+          opts.meter.sessionId = `${sandboxId}-thread`
+          return { ok: true, answer: { body_md: answer, escalate: false } }
+        },
+      })
+      boat.exit(sandboxId)
+      return out
+    }
+    return { ...made, boat, pass, until, runTurn }
+  }
+
+  it("a fresh agent gives each task its own machine: parallel, parked between turns, resumed, retired on stop", async () => {
+    const { app, meta, boat, until, runTurn } = await cloudSetup("jobs-machine-own")
+    const agent = await createAgent(app, {
+      machine: "derive",
+      provider: "codex",
+      sandbox: { snapshot: "team-image", size: "large", fresh: true },
+    })
+    const a = (await (await ask(app, ed.email, agent.id, "Fix the inbox copy")).json()) as {
+      id: string
+    }
+    const b = (await (await ask(app, ed.email, agent.id, "Bump the bundler")).json()) as {
+      id: string
+    }
+    await until(a.id, "running")
+    await until(b.id, "running")
+    // Two tasks on one agent run at once, each on its own large machine from the snapshot.
+    expect(boat.calls.filter((c) => c.startsWith("create"))).toEqual([
+      "create bx_1 team-image large",
+      "create bx_2 team-image large",
+    ])
+    const jobA = await meta.getJob(a.id)
+    const jobB = await meta.getJob(b.id)
+    expect([jobA?.machine_phase, jobB?.machine_phase]).toEqual(["running", "running"])
+    const sandboxOf = (job: typeof jobA) => JSON.parse(job?.machine_json ?? "{}").own.sandbox_id
+    const boxA = sandboxOf(jobA)
+    const boxB = sandboxOf(jobB)
+
+    expect(await runTurn(boxA, "Inbox copy fixed")).toBe("succeeded")
+    expect(await runTurn(boxB, "Bundler bumped")).toBe("succeeded")
+    await until(a.id, "parked")
+    await until(b.id, "parked")
+    // Finished turns park their machines: stopped, files kept, no compute held.
+    expect((await meta.getJob(a.id))?.machine_phase).toBe("parked")
+    expect(boat.boxes.get(boxA)?.stopped).toBe(true)
+
+    // A follow-up resumes the same machine instead of building a new one.
+    await app.request(
+      `/v1/jobs/${a.id}/messages`,
+      jsonAs(as(ed.email), { body_md: "Also the empty state" }),
+    )
+    await until(a.id, "running")
+    expect(boat.calls).toContain(`resume ${boxA}`)
+    expect(boat.calls.filter((c) => c.startsWith("create"))).toHaveLength(2)
+    expect(await runTurn(boxA, "Empty state too")).toBe("succeeded")
+    await until(a.id, "parked")
+
+    // Stopping a task for good retires its parked machine.
+    await app.request(`/v1/jobs/${b.id}/cancel`, { method: "POST", headers: as(ed.email) })
+    await until(b.id, "released")
+    const usage = JSON.parse((await meta.getJob(a.id))?.result_json ?? "{}").compute
+    expect(usage).toHaveLength(2)
+  })
+
+  it("the workspace machine limit holds the next task until a machine frees", async () => {
+    const { app, meta, pass, runTurn, boat } = await cloudSetup("jobs-machine-limit", {
+      global: 100,
+      workspace: 1,
+    })
+    const agent = await createAgent(app, {
+      machine: "derive",
+      provider: "codex",
+      sandbox: { fresh: true },
+    })
+    const a = (await (await ask(app, ed.email, agent.id, "One")).json()) as { id: string }
+    const b = (await (await ask(app, ed.email, agent.id, "Two")).json()) as { id: string }
+    for (let i = 0; i < 4; i++) await pass()
+    expect((await meta.getJob(a.id))?.machine_phase).toBe("running")
+    expect((await meta.getJob(b.id))?.status).toBe("queued")
+    await runTurn("bx_1", "done")
+    for (let i = 0; i < 4; i++) await pass()
+    // A parked machine holds no compute, so the waiting task starts.
+    expect((await meta.getJob(a.id))?.machine_phase).toBe("parked")
+    expect((await meta.getJob(b.id))?.machine_phase).toBe("running")
+    expect(boat.calls.filter((c) => c.startsWith("create"))).toHaveLength(2)
   })
 })

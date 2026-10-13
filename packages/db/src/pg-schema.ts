@@ -1576,7 +1576,9 @@ export const buildPgSchemaStatements = (): string[] => {
     ...ddl.addColumns,
     ...ddl.createIndexes,
     ...PERF_INDEXES,
-    "CREATE INDEX IF NOT EXISTS job_machine_capacity ON job (org_id) WHERE machine_phase IS NOT NULL AND machine_phase <> 'released'",
+    "DROP INDEX IF EXISTS job_machine_capacity",
+    "CREATE INDEX IF NOT EXISTS job_machine_active ON job (org_id) WHERE machine_phase IS NOT NULL AND machine_phase NOT IN ('released', 'parked')",
+    "CREATE INDEX IF NOT EXISTS job_machine_parked ON job (updated_at) WHERE machine_phase = 'parked'",
     "CREATE INDEX IF NOT EXISTS agent_compute_capacity ON agent (org_id) WHERE sandbox_phase IN ('creating', 'provisioning', 'stopping', 'deleting')",
     ...ARTIFACT_SEARCH_PG,
     // A Derive thread mirrors into every subscribed channel, so slack_thread_link is keyed

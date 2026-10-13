@@ -458,6 +458,18 @@ const CONFIG_VARS: ConfigVar[] = [
     doc: "Workspace IDs whose agents may run on a Derive machine, comma-separated. Empty keeps\nthem off.",
     active: true,
   },
+  {
+    name: "DERIVE_MACHINE_LIMIT",
+    group: "advanced",
+    doc: "Derive machines that may hold compute at once across this deploy. Default 100.",
+    example: "100",
+  },
+  {
+    name: "DERIVE_WORKSPACE_MACHINE_LIMIT",
+    group: "advanced",
+    doc: "Derive machines one workspace may hold at once (running, starting, or stopping; parked machines do not count). Default 20.",
+    example: "20",
+  },
 ]
 
 // ---- Capabilities (features gated on config) ------------------------------

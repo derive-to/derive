@@ -319,9 +319,15 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
     },
     listMachineJobs(limit) {
       return rows<JobRecord>(sql`
-        SELECT * FROM job WHERE machine_phase IS NOT NULL AND machine_phase <> 'released'
-        ORDER BY CASE WHEN machine_phase = 'stopping' THEN 0 ELSE 1 END,
+        SELECT * FROM job WHERE machine_phase IS NOT NULL
+          AND machine_phase NOT IN ('released', 'parked')
+        ORDER BY CASE WHEN machine_phase IN ('stopping', 'deleting') THEN 0 ELSE 1 END,
           updated_at, id LIMIT ${Math.max(1, Math.min(200, limit))}`)
+    },
+    listParkedJobs(before, limit) {
+      return rows<JobRecord>(sql`
+        SELECT * FROM job WHERE machine_phase = 'parked' AND updated_at < ${before}
+        ORDER BY updated_at, id LIMIT ${Math.max(1, Math.min(200, limit))}`)
     },
     listOpenGraphJobs(limit) {
       return rows<JobRecord>(sql`

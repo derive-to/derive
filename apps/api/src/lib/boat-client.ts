@@ -167,7 +167,7 @@ export class BoatClient implements SandboxClient {
       "POST",
       action === "resume"
         ? {
-            ttlSeconds: 1200,
+            ttlSeconds: machine.ttl_seconds ?? 1200,
             type: machine.size ?? "small",
             ...(machine.environment ? { environment: machine.environment } : { noEnv: true }),
           }

@@ -366,6 +366,9 @@ export const cancelJob = async (
       wakeSettled(deps, out.job)
       await announceJob(deps, out.job, actorId)
     }
+    // Stopping a task, even one that already finished, frees its parked sandbox now.
+    if (out.job.machine_phase === "parked")
+      await deps.meta.transitionJobMachine(out.job.id, out.job.machine_rev, { phase: "deleting" })
     return out.job
   }
   if (!isJobOpen(job.status)) return job

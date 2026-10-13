@@ -123,11 +123,15 @@ export interface JobExecutionStore<Agent> {
     global_limit: number
     org_limit: number
   }): Promise<Agent | null>
+  /** Start a queued job's turn within capacity. With `agent_rev`, it borrows the agent's shared
+   *  sandbox (which must be `ready`); without, the job runs on its own sandbox, beginning at
+   *  `phase` (`creating` for a new one, `starting` to resume a parked one). */
   borrow(input: {
     job_id: string
     org_id: string
     agent_id: string
-    agent_rev: number
+    agent_rev?: number
+    phase: "starting" | "creating"
     started_at: string
     lease_until: string
     machine_json: string

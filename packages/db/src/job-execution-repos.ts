@@ -31,9 +31,9 @@ const capacityAvailable = async (
   await execute(sql`SELECT pg_advisory_xact_lock(hashtextextended('derive-cloud-capacity', 0))`)
   const count = (
     await execute(sql`SELECT
-    (SELECT count(*) FROM job WHERE machine_phase IS NOT NULL AND machine_phase <> 'released') +
+    (SELECT count(*) FROM job WHERE machine_phase IS NOT NULL AND machine_phase NOT IN ('released', 'parked')) +
     (SELECT count(*) FROM agent WHERE sandbox_phase IN ('creating', 'provisioning', 'stopping', 'deleting')) AS total,
-    (SELECT count(*) FROM job WHERE org_id = ${org} AND machine_phase IS NOT NULL AND machine_phase <> 'released') +
+    (SELECT count(*) FROM job WHERE org_id = ${org} AND machine_phase IS NOT NULL AND machine_phase NOT IN ('released', 'parked')) +
     (SELECT count(*) FROM agent WHERE org_id = ${org} AND sandbox_phase IN ('creating', 'provisioning', 'stopping', 'deleting')) AS workspace`)
   )[0] as { total: string; workspace: string }
   return Number(count.total) < globalLimit && Number(count.workspace) < workspaceLimit
@@ -322,23 +322,32 @@ export const jobExecutionRepos = (
       const execute = async (q: SQL) => (await tx.execute(q)).rows
       if (!(await capacityAvailable(execute, input.org_id, input.global_limit, input.org_limit)))
         return null
-      const agent = (
-        await tx.execute(sql`SELECT id FROM agent WHERE id = ${input.agent_id}
-        AND org_id = ${input.org_id} AND sandbox_rev = ${input.agent_rev}
-        AND sandbox_phase = 'ready' AND paused_at IS NULL FOR UPDATE`)
-      ).rows[0]
-      if (!agent) return null
+      const shared = input.agent_rev !== undefined
+      if (shared) {
+        const agent = (
+          await tx.execute(sql`SELECT id FROM agent WHERE id = ${input.agent_id}
+          AND org_id = ${input.org_id} AND sandbox_rev = ${input.agent_rev}
+          AND sandbox_phase = 'ready' AND paused_at IS NULL FOR UPDATE`)
+        ).rows[0]
+        if (!agent) return null
+      }
+      // A parked job resumes its own sandbox; any other job starts from nothing held.
+      const from =
+        input.phase === "starting" && !shared
+          ? sql`machine_phase = 'parked'`
+          : sql`(machine_phase IS NULL OR machine_phase = 'released')`
       const held = (
         await tx.execute(sql`UPDATE job SET status = 'running', started_at = ${input.started_at},
-        lease_until = ${input.lease_until}, updated_at = ${input.started_at}, machine_phase = 'starting',
+        lease_until = ${input.lease_until}, updated_at = ${input.started_at}, machine_phase = ${input.phase},
         machine_json = ${input.machine_json}, machine_rev = machine_rev + 1
         WHERE id = ${input.job_id} AND org_id = ${input.org_id} AND agent_id = ${input.agent_id}
-          AND status = 'queued' AND (machine_phase IS NULL OR machine_phase = 'released') RETURNING *`)
+          AND status = 'queued' AND ${from} RETURNING *`)
       ).rows[0] as unknown as JobRecord | undefined
       if (!held) return null
-      await tx.execute(sql`UPDATE agent SET sandbox_phase = 'busy', sandbox_rev = sandbox_rev + 1,
-        sandbox_state_json = jsonb_set(coalesce(sandbox_state_json, '{}')::jsonb, '{holder}', to_jsonb(${held.id}::text))::text
-        WHERE id = ${input.agent_id} AND org_id = ${input.org_id}`)
+      if (shared)
+        await tx.execute(sql`UPDATE agent SET sandbox_phase = 'busy', sandbox_rev = sandbox_rev + 1,
+          sandbox_state_json = jsonb_set(coalesce(sandbox_state_json, '{}')::jsonb, '{holder}', to_jsonb(${held.id}::text))::text
+          WHERE id = ${input.agent_id} AND org_id = ${input.org_id}`)
       return held
     })
   },

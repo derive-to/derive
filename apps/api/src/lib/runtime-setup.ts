@@ -7,6 +7,8 @@ export interface RuntimeConfig {
   runnerVersion?: string
   runnerArchive?: { url: string; sha256: string }
   managed?: { apiKey: string; workspaceIds: ReadonlySet<string> }
+  /** Machines that may hold compute at once, across the deploy and per workspace. */
+  limits: { global: number; workspace: number }
 }
 
 // The runner a Derive machine (Ortam sandbox) installs once and then launches for every job.

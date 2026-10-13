@@ -7,3 +7,5 @@
 -- SQLite/D1 has no ADD COLUMN IF NOT EXISTS: run it once.
 ALTER TABLE agent ADD COLUMN effort TEXT;
 ALTER TABLE agent ADD COLUMN sandbox_json TEXT;
+-- Tasks on one agent can each hold their own sandbox (safe to re-run).
+DROP INDEX IF EXISTS job_machine_holder;
