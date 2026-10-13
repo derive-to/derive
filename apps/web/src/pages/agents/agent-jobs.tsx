@@ -309,7 +309,7 @@ export function taskStatus(job: Job, agent: Agent): string {
   return job.task.session ? "Session open" : "Running"
 }
 
-function detailOf(job: Job, agent: Agent): string | undefined {
+export function detailOf(job: Job, agent: Agent): string | undefined {
   if (job.status === "needs_you") return job.needs?.question
   if (job.status === "failed" || job.status === "lost") return failureOf(job) ?? undefined
   if (job.status === "cancelled") return "Stopped before completion"

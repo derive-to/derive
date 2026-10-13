@@ -5,7 +5,6 @@ import { ApiError, api } from "@/api"
 import { LoadError } from "@/components/shared/load-error"
 import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
-import { StatusBadge } from "@/components/shared/status-badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
@@ -15,10 +14,11 @@ import { useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { useJobEvents } from "@/lib/use-job-events"
 import { useTaskDraft } from "@/lib/use-task-draft"
-import { taskStatus, useCanSteer } from "./agent-jobs"
+import { useCanSteer } from "./agent-jobs"
 import { firstLine } from "./format"
 import { Segmented } from "./rows"
 import { TaskConversation } from "./task-conversation"
+import { TaskRun } from "./task-run"
 import { TaskSchedule } from "./task-schedule"
 import { useMemberNames } from "./use-member-names"
 
@@ -120,8 +120,11 @@ export function TaskPage({ id }: { id: string }) {
     task.status === "queued" || task.status === "running" || task.status === "needs_you"
   const latest = task.turns?.at(-1)
   const ownsConversation = !latest || latest.actor_id === me?.id
+  // A conversation that never got an answer has nothing to lose: the next turn starts it over
+  // from the transcript (the server allows it), so it can be tried again in place.
+  const answered = task.turns?.some((t) => t.status === "succeeded" || t.status === "needs_you")
   const continueAllowed =
-    ownsConversation && (active || !latest || task.turns?.some((t) => t.resumable))
+    ownsConversation && (active || !latest || !answered || task.turns?.some((t) => t.resumable))
   return (
     <PageShell className="flex flex-col gap-6">
       <PageHeader
@@ -140,43 +143,22 @@ export function TaskPage({ id }: { id: string }) {
         }
         subtitle={`${task.kind === "scheduled" ? "Scheduled by" : "Started by"} ${names.get(task.asked_by ?? "") ?? (task.kind === "scheduled" ? "Schedule" : "Teammate")}`}
       />
-      <div
-        className="flex flex-wrap items-center justify-between gap-3"
-        role="status"
-        data-testid="task-status"
-      >
-        <StatusBadge
-          tone={
-            task.status === "succeeded"
-              ? "ok"
-              : task.status === "needs_you"
-                ? "attention"
-                : task.status === "failed" || task.status === "lost"
-                  ? "error"
-                  : active
-                    ? "busy"
-                    : "muted"
-          }
-        >
-          {agent.data ? taskStatus(task, agent.data) : "Agent deleted"}
-        </StatusBadge>
-        {canSteer && active && (
-          <Button
-            variant="ghost"
-            size="sm"
-            data-testid="task-stop"
-            loading={stop.isPending}
-            onClick={() => stop.mutate()}
-          >
-            Stop
-          </Button>
-        )}
-      </div>
+      <TaskRun
+        job={task}
+        agent={agent.data}
+        canStop={canSteer}
+        stopping={stop.isPending}
+        onStop={() => stop.mutate()}
+      />
       {task.task.session && task.asked_by === me?.id && active && <SessionAttach jobId={task.id} />}
       <TaskConversation job={task} agentName={agentName} names={names} />
       {task.needs && (
-        <div className="rounded-xl border border-border bg-card p-4" data-testid="task-question">
-          <p className="text-sm font-medium">{task.needs.question}</p>
+        <div
+          className="rounded-xl border border-l-2 border-border border-l-warning/70 bg-card p-4"
+          data-testid="task-question"
+        >
+          <p className="text-xs font-medium text-muted-foreground">{agentName} needs you</p>
+          <p className="mt-1 text-base">{task.needs.question}</p>
           <p className="mt-2 text-sm text-muted-foreground">Your answer continues this task.</p>
           {task.needs.options?.map((option) => (
             <Button
