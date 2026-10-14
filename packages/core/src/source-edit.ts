@@ -11,6 +11,7 @@ export {
   type MarkdownSourceModel,
   type MarkdownSourceNode,
   type MarkdownSourceUnit,
+  markdownHistoryGap,
   parseSourceOps,
   removedSourceIn,
   SourceConflictError,

@@ -38,6 +38,7 @@ import {
   type MarkdownSourceKind as Kind,
   type MarkdownSourceNode as MdNode,
   type MarkdownSourceModel as Model,
+  markdownHistoryGap,
   parseSourceOps,
   removedSourceIn,
   SourceConflictError,
@@ -1095,7 +1096,11 @@ const serializeBlocks = (z: Serializer, n: MdNode, tokens: SourceToken[]): strin
     const prev = live[i - 1]
     if (!prev) return it.bytes
     const pi = prev.orig ? kids.indexOf(prev.orig) : -1
-    return (pi >= 0 && it.orig && kids.indexOf(it.orig) === pi + 1 ? sep(pi) : fallback) + it.bytes
+    const historical = markdownHistoryGap(z.model, prev, it)
+    return (
+      (historical ??
+        (pi >= 0 && it.orig && kids.indexOf(it.orig) === pi + 1 ? sep(pi) : fallback)) + it.bytes
+    )
   })
   const lead = kids[0] ? src.slice(n.cStart, kids[0].start) : ""
   const tail = kids.length ? src.slice((kids.at(-1) as MdNode).end, n.cEnd) : ""
