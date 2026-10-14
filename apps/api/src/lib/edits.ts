@@ -309,7 +309,11 @@ export async function materializeSourceOps(
       changes: changes.map((c) => ({ ...c, contentType: "text/markdown" })),
     }
   }
-  let { html, changes } = await applySourceOps(src, ops)
+  let { html, changes } = await applySourceOps(src, ops, async (version) => {
+    const historical = await deps.getVersion(artifact.id, version)
+    if (!historical || historical.content_type !== contentType) return null
+    return deps.sourceText(historical)
+  })
   // A legacy deck's arrangeable nodes exist only at serve time (runtime identities).
   // Layout set on one persists those identities, as a structural edit's save does.
   if (

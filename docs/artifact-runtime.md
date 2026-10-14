@@ -108,9 +108,18 @@ Comments and inert markup cannot supply navigation identities. Section reads pre
 Derive retains stored-format classification and its LaTeX renderer.
 The shared scanner keeps quoted attribute examples inert and preserves literal HTML text.
 The editor records explicit copy origins. Redo keeps working after an undo save removes a copy.
-The original must remain in the current source. Other deleted blocks still require safe recovery through History.
+The copy origin must remain in the current source. Saved deletions use immutable source history.
 
 Markdown quote edits use the shared exact-source text projection.
 Derive supplies its renderer's parser tokens. Open-artifact owns source ranges,
 inline wrappers, entities, and list, quote, table, and code boundaries.
 The host keeps Markdown rendering, source saves, formatting, and access checks.
+## Saved deletion recovery
+
+The edit session retains the source version and element identity of a saved deletion.
+Undo sends a historical keep token through the shared source module.
+Autosave fetches that version's source map and supplies the historical hash.
+The server reads history only from the authorized artifact.
+Historical hashes and identity collisions are checked before publication.
+Source reconciliation gives restored elements their current source identities.
+Redo uses the same saved source flow.

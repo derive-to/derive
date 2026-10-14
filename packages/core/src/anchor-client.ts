@@ -3773,6 +3773,8 @@ interface ElReg {
   /** Blocks this session copied (Duplicate, a pasted copy). */
   const copies = new WeakSet<Element>()
   const copyOrigins = new WeakMap<Element, Element>()
+  /** Immutable source identities for blocks retained by this session's Undo. */
+  const sourceHistory = new Map<Element, { src: number; version: number; parts: SigParts }>()
   interface BlockDrag {
     el: HTMLElement
     pointerId: number
@@ -4755,6 +4757,7 @@ interface ElReg {
     editOn = on
     elementEditsOn = on && allowElementEdits
     if (on) {
+      sourceHistory.clear()
       clearResizeUi()
       // The pre-edit snapshot every quote is built from. normalize() first so the
       // per-node offsets recorded at enable time can't be split later by typing.
@@ -4818,6 +4821,7 @@ interface ElReg {
       // History belongs to the session that made it. Carrying it across would offer
       // to undo into a document that has already been saved and reloaded.
       resetEditHistory()
+      sourceHistory.clear()
       sceneEdits = []
       videoAttrsBase = new Map()
       clearEditMention()
@@ -6012,18 +6016,17 @@ interface ElReg {
     }
     const { ops, ok, emit } = collectSourceOps(
       document.body,
-      snapshotOf(base, document.body, idsOf(base)),
+      snapshotOf(base, document.body, idsOf(base), sourceHistory),
       touched,
       videoChanges,
     )
     let uncaptured = ok && !blockResize ? 0 : 1
-    // A block the current version no longer has (a save deleted it, undo put it back)
-    // can't be written from here: the save is refused, not guessed.
+    // A removed block needs its retained source identity. Unknown stale markup refuses.
     let stale = 0
     for (const el of Array.from(document.body.querySelectorAll(`[${STALE_ATTR}]`)))
       for (let e: Element | null = el; e; e = e.parentElement)
         if (touched.has(e)) {
-          stale++
+          if (!sourceHistory.has(el)) stale++
           break
         }
     const changed = new Map<
@@ -6293,6 +6296,8 @@ interface ElReg {
           const now = ne.made ? adopt(d, ne.made, moved) : d
           // Most of a long page keeps its id: writing it again is a mutation for nothing.
           if (!ne.made && o !== ne.id) now.setAttribute(SRC_ATTR, String(ne.id))
+          now.removeAttribute(STALE_ATTR)
+          sourceHistory.delete(d)
           if (o !== ne.id) renamed = true
           pageFor.set(ne.id, now)
           if (spacedSet.has(d)) became.set(d, now)
@@ -6378,8 +6383,18 @@ interface ElReg {
     }
     /** Elements this sync took the id off. */
     const cleared = new Set<Element>()
+    const previousVersion = Number(document.documentElement.dataset.deriveSrcVersion)
     for (const [el, n] of plan)
       if (n === null) {
+        const original = oldId.get(el)
+        const parts = base.get(el)
+        if (!el.isConnected && original !== undefined && parts && previousVersion > 0) {
+          sourceHistory.set(el, { src: original, version: previousVersion, parts })
+          cleared.add(el)
+          renumber(el, null)
+          renamed = true
+          continue
+        }
         // On the page only a neighbour will do (what an Enter makes); for one undo holds,
         // any that opens the same way.
         const sibling = el.isConnected
