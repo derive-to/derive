@@ -14,7 +14,7 @@ import {
   type Selector,
   type TriggerRecord,
 } from "@derive/core"
-import { type TaskOptions, taskOptions } from "@derive-to/cli/conversation-format"
+import { TASK_REPO, type TaskOptions, taskOptions } from "@derive-to/cli/conversation-format"
 import { log } from "../log"
 import { agentWritesOff } from "./agent-writes"
 import { jobsOverBudget } from "./budget"
@@ -172,6 +172,23 @@ export const standDownMember = async (
   }
 }
 
+/** The repository an agent's tasks work in when an ask names none ("owner/name"), or null. */
+export const agentRepository = (agent: Pick<AgentRecord, "repositories_json">): string | null => {
+  try {
+    const list = JSON.parse(agent.repositories_json ?? "[]") as unknown
+    const first = Array.isArray(list) ? list[0] : null
+    return typeof first === "string" && TASK_REPO.test(first) ? first : null
+  } catch {
+    return null
+  }
+}
+
+/** A task's options with the agent's repository filled in when the ask named none. */
+const withRepository = (agent: AgentRecord, task: TaskOptions | undefined): TaskOptions => {
+  const repo = task?.repo ?? agentRepository(agent)
+  return { ...(task ?? {}), ...(repo ? { repo } : {}) }
+}
+
 // ---- Asking ------------------------------------------------------------------------------
 
 export interface AskInput {
@@ -200,6 +217,7 @@ export const askAgent = async (
   const { meta } = deps
   const kind =
     input.kind ?? ((await deps.isGraph?.(input.agent).catch(() => false)) ? "graph" : "ask")
+  const task = withRepository(input.agent, input.task)
   if (input.agent.machine === "derive" && !input.attended && kind !== "graph") {
     const out = await commandJob(deps, input.agent, input.askedBy, {
       intent: "start",
@@ -218,9 +236,7 @@ export const askAgent = async (
         parent_id: input.parentId ?? null,
         node_id: input.nodeId ?? null,
         trigger_id: input.triggerId ?? null,
-        ...(input.task && Object.keys(input.task).length
-          ? { meta_json: JSON.stringify(input.task) }
-          : {}),
+        ...(Object.keys(task).length ? { meta_json: JSON.stringify(task) } : {}),
       },
     })
     wake(deps, input.agent.id, "job.queued", out.job)
@@ -247,9 +263,7 @@ export const askAgent = async (
       parent_id: input.parentId ?? null,
       node_id: input.nodeId ?? null,
       trigger_id: input.triggerId ?? null,
-      ...(input.task && Object.keys(input.task).length
-        ? { meta_json: JSON.stringify(input.task) }
-        : {}),
+      ...(Object.keys(task).length ? { meta_json: JSON.stringify(task) } : {}),
     })
   } catch (error) {
     // Lost a race on the dedupe index: the winner is the job.
@@ -837,6 +851,9 @@ export const materializeTriggers = async (
             asked_by: agent.created_by,
             subject_json: t.subject_json,
             payer_id: payer,
+            ...(agentRepository(agent)
+              ? { meta_json: JSON.stringify({ repo: agentRepository(agent) }) }
+              : {}),
           },
         })
         created += out.created ? 1 : 0
@@ -853,6 +870,9 @@ export const materializeTriggers = async (
         scheduled_for: window,
         subject_json: t.subject_json,
         payer_id: payer,
+        ...(agentRepository(agent)
+          ? { meta_json: JSON.stringify({ repo: agentRepository(agent) }) }
+          : {}),
       })
       created += 1
       if (overBudget.get(agent.id)) await noteHeldForBudget(meta, job).catch(() => {})

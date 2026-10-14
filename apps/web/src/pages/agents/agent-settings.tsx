@@ -28,6 +28,7 @@ import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 import { accountLabel } from "../settings/accounts-section"
 import { sourceName } from "./agent-jobs"
+import { RepositoryField } from "./agent-repository"
 import { TriggersField } from "./agent-triggers"
 import { machineOf, modelChoices, ownerMachineName, runnerCommand, when } from "./format"
 import { Field, Group, Segmented, Sub, Verb } from "./rows"
@@ -145,6 +146,7 @@ export function AgentSettings({ agent, names, isWorkspaceOwner }: Props) {
 
       <Group label="Sources" testId="agent-sources">
         <SourcesField agent={agent} edit={edit} onSave={set} />
+        <RepositoryField agent={agent} edit={edit} onSave={set} />
         <EnvironmentField agent={agent} edit={edit} onSave={set} />
       </Group>
 

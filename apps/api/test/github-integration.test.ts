@@ -249,6 +249,41 @@ describe("standard GitHub integration", () => {
     expect(await meta.listEnabledScheduleTriggers(["default"])).toEqual([])
   })
 
+  it("runs an agent's tasks in its repository when an ask names none", async () => {
+    const { app, meta } = makeAuthedApp("gh-default-repo", [owner], "owner", {
+      deps: { encryptionKey: KEY },
+    })
+    await seedApp(meta)
+    const source = await upsertGithubConnection(meta, {
+      orgId: "default",
+      userId: owner.id,
+      installationId: "44011",
+      accountLogin: "acme",
+    })
+    const agent = (await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Demo setup" }))
+    ).json()) as { id: string }
+    const patch = (body: object) =>
+      app.request(`/v1/agents/${agent.id}`, { ...jsonAs(as(owner.email), body), method: "PATCH" })
+    // Only through a GitHub source for that owner.
+    expect((await patch({ repository: "acme/web" })).status).toBe(400)
+    const saved = await patch({ connection_ids: [source.id], repository: "acme/web" })
+    expect(saved.status).toBe(200)
+    expect(await saved.json()).toMatchObject({ repository: "acme/web" })
+    const ask = async (body: object) =>
+      (await (
+        await app.request(
+          "/v1/jobs",
+          jsonAs(as(owner.email), { agent_id: agent.id, instruction: "Set up a demo.", ...body }),
+        )
+      ).json()) as { id: string; task: { repo?: string } }
+    expect((await ask({})).task).toEqual({ repo: "acme/web" })
+    expect((await ask({ repo: "acme/api@main" })).task).toEqual({ repo: "acme/api@main" })
+    // Cleared, tasks run without one.
+    await patch({ repository: null })
+    expect((await ask({})).task).toEqual({})
+  })
+
   it("turns an install callback into one stable source without collection work", async () => {
     const { app, meta } = makeAuthedApp("gh-standard", [owner, member], "editor", {
       deps: { encryptionKey: KEY },

@@ -472,6 +472,7 @@ export type AgentPatch = Partial<
     | "ask_policy"
     | "write_policy"
     | "connection_ids"
+    | "repository"
     | "environment"
     | "account_id"
     | "model"

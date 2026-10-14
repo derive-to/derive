@@ -103,7 +103,7 @@ export function TaskComposer({ agents }: { agents: (Agent & { can_ask: boolean }
             <Input
               aria-label="Repository"
               data-testid="task-composer-repo"
-              placeholder="owner/repo (optional)"
+              placeholder={agent.repository ?? "owner/repo (optional)"}
               value={repo}
               disabled={ask.isPending}
               onChange={(event) => setRepo(event.target.value)}
