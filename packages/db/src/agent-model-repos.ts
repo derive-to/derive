@@ -92,6 +92,7 @@ const TRIGGER_FIELDS = [
 ] as const satisfies readonly (keyof TriggerPatch)[]
 
 const ACCOUNT_FIELDS = [
+  "user_id",
   "kind",
   "name",
   "secret_enc",

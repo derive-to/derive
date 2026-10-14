@@ -352,6 +352,8 @@ export interface TriggerPatch {
 }
 
 export interface AccountPatch {
+  /** Who holds it: a person, or WORKSPACE_ACCOUNT_OWNER once it is shared. */
+  user_id?: string
   kind?: AccountKind
   name?: string | null
   secret_enc?: string | null
