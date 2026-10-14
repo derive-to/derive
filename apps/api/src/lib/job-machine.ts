@@ -396,7 +396,6 @@ export async function advanceSandbox(
     })
   }
   if (!state) return move("failed")
-  const client = await clientFor(deps, agent, state)
   const id = agent.sandbox_id
   // `failed` ends a sandbox's life with a failure counted toward the backoff; a deliberate
   // delete (spec changed, agent moved off Derive) ends with no sandbox at all.
@@ -410,52 +409,51 @@ export async function advanceSandbox(
     })
   const broke = () => (state.failures ?? 0) + 1
 
-  switch (agent.sandbox_phase) {
-    case "creating": {
-      const at = iso(deps)
-      const problem = createRecoveryProblem(state, at)
-      if (problem)
-        return state.create_problem === problem
-          ? agent
-          : move("creating", { create_problem: problem })
-      if (!state.create_request) return agent
-      const replaying = !!state.create_submitted_at
-      if (!replaying && !allowed)
-        return move(
-          null,
-          { failures: 0, retired_at: at, credential_enc: undefined, account_id: undefined },
-          null,
-        )
-      const submitted = replaying ? state : { ...state, create_submitted_at: at }
-      if (!(await move("creating", submitted))) return null
-      let created: Awaited<ReturnType<typeof createStep>>
-      try {
-        created = await createStep(
-          client,
-          state.create_request,
-          `derive-agent-${agent.id}-${state.generation}-create`,
-          submitted,
-        )
-      } catch (error) {
-        if (!replaying && (error instanceof SandboxRateLimited || error instanceof SandboxRefused))
-          await move("creating", { ...submitted, create_submitted_at: undefined })
-        throw error
-      }
-      if (!created) {
-        if (replaying)
-          return move("creating", {
-            ...submitted,
-            create_problem:
-              "This machine creation needs manual recovery: a retry was refused after an unknown outcome.",
-          })
-        return failed(broke())
-      }
+  if (agent.sandbox_phase === "creating") {
+    const at = iso(deps)
+    const problem = createRecoveryProblem(state, at)
+    if (problem)
+      return state.create_problem === problem
+        ? agent
+        : move("creating", { create_problem: problem })
+    if (!state.create_request) return agent
+    const replaying = !!state.create_submitted_at
+    if (!replaying && !allowed)
       return move(
-        "provisioning",
-        { ...submitted, create_op: created.create_op },
-        created.sandbox_id,
+        null,
+        { failures: 0, retired_at: at, credential_enc: undefined, account_id: undefined },
+        null,
       )
+    const client = await clientFor(deps, agent, state)
+    const submitted = replaying ? state : { ...state, create_submitted_at: at }
+    if (!(await move("creating", submitted))) return null
+    let created: Awaited<ReturnType<typeof createStep>>
+    try {
+      created = await createStep(
+        client,
+        state.create_request,
+        `derive-agent-${agent.id}-${state.generation}-create`,
+        submitted,
+      )
+    } catch (error) {
+      if (!replaying && (error instanceof SandboxRateLimited || error instanceof SandboxRefused))
+        await move("creating", { ...submitted, create_submitted_at: undefined })
+      throw error
     }
+    if (!created) {
+      if (replaying)
+        return move("creating", {
+          ...submitted,
+          create_problem:
+            "This machine creation needs manual recovery: a retry was refused after an unknown outcome.",
+        })
+      return failed(broke())
+    }
+    return move("provisioning", { ...submitted, create_op: created.create_op }, created.sandbox_id)
+  }
+  const client = await clientFor(deps, agent, state)
+
+  switch (agent.sandbox_phase) {
     case "provisioning": {
       if (!id || !state.create_op)
         return move("failed", { failures: broke(), failed_at: iso(deps) })
