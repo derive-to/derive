@@ -147,8 +147,8 @@ export class BoatClient implements SandboxClient {
           ...(input.snapshot ? { from: input.snapshot } : {}),
           ...(input.env ? { env: input.env } : {}),
           snapshots: true,
+          // No org: Boat picks the key's default org, which carries the plan. Forcing "personal" gets a 402.
           setupScript: `sudo install -d -o "$(id -u)" -g "$(id -g)" /home/ortam\n${input.setup_script}`,
-          org: "personal",
         },
         key,
       ),
