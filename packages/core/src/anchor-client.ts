@@ -6658,6 +6658,7 @@ interface ElReg {
       lastOutline = ""
       postDeckSniff()
       postDeckOutline()
+      video.announce()
       reportScroll()
       lastPosition = null
       post({ type: "mention-resolve", handles: mentionHandlesInDocument() })
