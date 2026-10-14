@@ -667,9 +667,24 @@ describe("cloud session SSH transport", () => {
   const bin = join(import.meta.dirname, "..", "bin", "derive.js")
   const payload = Buffer.from(Array.from({ length: 153_600 }, (_, i) => i % 256))
   const claim = "2026-01-01T00:00:00.000Z"
-  const fixture = async ({ access = {}, peer = "echo", direct = false, hold = false } = {}) => {
+  const fixture = async ({
+    access = {},
+    peer = "echo",
+    direct = false,
+    hold = false,
+    specialPaths = false,
+    specialIdentity = false,
+  } = {}) => {
     const dir = mkdtempSync(join(tmpdir(), "derive-ssh-test-"))
-    const key = join(dir, "session_ed25519")
+    const sessionTmp = specialPaths
+      ? join(dir, 'private spaces "quote" \\slash %tokens ${UNSET_SSH_VARIABLE}')
+      : dir
+    mkdirSync(sessionTmp, { recursive: true })
+    const configDir = specialIdentity
+      ? join(dir, 'identity spaces "quote" \\slash %tokens ${UNSET_SSH_VARIABLE}')
+      : dir
+    mkdirSync(configDir, { recursive: true })
+    const key = join(configDir, "session_ed25519")
     for (const file of [key, join(dir, "ca")]) {
       const made = spawnSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", file])
       expect(made.status).toBe(0)
@@ -698,11 +713,20 @@ describe("cloud session SSH transport", () => {
       `#!${process.execPath}
 import { writeFileSync, readFileSync, statSync } from 'node:fs'
 import { connect } from 'node:net'
+import { spawnSync } from 'node:child_process'
+import { resolve } from 'node:path'
 const args = process.argv.slice(2)
 const option = prefix => args.find(a => a.startsWith(prefix))?.slice(prefix.length)
-const known = option('UserKnownHostsFile=')
-const certificate = option('CertificateFile=')
-writeFileSync(process.env.SSH_RECORD, JSON.stringify({ args, known, certificate, hostKey: known && readFileSync(known, 'utf8'), cert: certificate && readFileSync(certificate, 'utf8'), mode: known && (statSync(known).mode & 511), certMode: certificate && (statSync(certificate).mode & 511), dirMode: known && (statSync(known.slice(0, known.lastIndexOf('/'))).mode & 511) }))
+const configuration = spawnSync('/usr/bin/ssh', ['-G', ...args], {encoding:'utf8'})
+if (configuration.status !== 0) { process.stderr.write(configuration.stderr); process.exit(configuration.status ?? 1) }
+const knownOption = option('UserKnownHostsFile=')
+const certificateOption = option('CertificateFile=')
+const known = knownOption && resolve(knownOption)
+const certificate = certificateOption && resolve(certificateOption)
+const identity = resolve(args[args.indexOf('-i') + 1])
+const identityKey = spawnSync('ssh-keygen', ['-y', '-f', identity], {encoding:'utf8'})
+if (identityKey.status !== 0) { process.stderr.write(identityKey.stderr); process.exit(identityKey.status ?? 1) }
+writeFileSync(process.env.SSH_RECORD, JSON.stringify({ args, known, certificate, identity, identityPublicKey: identityKey.stdout.trim(), identityMode: statSync(identity).mode & 511, hostKey: known && readFileSync(known, 'utf8'), cert: certificate && readFileSync(certificate, 'utf8'), mode: known && (statSync(known).mode & 511), certMode: certificate && (statSync(certificate).mode & 511), dirMode: known && (statSync(known.slice(0, known.lastIndexOf('/'))).mode & 511) }))
 if (process.env.SSH_DIRECT === '1') process.exit(0)
 const expected = Buffer.from(Array.from({length:153600}, (_,i)=>i%256))
 const socket = connect(Number(args[args.indexOf('-p')+1]), '127.0.0.1', () => socket.write(expected))
@@ -785,7 +809,7 @@ socket.on('end', () => process.exit(7))
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
     const url = `http://127.0.0.1:${server.address().port}`
     writeFileSync(
-      join(dir, "credentials.json"),
+      join(configDir, "credentials.json"),
       JSON.stringify({
         [url]: {
           defaultAccount: "test",
@@ -812,10 +836,11 @@ socket.on('end', () => process.exit(7))
           cwd: dir,
           env: {
             ...process.env,
-            DERIVE_CONFIG_DIR: dir,
+            DERIVE_CONFIG_DIR: configDir,
             DERIVE_SERVER: url,
             PATH: `${dir}:${process.env.PATH}`,
             SSH_RECORD: record,
+            TMPDIR: sessionTmp,
             SSH_DIRECT: direct ? "1" : "",
             SSH_HOLD: hold ? "1" : "",
           },
@@ -879,7 +904,12 @@ socket.on('end', () => process.exit(7))
         expect(record.cert.trim()).toBe(f.certificate)
         expect(record.args).toContain("StrictHostKeyChecking=yes")
         expect(record.args).toContain("IdentitiesOnly=yes")
-        expect(record.args[record.args.indexOf("-i") + 1]).toBe(f.key)
+        expect(record.identityPublicKey.split(/\s+/).slice(0, 2)).toEqual(
+          f.publicKeys[0].split(/\s+/).slice(0, 2),
+        )
+        expect(record.identityMode).toBe(0o600)
+        expect(existsSync(record.identity)).toBe(false)
+        expect(existsSync(f.key)).toBe(true)
         expect(record.args).not.toContain("test-session-token")
         expect(existsSync(record.known)).toBe(false)
         expect(existsSync(record.certificate)).toBe(false)
@@ -902,6 +932,41 @@ socket.on('end', () => process.exit(7))
         expect(request.headers["x-derive-workspace"]).toBe("org_cli")
         expect(request.headers["x-derive-job-claim"]).toBe(claim)
       }
+    } finally {
+      await f.close()
+    }
+  })
+
+  it("uses literal private paths containing spaces, quotes, backslashes and SSH expansion tokens", async () => {
+    const f = await fixture({ specialPaths: true })
+    try {
+      const result = await f.run().done
+      expect(result.code, result.stderr).toBe(0)
+      const record = JSON.parse(readFileSync(f.record, "utf8"))
+      expect(record.cert.trim()).toBe(f.certificate)
+      expect(record.hostKey).toBe(`derive-session ${f.hostKey}\n`)
+      expect(record.known).toContain('private spaces "quote" \\slash %tokens ${UNSET_SSH_VARIABLE}')
+      expect(existsSync(record.known)).toBe(false)
+      expect(existsSync(record.certificate)).toBe(false)
+      expect(Buffer.concat(f.frames.map((frame) => frame.data))).toEqual(payload)
+    } finally {
+      await f.close()
+    }
+  })
+
+  it("uses the correct private key from a literal config path and removes only its temporary copy", async () => {
+    const f = await fixture({ specialIdentity: true })
+    try {
+      const result = await f.run().done
+      expect(result.code, result.stderr).toBe(0)
+      const record = JSON.parse(readFileSync(f.record, "utf8"))
+      expect(record.identityPublicKey.split(/\s+/).slice(0, 2)).toEqual(
+        f.publicKeys[0].split(/\s+/).slice(0, 2),
+      )
+      expect(record.identityMode).toBe(0o600)
+      expect(existsSync(record.identity)).toBe(false)
+      expect(existsSync(f.key)).toBe(true)
+      expect(Buffer.concat(f.frames.map((frame) => frame.data))).toEqual(payload)
     } finally {
       await f.close()
     }

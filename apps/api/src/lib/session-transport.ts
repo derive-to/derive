@@ -13,6 +13,7 @@ export interface SessionSocket {
 }
 export interface SessionTransport {
   connect(request: Request, c?: Context): Promise<SessionSocket>
+  watchDisconnect?(c: Context, close: () => void): () => void
   accept(c: Context, ready: (socket: SessionSocket) => void, failed: () => void): Promise<Response>
 }
 
@@ -76,10 +77,12 @@ export function relaySession(
   let detachUp: (() => void) | undefined
   let detachDown: (() => void) | undefined
   let checking = false
+  let cancelAuthorization: (() => void) | undefined
   const timers = new Set<ReturnType<typeof setTimeout>>()
   const close = () => {
     if (ended) return
     ended = true
+    cancelAuthorization?.()
     clearInterval(poll)
     clearTimeout(expiry)
     for (const timer of timers) clearTimeout(timer)
@@ -88,20 +91,31 @@ export function relaySession(
     upstream.close()
     downstream?.close()
   }
-  const poll = setInterval(async () => {
-    if (checking || ended) return
+  const authorize = async () => {
+    if (ended) return false
     checking = true
+    const cancelled = new Promise<boolean>((resolve) => {
+      cancelAuthorization = () => resolve(false)
+    })
     const timeout = setTimeout(close, 15_000)
     timers.add(timeout)
     try {
-      if (!(await stillAllowed())) close()
+      const allowed = await Promise.race([stillAllowed(), cancelled])
+      if (!allowed) close()
+      return allowed && !ended
     } catch {
       close()
+      return false
     } finally {
       clearTimeout(timeout)
       timers.delete(timeout)
+      cancelAuthorization = undefined
       checking = false
     }
+  }
+  const poll = setInterval(async () => {
+    if (checking || ended) return
+    await authorize()
   }, 5_000)
   const expiry = setTimeout(close, Math.max(0, deadline - Date.now()))
   const pipe = (target: SessionSocket) => {
@@ -134,6 +148,7 @@ export function relaySession(
   }
   return {
     close,
+    authorize,
     ready(socket: SessionSocket) {
       downstream = socket
       if (ended) return socket.close()

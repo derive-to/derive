@@ -37,10 +37,55 @@ export function workerSessionTransport<S extends WorkerSessionSocket>(platform: 
   const dial = platform.dial
   return {
     async connect(request) {
-      const response = await dial(request)
-      if (response.status !== 101 || !response.webSocket)
-        throw new Error("SSH tunnel connection failed")
-      return workerSessionSocket(response.webSocket)
+      if (request.signal.aborted) throw new Error("SSH tunnel connection canceled")
+      return new Promise((resolve, reject) => {
+        const controller = new AbortController()
+        let finished = false
+        const cleanup = () => {
+          clearTimeout(timer)
+          request.signal.removeEventListener("abort", cancel)
+        }
+        const cancel = () => {
+          if (finished) return
+          finished = true
+          cleanup()
+          controller.abort()
+          reject(new Error("SSH tunnel connection canceled"))
+        }
+        const timer = setTimeout(cancel, 15_000)
+        request.signal.addEventListener("abort", cancel, { once: true })
+        if (request.signal.aborted) cancel()
+        const open = async () => {
+          if (finished) return
+          try {
+            const response = await dial(new Request(request, { signal: controller.signal }))
+            const socket = response.webSocket
+            if (finished || response.status !== 101 || !socket) {
+              if (socket) {
+                socket.accept()
+                socket.close(1000)
+              }
+              if (finished) return
+              throw new Error("SSH tunnel connection failed")
+            }
+            const connected = workerSessionSocket(socket)
+            if (finished) {
+              connected.close()
+              return
+            }
+            finished = true
+            cleanup()
+            resolve(connected)
+          } catch (error) {
+            if (finished) return
+            finished = true
+            cleanup()
+            controller.abort()
+            reject(error)
+          }
+        }
+        void open()
+      })
     },
     async accept(_c, ready) {
       const pair = platform.pair()

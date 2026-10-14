@@ -25,6 +25,7 @@ import type { RuntimeConfig } from "./runtime-setup"
 import { runnerRunsJobs, runtimeSetup } from "./runtime-setup"
 import {
   type SandboxClient,
+  type SandboxCreate,
   SandboxCreateRejected,
   SandboxRateLimited,
   SandboxRefused,
@@ -65,6 +66,7 @@ const RETRY_BACKOFF_MS = 10 * 60_000
 const MAX_SANDBOX_FAILURES = 3
 /** A shared sandbox's provider-side stop timer at creation, before any job sets its own. */
 const CREATE_TTL_SECONDS = 2700
+const CREATE_REPLAY_MS = 24 * 60 * 60_000 - 60_000
 /** A start the provider refused for now (see SandboxRateLimited). */
 const WAITING = Symbol("waiting")
 /** A start the provider refused outright (see SandboxRefused). */
@@ -101,6 +103,9 @@ interface SandboxState {
    *  so a recreate after a failure never gets the old sandbox back. */
   generation: string
   create_op?: string
+  create_request?: SandboxCreate
+  create_submitted_at?: string
+  create_problem?: string
   stop_op?: string
   delete_op?: string
   holder?: string | null
@@ -158,9 +163,9 @@ const sandboxRequest = (
   state: SandboxState,
   deps: MachineDeps,
   ttlSeconds: number,
-) => ({
+): SandboxCreate => ({
   name,
-  size: state.size ?? "small",
+  ...(state.size ? { size: state.size } : {}),
   ...(state.environment ? { environment: state.environment } : {}),
   auto_stop_after_seconds: ttlSeconds,
   setup_script: state.setup_script ?? runtimeSetup(deps.config.runnerArchive),
@@ -267,7 +272,7 @@ async function newSandbox(
  *  same sandbox. Null when the provider refused it outright. */
 async function createStep(
   client: SandboxClient,
-  request: ReturnType<typeof sandboxRequest>,
+  request: SandboxCreate,
   key: string,
   state: SandboxState,
 ): Promise<{ sandbox_id: string; create_op: string } | null> {
@@ -278,6 +283,18 @@ async function createStep(
     if (error instanceof SandboxCreateRejected) return null
     throw error
   }
+}
+
+const createRecoveryProblem = (state: SandboxState, at: string): string | null => {
+  if (state.create_problem) return state.create_problem
+  if (!state.create_request)
+    return "This legacy machine creation needs manual recovery: its original request is unknown."
+  if (state.create_submitted_at && (state.provider ?? "ortam") === "ortam") {
+    const age = Date.parse(at) - Date.parse(state.create_submitted_at)
+    if (!Number.isFinite(age) || age < 0 || age >= CREATE_REPLAY_MS)
+      return "This machine creation needs manual recovery: Ortam's safe replay window has ended."
+  }
+  return null
 }
 
 /** Retire a sandbox: submit the delete once, then wait for it. True once it is gone. */
@@ -336,39 +353,49 @@ export async function advanceSandbox(
 ): Promise<AgentRecord | null> {
   const { meta } = deps
   const state = parse<SandboxState>(agent.sandbox_state_json)
-  const move = (
+  let revision = agent.sandbox_rev
+  const move = async (
     phase: AgentRecord["sandbox_phase"],
     next: Partial<SandboxState> = {},
     id?: string | null,
-  ) =>
-    meta.transitionAgentSandbox(agent.id, agent.org_id, agent.sandbox_rev, {
+  ) => {
+    const moved = await meta.transitionAgentSandbox(agent.id, agent.org_id, revision, {
       phase,
       state_json: JSON.stringify({ ...state, ...next }),
       ...(id !== undefined ? { sandbox_id: id } : {}),
     })
+    if (moved) revision = moved.sandbox_rev
+    return moved
+  }
   const allowed = await admitted(deps, agent, sharedState(agent))
 
   if (agent.sandbox_phase === null) {
     if (!allowed || !meta.jobExecution) return agent
+    const reserved = await newSandbox(
+      deps,
+      agent,
+      parseAgentSandbox(agent.sandbox_json),
+      actorId,
+      state?.failures ?? 0,
+    )
     return meta.jobExecution.reserve({
       agent_id: agent.id,
       org_id: agent.org_id,
       agent_rev: agent.sandbox_rev,
       global_limit: deps.config.limits.global,
       org_limit: deps.config.limits.workspace,
-      state_json: JSON.stringify(
-        await newSandbox(
+      state_json: JSON.stringify({
+        ...reserved,
+        create_request: sandboxRequest(
+          `derive-${agent.id.replaceAll("_", "-")}`,
+          reserved,
           deps,
-          agent,
-          parseAgentSandbox(agent.sandbox_json),
-          actorId,
-          state?.failures ?? 0,
+          CREATE_TTL_SECONDS,
         ),
-      ),
+      }),
     })
   }
   if (!state) return move("failed")
-  const client = await clientFor(deps, agent, state)
   const id = agent.sandbox_id
   // `failed` ends a sandbox's life with a failure counted toward the backoff; a deliberate
   // delete (spec changed, agent moved off Derive) ends with no sandbox at all.
@@ -382,19 +409,51 @@ export async function advanceSandbox(
     })
   const broke = () => (state.failures ?? 0) + 1
 
-  switch (agent.sandbox_phase) {
-    case "creating": {
-      // Always resolve the create, even once admission is gone: a create whose response was
-      // lost may have made a sandbox, and only the same key finds it to delete.
-      const created = await createStep(
-        client,
-        sandboxRequest(`derive-${agent.id.replaceAll("_", "-")}`, state, deps, CREATE_TTL_SECONDS),
-        `derive-agent-${agent.id}-${state.generation}-create`,
-        state,
+  if (agent.sandbox_phase === "creating") {
+    const at = iso(deps)
+    const problem = createRecoveryProblem(state, at)
+    if (problem)
+      return state.create_problem === problem
+        ? agent
+        : move("creating", { create_problem: problem })
+    if (!state.create_request) return agent
+    const replaying = !!state.create_submitted_at
+    if (!replaying && !allowed)
+      return move(
+        null,
+        { failures: 0, retired_at: at, credential_enc: undefined, account_id: undefined },
+        null,
       )
-      if (!created) return failed(broke())
-      return move("provisioning", { create_op: created.create_op }, created.sandbox_id)
+    const client = await clientFor(deps, agent, state)
+    const submitted = replaying ? state : { ...state, create_submitted_at: at }
+    if (!(await move("creating", submitted))) return null
+    let created: Awaited<ReturnType<typeof createStep>>
+    try {
+      created = await createStep(
+        client,
+        state.create_request,
+        `derive-agent-${agent.id}-${state.generation}-create`,
+        submitted,
+      )
+    } catch (error) {
+      if (!replaying && (error instanceof SandboxRateLimited || error instanceof SandboxRefused))
+        await move("creating", { ...submitted, create_submitted_at: undefined })
+      throw error
     }
+    if (!created) {
+      if (replaying)
+        return move("creating", {
+          ...submitted,
+          create_problem:
+            "This machine creation needs manual recovery: a retry was refused after an unknown outcome.",
+        })
+      return failed(broke())
+    }
+    return move("provisioning", { ...submitted, create_op: created.create_op }, created.sandbox_id)
+  }
+  const client = await clientFor(deps, agent, state)
+
+  switch (agent.sandbox_phase) {
     case "provisioning": {
       if (!id || !state.create_op)
         return move("failed", { failures: broke(), failed_at: iso(deps) })
@@ -496,7 +555,24 @@ async function borrow(
       deadline_at: new Date(clock.deadline).toISOString(),
       runner_path: deps.config.runnerPath,
       runner_setup: runtimeSetup(deps.config.runnerArchive),
-      ...(own ? { own: { ...own, stop_op: undefined } } : {}),
+      ...(own
+        ? {
+            own: {
+              ...own,
+              stop_op: undefined,
+              ...(!own.sandbox_id
+                ? {
+                    create_request: sandboxRequest(
+                      `derive-${job.id.replaceAll("_", "-")}`,
+                      own,
+                      deps,
+                      ttlFor(new Date(clock.deadline).toISOString(), now.toISOString()),
+                    ),
+                  }
+                : {}),
+            },
+          }
+        : {}),
     } satisfies MachineState),
     global_limit: deps.config.limits.global,
     org_limit: deps.config.limits.workspace,
@@ -510,11 +586,18 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
   const { meta } = deps
   const agent = await meta.getAgent(job.agent_id)
   const m = parse<MachineState>(job.machine_json)
-  const move = (phase: NonNullable<JobRecord["machine_phase"]>, next: Partial<MachineState> = {}) =>
-    meta.transitionJobMachine(job.id, job.machine_rev, {
+  let revision = job.machine_rev
+  const move = async (
+    phase: NonNullable<JobRecord["machine_phase"]>,
+    next: Partial<MachineState> = {},
+  ) => {
+    const moved = await meta.transitionJobMachine(job.id, revision, {
       phase,
       machine_json: JSON.stringify({ ...m, ...next }),
     })
+    if (moved) revision = moved.machine_rev
+    return moved
+  }
   const own = m?.own ?? null
   const shared = agent && !own ? parse<SandboxState>(agent.sandbox_state_json) : null
   const state: SandboxState | null = own ?? shared
@@ -527,7 +610,14 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
   const client = await clientFor(deps, agent, state)
   const at = iso(deps)
   // The provider is out of starts for now: wait, saying why, instead of asking every pass.
-  if (m.waiting && m.waiting.until > at && job.status === "running") return
+  if (
+    m.waiting &&
+    m.waiting.until > at &&
+    job.status === "running" &&
+    at < m.deadline_at &&
+    !own?.create_problem
+  )
+    return
   /** The turn's compute on `sandboxId`, from when its machine came up to `stopped`. */
   const recordCompute = async (sandboxId: string, stopped: string) => {
     if (!m.active_at) return
@@ -569,35 +659,71 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
       move(phase, { own: { ...own, ...next } })
     const ownKey = `derive-job-${job.id}-${own.generation}`
     if (job.machine_phase === "creating") {
-      // Stopped before its machine existed: nothing to build or retire.
-      if (job.status !== "running") {
-        await move("released", { own: undefined, waiting: undefined })
-        return
+      const problem = createRecoveryProblem(own, at)
+      const hold = async (reason: string, retained = own) => {
+        const held = await move("creating", {
+          own: { ...retained, create_problem: reason },
+          waiting: { reason, until: "9999-12-31T23:59:59.999Z" },
+        })
+        if (held) await failIfOpen(deps, agent, job, reason)
       }
-      const created = await startOrWait(() =>
-        createStep(
-          client,
-          sandboxRequest(
-            `derive-${job.id.replaceAll("_", "-")}`,
-            own,
-            deps,
-            ttlFor(m.deadline_at, at),
-          ),
-          `${ownKey}-create`,
-          own,
-        ),
-      )
-      if (created === WAITING) return
-      if (created === REFUSED) {
-        await move("released", { own: undefined, waiting: undefined })
+      if (problem) return hold(problem)
+      if (!own.create_request) return
+      const replaying = !!own.create_submitted_at
+      const shouldRetire =
+        job.status !== "running" || at >= m.deadline_at || !(await admitted(deps, agent, own))
+      if (shouldRetire) {
+        await failIfOpen(deps, agent, job, "The task stopped before its machine was ready.")
+        if (!replaying) {
+          await move("released", { own: undefined, waiting: undefined })
+          return
+        }
+      }
+      const submitted = replaying ? own : { ...own, create_submitted_at: at }
+      if (!(await saveOwn(submitted, "creating"))) return
+      let created: Awaited<ReturnType<typeof createStep>>
+      try {
+        created = await createStep(client, own.create_request, `${ownKey}-create`, submitted)
+      } catch (error) {
+        if (error instanceof SandboxRefused) {
+          if (replaying)
+            return hold(
+              "This machine creation needs manual recovery: a retry was refused after an unknown outcome.",
+              submitted,
+            )
+          const released = await move("released", { own: undefined, waiting: undefined })
+          if (released)
+            await failIfOpen(
+              deps,
+              agent,
+              job,
+              `boat.dev would not start a machine: ${error.message}`,
+              false,
+            )
+          return
+        }
+        if (!(error instanceof SandboxRateLimited)) throw error
+        await move("creating", {
+          own: { ...submitted, ...(!replaying ? { create_submitted_at: undefined } : {}) },
+          waiting: {
+            reason: error.message,
+            until: new Date(Date.parse(at) + error.retryAfterSeconds * 1000).toISOString(),
+          },
+        })
         return
       }
       if (!created) {
-        await failIfOpen(deps, agent, job, "Derive could not start a machine for this task.")
-        await move("released", { own: undefined })
+        if (replaying)
+          return hold(
+            "This machine creation needs manual recovery: a retry was refused after an unknown outcome.",
+            submitted,
+          )
+        const released = await move("released", { own: undefined, waiting: undefined })
+        if (released)
+          await failIfOpen(deps, agent, job, "Derive could not start a machine for this task.")
         return
       }
-      await move("provisioning", { own: { ...own, ...created }, waiting: undefined })
+      await move("provisioning", { own: { ...submitted, ...created }, waiting: undefined })
       return
     }
     if (job.machine_phase === "provisioning") {
@@ -605,8 +731,12 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
         await move("released", { own: undefined })
         return
       }
+      const shouldRetire =
+        job.status !== "running" || at >= m.deadline_at || !(await admitted(deps, agent, own))
+      if (shouldRetire)
+        await failIfOpen(deps, agent, job, "The task stopped before its machine was ready.")
       const op = await client.operation(own.create_op, own.sandbox_id, "create", own.identity)
-      if (op.state === "succeeded") await move("ready")
+      if (op.state === "succeeded") await move(shouldRetire ? "deleting" : "ready")
       if (op.state === "failed") {
         await failIfOpen(deps, agent, job, "The machine for this task failed to start.")
         await move("deleting")
@@ -867,7 +997,7 @@ async function failIfOpen(
   retryable = true,
 ) {
   const fresh = await deps.meta.getJob(job.id)
-  if (!agent || fresh?.status !== "running") return
+  if (!agent || fresh?.status !== "running" || fresh.started_at !== job.started_at) return
   if (fresh.started_at)
     await deps.meta.jobExecution?.claim(fresh.id, fresh.org_id, fresh.started_at)
   await reportJob(deps, agent, job.id, {

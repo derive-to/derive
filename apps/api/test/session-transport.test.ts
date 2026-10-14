@@ -10,6 +10,10 @@ import {
   SESSION_FRAME_LIMIT,
 } from "../src/lib/session-transport"
 import { nodeSessionTransport } from "../src/lib/session-transport-node"
+import {
+  type WorkerSessionSocket,
+  workerSessionTransport,
+} from "../src/lib/session-transport-worker"
 
 const cleanups: (() => void)[] = []
 afterEach(() => {
@@ -241,5 +245,94 @@ describe("SSH binary relay", () => {
     const ended = vi.fn()
     source.socket.listen({ message() {}, close: ended })
     expect(ended).toHaveBeenCalledOnce()
+  })
+})
+
+describe("Worker SSH handshake lifetime", () => {
+  const fixture = (
+    dial: (request: Request) => Promise<{ status: number; webSocket?: WorkerSessionSocket }>,
+  ) => {
+    const upstream = { accept: vi.fn(), send: vi.fn(), close: vi.fn(), addEventListener: vi.fn() }
+    return {
+      upstream,
+      transport: workerSessionTransport({
+        dial,
+        pair: () => ({ 0: upstream, 1: upstream }),
+        response: () => new Response(),
+      }),
+    }
+  }
+
+  it("bounds a stalled dial even if the platform does not settle on abort", async () => {
+    vi.useFakeTimers()
+    const { transport } = fixture(() => new Promise(() => {}))
+    const connecting = transport.connect(new Request("https://ortam.test/ssh"))
+    const rejected = expect(connecting).rejects.toThrow("SSH tunnel connection")
+    await vi.advanceTimersByTimeAsync(15_000)
+    await rejected
+  })
+
+  it("detaches caller cancellation and handshake timeout after admitting the socket", async () => {
+    vi.useFakeTimers()
+    let dialed: Request | undefined
+    const { upstream, transport } = fixture(async (request) => {
+      dialed = request
+      return { status: 101, webSocket: upstream }
+    })
+    const controller = new AbortController()
+    const socket = await transport.connect(
+      new Request("https://ortam.test/ssh", { signal: controller.signal }),
+    )
+    controller.abort()
+    await vi.advanceTimersByTimeAsync(16_000)
+    expect(dialed?.signal.aborted).toBe(false)
+    await socket.send(new Uint8Array([0, 255]))
+    expect(upstream.send).toHaveBeenCalledWith(new Uint8Array([0, 255]))
+    socket.close()
+  })
+
+  it("rejects a canceled handshake and closes an upgrade returned after cancellation", async () => {
+    let finish: ((response: { status: number; webSocket: WorkerSessionSocket }) => void) | undefined
+    const { upstream, transport } = fixture(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        }),
+    )
+    const controller = new AbortController()
+    const connecting = transport.connect(
+      new Request("https://ortam.test/ssh", { signal: controller.signal }),
+    )
+    const rejected = expect(connecting).rejects.toThrow("SSH tunnel connection canceled")
+    controller.abort()
+    await rejected
+    finish?.({ status: 101, webSocket: upstream })
+    await Promise.resolve()
+    expect(upstream.close).toHaveBeenCalledWith(1000)
+  })
+
+  it("closes an upstream when cancellation fires while accepting the upgrade", async () => {
+    const controller = new AbortController()
+    const { upstream, transport } = fixture(async () => ({ status: 101, webSocket: upstream }))
+    upstream.accept.mockImplementation(() => controller.abort())
+    await expect(
+      transport.connect(new Request("https://ortam.test/ssh", { signal: controller.signal })),
+    ).rejects.toThrow("SSH tunnel connection canceled")
+    expect(upstream.close).toHaveBeenCalledWith(1000)
+  })
+
+  it("does not dial a pre-canceled request and closes a socket on an invalid upgrade", async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const dial = vi.fn(async () => ({ status: 200, webSocket: upstream }))
+    const { upstream, transport } = fixture(dial)
+    await expect(
+      transport.connect(new Request("https://ortam.test/ssh", { signal: controller.signal })),
+    ).rejects.toThrow("SSH tunnel connection canceled")
+    expect(dial).not.toHaveBeenCalled()
+    await expect(transport.connect(new Request("https://ortam.test/ssh"))).rejects.toThrow(
+      "SSH tunnel connection failed",
+    )
+    expect(upstream.close).toHaveBeenCalledWith(1000)
   })
 })

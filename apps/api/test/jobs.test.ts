@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process"
+import { once } from "node:events"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import type { AddressInfo } from "node:net"
@@ -7,8 +8,10 @@ import { join } from "node:path"
 import { promisify } from "node:util"
 import { newId } from "@derive/core"
 import { sessionApi, sessionCommand } from "@derive-to/cli/sessions"
-import { SignJWT } from "jose"
+import { serve } from "@hono/node-server"
+import { exportJWK, generateKeyPair, SignJWT } from "jose"
 import { describe, expect, it, vi } from "vitest"
+import WebSocket, { WebSocketServer } from "ws"
 import {
   JobClient,
   jobDrainPass,
@@ -20,14 +23,21 @@ import { createApp } from "../src/app"
 import type { AppDeps } from "../src/context"
 import { purgeUserDataAndSyncSeats } from "../src/lib/account"
 import type { ModelTurn } from "../src/lib/agent-loop"
+import { signApiToken, verifyApiToken } from "../src/lib/api-token"
 import { signCapabilityToken } from "../src/lib/capability-token"
 import { encryptSecret } from "../src/lib/crypto"
 import { workspaceIdsFromEnv } from "../src/lib/env"
 import { advanceGraph, graphAware, graphPass } from "../src/lib/job-graph"
-import { advanceMachineJob, machineDepsFrom, machinePass } from "../src/lib/job-machine"
+import {
+  advanceMachineJob,
+  advanceSandbox,
+  machineDepsFrom,
+  machinePass,
+} from "../src/lib/job-machine"
 import { HELD_FOR_BUDGET, jobTick, OWNER_LEFT } from "../src/lib/jobs"
 import { catalogOf } from "../src/lib/model-catalog"
 import { bufferedSessionSocket } from "../src/lib/session-transport"
+import { nodeSessionTransport } from "../src/lib/session-transport-node"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // THE AGENT MODEL, through the surface people and runners use: an agent is created, asked,
@@ -2864,7 +2874,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     const operation = (command: string) => /operations\/([a-f0-9]{64})/.exec(command)?.[1] ?? ""
     const calls: string[] = []
     // Starts boat.dev refuses next, as a plan's start limit does.
-    const limited = { starts: 0, refuse: false }
+    const limited = { starts: 0, refusals: 0, refuse: false, lostReplies: 0 }
     let next = 0
     const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input))
@@ -2874,6 +2884,10 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
       const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200 })
       if (path === "/me") return json({ user: { id: "boat-user" } })
       if (path === "/sandboxes" && method === "POST") {
+        if (limited.refusals > 0) {
+          limited.refusals--
+          return new Response(null, { status: 422 })
+        }
         if (limited.refuse)
           return new Response(
             JSON.stringify({ message: "Add a payment method to keep starting sandboxes." }),
@@ -2893,6 +2907,10 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
           archiveAt: Date.now() + (body.ttlSeconds ?? 1800) * 1000,
         })
         calls.push(`create ${id} ${body.from ?? "-"} ${body.type}`)
+        if (limited.lostReplies > 0) {
+          limited.lostReplies--
+          throw new Error("create response lost")
+        }
         return json({ sandbox: { id, state: "provisioned" } })
       }
       const [, , id, action] = path.split("/")
@@ -3443,6 +3461,65 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     expect(boat.calls.filter((c) => c.startsWith("create"))).toHaveLength(1)
   })
 
+  it("releases a refused shared create after a provider rate limit proved no allocation", async () => {
+    const { app, meta, boat, pass } = await cloudSetup("jobs-machine-shared-rate-refusal")
+    const agent = await createAgent(app, { machine: "derive", provider: "codex" })
+    boat.limited.starts = 1
+    await ask(app, ed.email, agent.id, "Fix the copy")
+    const waiting = await meta.getAgent(agent.id)
+    expect(waiting?.sandbox_phase).toBe("creating")
+    expect(JSON.parse(waiting?.sandbox_state_json ?? "{}").create_submitted_at).toBeUndefined()
+    boat.limited.refusals = 1
+    await pass()
+    const after = await meta.getAgent(agent.id)
+    expect(after?.sandbox_phase).toBe("failed")
+    expect(JSON.parse(after?.sandbox_state_json ?? "{}").create_problem).toBeUndefined()
+    expect(boat.calls.filter((call) => call.startsWith("create"))).toHaveLength(0)
+  })
+
+  it("releases a refused shared create after a billing refusal proved no allocation", async () => {
+    const { app, meta, boat, pass } = await cloudSetup("jobs-machine-shared-billing-refusal")
+    const agent = await createAgent(app, { machine: "derive", provider: "codex" })
+    boat.limited.refuse = true
+    await ask(app, ed.email, agent.id, "Fix the copy")
+    const waiting = await meta.getAgent(agent.id)
+    expect(waiting?.sandbox_phase).toBe("creating")
+    expect(JSON.parse(waiting?.sandbox_state_json ?? "{}").create_submitted_at).toBeUndefined()
+    boat.limited.refuse = false
+    boat.limited.refusals = 1
+    await pass()
+    const after = await meta.getAgent(agent.id)
+    expect(after?.sandbox_phase).toBe("failed")
+    expect(JSON.parse(after?.sandbox_state_json ?? "{}").create_problem).toBeUndefined()
+    expect(boat.calls.filter((call) => call.startsWith("create"))).toHaveLength(0)
+  })
+
+  it("retains shared creation ownership when billing refusal follows a lost accepted response", async () => {
+    const { app, meta, boat, pass } = await cloudSetup("jobs-machine-shared-unknown-billing")
+    const agent = await createAgent(app, { machine: "derive", provider: "codex" })
+    boat.limited.lostReplies = 1
+    await ask(app, ed.email, agent.id, "Fix the copy")
+    const submitted = JSON.parse((await meta.getAgent(agent.id))?.sandbox_state_json ?? "{}")
+    expect(submitted.create_submitted_at).toBeDefined()
+    expect(boat.boxes.size).toBe(1)
+    boat.limited.refuse = true
+    await pass()
+    const refused = JSON.parse((await meta.getAgent(agent.id))?.sandbox_state_json ?? "{}")
+    expect(refused.create_submitted_at).toBe(submitted.create_submitted_at)
+    boat.limited.refuse = false
+    boat.limited.refusals = 1
+    await pass()
+    const held = await meta.getAgent(agent.id)
+    const state = JSON.parse(held?.sandbox_state_json ?? "{}")
+    expect(held?.sandbox_phase).toBe("creating")
+    expect(state.create_problem).toContain("a retry was refused after an unknown outcome")
+    expect(state.create_submitted_at).toBe(submitted.create_submitted_at)
+    expect(state.generation).toBe(submitted.generation)
+    expect(state.credential_enc).toBe(submitted.credential_enc)
+    expect(state.create_request).toEqual(submitted.create_request)
+    expect(boat.boxes.size).toBe(1)
+  })
+
   it("a provider that refuses to start a machine fails the task once, in its own words", async () => {
     const { app, meta, boat, until } = await cloudSetup("jobs-machine-refused")
     const agent = await createAgent(app, {
@@ -3511,12 +3588,26 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
   const cloudSetup = async (
     name: string,
     idleSeconds: number,
-    options: { session?: boolean; sessionTransport?: AppDeps["sessionTransport"] } = {},
+    options: {
+      session?: boolean
+      sessionTransport?: AppDeps["sessionTransport"]
+      snapshot?: string
+      reserveOnly?: boolean
+      fresh?: boolean
+    } = {},
   ) => {
     const identity = { organization_id: "ortam-org", user_id: "ortam-user" }
     const processes = new Map<string, { body: string; id: string }>()
     const launches: Array<{ body: Record<string, unknown>; key: string }> = []
     const responseLoss = { next: false }
+    const creates: Array<{ body: Record<string, unknown>; key: string }> = []
+    const created = new Map<string, string>()
+    const createOutcome = {
+      loseNext: false,
+      status: 200,
+      holdNext: undefined as Promise<void> | undefined,
+    }
+    let deleted = false
     const certificates: Array<unknown> = []
     const certificateExpiry = new Date(Date.now() + 60_000).toISOString()
     let stopped = false
@@ -3539,9 +3630,36 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
         kind,
         state: kind === "create" && !provisioning.ready ? "queued" : "succeeded",
       })
-      if (path === "/sandboxes" && request.method === "POST")
+      if (path === "/sandboxes" && request.method === "POST") {
+        const body = (await request.json()) as Record<string, unknown>
+        const key = request.headers.get("Idempotency-Key") ?? ""
+        creates.push({ body, key })
+        const status = createOutcome.status
+        const hold = createOutcome.holdNext
+        createOutcome.holdNext = undefined
+        if (status !== 200) {
+          await hold
+          return new Response(null, { status })
+        }
+        const fingerprint = JSON.stringify(body)
+        if (created.has(key) && created.get(key) !== fingerprint)
+          return new Response(null, { status: 409 })
+        created.set(key, fingerprint)
+        await hold
+        if (createOutcome.loseNext) {
+          createOutcome.loseNext = false
+          throw new Error("create response lost")
+        }
         return Response.json({ sandbox, operation: operation("create") })
-      if (path === "/sandboxes/sbx") return Response.json(sandbox)
+      }
+      if (path === "/sandboxes/sbx") {
+        if (request.method === "DELETE") {
+          deleted = true
+          return Response.json(operation("delete"))
+        }
+        if (deleted) return new Response(null, { status: 404 })
+        return Response.json(sandbox)
+      }
       if (path === "/sandboxes/sbx/ssh-certificate") {
         certificates.push(await request.json())
         return Response.json({
@@ -3589,6 +3707,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
       runtimeFetch: fetcher,
       baseUrl: "http://derive.test",
       sessionTransport: options.sessionTransport,
+      detachAfterResponse: options.reserveOnly,
     })
     await made.app.request(
       "/v1/accounts",
@@ -3609,11 +3728,19 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
     const agent = await createAgent(made.app, {
       machine: "derive",
       provider: "codex",
-      sandbox: { fresh: true },
+      sandbox: {
+        fresh: options.fresh ?? true,
+        ...(options.snapshot ? { snapshot: options.snapshot } : {}),
+      },
     })
-    const response = await ask(made.app, ed.email, agent.id, "Fix the parser", {
+    const body = jsonAs(as(ed.email), {
+      agent_id: agent.id,
+      instruction: "Fix the parser",
       session: options.session ?? false,
     })
+    const response = options.reserveOnly
+      ? await made.app.request("/v1/jobs", body, { outgoing: { once: () => {} } })
+      : await made.app.request("/v1/jobs", body)
     expect(response.status).toBe(201)
     const job = (await response.json()) as { id: string }
     const until = async (phase: string) => {
@@ -3622,7 +3749,11 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
         const current = await made.meta.getJob(job.id)
         if (current?.machine_phase === phase) return
         if (current?.machine_phase) await advanceMachineJob(deps, current)
-        else await machinePass(deps, { maxRequests: 400, maxTransitions: 2 })
+        else
+          await machinePass(deps, {
+            maxRequests: 400,
+            maxTransitions: phase === "creating" ? 1 : 2,
+          })
       }
       expect((await made.meta.getJob(job.id))?.machine_phase).toBe(phase)
     }
@@ -3635,10 +3766,399 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
       launches,
       processes,
       responseLoss,
+      creates,
+      createOutcome,
+      provisioning,
       certificates,
       certificateExpiry,
     }
   }
+
+  it("freezes shared creation and retires a lost response after admission is removed", async () => {
+    const fixture = await cloudSetup("jobs-ortam-shared-create-recovery", 2700, {
+      reserveOnly: true,
+      fresh: false,
+    })
+    const unreserved = await fixture.meta.getAgent(fixture.agent.id)
+    if (!unreserved) throw new Error("missing unreserved agent")
+    await advanceSandbox(fixture.deps, unreserved, ed.id)
+    const first = await fixture.meta.getAgent(fixture.agent.id)
+    if (!first) throw new Error("missing shared agent")
+    expect(first.sandbox_phase).toBe("creating")
+    fixture.createOutcome.loseNext = true
+    await advanceSandbox(fixture.deps, first).catch(() => null)
+    expect(fixture.creates).toHaveLength(1)
+    const submitted = await fixture.meta.getAgent(fixture.agent.id)
+    const state = JSON.parse(submitted?.sandbox_state_json ?? "{}")
+    expect(state.create_request).toBeDefined()
+    expect(state.create_submitted_at).toBeDefined()
+    await fixture.meta.updateAgent(fixture.agent.id, "default", {
+      paused_at: new Date().toISOString(),
+    })
+    const deps = {
+      ...fixture.deps,
+      config: {
+        ...fixture.deps.config,
+        runnerArchive: { url: "https://derive.test/new-runner.tgz", sha256: "a".repeat(64) },
+      },
+      now: () => new Date(Date.parse(state.create_submitted_at) + 60_000),
+    }
+    fixture.provisioning.ready = true
+    for (let i = 0; i < 6; i++) {
+      const agent = await fixture.meta.getAgent(fixture.agent.id)
+      if (!agent || agent.sandbox_phase === null) break
+      await advanceSandbox(deps, agent)
+    }
+    expect((await fixture.meta.getAgent(fixture.agent.id))?.sandbox_phase).toBeNull()
+    expect(fixture.creates).toHaveLength(2)
+    expect(fixture.creates[1]).toEqual(fixture.creates[0])
+    expect(fixture.launches).toHaveLength(0)
+  })
+
+  it.each([
+    true,
+    false,
+  ])("deletes an unsubmitted shared creation with provider key available: %s", async (configured) => {
+    const fixture = await cloudSetup(`jobs-ortam-shared-unsubmitted-delete-${configured}`, 2700, {
+      reserveOnly: true,
+      fresh: false,
+    })
+    const unreserved = await fixture.meta.getAgent(fixture.agent.id)
+    if (!unreserved) throw new Error("missing unreserved agent")
+    await advanceSandbox(fixture.deps, unreserved, ed.id)
+    const deleting = () =>
+      fixture.app.request(`/v1/agents/${fixture.agent.id}`, {
+        method: "DELETE",
+        headers: as(owner.email),
+      })
+    expect((await deleting()).status).toBe(409)
+    const paused = await fixture.meta.getAgent(fixture.agent.id)
+    if (!paused) throw new Error("missing paused agent")
+    await advanceSandbox(
+      configured
+        ? fixture.deps
+        : { ...fixture.deps, config: { ...fixture.deps.config, managed: undefined } },
+      paused,
+    )
+    expect((await deleting()).status).toBe(204)
+    expect(await fixture.meta.getAgent(fixture.agent.id)).toBeNull()
+    expect(fixture.creates).toHaveLength(0)
+    expect(fixture.launches).toHaveLength(0)
+  })
+
+  it("retains a legacy shared creation without guessing its key's age", async () => {
+    const fixture = await cloudSetup("jobs-ortam-shared-create-legacy", 2700, {
+      reserveOnly: true,
+      fresh: false,
+    })
+    const unreserved = await fixture.meta.getAgent(fixture.agent.id)
+    if (!unreserved) throw new Error("missing unreserved agent")
+    await advanceSandbox(fixture.deps, unreserved, ed.id)
+    const first = await fixture.meta.getAgent(fixture.agent.id)
+    if (!first) throw new Error("missing shared agent")
+    const state = JSON.parse(first.sandbox_state_json ?? "{}")
+    delete state.create_request
+    delete state.create_submitted_at
+    const legacy = await fixture.meta.transitionAgentSandbox(
+      first.id,
+      first.org_id,
+      first.sandbox_rev,
+      { phase: "creating", state_json: JSON.stringify(state) },
+    )
+    if (!legacy) throw new Error("could not seed legacy agent")
+    await advanceSandbox(fixture.deps, legacy)
+    const after = await fixture.meta.getAgent(fixture.agent.id)
+    expect(fixture.creates).toHaveLength(0)
+    expect(after?.sandbox_phase).toBe("creating")
+    expect(JSON.parse(after?.sandbox_state_json ?? "{}").generation).toBe(state.generation)
+    expect(JSON.parse(after?.sandbox_state_json ?? "{}").create_problem).toMatch(/manual recovery/)
+    const response = await fixture.app.request(`/v1/agents/${fixture.agent.id}`, {
+      headers: as(owner.email),
+    })
+    expect(response.status).toBe(200)
+    const visible = (await response.json()) as { runtime: { reason: string | null } }
+    expect(visible.runtime.reason).toMatch(/manual recovery/)
+    expect(JSON.stringify(visible)).not.toContain("create_request")
+    expect(JSON.stringify(visible)).not.toContain("managed-ortam-key")
+  })
+
+  const attemptCreate = async (
+    fixture: Awaited<ReturnType<typeof cloudSetup>>,
+    deps = fixture.deps,
+  ) => {
+    for (let i = 0; i < 4 && fixture.creates.length === 0; i++) {
+      const current = await fixture.meta.getJob(fixture.job.id)
+      if (!current) throw new Error("missing creating job")
+      await advanceMachineJob(deps, current).catch(() => null)
+    }
+    expect(fixture.creates).toHaveLength(1)
+  }
+
+  it("replays the durable create body after response loss and deployment changes", async () => {
+    const fixture = await cloudSetup("jobs-ortam-create-replay", 2700, { reserveOnly: true })
+    await fixture.until("creating")
+    fixture.createOutcome.loseNext = true
+    await attemptCreate(fixture)
+    const first = await fixture.meta.getJob(fixture.job.id)
+    const machine = JSON.parse(first?.machine_json ?? "{}")
+    expect(machine.own.create_request).toBeDefined()
+    expect(machine.own.create_submitted_at).toBeDefined()
+    if (!first) throw new Error("missing submitted job")
+    await advanceMachineJob(
+      {
+        ...fixture.deps,
+        config: {
+          ...fixture.deps.config,
+          runnerArchive: { url: "https://derive.test/new-runner.tgz", sha256: "a".repeat(64) },
+        },
+        now: () => new Date(Date.parse(machine.own.create_submitted_at) + 60_000),
+      },
+      first,
+    )
+    expect((await fixture.meta.getJob(fixture.job.id))?.machine_phase).toBe("provisioning")
+    expect(fixture.creates[1]).toEqual(fixture.creates[0])
+  })
+
+  it.each([
+    "cancel",
+    "deadline",
+    "lease",
+  ])("recovers a submitted create after %s and deletes without launching", async (stop) => {
+    const fixture = await cloudSetup(`jobs-ortam-create-retire-${stop}`, 2700, {
+      reserveOnly: true,
+    })
+    await fixture.until("creating")
+    fixture.createOutcome.loseNext = true
+    await attemptCreate(fixture)
+    const first = await fixture.meta.getJob(fixture.job.id)
+    const machine = JSON.parse(first?.machine_json ?? "{}")
+    const deps =
+      stop === "cancel"
+        ? fixture.deps
+        : {
+            ...fixture.deps,
+            now: () => new Date(Date.parse(machine.deadline_at) + (stop === "lease" ? 600_001 : 1)),
+          }
+    if (stop === "cancel")
+      await fixture.app.request(`/v1/jobs/${fixture.job.id}/cancel`, {
+        method: "POST",
+        headers: as(ed.email),
+      })
+    if (stop === "lease") await fixture.meta.reclaimStaleJobs(deps.now?.().toISOString() ?? "", 3)
+    for (let i = 0; i < 8; i++) {
+      const current = await fixture.meta.getJob(fixture.job.id)
+      if (!current || current.machine_phase === "released") break
+      await advanceMachineJob(deps, current)
+    }
+    expect((await fixture.meta.getJob(fixture.job.id))?.machine_phase).toBe("released")
+    expect(fixture.creates).toHaveLength(2)
+    expect(fixture.creates[1]).toEqual(fixture.creates[0])
+    expect(fixture.launches).toHaveLength(0)
+  })
+
+  it("settles the turn deadline while a submitted create operation is still queued", async () => {
+    const fixture = await cloudSetup("jobs-ortam-create-deadline-queued", 2700, {
+      reserveOnly: true,
+    })
+    await fixture.until("creating")
+    fixture.provisioning.ready = false
+    await attemptCreate(fixture)
+    const first = await fixture.meta.getJob(fixture.job.id)
+    if (!first) throw new Error("missing provisioning job")
+    expect(first.machine_phase).toBe("provisioning")
+    const machine = JSON.parse(first.machine_json ?? "{}")
+    const deps = { ...fixture.deps, now: () => new Date(Date.parse(machine.deadline_at) + 1) }
+    await advanceMachineJob(deps, first)
+    const queued = await fixture.meta.getJob(fixture.job.id)
+    expect(queued?.status).not.toBe("running")
+    expect(queued?.machine_phase).toBe("provisioning")
+    expect(JSON.parse(queued?.machine_json ?? "{}").own.sandbox_id).toBe("sbx")
+    fixture.provisioning.ready = true
+    for (let i = 0; i < 6; i++) {
+      const current = await fixture.meta.getJob(fixture.job.id)
+      if (!current || current.machine_phase === "released") break
+      await advanceMachineJob(deps, current)
+    }
+    expect((await fixture.meta.getJob(fixture.job.id))?.machine_phase).toBe("released")
+    expect(fixture.launches).toHaveLength(0)
+  })
+
+  it("fences a refusing first attempt against an accepted concurrent replay", async () => {
+    const fixture = await cloudSetup("jobs-ortam-create-concurrent-refusal", 2700, {
+      reserveOnly: true,
+    })
+    await fixture.until("creating")
+    const first = await fixture.meta.getJob(fixture.job.id)
+    if (!first) throw new Error("missing reserved job")
+    let refuse = () => {}
+    let accepted = () => {}
+    fixture.createOutcome.status = 422
+    fixture.createOutcome.holdNext = new Promise<void>((resolve) => {
+      refuse = resolve
+    })
+    const original = advanceMachineJob(fixture.deps, first)
+    await vi.waitFor(() => expect(fixture.creates).toHaveLength(1))
+    const replaying = await fixture.meta.getJob(fixture.job.id)
+    if (!replaying) throw new Error("missing submitted job")
+    fixture.createOutcome.status = 200
+    fixture.createOutcome.holdNext = new Promise<void>((resolve) => {
+      accepted = resolve
+    })
+    const replay = advanceMachineJob(fixture.deps, replaying)
+    await vi.waitFor(() => expect(fixture.creates).toHaveLength(2))
+    try {
+      refuse()
+      await original
+      expect((await fixture.meta.getJob(fixture.job.id))?.machine_phase).toBe("creating")
+      expect((await fixture.meta.getJob(fixture.job.id))?.status).toBe("running")
+      accepted()
+      await replay
+      const after = await fixture.meta.getJob(fixture.job.id)
+      expect(after?.machine_phase).toBe("provisioning")
+      expect(after?.status).toBe("running")
+      expect(JSON.parse(after?.machine_json ?? "{}").own.sandbox_id).toBe("sbx")
+      expect(fixture.creates[1]).toEqual(fixture.creates[0])
+      expect(fixture.launches).toHaveLength(0)
+    } finally {
+      refuse()
+      accepted()
+      await Promise.allSettled([original, replay])
+    }
+  })
+
+  it("settles a persisted recovery diagnostic after interruption before job failure", async () => {
+    const fixture = await cloudSetup("jobs-ortam-create-held-interruption", 2700, {
+      reserveOnly: true,
+    })
+    await fixture.until("creating")
+    const first = await fixture.meta.getJob(fixture.job.id)
+    if (!first) throw new Error("missing reserved job")
+    const machine = JSON.parse(first.machine_json ?? "{}")
+    const reason = "This machine creation needs manual recovery: its result is unknown."
+    machine.own.create_problem = reason
+    machine.waiting = { reason, until: "9999-12-31T23:59:59.999Z" }
+    const interrupted = await fixture.meta.transitionJobMachine(first.id, first.machine_rev, {
+      phase: "creating",
+      machine_json: JSON.stringify(machine),
+    })
+    if (!interrupted) throw new Error("could not persist interrupted recovery diagnostic")
+    await advanceMachineJob(fixture.deps, interrupted)
+    const after = await fixture.meta.getJob(fixture.job.id)
+    expect(after?.status).not.toBe("running")
+    expect(after?.machine_phase).toBe("creating")
+    expect(JSON.parse(after?.machine_json ?? "{}").own.generation).toBe(machine.own.generation)
+    expect(fixture.creates).toHaveLength(0)
+  })
+
+  it("does not submit a reserved create once its turn deadline has passed", async () => {
+    const fixture = await cloudSetup("jobs-ortam-create-expired-unsubmitted", 2700, {
+      reserveOnly: true,
+    })
+    await fixture.until("creating")
+    const first = await fixture.meta.getJob(fixture.job.id)
+    const machine = JSON.parse(first?.machine_json ?? "{}")
+    if (!first) throw new Error("missing reserved job")
+    await advanceMachineJob(
+      { ...fixture.deps, now: () => new Date(Date.parse(machine.deadline_at) + 1) },
+      first,
+    )
+    expect(fixture.creates).toHaveLength(0)
+    expect((await fixture.meta.getJob(fixture.job.id))?.machine_phase).toBe("released")
+  })
+
+  it("releases a definitive preallocation refusal without retrying for the entire turn", async () => {
+    const fixture = await cloudSetup("jobs-ortam-create-refused", 2700, { reserveOnly: true })
+    await fixture.until("creating")
+    fixture.createOutcome.status = 422
+    await attemptCreate(fixture)
+    expect((await fixture.meta.getJob(fixture.job.id))?.machine_phase).toBe("released")
+    expect((await fixture.meta.getJob(fixture.job.id))?.status).not.toBe("running")
+  })
+
+  it("retains an unknown allocation if a later retry is refused", async () => {
+    const fixture = await cloudSetup("jobs-ortam-create-uncertain-refused", 2700, {
+      reserveOnly: true,
+    })
+    await fixture.until("creating")
+    fixture.createOutcome.loseNext = true
+    await attemptCreate(fixture)
+    fixture.createOutcome.status = 422
+    const first = await fixture.meta.getJob(fixture.job.id)
+    if (!first) throw new Error("missing uncertain job")
+    const machine = JSON.parse(first.machine_json ?? "{}")
+    await advanceMachineJob(
+      { ...fixture.deps, now: () => new Date(Date.parse(machine.deadline_at) + 1) },
+      first,
+    )
+    const after = await fixture.meta.getJob(fixture.job.id)
+    expect(after?.machine_phase).toBe("creating")
+    expect(after?.status).not.toBe("running")
+    expect(JSON.parse(after?.machine_json ?? "{}").own).toMatchObject({
+      generation: machine.own.generation,
+      create_request: machine.own.create_request,
+      create_submitted_at: machine.own.create_submitted_at,
+    })
+  })
+
+  it("keeps recovery identity without replaying outside Ortam's idempotency window", async () => {
+    const fixture = await cloudSetup("jobs-ortam-create-stale", 2700, { reserveOnly: true })
+    await fixture.until("creating")
+    fixture.createOutcome.loseNext = true
+    await attemptCreate(fixture)
+    const first = await fixture.meta.getJob(fixture.job.id)
+    if (!first) throw new Error("missing uncertain job")
+    const machine = JSON.parse(first.machine_json ?? "{}")
+    await advanceMachineJob(
+      {
+        ...fixture.deps,
+        now: () =>
+          new Date(
+            Date.parse(machine.own.create_submitted_at ?? first.started_at) + 24 * 60 * 60_000,
+          ),
+      },
+      first,
+    )
+    const after = await fixture.meta.getJob(fixture.job.id)
+    expect(fixture.creates).toHaveLength(1)
+    expect(after?.machine_phase).toBe("creating")
+    expect(after?.status).not.toBe("running")
+    expect(JSON.parse(after?.machine_json ?? "{}").own.generation).toBe(machine.own.generation)
+    expect(JSON.parse(after?.machine_json ?? "{}").waiting.reason).toMatch(/manual recovery/)
+  })
+
+  it("does not invent a replay body for a legacy uncertain create", async () => {
+    const fixture = await cloudSetup("jobs-ortam-create-legacy", 2700, { reserveOnly: true })
+    await fixture.until("creating")
+    const first = await fixture.meta.getJob(fixture.job.id)
+    if (!first) throw new Error("missing legacy job")
+    const machine = JSON.parse(first.machine_json ?? "{}")
+    delete machine.own.create_request
+    delete machine.own.create_submitted_at
+    const legacy = await fixture.meta.transitionJobMachine(first.id, first.machine_rev, {
+      phase: "creating",
+      machine_json: JSON.stringify(machine),
+    })
+    if (!legacy) throw new Error("could not seed legacy state")
+    await advanceMachineJob(fixture.deps, legacy)
+    const after = await fixture.meta.getJob(fixture.job.id)
+    expect(fixture.creates).toHaveLength(0)
+    expect(after?.machine_phase).toBe("creating")
+    expect(JSON.parse(after?.machine_json ?? "{}").own.generation).toBe(machine.own.generation)
+    expect(JSON.parse(after?.machine_json ?? "{}").waiting.reason).toMatch(/manual recovery/)
+  })
+
+  it("lets Ortam infer the size of a restored snapshot", async () => {
+    const fixture = await cloudSetup("jobs-ortam-create-snapshot-size", 2700, {
+      snapshot: "spt_01h455vb4pex5vsknk084sn02q",
+      reserveOnly: true,
+    })
+    await fixture.until("creating")
+    await attemptCreate(fixture)
+    expect(fixture.creates[0]?.body.source).toEqual({
+      snapshot_id: "spt_01h455vb4pex5vsknk084sn02q",
+    })
+    expect(fixture.creates[0]?.body).not.toHaveProperty("size")
+  })
 
   it.each([
     60, 86400,
@@ -3822,6 +4342,291 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
       downstream.close()
     }
   }, 15_000)
+
+  it("closes the provider on native TCP cancellation during stalled downstream admission", async () => {
+    const closed = vi.fn()
+    const upstream = bufferedSessionSocket(async () => {}, closed)
+    let block = false
+    let blocked = () => {}
+    const stalled = new Promise<void>((resolve) => {
+      blocked = resolve
+    })
+    let release = () => {}
+    const resume = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const accept = vi.fn(async () => new Response("unexpected admission"))
+    const made = await cloudSetup("jobs-ortam-native-admission-abort", 2700, {
+      session: true,
+      sessionTransport: {
+        ...nodeSessionTransport,
+        connect: async () => {
+          block = true
+          return upstream.socket
+        },
+        accept,
+      },
+    })
+    await made.until("running")
+    const current = await made.meta.getJob(made.job.id)
+    if (!current) throw new Error("missing running session")
+    const original = made.meta.getJob.bind(made.meta)
+    const meta = new Proxy(made.ctx.meta, {
+      get(target, prop, receiver) {
+        if (prop === "getJob")
+          return async (id: string) => {
+            if (block) {
+              blocked()
+              await resume
+            }
+            return original(id)
+          }
+        return Reflect.get(target, prop, receiver)
+      },
+    })
+    const app = createApp({ ...made.ctx.deps, meta })
+    const sockets = new WebSocketServer({ noServer: true })
+    const server = serve({
+      fetch: app.fetch,
+      port: 0,
+      hostname: "127.0.0.1",
+      websocket: { server: sockets },
+    })
+    if (!server.listening) await once(server, "listening")
+    const port = (server.address() as AddressInfo).port
+    const client = new WebSocket(`ws://127.0.0.1:${port}/v1/jobs/${current.id}/ssh`, {
+      headers: { ...as(ed.email), "x-derive-job-claim": current.started_at ?? "" },
+    })
+    client.on("error", () => {})
+    try {
+      await stalled
+      client.terminate()
+      await vi.waitFor(() => expect(closed).toHaveBeenCalledOnce(), { timeout: 1000 })
+      expect(accept).not.toHaveBeenCalled()
+    } finally {
+      block = false
+      release()
+      client.terminate()
+      upstream.close()
+      sockets.close()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  })
+
+  it.each([
+    "request abort",
+    "authorization timeout",
+    "session expiry",
+  ])("closes an opened provider tunnel when post-connect authorization stalls: %s", async (reason) => {
+    const closed = vi.fn()
+    const upstream = bufferedSessionSocket(async () => {}, closed)
+    let block = false
+    let blocked = () => {}
+    const stalled = new Promise<void>((resolve) => {
+      blocked = resolve
+    })
+    let release = () => {}
+    const resume = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const accept = vi.fn(async () => new Response("unexpected admission"))
+    const made = await cloudSetup(`jobs-ortam-admission-${reason.replaceAll(" ", "-")}`, 2700, {
+      session: true,
+      sessionTransport: {
+        connect: async () => {
+          block = true
+          return upstream.socket
+        },
+        accept,
+      },
+    })
+    await made.until("running")
+    const current = await made.meta.getJob(made.job.id)
+    if (!current) throw new Error("missing running session")
+    if (reason === "session expiry")
+      await made.meta.transitionJobMachine(current.id, current.machine_rev, {
+        phase: "running",
+        machine_json: JSON.stringify({
+          ...JSON.parse(current.machine_json ?? "{}"),
+          deadline_at: new Date(Date.now() + 1000).toISOString(),
+        }),
+      })
+    const original = made.meta.getJob.bind(made.meta)
+    const meta = new Proxy(made.ctx.meta, {
+      get(target, prop, receiver) {
+        if (prop === "getJob")
+          return async (id: string) => {
+            if (block) {
+              blocked()
+              await resume
+            }
+            return original(id)
+          }
+        return Reflect.get(target, prop, receiver)
+      },
+    })
+    const app = createApp({ ...made.ctx.deps, meta })
+    const controller = new AbortController()
+    vi.useFakeTimers()
+    const pending = app.request(
+      new Request(`http://derive.test/v1/jobs/${current.id}/ssh`, {
+        signal: controller.signal,
+        headers: {
+          ...as(ed.email),
+          upgrade: "websocket",
+          "x-derive-job-claim": current.started_at ?? "",
+        },
+      }),
+    )
+    try {
+      await stalled
+      if (reason === "request abort") controller.abort()
+      await vi.advanceTimersByTimeAsync(reason === "session expiry" ? 1000 : 15000)
+      expect(closed).toHaveBeenCalledOnce()
+      expect((await pending).status).toBe(409)
+      expect(accept).not.toHaveBeenCalled()
+    } finally {
+      block = false
+      release()
+      await pending
+      upstream.close()
+      vi.useRealTimers()
+    }
+  })
+
+  it("caps an older signed publish JWT by current OAuth consent before SSH admission", async () => {
+    const connect = vi.fn(async () => {
+      throw new Error("read-only consent must not dial a provider")
+    })
+    const made = await cloudSetup("jobs-ortam-current-consent", 2700, {
+      session: true,
+      sessionTransport: { connect, accept: async () => new Response("unexpected tunnel") },
+    })
+    await made.until("running")
+    const { publicKey, privateKey } = await generateKeyPair("EdDSA")
+    const jwk = { ...(await exportJWK(publicKey)), kid: "session-consent-key", alg: "EdDSA" }
+    if (!made.ctx.deps.auth) throw new Error("missing test auth")
+    Object.assign(made.ctx.deps.auth.api, { getJwks: async () => ({ keys: [jwk] }) })
+    const scopes = { value: ["derive:read"] }
+    const grantedAt = new Date().toISOString()
+    const meta = new Proxy(made.ctx.meta, {
+      get(target, prop, receiver) {
+        if (prop === "oauthGrantWithWorkspaces" || prop === "getOAuthGrant") return async () => null
+        if (prop === "listUserGrants")
+          return async () => [
+            {
+              clientId: "session-cli",
+              clientName: "Session CLI",
+              scopes: scopes.value,
+              grantedAt,
+            },
+          ]
+        return Reflect.get(target, prop, receiver)
+      },
+    })
+    const app = createApp({ ...made.ctx.deps, meta })
+    const token = await new SignJWT({ scope: "derive:read derive:publish", azp: "session-cli" })
+      .setProtectedHeader({ alg: "EdDSA", kid: jwk.kid })
+      .setSubject(ed.id)
+      .setIssuer("http://derive.test")
+      .setAudience("http://derive.test")
+      .setIssuedAt(Math.floor(Date.now() / 1000) - 60)
+      .setExpirationTime("5m")
+      .sign(privateKey)
+    const current = await made.meta.getJob(made.job.id)
+    const headers = { ...bearer(token), "x-derive-workspace": "default" }
+    for (const currentScopes of [["derive:read"], ["derive:read", "derive:comment"]]) {
+      scopes.value = currentScopes
+      expect(
+        (
+          await app.request(
+            `/v1/jobs/${made.job.id}/attach`,
+            jsonAs(headers, {
+              public_key: "ssh-ed25519 AAAAclient",
+            }),
+          )
+        ).status,
+      ).toBe(403)
+      expect(
+        (
+          await app.request(`/v1/jobs/${made.job.id}/ssh`, {
+            headers: {
+              ...headers,
+              upgrade: "websocket",
+              "x-derive-job-claim": current?.started_at ?? "",
+            },
+          })
+        ).status,
+      ).toBe(403)
+    }
+    expect(made.certificates).toEqual([])
+    expect(connect).not.toHaveBeenCalled()
+  })
+
+  it("ends a minted API token's SSH tunnel at its verified expiry without parent consent", async () => {
+    const upstreamClosed = vi.fn()
+    const downstreamClosed = vi.fn()
+    const forwarded = vi.fn(async (_bytes: Uint8Array) => {})
+    const upstream = bufferedSessionSocket(forwarded, upstreamClosed)
+    const downstream = bufferedSessionSocket(async () => {}, downstreamClosed)
+    const made = await cloudSetup("jobs-ortam-minted-expiry", 2700, {
+      session: true,
+      sessionTransport: {
+        connect: async () => upstream.socket,
+        accept: async (_context, ready) => {
+          ready(downstream.socket)
+          return new Response("tunnel-open")
+        },
+      },
+    })
+    await made.until("running")
+    const consentReads = vi.fn(async () => [])
+    const meta = new Proxy(made.ctx.meta, {
+      get(target, prop, receiver) {
+        if (prop === "listUserGrants") return consentReads
+        return Reflect.get(target, prop, receiver)
+      },
+    })
+    const app = createApp({ ...made.ctx.deps, meta })
+    const expiresAt = Date.now() + 1000
+    const token = await signApiToken(
+      "test-encryption-key",
+      ed.id,
+      "default",
+      "editor",
+      "session-cli",
+      expiresAt,
+    )
+    const current = await made.meta.getJob(made.job.id)
+    try {
+      const response = await app.request(`/v1/jobs/${made.job.id}/ssh`, {
+        headers: {
+          ...bearer(token),
+          upgrade: "websocket",
+          "x-derive-job-claim": current?.started_at ?? "",
+        },
+      })
+      expect(await response.text()).toBe("tunnel-open")
+      downstream.message(new Uint8Array([0, 255]))
+      await vi.waitFor(() => expect(forwarded).toHaveBeenCalledOnce())
+      await vi.waitFor(
+        () => {
+          expect(Date.now()).toBeGreaterThanOrEqual(expiresAt)
+          expect(upstreamClosed).toHaveBeenCalledOnce()
+          expect(downstreamClosed).toHaveBeenCalledOnce()
+        },
+        { timeout: 1500, interval: 20 },
+      )
+      expect(await verifyApiToken("test-encryption-key", token, Date.now())).toBeNull()
+      downstream.message(new Uint8Array([42]))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(forwarded).toHaveBeenCalledOnce()
+      expect(consentReads).not.toHaveBeenCalled()
+    } finally {
+      upstream.close()
+      downstream.close()
+    }
+  })
 
   it.each([
     "consent",

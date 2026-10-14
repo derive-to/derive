@@ -7710,6 +7710,7 @@ export interface components {
             runtime?: {
                 /** @enum {string} */
                 provider: "ortam" | "boat";
+                reason?: string | null;
                 /** @enum {string|null} */
                 phase: "creating" | "provisioning" | "stopping" | "ready" | "busy" | "deleting" | "failed" | null;
             } | null;

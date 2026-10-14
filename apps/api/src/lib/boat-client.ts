@@ -140,7 +140,7 @@ export class BoatClient implements SandboxClient {
         "POST",
         {
           name: body.name,
-          type: body.size,
+          type: body.size ?? "small",
           ttlSeconds: input.auto_stop_after_seconds,
           // An owner-chosen environment brings its repositories and secrets; otherwise none.
           ...(input.environment ? { environment: input.environment } : { noEnv: true }),

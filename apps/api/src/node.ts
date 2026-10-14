@@ -730,8 +730,6 @@ const server = serve(
     log.info("derive api listening", {
       port: cfg.port,
       base_url: cfg.baseUrl,
-      // Name the HOST, not just the driver: "postgres" alone once read the same for a
-      // local database and a production one, and nobody could tell for a day.
       meta: cfg.databaseUrl ? `postgres (${dbHost ?? "unparseable"})` : `sqlite (${cfg.dataDir})`,
       blobs: cfg.objectStoreUrl ? "S3/R2" : `local disk (${cfg.dataDir})`,
       web: cfg.serveWeb ? "bundled SPA" : "API only",

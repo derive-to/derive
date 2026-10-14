@@ -99,7 +99,7 @@ export const verifyCapabilityToken = async (
   secret: string,
   token: string,
   nowMs: number,
-): Promise<{ rest: string } | null> => {
+): Promise<{ rest: string; expiresAt: number } | null> => {
   const dot = token.lastIndexOf(".")
   if (dot <= 0) return null
   const payload = token.slice(0, dot)
@@ -130,5 +130,5 @@ export const verifyCapabilityToken = async (
   const expEpochMs = Number(plain.slice(lastDot + 1))
   if (!Number.isFinite(expEpochMs) || nowMs >= expEpochMs) return null
 
-  return { rest: plain.slice(0, lastDot) }
+  return { rest: plain.slice(0, lastDot), expiresAt: expEpochMs }
 }

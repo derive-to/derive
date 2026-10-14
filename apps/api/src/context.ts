@@ -707,7 +707,7 @@ export function buildContext(input: AppDeps) {
   >()
   // Set when this request's bearer is a minted dkapi_ token — read by the mint to
   // refuse chaining (see isMintedApiToken).
-  const mintedApiCache = new WeakMap<Context, boolean>()
+  const mintedApiCache = new WeakMap<Context, number>()
   // The one job a `dkjob_` bearer may touch. Set only when agentFor resolved a job token;
   // the job routes read it to pin the principal to exactly its job.
   const jobScopeCache = new WeakMap<Context, string>()
@@ -737,7 +737,7 @@ export function buildContext(input: AppDeps) {
             userId: claim.userId,
           })
           owner = claim.userId
-          mintedApiCache.set(c, true)
+          mintedApiCache.set(c, claim.expiresAt)
           oauthGrantCache.set(c, {
             ownerId: claim.userId,
             // The capability claim carries no display name — mcp.ts falls back to a
@@ -1974,7 +1974,8 @@ export function buildContext(input: AppDeps) {
      *  to run off one: a token minting its successor with a fresh TTL would renew
      *  itself indefinitely and quietly defeat the "expires in minutes" property that
      *  makes a leaked one a bounded liability. Mint from the grant, not from a mint. */
-    isMintedApiToken: (c: Context): boolean => mintedApiCache.get(c) ?? false,
+    isMintedApiToken: (c: Context): boolean => mintedApiCache.has(c),
+    mintedApiExpiresAt: (c: Context): number | null => mintedApiCache.get(c) ?? null,
     resolvePrincipal,
     actingUser,
     actingHuman,

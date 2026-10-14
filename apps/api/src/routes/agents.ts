@@ -161,6 +161,10 @@ export const agentRoutes = (ctx: AppContext) => {
     const environment = readEnvironmentBindings(a.environment_json)
     const sandboxProvider =
       extra.sandboxProvider ?? (await workspaceRuntime(meta, deps.runtime, a.org_id)).provider
+    const sandboxState =
+      a.machine === "derive" && deps.runtime && a.sandbox_state_json
+        ? JSON.parse(a.sandbox_state_json)
+        : null
     return {
       id: a.id,
       name: a.name,
@@ -174,10 +178,9 @@ export const agentRoutes = (ctx: AppContext) => {
       runtime:
         a.machine === "derive" && deps.runtime
           ? {
-              provider: a.sandbox_state_json
-                ? (JSON.parse(a.sandbox_state_json).provider ?? sandboxProvider)
-                : sandboxProvider,
+              provider: sandboxState?.provider ?? sandboxProvider,
               phase: a.sandbox_phase,
+              reason: sandboxState?.create_problem ?? null,
             }
           : null,
       provider: a.provider,
@@ -262,6 +265,7 @@ export const agentRoutes = (ctx: AppContext) => {
       runtime: z
         .object({
           provider: z.enum(["ortam", "boat"]),
+          reason: z.string().nullable().optional(),
           phase: z
             .enum(["creating", "provisioning", "stopping", "ready", "busy", "deleting", "failed"])
             .nullable(),

@@ -62,6 +62,7 @@ import {
   reportJob,
   retryJob,
 } from "../lib/jobs"
+import { oauthScopeRole } from "../lib/oauth-agent"
 import {
   continuePageAsk,
   isPageAsk,
@@ -447,11 +448,20 @@ export const jobRoutes = (ctx: AppContext) => {
       grant && !ctx.isMintedApiToken(c)
         ? (await meta.listUserGrants(who.id)).find((row) => row.clientId === grant.clientId)
         : null
-    if (grant && !ctx.isMintedApiToken(c) && !consent)
+    if (
+      grant &&
+      !ctx.isMintedApiToken(c) &&
+      (!consent || !roleAllows(oauthScopeRole(consent.scopes), "publish"))
+    )
       return fail(c, 403, "This session's authorization was revoked")
+    const expiresAt = Math.min(
+      Date.parse(claim.deadlineAt),
+      ctx.mintedApiExpiresAt(c) ?? Number.POSITIVE_INFINITY,
+    )
     const consentStamp = JSON.stringify(consent)
     const claimStamp = JSON.stringify(claim)
     const stillAllowed = async () => {
+      if (Date.now() >= expiresAt) return false
       const current = await meta.getJob(job.id)
       const membership = await meta.getMembership(job.org_id, who.id)
       if (
@@ -477,7 +487,7 @@ export const jobRoutes = (ctx: AppContext) => {
       }
       return true
     }
-    return { job, machine, claim, stillAllowed }
+    return { job, machine, claim, expiresAt, stillAllowed }
   }
 
   // ---- The built-in Derive, asked from a page (lib/page-ask.ts) ---------------------------
@@ -1016,21 +1026,21 @@ export const jobRoutes = (ctx: AppContext) => {
       new Request(request, { signal: AbortSignal.any([request.signal, c.req.raw.signal]) }),
       c,
     )
+    const relay = relaySession(upstream, access.stillAllowed, access.expiresAt)
+    const signal = c.req.raw.signal
+    signal.addEventListener("abort", relay.close, { once: true })
+    const unwatch = transport.watchDisconnect?.(c, relay.close)
+    if (signal.aborted) relay.close()
     try {
-      if (!(await access.stillAllowed())) {
-        upstream.close()
+      if (!(await relay.authorize()))
         return bail(fail(c, 409, "This session changed. Attach again."))
-      }
-      const relay = relaySession(upstream, access.stillAllowed, Date.parse(access.claim.deadlineAt))
-      try {
-        return await transport.accept(c, relay.ready, relay.close)
-      } catch (error) {
-        relay.close()
-        throw error
-      }
+      return await transport.accept(c, relay.ready, relay.close)
     } catch (error) {
-      upstream.close()
+      relay.close()
       throw error
+    } finally {
+      signal.removeEventListener("abort", relay.close)
+      unwatch?.()
     }
   })
   personAction(
