@@ -3815,6 +3815,29 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
     expect(fixture.launches).toHaveLength(0)
   })
 
+  it("deletes an agent whose shared creation was cancelled before submission", async () => {
+    const fixture = await cloudSetup("jobs-ortam-shared-unsubmitted-delete", 2700, {
+      reserveOnly: true,
+      fresh: false,
+    })
+    const unreserved = await fixture.meta.getAgent(fixture.agent.id)
+    if (!unreserved) throw new Error("missing unreserved agent")
+    await advanceSandbox(fixture.deps, unreserved, ed.id)
+    const deleting = () =>
+      fixture.app.request(`/v1/agents/${fixture.agent.id}`, {
+        method: "DELETE",
+        headers: as(owner.email),
+      })
+    expect((await deleting()).status).toBe(409)
+    const paused = await fixture.meta.getAgent(fixture.agent.id)
+    if (!paused) throw new Error("missing paused agent")
+    await advanceSandbox(fixture.deps, paused)
+    expect((await deleting()).status).toBe(200)
+    expect(await fixture.meta.getAgent(fixture.agent.id)).toBeNull()
+    expect(fixture.creates).toHaveLength(0)
+    expect(fixture.launches).toHaveLength(0)
+  })
+
   it("retains a legacy shared creation without guessing its key's age", async () => {
     const fixture = await cloudSetup("jobs-ortam-shared-create-legacy", 2700, {
       reserveOnly: true,
