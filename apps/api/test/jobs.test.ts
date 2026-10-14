@@ -3832,7 +3832,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
     const paused = await fixture.meta.getAgent(fixture.agent.id)
     if (!paused) throw new Error("missing paused agent")
     await advanceSandbox(fixture.deps, paused)
-    expect((await deleting()).status).toBe(200)
+    expect((await deleting()).status).toBe(204)
     expect(await fixture.meta.getAgent(fixture.agent.id)).toBeNull()
     expect(fixture.creates).toHaveLength(0)
     expect(fixture.launches).toHaveLength(0)
