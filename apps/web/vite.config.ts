@@ -36,6 +36,10 @@ export default defineConfig({
     manifest: true,
     rollupOptions: {
       output: {
+        // Route wrappers can keep a content hash while their imported chunk changes.
+        // Give each build its own module URLs so immutable browser caches cannot mix them.
+        entryFileNames: `assets/[name]-[hash]-${BUILD_ID}.js`,
+        chunkFileNames: `assets/[name]-[hash]-${BUILD_ID}.js`,
         // Keep React/runtime in its own vendor chunk so app changes don't bust
         // its cache (and the entry chunk stays lean) — React 19's react-dom would
         // otherwise fold into the entry.

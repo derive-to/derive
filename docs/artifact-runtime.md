@@ -47,6 +47,8 @@ before each mutation. The opaque iframe receives no host cookies.
 State replies belong to the requesting frame and its loaded document.
 The host drops delayed replies after reload, replacement, navigation, or sign-in changes.
 An expired request cannot open a sign-in prompt on another document.
+Web module URLs include the existing build ID. Immutable caches cannot combine route
+wrappers from one build with artifact modules from another build.
 
 The adapter accepts responses only from its parent window. It validates snapshots
 before it changes state. Older responses cannot replace a newer saved snapshot.
