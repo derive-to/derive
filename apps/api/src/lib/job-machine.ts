@@ -420,7 +420,12 @@ export async function advanceSandbox(
           : move("creating", { create_problem: problem })
       if (!state.create_request) return agent
       const replaying = !!state.create_submitted_at
-      if (!replaying && !allowed) return move(null, { failures: 0 }, null)
+      if (!replaying && !allowed)
+        return move(
+          null,
+          { failures: 0, retired_at: at, credential_enc: undefined, account_id: undefined },
+          null,
+        )
       const submitted = replaying ? state : { ...state, create_submitted_at: at }
       if (!(await move("creating", submitted))) return null
       let created: Awaited<ReturnType<typeof createStep>>
