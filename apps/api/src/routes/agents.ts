@@ -23,7 +23,7 @@ import { GithubOn, githubEventsSetup, parseOn } from "../lib/github-events"
 import { bail, fail, readJson } from "../lib/http"
 import { machineDepsFrom, replaceIdleSandbox, retireSandbox } from "../lib/job-machine"
 import { agentAccess } from "../lib/job-policy"
-import { cancelJob } from "../lib/jobs"
+import { agentRepository, cancelJob } from "../lib/jobs"
 import { cloudEnabled, workspaceRuntime } from "../lib/runtime-connection"
 import { previousOccurrence } from "../lib/schedule"
 
@@ -194,6 +194,7 @@ export const agentRoutes = (ctx: AppContext) => {
       max_run_ms: a.max_run_ms,
       max_concurrency: a.max_concurrency,
       connection_ids: parseIds(a.connection_ids_json),
+      repository: agentRepository(a),
       environment,
       environment_names: Object.keys(environment),
       sources: extra.sources ?? [],
@@ -289,6 +290,10 @@ export const agentRoutes = (ctx: AppContext) => {
       max_run_ms: z.number().nullable(),
       max_concurrency: z.number(),
       connection_ids: z.array(z.string()).describe("Sources it can reach."),
+      repository: z
+        .string()
+        .nullable()
+        .describe("Where its tasks work when an ask names no repository."),
       environment: z
         .record(z.string(), z.string())
         .describe(
@@ -474,6 +479,24 @@ export const agentRoutes = (ctx: AppContext) => {
     )
   }
 
+  /** A default repository works only through a GitHub source for its owner the agent holds. */
+  const repositoryError = async (
+    repository: string | null | undefined,
+    connectionIds: string[],
+  ): Promise<string | null> => {
+    if (!repository) return null
+    const owner = repository.split("/")[0]?.toLowerCase()
+    const found = connectionIds.length ? await meta.getConnectionsByIds(connectionIds) : []
+    return found.some(
+      (cn) =>
+        cn.kind === "github_app" &&
+        cn.status === "active" &&
+        cn.scopes_label?.toLowerCase() === owner,
+    )
+      ? null
+      : `Give this agent a GitHub source for ${repository.split("/")[0]} before choosing ${repository}`
+  }
+
   const openJobs = (orgId: string, agentId: string) =>
     meta.listJobs({ orgId, agentId, status: [...JOB_OPEN_STATUSES], limit: 200 })
 
@@ -491,6 +514,12 @@ export const agentRoutes = (ctx: AppContext) => {
     ask_policy: z.enum(["workspace", "invited"]),
     write_policy: z.enum(["publish", "review"]),
     connection_ids: z.array(z.string().min(1).max(64)).max(20),
+    repository: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/, "owner/name")
+      .nullable()
+      .describe("Where its tasks work when an ask names no repository. Needs its GitHub source."),
     environment: EnvironmentBindings,
     max_run_ms: z
       .number()
@@ -593,7 +622,9 @@ export const agentRoutes = (ctx: AppContext) => {
         instructionsId = art.id
       }
       const creator = (await privateOwnerId(c)) ?? null
-      const refused = await definitionError(c, org, creator, b)
+      const refused =
+        (await definitionError(c, org, creator, b)) ??
+        (await repositoryError(b.repository, b.connection_ids ?? []))
       if (refused) return bail(fail(c, 400, refused))
       // No role named: an editor, so it can publish the reports its jobs produce, capped at its
       // creator's own seat (a commenter's agent comments). A role named above that seat was
@@ -643,6 +674,7 @@ export const agentRoutes = (ctx: AppContext) => {
           ask_policy: b.ask_policy ?? "workspace",
           write_policy: b.write_policy ?? "publish",
           connection_ids_json: b.connection_ids?.length ? JSON.stringify(b.connection_ids) : null,
+          repositories_json: b.repository ? JSON.stringify([b.repository]) : null,
           environment_json:
             b.environment && Object.keys(b.environment).length
               ? JSON.stringify(b.environment)
@@ -768,7 +800,12 @@ export const agentRoutes = (ctx: AppContext) => {
           instructions_artifact_id = art.id
         }
       }
-      const refused = await definitionError(c, org, who, b)
+      const refused =
+        (await definitionError(c, org, who, b)) ??
+        (await repositoryError(
+          b.repository,
+          b.connection_ids ?? parseConnectionIds(agent.connection_ids_json),
+        ))
       if (refused) return bail(fail(c, 400, refused))
       if (b.machine === "derive" && !(await cloudEnabled(meta, deps.runtime, org)))
         return bail(
@@ -805,6 +842,12 @@ export const agentRoutes = (ctx: AppContext) => {
               ? undefined
               : b.connection_ids.length
                 ? JSON.stringify(b.connection_ids)
+                : null,
+          repositories_json:
+            b.repository === undefined
+              ? undefined
+              : b.repository
+                ? JSON.stringify([b.repository])
                 : null,
           environment_json:
             b.environment === undefined

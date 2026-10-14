@@ -1530,6 +1530,12 @@ export const jobRoutes = (ctx: AppContext) => {
       const token = await bearerFor(meta, github, deps.encryptionKey, "code-write", name)
       return c.json({ repo: full, ref, token })
     } catch (error) {
+      // An App without Contents: write still reads: the task checks out and works, and only a
+      // push fails, with GitHub's own answer.
+      const token = await bearerFor(meta, github, deps.encryptionKey, "contents-read", name).catch(
+        () => null,
+      )
+      if (token) return c.json({ repo: full, ref, token, read_only: true })
       return fail(c, 409, `GitHub refused a token for ${full}: ${(error as Error).message}`)
     }
   })

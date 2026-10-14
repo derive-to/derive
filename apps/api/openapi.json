@@ -1962,6 +1962,11 @@
             },
             "description": "Sources it can reach."
           },
+          "repository": {
+            "type": "string",
+            "nullable": true,
+            "description": "Where its tasks work when an ask names no repository."
+          },
           "environment": {
             "type": "object",
             "additionalProperties": {
@@ -2009,6 +2014,7 @@
           "max_run_ms",
           "max_concurrency",
           "connection_ids",
+          "repository",
           "environment",
           "environment_names",
           "sources",
@@ -6798,6 +6804,12 @@
                       "maxLength": 64
                     },
                     "maxItems": 20
+                  },
+                  "repository": {
+                    "type": "string",
+                    "nullable": true,
+                    "pattern": "^[A-Za-z0-9_.-]{1,100}\\/[A-Za-z0-9_.-]{1,100}$",
+                    "description": "Where its tasks work when an ask names no repository. Needs its GitHub source."
                   },
                   "environment": {
                     "type": "object",

@@ -1309,6 +1309,8 @@ export interface paths {
                         /** @enum {string} */
                         write_policy?: "publish" | "review";
                         connection_ids?: string[];
+                        /** @description Where its tasks work when an ask names no repository. Needs its GitHub source. */
+                        repository?: string | null;
                         environment?: {
                             [key: string]: string;
                         };
@@ -7732,6 +7734,8 @@ export interface components {
             max_concurrency: number;
             /** @description Sources it can reach. */
             connection_ids: string[];
+            /** @description Where its tasks work when an ask names no repository. */
+            repository: string | null;
             /** @description Environment variables its jobs get: NAME → the id of a saved secret. Never values. */
             environment: {
                 [key: string]: string;
