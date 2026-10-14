@@ -634,6 +634,7 @@ export class PgMetaStore implements MetaStore {
   getTrigger = this.agentModel.getTrigger
   listTriggers = this.agentModel.listTriggers
   listEnabledScheduleTriggers = this.agentModel.listEnabledScheduleTriggers
+  listEnabledEventTriggers = this.agentModel.listEnabledEventTriggers
   updateTrigger = this.agentModel.updateTrigger
   deleteTrigger = this.agentModel.deleteTrigger
   createAccount = this.agentModel.createAccount

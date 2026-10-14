@@ -427,6 +427,11 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
           ${orgIds ? sql`AND org_id IN (${list(orgIds)})` : sql``}
         ORDER BY created_at, id`)
     },
+    listEnabledEventTriggers() {
+      return rows<TriggerRecord>(sql`
+        SELECT * FROM agent_trigger WHERE enabled = 1 AND kind = 'event' AND on_event IS NOT NULL
+        ORDER BY created_at, id`)
+    },
     updateTrigger(id, orgId, patch) {
       const set = assignments(patch, TRIGGER_FIELDS)
       set.push(sql`revision = revision + 1`, sql`updated_at = ${iso()}`)

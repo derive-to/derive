@@ -16,9 +16,10 @@ import {
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
-import { connectionBindError } from "../lib/broker"
+import { connectionBindError, parseConnectionIds } from "../lib/broker"
 import { EnvironmentBindings, readEnvironmentBindings } from "../lib/context-environment"
 import { sha256 } from "../lib/crypto"
+import { GithubOn, githubEventsSetup, parseOn } from "../lib/github-events"
 import { bail, fail, readJson } from "../lib/http"
 import { machineDepsFrom, replaceIdleSandbox, retireSandbox } from "../lib/job-machine"
 import { agentAccess } from "../lib/job-policy"
@@ -204,6 +205,7 @@ export const agentRoutes = (ctx: AppContext) => {
     cron: t.cron,
     tz: t.tz,
     on_event: t.on_event,
+    on: t.kind === "event" ? parseOn(t.on_event) : null,
     instruction: t.instruction,
     subject: t.subject_json ? (JSON.parse(t.subject_json) as unknown as object) : null,
     enabled: t.enabled === 1,
@@ -308,6 +310,12 @@ export const agentRoutes = (ctx: AppContext) => {
       cron: z.string().nullable(),
       tz: z.string().nullable(),
       on_event: z.string().nullable(),
+      on: GithubOn.nullable().describe("An event trigger: what starts it."),
+      notice: z
+        .string()
+        .nullable()
+        .optional()
+        .describe("Set up still needed before events arrive, on save."),
       instruction: z.string(),
       subject: z
         .union([
@@ -494,6 +502,17 @@ export const agentRoutes = (ctx: AppContext) => {
     instruction: z.string().trim().min(1).max(20_000),
     subject: z.unknown().optional(),
   })
+  const EventInput = z.object({
+    on: GithubOn,
+    instruction: z.string().trim().min(1).max(20_000),
+    subject: z.unknown().optional(),
+  })
+  /** An event trigger only fires through a GitHub source the agent holds. */
+  const holdsGithub = async (agent: AgentRecord) => {
+    const ids = parseConnectionIds(agent.connection_ids_json)
+    const connections = ids.length ? await meta.getConnectionsByIds(ids) : []
+    return connections.some((cn) => cn.kind === "github_app" && cn.status === "active")
+  }
 
   /** The artifact an agent's instructions live in, if the caller may read it and it is in this
    *  workspace. */
@@ -809,23 +828,50 @@ export const agentRoutes = (ctx: AppContext) => {
     },
   )
 
-  // ---- Schedules --------------------------------------------------------------------------
+  // ---- Schedules and events ---------------------------------------------------------------
 
   app.openapi(
     createRoute({
       method: "post",
       path: "/v1/agents/{id}/triggers",
       tags: ["Agents"],
-      summary: "Add a schedule to an agent.",
+      summary: "Add a schedule, or a GitHub event that starts the agent, to an agent.",
       request: { params: z.object({ id: z.string() }) },
       responses: {
-        201: { description: "The schedule.", content: { "application/json": { schema: Trigger } } },
+        201: { description: "The trigger.", content: { "application/json": { schema: Trigger } } },
       },
     }),
     async (c) => {
       const agent = await meta.getAgent(c.req.param("id"))
       const who = await managerOf(c, agent)
       if (!agent || !who) return bail(fail(c, 404, "agent not found"))
+      // `on` says which of the two it is; each is then read with its own schema and errors.
+      const sniff = await readJson(c, z.object({ on: z.unknown() }).partial())
+      if (sniff instanceof Response) return bail(sniff)
+      if (sniff.on !== undefined) {
+        const e = await readJson(c, EventInput)
+        if (e instanceof Response) return bail(e)
+        if (!(await holdsGithub(agent)))
+          return bail(fail(c, 400, "Give this agent a GitHub source before it can run on events"))
+        const t = await meta.createTrigger({
+          id: newId("trg"),
+          org_id: agent.org_id,
+          agent_id: agent.id,
+          kind: "event",
+          on_event: JSON.stringify(e.on),
+          instruction: e.instruction,
+          subject_json: e.subject
+            ? JSON.stringify(normalizeSelectors([e.subject])[0] ?? null)
+            : null,
+        })
+        const notice = await githubEventsSetup(
+          meta,
+          deps.encryptionKey,
+          deps.baseUrl,
+          e.on.github.event,
+        )
+        return c.json({ ...triggerJson(t), notice }, 201)
+      }
       const b = await readJson(c, ScheduleInput)
       if (b instanceof Response) return bail(b)
       if (!validCron(b.cron, b.tz))
@@ -856,7 +902,7 @@ export const agentRoutes = (ctx: AppContext) => {
       method: "patch",
       path: "/v1/triggers/{id}",
       tags: ["Agents"],
-      summary: "Change or pause a schedule.",
+      summary: "Change or pause a schedule or event trigger.",
       request: { params: z.object({ id: z.string() }) },
       responses: {
         200: { description: "The schedule.", content: { "application/json": { schema: Trigger } } },
@@ -870,14 +916,18 @@ export const agentRoutes = (ctx: AppContext) => {
         ScheduleInput.partial().extend({
           tz: z.string().trim().min(1).max(64).optional(),
           enabled: z.boolean().optional(),
+          on: GithubOn.optional(),
         }),
       )
       if (b instanceof Response) return bail(b)
+      if (t.kind === "event" ? b.cron || b.tz : b.on)
+        return bail(fail(c, 400, "A schedule has a cron; an event trigger has `on`"))
       const cron = b.cron ?? t.cron ?? ""
       const tz = b.tz ?? t.tz ?? "UTC"
       if ((b.cron || b.tz) && !validCron(cron, tz))
         return bail(fail(c, 400, "cron is not a valid cron expression for that timezone"))
       const updated = await meta.updateTrigger(t.id, t.org_id, {
+        on_event: b.on ? JSON.stringify(b.on) : undefined,
         cron: b.cron,
         tz: b.tz,
         instruction: b.instruction,
@@ -897,7 +947,7 @@ export const agentRoutes = (ctx: AppContext) => {
       method: "delete",
       path: "/v1/triggers/{id}",
       tags: ["Agents"],
-      summary: "Remove a schedule.",
+      summary: "Remove a schedule or event trigger.",
       request: { params: z.object({ id: z.string() }) },
       responses: { 204: { description: "Removed." } },
     }),

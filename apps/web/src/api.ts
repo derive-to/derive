@@ -482,6 +482,8 @@ export type AgentPatch = Partial<
   >
 >
 export type ScheduleInput = { cron: string; tz: string; instruction: string }
+export type GithubTriggerOn = NonNullable<components["schemas"]["GithubTriggerOn"]>
+export type EventTriggerInput = { on: GithubTriggerOn; instruction: string }
 /** One unit of agent work (routes/jobs.ts). */
 export type Job = components["schemas"]["Job"]
 export type JobStatus = Job["status"]
@@ -1390,11 +1392,11 @@ export const api = {
   getAgent: (id: string): Promise<AgentDetail> => f(`/v1/agents/${id}`, opts()).then(j),
   updateAgent: (id: string, patch: AgentPatch): Promise<Agent> =>
     f(`/v1/agents/${id}`, { ...opts(patch), method: "PATCH" }).then(j),
-  addTrigger: (agentId: string, body: ScheduleInput): Promise<AgentTrigger> =>
+  addTrigger: (agentId: string, body: ScheduleInput | EventTriggerInput): Promise<AgentTrigger> =>
     f(`/v1/agents/${agentId}/triggers`, opts(body)).then(j),
   updateTrigger: (
     id: string,
-    patch: Partial<ScheduleInput> & { enabled?: boolean },
+    patch: Partial<ScheduleInput & EventTriggerInput> & { enabled?: boolean },
   ): Promise<AgentTrigger> => f(`/v1/triggers/${id}`, { ...opts(patch), method: "PATCH" }).then(j),
   deleteTrigger: (id: string): Promise<void> =>
     f(`/v1/triggers/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),

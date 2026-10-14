@@ -3405,6 +3405,20 @@ export function runStoreContract(
       await store.updateTrigger(t.id, ORG, { enabled: 1 })
       expect((await store.listEnabledScheduleTriggers([ORG])).map((x) => x.id)).toContain(t.id)
       expect((await store.listTriggers(ORG, a.id)).map((x) => x.id)).toEqual([t.id])
+      const ev = await store.createTrigger({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: a.id,
+        kind: "event",
+        on_event: '{"github":{"event":"push","repository":"o/r"}}',
+        instruction: "check the push",
+      })
+      const events = (await store.listEnabledEventTriggers()).map((x) => x.id)
+      expect(events).toContain(ev.id)
+      expect(events).not.toContain(t.id)
+      expect((await store.listEnabledScheduleTriggers([ORG])).map((x) => x.id)).not.toContain(ev.id)
+      await store.updateTrigger(ev.id, ORG, { enabled: 0 })
+      expect((await store.listEnabledEventTriggers()).map((x) => x.id)).not.toContain(ev.id)
       expect(await store.deleteTrigger(t.id, ORG)).toBe(true)
       expect(await store.getTrigger(t.id)).toBeNull()
     })
