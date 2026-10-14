@@ -297,6 +297,7 @@ export function useAutoSave(p: {
       }
       const edits = c.edits ?? []
       if (!(c.ops ?? edits).length) {
+        queueSave(P.shortId, null)
         x.savedRev = Math.max(x.savedRev, rev)
         x.offline = false
         x.waiting = 0
