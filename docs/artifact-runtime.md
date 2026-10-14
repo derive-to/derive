@@ -107,3 +107,8 @@ Derive retains stored-format classification and its LaTeX renderer.
 The shared scanner keeps quoted attribute examples inert and preserves literal HTML text.
 The editor records explicit copy origins. Redo keeps working after an undo save removes a copy.
 The original must remain in the current source. Other deleted blocks still require safe recovery through History.
+
+Markdown quote edits use the shared exact-source text projection.
+Derive supplies its renderer's parser tokens. Open-artifact owns source ranges,
+inline wrappers, entities, and list, quote, table, and code boundaries.
+The host keeps Markdown rendering, source saves, formatting, and access checks.
