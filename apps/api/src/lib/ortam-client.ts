@@ -125,7 +125,7 @@ export class OrtamClient implements SandboxClient {
     try {
       response = await this.fetcher(this.base + path, {
         ...init,
-        // workerd does not support redirect: "error". Reject 3xx below instead.
+        // workerd rejects the "error" redirect mode. Reject 3xx below instead.
         redirect: "manual",
         signal: AbortSignal.timeout(15000),
       })
