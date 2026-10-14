@@ -432,7 +432,7 @@ export async function advanceSandbox(
           submitted,
         )
       } catch (error) {
-        if (!replaying && error instanceof SandboxRateLimited)
+        if (!replaying && (error instanceof SandboxRateLimited || error instanceof SandboxRefused))
           await move("creating", { ...submitted, create_submitted_at: undefined })
         throw error
       }
