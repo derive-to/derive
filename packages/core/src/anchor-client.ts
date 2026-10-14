@@ -36,15 +36,12 @@ import {
   elementNeighbors as neighborText,
   recordSourceCopy,
   resolveDomElement,
+  resolveSourceTextAnchor,
   sourceCopyId,
+  sourceTextNodes as textNodes,
   VideoSceneController,
 } from "@aniraga/open-artifact-runtime/source"
-import {
-  BLOCK_TEXT_ELEMENTS,
-  findQuoteMatches,
-  findQuoteWithContext,
-  normWs,
-} from "./anchor-shared"
+import { BLOCK_TEXT_ELEMENTS, findQuoteMatches, normWs } from "./anchor-shared"
 import {
   isMentionHandle,
   MENTION_NON_PROSE_SELECTOR,
@@ -1087,30 +1084,6 @@ interface ElReg {
       }, 150)
   }
 
-  const textNodes = (root: Node): Text[] => {
-    const w = document.createTreeWalker(root || document.body, NodeFilter.SHOW_TEXT, {
-      acceptNode: (n) => {
-        const p = n.parentNode ? n.parentNode.nodeName : ""
-        if (p === "SCRIPT" || p === "STYLE" || p === "NOSCRIPT") return NodeFilter.FILTER_REJECT
-        // Our OWN injected UI (the element-overlay badges) is not page text: it must
-        // never leak into quote context windows or edit snapshots — a suffix containing
-        // a badge glyph can't resolve against the stored source.
-        const el = (n as Text).parentElement
-        if (el?.closest?.(".derive-el-hl,.derive-edit-ui")) return NodeFilter.FILTER_REJECT
-        // Typeset math is glyph soup the server never has: the TeX rides in an
-        // attribute and the source projection counts a formula as no characters.
-        // Skipping it keeps quotes, context windows and edit snapshots in step.
-        if (el?.closest?.("[data-derive-math]")) return NodeFilter.FILTER_REJECT
-        return NodeFilter.FILTER_ACCEPT
-      },
-    })
-    const out: Text[] = []
-    let n: Node | null
-    // biome-ignore lint/suspicious/noAssignInExpressions: standard TreeWalker iteration
-    while ((n = w.nextNode())) out.push(n as Text)
-    return out
-  }
-
   /* === Rendered document @mentions ===========================================
      Mentions persist as portable, readable `@handle` source — never an app-private
      user id or a span in a saved document. This is only a presentational wrapper in
@@ -1208,35 +1181,6 @@ interface ElReg {
     if (flashHl) flashHl.priority = 3
   }
 
-  /* A DOM Range spanning [s,e) of root's concatenated text — the counterpart to the
-     old wrapIn, but it MUTATES NOTHING: it just locates the boundary text nodes. */
-  const rangeAt = (root: Node, s: number, e: number): Range | null => {
-    const nodes = textNodes(root)
-    const range = document.createRange()
-    let acc = 0
-    let started = false
-    let lastNode: Text | null = null
-    for (const node of nodes) {
-      const len = node.nodeValue?.length ?? 0
-      if (!started && s <= acc + len) {
-        range.setStart(node, Math.max(0, Math.min(len, s - acc)))
-        started = true
-      }
-      if (started && e <= acc + len) {
-        range.setEnd(node, Math.max(0, Math.min(len, e - acc)))
-        return range
-      }
-      acc += len
-      lastNode = node
-    }
-    // `e` ran past the available text — clamp the end to the last node so a slightly
-    // over-long stored quote still paints (never returns a half-open range).
-    if (started && lastNode) {
-      range.setEnd(lastNode, lastNode.nodeValue?.length ?? 0)
-      return range
-    }
-    return null
-  }
   const clearText = () => {
     textEntries = []
     quietEls = []
@@ -1315,17 +1259,6 @@ interface ElReg {
       } catch (_e) {}
     }
     return best?.id ?? null
-  }
-  /* root's concatenated-text span for a text anchor — context match first (to
-     disambiguate a repeated quote), then the exact, both WHITESPACE-FLEXIBLE via the
-     SHARED findQuoteWithContext, so a quote spanning block elements (whose inter-block
-     whitespace differs between the Selection, the DOM text, and the source) still
-     resolves, and identically to the server's reanchor. Returns the exact's span. */
-  const findIn = (root: Node, a: Anchor): { start: number; end: number } | null => {
-    const nodes = textNodes(root)
-    let full = ""
-    for (const node of nodes) full += node.nodeValue
-    return findQuoteWithContext(full, a.exact || "", a.prefix, a.suffix)
   }
   // The element ancestor of a range's start (its start is a text node) — for slide lookup.
   const rangeStartEl = (r: Range): Element | null => {
@@ -1881,29 +1814,15 @@ interface ElReg {
          phrase on two slides can't collide), then fall back to a whole-document
          search if the text moved off that slide. Builds a Range (no DOM mutation) from
          the resolved span; the highlight is painted from every range together, below. */
-      const identityAt = a.slide_identity
-        ? slides.findIndex(
-            (candidate) => candidate.getAttribute("data-derive-slide") === a.slide_identity,
-          )
-        : -1
-      const preferredAt = identityAt >= 0 ? identityAt : a.slide
-      const slide = preferredAt != null ? slides[preferredAt] : undefined
-      let range: Range | null = null
-      let where: number | null = null
-      if (preferredAt != null && slide) {
-        const span = findIn(slide, a)
-        if (span) {
-          range = rangeAt(slide, span.start, span.end)
-          where = preferredAt
-        }
-      }
-      if (!range) {
-        const span = findIn(document.body, a)
-        if (span) {
-          range = rangeAt(document.body, span.start, span.end)
-          where = slides.length && range ? slideOfEl(rangeStartEl(range), slides) : null
-        }
-      }
+      const range = resolveSourceTextAnchor(document.body, {
+        type: "TextQuoteSelector",
+        exact: a.exact || "",
+        prefix: a.prefix,
+        suffix: a.suffix,
+        slide: a.slide,
+        slide_identity: a.slide_identity,
+      })
+      const where = slides.length && range ? slideOfEl(rangeStartEl(range), slides) : null
       if (range) addText(a.id, range, a.quiet)
       resolved[a.id] = !!range
       landed[a.id] = range ? where : null

@@ -1,4 +1,8 @@
-import { type PageTextParts, projectPageText } from "@aniraga/open-artifact-protocol/source"
+import {
+  type PageTextParts,
+  projectPageText,
+  type SourceQuoteSelector as QuoteSelector,
+} from "@aniraga/open-artifact-protocol/source"
 import { findQuoteWithContext } from "./anchor-shared"
 import { isHtmlLike, isLatexLike } from "./content-types"
 import { elementResolvesIn, parseElementSelector } from "./element-anchor"
@@ -7,20 +11,7 @@ import { latexTextProjection } from "./latex-render"
 import { MENTION_NON_PROSE_TAGS } from "./mention-shared"
 import type { CommentState } from "./ports"
 
-/** A W3C Web Annotation TextQuoteSelector — survives republishing. */
-export interface QuoteSelector {
-  type: "TextQuoteSelector"
-  exact: string
-  prefix?: string
-  suffix?: string
-  /** Deck artifacts only: the 0-based slide the comment was made on. Undefined on
-   *  ordinary documents. Resolution scopes to this slide first, then falls back to
-   *  the whole document (so a comment survives text moving between slides). */
-  slide?: number
-  /** Stable `data-derive-slide` identity. New deck comments prefer this after a
-   *  rearrange; `slide` remains the backward-compatible positional fallback. */
-  slide_identity?: string
-}
+export type { SourceQuoteSelector as QuoteSelector } from "@aniraga/open-artifact-protocol/source"
 
 const CONTEXT = 24
 
