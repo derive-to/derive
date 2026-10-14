@@ -139,3 +139,9 @@ Deleting every rendered block does not discard the trailing source newline durin
 
 Emptying a paragraph or inline construct removes its source identity.
 That save appends a version, so repeated Undo cannot read replaced source bytes.
+
+The shared source entry identifies uploaded raster images and web fonts from bytes.
+The same entry owns the 25 MB asset limit. Avatar uploads retain their 2 MB limit.
+The kit source asset policy uses the same type detection and upload limit.
+Its HTTP, MCP, and rendering paths use that policy.
+The generic kit default retains its existing 10 MB limit and formats.
