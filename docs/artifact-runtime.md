@@ -72,6 +72,8 @@ Open-artifact owns video source classification and scene operations.
 Timing edits change actual attributes. Scene copies receive fresh DOM and structural identities.
 The shared runtime keeps inactive video scenes hidden when authored CSS sets their display.
 Its visibility rule never enters stored source.
+Playback, scene position, navigation, seek, and transitions use the shared video controller.
+Derive keeps the authorized frame transport and the editor's history integration.
 HTML-to-Markdown reading also uses the shared source entry.
 Document outlines, source sections, landmark maps, and Markdown headings use this entry too.
 Comments and inert markup cannot supply navigation identities. Section reads preserve exact source bytes.

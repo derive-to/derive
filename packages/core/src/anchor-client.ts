@@ -21,13 +21,13 @@
  *                  edit-undo / edit-redo / edit-format / edit-mention-insert /
  *                  edit-mention-close / deck-drive
  *
- * Keep its imports DOM-free + pure so it bundles into one small self-contained script.
+ * Keep its imports browser-safe so it bundles into one small self-contained script.
  */
 
 import {
-  ensureVideoSceneVisibility,
   recordSourceCopy,
   sourceCopyId,
+  VideoSceneController,
 } from "@aniraga/open-artifact-runtime/source"
 import {
   BLOCK_TEXT_ELEMENTS,
@@ -1698,141 +1698,8 @@ interface ElReg {
      small common runtime: scene position, playback and host control. Authors keep
      complete control of each scene's visual design; Derive only toggles `hidden`
      and reads the four data attributes that form the editing contract. */
-  const videoRoot = (): HTMLElement | null =>
-    document.querySelector<HTMLElement>("[data-derive-video]")
-  const videoScenes = (): HTMLElement[] =>
-    Array.from(document.querySelectorAll<HTMLElement>("[data-derive-scene]"))
-  let videoAt = 0
-  let videoPlaying = false
-  let videoStarted = 0
-  let videoElapsed = 0
-  let videoTimer = 0
-  const videoDuration = (el: HTMLElement | undefined): number =>
-    Math.max(1000, Math.min(30000, Number(el?.dataset.durationMs) || 5000))
-  const videoTotalDuration = (scenes = videoScenes()): number =>
-    scenes.reduce((total, scene) => total + videoDuration(scene), 0)
-  const videoPosition = (scenes = videoScenes()): number =>
-    scenes.slice(0, videoAt).reduce((total, scene) => total + videoDuration(scene), 0) +
-    videoElapsed
-  const animateVideoScene = (scene: HTMLElement) => {
-    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return
-    const transition = scene.dataset.transition || "cut"
-    if (transition === "cut") return
-    const duration = Math.max(100, Math.min(2000, Number(scene.dataset.transitionMs) || 300))
-    const keyframes: Keyframe[] =
-      transition === "slide"
-        ? [
-            { opacity: 0, transform: "translateX(4%)" },
-            { opacity: 1, transform: "translateX(0)" },
-          ]
-        : transition === "dissolve"
-          ? [
-              { opacity: 0, filter: "blur(8px)" },
-              { opacity: 1, filter: "blur(0)" },
-            ]
-          : [{ opacity: 0 }, { opacity: 1 }]
-    scene.animate(keyframes, { duration, easing: "ease-out" })
-  }
-  const postVideoSniff = () => {
-    const scenes = videoScenes()
-    const scene = scenes[videoAt]
-    if (!videoRoot() || !scene) return
-    post({
-      type: "video-sniff",
-      i: videoAt,
-      total: scenes.length,
-      id: scene.dataset.deriveScene || `scene-${videoAt + 1}`,
-      durationMs: videoDuration(scene),
-      transition: scene.dataset.transition || "cut",
-      transitionMs: Number(scene.dataset.transitionMs) || 300,
-      caption: scene.dataset.deriveCaption || "",
-      playing: videoPlaying,
-      elapsedMs: videoElapsed,
-      positionMs: videoPosition(scenes),
-      totalDurationMs: videoTotalDuration(scenes),
-    })
-  }
-  const showVideoScene = (index: number) => {
-    const scenes = videoScenes()
-    if (!scenes.length) return
-    const root = videoRoot()
-    if (root) ensureVideoSceneVisibility(root)
-    videoAt = Math.max(0, Math.min(scenes.length - 1, index))
-    for (let i = 0; i < scenes.length; i++) {
-      const scene = scenes[i] as HTMLElement
-      scene.hidden = i !== videoAt
-      scene.toggleAttribute("data-derive-video-active", i === videoAt)
-      if (i === videoAt) animateVideoScene(scene)
-    }
-    videoElapsed = 0
-    videoStarted = performance.now()
-    postVideoSniff()
-  }
-  const activeVideoSceneId = (): string | undefined => videoScenes()[videoAt]?.dataset.deriveScene
-  const restoreActiveVideoScene = (id: string | undefined) => {
-    const scenes = videoScenes()
-    if (!scenes.length) return
-    const byId = id ? scenes.findIndex((scene) => scene.dataset.deriveScene === id) : -1
-    showVideoScene(byId >= 0 ? byId : Math.min(videoAt, scenes.length - 1))
-  }
-  const stopVideoClock = () => {
-    if (videoTimer) cancelAnimationFrame(videoTimer)
-    videoTimer = 0
-  }
-  const tickVideo = (now: number) => {
-    if (!videoPlaying) return
-    videoElapsed = now - videoStarted
-    const scenes = videoScenes()
-    const duration = videoDuration(scenes[videoAt])
-    if (videoElapsed >= duration) {
-      if (videoAt < scenes.length - 1) showVideoScene(videoAt + 1)
-      else {
-        videoPlaying = false
-        videoElapsed = duration
-      }
-    }
-    postVideoSniff()
-    if (videoPlaying) videoTimer = requestAnimationFrame(tickVideo)
-  }
-  const driveVideo = (action: string, n?: number, id?: string) => {
-    if (action === "next") showVideoScene(videoAt + 1)
-    else if (action === "prev") showVideoScene(videoAt - 1)
-    else if (action === "goto") showVideoScene(Number.isInteger(n) ? (n as number) : 0)
-    else if (action === "play") {
-      videoPlaying = true
-      videoStarted = performance.now() - videoElapsed
-      stopVideoClock()
-      videoTimer = requestAnimationFrame(tickVideo)
-    } else if (action === "pause") {
-      videoElapsed = performance.now() - videoStarted
-      videoPlaying = false
-      stopVideoClock()
-      postVideoSniff()
-    } else if (action === "restart") {
-      showVideoScene(0)
-      driveVideo("play")
-    } else if (action === "seek" && typeof n === "number") {
-      const scenes = videoScenes()
-      let remaining = Math.max(0, Math.min(videoTotalDuration(scenes), n))
-      let at = 0
-      while (at < scenes.length - 1 && remaining >= videoDuration(scenes[at])) {
-        remaining -= videoDuration(scenes[at])
-        at++
-      }
-      showVideoScene(at)
-      videoElapsed = Math.min(videoDuration(scenes[at]), remaining)
-      videoStarted = performance.now() - videoElapsed
-      postVideoSniff()
-    } else if (action === "seek-scene" && id) {
-      const scenes = videoScenes()
-      const at = scenes.findIndex((scene) => scene.dataset.deriveScene === id)
-      if (at < 0) return
-      showVideoScene(at)
-      videoElapsed = Math.max(0, Math.min(videoDuration(scenes[at]), Number(n) || 0))
-      videoStarted = performance.now() - videoElapsed
-      postVideoSniff()
-    }
-  }
+  const video = new VideoSceneController(post)
+  window.addEventListener("pagehide", () => video.dispose())
   type WireSceneEdit =
     | {
         op: "scene-update"
@@ -1853,13 +1720,13 @@ interface ElReg {
     activeAfter: string | undefined
   }
   const videoSceneById = (id: string): HTMLElement | null =>
-    videoScenes().find((scene) => scene.dataset.deriveScene === id) ?? null
+    video.scenes().find((scene) => scene.dataset.deriveScene === id) ?? null
   const applySceneFromHost = (wire: WireSceneEdit) => {
     if (!editOn) return
     const scene = videoSceneById(wire.id)
-    const root = videoRoot()
+    const root = video.root()
     if (!scene || !root) return
-    const activeId = activeVideoSceneId()
+    const activeId = video.activeId()
     let undoScene = () => {}
     let redoScene = () => {}
     if (wire.op === "scene-update") {
@@ -1899,26 +1766,26 @@ interface ElReg {
       undoScene = () => root.insertBefore(scene, originalNext)
     } else if (wire.op === "scene-duplicate") {
       const copy = scene.cloneNode(true) as HTMLElement
-      const used = new Set(videoScenes().map((s) => s.dataset.deriveScene))
-      let n = videoScenes().length + 1
+      const used = new Set(video.scenes().map((s) => s.dataset.deriveScene))
+      let n = video.scenes().length + 1
       while (used.has(`scene-${n}`)) n++
       copy.dataset.deriveScene = `scene-${n}`
       redoScene = () => scene.after(copy)
       undoScene = () => copy.remove()
     } else {
-      if (videoScenes().length <= 1) return
+      if (video.scenes().length <= 1) return
       const originalNext = scene.nextSibling
       redoScene = () => scene.remove()
       undoScene = () => root.insertBefore(scene, originalNext)
     }
     redoScene()
-    restoreActiveVideoScene(activeId)
+    video.restore(activeId)
     const entry = {
       wire,
       undo: undoScene,
       redo: redoScene,
       activeBefore: activeId,
-      activeAfter: activeVideoSceneId(),
+      activeAfter: video.activeId(),
     }
     sceneEdits.push(entry)
     remember({ kind: "scene", entry, activeAfter: false })
@@ -2331,7 +2198,7 @@ interface ElReg {
       postDeckSniff()
       postDeckOutline()
     }, 400)
-    if (videoRoot()) showVideoScene(videoAt)
+    if (video.root()) video.show(video.index)
   })
   /* The artifact's OWN scripts can mutate the DOM after load (a chart library renders,
      content animates, an accordion expands) — none of which fire scroll/resize/load. So
@@ -2858,11 +2725,11 @@ interface ElReg {
       if (entry.activeAfter) {
         entry.entry.redo()
         if (!sceneEdits.includes(entry.entry)) sceneEdits.push(entry.entry)
-        restoreActiveVideoScene(entry.entry.activeAfter)
+        video.restore(entry.entry.activeAfter)
       } else {
         entry.entry.undo()
         sceneEdits = sceneEdits.filter((candidate) => candidate !== entry.entry)
-        restoreActiveVideoScene(entry.entry.activeBefore)
+        video.restore(entry.entry.activeBefore)
       }
       return { ...entry, activeAfter: !entry.activeAfter }
     }
@@ -5054,7 +4921,7 @@ interface ElReg {
         revert: () => {
           s.undo()
           sceneEdits = sceneEdits.filter((x) => x !== s)
-          restoreActiveVideoScene(s.activeBefore)
+          video.restore(s.activeBefore)
         },
       })
     return out.sort((a, b) =>
@@ -6961,7 +6828,7 @@ interface ElReg {
     // `deck` message, which it answers itself.
     else if (d.type === "deck-drive") driveDeck(String(d.action || ""), d.n)
     else if (d.type === "video-drive")
-      driveVideo(String(d.action || ""), d.n, typeof d.id === "string" ? d.id : undefined)
+      video.drive(String(d.action || ""), d.n, typeof d.id === "string" ? d.id : undefined)
     else if (d.type === "video-edit") {
       const op = String(d.op || "")
       const id = String(d.id || "")
