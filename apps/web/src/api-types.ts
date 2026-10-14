@@ -1440,7 +1440,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Add a schedule to an agent. */
+        /** Add a schedule, or a GitHub event that starts the agent, to an agent. */
         post: {
             parameters: {
                 query?: never;
@@ -1452,7 +1452,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description The schedule. */
+                /** @description The trigger. */
                 201: {
                     headers: {
                         [name: string]: unknown;
@@ -1479,7 +1479,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Remove a schedule. */
+        /** Remove a schedule or event trigger. */
         delete: {
             parameters: {
                 query?: never;
@@ -1502,7 +1502,7 @@ export interface paths {
         };
         options?: never;
         head?: never;
-        /** Change or pause a schedule. */
+        /** Change or pause a schedule or event trigger. */
         patch: {
             parameters: {
                 query?: never;
@@ -7644,6 +7644,9 @@ export interface components {
             cron: string | null;
             tz: string | null;
             on_event: string | null;
+            on: components["schemas"]["GithubTriggerOn"];
+            /** @description Set up still needed before events arrive, on save. */
+            notice?: string | null;
             instruction: string;
             subject: {
                 /** @enum {string} */
@@ -7662,6 +7665,20 @@ export interface components {
             revision: number;
             created_at: string;
         };
+        /** @description An event trigger: what starts it. */
+        GithubTriggerOn: {
+            github: {
+                /** @enum {string} */
+                event: "pull_request" | "push" | "issues" | "issue_comment" | "pull_request_review" | "release" | "workflow_run";
+                repository: string;
+                /** @description Only these actions (opened, synchronize, closed…); merged is a closed pull request that merged. Omit for all. */
+                actions?: string[];
+                /** @description Only these branches; * matches within a segment, ** across. Omit for all. */
+                branches?: string[];
+                /** @description Also run on draft pull requests. */
+                drafts?: boolean;
+            };
+        } | null;
         Agent: {
             id: string;
             name: string;

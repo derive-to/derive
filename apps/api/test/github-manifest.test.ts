@@ -1,17 +1,23 @@
 import { describe, expect, it } from "vitest"
 import { buildManifest } from "../src/github-app-setup"
 
-// Locks the standard-source manifest. New installs query GitHub on demand and subscribe to no
-// events. Actions write is server-narrowed to workflow discovery, dispatch, status, artifacts,
+// Locks the standard-source manifest. New installs query GitHub on demand and deliver the
+// events agent triggers start on. Actions write is server-narrowed to workflow discovery, dispatch, status, artifacts,
 // and cancellation.
 describe("GitHub App manifest", () => {
   const m = buildManifest("https://derive.example.com", "derive.example.com")
 
-  it("subscribes to no events and leaves the webhook inactive", () => {
-    expect(m.default_events).toEqual([])
+  it("delivers the events agent triggers start on to Derive's webhook", () => {
+    expect(m.default_events).toEqual([
+      "pull_request",
+      "push",
+      "pull_request_review",
+      "release",
+      "workflow_run",
+    ])
     expect(m.hook_attributes).toEqual({
       url: "https://derive.example.com/v1/github/webhook",
-      active: false,
+      active: true,
     })
   })
 

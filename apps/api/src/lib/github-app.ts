@@ -101,6 +101,33 @@ const PROFILE_PERMISSIONS: Record<GitHubTokenProfile, Record<string, string>> = 
   "code-write": { metadata: "read", contents: "write", pull_requests: "write" },
 }
 
+/** Point the App's webhook at Derive with the derived secret. GitHub never returns the
+ *  secret, so this is the only way it gets set. Turning the hook on and choosing its events
+ *  stays in the App's settings on GitHub; the API offers neither. */
+export async function configureAppWebhook(input: {
+  appId: string
+  privateKeyPem: string
+  url: string
+  secret: string
+}): Promise<void> {
+  const res = await fetch(`${API}/app/hook/config`, {
+    method: "PATCH",
+    redirect: "manual",
+    signal: AbortSignal.timeout(20_000),
+    headers: {
+      ...ghHeaders(`Bearer ${appJwt(input.appId, input.privateKeyPem)}`),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      url: input.url,
+      content_type: "json",
+      insecure_ssl: "0",
+      secret: input.secret,
+    }),
+  })
+  if (!res.ok) await raise(res, "updating the GitHub App webhook")
+}
+
 /**
  * Fetch the App's own record (GET /app, App-JWT auth). Used to confirm a stored
  * App still exists on GitHub — if it was deleted, this 404s, and the caller treats

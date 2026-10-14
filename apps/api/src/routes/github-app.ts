@@ -2,7 +2,7 @@ import { Hono } from "hono"
 import type { AppContext } from "../context"
 import { manifestFormHTML, setupResultHTML } from "../github-app-setup"
 import { encryptSecret, signState, verifyState } from "../lib/crypto"
-import { convertManifestCode } from "../lib/github-app"
+import { configureAppWebhook, convertManifestCode, githubWebhookSecret } from "../lib/github-app"
 import { log } from "../log"
 
 /**
@@ -92,6 +92,15 @@ export const githubAppRoutes = (ctx: AppContext) => {
           }),
           409,
         )
+      // The manifest cannot carry our webhook secret; set it now so events verify.
+      await configureAppWebhook({
+        appId: conv.app_id,
+        privateKeyPem: conv.pem,
+        url: new URL("/v1/github/webhook", deps.baseUrl).toString(),
+        secret: githubWebhookSecret(conv.app_id, key),
+      }).catch((error: Error) =>
+        log.warn("github app webhook setup failed", { error: error.message }),
+      )
       return c.html(setupResultHTML({ ok: true, slug: conv.slug }))
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err)

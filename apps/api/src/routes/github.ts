@@ -24,7 +24,10 @@ import {
   listUserInstallations,
 } from "../lib/github-app"
 import { upsertGithubConnection } from "../lib/github-connection"
+import { dispatchGithubEvent } from "../lib/github-events"
 import { bail, fail } from "../lib/http"
+import { graphAware } from "../lib/job-graph"
+import { machineDepsFrom, machinePass } from "../lib/job-machine"
 import { log } from "../log"
 
 interface InstallState {
@@ -72,6 +75,13 @@ export const githubRoutes = (ctx: AppContext) => {
     isSuperAdmin,
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
+  const jobDeps = graphAware({
+    meta,
+    cloud: { secret: deps.encryptionKey, config: deps.runtime },
+    bus: ctx.backplane,
+    blobs: ctx.blobs,
+    announce: ctx.announceJob,
+  })
 
   const loadApp = async (): Promise<{ app: GitHubAppRecord; pem: string } | null> => {
     if (!deps.encryptionKey) return null
@@ -422,14 +432,36 @@ export const githubRoutes = (ctx: AppContext) => {
     const delivery = c.req.header("x-github-delivery") ?? ""
     if (!/^[a-z_]{1,64}$/.test(event) || !/^[A-Za-z0-9-]{1,100}$/.test(delivery))
       return fail(c, 400, "invalid webhook headers")
+    let payload: unknown
     try {
-      JSON.parse(raw)
+      payload = JSON.parse(raw)
     } catch {
       return fail(c, 400, "body must be JSON")
     }
-    // Signed and well-formed: acknowledged. No event drives work here since GitHub Actions
-    // workflow runs stopped being a Derive execution lane; new Apps subscribe to none, and the
-    // receiver stays so Apps created earlier, which still deliver here, get a clean answer.
+    // Signed and well-formed: acknowledged at once. Matching event triggers start their tasks
+    // after the response, so GitHub never waits on a machine.
+    const installation = (payload as { installation?: { id?: unknown } } | null)?.installation?.id
+    if (typeof installation === "number")
+      await ctx.afterResponse(c, async () => {
+        const started = await dispatchGithubEvent(jobDeps, {
+          id: delivery,
+          event,
+          installationId: String(installation),
+          payload,
+          appBot: `${loaded.app.slug}[bot]`,
+        })
+        const machines = started.length
+          ? machineDepsFrom(meta, {
+              secret: deps.encryptionKey,
+              server: deps.baseUrl,
+              config: deps.runtime,
+              fetcher: deps.runtimeFetch,
+              bus: ctx.backplane,
+              announce: ctx.announceJob,
+            })
+          : null
+        if (machines) await machinePass(machines)
+      })
     return c.body(null, 202)
   }
   app.post("/v1/github/webhook", handleWebhook)

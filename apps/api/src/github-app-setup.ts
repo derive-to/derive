@@ -26,6 +26,16 @@ export const REQUIRED_PERMISSIONS: Record<string, string> = {
   pull_requests: "write",
 }
 export const ACTIONS_PERMISSION = { actions: "write" } as const
+/** The events an agent trigger can start on, as GitHub names them. */
+export const GITHUB_EVENTS = [
+  "pull_request",
+  "push",
+  "issues",
+  "issue_comment",
+  "pull_request_review",
+  "release",
+  "workflow_run",
+] as const
 export const MANIFEST_PERMISSIONS: Record<string, string> = {
   ...REQUIRED_PERMISSIONS,
   ...ACTIONS_PERMISSION,
@@ -50,11 +60,10 @@ export const buildManifest = (baseUrl: string, host: string) => ({
   setup_on_update: true,
   callback_urls: [new URL("/v1/github/authorize", baseUrl).toString()],
   request_oauth_on_install: false,
-  // Inactive: no event drives work, and nothing configures the signing secret for a new App
-  // any more, so an active hook would only deliver payloads that fail the signature check.
+  // Events start agent tasks. Setup sets the signing secret right after the App is created.
   hook_attributes: {
     url: new URL("/v1/github/webhook", baseUrl).toString(),
-    active: false,
+    active: true,
   },
   // Public so it can be installed on organizations too, not just the owner's
   // personal account (GitHub restricts a private App to its owner account). It is
@@ -62,7 +71,9 @@ export const buildManifest = (baseUrl: string, host: string) => ({
   // signed-state callback, so a stray direct install is inert.
   public: true,
   default_permissions: MANIFEST_PERMISSIONS,
-  default_events: [] as string[],
+  // What the granted permissions can deliver. Issue events need Issues access, which an owner
+  // adds in the App's settings only if they want those triggers.
+  default_events: GITHUB_EVENTS.filter((e) => e !== "issues" && e !== "issue_comment") as string[],
 })
 
 export function installationPickerHTML(props: {

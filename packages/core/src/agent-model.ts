@@ -469,6 +469,8 @@ export interface AgentModelStore<Agent = unknown> {
   listTriggers(orgId: string, agentId?: string): Promise<TriggerRecord[]>
   /** Every enabled schedule trigger, scoped to `orgIds` when given. */
   listEnabledScheduleTriggers(orgIds?: readonly string[]): Promise<TriggerRecord[]>
+  /** Every enabled event trigger: few, and a delivery filters them by what they name. */
+  listEnabledEventTriggers(): Promise<TriggerRecord[]>
   /** Partial update, org-scoped; bumps revision. Null when not found. */
   updateTrigger(id: string, orgId: string, patch: TriggerPatch): Promise<TriggerRecord | null>
   deleteTrigger(id: string, orgId: string): Promise<boolean>
