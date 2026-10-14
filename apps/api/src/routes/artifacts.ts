@@ -869,6 +869,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     let filename: string
     let isBundle: boolean
     let preparedSource: string | undefined
+    let preserveSourceHistory = false
     // An edit inside a paper bundle republishes the bundle; its SPA flag is kept as is.
     let bundleSpa: boolean | undefined
     let bundleEntry: string | undefined
@@ -925,6 +926,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         if (sourceOps) {
           const applied = await materializeSourceOps(deps, existing, parsed)
           opChanges = applied.changes
+          preserveSourceHistory = applied.preserveSourceHistory ?? false
           materialized = applied
         } else
           materialized = structural
@@ -1126,7 +1128,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         !!onBehalf &&
         !agentPrincipal
       const editSession = coalescing ? sessionField : undefined
-      if (coalescing && existing) {
+      if (coalescing && existing && !preserveSourceHistory) {
         const current = await versionOf(existing.id, existing.current_version)
         const age = current ? Date.now() - Date.parse(current.created_at) : Number.POSITIVE_INFINITY
         if (

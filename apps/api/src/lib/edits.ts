@@ -293,7 +293,10 @@ export async function materializeSourceOps(
   artifact: Pick<ArtifactRecord, "id" | "short_id" | "kind" | "current_version">,
   ops: unknown,
 ): Promise<
-  MaterializedEdits & { changes: { before: string; after: string; contentType: string }[] }
+  MaterializedEdits & {
+    changes: { before: string; after: string; contentType: string }[]
+    preserveSourceHistory?: boolean
+  }
 > {
   const { src, contentType } = await currentSource(deps, artifact, undefined, "ops")
   if (!isSourceEditable(contentType ?? ""))
@@ -309,7 +312,7 @@ export async function materializeSourceOps(
       changes: changes.map((c) => ({ ...c, contentType: "text/markdown" })),
     }
   }
-  let { html, changes } = await applySourceOps(src, ops, async (version) => {
+  let { html, changes, removedSource } = await applySourceOps(src, ops, async (version) => {
     const historical = await deps.getVersion(artifact.id, version)
     if (!historical || historical.content_type !== contentType) return null
     return deps.sourceText(historical)
@@ -324,6 +327,7 @@ export async function materializeSourceOps(
   return {
     content: html,
     filename,
+    preserveSourceHistory: removedSource,
     changes: changes.map((c) => ({ ...c, contentType: "text/html" })),
   }
 }

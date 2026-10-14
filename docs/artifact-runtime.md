@@ -123,3 +123,6 @@ The server reads history only from the authorized artifact.
 Historical hashes and identity collisions are checked before publication.
 Source reconciliation gives restored elements their current source identities.
 Redo uses the same saved source flow.
+Deletion saves append a version instead of replacing the session's working version.
+This keeps the source needed by repeated Undo and redo.
+An edit that returns to the saved source clears any queued local draft.
