@@ -44,6 +44,9 @@ Authored fields named `__actor` or `__slot` remain ordinary data.
 
 The host keeps authentication and artifact access. It also checks browser activation
 before each mutation. The opaque iframe receives no host cookies.
+State replies belong to the requesting frame and its loaded document.
+The host drops delayed replies after reload, replacement, navigation, or listener teardown.
+An expired request cannot open a sign-in prompt on another document.
 
 The adapter accepts responses only from its parent window. It validates snapshots
 before it changes state. Older responses cannot replace a newer saved snapshot.
