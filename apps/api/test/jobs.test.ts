@@ -1791,6 +1791,20 @@ describe("jobs: which account a job runs with", () => {
     expect((await rename(owner.email, work.id, "Mine now")).status).toBe(404)
     expect((await rename(ed.email, shared.id, "Ed's")).status).toBe(404)
     expect((await rename(owner.email, shared.id, "Team")).status).toBe(200)
+
+    // An owner shares their own account with the workspace; a member cannot share theirs.
+    const share = (who: string, id: string) =>
+      app.request(`/v1/accounts/${id}`, { ...jsonAs(as(who), { shared: true }), method: "PATCH" })
+    expect((await share(ed.email, work.id)).status).toBe(403)
+    const plan = await add(owner.email, { secret: "sk-ant-oat-plan-3333" })
+    const sharedPlan = await share(owner.email, plan.id)
+    expect(await sharedPlan.json()).toMatchObject({ id: plan.id, shared: true, mine: false })
+    // A teammate now sees it, and still cannot rename it.
+    const edsList = (await (
+      await app.request("/v1/accounts", { headers: as(ed.email) })
+    ).json()) as { accounts: { id: string; shared: boolean }[] }
+    expect(edsList.accounts).toContainEqual(expect.objectContaining({ id: plan.id, shared: true }))
+    expect((await rename(ed.email, plan.id, "Ed's")).status).toBe(404)
   })
 
   it("a removed member's key stops paying for their agent's jobs", async () => {

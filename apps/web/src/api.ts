@@ -1502,6 +1502,8 @@ export const api = {
   /** Rename an account; null (or blank) goes back to the provider's name. */
   renameAccount: (id: string, name: string | null): Promise<ModelAccount> =>
     f(`/v1/accounts/${id}`, { ...opts({ name }), method: "PATCH" }).then(j),
+  shareAccount: (id: string): Promise<ModelAccount> =>
+    f(`/v1/accounts/${id}`, { ...opts({ shared: true }), method: "PATCH" }).then(j),
   deleteAccount: (id: string): Promise<void> =>
     f(`/v1/accounts/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
 

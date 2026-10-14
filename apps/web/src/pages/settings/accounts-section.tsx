@@ -51,6 +51,11 @@ export function AccountsSection() {
   const [connecting, setConnecting] = useState<ModelAccount | null>(null)
   const [removing, setRemoving] = useState<ModelAccount | null>(null)
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null)
+  const [sharing, setSharing] = useState<ModelAccount | null>(null)
+  const share = useApiMutation({
+    mutationFn: (a: ModelAccount) => api.shareAccount(a.id),
+    invalidate: [["accounts"], ["agents"]],
+  })
   const rename = useApiMutation({
     mutationFn: (r: { id: string; name: string }) => api.renameAccount(r.id, r.name.trim() || null),
     invalidate: [["accounts"], ["agents"]],
@@ -175,6 +180,18 @@ export function AccountsSection() {
                             {a.status === "connecting" ? "Continue" : "Reconnect"}
                           </Button>
                         )}
+                        {isOwner && a.mine && !a.shared && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="xs"
+                            data-testid={`account-share-${a.id}`}
+                            onClick={() => setSharing(a)}
+                            className="text-muted-foreground"
+                          >
+                            Share with workspace
+                          </Button>
+                        )}
                         {canEdit && (
                           <Button
                             type="button"
@@ -244,6 +261,19 @@ export function AccountsSection() {
           )}
         </div>
       )}
+      <ConfirmDialog
+        open={!!sharing}
+        onOpenChange={(open) => !open && setSharing(null)}
+        title="Share this account with the workspace?"
+        description="Every teammate’s tasks can then run on it, including agents that use the workspace default. Its usage counts against this plan. You can disconnect it at any time."
+        confirmLabel="Share"
+        tone="default"
+        confirmTestId="account-share-confirm"
+        onConfirm={async () => {
+          if (sharing) await share.mutateAsync(sharing)
+          setSharing(null)
+        }}
+      />
       <ConfirmDialog
         open={!!removing}
         onOpenChange={(o) => !o && setRemoving(null)}

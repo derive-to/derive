@@ -7677,7 +7677,7 @@
         "tags": [
           "Accounts"
         ],
-        "summary": "Rename an account. Yours, or a shared one if you own the workspace.",
+        "summary": "Rename an account, or share yours with the workspace (owners). Yours, or a shared one if you own the workspace.",
         "parameters": [
           {
             "schema": {

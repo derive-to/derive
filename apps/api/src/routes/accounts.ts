@@ -148,7 +148,8 @@ export const accountRoutes = (ctx: AppContext) => {
       method: "patch",
       path: "/v1/accounts/{id}",
       tags: ["Accounts"],
-      summary: "Rename an account. Yours, or a shared one if you own the workspace.",
+      summary:
+        "Rename an account, or share yours with the workspace (owners). Yours, or a shared one if you own the workspace.",
       request: { params: z.object({ id: z.string() }) },
       responses: {
         200: { description: "The account.", content: { "application/json": { schema: Account } } },
@@ -159,11 +160,34 @@ export const accountRoutes = (ctx: AppContext) => {
       if (org instanceof Response) return bail(org)
       const who = await ctx.managementPrincipal(c)
       if (!who) return bail(fail(c, 403, "forbidden"))
-      const b = await readJson(c, z.object({ name: AccountName.nullable() }))
+      const b = await readJson(
+        c,
+        z.object({
+          name: AccountName.nullable().optional(),
+          shared: z
+            .boolean()
+            .optional()
+            .describe("Share your account with the workspace, or take a shared one back as yours."),
+        }),
+      )
       if (b instanceof Response) return bail(b)
       const a = await manageable(c, org, who)
       if (!a) return bail(fail(c, 404, "account not found"))
-      const updated = await meta.updateAccount(a.id, org, { name: b.name })
+      // Sharing moves the account to the workspace pool every teammate's tasks may fall back to,
+      // so only an owner does it; taking one back makes it the owner's own.
+      const sharedNow = a.user_id === WORKSPACE_ACCOUNT_OWNER
+      if (
+        b.shared !== undefined &&
+        b.shared !== sharedNow &&
+        !(await ctx.workspaceCan(c, "manage"))
+      )
+        return bail(fail(c, 403, "only a workspace owner shares an account"))
+      const updated = await meta.updateAccount(a.id, org, {
+        name: b.name,
+        ...(b.shared === undefined || b.shared === sharedNow
+          ? {}
+          : { user_id: b.shared ? WORKSPACE_ACCOUNT_OWNER : who }),
+      })
       if (!updated) return bail(fail(c, 404, "account not found"))
       return c.json(accountJson(updated, who))
     },

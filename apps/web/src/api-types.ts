@@ -2072,7 +2072,7 @@ export interface paths {
         };
         options?: never;
         head?: never;
-        /** Rename an account. Yours, or a shared one if you own the workspace. */
+        /** Rename an account, or share yours with the workspace (owners). Yours, or a shared one if you own the workspace. */
         patch: {
             parameters: {
                 query?: never;
