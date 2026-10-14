@@ -452,7 +452,12 @@ export const jobExecutionRepos = (
       if (input.status === "failed")
         await tx.execute(sql`UPDATE job_turn SET status = 'cancelled', finished_at = ${now}
           WHERE job_id = ${job.id} AND org_id = ${job.org_id} AND status = 'queued'`)
-      const status = waiting && input.status === "succeeded" ? "queued" : input.status
+      // A message the person already sent goes next, whether the turn finished or stopped to
+      // ask: that message is their answer, so the task does not wait on a question it has.
+      const status =
+        waiting && (input.status === "succeeded" || input.status === "needs_you")
+          ? "queued"
+          : input.status
       if (input.status !== "failed") delete combined.failure
       let needsJson = input.needs_json
       if (input.status === "needs_you" && job.trigger_id && needsJson) {
@@ -478,7 +483,7 @@ export const jobExecutionRepos = (
       const updated = await repos.updateJob(job.id, {
         status,
         result_json: JSON.stringify(combined),
-        needs_json: needsJson,
+        needs_json: status === "queued" ? null : needsJson,
         lease_until: null,
         ...(status === "queued"
           ? { started_at: null, finished_at: null, attempt: 0 }
