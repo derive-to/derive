@@ -180,6 +180,7 @@ import {
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
 import { Pool } from "pg"
 import { agentModelRepos, skillJobUsage } from "./agent-model-repos"
+import { readCommentActivity } from "./comment-activity"
 import {
   DYNAMIC_STATE_PREFIX,
   dynamicRecord,
@@ -908,16 +909,19 @@ export class PgMetaStore implements MetaStore {
     return rows[0] ?? null
   }
 
-  async appendSharedStateActivity(a: NewSharedStateActivity): Promise<void> {
+  async appendSharedStateActivity(
+    a: NewSharedStateActivity,
+    keep = SHARED_STATE_ACTIVITY_LIMIT,
+  ): Promise<void> {
     await this.db.insert(sharedStateActivity).values(a)
-    if (a.version <= SHARED_STATE_ACTIVITY_LIMIT) return
+    if (a.version <= keep) return
     await this.db
       .delete(sharedStateActivity)
       .where(
         and(
           eq(sharedStateActivity.artifact_id, a.artifact_id),
           eq(sharedStateActivity.key, a.key),
-          lte(sharedStateActivity.version, a.version - SHARED_STATE_ACTIVITY_LIMIT),
+          lte(sharedStateActivity.version, a.version - keep),
         ),
       )
   }
@@ -1262,7 +1266,7 @@ export class PgMetaStore implements MetaStore {
 
   async versionsForArtifacts(
     artifactIds: string[],
-    opts: { createdFrom?: string; createdTo?: string; limit?: number } = {},
+    opts: { createdFrom?: string; createdTo?: string; limit?: number; n?: number } = {},
   ): Promise<VersionRecord[]> {
     if (artifactIds.length === 0) return []
     const limit = Math.max(1, Math.min(opts.limit ?? 100, 1_000))
@@ -1271,9 +1275,10 @@ export class PgMetaStore implements MetaStore {
         WHERE artifact_id = ANY($1)
           AND ($2::text IS NULL OR created_at >= $2::text)
           AND ($3::text IS NULL OR created_at <= $3::text)
+          AND ($5::integer IS NULL OR n = $5::integer)
         ORDER BY created_at DESC, artifact_id ASC, n DESC
         LIMIT $4`,
-      [artifactIds, opts.createdFrom ?? null, opts.createdTo ?? null, limit],
+      [artifactIds, opts.createdFrom ?? null, opts.createdTo ?? null, limit, opts.n ?? null],
     )
     return rows
   }
@@ -1747,6 +1752,13 @@ export class PgMetaStore implements MetaStore {
       .from(comment)
       .where(and(eq(comment.artifact_id, artifactId), isNotNull(comment.author_id)))
     return rows.map((r) => r.id).filter((x): x is string => !!x)
+  }
+
+  commentActivity(artifactIds: string[]) {
+    return readCommentActivity(
+      async (statement) => (await this.db.execute(statement)).rows,
+      artifactIds,
+    )
   }
 
   async commentsPage(

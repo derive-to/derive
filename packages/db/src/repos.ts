@@ -166,6 +166,7 @@ import {
 } from "drizzle-orm"
 import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core"
 import { agentModelRepos, skillJobUsage } from "./agent-model-repos"
+import { readCommentActivity } from "./comment-activity"
 import {
   DYNAMIC_STATE_PREFIX,
   dynamicRecord,
@@ -356,6 +357,12 @@ export function artifactListConditions(
   }
   if (opts?.ids) conds.push(inArray(art.id, opts.ids))
   if (opts?.orgId) conds.push(eq(art.org_id, opts.orgId))
+  if (opts?.firstAuthorId !== undefined)
+    conds.push(sql`EXISTS (
+      SELECT 1 FROM version v
+      WHERE v.artifact_id = ${art.id} AND v.n = 1
+        AND coalesce(v.author_id, v.agent_id, 'anonymous') = ${opts.firstAuthorId}
+    )`)
   return conds
 }
 
@@ -684,16 +691,19 @@ export function makeRepos(db: SqliteDb) {
     return (updated as SharedStateRecord | undefined) ?? null
   }
 
-  const appendSharedStateActivity = async (a: NewSharedStateActivity): Promise<void> => {
+  const appendSharedStateActivity = async (
+    a: NewSharedStateActivity,
+    keep = SHARED_STATE_ACTIVITY_LIMIT,
+  ): Promise<void> => {
     await db.insert(sharedStateActivity).values(a).run()
-    if (a.version <= SHARED_STATE_ACTIVITY_LIMIT) return
+    if (a.version <= keep) return
     await db
       .delete(sharedStateActivity)
       .where(
         and(
           eq(sharedStateActivity.artifact_id, a.artifact_id),
           eq(sharedStateActivity.key, a.key),
-          lte(sharedStateActivity.version, a.version - SHARED_STATE_ACTIVITY_LIMIT),
+          lte(sharedStateActivity.version, a.version - keep),
         ),
       )
       .run()
@@ -1013,7 +1023,7 @@ export function makeRepos(db: SqliteDb) {
 
   const versionsForArtifacts = async (
     artifactIds: string[],
-    opts: { createdFrom?: string; createdTo?: string; limit?: number } = {},
+    opts: { createdFrom?: string; createdTo?: string; limit?: number; n?: number } = {},
   ): Promise<VersionRecord[]> => {
     if (artifactIds.length === 0) return []
     const limit = Math.max(1, Math.min(opts.limit ?? 100, 1_000))
@@ -1023,6 +1033,7 @@ export function makeRepos(db: SqliteDb) {
       .where(
         and(
           inArray(version.artifact_id, artifactIds),
+          opts.n !== undefined ? eq(version.n, opts.n) : undefined,
           opts.createdFrom ? gte(version.created_at, opts.createdFrom) : undefined,
           opts.createdTo ? lte(version.created_at, opts.createdTo) : undefined,
         ),
@@ -5155,6 +5166,8 @@ export function makeRepos(db: SqliteDb) {
     updateComment,
     listComments,
     commentAuthorIds,
+    commentActivity: (artifactIds: string[]) =>
+      readCommentActivity(async (statement) => await db.all(statement), artifactIds),
     setThreadState,
     deleteThread,
     commentSignals,

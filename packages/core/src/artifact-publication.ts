@@ -1,10 +1,6 @@
-import {
-  type ArtifactRow,
-  createEvents,
-  createSourcePublication,
-  type PublicationStore,
-  type VersionRow,
-} from "@aniraga/open-artifact-server/source"
+import { createEvents, createSourcePublication } from "@aniraga/open-artifact-server/source"
+import { createArtifactStore } from "./artifact-store"
+import { artifactRowOf, publicationActor } from "./artifact-store-records"
 import type {
   ArtifactRecord,
   BlobStore,
@@ -18,39 +14,6 @@ type Target =
   | { create: NewArtifact }
   | { artifact: ArtifactRecord; expected?: number; replacement?: { n: number; blobKey: string } }
 
-const actorOf = (version: NewVersion) => ({
-  id: version.author_id ?? version.agent_id ?? "anonymous",
-  name: version.author,
-})
-
-const versionOf = (version: VersionRecord): VersionRow => ({
-  artifactId: version.artifact_id,
-  n: version.n,
-  contentHash: version.blob_key,
-  size: version.size_bytes,
-  csp: {},
-  createdAt: version.created_at,
-  createdBy: actorOf(version),
-  source: { contentType: version.content_type },
-})
-
-/** Publication uses this identity. Native rows retain Derive's complete bylines and access. */
-const artifactOf = (artifact: ArtifactRecord): ArtifactRow => {
-  const actor = { id: artifact.author_id ?? "anonymous", name: artifact.author_name ?? "anonymous" }
-  return {
-    id: artifact.id,
-    space: artifact.org_id,
-    title: artifact.title ?? "",
-    currentVersion: artifact.current_version,
-    createdAt: artifact.created_at,
-    updatedAt: artifact.updated_at ?? artifact.created_at,
-    createdBy: actor,
-    updatedBy: actor,
-    summary: "",
-    kind: artifact.current_content_type === "text/x-derive-deck" ? "slides" : "page",
-  }
-}
-
 /** Existing schema and native atomic writes adapt to the shared publication kernel. */
 export const publishArtifactSource = async (
   meta: MetaStore,
@@ -59,36 +22,16 @@ export const publishArtifactSource = async (
 ): Promise<{ artifact: ArtifactRecord; version: VersionRecord }> => {
   let writtenArtifact: ArtifactRecord | undefined
   let writtenVersion: VersionRecord | undefined
-  const newVersion = (row: VersionRow): NewVersion => ({
-    ...input.version,
-    blob_key: row.contentHash,
-    content_type: row.source?.contentType ?? "text/html",
+  const store = createArtifactStore(meta, {
+    publication: {
+      version: input.version,
+      ...("create" in input.target ? { create: input.target.create } : {}),
+      capture: (saved) => {
+        if (saved.artifact) writtenArtifact = saved.artifact
+        writtenVersion = saved.version
+      },
+    },
   })
-  const capture = (version: VersionRecord): VersionRow => {
-    writtenVersion = version
-    return versionOf(version)
-  }
-  const store: PublicationStore = {
-    createArtifact: async (_artifact, first) => {
-      if (!("create" in input.target)) throw new Error("Publication is missing its creation input")
-      const saved = await meta.createPublishedArtifact(input.target.create, newVersion(first))
-      writtenArtifact = saved.artifact
-      writtenVersion = saved.version
-    },
-    addVersion: async (row, expected) => {
-      const saved = await meta.addVersionIfCurrent(row.artifactId, expected, newVersion(row))
-      return saved ? capture(saved) : null
-    },
-    appendVersion: async (row) => capture(await meta.addVersion(row.artifactId, newVersion(row))),
-    replaceVersion: async (row, expectedHash) => {
-      const saved = await meta.replaceCurrentVersion(
-        row.artifactId,
-        { n: row.n, blobKey: expectedHash },
-        newVersion(row),
-      )
-      return saved ? capture(saved) : null
-    },
-  }
   const publication = createSourcePublication(
     {
       store,
@@ -117,7 +60,7 @@ export const publishArtifactSource = async (
       input.version.content_type === "text/x-derive-deck" ? ("slides" as const) : ("page" as const),
   }
   if ("create" in input.target) {
-    await publication.createSource(actorOf(input.version), {
+    await publication.createSource(publicationActor(input.version), {
       ...source,
       id: input.target.create.id,
       title: input.target.create.title ?? "",
@@ -126,14 +69,18 @@ export const publishArtifactSource = async (
     })
   } else {
     const target = input.target
-    await publication.publishSource(actorOf(input.version), artifactOf(target.artifact), {
-      ...source,
-      facts,
-      expected: target.expected,
-      replaceCurrent: target.replacement
-        ? { n: target.replacement.n, contentHash: target.replacement.blobKey }
-        : undefined,
-    })
+    await publication.publishSource(
+      publicationActor(input.version),
+      artifactRowOf(target.artifact),
+      {
+        ...source,
+        facts,
+        expected: target.expected,
+        replaceCurrent: target.replacement
+          ? { n: target.replacement.n, contentHash: target.replacement.blobKey }
+          : undefined,
+      },
+    )
     writtenArtifact = target.artifact
   }
   if (!writtenArtifact || !writtenVersion) throw new Error("Artifact publication did not commit")

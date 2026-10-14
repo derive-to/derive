@@ -5,6 +5,7 @@ import {
   elementSelectorForId,
   isAnchored,
   newId,
+  postArtifactComment,
 } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
@@ -157,7 +158,7 @@ export const commentRoutes = (ctx: AppContext) => {
           : "anonymous"
       const mentions = parseMentions(body.mentions)
 
-      let created = await meta.createComment({
+      const created = await postArtifactComment(meta, artifact, {
         id,
         artifact_id: artifact.id,
         thread_id: threadId,
@@ -167,15 +168,8 @@ export const commentRoutes = (ctx: AppContext) => {
         body_md: body.body_md,
         author,
         author_id: acting?.id ?? null,
+        ...(mentions.length ? { meta: JSON.stringify({ mentions }) } : {}),
       })
-      // Mentions live in the comment's meta JSON (the picker supplies user ids, so
-      // there's no fragile server-side @name parsing); persist them with the row.
-      if (mentions.length) {
-        const patched = await meta.updateComment(created.id, {
-          meta: JSON.stringify({ ...parseMeta(created.meta), mentions }),
-        })
-        if (patched) created = patched
-      }
       // Signal-only: never put the comment body on the realtime bus. Clients refetch
       // /comments (which is account-gated), so the content can't leak to an anonymous
       // SSE subscriber. Webhooks carry their own payload via notify() below.

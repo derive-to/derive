@@ -35,3 +35,16 @@ the head before it deletes facts. This order also supports versions without fact
 
 The portable repositories do not implement these writes. This prevents callers
 from using a sequence of separate writes where a transaction is required.
+
+## Shared kit adapter
+
+`createArtifactStore` implements the shared kit storage port through `MetaStore`.
+Source publication uses this adapter. The host supplies prepared creation and publication fields.
+This preserves native access, bylines, formats, checkpoints, and edit sessions.
+Reads batch first versions, current versions, and comment activity within native parameter limits.
+Creator filters use the first version's author. Later publishers cannot change this filter.
+
+Comment hosts retain their root comment and thread identities, including named threads.
+Prepared comment input preserves paths and metadata. Deleted bodies stay hidden.
+State writes retain authenticated attribution and native activity action names.
+The API's complete kit integration remains unfinished.

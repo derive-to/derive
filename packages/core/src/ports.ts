@@ -238,6 +238,8 @@ export interface ListArtifactsOpts {
   collectionId?: string
   /** Scope to one workspace (multi-workspace). Omitted ⇒ every workspace. */
   orgId?: string
+  /** The first version's stable author id. Later publishers do not change this filter. */
+  firstAuthorId?: string
   /** Only `public` artifacts. Set for anonymous / non-member callers so a workspace
    *  listing never leaks `org`/`link`/`password` titles to someone who can't open them. */
   publicOnly?: boolean
@@ -834,7 +836,7 @@ export interface ArtifactStore {
    * edge round trip per member. */
   versionsForArtifacts(
     artifactIds: string[],
-    opts?: { createdFrom?: string; createdTo?: string; limit?: number },
+    opts?: { createdFrom?: string; createdTo?: string; limit?: number; n?: number },
   ): Promise<VersionRecord[]>
   /** Replace a version's stored facts with `rows` (delete-then-insert, so a
    *  re-extraction is idempotent). Empty `rows` clears them. Keyed by the immutable
@@ -1039,6 +1041,13 @@ export interface ArtifactStore {
   ): Promise<void>
 }
 
+export interface CommentActivityRecord {
+  artifact_id: string
+  open_threads: number
+  threads: number
+  people: { author_id: string | null; author: string }[]
+}
+
 export interface CommentStore {
   createComment(c: NewComment): Promise<CommentRecord>
   /** Comments on an artifact, oldest-first; optionally filtered by thread state. */
@@ -1081,6 +1090,8 @@ export interface CommentStore {
   /** DISTINCT author ids on an artifact's comments. The @mention directory needs only this,
    *  and was reading every comment ROW — bodies and all — to collect them. */
   commentAuthorIds(artifactId: string): Promise<string[]>
+  /** Counts and the five latest distinct authors for a bounded artifact page. */
+  commentActivity(artifactIds: string[]): Promise<CommentActivityRecord[]>
 }
 
 export interface ArtifactQueryStore {
@@ -2896,7 +2907,7 @@ export interface SharedStateStore {
    * version. Null means another interaction won the race and the caller retries. */
   putSharedState(write: SharedStateWrite): Promise<SharedStateRecord | null>
   /** Append one attributed version and retain the bounded recent activity feed. */
-  appendSharedStateActivity(activity: NewSharedStateActivity): Promise<void>
+  appendSharedStateActivity(activity: NewSharedStateActivity, keep?: number): Promise<void>
   listSharedStateActivity(
     artifactId: string,
     key: string,
@@ -4296,6 +4307,8 @@ export interface NewComment {
   id: string
   artifact_id: string
   thread_id: string
+  /** Storage adapters can preserve an existing thread state on a new reply. */
+  state?: CommentState
   base_version: number
   path?: string | null
   anchor?: string | null

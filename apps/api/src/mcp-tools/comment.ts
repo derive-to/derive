@@ -1,4 +1,4 @@
-import { elementSelectorForId, newId, roleAllows } from "@derive/core"
+import { elementSelectorForId, newId, postArtifactComment, roleAllows } from "@derive/core"
 import { z } from "zod"
 import { commentCreatedAction } from "../lib/comment-actions"
 import {
@@ -161,7 +161,7 @@ export function registerCommentTool(tc: ToolContext): void {
             )
           anchor = JSON.stringify(selector)
         }
-        await ctx.meta.createComment({
+        const created = await postArtifactComment(ctx.meta, a, {
           id: commentId,
           artifact_id: a.id,
           thread_id: thread,
@@ -187,29 +187,27 @@ export function registerCommentTool(tc: ToolContext): void {
         // participants + the artifact's owners, plus webhooks, email, and connected Slack
         // channels. This path used to bell only, so an agent's comment reached no channel at
         // all. It now sends the same resolved mention payload as the web composer too.
-        const created = await ctx.meta.getComment(commentId)
         // Through ctx.background, exactly as the HTTP route runs it: the fan-out is
         // best-effort, and the comment is already durable by now. Awaiting it bare would turn
         // any channel-side failure (such as a Slack install lookup)
         // into a tool error for a comment that WAS written — and an agent that believes its
         // comment failed retries and duplicates it. background() catches + logs, and on
         // Workers rides waitUntil; on Node it still settles inline.
-        if (created)
-          await ctx.background(
-            commentCreatedAction(
-              {
-                meta: ctx.meta,
-                bus: ctx.bus,
-                baseUrl: ctx.deps.baseUrl,
-                notify: ctx.notify,
-                pokeWebhooks: ctx.deps.pokeWebhooks,
-                answerDeriveMention: ctx.answerDeriveMention,
-              },
-              a,
-              created,
-              { mentions, actorId: agent.id, onBehalfOf: ownerId },
-            ),
-          )
+        await ctx.background(
+          commentCreatedAction(
+            {
+              meta: ctx.meta,
+              bus: ctx.bus,
+              baseUrl: ctx.deps.baseUrl,
+              notify: ctx.notify,
+              pokeWebhooks: ctx.deps.pokeWebhooks,
+              answerDeriveMention: ctx.answerDeriveMention,
+            },
+            a,
+            created,
+            { mentions, actorId: agent.id, onBehalfOf: ownerId },
+          ),
+        )
       }
       // The ack: land the emoji on the thread's newest comment by someone ELSE
       // (the human being acknowledged), falling back to its newest comment.

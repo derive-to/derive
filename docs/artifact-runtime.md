@@ -58,6 +58,13 @@ The existing client guard checks the generated bundle before delivery.
 The collection client is one completed runtime seam. The full artifact kit,
 anchor client, frame bridge, React reader, and format controls still need adoption.
 
+HTTP and MCP comment creation use the shared thread module through `postArtifactComment`.
+The host keeps access checks, rate limits, mentions, question options, and notifications.
+Native IDs, original selector bytes, paths, body text, and attribution stay unchanged.
+Mention metadata commits with the comment. Callers can name a new thread.
+An existing root from another artifact cannot become a reply target.
+The API maps the shared module's safe HTTP errors to its existing error response.
+
 Exact source operation validation and application use the shared protocol.
 Source maps, source stamps, incremental hashes, and page reconciliation use the same source owner.
 Slide operations retain comment identities and rewrite copied DOM and structural references.
