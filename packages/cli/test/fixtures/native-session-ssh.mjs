@@ -227,6 +227,20 @@ LogLevel VERBOSE
     else process.env.TMPDIR = previousTmp
   }
 
+  const literalIdentity = 'identity spaces "quote" \\slash %tokens ${UNSET_SSH_VARIABLE}'
+  writeFileSync(join(dir, literalIdentity), readFileSync(join(dir, "client")), { mode: 0o600 })
+  const identity = await makeShell({}, literalIdentity)
+  assert.equal(
+    await identity.shell.run(["-l", username], `printf literal-identity > ${quote(marker)}`),
+    0,
+  )
+  assert.equal(readFileSync(marker, "utf8"), "literal-identity")
+  assert.equal(existsSync(join(dir, literalIdentity)), true)
+  identity.assertClean()
+  process.stdout.write(
+    "PASS native SSH with literal private identity path and source-key retention\n",
+  )
+
   const persistentHosts = join(dir, "persistent_known_hosts")
   const directCertificate = join(dir, "direct-certificate.pub")
   writeFileSync(directCertificate, `${certificate}\n`, { mode: 0o600 })

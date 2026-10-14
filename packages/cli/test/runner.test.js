@@ -556,13 +556,18 @@ describe("cloud session SSH transport", () => {
     direct = false,
     hold = false,
     specialPaths = false,
+    specialIdentity = false,
   } = {}) => {
     const dir = mkdtempSync(join(tmpdir(), "derive-ssh-test-"))
     const sessionTmp = specialPaths
       ? join(dir, 'private spaces "quote" \\slash %tokens ${UNSET_SSH_VARIABLE}')
       : dir
     mkdirSync(sessionTmp, { recursive: true })
-    const key = join(dir, "session_ed25519")
+    const configDir = specialIdentity
+      ? join(dir, 'identity spaces "quote" \\slash %tokens ${UNSET_SSH_VARIABLE}')
+      : dir
+    mkdirSync(configDir, { recursive: true })
+    const key = join(configDir, "session_ed25519")
     for (const file of [key, join(dir, "ca")]) {
       const made = spawnSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", file])
       expect(made.status).toBe(0)
@@ -601,7 +606,10 @@ const knownOption = option('UserKnownHostsFile=')
 const certificateOption = option('CertificateFile=')
 const known = knownOption && resolve(knownOption)
 const certificate = certificateOption && resolve(certificateOption)
-writeFileSync(process.env.SSH_RECORD, JSON.stringify({ args, known, certificate, hostKey: known && readFileSync(known, 'utf8'), cert: certificate && readFileSync(certificate, 'utf8'), mode: known && (statSync(known).mode & 511), certMode: certificate && (statSync(certificate).mode & 511), dirMode: known && (statSync(known.slice(0, known.lastIndexOf('/'))).mode & 511) }))
+const identity = resolve(args[args.indexOf('-i') + 1])
+const identityKey = spawnSync('ssh-keygen', ['-y', '-f', identity], {encoding:'utf8'})
+if (identityKey.status !== 0) { process.stderr.write(identityKey.stderr); process.exit(identityKey.status ?? 1) }
+writeFileSync(process.env.SSH_RECORD, JSON.stringify({ args, known, certificate, identity, identityPublicKey: identityKey.stdout.trim(), identityMode: statSync(identity).mode & 511, hostKey: known && readFileSync(known, 'utf8'), cert: certificate && readFileSync(certificate, 'utf8'), mode: known && (statSync(known).mode & 511), certMode: certificate && (statSync(certificate).mode & 511), dirMode: known && (statSync(known.slice(0, known.lastIndexOf('/'))).mode & 511) }))
 if (process.env.SSH_DIRECT === '1') process.exit(0)
 const expected = Buffer.from(Array.from({length:153600}, (_,i)=>i%256))
 const socket = connect(Number(args[args.indexOf('-p')+1]), '127.0.0.1', () => socket.write(expected))
@@ -684,7 +692,7 @@ socket.on('end', () => process.exit(7))
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
     const url = `http://127.0.0.1:${server.address().port}`
     writeFileSync(
-      join(dir, "credentials.json"),
+      join(configDir, "credentials.json"),
       JSON.stringify({
         [url]: {
           defaultAccount: "test",
@@ -711,7 +719,7 @@ socket.on('end', () => process.exit(7))
           cwd: dir,
           env: {
             ...process.env,
-            DERIVE_CONFIG_DIR: dir,
+            DERIVE_CONFIG_DIR: configDir,
             DERIVE_SERVER: url,
             PATH: `${dir}:${process.env.PATH}`,
             SSH_RECORD: record,
@@ -779,7 +787,12 @@ socket.on('end', () => process.exit(7))
         expect(record.cert.trim()).toBe(f.certificate)
         expect(record.args).toContain("StrictHostKeyChecking=yes")
         expect(record.args).toContain("IdentitiesOnly=yes")
-        expect(record.args[record.args.indexOf("-i") + 1]).toBe(f.key)
+        expect(record.identityPublicKey.split(/\s+/).slice(0, 2)).toEqual(
+          f.publicKeys[0].split(/\s+/).slice(0, 2),
+        )
+        expect(record.identityMode).toBe(0o600)
+        expect(existsSync(record.identity)).toBe(false)
+        expect(existsSync(f.key)).toBe(true)
         expect(record.args).not.toContain("test-session-token")
         expect(existsSync(record.known)).toBe(false)
         expect(existsSync(record.certificate)).toBe(false)
@@ -818,6 +831,24 @@ socket.on('end', () => process.exit(7))
       expect(record.known).toContain('private spaces "quote" \\slash %tokens ${UNSET_SSH_VARIABLE}')
       expect(existsSync(record.known)).toBe(false)
       expect(existsSync(record.certificate)).toBe(false)
+      expect(Buffer.concat(f.frames.map((frame) => frame.data))).toEqual(payload)
+    } finally {
+      await f.close()
+    }
+  })
+
+  it("uses the correct private key from a literal config path and removes only its temporary copy", async () => {
+    const f = await fixture({ specialIdentity: true })
+    try {
+      const result = await f.run().done
+      expect(result.code, result.stderr).toBe(0)
+      const record = JSON.parse(readFileSync(f.record, "utf8"))
+      expect(record.identityPublicKey.split(/\s+/).slice(0, 2)).toEqual(
+        f.publicKeys[0].split(/\s+/).slice(0, 2),
+      )
+      expect(record.identityMode).toBe(0o600)
+      expect(existsSync(record.identity)).toBe(false)
+      expect(existsSync(f.key)).toBe(true)
       expect(Buffer.concat(f.frames.map((frame) => frame.data))).toEqual(payload)
     } finally {
       await f.close()

@@ -4128,6 +4128,87 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
     }
   })
 
+  it.each([
+    "request abort",
+    "authorization timeout",
+    "session expiry",
+  ])("closes an opened provider tunnel when post-connect authorization stalls: %s", async (reason) => {
+    const closed = vi.fn()
+    const upstream = bufferedSessionSocket(async () => {}, closed)
+    let block = false
+    let blocked = () => {}
+    const stalled = new Promise<void>((resolve) => {
+      blocked = resolve
+    })
+    let release = () => {}
+    const resume = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const accept = vi.fn(async () => new Response("unexpected admission"))
+    const made = await cloudSetup(`jobs-ortam-admission-${reason.replaceAll(" ", "-")}`, 2700, {
+      session: true,
+      sessionTransport: {
+        connect: async () => {
+          block = true
+          return upstream.socket
+        },
+        accept,
+      },
+    })
+    await made.until("running")
+    const current = await made.meta.getJob(made.job.id)
+    if (!current) throw new Error("missing running session")
+    if (reason === "session expiry")
+      await made.meta.transitionJobMachine(current.id, current.machine_rev, {
+        phase: "running",
+        machine_json: JSON.stringify({
+          ...JSON.parse(current.machine_json ?? "{}"),
+          deadline_at: new Date(Date.now() + 1000).toISOString(),
+        }),
+      })
+    const original = made.meta.getJob.bind(made.meta)
+    const meta = new Proxy(made.ctx.meta, {
+      get(target, prop, receiver) {
+        if (prop === "getJob")
+          return async (id: string) => {
+            if (block) {
+              blocked()
+              await resume
+            }
+            return original(id)
+          }
+        return Reflect.get(target, prop, receiver)
+      },
+    })
+    const app = createApp({ ...made.ctx.deps, meta })
+    const controller = new AbortController()
+    vi.useFakeTimers()
+    const pending = app.request(
+      new Request(`http://derive.test/v1/jobs/${current.id}/ssh`, {
+        signal: controller.signal,
+        headers: {
+          ...as(ed.email),
+          upgrade: "websocket",
+          "x-derive-job-claim": current.started_at ?? "",
+        },
+      }),
+    )
+    try {
+      await stalled
+      if (reason === "request abort") controller.abort()
+      await vi.advanceTimersByTimeAsync(reason === "session expiry" ? 1000 : 15000)
+      expect(closed).toHaveBeenCalledOnce()
+      expect((await pending).status).toBe(409)
+      expect(accept).not.toHaveBeenCalled()
+    } finally {
+      block = false
+      release()
+      await pending
+      upstream.close()
+      vi.useRealTimers()
+    }
+  })
+
   it("caps an older signed publish JWT by current OAuth consent before SSH admission", async () => {
     const connect = vi.fn(async () => {
       throw new Error("read-only consent must not dial a provider")
