@@ -37,7 +37,7 @@ type Reads = Pick<
 export const artifactStoreReads = (meta: MetaStore): Reads => ({
   getArtifact: async (id) => {
     const row = await meta.getArtifactById(id)
-    return row ? ((await projectArtifacts(meta, [row]))[0] ?? null) : null
+    return row && !row.removed_at ? ((await projectArtifacts(meta, [row]))[0] ?? null) : null
   },
   listArtifacts: async (page) => {
     if (!page.space) return []
@@ -48,7 +48,7 @@ export const artifactStoreReads = (meta: MetaStore): Reads => ({
         sort: "updated",
         limit: page.limit,
         cursor: page.after ? { key: page.after.updatedAt, id: page.after.id } : undefined,
-        q: page.search,
+        textSearch: page.search,
         firstAuthorId: page.createdBy,
         excludeRemoved: true,
       }),

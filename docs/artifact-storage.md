@@ -43,6 +43,8 @@ Source publication uses this adapter. The host supplies prepared creation and pu
 This preserves native access, bylines, formats, checkpoints, and edit sessions.
 Reads batch first versions, current versions, and comment activity within native parameter limits.
 Creator filters use the first version's author. Later publishers cannot change this filter.
+Kit search matches literal text in titles and current summaries before pagination.
+Kit reads exclude removed artifacts. Native moderation retains its tombstone records.
 
 Comment hosts retain their root comment and thread identities, including named threads.
 Prepared comment input preserves paths and metadata. Deleted bodies stay hidden.

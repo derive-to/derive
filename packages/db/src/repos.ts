@@ -301,6 +301,18 @@ export function artifactListConditions(
     conds.push(sql`(${art.listed} != 'none' OR ${isMember})`)
   }
   // A trusted caller (operator token / internal jobs, no viewerId) sees everything.
+  if (opts?.textSearch) {
+    const literal = opts.textSearch.toLowerCase().replace(/[\\%_]/g, "\\$&")
+    const pattern = `%${literal}%`
+    conds.push(sql`(
+      lower(${art.title}) LIKE ${pattern} ESCAPE '\\'
+      OR EXISTS (
+        SELECT 1 FROM version v
+        WHERE v.artifact_id = ${art.id} AND v.n = ${art.current_version}
+          AND lower(v.summary) LIKE ${pattern} ESCAPE '\\'
+      )
+    )`)
+  }
   if (opts?.q) {
     const pattern = `%${opts.q.toLowerCase()}%`
     const collectionAccess =

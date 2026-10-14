@@ -240,6 +240,8 @@ export interface ListArtifactsOpts {
   orgId?: string
   /** The first version's stable author id. Later publishers do not change this filter. */
   firstAuthorId?: string
+  /** Literal text in the title or current version summary. Filters before pagination. */
+  textSearch?: string
   /** Only `public` artifacts. Set for anonymous / non-member callers so a workspace
    *  listing never leaks `org`/`link`/`password` titles to someone who can't open them. */
   publicOnly?: boolean
