@@ -2,7 +2,7 @@ import type { Actor } from "@aniraga/open-artifact-protocol"
 import { type ArtifactStore, HttpError } from "@aniraga/open-artifact-server/kit"
 import { newId } from "./ids"
 import type { MetaStore } from "./ports"
-import { artifactCollection } from "./shared-state"
+import { artifactCollection, StoredStateError } from "./shared-state"
 
 type State = Pick<
   ArtifactStore,
@@ -13,8 +13,14 @@ export const artifactStoreState = (meta: MetaStore, actor?: Actor): State => ({
   getState: async (id, key) => {
     const row = await meta.getSharedState(id, key)
     if (!row) return null
-    const items = artifactCollection.read(JSON.parse(row.json), { stored: true })
-    if ("error" in items) throw new HttpError(500, "Stored shared state is invalid.")
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(row.json)
+    } catch {
+      throw new StoredStateError()
+    }
+    const items = artifactCollection.read(parsed, { stored: true })
+    if ("error" in items) throw new StoredStateError()
     return {
       artifactId: id,
       key,
@@ -43,7 +49,7 @@ export const artifactStoreState = (meta: MetaStore, actor?: Actor): State => ({
   appendActivity: (row, keep) =>
     meta.appendSharedStateActivity(
       {
-        id: newId("sa"),
+        id: newId("activity"),
         artifact_id: row.artifactId,
         key: row.key,
         action: row.action === "setMine" ? "set_mine" : row.action,

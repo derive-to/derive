@@ -1,11 +1,11 @@
 import {
   artifactCollection,
-  commitCollection,
+  commitArtifactState,
+  createArtifactStore,
   isSharedStateKey,
   newId,
   SHARED_STATE_ACTIVITY_LIMIT,
   SHARED_STATE_MAX_KEYS,
-  type SharedStateAction,
   type SharedStateMutation,
 } from "@derive/core"
 import { z } from "@hono/zod-openapi"
@@ -45,12 +45,8 @@ const publicCollection = (items: Item[], version: number, actorId: string | null
   return { value: result.items, version: result.version, mine: result.mine }
 }
 
-const publicState = (row: { json: string; version: number } | null, actorId: string | null) => {
-  if (!row) return { value: null, version: 0, mine: {} }
-  const parsed = artifactCollection.read(JSON.parse(row.json), { stored: true })
-  if ("error" in parsed) throw new Error(parsed.error)
-  return publicCollection(parsed, row.version, actorId)
-}
+const publicState = (row: { items: Item[]; version: number } | null, actorId: string | null) =>
+  row ? publicCollection(row.items, row.version, actorId) : { value: null, version: 0, mine: {} }
 
 // The host assigns COMMENT to counters and own slots. Field replacement requires PUBLISH.
 const commenterMutation = (body: MutationBody): boolean =>
@@ -70,7 +66,9 @@ export const sharedStateRoutes = (ctx: AppContext) => {
     const key = c.req.param("key")
     if (!isSharedStateKey(key)) return fail(c, 400, "invalid shared-state key")
     const actor = await actingUser(c)
-    return c.json(publicState(await meta.getSharedState(artifact.id, key), actor?.id ?? null))
+    return c.json(
+      publicState(await createArtifactStore(meta).getState(artifact.id, key), actor?.id ?? null),
+    )
   })
 
   app.get("/v1/artifacts/:shortId/state/:key/activity", async (c) => {
@@ -78,14 +76,18 @@ export const sharedStateRoutes = (ctx: AppContext) => {
     if (artifact instanceof Response) return artifact
     const key = c.req.param("key")
     if (!isSharedStateKey(key)) return fail(c, 400, "invalid shared-state key")
-    const rows = await meta.listSharedStateActivity(artifact.id, key, SHARED_STATE_ACTIVITY_LIMIT)
+    const rows = await createArtifactStore(meta).listActivity(
+      artifact.id,
+      key,
+      SHARED_STATE_ACTIVITY_LIMIT,
+    )
     return c.json({
       activity: rows.map((row) => ({
-        action: row.action,
+        action: row.action === "setMine" ? "set_mine" : row.action,
         version: row.version,
-        item_id: row.item_id,
-        actor: { id: row.actor_id, name: row.actor_name },
-        at: row.created_at,
+        item_id: row.itemId,
+        actor: row.actor,
+        at: row.at,
       })),
     })
   })
@@ -102,45 +104,21 @@ export const sharedStateRoutes = (ctx: AppContext) => {
     const rateLimited = await limited(c, commentLimiter)
     if (rateLimited) return rateLimited
     const actor = (await actingUser(c)) ?? { id: "system", name: "automation" }
-    const stateId = newId("state")
     const itemId = body.op === "update" ? body.id : newId("item")
 
     const at = new Date().toISOString()
-    const saved = await commitCollection(
-      {
-        read: async () => {
-          const row = await meta.getSharedState(artifact.id, key)
-          if (!row) return null
-          let items: unknown
-          try {
-            items = JSON.parse(row.json)
-          } catch {
-            items = null
-          }
-          return { items, version: row.version }
-        },
-        countKeys: () => meta.countSharedStateKeys(artifact.id),
-        put: async (items, expected) =>
-          !!(await meta.putSharedState({
-            id: stateId,
-            artifact_id: artifact.id,
-            key,
-            json: JSON.stringify(items),
-            expected_version: expected,
-            updated_by_id: actor.id,
-            updated_by_name: actor.name,
-            updated_at: at,
-          })),
-      },
-      {
-        rules: artifactCollection,
-        actorId: actor.id,
-        mutation: coreMutation(body),
-        initial: body.initial,
-        mintId: () => newId("item"),
-        itemId,
-      },
-    )
+    const store = createArtifactStore(meta)
+    const saved = await commitArtifactState(store, {
+      artifactId: artifact.id,
+      key,
+      actor,
+      updatedAt: at,
+      rules: artifactCollection,
+      mutation: coreMutation(body),
+      initial: body.initial,
+      mintId: () => newId("item"),
+      itemId,
+    })
     if ("error" in saved) {
       if (saved.code === "keys")
         return fail(c, 413, `shared state is limited to ${SHARED_STATE_MAX_KEYS} keys per artifact`)
@@ -157,15 +135,13 @@ export const sharedStateRoutes = (ctx: AppContext) => {
           : { value: null, version: 0, mine: {} },
       )
     const activity = {
-      id: newId("activity"),
-      artifact_id: artifact.id,
+      artifactId: artifact.id,
       key,
       version: saved.version,
-      action: body.op as SharedStateAction,
-      item_id: saved.itemId,
-      actor_id: actor.id,
-      actor_name: actor.name,
-      created_at: at,
+      action: coreMutation(body).op,
+      itemId: saved.itemId,
+      actor,
+      at,
     }
     bus.publish(artifact.id, {
       type: "artifact.state.updated",
@@ -173,7 +149,7 @@ export const sharedStateRoutes = (ctx: AppContext) => {
       ...publicCollection(saved.items, saved.version, null),
     })
     // The ledger runs after commit. It cannot make a client retry a saved mutation.
-    await background(meta.appendSharedStateActivity(activity))
+    await background(store.appendActivity(activity, SHARED_STATE_ACTIVITY_LIMIT))
     return c.json({
       ...publicCollection(saved.items, saved.version, actor.id),
       itemId: saved.itemId,

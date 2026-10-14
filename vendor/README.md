@@ -1,13 +1,12 @@
-# Open-artifact source preview
+# Open-artifact packed preview
 
-Derive consumes the first extracted artifact source rules from a packed preview.
-The source lives in `derive-to/open-artifact`. It does not live in this folder.
-The preview contains the verified 0.5.2 protocol distribution and the shared
-source entry. The companion JSON records the source hashes and package hash.
+Derive consumes immutable protocol, runtime, and server packages from
+`derive-to/open-artifact`. The source does not live in this folder.
+The companion JSON records the exact source commit, source hashes, and package hashes.
 
-This keeps the first consumer reproducible before a registry release exists.
-It does not require npm publishing credentials or a cross-checkout source link.
-Replace the file dependency with the exact released version after the core PR
-ships. Remove this folder's preview files in that same change.
+The packed candidate makes the consumer reproducible before a registry release.
+It needs no publishing credentials or link to another checkout.
+After the core release, replace these file dependencies with its exact released version.
+Remove the preview packages in the same change.
 
-The preview adds no database schema, roles, or artifact URL changes.
+The adapter preserves native source, storage, access, attribution, and artifact URLs.

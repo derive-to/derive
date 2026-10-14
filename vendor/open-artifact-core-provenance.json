@@ -1,7 +1,7 @@
 {
   "repository": "https://github.com/derive-to/open-artifact",
   "baseCommit": "9b6a221ca7ac64dea06c1603426504771aee4dab",
-  "previewVersion": "0.6.0-core.42",
+  "previewVersion": "0.6.0-core.43",
   "sources": {
     "anchors.ts": "ca204a554d2ae5c4743eae5091162744b399ae0c93cd6afcda39cb0e145df3a9",
     "collection.ts": "a2b3e15154bc80ee338f57d4d7a0123662c415f7e8ff666fcb37be98e972d626",
@@ -92,9 +92,9 @@
     "tools.ts": "a83f4d194b0fcf7f56f37753fbd1f4b1a48d32f1aaafebb98fea2584bf996611",
     "viewer.ts": "e7c87eda4dbbbf8a02f7e25aff70139df90f7375967086be0f9a740f8ea64f41"
   },
-  "tarballSha256": "f700234dfd9fa3b3c576cd2fa0e3166a1fb4943c7bbaeda62f44639e6c1468c6",
+  "tarballSha256": "9eb5379aaa09b93fedb9ed5756061ada20ec29187bf52dd6237d6e090004ebc7",
   "note": "Packed committed source for Derive. Shared source, collection, publication, browser capture, source operations, and slide identities. Registry release remains pending.",
-  "sourceCommit": "b634963bb397163a0686c1bbeafec5364d9f0cc8",
+  "sourceCommit": "95718d267de1396fe78ca5a8f12cbdbe87250f11",
   "runtimeSources": {
     "anchoring.ts": "2cf941d1f5cbe685c68acda5d8b46c1792c5344117e17761d01dc526dd3714bc",
     "connection.ts": "ebb1704972a86e554f065c7e635f40e421716831120dd8bf1a541913fab7a953",
@@ -132,7 +132,7 @@
     "viewer.entry.ts": "ba030f8c1483ba6c741284e498fa47b7798b9bd27d682b0fe36fc9457e7252b4",
     "viewer.ts": "2855a1bc365c0fc2af552fa3d3c7da2da598f13d2ca4824290587501685ceed5"
   },
-  "runtimeTarballSha256": "78124892962f7a5d999fccb3826dc060de9208523e1764d82ddc7ea8f7028f21",
+  "runtimeTarballSha256": "c684c6f57351f8e5da70430a0bd790a5ccf8bcc87605c9292ebaf866ba863d73",
   "runtimeDeclarationBase": {
     "version": "0.5.2",
     "sha256": "d02d2797c94147df26ba1f3e7e1746d617022f61f01718bca218b456a5b052ef"
@@ -154,7 +154,7 @@
     "adapters/sqlite/index.ts": "996161e94fb2107b1f964f232d4ef2ecb744d343e0ea22aaaac7ab20b6b04dc9",
     "adapters/sqlite/schema.ts": "f3aeed74e6087f3056d0afb824e17a356c73b01d19a82be9e430a8a7db0eed59",
     "adapters/sqlite/store.ts": "ae9799238d9fdd5e2f80b4490badf6e2722ba002e721baa71be715636a5c92c9",
-    "collection-storage.ts": "3a1ecafa6b8923ef78be4f435bc480b83edbdd02cb33c566608cb97969ef17b1",
+    "collection-storage.ts": "67e773adf04b2caeba586ea342df9da4664e75ec4425ebae8fa25e9d798d4d41",
     "core/access.ts": "f9749256f4a130daee8cdc22b53be86cddf2dfa578db7b876216a7cf26ea74ef",
     "core/artifacts.ts": "0fa4d39dc8a12ae187d7d2537d0441a81cf333240643c9fe1fe877e4d693c921",
     "core/assets.ts": "32959a646a59f16a178e9cb694fecf35487d856ce25b3fc1154a9774f1885896",
@@ -206,7 +206,7 @@
     "plugins/presence.ts": "69bb92d9c608db9aa9d3ad1affd8014838eaa670f91183cb61c9ef9534c36848",
     "plugins/rate-limit.ts": "029c8334fe7f79f45ae1679ae5c492579265af922576d603521e0083913adbf7",
     "plugins/state/index.ts": "73752198846d20864efff6e8c4f21ac8dc5825b600396808cbeb61b9f5e77577",
-    "plugins/state/service.ts": "973b3752c8b6743799d6176209d0c2b2ec40c6cad9e2f759220afa9245df3dee",
+    "plugins/state/service.ts": "c2267d8fe8b4bad392d8afe4fb68b106543c57c755d27cdce6afe3ce89776295",
     "plugins/webhook.ts": "774833e7212801bf0251fcb2d5af780836251256e0c2a01ba8b3da9bb37e4fda",
     "ports.ts": "0c5df2f65ca38eca6969858e5bd9b0b47bc526ee6334da398ecfab5387317347",
     "sandbox/assets.ts": "fca496b7585d6f7317d270dc07b46f7b4c4151ee6519711f8f24768e7f04b639",
@@ -216,7 +216,7 @@
     "source.ts": "cd7e37c99dac509829dabdb22a9ad1f6e8de7af9fd0156d3742b75f9cf29443c",
     "testing.ts": "cedbc1dd20a8a6c796a3751032a0e5f1a51c8b16cd460a1a4ad744b9b76a08b4"
   },
-  "serverTarballSha256": "a682b0fc30c017f2cbebc3013fc90e9d034ec6e9bcaa5f6cc2eb5268c99bc8a9",
+  "serverTarballSha256": "a920bf15f329917d476aaebd965d558be9c767175ce286b7ba523340b05a3be0",
   "serverDeclarationBase": {
     "version": "0.5.2",
     "sha256": "64caa1af433ede4c9b565d54c2d2a998880f3e8c88c5efc10b2f24bf32d3cac2"

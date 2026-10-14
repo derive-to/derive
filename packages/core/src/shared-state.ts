@@ -1,4 +1,7 @@
-export { commitCollection } from "@aniraga/open-artifact-server/collections"
+export {
+  commitArtifactState,
+  StoredStateError,
+} from "@aniraga/open-artifact-server/collections"
 
 import {
   createCollectionRules,

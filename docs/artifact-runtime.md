@@ -6,6 +6,9 @@ It uses the same collection rules as the server.
 
 The kit and Derive use `@aniraga/open-artifact-server/collections` for saved mutations.
 The module reads, applies the mutation, and retries a lost compare-and-swap.
+Native HTTP routes and kit tools now use the same state storage adapter.
+It stamps each write with the authenticated actor. Malformed stored state refuses the write.
+A database error remains a database error. It cannot become a seeded collection.
 Derive adapts its existing metadata store. It keeps access checks, rate limits,
 actor attribution, live broadcasts, and the activity ledger.
 The module reports whether a result is saved. A changed result identifies its item.
