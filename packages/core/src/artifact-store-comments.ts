@@ -49,8 +49,18 @@ export interface NativeCommentWrite {
   capture?: (saved: CommentRecord) => void
 }
 
+export interface NativeThreadStateWrite {
+  artifactId: string
+  threadId: string
+  capture: (updated: number) => void
+}
+
 /** Prepared native input retains paths, mentions, and nullable legacy attribution. */
-export const artifactStoreComments = (meta: MetaStore, write?: NativeCommentWrite): Comments => {
+export const artifactStoreComments = (
+  meta: MetaStore,
+  write?: NativeCommentWrite,
+  threadState?: NativeThreadStateWrite,
+): Comments => {
   const input = write?.comment
   const save = async (row: CommentRow, state: CommentState) => {
     const saved = await meta.createComment({
@@ -82,12 +92,19 @@ export const artifactStoreComments = (meta: MetaStore, write?: NativeCommentWrit
       if (!root || root.artifact_id !== row.artifactId) throw new HttpError(404, "No such thread.")
       await save(row, root.state)
     },
-    setThreadState: async (id, threadId, state) =>
-      (await meta.setThreadState(id, threadId, state)) > 0,
+    setThreadState: async (id, threadId, state) => {
+      const updated = await meta.setThreadState(id, threadId, state)
+      threadState?.capture(updated)
+      return updated > 0
+    },
     listThreads: async (id) => {
       const rows = await meta.listComments(
         id,
-        input?.artifact_id === id ? { threadId: input.thread_id } : undefined,
+        input?.artifact_id === id
+          ? { threadId: input.thread_id }
+          : threadState?.artifactId === id
+            ? { threadId: threadState.threadId }
+            : undefined,
       )
       const threads = new Map<string, { id: string; artifactId: string; state: CommentState }>()
       for (const row of rows)

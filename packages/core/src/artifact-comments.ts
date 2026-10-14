@@ -6,7 +6,7 @@ import {
 import { createArtifactStore } from "./artifact-store"
 import { commentQuoteOf } from "./artifact-store-comments"
 import { artifactRowOf } from "./artifact-store-records"
-import type { ArtifactRecord, CommentRecord, MetaStore, NewComment } from "./ports"
+import type { ArtifactRecord, CommentRecord, CommentState, MetaStore, NewComment } from "./ports"
 
 /** Host validation and workflows surround the shared comment write module. */
 export const postArtifactComment = async (
@@ -45,4 +45,34 @@ export const postArtifactComment = async (
   } else await threads.reply(actor, row, input.thread_id, input.body_md)
   if (!created) throw new Error("The comment write did not return its native record")
   return created
+}
+
+/** Retain the native update count while the kit owns thread transitions and missing refusal. */
+export const setArtifactThreadState = async (
+  meta: MetaStore,
+  artifact: ArtifactRecord,
+  input: {
+    threadId: string
+    state: Extract<CommentState, "open" | "resolved">
+    actor: { id: string | null; name: string | null } | null
+  },
+): Promise<number> => {
+  let updated = 0
+  const store = createArtifactStore(meta, {
+    threadState: {
+      artifactId: artifact.id,
+      threadId: input.threadId,
+      capture: (count) => {
+        updated = count
+      },
+    },
+  })
+  const threads = createThreadService({ store }, createEvents())
+  await threads.setState(
+    { id: input.actor?.id ?? "anonymous", name: input.actor?.name ?? "Anonymous" },
+    artifactRowOf(artifact),
+    input.threadId,
+    input.state,
+  )
+  return updated
 }

@@ -8,7 +8,12 @@
 // shows has to follow the thread no matter what moved it, and three of the four ways to resolve
 // one (the web app, the API, an agent over MCP) are nowhere near Slack.
 
-import type { ArtifactRecord, CommentState, MetaStore } from "@derive/core"
+import {
+  type ArtifactRecord,
+  type CommentState,
+  type MetaStore,
+  setArtifactThreadState,
+} from "@derive/core"
 import type { Backplane } from "../bus"
 import type { WebhookEvent } from "../events"
 import { parseMeta } from "./comments"
@@ -70,7 +75,11 @@ export const resolveThreadAction = async (
   actor?: ThreadActor,
 ): Promise<number> => {
   const { meta, bus, notify, baseUrl } = deps
-  const updated = await meta.setThreadState(artifact.id, threadId, state)
+  const updated = await setArtifactThreadState(meta, artifact, {
+    threadId,
+    state,
+    actor: actor ?? null,
+  })
   await recordThreadResolution(meta, artifact.id, threadId, state, actor ?? null)
   bus.publish(artifact.id, { type: "comment.resolved", thread_id: threadId, state })
   await notify(artifact, "comment.resolved", { state, thread_id: threadId })
