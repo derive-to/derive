@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { encryptSecret, signState } from "../src/lib/crypto"
 import { githubWebhookSecret, githubWebhookSignature } from "../src/lib/github-app"
 import { upsertGithubConnection } from "../src/lib/github-connection"
-import { as, jsonAs, makeAuthedApp, type quotaApp, type TestUser } from "./helpers"
+import { as, bearer, jsonAs, makeAuthedApp, type quotaApp, type TestUser } from "./helpers"
 
 // A real RSA key (PKCS#1, as GitHub's manifest returns) so appJwt/getAppInfo can
 // actually sign during the auto-heal check.
@@ -282,6 +282,65 @@ describe("standard GitHub integration", () => {
     // Cleared, tasks run without one.
     await patch({ repository: null })
     expect((await ask({})).task).toEqual({})
+  })
+
+  it("checks a task's repository out read-only when the App cannot write", async () => {
+    const { app, meta } = makeAuthedApp("gh-read-only", [owner], "owner", {
+      deps: { encryptionKey: KEY },
+    })
+    await seedApp(meta)
+    const asked: string[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        if (/\/access_tokens$/.test(new URL(String(url)).pathname)) {
+          const wants = (JSON.parse(String(init?.body)) as { permissions: { contents: string } })
+            .permissions.contents
+          asked.push(wants)
+          if (wants === "write") return new Response("{}", { status: 422 })
+          return new Response(
+            JSON.stringify({ token: "read-token", expires_at: new Date(Date.now() + 3.6e6) }),
+            { status: 201 },
+          )
+        }
+        return new Response("not found", { status: 404 })
+      }),
+    )
+    const source = await upsertGithubConnection(meta, {
+      orgId: "default",
+      userId: owner.id,
+      installationId: "44012",
+      accountLogin: "acme",
+    })
+    const agent = (await (
+      await app.request(
+        "/v1/agents",
+        jsonAs(as(owner.email), {
+          name: "Reader",
+          connection_ids: [source.id],
+          repository: "acme/web",
+        }),
+      )
+    ).json()) as { id: string; token: string }
+    await app.request(
+      "/v1/jobs",
+      jsonAs(as(owner.email), { agent_id: agent.id, instruction: "Look." }),
+    )
+    const pulled = (await (
+      await app.request(`/v1/agents/${agent.id}/pull`, jsonAs(bearer(agent.token), {}))
+    ).json()) as { jobs: { id: string; started_at: string }[] }
+    const job = pulled.jobs[0]
+    if (!job) throw new Error("nothing pulled")
+    const git = await app.request(`/v1/jobs/${job.id}/git`, {
+      headers: { ...bearer(agent.token), "x-derive-claim": job.started_at },
+    })
+    expect(await git.json()).toEqual({
+      repo: "acme/web",
+      ref: null,
+      token: "read-token",
+      read_only: true,
+    })
+    expect(asked).toEqual(["write", "read"])
   })
 
   it("turns an install callback into one stable source without collection work", async () => {
