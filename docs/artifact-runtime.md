@@ -73,6 +73,9 @@ Timing edits change actual attributes. Scene copies receive fresh DOM and struct
 The shared runtime keeps inactive video scenes hidden when authored CSS sets their display.
 Its visibility rule never enters stored source.
 HTML-to-Markdown reading also uses the shared source entry.
+Document outlines, source sections, landmark maps, and Markdown headings use this entry too.
+Comments and inert markup cannot supply navigation identities. Section reads preserve exact source bytes.
+Derive retains stored-format classification and its LaTeX renderer.
 The shared scanner keeps quoted attribute examples inert and preserves literal HTML text.
 The editor records explicit copy origins. Redo keeps working after an undo save removes a copy.
 The original must remain in the current source. Other deleted blocks still require safe recovery through History.
