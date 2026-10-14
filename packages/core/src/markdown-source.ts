@@ -1353,16 +1353,18 @@ export const applyMarkdownOps = async (
     fail("These ops leave the document exactly as it is, so there is nothing to save.")
   return {
     markdown,
-    removedSource: removedSourceIn(
-      originalOps,
-      originalModel.nodes.map((node) => ({
-        src: node.n,
-        start: node.start,
-        end: node.end,
-        contentStart: node.cStart,
-        contentEnd: node.cEnd,
-      })),
-    ),
+    removedSource:
+      targets.some(({ node }, k) => texts[k] === "" && (whole(node) || node.kind === "p")) ||
+      removedSourceIn(
+        originalOps,
+        originalModel.nodes.map((node) => ({
+          src: node.n,
+          start: node.start,
+          end: node.end,
+          contentStart: node.cStart,
+          contentEnd: node.cEnd,
+        })),
+      ),
     changes: targets.map(({ node }, k) => ({
       before: source.slice(...range(node)),
       after: texts[k] as string,

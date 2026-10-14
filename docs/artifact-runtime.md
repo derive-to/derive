@@ -136,3 +136,6 @@ Undo can then restore its original source through the same historical keep token
 
 A Markdown restore keeps authored separators and document edges.
 Deleting every rendered block does not discard the trailing source newline during Undo.
+
+Emptying a paragraph or inline construct removes its source identity.
+That save appends a version, so repeated Undo cannot read replaced source bytes.
