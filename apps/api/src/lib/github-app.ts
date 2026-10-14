@@ -119,7 +119,7 @@ export async function getAppInfo(
 }> {
   const res = await fetch(`${API}/app`, {
     headers: ghHeaders(`Bearer ${appJwt(appId, privateKeyPem)}`),
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(20_000),
   })
   if (!res.ok) return raise(res, "reading the GitHub App")
@@ -184,7 +184,7 @@ export async function installationToken(
   const jwt = appJwt(appId, privateKeyPem)
   const res = await fetch(`${base}/app/installations/${installationId}/access_tokens`, {
     method: "POST",
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(20_000),
     headers: {
       ...ghHeaders(`Bearer ${jwt}`),
@@ -223,7 +223,7 @@ export async function getAppInstallation(
 ): Promise<AppInstallation & { suspended: boolean }> {
   const res = await fetch(`${API}/app/installations/${encodeURIComponent(installationId)}`, {
     headers: ghHeaders(`Bearer ${appJwt(appId, privateKeyPem)}`),
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(20_000),
   })
   if (!res.ok) return raise(res, "reading the GitHub App installation")
@@ -362,7 +362,7 @@ export interface AppInstallation {
 export async function listInstallationRepositories(token: string, page: number) {
   const res = await fetch(`${API}/installation/repositories?per_page=100&page=${page}`, {
     headers: ghHeaders(`Bearer ${token}`),
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(20_000),
   })
   if (!res.ok) return raise(res, "reading available GitHub repositories")

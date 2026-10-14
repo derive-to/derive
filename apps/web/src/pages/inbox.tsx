@@ -43,13 +43,7 @@ export function Inbox() {
         jobs.data.length > 0 && (
           <Group label="Needs you" testId="inbox-needs">
             {jobs.data.map((job) => (
-              <InboxNeedsRow
-                key={job.id}
-                job={job}
-                agent={byId.get(job.agent_id)}
-                names={names}
-                defaultOpen={jobs.data.length === 1}
-              />
+              <InboxNeedsRow key={job.id} job={job} agent={byId.get(job.agent_id)} names={names} />
             ))}
           </Group>
         )
@@ -77,12 +71,10 @@ function InboxNeedsRow({
   job,
   agent,
   names,
-  defaultOpen,
 }: {
   job: Job
   agent: Agent | undefined
   names: Map<string, string>
-  defaultOpen: boolean
 }) {
   const { me } = useAuth()
   const canSteer = useCanSteer(job, me?.id)
@@ -100,7 +92,6 @@ function InboxNeedsRow({
         canSteer={canSteer && !reviewPage}
         agentName={agent?.name ?? "Agent"}
         names={names}
-        defaultOpen={defaultOpen}
         title={
           <Link
             to="/agents/$id"

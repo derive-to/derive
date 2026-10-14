@@ -26,6 +26,7 @@ import type { ModelTurn } from "../src/lib/agent-loop"
 import { signApiToken, verifyApiToken } from "../src/lib/api-token"
 import { signCapabilityToken } from "../src/lib/capability-token"
 import { encryptSecret } from "../src/lib/crypto"
+import { workspaceIdsFromEnv } from "../src/lib/env"
 import { advanceGraph, graphAware, graphPass } from "../src/lib/job-graph"
 import {
   advanceMachineJob,
@@ -2873,7 +2874,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     const operation = (command: string) => /operations\/([a-f0-9]{64})/.exec(command)?.[1] ?? ""
     const calls: string[] = []
     // Starts boat.dev refuses next, as a plan's start limit does.
-    const limited = { starts: 0, refusals: 0 }
+    const limited = { starts: 0, refusals: 0, refuse: false }
     let next = 0
     const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input))
@@ -2887,6 +2888,11 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
           limited.refusals--
           return new Response(null, { status: 422 })
         }
+        if (limited.refuse)
+          return new Response(
+            JSON.stringify({ message: "Add a payment method to keep starting sandboxes." }),
+            { status: 402 },
+          )
         if (limited.starts > 0) {
           limited.starts--
           return new Response(
@@ -3069,9 +3075,30 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
               }) => {
                 const day = join(opts.env.CODEX_HOME ?? "", "sessions", "2026", "10", "13")
                 mkdirSync(day, { recursive: true })
+                // What a person and Codex did in the session, as Codex records it.
+                const at = new Date(Date.now() + 1000).toISOString()
                 writeFileSync(
                   join(day, `rollout-2026-10-13T00-00-00-${SESSION_UUID}.jsonl`),
-                  "{}\n",
+                  [
+                    { type: "event_msg", payload: { type: "user_message", message: "Tidy it" } },
+                    {
+                      type: "response_item",
+                      payload: {
+                        type: "function_call",
+                        name: "shell",
+                        arguments: JSON.stringify({ command: ["pnpm", "test", "inbox"] }),
+                      },
+                    },
+                    {
+                      type: "event_msg",
+                      payload: {
+                        type: "agent_message",
+                        message: "Done. Token sk-live0123456789abcdef stays out of it.",
+                      },
+                    },
+                  ]
+                    .map((item) => JSON.stringify({ timestamp: at, ...item }))
+                    .join("\n"),
                 )
                 return runSession(opts)
               },
@@ -3160,6 +3187,10 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     expect((await attach(owner.email)).status).toBe(403)
     const opened = await attach(ed.email)
     expect(opened.status).toBe(200)
+    // The task keeps who opened a terminal on it.
+    expect((await meta.listJobMessages(job.id)).at(-1)?.body_md).toMatch(
+      /opened a terminal on this session\.$/,
+    )
     expect(await opened.json()).toEqual({
       host: "203.0.113.10",
       port: 22,
@@ -3195,7 +3226,17 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     expect(first.at(-1)).toBe("Tidy the inbox empty state")
     expect(home.agents).toContain("Derive")
     await until(job.id, "parked")
-    expect((await meta.listJobMessages(job.id)).at(-1)?.body_md).toContain("Session paused")
+    // The session's conversation lands in the task, credentials masked, then how it ended.
+    const record = (await meta.listJobMessages(job.id)).at(-1)?.body_md ?? ""
+    expect(record).toContain("**You:** Tidy it")
+    expect(record).toContain("**Codex:** Done. Token [redacted] stays out of it.")
+    expect(record).toContain("Session paused")
+    const view = (await (
+      await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
+    ).json()) as {
+      events: { label?: string }[]
+    }
+    expect(view.events.map((e) => e.label)).toContain("pnpm test inbox")
     expect((await attach(ed.email)).status).toBe(409)
     // `derive ls` lists it as a paused session.
     const printed: string[] = []
@@ -3261,18 +3302,58 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
       reason: "Bind a GitHub connection for acme-dev to this agent to work in acme-dev/widgets.",
       retryable: false,
     })
-    // A repository is only for cloud agents.
-    const local = await createAgent(app, { provider: "codex" })
-    const refused = await app.request(
+    // From a laptop: `derive show` says where it ran, its repository and why it stopped, and
+    // `derive send` follows up on it.
+    const cli = sessionApi({
+      server: "http://derive.test",
+      token: null,
+      workspaceId: null,
+      fetcher: (url: RequestInfo | URL, init?: RequestInit) =>
+        Promise.resolve(
+          app.request(String(url), {
+            ...init,
+            headers: { ...(init?.headers as Record<string, string>), ...as(ed.email) },
+          }),
+        ),
+    })
+    const printed: string[] = []
+    const log = vi
+      .spyOn(console, "log")
+      .mockImplementation((line) => void printed.push(String(line)))
+    expect(await sessionCommand("show", [job.id.slice(-6)], {}, cli)).toBe(0)
+    log.mockRestore()
+    const shown = printed.join("\n")
+    expect(shown).toMatch(/runs on\s+Derive cloud/)
+    expect(shown).toMatch(/repository\s+acme-dev\/widgets@main/)
+    expect(shown).toMatch(/failed\s+Bind a GitHub connection for acme-dev/)
+    expect(
+      await sessionCommand("send", [job.id.slice(-6), "Try again with the token"], {}, cli, {
+        log: () => {},
+      }),
+    ).toBe(0)
+    expect((await meta.listJobMessages(job.id)).at(-1)?.body_md).toBe("Try again with the token")
+    // A team's own box takes repository tasks too; interactive sessions stay on Derive machines.
+    const box = await createAgent(app, { provider: "codex" })
+    const onBox = await app.request(
       "/v1/jobs",
-      jsonAs(as(ed.email), { agent_id: local.id, instruction: "x", repo: "acme-dev/widgets" }),
+      jsonAs(as(ed.email), { agent_id: box.id, instruction: "x", repo: "acme-dev/widgets" }),
     )
-    expect(refused.status).toBe(400)
+    expect(onBox.status).toBe(201)
+    expect(((await onBox.json()) as { task: { repo: string } }).task.repo).toBe("acme-dev/widgets")
+    const session = await app.request(
+      "/v1/jobs",
+      jsonAs(as(ed.email), { agent_id: box.id, instruction: "x", session: true }),
+    )
+    expect(session.status).toBe(400)
   })
 
   it("an interrupting follow-up ends the running turn and runs next; a plain one waits", async () => {
     const { app, meta, boat, pass, until, runTurn } = await cloudSetup("jobs-machine-interrupt")
-    const agent = await createAgent(app, { machine: "derive", provider: "codex" })
+    const agent = await createAgent(app, {
+      machine: "derive",
+      provider: "codex",
+      sandbox: { fresh: true },
+    })
     const job = (await (await ask(app, ed.email, agent.id, "Refactor the parser")).json()) as {
       id: string
     }
@@ -3331,6 +3412,10 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     // Nothing had finished before the interrupt, so the next turn starts the conversation
     // from the transcript rather than failing for want of a checkpoint.
     expect(await runTurn("bx_1", "Kept the old API")).toBe("succeeded")
+    // The waiting turn took the running machine: no stop, no resume, no second start.
+    expect(boat.calls.filter((c) => /^(stop|resume|create)/.test(c))).toEqual([
+      "create bx_1 - small",
+    ])
   })
 
   it("a provider start limit makes the task wait, saying why, then start", async () => {
@@ -3386,6 +3471,46 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     expect(after?.sandbox_phase).toBe("failed")
     expect(JSON.parse(after?.sandbox_state_json ?? "{}").create_problem).toBeUndefined()
     expect(boat.calls.filter((call) => call.startsWith("create"))).toHaveLength(0)
+  })
+
+  it("a provider that refuses to start a machine fails the task once, in its own words", async () => {
+    const { app, meta, boat, until } = await cloudSetup("jobs-machine-refused")
+    const agent = await createAgent(app, {
+      machine: "derive",
+      provider: "codex",
+      sandbox: { fresh: true },
+    })
+    boat.limited.refuse = true
+    const job = (await (await ask(app, ed.email, agent.id, "Fix the copy")).json()) as {
+      id: string
+    }
+    await until(job.id, "released")
+    const failed = await meta.getJob(job.id)
+    expect(failed?.status).toBe("failed")
+    expect(JSON.parse(failed?.result_json ?? "{}").failure).toEqual({
+      reason:
+        "boat.dev would not start a machine: Add a payment method to keep starting sandboxes.",
+      retryable: false,
+    })
+  })
+
+  it("a managed allowlist of * gives every workspace Derive machines on the deployment's key", async () => {
+    const runtime = {
+      provider: "ortam" as const,
+      apiUrl: "https://api.ortam.dev/v1",
+      runnerPath: "/opt/derive/bin/derive.js",
+      limits: { global: 100, workspace: 20 },
+      managed: { apiKey: "x".repeat(20), workspaceIds: workspaceIdsFromEnv("*") },
+    }
+    const { app } = await setup("jobs-machine-managed-all", { runtime })
+    // Settings says so: Derive cloud is included, nothing connected.
+    const compute = await app.request("/v1/runtime/connection", { headers: as(owner.email) })
+    expect(await compute.json()).toMatchObject({ connected: false, managed: true })
+    const made = await app.request(
+      "/v1/agents",
+      jsonAs(as(owner.email), { name: "Anywhere", machine: "derive", provider: "codex" }),
+    )
+    expect(made.status).toBe(201)
   })
 
   it("the workspace machine limit holds the next task until a machine frees", async () => {
@@ -4138,7 +4263,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
       upstream.close()
       downstream.close()
     }
-  })
+  }, 15_000)
 
   it("closes the provider on native TCP cancellation during stalled downstream admission", async () => {
     const closed = vi.fn()

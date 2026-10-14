@@ -5,6 +5,7 @@ import {
   DERIVE_AGENT_ID,
   type JobNeeds,
   type JobRecord,
+  newId,
   normalizeSelectors,
   parseAgentSandbox,
   roleAllows,
@@ -119,6 +120,14 @@ const JobEffectSchema = z.object({
 const JobResultSchema = z.object({
   claim_ledger_version: z.literal(1).optional(),
   attempt_offset: z.number().int().nonnegative().optional(),
+  git: z
+    .object({
+      repo: z.string().max(300),
+      branch: z.string().max(300).nullable(),
+      commit: z.string().max(64).nullable(),
+    })
+    .optional()
+    .describe("Where the latest turn left the task's repository."),
   compute: z
     .array(
       z.object({
@@ -702,8 +711,10 @@ export const jobRoutes = (ctx: AppContext) => {
       const caller = await agentFor(c)
       if (!agent || !(await canAskAgent(meta, agent, who.id, caller)))
         return bail(fail(c, 404, "no such agent you can ask"))
-      if ((b.session || b.repo) && agent.machine !== "derive")
-        return bail(fail(c, 400, "Sessions and repositories need an agent that runs on Derive"))
+      // A session is attached to over a Derive machine's SSH; a team's own box has its own tools
+      // for that. Repositories work on both.
+      if (b.session && agent.machine !== "derive")
+        return bail(fail(c, 400, "Interactive sessions need an agent that runs on Derive"))
       // A workspace past its monthly model budget takes no new work. Checked before anything
       // is written, so a refused ask leaves no job behind. A dedupe key naming an open job
       // still finds it: that work is already asked for.
@@ -966,6 +977,16 @@ export const jobRoutes = (ctx: AppContext) => {
       if (!out.ok) return bail(fail(c, out.status, out.error))
       if (!(await access.stillAllowed()))
         return bail(fail(c, 409, "This session changed. Attach again."))
+      // Who opened a terminal on the session, and when, stays on the task. Only its starter can.
+      const starter = access.job.asked_by ?? ""
+      await meta.addJobMessage({
+        id: newId("jm"),
+        job_id: access.job.id,
+        author_kind: "agent",
+        author_id: access.job.agent_id,
+        body_md: `${(await meta.getUsers([starter]))[0]?.name ?? "Its starter"} opened a terminal on this session.`,
+        meta_json: JSON.stringify({ progress: true, server: true, attached_by: starter }),
+      })
       if (out.transport === "websocket")
         return c.json({
           transport: out.transport,

@@ -7792,6 +7792,12 @@ export interface components {
                 /** @enum {number} */
                 claim_ledger_version?: 1;
                 attempt_offset?: number;
+                /** @description Where the latest turn left the task's repository. */
+                git?: {
+                    repo: string;
+                    branch: string | null;
+                    commit: string | null;
+                };
                 compute?: {
                     turn: string;
                     /** @enum {string} */
@@ -8361,6 +8367,8 @@ export interface components {
             account_id: string | null;
             can_manage: boolean;
             snapshot: string | null;
+            /** @description Cloud work runs on the deployment's own machines when nothing is connected. */
+            managed: boolean;
         };
         ContextInfo: {
             id: string;

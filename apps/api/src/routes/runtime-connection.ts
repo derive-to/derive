@@ -7,6 +7,7 @@ import { bail, fail } from "../lib/http"
 import { OrtamClient } from "../lib/ortam-client"
 import {
   BOAT_API_URL,
+  managedFor,
   ORTAM_API_URL,
   runtimeConnection,
   runtimeConnectionId,
@@ -24,6 +25,9 @@ const Connection = z
     account_id: z.string().nullable(),
     can_manage: z.boolean(),
     snapshot: z.string().nullable(),
+    managed: z
+      .boolean()
+      .describe("Cloud work runs on the deployment's own machines when nothing is connected."),
   })
   .openapi("ComputeConnection")
 const response = {
@@ -47,6 +51,7 @@ export const runtimeConnectionRoutes = (ctx: AppContext) => {
       can_manage: canManage,
       snapshot:
         cn?.toolkit === "boat" ? ((await meta.getOrgSettings(org)).boatSnapshot ?? null) : null,
+      managed: available && managedFor(deps.runtime, org),
     }
   }
 

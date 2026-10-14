@@ -80,6 +80,13 @@ with the agent's instructions and model account, and reports the result. It rene
 claim as it works, and drops an answer whose claim moved to another runner, so a job is never
 answered twice.
 
+A task asked with a repository (`derive run <agent> "…" --repo owner/name[@ref]`) checks it out
+with a short-lived token from the agent's GitHub connection. On a box shared by many tasks, one
+clone under `--cwd` holds the objects and each task works in its own git worktree in
+`--cwd/.derive-tasks/<task>`, kept for its follow-ups and removed after a week untouched, so
+tasks running side by side never touch each other's files. Interactive sessions (`derive code`)
+run on Derive machines; on your own box, use its own tools for that.
+
 ```bash
 derive runner serve --agent <id>   # work the agent's jobs until stopped
 derive runner once  --agent <id>   # one pull (up to the agent's concurrency), then exit

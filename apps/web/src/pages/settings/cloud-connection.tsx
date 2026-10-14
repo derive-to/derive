@@ -49,7 +49,9 @@ export function CloudConnection() {
       : "Ortam"
     : editing
       ? editingLabel
-      : "Your sandbox"
+      : cn.managed
+        ? "Derive cloud"
+        : "Your sandbox"
   return (
     <section className="flex flex-col gap-3" data-testid="compute-connection">
       <SectionTitle>Cloud compute</SectionTitle>
@@ -59,15 +61,19 @@ export function CloudConnection() {
             <h3 className="text-base font-medium">{label}</h3>
             <p className="mt-1 text-sm text-muted-foreground">
               {cn.connected
-                ? "Connected for everyone in this workspace."
-                : "Connect your company’s sandbox account once. Everyone in this workspace can run cloud tasks."}
+                ? cn.managed
+                  ? "Your own account runs this workspace’s cloud tasks. Disconnect it to use Derive cloud."
+                  : "Connected for everyone in this workspace."
+                : cn.managed
+                  ? "Included. Cloud tasks and sessions run on Derive’s machines; nothing to set up."
+                  : "Connect your company’s sandbox account once. Everyone in this workspace can run cloud tasks."}
             </p>
           </div>
           {cn.available && cn.can_manage && !editing && (
             <div className="flex flex-wrap gap-2">
               <Button
                 type="button"
-                variant={cn.connected ? "outline" : "default"}
+                variant={cn.connected || cn.managed ? "outline" : "default"}
                 data-testid="compute-connect"
                 onClick={() => {
                   setEditing(true)
@@ -75,7 +81,11 @@ export function CloudConnection() {
                   connect.reset()
                 }}
               >
-                {cn.connected ? "Replace key" : "Connect sandbox"}
+                {cn.connected
+                  ? "Replace key"
+                  : cn.managed
+                    ? "Use your own account"
+                    : "Connect sandbox"}
               </Button>
               {cn.connected && (
                 <Button
@@ -95,14 +105,15 @@ export function CloudConnection() {
             Cloud compute is not enabled on this server yet.
           </p>
         )}
-        {cn.available && !cn.can_manage && !cn.connected && (
+        {cn.available && !cn.can_manage && !cn.connected && !cn.managed && (
           <p className="mt-3 text-sm text-muted-foreground">
             Ask a workspace owner to connect a sandbox.
           </p>
         )}
         <p className="mt-3 text-sm text-muted-foreground">
-          Your company pays its sandbox provider directly. Other workspaces use their own
-          connection. Model plans and API keys are separate.
+          {cn.managed && !cn.connected
+            ? "Connect your own boat.dev or Ortam account instead to run on it and pay its provider directly. Model plans and API keys are separate."
+            : "Your company pays its sandbox provider directly. Other workspaces use their own connection. Model plans and API keys are separate."}
         </p>
         {cn.connected && (
           <details className="mt-3 text-xs text-muted-foreground">

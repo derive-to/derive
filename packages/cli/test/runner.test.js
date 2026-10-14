@@ -16,7 +16,9 @@ import { describe, expect, it } from "vitest"
 import { WebSocketServer } from "ws"
 import { loadJobRunnerConfig } from "../src/job-runner.js"
 import { claudeCode } from "../src/providers/claude-code.js"
+import { prepareRepo } from "../src/repo.js"
 import { OUTPUT_CONTRACT, parseAnswer, resolveArtifactHtml, runAgent } from "../src/runner.js"
+import { runSession } from "../src/session.js"
 import { sessionApi, sessionCommand } from "../src/sessions.js"
 import { materializeSkills, skillDigest, skillSlug, writeSkill } from "../src/skills.js"
 
@@ -544,6 +546,121 @@ describe("cloud sessions", () => {
       git(work, "rev-parse", "HEAD").toString().trim(),
     )
   })
+
+  it("a session parks once nobody types and its screen stops changing, even with a dropped client listed", async () => {
+    let clock = 1_000_000
+    let screen = "working 1s"
+    const tmux = (cmd, ...args) => {
+      if (cmd === "has-session") return { status: 0, stdout: "" }
+      // A connection that dropped an hour ago is still listed, with its last keystroke then.
+      if (cmd === "list-clients") return { status: 0, stdout: `${(clock - 3_600_000) / 1000}\n` }
+      if (cmd === "capture-pane") return { status: 0, stdout: screen }
+      return { status: 0, stdout: "", stderr: "", args }
+    }
+    const ticks = []
+    const ended = runSession(
+      { bin: "codex", args: [], cwd: tmpdir(), env: {} },
+      {
+        idleMs: 60_000,
+        pollMs: 1,
+        tmux,
+        now: () => {
+          clock += 10_000
+          ticks.push(clock)
+          // The harness works (the screen changes) for the first few polls, then waits.
+          if (ticks.length < 6) screen = `working ${ticks.length}s`
+          return clock
+        },
+      },
+    )
+    expect(await ended).toBe("idle")
+    // Idle counts from the last change on screen, not from the dropped client's listing.
+    expect(ticks.length).toBeGreaterThan(6)
+  })
+
+  it("a task's checkout reaches GitHub with the renewed token, through git and gh alike", () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-repo-"))
+    const bare = join(root, "origin.git")
+    execSync(`git init -q --bare ${bare}`)
+    const seed = join(root, "seed")
+    execSync(`git init -q -b main ${seed}`)
+    execSync(`git -C ${seed} -c user.email=a@b -c user.name=a commit -q --allow-empty -m first`)
+    execSync(`git -C ${seed} push -q ${bare} main`)
+    // GitHub, as this test reaches it: the bare repository stands in for the remote.
+    const config = join(root, "gitconfig")
+    writeFileSync(
+      config,
+      `[url "${bare}"]\n\tinsteadOf = https://github.com/acme-dev/widgets.git\n`,
+    )
+    const tools = join(root, "tools")
+    mkdirSync(tools)
+    writeFileSync(join(tools, "gh"), '#!/bin/sh\necho "gh sees $GH_TOKEN"\n', { mode: 0o755 })
+    const before = { PATH: process.env.PATH, GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL }
+    process.env.PATH = `${tools}:${process.env.PATH}`
+    process.env.GIT_CONFIG_GLOBAL = config
+    try {
+      const secrets = mkdtempSync(join(tmpdir(), "derive-git-"))
+      const tokenFile = join(secrets, "token")
+      const { dir, env } = prepareRepo(
+        { repo: "acme-dev/widgets", ref: "main", token: "first-token" },
+        { cwd: root, firstTurn: true, tokenFile },
+      )
+      expect(existsSync(join(dir, ".git"))).toBe(true)
+      const gh = () =>
+        execSync("gh auth status", { env: { ...process.env, ...env }, encoding: "utf8" }).trim()
+      expect(gh()).toBe("gh sees first-token")
+      // The runner renews the token in place; the harness's gh picks it up without a restart.
+      writeFileSync(tokenFile, "renewed-token")
+      expect(gh()).toBe("gh sees renewed-token")
+    } finally {
+      process.env.PATH = before.PATH
+      if (before.GIT_CONFIG_GLOBAL === undefined) delete process.env.GIT_CONFIG_GLOBAL
+      else process.env.GIT_CONFIG_GLOBAL = before.GIT_CONFIG_GLOBAL
+    }
+  })
+
+  it("on a shared box, each task works in its own worktree and keeps it for follow-ups", () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-box-"))
+    const bare = join(root, "origin.git")
+    execSync(`git init -q --bare ${bare}`)
+    const seed = join(root, "seed")
+    execSync(`git init -q -b main ${seed}`)
+    execSync(`git -C ${seed} -c user.email=a@b -c user.name=a commit -q --allow-empty -m first`)
+    execSync(`git -C ${seed} push -q ${bare} main`)
+    const config = join(root, "gitconfig")
+    writeFileSync(
+      config,
+      `[url "${bare}"]\n\tinsteadOf = https://github.com/acme-dev/widgets.git\n`,
+    )
+    const before = process.env.GIT_CONFIG_GLOBAL
+    process.env.GIT_CONFIG_GLOBAL = config
+    try {
+      const work = join(root, "work")
+      mkdirSync(work)
+      const checkout = (task) =>
+        prepareRepo(
+          { repo: "acme-dev/widgets", ref: "main", token: "t" },
+          {
+            cwd: work,
+            firstTurn: true,
+            tokenFile: join(mkdtempSync(join(tmpdir(), "g-")), "t"),
+            task,
+          },
+        ).dir
+      const a = checkout("job_a")
+      const b = checkout("job_b")
+      // Two tasks at once, two folders: one task's edits never reach the other.
+      expect(a).not.toBe(b)
+      writeFileSync(join(a, "change.txt"), "task a")
+      expect(existsSync(join(b, "change.txt"))).toBe(false)
+      // A follow-up on task a returns to its own folder with the work in progress.
+      expect(checkout("job_a")).toBe(a)
+      expect(readFileSync(join(a, "change.txt"), "utf8")).toBe("task a")
+    } finally {
+      if (before === undefined) delete process.env.GIT_CONFIG_GLOBAL
+      else process.env.GIT_CONFIG_GLOBAL = before
+    }
+  })
 })
 
 describe("cloud session SSH transport", () => {
@@ -796,7 +913,7 @@ socket.on('end', () => process.exit(7))
         expect(record.args).not.toContain("test-session-token")
         expect(existsSync(record.known)).toBe(false)
         expect(existsSync(record.certificate)).toBe(false)
-        if (command === "attach") expect(record.args.at(-1)).toContain("exec tmux attach -t derive")
+        if (command === "attach") expect(record.args.at(-1)).toContain("tmux attach -t derive")
         else expect(record.args).toContain("3333:127.0.0.1:3000")
         expect(f.frames.every((frame) => frame.binary && frame.data.length <= 32_768)).toBe(true)
         expect(Buffer.concat(f.frames.map((frame) => frame.data))).toEqual(payload)

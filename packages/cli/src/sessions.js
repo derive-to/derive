@@ -6,6 +6,7 @@
 //   derive run <agent> "ask" [--repo owner/name[@ref]] [--here] [--follow]
 //   derive ls [--team]
 //   derive attach <task>      derive forward <task> <port>      derive stop <task>
+//   derive send <task> "msg" [--interrupt]   derive follow <task>   derive show <task>
 import { spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
@@ -17,6 +18,8 @@ import { DeriveClient } from "./runner.js"
 import { sessionShell } from "./session-shell.js"
 
 const KEY_DIR = () => process.env.DERIVE_CONFIG_DIR ?? join(homedir(), ".derive")
+/** The remote attach command's exit code when the harness quit (the session ended). */
+const SESSION_ENDED = 75
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /** The session commands' client: the CLI's Derive client, reporting refusals in the
@@ -54,10 +57,11 @@ export function sessionApi({ server, token, workspaceId, fetcher }) {
   return api
 }
 
-/** The agent a new session runs on: `--agent` by id or name, else the workspace's agent named
- *  "Coding", else the only cloud agent for the chosen harness. */
-export function pickAgent(agents, { agent, harness } = {}) {
-  const cloud = agents.filter((a) => a.machine === "derive")
+/** The agent new work runs on: `--agent` by id or name, else the workspace's agent named
+ *  "Coding", else the only cloud agent for the chosen harness. A session needs a Derive
+ *  machine; a task may also run on a team's own box. */
+export function pickAgent(agents, { agent, harness, boxes = false } = {}) {
+  const cloud = agents.filter((a) => a.machine === "derive" || (boxes && a.machine === "owner"))
   if (agent) {
     const want = String(agent).toLowerCase()
     const found = cloud.find((a) => a.id === agent || a.name.toLowerCase() === want)
@@ -134,7 +138,10 @@ async function cloudTasks(api, { team }) {
     api(`/v1/jobs?limit=100${team ? "" : "&mine=1"}`),
     api("/v1/agents"),
   ])
-  const cloud = new Set(agents.filter((a) => a.machine === "derive").map((a) => a.id))
+  // Work on Derive machines and on a team's own boxes alike.
+  const cloud = new Set(
+    agents.filter((a) => a.machine === "derive" || a.machine === "owner").map((a) => a.id),
+  )
   return { tasks: jobs.filter((j) => cloud.has(j.agent_id)), agents }
 }
 
@@ -216,7 +223,7 @@ export async function sessionCommand(cmd, positional, flags, api, { log = consol
     const session = cmd === "code"
     const agent = session
       ? pickAgent(agents, { agent: flags.agent, harness })
-      : pickAgent(agents, { agent: positional[0] })
+      : pickAgent(agents, { agent: positional[0], boxes: true })
     // `derive code owner/name "message"`, `derive code owner/name`, or `derive code "message"`.
     const named = session && TASK_REPO.test(positional[0] ?? "")
     const repo = flags.here ? hereRepo() : named ? positional[0] : flags.repo
@@ -245,9 +252,26 @@ export async function sessionCommand(cmd, positional, flags, api, { log = consol
     else console.log(tasks.length ? formatTasks(tasks, agents) : "no cloud tasks yet: derive code")
     return 0
   }
-  const { tasks } = await cloudTasks(api, { team: true })
+  const { tasks, agents } = await cloudTasks(api, { team: true })
   const task = pickTask(tasks, positional[0])
   if (cmd === "attach") return attach(api, task.id, log)
+  if (cmd === "send") {
+    const body = positional[1]
+    if (!body) throw new Error('usage: derive send <task> "message" [--interrupt]')
+    await api(`/v1/jobs/${task.id}/messages`, {
+      method: "POST",
+      body: { body_md: body, ...(flags.interrupt ? { interrupt: true } : {}) },
+    })
+    log(
+      `sent to ${task.id.slice(-6)}${flags.interrupt ? "; its running turn stops and this one runs next" : ""}`,
+    )
+    return flags.follow ? follow(api, task.id, log) : 0
+  }
+  if (cmd === "follow") return follow(api, task.id, log)
+  if (cmd === "show") {
+    console.log(describeTask(await api(`/v1/jobs/${task.id}`), agents))
+    return 0
+  }
   if (cmd === "stop") {
     await api(`/v1/jobs/${task.id}/cancel`, { method: "POST" })
     log(`stopped ${task.id.slice(-6)}; its machine is retired`)
@@ -270,14 +294,48 @@ async function attach(api, id, log) {
   const shell = await openShell(api, id)
   // The runner opens tmux a moment after the machine reports running, so wait briefly for it.
   // tmux keeps the session when this terminal closes; the machine parks once it sits idle.
-  const join_ = `for i in $(seq 60); do tmux has-session -t ${shell.tmux} 2>/dev/null && exec tmux attach -t ${shell.tmux}; sleep 1; done; echo "the session did not start; see Derive"; exit 1`
+  const join_ = `for i in $(seq 60); do if tmux has-session -t ${shell.tmux} 2>/dev/null; then tmux attach -t ${shell.tmux}; tmux has-session -t ${shell.tmux} 2>/dev/null && exit 0; exit ${SESSION_ENDED}; fi; sleep 1; done; echo "the session did not start; see Derive"; exit 1`
   const out = await shell.run(["-t"], join_)
-  log(`detached from ${id.slice(-6)}. It keeps running; derive attach ${id.slice(-6)} to return.`)
-  return out
+  // Detaching leaves the harness running in tmux; quitting it ends the session's turn. The
+  // remote command says which by its exit code (see join_).
+  const short = id.slice(-6)
+  log(
+    out === SESSION_ENDED
+      ? `session ${short} ended; its machine pauses with your files. derive attach ${short} resumes it.`
+      : `detached from ${short}. It keeps running; derive attach ${short} to return.`,
+  )
+  return out === SESSION_ENDED ? 0 : out
+}
+
+/** One task, everything Derive knows about where it ran and what it did. */
+export function describeTask(t, agents) {
+  const agent = agents.find((a) => a.id === t.agent_id)
+  const git = t.result?.git
+  const pr = t.result?.effects?.find((e) => e.kind === "pr")
+  const compute = (t.result?.compute ?? []).reduce((s, c) => s + (c.billable_seconds ?? 0), 0)
+  const rows = [
+    ["task", `${t.id} · ${state(t)}`],
+    ["agent", `${agent?.name ?? "?"} · ${agent?.provider === "codex" ? "codex" : "claude"}`],
+    ["runs on", agent?.machine === "derive" ? "Derive cloud" : "its owner's machine"],
+    ["started", `${t.created_at}${t.asked_by ? "" : " by a schedule"}`],
+    ...(t.machine_waiting ? [["waiting", t.machine_waiting]] : []),
+    ...(t.task?.repo ? [["repository", t.task.repo]] : []),
+    ...(git ? [["git", `${git.branch ?? "(detached)"} @ ${git.commit?.slice(0, 12) ?? "?"}`]] : []),
+    ...(pr ? [["pull request", pr.url ?? pr.ref ?? pr.label]] : []),
+    ...(t.result?.failure ? [["failed", t.result.failure.reason]] : []),
+    ...(compute ? [["machine time", `${Math.round(compute / 60)} min`]] : []),
+  ]
+  const width = Math.max(...rows.map(([k]) => k.length))
+  const recent = (t.events ?? []).filter((e) => e.label).slice(-8)
+  return [
+    ...rows.map(([k, v]) => `${k.padEnd(width)}  ${v}`),
+    ...(recent.length ? ["", "recent activity", ...recent.map((e) => `  · ${e.label}`)] : []),
+  ].join("\n")
 }
 
 async function follow(api, id, log) {
   let seen = 0
+  let acted = 0
   let misses = 0
   for (;;) {
     // A dropped connection (a server restart, a network blip) is waited out, not fatal.
@@ -290,6 +348,8 @@ async function follow(api, id, log) {
       continue
     }
     misses = 0
+    for (const e of (task.events ?? []).slice(acted)) if (e.label) log(`  · ${e.label}`)
+    acted = task.events?.length ?? 0
     for (const m of task.messages.slice(seen)) if (m.author_kind === "agent") log(m.body_md)
     seen = task.messages.length
     if (!["queued", "running"].includes(task.status)) return task.status === "succeeded" ? 0 : 1

@@ -8,6 +8,7 @@ import {
   type SandboxLaunch,
   type SandboxMachine,
   SandboxRateLimited,
+  SandboxRefused,
 } from "./sandbox-client"
 
 const Box = z.object({
@@ -78,6 +79,15 @@ export class BoatClient implements SandboxClient {
         Number.isFinite(after) && after > 0 ? after : 60,
       )
     }
+    const starts = method === "POST" && (path === "/sandboxes" || path.endsWith("/resume"))
+    if (starts && [401, 402, 403].includes(response.status)) {
+      const body = (await response.json().catch(() => null)) as { message?: unknown } | null
+      throw new SandboxRefused(
+        typeof body?.message === "string"
+          ? body.message
+          : `boat.dev refused with HTTP ${response.status}`,
+      )
+    }
     if (!response.ok) {
       const message = `boat.dev returned HTTP ${response.status}`
       if (method === "POST" && path === "/sandboxes" && [400, 404, 422].includes(response.status))
@@ -137,8 +147,8 @@ export class BoatClient implements SandboxClient {
           ...(input.snapshot ? { from: input.snapshot } : {}),
           ...(input.env ? { env: input.env } : {}),
           snapshots: true,
+          // No org: Boat picks the key's default org, which carries the plan. Forcing "personal" gets a 402.
           setupScript: `sudo install -d -o "$(id -u)" -g "$(id -g)" /home/ortam\n${input.setup_script}`,
-          org: "personal",
         },
         key,
       ),

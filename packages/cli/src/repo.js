@@ -4,9 +4,9 @@
 // machine): git asks a credential helper that reads it there, so nothing secret lands in the
 // checkout the machine's disk keeps.
 import { spawnSync } from "node:child_process"
-import { existsSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 
 const HELPER =
   '!f() { test "$1" = get || exit 0; echo username=x-access-token; echo "password=$(cat "$DERIVE_GIT_TOKEN_FILE")"; }; f'
@@ -32,20 +32,39 @@ const run = (args, { cwd, env, quiet } = {}) => {
 export const githubRepoOf = (url) =>
   /github\.com[/:]([^/]+\/[^/]+?)(\.git)?\/?$/.exec(url ?? "")?.[1]?.toLowerCase() ?? null
 
+/** `gh` reads its token only from GH_TOKEN, which a running harness would keep from the first
+ *  hour. A `gh` placed first on PATH beside the token file reads the renewed token on every
+ *  call instead. Nothing when the machine has no `gh`. */
+function ghThroughFile(tokenFile) {
+  const real = spawnSync("sh", ["-c", "command -v gh"], { encoding: "utf8" }).stdout.trim()
+  if (!real) return {}
+  const bin = join(dirname(tokenFile), "bin")
+  mkdirSync(bin, { recursive: true, mode: 0o700 })
+  writeFileSync(
+    join(bin, "gh"),
+    `#!/bin/sh\nGH_TOKEN="$(cat "$DERIVE_GIT_TOKEN_FILE")" exec ${JSON.stringify(real)} "$@"\n`,
+    { mode: 0o700 },
+  )
+  return { PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}` }
+}
+
 /** Check out the task's repository and return where, plus the environment git and the harness
  *  need. A checkout of the same repository already on the machine (a prepared image's, or an
  *  earlier turn's) is reused; only the first turn moves it to the task's ref, so later turns
- *  keep the work in progress. */
-export function prepareRepo({ repo, ref, token }, { cwd, firstTurn, tokenFile }) {
+ *  keep the work in progress.
+ *
+ *  With `task`, on a machine many tasks share (a team's own box), the shared checkout only
+ *  holds the objects: each task works in its own git worktree beside it, made on the task's
+ *  first turn and kept for its follow-ups, so parallel tasks never touch each other's files. */
+export function prepareRepo({ repo, ref, token }, { cwd, firstTurn, tokenFile, task }) {
   writeFileSync(tokenFile, token, { mode: 0o600 })
-  // `gh` reads only GH_TOKEN, which a running harness cannot see renewed: past the first hour
-  // it fails, while git (through the file) and the runner's pull request lookup keep working.
-  const env = { DERIVE_GIT_TOKEN_FILE: tokenFile, GH_TOKEN: token }
+  const env = { DERIVE_GIT_TOKEN_FILE: tokenFile, ...ghThroughFile(tokenFile) }
   const name = repo.split("/")[1]
   const mine = (dir) =>
     existsSync(join(dir, ".git")) &&
-    githubRepoOf(run(["remote", "get-url", "origin"], { cwd: dir, quiet: true }).stdout.trim()) ===
-      repo.toLowerCase()
+    githubRepoOf(
+      run(["config", "--get", "remote.origin.url"], { cwd: dir, quiet: true }).stdout.trim(),
+    ) === repo.toLowerCase()
   let dir = [join(cwd, name), join(homedir(), name)].find(mine)
   if (!dir) {
     dir = join(cwd, name)
@@ -63,7 +82,7 @@ export function prepareRepo({ repo, ref, token }, { cwd, firstTurn, tokenFile })
   }
   run(["config", "--replace-all", "credential.helper", HELPER], { cwd: dir })
   run(["fetch", "--prune", "origin"], { cwd: dir, env })
-  if (firstTurn) {
+  const start = () => {
     const base =
       ref ??
       run(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], { cwd: dir, quiet: true })
@@ -74,11 +93,47 @@ export function prepareRepo({ repo, ref, token }, { cwd, firstTurn, tokenFile })
       cwd: dir,
       quiet: true,
     })
-    if (branch.status === 0)
-      run(["checkout", "--force", "-B", base, `origin/${base}`], { cwd: dir })
+    return branch.status === 0 ? { base, at: `origin/${base}` } : { base, at: base }
+  }
+  if (task) {
+    const tasks = join(cwd, ".derive-tasks")
+    const own = join(tasks, task)
+    if (!existsSync(own)) {
+      mkdirSync(tasks, { recursive: true })
+      retireOldWorktrees(dir, tasks)
+      run(["worktree", "add", "--detach", own, start().at], { cwd: dir, env })
+    }
+    return { dir: own, env }
+  }
+  if (firstTurn) {
+    const { base, at } = start()
+    if (at === `origin/${base}`) run(["checkout", "--force", "-B", base, at], { cwd: dir })
     else run(["checkout", "--force", "--detach", base], { cwd: dir, env })
   }
   return { dir, env }
+}
+
+/** Task worktrees untouched for a week go, as parked cloud machines do. */
+const WORKTREE_TTL_MS = 7 * 24 * 3600_000
+function retireOldWorktrees(dir, tasks) {
+  for (const entry of readdirSync(tasks, { withFileTypes: true })) {
+    const path = join(tasks, entry.name)
+    if (entry.isDirectory() && Date.now() - statSync(path).mtimeMs > WORKTREE_TTL_MS)
+      run(["worktree", "remove", "--force", path], { cwd: dir, quiet: true })
+  }
+  run(["worktree", "prune"], { cwd: dir, quiet: true })
+}
+
+/** Where a turn left the checkout: its branch (null when detached) and commit, for the task's
+ *  record. */
+export function gitState(repo, dir) {
+  const branch = run(["rev-parse", "--abbrev-ref", "HEAD"], { cwd: dir, quiet: true }).stdout.trim()
+  const commit = run(["rev-parse", "HEAD"], { cwd: dir, quiet: true }).stdout.trim()
+  return {
+    repo,
+    branch: branch && branch !== "HEAD" ? branch : null,
+    commit: /^[0-9a-f]{40}$/.test(commit) ? commit : null,
+  }
 }
 
 /** The pull request the turn's branch has open (or had), for the task's result. */

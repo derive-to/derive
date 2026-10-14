@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router"
 import type { JobDetail } from "@/api"
 import { mdToHtml } from "../artifact/lib/markdown"
+import { eventLine } from "./format"
 import { TaskReceipt } from "./task-usage"
 
 export function TaskConversation({
@@ -12,36 +13,11 @@ export function TaskConversation({
   agentName: string
   names: Map<string, string>
 }) {
-  const labels: Record<string, string> = {
-    command_execution: "Ran a command",
-    file_change: "Changed a file",
-    mcp_tool_call: "Used a connected tool",
-    web_search: "Searched the web",
-    plan_update: "Updated its plan",
-    tool_use: "Used a tool",
-  }
   const effects = job.result.effects ?? []
   const id = job.id
   const events = job.events ?? []
-  const line = (event: (typeof events)[number]) =>
-    event.label
-      ? `${labels[event.kind] ?? "Worked"}: ${event.label}`
-      : (labels[event.kind] ?? "Worked on this task")
   return (
     <div data-testid={`task-conversation-${job.id}`} className="flex flex-col gap-6">
-      {job.status === "running" && events.length > 0 && (
-        <section data-testid="task-live" aria-live="polite" className="flex flex-col gap-1">
-          <p className="text-xs font-medium text-muted-foreground">Now</p>
-          {events.slice(-6).map((event) => (
-            <p
-              key={`live-${event.turn_id}:${event.seq}`}
-              className="truncate font-mono text-xs text-muted-foreground"
-            >
-              {line(event)}
-            </p>
-          ))}
-        </section>
-      )}
       {job.result.failure && (job.status === "failed" || job.status === "lost") && (
         <div
           role="alert"
@@ -143,7 +119,7 @@ export function TaskConversation({
             key={`${event.turn_id}:${event.seq}`}
             className="mt-2 truncate text-xs text-muted-foreground"
           >
-            {line(event)}
+            {eventLine(event)}
           </p>
         ))}
         {job.messages

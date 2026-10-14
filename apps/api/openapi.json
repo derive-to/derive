@@ -2205,6 +2205,31 @@
                 "type": "integer",
                 "minimum": 0
               },
+              "git": {
+                "type": "object",
+                "properties": {
+                  "repo": {
+                    "type": "string",
+                    "maxLength": 300
+                  },
+                  "branch": {
+                    "type": "string",
+                    "nullable": true,
+                    "maxLength": 300
+                  },
+                  "commit": {
+                    "type": "string",
+                    "nullable": true,
+                    "maxLength": 64
+                  }
+                },
+                "required": [
+                  "repo",
+                  "branch",
+                  "commit"
+                ],
+                "description": "Where the latest turn left the task's repository."
+              },
               "compute": {
                 "type": "array",
                 "items": {
@@ -4141,6 +4166,10 @@
           "snapshot": {
             "type": "string",
             "nullable": true
+          },
+          "managed": {
+            "type": "boolean",
+            "description": "Cloud work runs on the deployment's own machines when nothing is connected."
           }
         },
         "required": [
@@ -4149,7 +4178,8 @@
           "connected",
           "account_id",
           "can_manage",
-          "snapshot"
+          "snapshot",
+          "managed"
         ]
       },
       "ContextInfo": {

@@ -415,7 +415,7 @@ export const executeHttpTool = async (
   if (githubPolicy?.prPreflightPath) {
     const preflight = new URL(`.${githubPolicy.prPreflightPath}`, base)
     const check = await fetchImpl(preflight.href, {
-      redirect: "error",
+      redirect: "manual",
       headers,
       signal: AbortSignal.timeout(20_000),
     })
@@ -426,7 +426,7 @@ export const executeHttpTool = async (
       }
   }
   const res = await fetchImpl(url.href, {
-    ...(cn.kind === "github_app" ? { redirect: "error" as const } : {}),
+    ...(cn.kind === "github_app" ? { redirect: "manual" as const } : {}),
     method: verb,
     headers,
     body: verb === "POST" ? JSON.stringify(a.body ?? {}) : undefined,
