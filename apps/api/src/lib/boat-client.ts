@@ -5,8 +5,10 @@ import {
   type SandboxClient,
   type SandboxCreate,
   SandboxCreateRejected,
+  type SandboxLaunch,
   type SandboxMachine,
   SandboxRateLimited,
+  SandboxRefused,
 } from "./sandbox-client"
 
 const Box = z.object({
@@ -31,6 +33,7 @@ const op = (kind: string, id: string, state: "running" | "succeeded" | "failed" 
 /** boat.dev: the same Agent/Job lifecycle through its public v1 API. Creates are
  * idempotent. Commands submit once. A stop is complete only after its saved-disk receipt. */
 export class BoatClient implements SandboxClient {
+  readonly stopTimer = "deadline"
   private readonly fetcher: typeof fetch
   constructor(
     readonly base: string,
@@ -74,6 +77,15 @@ export class BoatClient implements SandboxClient {
       throw new SandboxRateLimited(
         typeof body?.message === "string" ? body.message : "boat.dev rate limit reached",
         Number.isFinite(after) && after > 0 ? after : 60,
+      )
+    }
+    const starts = method === "POST" && (path === "/sandboxes" || path.endsWith("/resume"))
+    if (starts && [401, 402, 403].includes(response.status)) {
+      const body = (await response.json().catch(() => null)) as { message?: unknown } | null
+      throw new SandboxRefused(
+        typeof body?.message === "string"
+          ? body.message
+          : `boat.dev refused with HTTP ${response.status}`,
       )
     }
     if (!response.ok) {
@@ -208,12 +220,7 @@ export class BoatClient implements SandboxClient {
       box.state === "error" || box.state === "cancelled" || box.setupStatus === "failed"
     return op(kind, sandboxId, done ? "succeeded" : failed ? "failed" : "running")
   }
-  async launch(
-    id: string,
-    body: { argv: string[]; cwd: string; env: Record<string, string>; timeout_seconds: number },
-    key: string,
-    identity: Identity,
-  ) {
+  async launch(id: string, body: SandboxLaunch, key: string, identity: Identity) {
     await this.read(id, identity)
     // Boat command submission has no idempotency contract. The owned runner's disk marker
     // supplies it. Two accepted commands can race, but only one can own this operation.

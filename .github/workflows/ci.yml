@@ -378,6 +378,22 @@ jobs:
           grep -q "^database_id = \"$D1_ID\"$" apps/api/wrangler.toml || { echo "D1 id injection failed" >&2; exit 1; }
           grep -q "^id = \"$HD_ID\"$" apps/api/wrangler.toml || { echo "Hyperdrive id injection failed" >&2; exit 1; }
 
+      # Derive machines install the CLI at RUNNER_VERSION (apps/api/src/lib/runtime-setup.ts).
+      # publish-cli releases a new version from this same push, in parallel. Ship the worker
+      # that pins it only once npm serves it, or every cloud task fails to set up meanwhile.
+      - name: Wait for the pinned runner on npm
+        if: steps.head.outputs.stale != 'true'
+        run: |
+          version=$(sed -n 's/^export const RUNNER_VERSION = "\(.*\)"$/\1/p' apps/api/src/lib/runtime-setup.ts)
+          : "${version:?RUNNER_VERSION not found in runtime-setup.ts}"
+          for i in $(seq 60); do
+            npm view --prefer-online "@derive-to/cli@$version" version >/dev/null 2>&1 && exit 0
+            echo "waiting for @derive-to/cli@$version on npm ($i/60)"
+            sleep 20
+          done
+          echo "@derive-to/cli@$version is not on npm after 20 minutes" >&2
+          exit 1
+
       - name: Apply schemas (D1 + Postgres)
         if: steps.head.outputs.stale != 'true'
         env:

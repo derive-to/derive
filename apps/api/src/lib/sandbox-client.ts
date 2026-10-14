@@ -11,9 +11,23 @@ export class SandboxRateLimited extends Error {
   }
 }
 
+/** The provider will not start a machine for this account at all (billing, permission): a
+ *  person has to fix it there, so the task fails plainly instead of retrying. `message` says
+ *  what the provider said. */
+export class SandboxRefused extends Error {}
+
 /** Provider adapters own API translation. The controller owns jobs, claims, and
  * retries. A stopped sandbox must mean compute is off and its files are saved. */
 type Identity = { organization_id: string; user_id: string }
+export type SandboxSshAccess =
+  | { host: string; port: number; user: string; host_key: string | null; transport?: "direct" }
+  | {
+      transport: "websocket"
+      user: "ortam"
+      host_key: string
+      certificate: string
+      certificate_expires_at: string
+    }
 type Operation = {
   id: string
   sandbox_id: string
@@ -47,7 +61,16 @@ export interface SandboxMachine {
   /** Provider stop timer for the resumed turn. */
   ttl_seconds?: number
 }
+export interface SandboxLaunch {
+  argv: string[]
+  cwd: string
+  env: Record<string, string>
+  timeout_seconds: number
+  /** Frozen per turn; false preserves Ortam launches claimed before keep-awake support. */
+  keep_awake?: boolean
+}
 export interface SandboxClient {
+  readonly stopTimer: "idle" | "deadline"
   authenticate(): Promise<Identity>
   create(
     body: SandboxCreate,
@@ -69,22 +92,14 @@ export interface SandboxClient {
     env?: Record<string, string>,
     machine?: SandboxMachine,
   ): Promise<Operation>
-  launch(
-    id: string,
-    body: { argv: string[]; cwd: string; env: Record<string, string>; timeout_seconds: number },
-    key: string,
-    identity: Identity,
-  ): Promise<Process>
+  launch(id: string, body: SandboxLaunch, key: string, identity: Identity): Promise<Process>
   process(sandboxId: string, id: string, identity: Identity): Promise<Process>
   deleteSandbox(id: string, key: string, identity: Identity): Promise<Operation>
   isSandboxDeleted(id: string, identity: Identity): Promise<boolean>
   /** Authorize an OpenSSH public key on a running sandbox; where to connect, and the host key
    *  to pin. */
-  sshKey?(
-    id: string,
-    publicKey: string,
-    identity: Identity,
-  ): Promise<{ host: string; port: number; user: string; host_key: string | null }>
+  sshKey?(id: string, publicKey: string, identity: Identity): Promise<SandboxSshAccess>
+  sshTunnel?(id: string, identity: Identity): Promise<Request>
   usage?(
     id: string,
     since: string,

@@ -153,8 +153,13 @@ export const commandJob = async (
           reject(
             "This conversation uses another harness or account. Start a fresh task with the new settings.",
           )
+        // A conversation that existed (a turn finished) must come back from its checkpoint.
+        // When none ever finished (each failed or was stopped before answering), the next
+        // turn starts it from the transcript instead (the claim marks it fresh).
+        const answered = turns.some((t) => t.status === "succeeded" || t.status === "needs_you")
         if (
           !["queued", "running"].includes(previous.status) &&
+          answered &&
           !turns.some((t) => t.session_id && t.has_checkpoint)
         )
           reject(

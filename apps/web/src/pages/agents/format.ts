@@ -1,4 +1,4 @@
-import type { Agent, AgentTrigger, Job, JobStatus } from "@/api"
+import type { Agent, AgentTrigger, Job, JobDetail, JobStatus } from "@/api"
 import { API_BASE } from "@/api"
 import type { IconName } from "@/components/icons"
 
@@ -207,3 +207,19 @@ export const modelChoices = (provider: Agent["provider"]) =>
         { id: "gpt-6-luna", label: "Luna · lower cost" },
         { id: "gpt-6.1-sol", label: "Sol · complex work" },
       ]
+
+/** What an action in a turn's activity was, in words. */
+export const EVENT_LABELS: Record<string, string> = {
+  command_execution: "Ran",
+  file_change: "Changed",
+  mcp_tool_call: "Used",
+  web_search: "Searched",
+  plan_update: "Updated its plan",
+  tool_use: "Used",
+}
+
+type JobEvent = NonNullable<JobDetail["events"]>[number]
+export const eventLine = (event: JobEvent) =>
+  event.label
+    ? `${EVENT_LABELS[event.kind] ?? "Worked"} ${event.label}`
+    : (EVENT_LABELS[event.kind] ?? "Worked on this task")

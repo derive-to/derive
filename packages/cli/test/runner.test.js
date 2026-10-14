@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs"
@@ -12,10 +13,13 @@ import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
 import { describe, expect, it } from "vitest"
+import { WebSocketServer } from "ws"
 import { loadJobRunnerConfig } from "../src/job-runner.js"
 import { claudeCode } from "../src/providers/claude-code.js"
+import { prepareRepo } from "../src/repo.js"
 import { OUTPUT_CONTRACT, parseAnswer, resolveArtifactHtml, runAgent } from "../src/runner.js"
-import { sessionCommand } from "../src/sessions.js"
+import { runSession } from "../src/session.js"
+import { sessionApi, sessionCommand } from "../src/sessions.js"
 import { materializeSkills, skillDigest, skillSlug, writeSkill } from "../src/skills.js"
 
 describe("parseAnswer", () => {
@@ -541,5 +545,476 @@ describe("cloud sessions", () => {
     expect(git(bare, "rev-parse", "fix-copy").toString().trim()).toBe(
       git(work, "rev-parse", "HEAD").toString().trim(),
     )
+  })
+
+  it("a session parks once nobody types and its screen stops changing, even with a dropped client listed", async () => {
+    let clock = 1_000_000
+    let screen = "working 1s"
+    const tmux = (cmd, ...args) => {
+      if (cmd === "has-session") return { status: 0, stdout: "" }
+      // A connection that dropped an hour ago is still listed, with its last keystroke then.
+      if (cmd === "list-clients") return { status: 0, stdout: `${(clock - 3_600_000) / 1000}\n` }
+      if (cmd === "capture-pane") return { status: 0, stdout: screen }
+      return { status: 0, stdout: "", stderr: "", args }
+    }
+    const ticks = []
+    const ended = runSession(
+      { bin: "codex", args: [], cwd: tmpdir(), env: {} },
+      {
+        idleMs: 60_000,
+        pollMs: 1,
+        tmux,
+        now: () => {
+          clock += 10_000
+          ticks.push(clock)
+          // The harness works (the screen changes) for the first few polls, then waits.
+          if (ticks.length < 6) screen = `working ${ticks.length}s`
+          return clock
+        },
+      },
+    )
+    expect(await ended).toBe("idle")
+    // Idle counts from the last change on screen, not from the dropped client's listing.
+    expect(ticks.length).toBeGreaterThan(6)
+  })
+
+  it("a task's checkout reaches GitHub with the renewed token, through git and gh alike", () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-repo-"))
+    const bare = join(root, "origin.git")
+    execSync(`git init -q --bare ${bare}`)
+    const seed = join(root, "seed")
+    execSync(`git init -q -b main ${seed}`)
+    execSync(`git -C ${seed} -c user.email=a@b -c user.name=a commit -q --allow-empty -m first`)
+    execSync(`git -C ${seed} push -q ${bare} main`)
+    // GitHub, as this test reaches it: the bare repository stands in for the remote.
+    const config = join(root, "gitconfig")
+    writeFileSync(
+      config,
+      `[url "${bare}"]\n\tinsteadOf = https://github.com/acme-dev/widgets.git\n`,
+    )
+    const tools = join(root, "tools")
+    mkdirSync(tools)
+    writeFileSync(join(tools, "gh"), '#!/bin/sh\necho "gh sees $GH_TOKEN"\n', { mode: 0o755 })
+    const before = { PATH: process.env.PATH, GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL }
+    process.env.PATH = `${tools}:${process.env.PATH}`
+    process.env.GIT_CONFIG_GLOBAL = config
+    try {
+      const secrets = mkdtempSync(join(tmpdir(), "derive-git-"))
+      const tokenFile = join(secrets, "token")
+      const { dir, env } = prepareRepo(
+        { repo: "acme-dev/widgets", ref: "main", token: "first-token" },
+        { cwd: root, firstTurn: true, tokenFile },
+      )
+      expect(existsSync(join(dir, ".git"))).toBe(true)
+      const gh = () =>
+        execSync("gh auth status", { env: { ...process.env, ...env }, encoding: "utf8" }).trim()
+      expect(gh()).toBe("gh sees first-token")
+      // The runner renews the token in place; the harness's gh picks it up without a restart.
+      writeFileSync(tokenFile, "renewed-token")
+      expect(gh()).toBe("gh sees renewed-token")
+    } finally {
+      process.env.PATH = before.PATH
+      if (before.GIT_CONFIG_GLOBAL === undefined) delete process.env.GIT_CONFIG_GLOBAL
+      else process.env.GIT_CONFIG_GLOBAL = before.GIT_CONFIG_GLOBAL
+    }
+  })
+
+  it("on a shared box, each task works in its own worktree and keeps it for follow-ups", () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-box-"))
+    const bare = join(root, "origin.git")
+    execSync(`git init -q --bare ${bare}`)
+    const seed = join(root, "seed")
+    execSync(`git init -q -b main ${seed}`)
+    execSync(`git -C ${seed} -c user.email=a@b -c user.name=a commit -q --allow-empty -m first`)
+    execSync(`git -C ${seed} push -q ${bare} main`)
+    const config = join(root, "gitconfig")
+    writeFileSync(
+      config,
+      `[url "${bare}"]\n\tinsteadOf = https://github.com/acme-dev/widgets.git\n`,
+    )
+    const before = process.env.GIT_CONFIG_GLOBAL
+    process.env.GIT_CONFIG_GLOBAL = config
+    try {
+      const work = join(root, "work")
+      mkdirSync(work)
+      const checkout = (task) =>
+        prepareRepo(
+          { repo: "acme-dev/widgets", ref: "main", token: "t" },
+          {
+            cwd: work,
+            firstTurn: true,
+            tokenFile: join(mkdtempSync(join(tmpdir(), "g-")), "t"),
+            task,
+          },
+        ).dir
+      const a = checkout("job_a")
+      const b = checkout("job_b")
+      // Two tasks at once, two folders: one task's edits never reach the other.
+      expect(a).not.toBe(b)
+      writeFileSync(join(a, "change.txt"), "task a")
+      expect(existsSync(join(b, "change.txt"))).toBe(false)
+      // A follow-up on task a returns to its own folder with the work in progress.
+      expect(checkout("job_a")).toBe(a)
+      expect(readFileSync(join(a, "change.txt"), "utf8")).toBe("task a")
+    } finally {
+      if (before === undefined) delete process.env.GIT_CONFIG_GLOBAL
+      else process.env.GIT_CONFIG_GLOBAL = before
+    }
+  })
+})
+
+describe("cloud session SSH transport", () => {
+  const bin = join(import.meta.dirname, "..", "bin", "derive.js")
+  const payload = Buffer.from(Array.from({ length: 153_600 }, (_, i) => i % 256))
+  const claim = "2026-01-01T00:00:00.000Z"
+  const fixture = async ({ access = {}, peer = "echo", direct = false, hold = false } = {}) => {
+    const dir = mkdtempSync(join(tmpdir(), "derive-ssh-test-"))
+    const key = join(dir, "session_ed25519")
+    for (const file of [key, join(dir, "ca")]) {
+      const made = spawnSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", file])
+      expect(made.status).toBe(0)
+    }
+    const signed = spawnSync("ssh-keygen", [
+      "-q",
+      "-s",
+      join(dir, "ca"),
+      "-I",
+      "test",
+      "-n",
+      "ortam",
+      "-V",
+      "-1m:+5m",
+      `${key}.pub`,
+    ])
+    expect(signed.status).toBe(0)
+    const hostKey = readFileSync(join(dir, "ca.pub"), "utf8").trim()
+    const certificate = readFileSync(`${key}-cert.pub`, "utf8").trim()
+    const knownHosts = join(dir, "known_hosts")
+    writeFileSync(knownHosts, "existing-host sentinel\n")
+    const record = join(dir, "ssh-record.json")
+    const executable = join(dir, "ssh")
+    writeFileSync(
+      executable,
+      `#!${process.execPath}
+import { writeFileSync, readFileSync, statSync } from 'node:fs'
+import { connect } from 'node:net'
+const args = process.argv.slice(2)
+const option = prefix => args.find(a => a.startsWith(prefix))?.slice(prefix.length)
+const known = option('UserKnownHostsFile=')
+const certificate = option('CertificateFile=')
+writeFileSync(process.env.SSH_RECORD, JSON.stringify({ args, known, certificate, hostKey: known && readFileSync(known, 'utf8'), cert: certificate && readFileSync(certificate, 'utf8'), mode: known && (statSync(known).mode & 511), certMode: certificate && (statSync(certificate).mode & 511), dirMode: known && (statSync(known.slice(0, known.lastIndexOf('/'))).mode & 511) }))
+if (process.env.SSH_DIRECT === '1') process.exit(0)
+const expected = Buffer.from(Array.from({length:153600}, (_,i)=>i%256))
+const socket = connect(Number(args[args.indexOf('-p')+1]), '127.0.0.1', () => socket.write(expected))
+let chunks = [], bytes = 0
+socket.on('data', data => {
+  chunks.push(data); bytes += data.length
+  if (bytes === expected.length) {
+    if (!Buffer.concat(chunks).equals(expected)) process.exit(9)
+    if (process.env.SSH_HOLD === '1') process.stdout.write('SSH_READY\\n')
+    else { socket.end(); process.exit(0) }
+  }
+})
+socket.on('error', () => process.exit(8))
+socket.on('end', () => process.exit(7))
+`,
+    )
+    chmodSync(executable, 0o755)
+    const upgradeRequests = []
+    const frames = []
+    const publicKeys = []
+    const sockets = new Set()
+    const wss = new WebSocketServer({ noServer: true })
+    wss.on("connection", (ws) => {
+      sockets.add(ws)
+      ws.on("close", () => sockets.delete(ws))
+      ws.on("message", (data, binary) => {
+        frames.push({ data: Buffer.from(data), binary })
+        if (peer === "text") ws.send("invalid text")
+        else if (peer === "oversize") ws.send(Buffer.alloc(1_048_577))
+        else ws.send(data, { binary: true })
+      })
+    })
+    const server = createServer((req, res) => {
+      let body = ""
+      req.on("data", (chunk) => {
+        body += chunk
+      })
+      req.on("end", () => {
+        res.setHeader("content-type", "application/json")
+        const task = {
+          id: "job_session",
+          agent_id: "ag_1",
+          machine_phase: "running",
+          status: "running",
+        }
+        if (req.url === "/v1/agents")
+          return res.end(JSON.stringify({ agents: [{ id: "ag_1", machine: "derive" }] }))
+        if (req.url.startsWith("/v1/jobs?")) return res.end(JSON.stringify({ jobs: [task] }))
+        if (req.url === "/v1/jobs/job_session/attach") {
+          publicKeys.push(JSON.parse(body).public_key)
+          return res.end(
+            JSON.stringify({
+              ...(direct
+                ? { host: "127.0.0.1", port: 2222, user: "root" }
+                : {
+                    transport: "websocket",
+                    user: "ortam",
+                    certificate,
+                    certificate_expires_at: new Date(Date.now() + 300_000).toISOString(),
+                    tunnel_path: "/v1/jobs/job_session/ssh",
+                    claim,
+                  }),
+              host_key: hostKey,
+              tmux_session: "derive",
+              ...access,
+            }),
+          )
+        }
+        res.end(JSON.stringify(task))
+      })
+    })
+    server.on("upgrade", (req, socket, head) => {
+      upgradeRequests.push({ url: req.url, headers: req.headers })
+      if (peer === "refuse") {
+        socket.end("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
+        return
+      }
+      wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req))
+    })
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+    const url = `http://127.0.0.1:${server.address().port}`
+    writeFileSync(
+      join(dir, "credentials.json"),
+      JSON.stringify({
+        [url]: {
+          defaultAccount: "test",
+          accounts: {
+            test: { defaultWorkspace: "org_cli", workspaces: { org_cli: { name: "CLI" } } },
+          },
+        },
+      }),
+    )
+    const run = (command = "attach") => {
+      const child = spawn(
+        process.execPath,
+        [
+          bin,
+          command,
+          "job_session",
+          ...(command === "forward" ? ["3000:3333"] : []),
+          "--server",
+          url,
+          "--token",
+          "test-session-token",
+        ],
+        {
+          cwd: dir,
+          env: {
+            ...process.env,
+            DERIVE_CONFIG_DIR: dir,
+            DERIVE_SERVER: url,
+            PATH: `${dir}:${process.env.PATH}`,
+            SSH_RECORD: record,
+            SSH_DIRECT: direct ? "1" : "",
+            SSH_HOLD: hold ? "1" : "",
+          },
+        },
+      )
+      let stdout = "",
+        stderr = ""
+      child.stdout.on("data", (data) => {
+        stdout += data
+      })
+      child.stderr.on("data", (data) => {
+        stderr += data
+      })
+      const done = new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          child.kill("SIGKILL")
+          reject(new Error(`CLI timed out: ${stderr}`))
+        }, 10_000)
+        child.on("error", reject)
+        child.on("exit", (code) => {
+          clearTimeout(timeout)
+          resolve({ code, stdout, stderr })
+        })
+      })
+      return { child, done }
+    }
+    return {
+      dir,
+      record,
+      key,
+      certificate,
+      hostKey,
+      frames,
+      upgradeRequests,
+      publicKeys,
+      sockets,
+      run,
+      async close() {
+        for (const socket of sockets) socket.terminate()
+        wss.close()
+        server.closeAllConnections()
+        await new Promise((resolve) => server.close(resolve))
+        rmSync(dir, { recursive: true, force: true })
+      },
+    }
+  }
+
+  it("attaches and forwards through a binary authenticated tunnel, preserving bytes and cleaning private files", async () => {
+    const f = await fixture()
+    try {
+      const paths = []
+      for (const command of ["attach", "forward"]) {
+        const result = await f.run(command).done
+        expect(result.code, result.stderr).toBe(0)
+        const record = JSON.parse(readFileSync(f.record, "utf8"))
+        paths.push(record.known)
+        expect(record.mode).toBe(0o600)
+        expect(record.certMode).toBe(0o600)
+        expect(record.dirMode).toBe(0o700)
+        expect(record.hostKey).toBe(`derive-session ${f.hostKey}\n`)
+        expect(record.cert.trim()).toBe(f.certificate)
+        expect(record.args).toContain("StrictHostKeyChecking=yes")
+        expect(record.args).toContain("IdentitiesOnly=yes")
+        expect(record.args[record.args.indexOf("-i") + 1]).toBe(f.key)
+        expect(record.args).not.toContain("test-session-token")
+        expect(existsSync(record.known)).toBe(false)
+        expect(existsSync(record.certificate)).toBe(false)
+        if (command === "attach") expect(record.args.at(-1)).toContain("tmux attach -t derive")
+        else expect(record.args).toContain("3333:127.0.0.1:3000")
+        expect(f.frames.every((frame) => frame.binary && frame.data.length <= 32_768)).toBe(true)
+        expect(Buffer.concat(f.frames.map((frame) => frame.data))).toEqual(payload)
+        f.frames.length = 0
+      }
+      expect(paths[0]).not.toBe(paths[1])
+      expect(readFileSync(join(f.dir, "known_hosts"), "utf8")).toBe("existing-host sentinel\n")
+      expect(f.publicKeys).toEqual([
+        readFileSync(`${f.key}.pub`, "utf8").trim(),
+        readFileSync(`${f.key}.pub`, "utf8").trim(),
+      ])
+      expect(f.upgradeRequests).toHaveLength(2)
+      for (const request of f.upgradeRequests) {
+        expect(request.url).toBe("/v1/jobs/job_session/ssh")
+        expect(request.headers.authorization).toBe("Bearer test-session-token")
+        expect(request.headers["x-derive-workspace"]).toBe("org_cli")
+        expect(request.headers["x-derive-job-claim"]).toBe(claim)
+      }
+    } finally {
+      await f.close()
+    }
+  })
+
+  it.each([
+    "text",
+    "oversize",
+    "refuse",
+  ])("fails closed for %s from the tunnel and removes its files", async (peer) => {
+    const f = await fixture({ peer })
+    try {
+      const result = await f.run().done
+      expect(result.code, result.stderr).toBe(1)
+      expect(result.stderr).toMatch(/SSH tunnel/)
+      const record = JSON.parse(readFileSync(f.record, "utf8"))
+      expect(existsSync(record.known)).toBe(false)
+      expect(existsSync(record.certificate)).toBe(false)
+    } finally {
+      await f.close()
+    }
+  })
+
+  it.each([
+    { certificate_expires_at: "2020-01-01T00:00:00.000Z" },
+    { certificate: "ssh-ed25519 ordinary-key" },
+    { tunnel_path: "https://other.example/v1/jobs/job_session/ssh" },
+    { tunnel_path: "/v1/jobs/other/ssh" },
+    { host_key: "ssh-ed25519 key\ninjected" },
+    { tmux_session: "derive; malicious" },
+  ])("rejects invalid attachment details before invoking SSH (%j)", async (access) => {
+    const f = await fixture({ access })
+    try {
+      const result = await f.run().done
+      expect(result.code).toBe(1)
+      expect(existsSync(f.record)).toBe(false)
+      expect(f.upgradeRequests).toHaveLength(0)
+    } finally {
+      await f.close()
+    }
+  })
+
+  it("keeps the direct Boat response working with a separate pinned-host file", async () => {
+    const f = await fixture({ direct: true })
+    try {
+      const result = await f.run().done
+      expect(result.code, result.stderr).toBe(0)
+      const record = JSON.parse(readFileSync(f.record, "utf8"))
+      expect(record.args).toContain("root@127.0.0.1")
+      expect(record.args[record.args.indexOf("-p") + 1]).toBe("2222")
+      expect(record.certificate).toBeUndefined()
+      expect(existsSync(record.known)).toBe(false)
+      expect(f.upgradeRequests).toHaveLength(0)
+    } finally {
+      await f.close()
+    }
+  })
+
+  it("keeps OpenSSH's persistent host trust when Boat returns no host key", async () => {
+    const f = await fixture({ direct: true, access: { host_key: null } })
+    try {
+      const result = await f.run().done
+      expect(result.code, result.stderr).toBe(0)
+      const record = JSON.parse(readFileSync(f.record, "utf8"))
+      expect(record.args).toContain("StrictHostKeyChecking=accept-new")
+      expect(record.args).not.toContain("-F")
+      expect(
+        record.args.some((arg) =>
+          /^(?:UserKnownHostsFile|GlobalKnownHostsFile|HostKeyAlias)=/.test(arg),
+        ),
+      ).toBe(false)
+      expect(readFileSync(join(f.dir, "known_hosts"), "utf8")).toBe("existing-host sentinel\n")
+      expect(f.upgradeRequests).toHaveLength(0)
+    } finally {
+      await f.close()
+    }
+  })
+
+  it("interrupts a forwarded session and tears down its relay", async () => {
+    const f = await fixture({ hold: true })
+    const run = f.run("forward")
+    try {
+      await new Promise((resolve, reject) => {
+        run.child.stdout.on("data", (data) => {
+          if (data.toString().includes("SSH_READY")) resolve()
+        })
+        run.done.then(() => reject(new Error("SSH ended before the interruption")), reject)
+      })
+      run.child.kill("SIGINT")
+      const result = await run.done
+      expect(result.code).toBe(130)
+      const record = JSON.parse(readFileSync(f.record, "utf8"))
+      expect(existsSync(record.known)).toBe(false)
+      expect(existsSync(record.certificate)).toBe(false)
+    } finally {
+      run.child.kill("SIGKILL")
+      await f.close()
+    }
+  })
+
+  it("refuses arbitrary URLs and non-task paths in the authenticated tunnel capability", () => {
+    const api = sessionApi({
+      server: "https://derive.example",
+      token: "test-session-token",
+      workspaceId: "org_cli",
+    })
+    for (const path of [
+      "https://other.example/ssh",
+      "//other.example/ssh",
+      "/v1/jobs/job_session/ssh?token=x",
+      "/v1/jobs/../ssh",
+      "/v1/artifacts/x/ssh",
+    ])
+      expect(() => api.openSshTunnel(path, claim)).toThrow(/invalid SSH tunnel/)
   })
 })

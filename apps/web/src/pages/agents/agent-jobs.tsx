@@ -182,7 +182,6 @@ export function NeedsRow({
   agentName,
   names,
   below,
-  defaultOpen = false,
 }: {
   job: Job
   canSteer: boolean
@@ -192,9 +191,8 @@ export function NeedsRow({
   names: Map<string, string>
   /** Always under the question: a link to the page a review waits on. */
   below?: ReactNode
-  defaultOpen?: boolean
 }) {
-  const [open, setOpen] = useState(defaultOpen)
+  const [open, setOpen] = useState(false)
   const asked = askedLine(job)
   const question = job.needs?.question ?? job.instruction
   const gist = gistOf(question)
@@ -206,35 +204,80 @@ export function NeedsRow({
     <div
       data-testid={`job-${job.id}`}
       data-status={job.status}
-      className="-mx-3 my-0.5 flex flex-col gap-3 rounded-lg bg-warning/10 px-3 py-3"
+      className="flex flex-col gap-3 border-b border-border py-3 last:border-b-0"
     >
-      <div className="flex items-center gap-3.5">
-        <button
-          type="button"
-          data-testid={`job-row-${job.id}`}
-          aria-expanded={open}
-          onClick={() => setOpen((o) => !o)}
-          className="flex min-w-0 flex-1 items-center gap-3.5 text-left"
-        >
-          <Icon
-            name="job-needs-you"
-            size={18}
-            strokeWidth={1.75}
-            className="shrink-0 text-warning"
-          />
-          <span className="flex min-w-0 flex-1 items-baseline gap-2.5 text-base whitespace-nowrap">
-            {title && <span className="shrink-0 font-medium text-foreground">{title}</span>}
-            <span className={cn("truncate text-foreground", open && "whitespace-normal")}>
-              {open ? question : gist}
-            </span>
-          </span>
-        </button>
+      {/* Short by default: who is asking, then the question on one line. The rest (the
+          whole question, the conversation, the answer) opens with a tap. */}
+      <div className="flex items-start gap-3.5">
+        <Icon
+          name="job-needs-you"
+          size={18}
+          strokeWidth={1.75}
+          className="mt-0.5 shrink-0 text-warning"
+        />
+        <div className="flex min-w-0 flex-1 flex-col">
+          {title && <span className="truncate font-medium text-foreground">{title}</span>}
+          <button
+            type="button"
+            data-testid={`job-row-${job.id}`}
+            aria-expanded={open}
+            onClick={() => setOpen((o) => !o)}
+            className="min-w-0 truncate text-left text-base text-foreground"
+          >
+            {/* Opened, the question reads in full in the conversation below. */}
+            {gist}
+          </button>
+        </div>
         <Meta>
+          <span className="contents max-sm:hidden">
+            {job.needs?.question_id && (
+              <Link
+                to="/tasks/$id"
+                params={{ id: job.id }}
+                data-testid={`job-task-link-${job.id}`}
+                className="font-medium text-foreground hover:underline"
+              >
+                Open task
+              </Link>
+            )}
+            {asked && <span>{asked}</span>}
+            {job.report_short_id && (
+              <Link
+                to="/artifacts/$ref"
+                params={{ ref: job.report_short_id }}
+                data-testid={`job-report-link-${job.id}`}
+                className="font-medium text-foreground hover:underline"
+              >
+                Report
+              </Link>
+            )}
+          </span>
+          <Time>{when(job.updated_at)}</Time>
+          <span className="contents max-sm:hidden">
+            {canSteer && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                data-testid={`job-dismiss-${job.id}`}
+                loading={dismiss.isPending}
+                onClick={() => dismiss.mutate()}
+                className="text-muted-foreground"
+              >
+                Dismiss
+              </Button>
+            )}
+          </span>
+        </Meta>
+      </div>
+      {/* On a phone the row keeps only its time; its links open with it. */}
+      {open && (
+        <div className="flex flex-wrap items-center gap-4 pl-8 text-sm text-muted-foreground sm:hidden">
           {job.needs?.question_id && (
             <Link
               to="/tasks/$id"
               params={{ id: job.id }}
-              data-testid={`job-task-link-${job.id}`}
+              data-testid={`job-task-link-m-${job.id}`}
               className="font-medium text-foreground hover:underline"
             >
               Open task
@@ -245,19 +288,18 @@ export function NeedsRow({
             <Link
               to="/artifacts/$ref"
               params={{ ref: job.report_short_id }}
-              data-testid={`job-report-link-${job.id}`}
+              data-testid={`job-report-link-m-${job.id}`}
               className="font-medium text-foreground hover:underline"
             >
               Report
             </Link>
           )}
-          <Time>{when(job.updated_at)}</Time>
           {canSteer && (
             <Button
               type="button"
               variant="ghost"
               size="xs"
-              data-testid={`job-dismiss-${job.id}`}
+              data-testid={`job-dismiss-m-${job.id}`}
               loading={dismiss.isPending}
               onClick={() => dismiss.mutate()}
               className="text-muted-foreground"
@@ -265,8 +307,8 @@ export function NeedsRow({
               Dismiss
             </Button>
           )}
-        </Meta>
-      </div>
+        </div>
+      )}
       {below}
       {open && <Transcript id={job.id} agentName={agentName} names={names} />}
       {open && canSteer && <AnswerBox job={job} />}
@@ -309,7 +351,7 @@ export function taskStatus(job: Job, agent: Agent): string {
   return job.task.session ? "Session open" : "Running"
 }
 
-function detailOf(job: Job, agent: Agent): string | undefined {
+export function detailOf(job: Job, agent: Agent): string | undefined {
   if (job.status === "needs_you") return job.needs?.question
   if (job.status === "failed" || job.status === "lost") return failureOf(job) ?? undefined
   if (job.status === "cancelled") return "Stopped before completion"
@@ -385,10 +427,7 @@ export function JobRow({
     <div
       data-testid={`job-${job.id}`}
       data-status={job.status}
-      className={cn(
-        "border-b border-border transition-colors motion-reduce:transition-none last:border-b-0",
-        needs && "-mx-3 my-0.5 rounded-lg border-b-0 bg-warning/10 px-3",
-      )}
+      className="border-b border-border transition-colors motion-reduce:transition-none last:border-b-0"
     >
       <div className="flex min-h-18 flex-wrap items-center gap-x-3.5 gap-y-2 py-3 text-base">
         <button
@@ -402,7 +441,7 @@ export function JobRow({
             icon={JOB_ICON[job.status]}
             tone={needs ? "warning" : failed ? "destructive" : undefined}
             title={firstLine(job.instruction)}
-            detail={detail && <span className="block whitespace-normal">{detail}</span>}
+            detail={detail && <span className="line-clamp-2 whitespace-normal">{detail}</span>}
           />
         </button>
         <Meta>
@@ -543,7 +582,10 @@ export function AnswerBox({ job }: { job: Job }) {
   }
   const options = job.needs?.options ?? []
   return (
-    <form onSubmit={submit} className="flex flex-wrap items-center gap-2 pb-3 pl-8">
+    <form
+      onSubmit={submit}
+      className="mb-3 ml-8 flex flex-wrap items-center gap-2 border-l-2 border-warning/50 pl-3"
+    >
       {options.map((o, i) => (
         <Button
           key={o}
@@ -553,7 +595,6 @@ export function AnswerBox({ job }: { job: Job }) {
           data-testid={`job-option-${job.id}-${i}`}
           disabled={answer.isPending}
           onClick={() => answer.mutate({ option: o })}
-          className="bg-card"
         >
           {o}
         </Button>
@@ -564,7 +605,7 @@ export function AnswerBox({ job }: { job: Job }) {
         placeholder={options.length ? "Or answer in words" : "Answer"}
         aria-label="Answer"
         data-testid={`job-answer-${job.id}`}
-        className="h-8 max-w-sm min-w-48 flex-1 bg-card"
+        className="h-8 max-w-sm min-w-48 flex-1"
       />
       <Button
         type="submit"

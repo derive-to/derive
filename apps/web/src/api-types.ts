@@ -1879,6 +1879,19 @@ export interface paths {
                             /** @description Pin this in known_hosts. */
                             host_key: string | null;
                             tmux_session: string;
+                        } | {
+                            /** @enum {string} */
+                            transport: "websocket";
+                            /** @enum {string} */
+                            user: "ortam";
+                            host_key: string;
+                            certificate: string;
+                            /** Format: date-time */
+                            certificate_expires_at: string;
+                            tunnel_path: string;
+                            /** Format: date-time */
+                            claim: string;
+                            tmux_session: string;
                         };
                     };
                 };
@@ -7778,6 +7791,12 @@ export interface components {
                 /** @enum {number} */
                 claim_ledger_version?: 1;
                 attempt_offset?: number;
+                /** @description Where the latest turn left the task's repository. */
+                git?: {
+                    repo: string;
+                    branch: string | null;
+                    commit: string | null;
+                };
                 compute?: {
                     turn: string;
                     /** @enum {string} */
@@ -8347,6 +8366,8 @@ export interface components {
             account_id: string | null;
             can_manage: boolean;
             snapshot: string | null;
+            /** @description Cloud work runs on the deployment's own machines when nothing is connected. */
+            managed: boolean;
         };
         ContextInfo: {
             id: string;

@@ -14,7 +14,7 @@ export interface RuntimeConfig {
 // The runner a Derive machine (Ortam sandbox) installs once and then launches for every job.
 // job-machine.ts runs INSTALL_RUNTIME_RUNNER when it sets a sandbox up.
 
-export const RUNNER_VERSION = "0.8.8"
+export const RUNNER_VERSION = "0.8.9"
 
 /** The pinned install must support job tokens and match a versioned runner path. */
 export const runnerRunsJobs = (runnerPath: string, installs: string = RUNNER_VERSION): boolean => {
@@ -46,8 +46,11 @@ export const INSTALL_RUNTIME_RUNNER = [
 export const runtimeSetup = (archive?: { url: string; sha256: string }) => {
   // The harnesses this runner is verified against, and tmux for interactive sessions.
   const harness = [
-    'test "$(codex --version 2>/dev/null)" = "codex-cli 0.162.1" || npm install -g --no-audit --no-fund @openai/codex@0.162.1',
-    'test "$(claude --version 2>/dev/null)" = "2.1.141 (Claude Code)" || npm install -g --no-audit --no-fund --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claude-code@2.1.141',
+    'export PATH="/home/ortam/derive-harness/codex-0.162.1/bin:/home/ortam/derive-harness/claude-2.1.141/bin:$PATH"',
+    'test "$(codex --version 2>/dev/null)" = "codex-cli 0.162.1" || npm install -g --prefix /home/ortam/derive-harness/codex-0.162.1 --no-audit --no-fund @openai/codex@0.162.1',
+    'test "$(claude --version 2>/dev/null)" = "2.1.141 (Claude Code)" || npm install -g --prefix /home/ortam/derive-harness/claude-2.1.141 --no-audit --no-fund --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claude-code@2.1.141',
+    'test "$(codex --version)" = "codex-cli 0.162.1"',
+    'test "$(claude --version)" = "2.1.141 (Claude Code)"',
     "command -v tmux >/dev/null || (sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tmux)",
   ].join("\n")
   if (!archive) return [INSTALL_RUNTIME_RUNNER, harness].join("\n")

@@ -243,6 +243,9 @@ export const askAgent = async (
       dedupe_key: input.dedupeKey ?? null,
       parent_id: input.parentId ?? null,
       node_id: input.nodeId ?? null,
+      ...(input.task && Object.keys(input.task).length
+        ? { meta_json: JSON.stringify(input.task) }
+        : {}),
     })
   } catch (error) {
     // Lost a race on the dedupe index: the winner is the job.
@@ -685,7 +688,10 @@ export const reportJob = async (
       reason: r.body_md.trim().split("\n")[0]?.trim() ?? "",
       retryable: r.retryable === true,
     }
-  const meta_json = r.meta ? JSON.stringify(r.meta) : job.meta_json
+  // A report's own meta never drops how the task runs (its repository, a session).
+  const meta_json = r.meta
+    ? JSON.stringify({ ...r.meta, ...taskOptions(job.meta_json) })
+    : job.meta_json
   const common = {
     cost_micro_usd: cost,
     result_json: JSON.stringify(result),

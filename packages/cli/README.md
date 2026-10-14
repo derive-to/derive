@@ -80,6 +80,13 @@ with the agent's instructions and model account, and reports the result. It rene
 claim as it works, and drops an answer whose claim moved to another runner, so a job is never
 answered twice.
 
+A task asked with a repository (`derive run <agent> "…" --repo owner/name[@ref]`) checks it out
+with a short-lived token from the agent's GitHub connection. On a box shared by many tasks, one
+clone under `--cwd` holds the objects and each task works in its own git worktree in
+`--cwd/.derive-tasks/<task>`, kept for its follow-ups and removed after a week untouched, so
+tasks running side by side never touch each other's files. Interactive sessions (`derive code`)
+run on Derive machines; on your own box, use its own tools for that.
+
 ```bash
 derive runner serve --agent <id>   # work the agent's jobs until stopped
 derive runner once  --agent <id>   # one pull (up to the agent's concurrency), then exit
@@ -140,6 +147,14 @@ repository checks it out with a short-lived token from a GitHub connection bound
 the pull request it opens shows on the task in Derive. Only the person who started a session
 can attach to it. Sessions, scheduled runs, and teammates' tasks share one list under
 Agents → Tasks.
+
+Managed Ortam sessions use the same commands. Derive issues a short-lived SSH certificate
+for the public key on your laptop and relays SSH through an authenticated WebSocket. Your
+private SSH key stays on your laptop; the Ortam integration key stays on the server. The CLI
+pins the machine's host key in a private temporary file for each attachment and removes it,
+along with the certificate, when SSH exits. An admitted SSH connection can continue after
+its certificate expires; attaching again obtains a new certificate. `derive forward` uses
+the same transport. OpenSSH (`ssh` and `ssh-keygen`) must be installed locally.
 
 ## Save a secret for an agent
 
@@ -304,3 +319,5 @@ uploads stay in a local spool and retry on the next scan.
 
 Derive is licensed under FSL-1.1-ALv2 and converts to Apache-2.0 on the schedule in
 the [license](https://github.com/derive-to/derive/blob/main/LICENSE).
+
+For local SSH qualification, run `node packages/cli/test/fixtures/native-session-ssh.mjs` from the repository root. This fixture needs OpenSSH client and server binaries. It starts an isolated server and tests certificates, forwarding, host trust, and cleanup. Set `DERIVE_NATIVE_SSHD` if `sshd` is outside `/usr/sbin/sshd`.

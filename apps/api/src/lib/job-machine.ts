@@ -23,7 +23,12 @@ import { cloudEnabled, connectionClient, workspaceRuntime } from "./runtime-conn
 import { runtimeFailureReason } from "./runtime-diagnostics"
 import type { RuntimeConfig } from "./runtime-setup"
 import { runnerRunsJobs, runtimeSetup } from "./runtime-setup"
-import { type SandboxClient, SandboxCreateRejected, SandboxRateLimited } from "./sandbox-client"
+import {
+  type SandboxClient,
+  SandboxCreateRejected,
+  SandboxRateLimited,
+  SandboxRefused,
+} from "./sandbox-client"
 
 // THE DERIVE MACHINE: a sandbox the job's runner works in. An agent that keeps files shares one
 // sandbox across its tasks; an agent that starts fresh gives each task its own, which stays
@@ -62,9 +67,14 @@ const MAX_SANDBOX_FAILURES = 3
 const CREATE_TTL_SECONDS = 2700
 /** A start the provider refused for now (see SandboxRateLimited). */
 const WAITING = Symbol("waiting")
+/** A start the provider refused outright (see SandboxRefused). */
+const REFUSED = Symbol("refused")
 /** How far past the asked stop time a provider's timer may land (it counts from when a resume
  *  finishes) before the turn treats the machine as misconfigured. */
 const TTL_SLACK_SECONDS = 300
+/** How far short of a full turn a running machine's stop timer may be and still take the next
+ *  turn directly (the turn then ends at most this early, and is retried). */
+const RELAUNCH_SLACK_SECONDS = 900
 /** A task's parked sandbox is deleted after this long without a turn. Stopped costs nothing,
  *  so this only bounds storage and lets a session be reopened days later. */
 const PARKED_TTL_MS = 7 * 24 * 60 * 60_000
@@ -110,6 +120,7 @@ interface MachineState {
   stop_op?: string
   process_id?: string
   launch_timeout_seconds?: number
+  launch_keep_awake?: boolean
   runner_path?: string
   runner_setup?: string
   /** Present when the job runs on its own sandbox rather than its agent's shared one. */
@@ -517,10 +528,35 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
   const at = iso(deps)
   // The provider is out of starts for now: wait, saying why, instead of asking every pass.
   if (m.waiting && m.waiting.until > at && job.status === "running") return
-  const startOrWait = async <T>(start: () => Promise<T>): Promise<T | typeof WAITING> => {
+  /** The turn's compute on `sandboxId`, from when its machine came up to `stopped`. */
+  const recordCompute = async (sandboxId: string, stopped: string) => {
+    if (!m.active_at) return
+    const usage = await client
+      .usage?.(sandboxId, m.active_at, stopped, state.identity)
+      .catch(() => null)
+    const updated = await meta.jobExecution?.compute(job.id, job.org_id, {
+      turn: m.turn,
+      provider: state.provider ?? "ortam",
+      ...(state.connection_id ? { connection_id: state.connection_id } : {}),
+      sandbox_id: sandboxId,
+      started_at: m.active_at,
+      stopped_at: stopped,
+      billable_seconds: usage?.billable_seconds ?? null,
+      cost_micro_usd: usage?.cost_micro_usd ?? null,
+    })
+    if (updated) wakeSettled(deps, updated)
+  }
+  const startOrWait = async <T>(
+    start: () => Promise<T>,
+  ): Promise<T | typeof WAITING | typeof REFUSED> => {
     try {
       return await start()
     } catch (error) {
+      if (error instanceof SandboxRefused) {
+        const why = `boat.dev would not start a machine: ${error.message}`
+        await failIfOpen(deps, agent, job, why, false)
+        return REFUSED
+      }
       if (!(error instanceof SandboxRateLimited)) throw error
       const until = new Date(Date.parse(at) + error.retryAfterSeconds * 1000).toISOString()
       await move(job.machine_phase ?? "starting", { waiting: { reason: error.message, until } })
@@ -552,6 +588,10 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
         ),
       )
       if (created === WAITING) return
+      if (created === REFUSED) {
+        await move("released", { own: undefined, waiting: undefined })
+        return
+      }
       if (!created) {
         await failIfOpen(deps, agent, job, "Derive could not start a machine for this task.")
         await move("released", { own: undefined })
@@ -633,6 +673,7 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
         cwd: "/home/ortam",
         env: await environment(),
         timeout_seconds: claim.launch_timeout_seconds,
+        keep_awake: claim.launch_keep_awake ?? false,
       },
       `derive-job-${m.turn}-launch`,
       state.identity,
@@ -654,8 +695,9 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
     case "starting": {
       if (!m.resume_op) {
         const observed = await client.sandbox(sandbox, state.identity)
+        // Already up (handed over from the previous turn): this turn's compute starts now.
         if (observed.state === "ready") {
-          await move("ready")
+          await move("ready", { active_at: m.active_at ?? at })
           return
         }
         const env = await environment()
@@ -667,6 +709,11 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
           }),
         )
         if (op === WAITING) return
+        // Refused: a task's own machine stays parked with its files; a shared one goes back.
+        if (op === REFUSED) {
+          await move(own ? "parked" : "stopping", { waiting: undefined })
+          return
+        }
         await move("starting", {
           resume_op: op.id,
           active_at: m.active_at ?? at,
@@ -681,19 +728,20 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
     }
     case "ready": {
       const observed = await client.sandbox(sandbox, state.identity)
-      // The provider's own stop timer must be set and must not outlive this turn by much. It
-      // starts when a resume finishes rather than when it was asked for, so it may run a little
-      // past the asked time.
+      // Deadline timers bound compute after resume; idle timers reset with activity and are
+      // held by the runner process. Both keep the controller deadline and process timeout.
       if (
         observed.state !== "ready" ||
         observed.auto_stop_after_seconds <= 0 ||
-        observed.auto_stop_after_seconds >
-          Math.max(CREATE_TTL_SECONDS, ttlFor(m.deadline_at, at)) + TTL_SLACK_SECONDS
+        (client.stopTimer === "deadline" &&
+          observed.auto_stop_after_seconds >
+            Math.max(CREATE_TTL_SECONDS, ttlFor(m.deadline_at, at)) + TTL_SLACK_SECONDS)
       ) {
         await move("stopping")
         return
       }
       const launching = await move("launching", {
+        launch_keep_awake: client.stopTimer === "idle",
         launch_timeout_seconds: Math.max(
           1,
           Math.ceil((Date.parse(m.deadline_at) - Date.parse(at)) / 1000),
@@ -748,6 +796,25 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
           })
         return
       }
+      // The task's next turn is already waiting (a follow-up, or an interrupt that ended this
+      // turn): hand it the running machine instead of stopping and resuming it, which costs a
+      // provider start and minutes. Only while the provider's timer still covers a full turn.
+      if (own && observed.state === "ready" && !m.stop_op) {
+        const after = await meta.getJob(job.id)
+        const next = machineClock(
+          taskOptions(job.meta_json).session ? MAX_RUN_CEILING_MS : agent.max_run_ms,
+          Date.parse(at),
+        )
+        if (
+          after?.status === "queued" &&
+          observed.auto_stop_after_seconds >=
+            ttlFor(new Date(next.deadline).toISOString(), at) - RELAUNCH_SLACK_SECONDS
+        ) {
+          await recordCompute(sandbox, at)
+          await move("parked")
+          return
+        }
+      }
       if (observed.state !== "stopped") {
         if (!m.stop_op) {
           const op = await client.lifecycle(
@@ -767,23 +834,7 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
       }
       // Stopped, files saved. A runner that never reported fails the job so it can retry.
       await failIfOpen(deps, agent, job, "The machine stopped before the job reported back.")
-      if (m.active_at) {
-        const stopped = iso(deps)
-        const usage = await client
-          .usage?.(sandbox, m.active_at, stopped, state.identity)
-          .catch(() => null)
-        const updated = await meta.jobExecution?.compute(job.id, job.org_id, {
-          turn: m.turn,
-          provider: state.provider ?? "ortam",
-          ...(state.connection_id ? { connection_id: state.connection_id } : {}),
-          sandbox_id: sandbox,
-          started_at: m.active_at,
-          stopped_at: stopped,
-          billable_seconds: usage?.billable_seconds ?? null,
-          cost_micro_usd: usage?.cost_micro_usd ?? null,
-        })
-        if (updated) wakeSettled(deps, updated)
-      }
+      await recordCompute(sandbox, iso(deps))
       // A job's own sandbox parks with its files for the next turn, unless the task was
       // stopped for good; a shared one goes back to its agent.
       if (own) {
@@ -813,6 +864,7 @@ async function failIfOpen(
   agent: AgentRecord | null,
   job: JobRecord,
   why: string,
+  retryable = true,
 ) {
   const fresh = await deps.meta.getJob(job.id)
   if (!agent || fresh?.status !== "running") return
@@ -822,7 +874,7 @@ async function failIfOpen(
     started_at: fresh.started_at,
     status: "failed",
     body_md: why,
-    retryable: true,
+    retryable,
   }).catch(() => null)
 }
 
@@ -1177,14 +1229,14 @@ export async function attachSession(
   job: JobRecord,
   publicKey: string,
 ): Promise<
-  | { ok: true; host: string; port: number; user: string; host_key: string | null }
+  | ({ ok: true } & import("./sandbox-client").SandboxSshAccess)
   | { ok: false; status: 404 | 409; error: string }
 > {
   const agent = await deps.meta.getAgent(job.agent_id)
   const own = parse<MachineState>(job.machine_json)?.own
   if (!agent || !taskOptions(job.meta_json).session)
     return { ok: false, status: 404, error: "This task is not an interactive session." }
-  if (job.machine_phase !== "running" || !own?.sandbox_id)
+  if (job.status !== "running" || job.machine_phase !== "running" || !own?.sandbox_id)
     return {
       ok: false,
       status: 409,
@@ -1195,6 +1247,39 @@ export async function attachSession(
   const client = await clientFor(deps, agent, own)
   if (!client.sshKey) return { ok: false, status: 409, error: "This machine has no SSH access." }
   return { ok: true, ...(await client.sshKey(own.sandbox_id, publicKey, own.identity)) }
+}
+
+export function sessionClaim(job: JobRecord) {
+  const state = parse<MachineState>(job.machine_json)
+  if (
+    job.status !== "running" ||
+    job.machine_phase !== "running" ||
+    !job.started_at ||
+    !taskOptions(job.meta_json).session ||
+    !state?.own?.sandbox_id ||
+    !state.turn ||
+    !Number.isFinite(Date.parse(state.deadline_at)) ||
+    Date.parse(state.deadline_at) <= Date.now()
+  )
+    return null
+  return {
+    startedAt: job.started_at,
+    turn: state.turn,
+    sandboxId: state.own.sandbox_id,
+    deadlineAt: state.deadline_at,
+    identity: state.own.identity,
+    provider: state.own.provider,
+    connectionId: state.own.connection_id,
+    apiUrl: state.own.api_url,
+  }
+}
+
+export async function sessionTunnelRequest(deps: MachineDeps, job: JobRecord) {
+  const agent = await deps.meta.getAgent(job.agent_id)
+  const own = parse<MachineState>(job.machine_json)?.own
+  if (!agent || !own?.sandbox_id || !sessionClaim(job)) return null
+  const client = await clientFor(deps, agent, own)
+  return client.sshTunnel ? client.sshTunnel(own.sandbox_id, own.identity) : null
 }
 
 /** For the tick's callers: the pass, or nothing when this deploy has no Derive machines. */
