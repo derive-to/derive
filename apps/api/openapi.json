@@ -1665,6 +1665,14 @@
             "type": "string",
             "nullable": true
           },
+          "on": {
+            "$ref": "#/components/schemas/GithubTriggerOn"
+          },
+          "notice": {
+            "type": "string",
+            "nullable": true,
+            "description": "Set up still needed before events arrive, on save."
+          },
           "instruction": {
             "type": "string"
           },
@@ -1746,12 +1754,71 @@
           "cron",
           "tz",
           "on_event",
+          "on",
           "instruction",
           "subject",
           "enabled",
           "revision",
           "created_at"
         ]
+      },
+      "GithubTriggerOn": {
+        "type": "object",
+        "nullable": true,
+        "properties": {
+          "github": {
+            "type": "object",
+            "properties": {
+              "event": {
+                "type": "string",
+                "enum": [
+                  "pull_request",
+                  "push",
+                  "issues",
+                  "issue_comment",
+                  "pull_request_review",
+                  "release",
+                  "workflow_run"
+                ]
+              },
+              "repository": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_.-]{1,100}\\/[A-Za-z0-9_.-]{1,100}$"
+              },
+              "actions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z_]{1,40}$"
+                },
+                "maxItems": 20,
+                "description": "Only these actions (opened, synchronize, closed…); merged is a closed pull request that merged. Omit for all."
+              },
+              "branches": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "maxItems": 20,
+                "description": "Only these branches; * matches within a segment, ** across. Omit for all."
+              },
+              "drafts": {
+                "type": "boolean",
+                "description": "Also run on draft pull requests."
+              }
+            },
+            "required": [
+              "event",
+              "repository"
+            ]
+          }
+        },
+        "required": [
+          "github"
+        ],
+        "description": "An event trigger: what starts it."
       },
       "Agent": {
         "type": "object",
@@ -6948,7 +7015,7 @@
         "tags": [
           "Agents"
         ],
-        "summary": "Add a schedule to an agent.",
+        "summary": "Add a schedule, or a GitHub event that starts the agent, to an agent.",
         "parameters": [
           {
             "schema": {
@@ -6961,7 +7028,7 @@
         ],
         "responses": {
           "201": {
-            "description": "The schedule.",
+            "description": "The trigger.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6978,7 +7045,7 @@
         "tags": [
           "Agents"
         ],
-        "summary": "Change or pause a schedule.",
+        "summary": "Change or pause a schedule or event trigger.",
         "parameters": [
           {
             "schema": {
@@ -7006,7 +7073,7 @@
         "tags": [
           "Agents"
         ],
-        "summary": "Remove a schedule.",
+        "summary": "Remove a schedule or event trigger.",
         "parameters": [
           {
             "schema": {

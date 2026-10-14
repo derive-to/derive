@@ -106,6 +106,149 @@ describe("standard GitHub integration", () => {
     ).toBe(202)
   })
 
+  it("starts an agent's task when a signed GitHub event matches its trigger", async () => {
+    const { app, meta } = makeAuthedApp("gh-events", [owner], "owner", {
+      deps: { encryptionKey: KEY },
+    })
+    await seedApp(meta)
+    const hooks: Record<string, unknown>[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        const path = new URL(String(url)).pathname
+        if (path === "/app/hook/config" && init?.method === "PATCH") {
+          hooks.push(JSON.parse(String(init.body)))
+          return new Response("{}", { status: 200 })
+        }
+        if (path === "/app")
+          return new Response(
+            JSON.stringify({
+              slug: "derive-test",
+              owner: { login: "acme", type: "User" },
+              events: [],
+            }),
+            { status: 200 },
+          )
+        return new Response("not found", { status: 404 })
+      }),
+    )
+    const source = await upsertGithubConnection(meta, {
+      orgId: "default",
+      userId: owner.id,
+      installationId: "44010",
+      accountLogin: "acme",
+    })
+    const create = async (body: object) =>
+      (await (await app.request("/v1/agents", jsonAs(as(owner.email), body))).json()) as {
+        id: string
+      }
+    const reviewer = await create({ name: "Reviewer", connection_ids: [source.id] })
+    const loner = await create({ name: "Loner" })
+    const on = {
+      github: {
+        event: "pull_request",
+        repository: "acme/web",
+        actions: ["opened", "synchronize"],
+        branches: ["main", "release/*"],
+      },
+    }
+    const refused = await app.request(
+      `/v1/agents/${loner.id}/triggers`,
+      jsonAs(as(owner.email), { on, instruction: "Review it." }),
+    )
+    expect(refused.status).toBe(400)
+    const added = await app.request(
+      `/v1/agents/${reviewer.id}/triggers`,
+      jsonAs(as(owner.email), { on, instruction: "Review this pull request." }),
+    )
+    expect(added.status).toBe(201)
+    const trigger = (await added.json()) as {
+      id: string
+      kind: string
+      on: unknown
+      notice: string
+    }
+    expect(trigger).toMatchObject({ kind: "event", on })
+    // Derive sets the webhook's secret itself and says what is left to turn on at GitHub.
+    expect(hooks).toEqual([
+      expect.objectContaining({
+        url: "http://derive.test/v1/github/webhook",
+        secret: githubWebhookSecret("1", KEY),
+      }),
+    ])
+    expect(trigger.notice).toContain("https://github.com/settings/apps/derive-test/permissions")
+
+    const pr = (over: { action?: string; base?: string; head?: string; draft?: boolean } = {}) => ({
+      action: over.action ?? "opened",
+      installation: { id: 44010 },
+      repository: { full_name: "acme/web" },
+      sender: { login: "dev" },
+      pull_request: {
+        number: 7,
+        title: "Speed up search",
+        html_url: "https://github.com/acme/web/pull/7",
+        draft: over.draft ?? false,
+        base: { ref: over.base ?? "main" },
+        head: { sha: "a1b2c3d4e5f6", ref: "fast", repo: { full_name: over.head ?? "acme/web" } },
+      },
+    })
+    const deliver = async (payload: object, delivery: string, event = "pull_request") => {
+      const body = JSON.stringify(payload)
+      const res = await app.request("/v1/github/webhook", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-github-event": event,
+          "x-github-delivery": delivery,
+          "x-hub-signature-256": githubWebhookSignature(body, githubWebhookSecret("1", KEY)),
+        },
+        body,
+      })
+      expect(res.status).toBe(202)
+    }
+    const jobs = () => meta.listJobs({ orgId: "default", triggerId: trigger.id })
+
+    await deliver(pr(), "d-1")
+    await deliver(pr(), "d-1") // GitHub redelivers: still one task
+    const [job, ...rest] = await jobs()
+    expect(rest).toEqual([])
+    expect(job).toMatchObject({ agent_id: reviewer.id, trigger_id: trigger.id })
+    expect(job?.instruction).toContain("Review this pull request.")
+    expect(job?.instruction).toContain("GitHub pull_request.opened on acme/web#7: Speed up search")
+    expect(JSON.parse(job?.meta_json ?? "{}")).toEqual({ repo: "acme/web@a1b2c3d4e5f6" })
+
+    // Nothing else starts work: another action, another base, a fork, a draft, its own bot,
+    // or an installation this agent does not hold.
+    await deliver(pr({ action: "closed" }), "d-2")
+    await deliver(pr({ base: "dev" }), "d-3")
+    await deliver(pr({ head: "stranger/web" }), "d-4")
+    await deliver(pr({ draft: true }), "d-5")
+    await deliver({ ...pr(), sender: { login: "derive-test[bot]" } }, "d-6")
+    await deliver({ ...pr(), installation: { id: 99 } }, "d-7")
+    expect(await jobs()).toHaveLength(1)
+    await deliver(pr({ action: "synchronize", base: "release/2.1" }), "d-8")
+    expect(await jobs()).toHaveLength(2)
+    // "merged" is a closed pull request that merged.
+    await app.request(`/v1/triggers/${trigger.id}`, {
+      ...jsonAs(as(owner.email), { on: { github: { ...on.github, actions: ["merged"] } } }),
+      method: "PATCH",
+    })
+    await deliver(pr({ action: "closed" }), "d-10")
+    expect(await jobs()).toHaveLength(2)
+    const merged = pr({ action: "closed" })
+    await deliver({ ...merged, pull_request: { ...merged.pull_request, merged: true } }, "d-11")
+    expect(await jobs()).toHaveLength(3)
+
+    // Paused, it waits; the schedule list never sees it.
+    await app.request(`/v1/triggers/${trigger.id}`, {
+      ...jsonAs(as(owner.email), { enabled: false }),
+      method: "PATCH",
+    })
+    await deliver({ ...merged, pull_request: { ...merged.pull_request, merged: true } }, "d-9")
+    expect(await jobs()).toHaveLength(3)
+    expect(await meta.listEnabledScheduleTriggers(["default"])).toEqual([])
+  })
+
   it("turns an install callback into one stable source without collection work", async () => {
     const { app, meta } = makeAuthedApp("gh-standard", [owner, member], "editor", {
       deps: { encryptionKey: KEY },

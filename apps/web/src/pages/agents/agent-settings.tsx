@@ -1,11 +1,10 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link, useNavigate } from "@tanstack/react-router"
-import { type FormEvent, type ReactNode, useState } from "react"
+import { type FormEvent, useState } from "react"
 import {
   type AgentDetail,
   type AgentPatch,
   type AgentSource,
-  type AgentTrigger,
   api,
   type Connection,
   type ModelAccount,
@@ -29,16 +28,9 @@ import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 import { accountLabel } from "../settings/accounts-section"
 import { sourceName } from "./agent-jobs"
-import {
-  cronLabel,
-  firstLine,
-  machineOf,
-  modelChoices,
-  ownerMachineName,
-  runnerCommand,
-  when,
-} from "./format"
-import { Group, Segmented } from "./rows"
+import { TriggersField } from "./agent-triggers"
+import { machineOf, modelChoices, ownerMachineName, runnerCommand, when } from "./format"
+import { Field, Group, Segmented, Sub, Verb } from "./rows"
 
 // An agent's Settings tab. Everything a coding session set when it made the agent is changed
 // here; nothing is created here. A person who cannot manage the agent sees the same rows as
@@ -93,7 +85,7 @@ export function AgentSettings({ agent, names, isWorkspaceOwner }: Props) {
       </Group>
 
       <Group label="Running" testId="agent-running">
-        <SchedulesField agent={agent} edit={edit} />
+        <TriggersField agent={agent} edit={edit} />
         <Field label="Machine">
           <Segmented
             testId="agent-machine"
@@ -193,54 +185,6 @@ export function AgentSettings({ agent, names, isWorkspaceOwner }: Props) {
 }
 
 /** One settings line: a grey label, the value, and an optional verb at the right. */
-function Field({
-  label,
-  action,
-  children,
-}: {
-  label: string
-  action?: ReactNode
-  children: ReactNode
-}) {
-  return (
-    <div className="grid gap-x-3.5 gap-y-1.5 border-b border-border py-3.5 last:border-b-0 sm:grid-cols-[9rem_minmax(0,1fr)_auto]">
-      <span className="pt-0.5 text-sm text-muted-foreground">{label}</span>
-      <div className="flex min-w-0 flex-col gap-1 text-base">{children}</div>
-      <div className="flex items-start">{action}</div>
-    </div>
-  )
-}
-
-const Sub = ({ children }: { children: ReactNode }) => (
-  <p className="text-sm text-muted-foreground">{children}</p>
-)
-
-function Verb({
-  testId,
-  onClick,
-  disabled,
-  children,
-}: {
-  testId: string
-  onClick: () => void
-  disabled?: boolean
-  children: ReactNode
-}) {
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="xs"
-      data-testid={testId}
-      disabled={disabled}
-      onClick={onClick}
-      className="text-muted-foreground"
-    >
-      {children}
-    </Button>
-  )
-}
-
 function NameFields({
   agent,
   edit,
@@ -376,153 +320,6 @@ function InstructionsField({
         version.
       </Sub>
     </Field>
-  )
-}
-
-const BROWSER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
-
-function SchedulesField({ agent, edit }: { agent: AgentDetail; edit: boolean }) {
-  const [editing, setEditing] = useState<AgentTrigger | "new" | null>(null)
-  const invalidate = [["agents"]]
-  const toggle = useApiMutation({
-    mutationFn: (t: AgentTrigger) => api.updateTrigger(t.id, { enabled: !t.enabled }),
-    invalidate,
-  })
-  const remove = useApiMutation({
-    mutationFn: (t: AgentTrigger) => api.deleteTrigger(t.id),
-    invalidate,
-  })
-  const schedules = agent.triggers.filter((t) => t.kind === "schedule")
-  return (
-    <Field
-      label="Schedule"
-      action={
-        edit &&
-        !editing && (
-          <Verb testId="agent-schedule-add" onClick={() => setEditing("new")}>
-            Add
-          </Verb>
-        )
-      }
-    >
-      {schedules.length === 0 && !editing && <span className="text-muted-foreground">None</span>}
-      {schedules.map((t) =>
-        editing !== "new" && editing?.id === t.id ? (
-          <ScheduleForm key={t.id} agentId={agent.id} trigger={t} onDone={() => setEditing(null)} />
-        ) : (
-          <div
-            key={t.id}
-            data-testid={`agent-schedule-${t.id}`}
-            className="flex items-start justify-between gap-3 border-b border-border py-1.5 last:border-b-0"
-          >
-            <div className="flex min-w-0 flex-col">
-              <span className={cn(!t.enabled && "text-muted-foreground")}>
-                {t.cron ? cronLabel(t.cron) : "Schedule"}
-                {t.tz && <span className="ml-2 text-sm text-muted-foreground">{t.tz}</span>}
-                {!t.enabled && <span className="ml-2 text-sm">Paused</span>}
-              </span>
-              <span className="truncate text-sm text-muted-foreground">
-                {firstLine(t.instruction)}
-              </span>
-            </div>
-            {edit && (
-              <span className="flex shrink-0 items-center">
-                <Verb testId={`agent-schedule-toggle-${t.id}`} onClick={() => toggle.mutate(t)}>
-                  {t.enabled ? "Pause" : "Resume"}
-                </Verb>
-                <Verb testId={`agent-schedule-edit-${t.id}`} onClick={() => setEditing(t)}>
-                  Edit
-                </Verb>
-                <Button
-                  type="button"
-                  variant="destructive-ghost"
-                  size="xs"
-                  data-testid={`agent-schedule-remove-${t.id}`}
-                  onClick={() => remove.mutate(t)}
-                >
-                  Remove
-                </Button>
-              </span>
-            )}
-          </div>
-        ),
-      )}
-      {editing === "new" && <ScheduleForm agentId={agent.id} onDone={() => setEditing(null)} />}
-    </Field>
-  )
-}
-
-function ScheduleForm({
-  agentId,
-  trigger,
-  onDone,
-}: {
-  agentId: string
-  trigger?: AgentTrigger
-  onDone: () => void
-}) {
-  const [cron, setCron] = useState(trigger?.cron ?? "0 9 * * 1-5")
-  const [tz, setTz] = useState(trigger?.tz ?? BROWSER_TZ)
-  const [instruction, setInstruction] = useState(trigger?.instruction ?? "")
-  const save = useApiMutation({
-    mutationFn: () => {
-      const body = { cron: cron.trim(), tz: tz.trim(), instruction: instruction.trim() }
-      return trigger ? api.updateTrigger(trigger.id, body) : api.addTrigger(agentId, body)
-    },
-    invalidate: [["agents"]],
-    onSuccess: onDone,
-  })
-  const ready = cron.trim() && tz.trim() && instruction.trim()
-  return (
-    <form
-      data-testid="agent-schedule-form"
-      className="flex flex-col gap-2 py-1.5"
-      onSubmit={(e) => {
-        e.preventDefault()
-        if (ready) save.mutate()
-      }}
-    >
-      <div className="flex flex-wrap gap-2">
-        <Input
-          value={cron}
-          onChange={(e) => setCron(e.target.value)}
-          aria-label="Cron"
-          data-testid="agent-schedule-cron"
-          className="w-40 font-mono"
-        />
-        <Input
-          value={tz}
-          onChange={(e) => setTz(e.target.value)}
-          aria-label="Time zone"
-          data-testid="agent-schedule-tz"
-          className="w-48"
-        />
-        {cron.trim() && cronLabel(cron) !== cron.trim() && (
-          <span className="self-center text-sm text-muted-foreground">{cronLabel(cron)}</span>
-        )}
-      </div>
-      <Textarea
-        value={instruction}
-        onChange={(e) => setInstruction(e.target.value)}
-        placeholder="What it does each time"
-        aria-label="Instruction"
-        data-testid="agent-schedule-instruction"
-      />
-      <div className="flex items-center gap-2">
-        <Button
-          type="submit"
-          size="xs"
-          data-testid="agent-schedule-save"
-          disabled={!ready}
-          loading={save.isPending}
-        >
-          Save
-        </Button>
-        <Verb testId="agent-schedule-cancel" onClick={onDone}>
-          Cancel
-        </Verb>
-      </div>
-    </form>
   )
 }
 

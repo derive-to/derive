@@ -186,6 +186,8 @@ export interface AskInput {
   kind?: "ask" | "node" | "graph"
   /** How a Derive-machine task runs (interactive session, repository); kept for its life. */
   task?: TaskOptions
+  /** The event trigger that started it. */
+  triggerId?: string
 }
 
 /** Open a job for an agent. With a dedupe key that already names an open job, returns that
@@ -215,6 +217,7 @@ export const askAgent = async (
         subject_json: input.subject ? JSON.stringify(input.subject) : null,
         parent_id: input.parentId ?? null,
         node_id: input.nodeId ?? null,
+        trigger_id: input.triggerId ?? null,
         ...(input.task && Object.keys(input.task).length
           ? { meta_json: JSON.stringify(input.task) }
           : {}),
@@ -243,6 +246,7 @@ export const askAgent = async (
       dedupe_key: input.dedupeKey ?? null,
       parent_id: input.parentId ?? null,
       node_id: input.nodeId ?? null,
+      trigger_id: input.triggerId ?? null,
       ...(input.task && Object.keys(input.task).length
         ? { meta_json: JSON.stringify(input.task) }
         : {}),

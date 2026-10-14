@@ -1,6 +1,7 @@
 import type { ReactNode } from "react"
 import { Icon, type IconName } from "@/components/icons"
 import { SectionHeading } from "@/components/shared/section-title"
+import { Button } from "@/components/ui/button"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { cn } from "@/lib/utils"
 import type { MachineMark } from "./format"
@@ -137,5 +138,54 @@ export function Segmented({
         </ToggleGroupItem>
       ))}
     </ToggleGroup>
+  )
+}
+
+// Settings rows: a label, its value, and a quiet action on the right.
+export function Field({
+  label,
+  action,
+  children,
+}: {
+  label: string
+  action?: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <div className="grid gap-x-3.5 gap-y-1.5 border-b border-border py-3.5 last:border-b-0 sm:grid-cols-[9rem_minmax(0,1fr)_auto]">
+      <span className="pt-0.5 text-sm text-muted-foreground">{label}</span>
+      <div className="flex min-w-0 flex-col gap-1 text-base">{children}</div>
+      <div className="flex items-start">{action}</div>
+    </div>
+  )
+}
+
+export const Sub = ({ children }: { children: ReactNode }) => (
+  <p className="text-sm text-muted-foreground">{children}</p>
+)
+
+export function Verb({
+  testId,
+  onClick,
+  disabled,
+  children,
+}: {
+  testId: string
+  onClick: () => void
+  disabled?: boolean
+  children: ReactNode
+}) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="xs"
+      data-testid={testId}
+      disabled={disabled}
+      onClick={onClick}
+      className="text-muted-foreground"
+    >
+      {children}
+    </Button>
   )
 }
