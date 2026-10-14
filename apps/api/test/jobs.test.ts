@@ -3050,6 +3050,8 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
         cwd: string
       }) => Promise<"exited" | "idle" | "stopped">,
       hold?: Promise<void>,
+      /** The turn stops to ask the person this. */
+      question?: string,
     ) => {
       const env = boat.boxes.get(sandboxId)?.env
       if (!env) throw new Error(`nothing launched on ${sandboxId}`)
@@ -3080,7 +3082,12 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
           )
           opts.meter.sessionId = `${sandboxId}-thread`
           await hold
-          return { ok: true, answer: { body_md: answer, escalate: false } }
+          return {
+            ok: true,
+            answer: question
+              ? { body_md: answer, escalate: true, escalation_reason: question }
+              : { body_md: answer, escalate: false },
+          }
         },
         // An interactive harness leaves its own session file, named by the id it chose.
         ...(runSession
@@ -3434,6 +3441,57 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     expect(boat.calls.filter((c) => /^(stop|resume|create)/.test(c))).toEqual([
       "create bx_1 - small",
     ])
+  })
+
+  it("a turn that stops to ask hands off to what the person already sent, and an answer needs no question id", async () => {
+    const { app, meta, pass, until, runTurn } = await cloudSetup("jobs-machine-asks")
+    const agent = await createAgent(app, {
+      machine: "derive",
+      provider: "codex",
+      sandbox: { fresh: true },
+    })
+    const job = (await (await ask(app, ed.email, agent.id, "Set up the demo")).json()) as {
+      id: string
+    }
+    await until(job.id, "running")
+    let release = () => {}
+    const asking = runTurn(
+      "bx_1",
+      "Prepared it.",
+      undefined,
+      new Promise<void>((resolve) => {
+        release = resolve
+      }),
+      "Which brand?",
+    )
+    const status = async () => (await meta.getJob(job.id))?.status
+    for (let i = 0; i < 250 && (await status()) !== "running"; i++)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    // The person writes while the turn is still working; then the turn stops to ask.
+    await app.request(
+      `/v1/jobs/${job.id}/messages`,
+      jsonAs(as(ed.email), { body_md: "Use the olive oil brand." }),
+    )
+    release()
+    expect(await asking).toBe("needs_you")
+    // Their message is the answer: the task goes on with it instead of waiting on the question.
+    const handedOff = await meta.getJob(job.id)
+    expect(handedOff?.needs_json).toBeNull()
+    expect(["queued", "running"]).toContain(handedOff?.status)
+    for (let i = 0; i < 6 && (await status()) !== "running"; i++) await pass()
+    await until(job.id, "running")
+    // This time it asks with nothing waiting, so the task waits on the person.
+    expect(
+      await runTurn("bx_1", "Need one more thing.", undefined, undefined, "Which channels?"),
+    ).toBe("needs_you")
+    expect(await status()).toBe("needs_you")
+    // An answer that names no question answers the one waiting.
+    const answered = await app.request(
+      `/v1/jobs/${job.id}/answer`,
+      jsonAs(as(ed.email), { text: "X and Instagram." }),
+    )
+    expect(answered.status).toBe(200)
+    expect(["queued", "running"]).toContain(await status())
   })
 
   it("a provider start limit makes the task wait, saying why, then start", async () => {
