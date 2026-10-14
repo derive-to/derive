@@ -362,7 +362,9 @@ export const answerJob = async (
   if (usesCloudTurns(agent, job)) {
     const out = await commandJob(deps, agent, authorId, {
       intent: "answer",
-      question_id: answer.question_id ?? null,
+      // An answer that names no question answers the one waiting now; one that names an older
+      // question is still refused as stale.
+      question_id: answer.question_id ?? needs?.question_id ?? null,
       source: "app",
       key: commandKey(answer.dedupe_key),
       job_id: job.id,
