@@ -6358,8 +6358,8 @@ interface ElReg {
     for (const el of Array.from(document.body.querySelectorAll(`[${SRC_ATTR}]`))) consider(el)
     for (const el of base.keys()) consider(el)
     for (const root of detachedRoots()) for (const e of stampedIn(root)) consider(e)
-    // What the new version no longer has (a save removed it and undo brought it back)
-    // saves as a copy of a block that opens the same way, or else refuses to save.
+    // A saved deletion can leave an empty Markdown element on the page. Keep its
+    // verified source history, as well as the detached elements held by Undo.
     for (const [el, n] of plan)
       if (n !== null && srcOf(el) !== n) {
         renumber(el, n)
@@ -6388,7 +6388,7 @@ interface ElReg {
       if (n === null) {
         const original = oldId.get(el)
         const parts = base.get(el)
-        if (!el.isConnected && original !== undefined && parts && previousVersion > 0) {
+        if (original !== undefined && parts && previousVersion > 0) {
           sourceHistory.set(el, { src: original, version: previousVersion, parts })
           cleared.add(el)
           renumber(el, null)

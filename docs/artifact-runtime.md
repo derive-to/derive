@@ -129,3 +129,7 @@ An edit that returns to the saved source clears any queued local draft.
 Markdown uses the same historical keep token and source preservation rule.
 Its parser supplies source ranges to the shared history module.
 Historical nodes keep their authored bytes and parser context when restored.
+
+An emptied Markdown element can remain in the live editor after its source disappears.
+The editor retains its verified source history until the edit session ends.
+Undo can then restore its original source through the same historical keep token.
