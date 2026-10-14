@@ -1471,17 +1471,15 @@ interface ElReg {
         restore("data-derive-caption", before.caption)
       }
     } else if (wire.op === "scene-move") {
-      const originalNext = scene.nextSibling
-      redoScene = () => {
-        if (wire.direction === "previous") {
-          const prev = scene.previousElementSibling
-          if (prev?.hasAttribute("data-derive-scene")) root.insertBefore(scene, prev)
-        } else {
-          const next = scene.nextElementSibling
-          if (next?.hasAttribute("data-derive-scene")) root.insertBefore(next, scene)
-        }
-      }
-      undoScene = () => root.insertBefore(scene, originalNext)
+      const before = video.scenes()
+      const at = before.indexOf(scene)
+      const to = at + (wire.direction === "previous" ? -1 : 1)
+      if (to < 0 || to >= before.length) return
+      const after = [...before]
+      after.splice(at, 1)
+      after.splice(to, 0, scene)
+      redoScene = () => reorderInPlace(after)
+      undoScene = () => reorderInPlace(before)
     } else if (wire.op === "scene-duplicate") {
       const copy = scene.cloneNode(true) as HTMLElement
       const used = new Set(video.scenes().map((s) => s.dataset.deriveScene ?? ""))
