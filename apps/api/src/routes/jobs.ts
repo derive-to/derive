@@ -1005,21 +1005,21 @@ export const jobRoutes = (ctx: AppContext) => {
       new Request(request, { signal: AbortSignal.any([request.signal, c.req.raw.signal]) }),
       c,
     )
+    const relay = relaySession(upstream, access.stillAllowed, access.expiresAt)
+    const signal = c.req.raw.signal
+    signal.addEventListener("abort", relay.close, { once: true })
+    const unwatch = transport.watchDisconnect?.(c, relay.close)
+    if (signal.aborted) relay.close()
     try {
-      if (!(await access.stillAllowed())) {
-        upstream.close()
+      if (!(await relay.authorize()))
         return bail(fail(c, 409, "This session changed. Attach again."))
-      }
-      const relay = relaySession(upstream, access.stillAllowed, access.expiresAt)
-      try {
-        return await transport.accept(c, relay.ready, relay.close)
-      } catch (error) {
-        relay.close()
-        throw error
-      }
+      return await transport.accept(c, relay.ready, relay.close)
     } catch (error) {
-      upstream.close()
+      relay.close()
       throw error
+    } finally {
+      signal.removeEventListener("abort", relay.close)
+      unwatch?.()
     }
   })
   personAction(

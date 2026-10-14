@@ -46,9 +46,19 @@ export function nodeSessionSocket(ws: WebSocket) {
 }
 
 export const nodeSessionTransport: SessionTransport = {
+  watchDisconnect(c, close) {
+    const downstream = requestSocket(c)
+    downstream?.once("close", close)
+    downstream?.once("end", close)
+    if (downstream?.destroyed || downstream?.readableEnded) close()
+    return () => {
+      downstream?.off("close", close)
+      downstream?.off("end", close)
+    }
+  },
   async connect(request, c) {
     const downstream = requestSocket(c)
-    if (request.signal.aborted || downstream?.destroyed)
+    if (request.signal.aborted || downstream?.destroyed || downstream?.readableEnded)
       throw new Error("SSH tunnel connection canceled")
     const url = new URL(request.url)
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:"
@@ -64,6 +74,7 @@ export const nodeSessionTransport: SessionTransport = {
       const cleanup = () => {
         request.signal.removeEventListener("abort", abort)
         downstream?.off("close", abort)
+        downstream?.off("end", abort)
       }
       const abort = () => {
         cleanup()
@@ -76,6 +87,7 @@ export const nodeSessionTransport: SessionTransport = {
       }
       request.signal.addEventListener("abort", abort, { once: true })
       downstream?.once("close", abort)
+      downstream?.once("end", abort)
       ws.once("error", fail)
       ws.once("close", fail)
       ws.once("open", () => {
@@ -89,6 +101,7 @@ export const nodeSessionTransport: SessionTransport = {
     const cleanup = () => {
       clearTimeout(timeout)
       downstream?.off("close", abort)
+      downstream?.off("end", abort)
     }
     const abort = () => {
       cleanup()
@@ -96,7 +109,8 @@ export const nodeSessionTransport: SessionTransport = {
     }
     const timeout = setTimeout(abort, 15_000)
     downstream?.once("close", abort)
-    if (downstream?.destroyed) {
+    downstream?.once("end", abort)
+    if (downstream?.destroyed || downstream?.readableEnded) {
       abort()
       return new Response(null, { status: 400 })
     }

@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { join } from "node:path"
 import { SESSION_TMUX } from "./conversation-format.js"
 
 const MAX_FRAME = 1_048_576
@@ -71,10 +71,11 @@ export async function sessionShell(access, { key, id, openSshTunnel }) {
   try {
     if (access.host_key)
       writeFileSync(knownHosts, `derive-session ${access.host_key}\n`, { mode: 0o600 })
+    if (access.host_key) writeFileSync(join(dir, "identity"), readFileSync(key), { mode: 0o600 })
     const ssh = [
       ...(access.host_key ? ["-F", "/dev/null"] : []),
       "-i",
-      access.host_key ? resolve(key) : key,
+      access.host_key ? "identity" : key,
       "-o",
       "BatchMode=yes",
       "-o",
