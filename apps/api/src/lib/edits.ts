@@ -304,19 +304,21 @@ export async function materializeSourceOps(
       `"${artifact.short_id}" isn't an HTML page, deck or Markdown document; \`ops\` edit those only.`,
     )
   const filename = preservingFilename(contentType)
-  if (isMarkdownLike(contentType ?? "")) {
-    const { markdown, changes } = await applyMarkdownOps(src, ops)
-    return {
-      content: markdown,
-      filename,
-      changes: changes.map((c) => ({ ...c, contentType: "text/markdown" })),
-    }
-  }
-  let { html, changes, removedSource } = await applySourceOps(src, ops, async (version) => {
+  const historySource = async (version: number) => {
     const historical = await deps.getVersion(artifact.id, version)
     if (!historical || historical.content_type !== contentType) return null
     return deps.sourceText(historical)
-  })
+  }
+  if (isMarkdownLike(contentType ?? "")) {
+    const { markdown, changes, removedSource } = await applyMarkdownOps(src, ops, historySource)
+    return {
+      content: markdown,
+      filename,
+      preserveSourceHistory: removedSource,
+      changes: changes.map((c) => ({ ...c, contentType: "text/markdown" })),
+    }
+  }
+  let { html, changes, removedSource } = await applySourceOps(src, ops, historySource)
   // A legacy deck's arrangeable nodes exist only at serve time (runtime identities).
   // Layout set on one persists those identities, as a structural edit's save does.
   if (

@@ -126,3 +126,6 @@ Redo uses the same saved source flow.
 Deletion saves append a version instead of replacing the session's working version.
 This keeps the source needed by repeated Undo and redo.
 An edit that returns to the saved source clears any queued local draft.
+Markdown uses the same historical keep token and source preservation rule.
+Its parser supplies source ranges to the shared history module.
+Historical nodes keep their authored bytes and parser context when restored.

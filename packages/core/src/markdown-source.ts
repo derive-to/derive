@@ -34,72 +34,19 @@ import { MERMAID_HEAD } from "./mermaid"
 import {
   hashSource,
   hostMarker,
+  hydrateMarkdownHistory,
+  type MarkdownSourceKind as Kind,
+  type MarkdownSourceNode as MdNode,
+  type MarkdownSourceModel as Model,
   parseSourceOps,
+  removedSourceIn,
   SourceConflictError,
   type SourceOp,
   type SourceToken,
   sourceSha,
   staleSourceIds,
+  type MarkdownSourceUnit as Unit,
 } from "./source-edit"
-
-type Kind =
-  | "root"
-  | "p"
-  | "h"
-  | "bq"
-  | "list"
-  | "li"
-  | "tb"
-  | "table"
-  | "thead"
-  | "tbody"
-  | "tr"
-  | "cell"
-  | "pre"
-  | "code"
-  | "hr"
-  | "strong"
-  | "em"
-  | "del"
-  | "a"
-  | "codespan"
-  | "img"
-  | "br"
-  | "raw"
-
-/** One rendered character run: `r` is what the page shows, the source bytes are [s, e).
- *  An atomic unit (an entity, an escape, a surrogate pair) is kept whole or not at all. */
-interface Unit {
-  s: number
-  e: number
-  r: string
-  atomic: boolean
-}
-
-interface MdNode {
-  /** Stamp id; -1 for what is never stamped (a tight item's text, an HTML block). */
-  n: number
-  kind: Kind
-  start: number
-  end: number
-  cStart: number
-  cEnd: number
-  /** The continuation-line prefix where this node sits (`> ` inside a quote…). */
-  linePrefix: string
-  /** The continuation-line prefix inside its content. */
-  prefix: string
-  /** Content: text units and child nodes (inline), or child nodes (blocks). */
-  seq: (Unit | MdNode)[]
-  /** Whether an op may rewrite its content (mapped and verified). */
-  editable: boolean
-  /** Its content starts a line (a paragraph, a list item's text). */
-  lineStart: boolean
-  ctx: { cell?: boolean; link?: boolean; atx?: boolean; code?: "span" | "block" }
-  /** Its text as rendered, filled in while rendering. */
-  rendered?: string
-  /** A fenced code block's fence. */
-  fence?: string
-}
 
 const isUnit = (x: Unit | MdNode): x is Unit => "r" in x
 const INLINE_KINDS = new Set<Kind>(["strong", "em", "del", "a", "codespan", "img", "br"])
@@ -191,14 +138,6 @@ const rowCells = (line: string): { s: number; e: number }[] => {
       s = i + 1
     }
   return out
-}
-
-interface Model {
-  source: string
-  nodes: MdNode[]
-  root: MdNode
-  /** The node each token was drawn as, for the renderer. */
-  nodeOf: Map<object, MdNode>
 }
 
 /** Walk the parser's tokens once, giving every construct its exact ranges. */
@@ -1222,6 +1161,7 @@ const serializeContent = (z: Serializer, n: MdNode, tokens: SourceToken[]): stri
 // ── Apply ───────────────────────────────────────────────────────────────────────────
 
 export interface AppliedMarkdownOps {
+  removedSource: boolean
   markdown: string
   /** Each op's content before and after, for the review summary. */
   changes: { before: string; after: string }[]
@@ -1311,19 +1251,14 @@ const expectedNode = (model: Model, host: MdNode, tokens: SourceToken[]): MdNode
 export const applyMarkdownOps = async (
   source: string,
   raw: unknown,
+  historySource?: (version: number) => Promise<string | null>,
 ): Promise<AppliedMarkdownOps> => {
-  const ops = parseSourceOps(raw)
-  const historical = (tokens: SourceToken[]): boolean =>
-    tokens.some(
-      (token) =>
-        ("keep" in token && token.version !== undefined) ||
-        ("children" in token && !!token.children && historical(token.children)),
-    )
-  if (ops.some((op) => op.op === "content" && historical(op.children)))
-    fail("Restore deleted Markdown from History before editing its source.")
+  const originalOps = parseSourceOps(raw)
+  let ops = originalOps
   for (const op of ops)
     if (op.op !== "content") fail("A Markdown document has no layout to change inline.")
-  const model = modelOf(source)
+  const originalModel = modelOf(source)
+  let model: Model = originalModel
   const place = (n: number) => `element ${n}`
   const conflicts = await staleSourceIds(ops, (n) => hashOf(source, model.nodes[n]), place)
   if (conflicts.length)
@@ -1331,6 +1266,15 @@ export const applyMarkdownOps = async (
       `${conflicts.length === 1 ? "A part of the document" : `${conflicts.length} parts of the document`} changed since this page was loaded. Reload to see the latest version, then redo ${conflicts.length === 1 ? "that edit" : "those edits"}.`,
       conflicts,
     )
+  const hydrated = await hydrateMarkdownHistory({
+    model,
+    ops,
+    load: historySource,
+    parse: modelOf,
+    hash: hashOf,
+  })
+  model = hydrated.model
+  ops = hydrated.ops
   const targets = (ops as Extract<SourceOp, { op: "content" }>[])
     .map(({ src, children }) => ({ children, node: model.nodes[src] as MdNode }))
     .sort((a, b) => a.node.start - b.node.start)
@@ -1399,6 +1343,16 @@ export const applyMarkdownOps = async (
     fail("These ops leave the document exactly as it is, so there is nothing to save.")
   return {
     markdown,
+    removedSource: removedSourceIn(
+      originalOps,
+      originalModel.nodes.map((node) => ({
+        src: node.n,
+        start: node.start,
+        end: node.end,
+        contentStart: node.cStart,
+        contentEnd: node.cEnd,
+      })),
+    ),
     changes: targets.map(({ node }, k) => ({
       before: source.slice(...range(node)),
       after: texts[k] as string,
