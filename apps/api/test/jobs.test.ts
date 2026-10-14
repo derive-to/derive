@@ -2874,7 +2874,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     const operation = (command: string) => /operations\/([a-f0-9]{64})/.exec(command)?.[1] ?? ""
     const calls: string[] = []
     // Starts boat.dev refuses next, as a plan's start limit does.
-    const limited = { starts: 0, refusals: 0, refuse: false }
+    const limited = { starts: 0, refusals: 0, refuse: false, lostReplies: 0 }
     let next = 0
     const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input))
@@ -2907,6 +2907,10 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
           archiveAt: Date.now() + (body.ttlSeconds ?? 1800) * 1000,
         })
         calls.push(`create ${id} ${body.from ?? "-"} ${body.type}`)
+        if (limited.lostReplies > 0) {
+          limited.lostReplies--
+          throw new Error("create response lost")
+        }
         return json({ sandbox: { id, state: "provisioned" } })
       }
       const [, , id, action] = path.split("/")
@@ -3471,6 +3475,49 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     expect(after?.sandbox_phase).toBe("failed")
     expect(JSON.parse(after?.sandbox_state_json ?? "{}").create_problem).toBeUndefined()
     expect(boat.calls.filter((call) => call.startsWith("create"))).toHaveLength(0)
+  })
+
+  it("releases a refused shared create after a billing refusal proved no allocation", async () => {
+    const { app, meta, boat, pass } = await cloudSetup("jobs-machine-shared-billing-refusal")
+    const agent = await createAgent(app, { machine: "derive", provider: "codex" })
+    boat.limited.refuse = true
+    await ask(app, ed.email, agent.id, "Fix the copy")
+    const waiting = await meta.getAgent(agent.id)
+    expect(waiting?.sandbox_phase).toBe("creating")
+    expect(JSON.parse(waiting?.sandbox_state_json ?? "{}").create_submitted_at).toBeUndefined()
+    boat.limited.refuse = false
+    boat.limited.refusals = 1
+    await pass()
+    const after = await meta.getAgent(agent.id)
+    expect(after?.sandbox_phase).toBe("failed")
+    expect(JSON.parse(after?.sandbox_state_json ?? "{}").create_problem).toBeUndefined()
+    expect(boat.calls.filter((call) => call.startsWith("create"))).toHaveLength(0)
+  })
+
+  it("retains shared creation ownership when billing refusal follows a lost accepted response", async () => {
+    const { app, meta, boat, pass } = await cloudSetup("jobs-machine-shared-unknown-billing")
+    const agent = await createAgent(app, { machine: "derive", provider: "codex" })
+    boat.limited.lostReplies = 1
+    await ask(app, ed.email, agent.id, "Fix the copy")
+    const submitted = JSON.parse((await meta.getAgent(agent.id))?.sandbox_state_json ?? "{}")
+    expect(submitted.create_submitted_at).toBeDefined()
+    expect(boat.boxes.size).toBe(1)
+    boat.limited.refuse = true
+    await pass()
+    const refused = JSON.parse((await meta.getAgent(agent.id))?.sandbox_state_json ?? "{}")
+    expect(refused.create_submitted_at).toBe(submitted.create_submitted_at)
+    boat.limited.refuse = false
+    boat.limited.refusals = 1
+    await pass()
+    const held = await meta.getAgent(agent.id)
+    const state = JSON.parse(held?.sandbox_state_json ?? "{}")
+    expect(held?.sandbox_phase).toBe("creating")
+    expect(state.create_problem).toContain("a retry was refused after an unknown outcome")
+    expect(state.create_submitted_at).toBe(submitted.create_submitted_at)
+    expect(state.generation).toBe(submitted.generation)
+    expect(state.credential_enc).toBe(submitted.credential_enc)
+    expect(state.create_request).toEqual(submitted.create_request)
+    expect(boat.boxes.size).toBe(1)
   })
 
   it("a provider that refuses to start a machine fails the task once, in its own words", async () => {
