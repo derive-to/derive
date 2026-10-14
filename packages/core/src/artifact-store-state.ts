@@ -1,4 +1,3 @@
-import type { Actor } from "@aniraga/open-artifact-protocol"
 import { type ArtifactStore, HttpError } from "@aniraga/open-artifact-server/kit"
 import { newId } from "./ids"
 import type { MetaStore } from "./ports"
@@ -9,7 +8,7 @@ type State = Pick<
   "getState" | "countStateKeys" | "putState" | "appendActivity" | "listActivity"
 >
 
-export const artifactStoreState = (meta: MetaStore, actor?: Actor): State => ({
+export const artifactStoreState = (meta: MetaStore): State => ({
   getState: async (id, key) => {
     const row = await meta.getSharedState(id, key)
     if (!row) return null
@@ -32,7 +31,7 @@ export const artifactStoreState = (meta: MetaStore, actor?: Actor): State => ({
   },
   countStateKeys: (id) => meta.countSharedStateKeys(id),
   putState: async (row, expected) => {
-    const by = row.updatedBy ?? actor
+    const by = row.updatedBy
     if (!by) throw new HttpError(400, "State writes require authenticated attribution.")
     if (row.version !== expected + 1) throw new HttpError(400, "State version is invalid.")
     return !!(await meta.putSharedState({
