@@ -75,6 +75,7 @@ HTTP, MCP, and Slack resolve and reopen calls also use the shared thread module.
 The native adapter retains the actual storage update count. Missing threads refuse
 before resolution metadata, notifications, and Slack updates run.
 The host keeps resolution attribution and the existing notification workflow.
+MCP retains its missing-thread message without a separate existence query.
 Mention metadata commits with the comment. Callers can name a new thread.
 An existing root from another artifact cannot become a reply target.
 The API maps the shared module's safe HTTP errors to its existing error response.

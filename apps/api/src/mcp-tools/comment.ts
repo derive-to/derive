@@ -1,4 +1,10 @@
-import { elementSelectorForId, newId, postArtifactComment, roleAllows } from "@derive/core"
+import {
+  ArtifactError,
+  elementSelectorForId,
+  newId,
+  postArtifactComment,
+  roleAllows,
+} from "@derive/core"
 import { z } from "zod"
 import { commentCreatedAction } from "../lib/comment-actions"
 import {
@@ -236,23 +242,21 @@ export function registerCommentTool(tc: ToolContext): void {
       }
       if (set_state) {
         if (!thread) return err("`set_state` needs `reply_to` (the thread id to resolve/reopen).")
-        // The HTTP resolve route 404s on a thread that isn't on this artifact; this path has to
-        // check too, because resolveThreadAction discards its update count and fans
-        // comment.resolved out regardless. Without it an agent could emit unbounded "a thread was
-        // resolved" events — into every webhook subscriber and any connected Slack channel — for
-        // threads that never existed.
-        const known = (await ctx.meta.listComments(a.id, { threadId: thread })).length > 0
-        if (!known) return err(`No thread "${thread}" on "${short_id}".`)
-        // Shared with the HTTP resolve route and the Slack Resolve button (lib/thread-actions.ts)
-        // — it flips the thread, publishes on the bus AND fans comment.resolved out to webhooks.
-        // The hand-rolled pair of calls this replaced skipped that last step.
-        await resolveThreadAction(
-          { meta: ctx.meta, bus: ctx.bus, notify: ctx.notify, baseUrl: ctx.deps.baseUrl },
-          a,
-          thread,
-          set_state,
-          { id: agent.id, name: agent.name },
-        )
+        // The shared thread module refuses missing targets before host notifications.
+        // Keep the native MCP wording without a second existence query.
+        try {
+          await resolveThreadAction(
+            { meta: ctx.meta, bus: ctx.bus, notify: ctx.notify, baseUrl: ctx.deps.baseUrl },
+            a,
+            thread,
+            set_state,
+            { id: agent.id, name: agent.name },
+          )
+        } catch (error) {
+          if (error instanceof ArtifactError && error.status === 404)
+            return err(`No thread "${thread}" on "${short_id}".`)
+          throw error
+        }
       }
       return json({
         short_id,
