@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process"
+import { once } from "node:events"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import type { AddressInfo } from "node:net"
@@ -7,8 +8,10 @@ import { join } from "node:path"
 import { promisify } from "node:util"
 import { newId } from "@derive/core"
 import { sessionApi, sessionCommand } from "@derive-to/cli/sessions"
+import { serve } from "@hono/node-server"
 import { exportJWK, generateKeyPair, SignJWT } from "jose"
 import { describe, expect, it, vi } from "vitest"
+import WebSocket, { WebSocketServer } from "ws"
 import {
   JobClient,
   jobDrainPass,
@@ -33,6 +36,7 @@ import {
 import { HELD_FOR_BUDGET, jobTick, OWNER_LEFT } from "../src/lib/jobs"
 import { catalogOf } from "../src/lib/model-catalog"
 import { bufferedSessionSocket } from "../src/lib/session-transport"
+import { nodeSessionTransport } from "../src/lib/session-transport-node"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // THE AGENT MODEL, through the surface people and runners use: an agent is created, asked,
@@ -3665,6 +3669,14 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
     expect(after?.sandbox_phase).toBe("creating")
     expect(JSON.parse(after?.sandbox_state_json ?? "{}").generation).toBe(state.generation)
     expect(JSON.parse(after?.sandbox_state_json ?? "{}").create_problem).toMatch(/manual recovery/)
+    const response = await fixture.app.request(`/v1/agents/${fixture.agent.id}`, {
+      headers: as(owner.email),
+    })
+    expect(response.status).toBe(200)
+    const visible = (await response.json()) as { runtime: { reason: string | null } }
+    expect(visible.runtime.reason).toMatch(/manual recovery/)
+    expect(JSON.stringify(visible)).not.toContain("create_request")
+    expect(JSON.stringify(visible)).not.toContain("managed-ortam-key")
   })
 
   const attemptCreate = async (
@@ -4125,6 +4137,76 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
     } finally {
       upstream.close()
       downstream.close()
+    }
+  })
+
+  it("closes the provider on native TCP cancellation during stalled downstream admission", async () => {
+    const closed = vi.fn()
+    const upstream = bufferedSessionSocket(async () => {}, closed)
+    let block = false
+    let blocked = () => {}
+    const stalled = new Promise<void>((resolve) => {
+      blocked = resolve
+    })
+    let release = () => {}
+    const resume = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const accept = vi.fn(async () => new Response("unexpected admission"))
+    const made = await cloudSetup("jobs-ortam-native-admission-abort", 2700, {
+      session: true,
+      sessionTransport: {
+        ...nodeSessionTransport,
+        connect: async () => {
+          block = true
+          return upstream.socket
+        },
+        accept,
+      },
+    })
+    await made.until("running")
+    const current = await made.meta.getJob(made.job.id)
+    if (!current) throw new Error("missing running session")
+    const original = made.meta.getJob.bind(made.meta)
+    const meta = new Proxy(made.ctx.meta, {
+      get(target, prop, receiver) {
+        if (prop === "getJob")
+          return async (id: string) => {
+            if (block) {
+              blocked()
+              await resume
+            }
+            return original(id)
+          }
+        return Reflect.get(target, prop, receiver)
+      },
+    })
+    const app = createApp({ ...made.ctx.deps, meta })
+    const sockets = new WebSocketServer({ noServer: true })
+    const server = serve({
+      fetch: app.fetch,
+      port: 0,
+      hostname: "127.0.0.1",
+      websocket: { server: sockets },
+    })
+    if (!server.listening) await once(server, "listening")
+    const port = (server.address() as AddressInfo).port
+    const client = new WebSocket(`ws://127.0.0.1:${port}/v1/jobs/${current.id}/ssh`, {
+      headers: { ...as(ed.email), "x-derive-job-claim": current.started_at ?? "" },
+    })
+    client.on("error", () => {})
+    try {
+      await stalled
+      client.terminate()
+      await vi.waitFor(() => expect(closed).toHaveBeenCalledOnce(), { timeout: 1000 })
+      expect(accept).not.toHaveBeenCalled()
+    } finally {
+      block = false
+      release()
+      client.terminate()
+      upstream.close()
+      sockets.close()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
     }
   })
 
