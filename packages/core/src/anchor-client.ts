@@ -24,7 +24,9 @@
  * Keep its imports browser-safe so it bundles into one small self-contained script.
  */
 
+import { nextVideoSceneId } from "@aniraga/open-artifact-protocol/source"
 import {
+  changedVideoSceneAttributes,
   elementCssPath as cssPath,
   type DomElementSelector,
   elementAlternative as elAlt,
@@ -39,7 +41,9 @@ import {
   resolveSourceTextAnchor,
   sourceCopyId,
   sourceTextNodes as textNodes,
+  type VideoSceneAttributes,
   VideoSceneController,
+  videoSceneAttributes,
 } from "@aniraga/open-artifact-runtime/source"
 import { BLOCK_TEXT_ELEMENTS, findQuoteMatches, normWs } from "./anchor-shared"
 import {
@@ -1410,6 +1414,7 @@ interface ElReg {
      small common runtime: scene position, playback and host control. Authors keep
      complete control of each scene's visual design; Derive only toggles `hidden`
      and reads the four data attributes that form the editing contract. */
+  let videoAttrsBase = new Map<Element, VideoSceneAttributes>()
   const video = new VideoSceneController(post)
   window.addEventListener("pagehide", () => video.dispose())
   type WireSceneEdit =
@@ -1439,6 +1444,7 @@ interface ElReg {
     const root = video.root()
     if (!scene || !root) return
     const activeId = video.activeId()
+    if (saved && wire.op !== "scene-update") snapKids(root)
     let undoScene = () => {}
     let redoScene = () => {}
     if (wire.op === "scene-update") {
@@ -1478,10 +1484,10 @@ interface ElReg {
       undoScene = () => root.insertBefore(scene, originalNext)
     } else if (wire.op === "scene-duplicate") {
       const copy = scene.cloneNode(true) as HTMLElement
-      const used = new Set(video.scenes().map((s) => s.dataset.deriveScene))
-      let n = video.scenes().length + 1
-      while (used.has(`scene-${n}`)) n++
-      copy.dataset.deriveScene = `scene-${n}`
+      const used = new Set(video.scenes().map((s) => s.dataset.deriveScene ?? ""))
+      copy.dataset.deriveScene = nextVideoSceneId(used)
+      recordSourceCopy(scene, copy, copyOrigins)
+      videoAttrsBase.set(copy, videoSceneAttributes(copy))
       redoScene = () => scene.after(copy)
       undoScene = () => copy.remove()
     } else {
@@ -4777,6 +4783,7 @@ interface ElReg {
         saved = baselineOf(document.body)
       } else saved = null
       sceneEdits = []
+      videoAttrsBase = new Map(video.scenes().map((scene) => [scene, videoSceneAttributes(scene)]))
       enableBlocks()
       enableResizeFocus()
       setHover(null)
@@ -4814,6 +4821,7 @@ interface ElReg {
       // to undo into a document that has already been saved and reloaded.
       resetEditHistory()
       sceneEdits = []
+      videoAttrsBase = new Map()
       clearEditMention()
       post({ type: "edit-mention-close" })
     }
@@ -5929,6 +5937,7 @@ interface ElReg {
     attrs: [Element, string | null, Record<string, string | null> | null][]
     /** The words of each block the save rewrote, as sent. */
     words: Map<Element, string>
+    videoAttrs: Map<Element, VideoSceneAttributes>
   }
   let lastCollect: CollectRecord | null = null
   /** Sizes and structural layout as the server holds them (a save moves them on). */
@@ -5994,10 +6003,20 @@ interface ElReg {
   const collectOps = (base: Baseline) => {
     // Only what the person changed is theirs to save: the page's own scripts keep running.
     const touched = touchedSet()
+    const videoChanges = new Map<Element, VideoSceneAttributes>()
+    for (const scene of video.scenes()) {
+      const before = videoAttrsBase.get(scene)
+      if (!before) continue
+      const attrs = base.has(scene)
+        ? changedVideoSceneAttributes(scene, before)
+        : videoSceneAttributes(scene)
+      if (Object.keys(attrs).length) videoChanges.set(scene, attrs)
+    }
     const { ops, ok, emit } = collectSourceOps(
       document.body,
       snapshotOf(base, document.body, idsOf(base)),
       touched,
+      videoChanges,
     )
     let uncaptured = ok && !blockResize ? 0 : 1
     // A block the current version no longer has (a save deleted it, undo put it back)
@@ -6045,6 +6064,8 @@ interface ElReg {
         }
         sent.push([node.el, rawStyle(node.el), now])
       }
+    for (const [scene, attrs] of videoChanges)
+      if (base.has(scene)) Object.assign(change(scene, null).attrs, attrs)
     for (const [el, { orig, style, attrs }] of changed) {
       const src = srcOf(el)
       if (src === null) uncaptured++
@@ -6053,7 +6074,7 @@ interface ElReg {
           op: "attrs",
           src,
           hash: "",
-          style: updatedStyle(orig ?? "", style) || null,
+          ...(Object.keys(style).length ? { style: updatedStyle(orig ?? "", style) || null } : {}),
           ...(Object.keys(attrs).length ? { attrs } : {}),
         })
     }
@@ -6061,6 +6082,9 @@ interface ElReg {
       order: layoutOf(document.body, emit),
       rev,
       attrs: sent,
+      videoAttrs: new Map(
+        [...videoChanges.keys()].map((scene) => [scene, videoSceneAttributes(scene)]),
+      ),
       words: new Map([...emit.keys()].map((el) => [el, wordsIn(el)])),
     }
     const { deriveSrcVersion, deriveSrcSha } = document.documentElement.dataset
@@ -6080,6 +6104,14 @@ interface ElReg {
       if (touched.has(el) && (!was || !sameParts(sigParts(el), was))) return true
     }
     return (
+      video.scenes().some((scene) => {
+        const before = videoAttrsBase.get(scene)
+        return (
+          x.contains(scene) &&
+          !!before &&
+          Object.keys(changedVideoSceneAttributes(scene, before)).length > 0
+        )
+      }) ||
       resizeTargets.some((t) => x.contains(t.el) && resized(t)) ||
       structureRegions.some((r) => r.nodes.some((n) => x.contains(n.el) && relaidOut(n)))
     )
@@ -6380,6 +6412,9 @@ interface ElReg {
       } else markRemote(p, by)
     }
     for (const now of spacedNow) if (now.isConnected) made.push([now, sigParts(now)])
+    if (own) for (const [scene, attrs] of own.videoAttrs) videoAttrsBase.set(scene, attrs)
+    else
+      videoAttrsBase = new Map(video.scenes().map((scene) => [scene, videoSceneAttributes(scene)]))
     if (own)
       for (const [el, style, lay] of own.attrs) {
         savedStyle.set(el, style)

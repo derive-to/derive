@@ -74,6 +74,10 @@ The shared runtime keeps inactive video scenes hidden when authored CSS sets the
 Its visibility rule never enters stored source.
 Playback, scene position, navigation, seek, and transitions use the shared video controller.
 Derive keeps the authorized frame transport and the editor's history integration.
+Video editing uses the stamped exact-source save path. Scene timing and captions
+use shared attribute validation. Scene copies use shared identities and DOM references.
+An autosave sync preserves the editor history. Playback styles stay outside stored source.
+Unique scenes already saved as deleted still require recovery through History.
 HTML-to-Markdown reading also uses the shared source entry.
 Document outlines, source sections, landmark maps, and Markdown headings use this entry too.
 Comments and inert markup cannot supply navigation identities. Section reads preserve exact source bytes.

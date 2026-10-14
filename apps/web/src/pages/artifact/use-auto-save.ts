@@ -331,7 +331,7 @@ export function useAutoSave(p: {
         if (frame !== x.frame) return
         await syncIn(true, wire)
       } else {
-        // Quotes (LaTeX) and video scenes resolve against the current head, and the
+        // Quote edits (LaTeX and unstamped documents) resolve against the current head, and the
         // page's text becomes the new baseline — unless it moved on while this saved.
         const a = await api.publishEdits(
           P.shortId,
