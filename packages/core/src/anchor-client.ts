@@ -25,7 +25,17 @@
  */
 
 import {
+  elementCssPath as cssPath,
+  type DomElementSelector,
+  elementAlternative as elAlt,
+  elementFingerprint as elFp,
+  elementOrdinal as elOrdinal,
+  elementSource as elSrc,
+  elementText as elText,
+  authoredElementId as looksAuthoredId,
+  elementNeighbors as neighborText,
   recordSourceCopy,
+  resolveDomElement,
   sourceCopyId,
   VideoSceneController,
 } from "@aniraga/open-artifact-runtime/source"
@@ -33,7 +43,6 @@ import {
   BLOCK_TEXT_ELEMENTS,
   findQuoteMatches,
   findQuoteWithContext,
-  fingerprintFrom,
   normWs,
 } from "./anchor-shared"
 import {
@@ -89,18 +98,10 @@ import {
 } from "./structural-width"
 import { updatedStyle } from "./style-attribute"
 
-// The element-anchor selector as it arrives from the host (mirrors core's ElementSelector).
-interface ElWire {
+// Keep the host fields alongside the shared browser selector.
+type ElWire = DomElementSelector & {
   type: "ElementSelector"
-  tag: string
   role?: string
-  id?: string
-  css?: string
-  fingerprint: string
-  ordinal: number
-  docFraction: number
-  before?: string
-  after?: string
   slide?: number
   slide_identity?: string
   snapshot?: unknown
@@ -835,97 +836,9 @@ interface ElReg {
      Pin a comment to a non-text element (image, chart, table, embed, code, figure).
      We capture several independent signals and resolve by agreement — a cascade:
      id -> css -> content fingerprint -> structural ordinal -> geometry -> neighbors.
-     The fingerprint primitives come from the shared `anchor-shared` module, so a
-     fingerprint made here equals one made on the server. */
-  const elSrc = (el: Element): string => el.getAttribute("src") || el.getAttribute("href") || ""
-  const elAlt = (el: Element): string =>
-    el.getAttribute("alt") || el.getAttribute("aria-label") || el.getAttribute("title") || ""
-  const elText = (el: Element): string => normWs(el.textContent || "")
-  const elFp = (el: Element): string =>
-    fingerprintFrom(el.tagName.toLowerCase(), elSrc(el), elAlt(el), elText(el))
-  const elOrdinal = (el: Element): number => {
-    const list = document.getElementsByTagName(el.tagName)
-    let ordinal = 0
-    for (let i = 0; i < list.length; i++) {
-      const candidate = list[i]
-      // Editor/comment overlays are appended to the artifact DOM but do not exist in
-      // stored source. Leaving them in this count can shift selectors for content a
-      // client-side app mounts after the overlay.
-      if (candidate?.closest?.(".derive-edit-ui,.derive-el-hl")) continue
-      if (candidate === el) return ordinal
-      ordinal++
-    }
-    return 0
-  }
-  /* nearest preceding/following text block, in document order. Walks OUTWARD from el
-     (prev/next siblings, then up a level) instead of scanning every block in the doc —
-     the old querySelectorAll+compareDocumentPosition was O(blocks) PER candidate, so a
-     large gallery froze the frame for seconds (1500 imgs ~1.7s). The nearest block is
-     almost always a sibling or one level up, so this is effectively O(1). */
+     The shared runtime owns capture properties and resolution. Its fingerprints
+     use the same protocol rules as the server. */
   const BLOCKS = "p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th,figcaption,dd,dt,pre"
-  const isBlock = (n: Element): boolean => n.nodeType === 1 && !!n.matches && n.matches(BLOCKS)
-  /* deepest block at the trailing (last=true) or leading edge of root's subtree, incl root */
-  const edgeBlockText = (root: Element, last: boolean): string | null => {
-    if (root.nodeType !== 1) return null
-    const bl = root.querySelectorAll
-      ? root.querySelectorAll(BLOCKS)
-      : ([] as unknown as NodeListOf<Element>)
-    for (let i = 0; i < bl.length; i++) {
-      const b = bl[last ? bl.length - 1 - i : i]
-      const t = normWs(b?.textContent || "")
-      if (t.length >= 2) return t
-    }
-    if (isBlock(root)) {
-      const rt = normWs(root.textContent || "")
-      if (rt.length >= 2) return rt
-    }
-    return null
-  }
-  const neighborText = (el: Element): { before: string | null; after: string | null } => {
-    let before: string | null = null
-    let after: string | null = null
-    let hops = 0
-    for (let n: Element | null = el; n?.parentElement && !before && hops < 400; n = n.parentElement)
-      for (
-        let s = n.previousElementSibling;
-        s && !before && hops < 400;
-        s = s.previousElementSibling
-      ) {
-        hops++
-        before = edgeBlockText(s, true)
-      }
-    hops = 0
-    for (let m: Element | null = el; m?.parentElement && !after && hops < 400; m = m.parentElement)
-      for (let p = m.nextElementSibling; p && !after && hops < 400; p = p.nextElementSibling) {
-        hops++
-        after = edgeBlockText(p, false)
-      }
-    return { before, after }
-  }
-  /* structural css path of tag:nth-of-type up to a stable ancestor (authored id or body) */
-  const cssPath = (el: Element): string => {
-    const parts: string[] = []
-    let n: Element | null = el
-    for (let depth = 0; n && n.nodeType === 1 && depth < 8; depth++) {
-      const tag = n.tagName.toLowerCase()
-      if (looksAuthoredId(n.id)) {
-        parts.unshift(`#${n.id}`)
-        break
-      }
-      if (tag === "body") {
-        parts.unshift("body")
-        break
-      }
-      let k = 1
-      for (let c = n.previousElementSibling; c; c = c.previousElementSibling)
-        if (c.tagName === n.tagName) k++
-      parts.unshift(`${tag}:nth-of-type(${k})`)
-      n = n.parentElement
-    }
-    return parts.join(">")
-  }
-  const looksAuthoredId = (id: string): boolean =>
-    !!id && !/[0-9a-f]{8}|^[0-9]|^(radix|headlessui|react|mui|:r)/i.test(id)
   const ANCHORABLE = "img,picture,svg,canvas,video,audio,iframe,embed,object,table,pre,figure"
   const anchorEl = (t: Element | null): Element | null => {
     if (!t?.closest) return null
@@ -1076,141 +989,7 @@ interface ElReg {
     if (reviewOn) setReviewHover(null)
   })
 
-  /* -- the in-browser cascade: score every candidate by signal agreement and pick
-        the best over threshold (mirrors resolveElement in core) -- */
-  const textClose = (a: string, b: string): boolean => {
-    if (typeof a !== "string" || typeof b !== "string") return false
-    const x = a.toLowerCase()
-    const y = b.toLowerCase()
-    if (x === y) return true
-    const sh = x.length < y.length ? x : y
-    const lo = x.length < y.length ? y : x
-    if (sh.length >= 8 && lo.indexOf(sh) >= 0) return true
-    const w = Math.min(16, sh.length)
-    return w >= 8 && lo.slice(0, w) === sh.slice(0, w)
-  }
-  const scoreEl = (el: Element, a: ElWire, fpM: number): { c: number; signals: string[] } => {
-    let score = 0
-    let max = 0
-    const signals: string[] = []
-    if (a.id) {
-      max += 5
-      if (el.id === a.id) {
-        score += 5
-        signals.push("id")
-      }
-    }
-    max += 5
-    if (elFp(el) === a.fingerprint) {
-      score += 5
-      signals.push("content")
-    }
-    if (a.css) {
-      max += 3
-      if (cssPath(el) === a.css) {
-        score += 3
-        signals.push("css")
-      }
-    }
-    /* drop ordinal when content repeats across candidates (same logo per slide) — it's
-       the signal an insertion scrambles; let neighbors/geometry pick the instance */
-    if (fpM <= 1) {
-      max += 3
-      if (el.tagName.toLowerCase() === a.tag) {
-        if (elOrdinal(el) === a.ordinal) {
-          score += 3
-          signals.push("position")
-        } else score += 1
-      }
-    }
-    if (a.before || a.after) {
-      const nb = neighborText(el)
-      if (a.before) {
-        max += 1
-        if (textClose(a.before, nb.before || "")) {
-          score += 1
-          signals.push("nb")
-        }
-      }
-      if (a.after) {
-        max += 1
-        if (textClose(a.after, nb.after || "")) {
-          score += 1
-          signals.push("nb")
-        }
-      }
-    }
-    max += 1
-    const r = el.getBoundingClientRect()
-    const dh = document.documentElement.scrollHeight || 1
-    const f = (r.top + scrollTop()) / dh
-    score += 1 * (1 - Math.min(1, Math.abs(f - (a.docFraction || 0))))
-    return { c: max > 0 ? score / max : 0, signals }
-  }
-  const resolveEl = (
-    a: ElWire,
-  ): { el: Element; confidence: number; band: Band; signals: string[] } | null => {
-    const cand: Element[] = []
-    const seen: Element[] = []
-    if (a.tag) {
-      const bt = document.getElementsByTagName(a.tag)
-      for (let i = 0; i < bt.length; i++) {
-        const el = bt[i]
-        if (el) {
-          cand.push(el)
-          seen.push(el)
-        }
-      }
-    }
-    if (a.id) {
-      const byId = document.getElementById(a.id)
-      if (byId && seen.indexOf(byId) < 0) cand.push(byId)
-    }
-    /* count how many candidates share the recorded fingerprint / id — a strong
-       signal matching MANY candidates isn't identifying (a gallery of identical
-       thumbnails), so it can't grant high confidence (mirrors core's grade()). */
-    let fpM = 0
-    let idM = 0
-    for (const c of cand) {
-      if (elFp(c) === a.fingerprint) fpM++
-      if (a.id && c.id === a.id) idM++
-    }
-    let best: { c: number; signals: string[] } | null = null
-    let bestEl: Element | null = null
-    let runnerUp = 0
-    for (const c of cand) {
-      const s = scoreEl(c, a, fpM)
-      if (!best || s.c > best.c) {
-        if (best && best.c > runnerUp) runnerUp = best.c
-        best = s
-        bestEl = c
-      } else if (s.c > runnerUp) runnerUp = s.c
-    }
-    if (!best || best.c < 0.42 || !bestEl) return null
-    const g = gradeEl(best.signals, best.c, fpM, idM, best.c - runnerUp)
-    return { el: bestEl, confidence: g.c, band: g.band, signals: best.signals }
-  }
-  const gradeEl = (
-    sig: string[],
-    conf: number,
-    fpM: number,
-    idM: number,
-    margin: number,
-  ): { band: Band; c: number } => {
-    const mId = sig.indexOf("id") >= 0
-    const mContent = sig.indexOf("content") >= 0
-    const nb = sig.indexOf("nb") >= 0
-    const uniq = (mId && idM === 1) || (mContent && fpM === 1)
-    const ambig = (mId && idM > 1) || (mContent && fpM > 1)
-    /* id and content point at different elements (swapped content) -> never high */
-    const conflict = (mId && !mContent && fpM > 0) || (mContent && !mId && idM > 0)
-    if (ambig && !uniq && !nb) return { band: "low", c: Math.min(conf, 0.45) }
-    if (conflict) return { band: "medium", c: Math.min(conf, 0.6) }
-    if (uniq && conf >= 0.6 && margin >= 0.12) return { band: "high", c: conf }
-    if ((uniq || nb || sig.indexOf("position") >= 0) && conf >= 0.5)
-      return { band: "medium", c: Math.min(conf, 0.75) }
-    return { band: "low", c: Math.min(conf, 0.5) }
-  }
+  const resolveEl = (selector: ElWire) => resolveDomElement(document, selector)
 
   /* overlay registry: each resolved element anchor gets an absolutely-positioned
      outline (in document coords, so it glides with scroll) + a corner badge. */
