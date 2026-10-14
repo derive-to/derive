@@ -129,6 +129,8 @@ export function useArtifactFrame(p: {
   const { setHoverThread, setActiveThread, setPanel, onOpenComments, onEsc, onOpenExternal } = p
   const frame = useRef<HTMLIFrameElement>(null)
   const frameGeneration = useRef(0)
+  const requestScope = useRef({ shortId, authenticated: p.authenticated })
+  requestScope.current = { shortId, authenticated: p.authenticated }
   const onVisualPinRef = useRef(p.onVisualPin)
   onVisualPinRef.current = p.onVisualPin
   const onPositionRef = useRef(p.onPosition)
@@ -216,7 +218,6 @@ export function useArtifactFrame(p: {
   const scrollBy = useCallback((dy: number) => post({ type: "scroll-by", dy }), [post])
 
   useEffect(() => {
-    let listening = true
     const onMsg = (e: MessageEvent) => {
       // Only the artifact iframe's own window speaks this protocol. Without the
       // source pin, ANY window that can post here — a nested iframe inside the
@@ -294,10 +295,11 @@ export function useArtifactFrame(p: {
         const target = frame.current
         const generation = frameGeneration.current
         const current = () =>
-          listening &&
           target?.isConnected &&
           target === frame.current &&
-          generation === frameGeneration.current
+          generation === frameGeneration.current &&
+          requestScope.current.shortId === shortId &&
+          requestScope.current.authenticated === p.authenticated
         const reply = (message: Record<string, unknown>) => {
           if (current())
             target?.contentWindow?.postMessage({ source: "derive-host", ...message }, "*")
@@ -489,10 +491,7 @@ export function useArtifactFrame(p: {
       }
     }
     window.addEventListener("message", onMsg)
-    return () => {
-      listening = false
-      window.removeEventListener("message", onMsg)
-    }
+    return () => window.removeEventListener("message", onMsg)
   }, [
     onPointerMove,
     onPointerLeave,
