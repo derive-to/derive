@@ -1313,6 +1313,14 @@ export const applyMarkdownOps = async (
   raw: unknown,
 ): Promise<AppliedMarkdownOps> => {
   const ops = parseSourceOps(raw)
+  const historical = (tokens: SourceToken[]): boolean =>
+    tokens.some(
+      (token) =>
+        ("keep" in token && token.version !== undefined) ||
+        ("children" in token && !!token.children && historical(token.children)),
+    )
+  if (ops.some((op) => op.op === "content" && historical(op.children)))
+    fail("Restore deleted Markdown from History before editing its source.")
   for (const op of ops)
     if (op.op !== "content") fail("A Markdown document has no layout to change inline.")
   const model = modelOf(source)
