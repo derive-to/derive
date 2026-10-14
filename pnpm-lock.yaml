@@ -36,8 +36,8 @@ overrides:
   seroval: ^1.6.3
   source-map-js: ^1.2.2
   onnxruntime-node>global-agent: 4.1.3
-  '@aniraga/open-artifact-protocol': file:./vendor/aniraga-open-artifact-protocol-0.6.0-core.48.tgz
-  '@aniraga/open-artifact-runtime': file:./vendor/aniraga-open-artifact-runtime-0.6.0-core.48.tgz
+  '@aniraga/open-artifact-protocol': file:./vendor/aniraga-open-artifact-protocol-0.6.0-core.49.tgz
+  '@aniraga/open-artifact-runtime': file:./vendor/aniraga-open-artifact-runtime-0.6.0-core.49.tgz
 
 patchedDependencies:
   '@better-auth/oauth-provider@1.6.19':
@@ -443,14 +443,14 @@ importers:
   packages/core:
     dependencies:
       '@aniraga/open-artifact-protocol':
-        specifier: file:../../vendor/aniraga-open-artifact-protocol-0.6.0-core.48.tgz
-        version: file:vendor/aniraga-open-artifact-protocol-0.6.0-core.48.tgz
+        specifier: file:../../vendor/aniraga-open-artifact-protocol-0.6.0-core.49.tgz
+        version: file:vendor/aniraga-open-artifact-protocol-0.6.0-core.49.tgz
       '@aniraga/open-artifact-runtime':
-        specifier: file:../../vendor/aniraga-open-artifact-runtime-0.6.0-core.48.tgz
-        version: file:vendor/aniraga-open-artifact-runtime-0.6.0-core.48.tgz(@modelcontextprotocol/client@2.3.1)(@modelcontextprotocol/core@2.3.1)(@modelcontextprotocol/server@2.2.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+        specifier: file:../../vendor/aniraga-open-artifact-runtime-0.6.0-core.49.tgz
+        version: file:vendor/aniraga-open-artifact-runtime-0.6.0-core.49.tgz(@modelcontextprotocol/client@2.3.1)(@modelcontextprotocol/core@2.3.1)(@modelcontextprotocol/server@2.2.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@aniraga/open-artifact-server':
-        specifier: file:../../vendor/aniraga-open-artifact-server-0.6.0-core.48.tgz
-        version: file:vendor/aniraga-open-artifact-server-0.6.0-core.48.tgz(@modelcontextprotocol/client@2.3.1)(@modelcontextprotocol/core@2.3.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vitest@4.1.11)
+        specifier: file:../../vendor/aniraga-open-artifact-server-0.6.0-core.49.tgz
+        version: file:vendor/aniraga-open-artifact-server-0.6.0-core.49.tgz(@modelcontextprotocol/client@2.3.1)(@modelcontextprotocol/core@2.3.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vitest@4.1.11)
       '@derive/facts':
         specifier: workspace:*
         version: link:../facts
@@ -612,19 +612,19 @@ packages:
     resolution: {integrity: sha512-tbHKNLirllUNF3ZlkCsXnwab2ZV1Sl4b1H/Cp9ruCce15IBmskE8Gwkk0yo9xDWY+jho2of7lVXtwSsyrq7cwQ==}
     engines: {node: '>=22'}
 
-  '@aniraga/open-artifact-protocol@file:vendor/aniraga-open-artifact-protocol-0.6.0-core.48.tgz':
-    resolution: {integrity: sha512-k1fk9ss4/yGvQp51t7pmmsZeYKcgZp7b2MTzGgiUNssdVw2ME/LokMaCXA3m5J3eytQHjakWJj5xu2h5aauNSQ==, tarball: file:vendor/aniraga-open-artifact-protocol-0.6.0-core.48.tgz}
-    version: 0.6.0-core.48
+  '@aniraga/open-artifact-protocol@file:vendor/aniraga-open-artifact-protocol-0.6.0-core.49.tgz':
+    resolution: {integrity: sha512-No00peKPu/58CYovkt8GMSCErjCzwltBOgfG5NP4QAVJKgjoIw959+zKQybbzOla25NUd7lm2+dporNtqhRnsQ==, tarball: file:vendor/aniraga-open-artifact-protocol-0.6.0-core.49.tgz}
+    version: 0.6.0-core.49
     engines: {node: '>=20'}
 
-  '@aniraga/open-artifact-runtime@file:vendor/aniraga-open-artifact-runtime-0.6.0-core.48.tgz':
-    resolution: {integrity: sha512-NrbxFYeiNekuJgWtxwDnV9P6A6zx7MT9ewHAPdht2EuD1DzMsR+170mnnrzz/IxbmVBBKZYCsdJJ0yH8eVWI1Q==, tarball: file:vendor/aniraga-open-artifact-runtime-0.6.0-core.48.tgz}
-    version: 0.6.0-core.48
+  '@aniraga/open-artifact-runtime@file:vendor/aniraga-open-artifact-runtime-0.6.0-core.49.tgz':
+    resolution: {integrity: sha512-h+Ll6jCTyS0mPSbzLkiezsX6/83J2gF97MNunrRzUJphB5f6t4+TL9358UY40kkDiYXbuNshLe8eEgxU3rjdzQ==, tarball: file:vendor/aniraga-open-artifact-runtime-0.6.0-core.49.tgz}
+    version: 0.6.0-core.49
     engines: {node: '>=20'}
 
-  '@aniraga/open-artifact-server@file:vendor/aniraga-open-artifact-server-0.6.0-core.48.tgz':
-    resolution: {integrity: sha512-MhCASOzx+gF6IqxSXMrLfZGjKNLZHtDqoJYQuIZ1KdnVLwkrCUrropJOq+fbfaykgOa0RjrBgn4/lyweU0MsqQ==, tarball: file:vendor/aniraga-open-artifact-server-0.6.0-core.48.tgz}
-    version: 0.6.0-core.48
+  '@aniraga/open-artifact-server@file:vendor/aniraga-open-artifact-server-0.6.0-core.49.tgz':
+    resolution: {integrity: sha512-/MpYIGkrQCHs0JZqrV4AMXVf2+KKjuJON2cKW4YOKGKILrIVtO0w2YJctFgzjddXx9DugKBMEbRaXfUOFOGDhA==, tarball: file:vendor/aniraga-open-artifact-server-0.6.0-core.49.tgz}
+    version: 0.6.0-core.49
     engines: {node: '>=22.13'}
     peerDependencies:
       vitest: '>=3'
@@ -8270,14 +8270,14 @@ snapshots:
     dependencies:
       json-schema: 0.4.0
 
-  '@aniraga/open-artifact-protocol@file:vendor/aniraga-open-artifact-protocol-0.6.0-core.48.tgz':
+  '@aniraga/open-artifact-protocol@file:vendor/aniraga-open-artifact-protocol-0.6.0-core.49.tgz':
     dependencies:
       entities: 6.0.1
       zod: 4.6.5
 
-  '@aniraga/open-artifact-runtime@file:vendor/aniraga-open-artifact-runtime-0.6.0-core.48.tgz(@modelcontextprotocol/client@2.3.1)(@modelcontextprotocol/core@2.3.1)(@modelcontextprotocol/server@2.2.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+  '@aniraga/open-artifact-runtime@file:vendor/aniraga-open-artifact-runtime-0.6.0-core.49.tgz(@modelcontextprotocol/client@2.3.1)(@modelcontextprotocol/core@2.3.1)(@modelcontextprotocol/server@2.2.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
-      '@aniraga/open-artifact-protocol': file:vendor/aniraga-open-artifact-protocol-0.6.0-core.48.tgz
+      '@aniraga/open-artifact-protocol': file:vendor/aniraga-open-artifact-protocol-0.6.0-core.49.tgz
       '@modelcontextprotocol/ext-apps': 2.0.3(@modelcontextprotocol/client@2.3.1)(@modelcontextprotocol/core@2.3.1)(@modelcontextprotocol/server@2.2.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(zod@4.6.5)
       zod: 4.6.5
     transitivePeerDependencies:
@@ -8287,10 +8287,10 @@ snapshots:
       - react
       - react-dom
 
-  '@aniraga/open-artifact-server@file:vendor/aniraga-open-artifact-server-0.6.0-core.48.tgz(@modelcontextprotocol/client@2.3.1)(@modelcontextprotocol/core@2.3.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vitest@4.1.11)':
+  '@aniraga/open-artifact-server@file:vendor/aniraga-open-artifact-server-0.6.0-core.49.tgz(@modelcontextprotocol/client@2.3.1)(@modelcontextprotocol/core@2.3.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vitest@4.1.11)':
     dependencies:
-      '@aniraga/open-artifact-protocol': file:vendor/aniraga-open-artifact-protocol-0.6.0-core.48.tgz
-      '@aniraga/open-artifact-runtime': file:vendor/aniraga-open-artifact-runtime-0.6.0-core.48.tgz(@modelcontextprotocol/client@2.3.1)(@modelcontextprotocol/core@2.3.1)(@modelcontextprotocol/server@2.2.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@aniraga/open-artifact-protocol': file:vendor/aniraga-open-artifact-protocol-0.6.0-core.49.tgz
+      '@aniraga/open-artifact-runtime': file:vendor/aniraga-open-artifact-runtime-0.6.0-core.49.tgz(@modelcontextprotocol/client@2.3.1)(@modelcontextprotocol/core@2.3.1)(@modelcontextprotocol/server@2.2.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@modelcontextprotocol/ext-apps': 2.0.3(@modelcontextprotocol/client@2.3.1)(@modelcontextprotocol/core@2.3.1)(@modelcontextprotocol/server@2.2.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(zod@4.6.5)
       '@modelcontextprotocol/server': 2.2.0
       aws4fetch: 1.0.20

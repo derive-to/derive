@@ -38,6 +38,7 @@ import {
   type MarkdownSourceKind as Kind,
   type MarkdownSourceNode as MdNode,
   type MarkdownSourceModel as Model,
+  markdownHistoryEdge,
   markdownHistoryGap,
   parseSourceOps,
   removedSourceIn,
@@ -1102,8 +1103,12 @@ const serializeBlocks = (z: Serializer, n: MdNode, tokens: SourceToken[]): strin
         (pi >= 0 && it.orig && kids.indexOf(it.orig) === pi + 1 ? sep(pi) : fallback)) + it.bytes
     )
   })
-  const lead = kids[0] ? src.slice(n.cStart, kids[0].start) : ""
-  const tail = kids.length ? src.slice((kids.at(-1) as MdNode).end, n.cEnd) : ""
+  const lead =
+    markdownHistoryEdge(z.model, live[0]?.node, n.kind, "before") ??
+    (kids[0] ? src.slice(n.cStart, kids[0].start) : "")
+  const tail =
+    markdownHistoryEdge(z.model, live.at(-1)?.node, n.kind, "after") ??
+    (kids.length ? src.slice((kids.at(-1) as MdNode).end, n.cEnd) : "")
   return lead + out.join("") + tail
 }
 

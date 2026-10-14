@@ -133,3 +133,6 @@ Historical nodes keep their authored bytes and parser context when restored.
 An emptied Markdown element can remain in the live editor after its source disappears.
 The editor retains its verified source history until the edit session ends.
 Undo can then restore its original source through the same historical keep token.
+
+A Markdown restore keeps authored separators and document edges.
+Deleting every rendered block does not discard the trailing source newline during Undo.
