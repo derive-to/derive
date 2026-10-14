@@ -3815,8 +3815,11 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
     expect(fixture.launches).toHaveLength(0)
   })
 
-  it("deletes an agent whose shared creation was cancelled before submission", async () => {
-    const fixture = await cloudSetup("jobs-ortam-shared-unsubmitted-delete", 2700, {
+  it.each([
+    true,
+    false,
+  ])("deletes an unsubmitted shared creation with provider key available: %s", async (configured) => {
+    const fixture = await cloudSetup(`jobs-ortam-shared-unsubmitted-delete-${configured}`, 2700, {
       reserveOnly: true,
       fresh: false,
     })
@@ -3831,7 +3834,12 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
     expect((await deleting()).status).toBe(409)
     const paused = await fixture.meta.getAgent(fixture.agent.id)
     if (!paused) throw new Error("missing paused agent")
-    await advanceSandbox(fixture.deps, paused)
+    await advanceSandbox(
+      configured
+        ? fixture.deps
+        : { ...fixture.deps, config: { ...fixture.deps.config, managed: undefined } },
+      paused,
+    )
     expect((await deleting()).status).toBe(204)
     expect(await fixture.meta.getAgent(fixture.agent.id)).toBeNull()
     expect(fixture.creates).toHaveLength(0)
