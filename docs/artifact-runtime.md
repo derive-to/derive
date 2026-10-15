@@ -149,3 +149,5 @@ The generic kit default retains its existing 10 MB limit and formats.
 Exact Markdown writes use the shared source engine.
 The native parser supplies source ranges and renders the editor page.
 The core serializes edits, checks their rendered meaning, and retains source history.
+
+Signed raw viewer paths redact the capability from access and error logs. Artifact IDs, versions, and file paths remain visible.

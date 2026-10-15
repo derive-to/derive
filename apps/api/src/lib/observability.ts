@@ -16,11 +16,13 @@ declare module "hono" {
 // real signal. (They still get a request id + the X-Request-Id header.)
 const SKIP_LOG = new Set(["/healthz", "/readyz"])
 
-/** Invite tokens ride URL paths (/invite/a/<t> → /v1/artifact-invites/<t>); the DB
+/** Raw viewer capabilities and invite tokens ride URL paths (/invite/a/<t> → /v1/artifact-invites/<t>); the DB
  *  only ever stores their hash, so the log must not become the one place the raw
  *  bearer value persists. Redact anything token-shaped before a path is logged. */
 export const redactPath = (path: string): string =>
-  path.replace(/(dk[a-z_]*_)[A-Za-z0-9]{16,}/g, "$1[redacted]")
+  path
+    .replace(/(dk[a-z_]*_)[A-Za-z0-9]{16,}/g, "$1[redacted]")
+    .replace(/^(\/raw\/[^/]+\/v\/[^/]+\/t\/)[^/]+/, "$1[redacted]")
 
 /**
  * Tags every request with a stable id (honoring an inbound `X-Request-Id` from a
