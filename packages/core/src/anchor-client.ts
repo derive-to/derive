@@ -63,6 +63,7 @@ import {
   patchRoot,
   renumber,
   renumberHtml,
+  retainedCodeIds,
   STALE_ATTR,
   type SyncReply,
   tagOf,
@@ -6251,6 +6252,7 @@ interface ElReg {
         if (!p) return reload
         roots.set(patch.old, p)
       }
+      for (const [old, next] of retainedCodeIds(base, roots)) oldToNew.set(old, next)
       const page = newPageOf(base, r.remap, roots)
       const lined = page && linePage(own.order, page)
       if (!page || !lined) return reload

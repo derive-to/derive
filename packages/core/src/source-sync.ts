@@ -11,6 +11,7 @@ export {
   patchRoot,
   renumber,
   renumberHtml,
+  retainedCodeIds,
   STALE_ATTR,
   type SyncReply,
   tagOf,

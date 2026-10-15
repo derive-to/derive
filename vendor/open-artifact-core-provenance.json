@@ -1,7 +1,7 @@
 {
   "repository": "https://github.com/derive-to/open-artifact",
   "baseCommit": "9b6a221ca7ac64dea06c1603426504771aee4dab",
-  "previewVersion": "0.6.0-core.52",
+  "previewVersion": "0.6.0-core.54",
   "sources": {
     "anchors.ts": "ca204a554d2ae5c4743eae5091162744b399ae0c93cd6afcda39cb0e145df3a9",
     "collection.ts": "a2b3e15154bc80ee338f57d4d7a0123662c415f7e8ff666fcb37be98e972d626",
@@ -108,9 +108,9 @@
     "tools.ts": "a83f4d194b0fcf7f56f37753fbd1f4b1a48d32f1aaafebb98fea2584bf996611",
     "viewer.ts": "e7c87eda4dbbbf8a02f7e25aff70139df90f7375967086be0f9a740f8ea64f41"
   },
-  "tarballSha256": "06fba7ab7c2642da6e6f7042b702e95774d8e1a5460520d9a8a62f4d5d9f6c44",
+  "tarballSha256": "ea7d8da6fecf342eec81be40c459c412fb30a003a628fa8d1eb25b17c8be9729",
   "note": "Packed committed source for Derive. Shared source, collection, publication, browser capture, source operations, and slide identities. Registry release remains pending.",
-  "sourceCommit": "18259a0c6ebbea727c0b821d14638a64dce1a0ac",
+  "sourceCommit": "c05fe17358500973f21f5640c7e0384370ad6036",
   "runtimeSources": {
     "anchoring.ts": "2cf941d1f5cbe685c68acda5d8b46c1792c5344117e17761d01dc526dd3714bc",
     "connection.ts": "ebb1704972a86e554f065c7e635f40e421716831120dd8bf1a541913fab7a953",
@@ -132,7 +132,7 @@
     "source-copy-origin.ts": "530c55f613946d82cb1b916a24b0ffb544dd919d9bf747ea3b8209aafc9d60f2",
     "source-element-dom-resolve.ts": "b8f8d38896647b9ba7f89b1d49d6839c5f69bc272733bdbdda92f0ff22f11458",
     "source-element-dom.ts": "a581f9dbc27a9d82b4faaab2537dc35cffd8d424f4983215a5a075d007d4c4a0",
-    "source-page.ts": "c73096bf2a6205dcecb05d7bc654a22c795132431829f77453cb45dbcec2e464",
+    "source-page.ts": "5926606fc3a96c510911f56b95cc82aa57d8e8d994faa2636accd0411dd269b5",
     "source-patch.ts": "55e5eea68fd2b0455ffaefd7dac71ee9f8983a90b08650158925764fb82f6a6c",
     "source-serialize.ts": "f1bb26a95c48a14f1b678a27f5d05e2b98b001de607cc2f68fe3e24999b20ce0",
     "source-text-anchor.ts": "b2147ca76c8e2895357510a6de2d6dbdd3ed13b7f89acda41b81cfd2d6623977",
@@ -141,14 +141,14 @@
     "source-video-attributes.ts": "6843225b1273089d931bbf694b4eb688ee6c18e049d97424ce98a8c4a4965d2d",
     "source-video-controller.ts": "deaef87aa55fbcc6a295d7971c37f09451d7d4c9046301be36118113a4522f14",
     "source-video-dom.ts": "c988fbd6eace24679cfc3fc57215d08e588b4ef24ce6d96ad89510cb8d4d6767",
-    "source.ts": "a0f157c8f6aa423085294fdc9f2a4442ae3f01890e2c144e72f8bb973a9b1775",
+    "source.ts": "fad7e36141db21fcbfab65427a31387396e4e905f9c21eda0559ecc776ac85d8",
     "state-backend.ts": "00c24517ec1865f93d873238634d260c4b7b91b49342c7363c066bed9fb9958b",
     "text-index.ts": "b03514540909f94a08c83074687151b7b0bc907061e12cccf53748416d78798e",
     "theme.ts": "d6e31b99487bf70b3bcae129f3846fb725e851689ceed0f7c40d47cdb62d8577",
     "viewer.entry.ts": "ba030f8c1483ba6c741284e498fa47b7798b9bd27d682b0fe36fc9457e7252b4",
     "viewer.ts": "2855a1bc365c0fc2af552fa3d3c7da2da598f13d2ca4824290587501685ceed5"
   },
-  "runtimeTarballSha256": "73dd9161d22c01821098ac18f0ec85e9314ec69949807410f973bba1539bd774",
+  "runtimeTarballSha256": "5db733a50a3b5e86c076bc44c57f4162b889a1a7e15a59fc0687ec0e317c96fd",
   "runtimeDeclarationBase": {
     "version": "0.5.2",
     "sha256": "d02d2797c94147df26ba1f3e7e1746d617022f61f01718bca218b456a5b052ef"
@@ -232,7 +232,7 @@
     "source.ts": "3727a68bdfb1495a495a4bf8d500dcfa18c1057de7ac5f46c9110db84913143c",
     "testing.ts": "cedbc1dd20a8a6c796a3751032a0e5f1a51c8b16cd460a1a4ad744b9b76a08b4"
   },
-  "serverTarballSha256": "de474ba2a367f155becf550aff17e808738e35cbcff2ce7ee2b4c71c181a034e",
+  "serverTarballSha256": "aea997c708a3e7e7f94ccad03ac8ae9fab547da78d8c1b5edfbc2426a0d5448d",
   "serverDeclarationBase": {
     "version": "0.5.2",
     "sha256": "64caa1af433ede4c9b565d54c2d2a998880f3e8c88c5efc10b2f24bf32d3cac2"

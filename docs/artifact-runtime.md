@@ -151,3 +151,5 @@ The native parser supplies source ranges and renders the editor page.
 The core serializes edits, checks their rendered meaning, and retains source history.
 
 Signed raw viewer paths redact the capability from access and error logs. Artifact IDs, versions, and file paths remain visible.
+
+The shared runtime retains a saved code wrapper identity for HTML Undo. A code edit does not turn its unchanged wrapper into a deleted source node.
