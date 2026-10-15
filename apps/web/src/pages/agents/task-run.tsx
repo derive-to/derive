@@ -39,12 +39,16 @@ function useElapsed(from: string | null | undefined, to: string | null | undefin
 export function TaskRun({
   job,
   agent,
+  names,
+  meId,
   canStop,
   stopping,
   onStop,
 }: {
   job: JobDetail
   agent: Agent | undefined
+  names: Map<string, string>
+  meId: string | undefined
   canStop: boolean
   stopping: boolean
   onStop: () => void
@@ -60,7 +64,7 @@ export function TaskRun({
     active ? null : job.finished_at,
     job.status === "running",
   )
-  const detail = agent ? detailOf(job, agent) : undefined
+  const detail = agent ? detailOf(job, agent, names, meId) : undefined
   const turn = job.turns?.at(-1)
   const git = job.result.git
   const pr = job.result.effects?.find((e) => e.kind === "pr")

@@ -38,7 +38,7 @@ import { buildJobTools, JOB_TOOL_PREFIX } from "../lib/chat-tools"
 import { readEnvironmentBindings } from "../lib/context-environment"
 import { decryptSecret, encryptSecret, sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
-import { resolveJobCredential } from "../lib/job-accounts"
+import { creatorLeft, resolveJobCredential } from "../lib/job-accounts"
 import { turnAgent } from "../lib/job-command"
 import { advanceGraph, graphAware } from "../lib/job-graph"
 import {
@@ -61,6 +61,7 @@ import {
   pullJobs,
   reportJob,
   retryJob,
+  waitingFor,
 } from "../lib/jobs"
 import { oauthScopeRole } from "../lib/oauth-agent"
 import {
@@ -282,6 +283,15 @@ const JobTurn = z.object({
       .optional(),
   }),
 })
+const WaitingFor = z
+  .object({
+    machine: z.literal("owner"),
+    owner: z.string().nullable().describe("Whose machine: the agent's creator."),
+    seen_at: z.string().nullable().describe("When that runner last polled; null if never."),
+  })
+  .nullable()
+  .describe("Set when nothing will pick this task up until a runner comes back.")
+
 const JobDetail = Job.extend({
   messages: z.array(JobMessage),
   turns: z.array(JobTurn).optional(),
@@ -297,6 +307,9 @@ const JobDetail = Job.extend({
     )
     .optional(),
 }).openapi("JobDetail")
+
+/** What an ask returns: the task, and whose machine it is waiting for, if any. */
+const JobAsked = JobDetail.extend({ waiting_for: WaitingFor }).openapi("JobAsked")
 
 const STATUSES = [
   "queued",
@@ -650,11 +663,11 @@ export const jobRoutes = (ctx: AppContext) => {
       responses: {
         201: {
           description: "The new job.",
-          content: { "application/json": { schema: JobDetail } },
+          content: { "application/json": { schema: JobAsked } },
         },
         200: {
           description: "An open job already holding this dedupe key.",
-          content: { "application/json": { schema: JobDetail } },
+          content: { "application/json": { schema: JobAsked } },
         },
       },
     }),
@@ -705,7 +718,10 @@ export const jobRoutes = (ctx: AppContext) => {
         const asker = await askerOf(who.id)
         await ctx.afterResponse(c, () => servePageTurn(ctx, job, asker, page, grant))
         const messages = (await meta.listJobMessages(job.id)).map(messageJson)
-        return c.json({ ...(await showOne((await meta.getJob(job.id)) ?? job)), messages }, 201)
+        return c.json(
+          { ...(await showOne((await meta.getJob(job.id)) ?? job)), messages, waiting_for: null },
+          201,
+        )
       }
       const agent = await meta.getAgent(b.agent_id)
       const caller = await agentFor(c)
@@ -750,6 +766,14 @@ export const jobRoutes = (ctx: AppContext) => {
         messages,
         turns: await turnsFor(job),
         events: (await meta.jobExecution?.events(job.id, job.org_id)) ?? [],
+        // Said here, not on every job: the asker is the one who can do something about it.
+        // A dedupe hit that is already running or asking waits for nobody's machine.
+        waiting_for:
+          job.status === "queued"
+            ? (await creatorLeft(meta, agent))
+              ? { machine: "owner" as const, owner: agent.created_by, seen_at: agent.seen_at }
+              : waitingFor(agent)
+            : null,
       }
       if (created) await wakeCloud(c, job)
       return created ? c.json(body, 201) : c.json(body, 200)

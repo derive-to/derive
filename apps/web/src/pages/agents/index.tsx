@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query"
 import { getRouteApi, Link } from "@tanstack/react-router"
 import { useState } from "react"
-import type { ListedAgent } from "@/api"
+import { api, type ListedAgent } from "@/api"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { LoadError } from "@/components/shared/load-error"
 import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
@@ -10,13 +11,24 @@ import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useAuth } from "@/ctx"
 import { agentsQuery, openJobsQuery, recentJobsQuery } from "@/lib/queries"
+import { useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { useJobEvents } from "@/lib/use-job-events"
 import { JobRow } from "./agent-jobs"
-import { cronLabel, firstLine, groupAgents, rosterOf, schedulesOf, when } from "./format"
-import { Group, Meta, RowLine, rowClass, Segmented, Time } from "./rows"
+import {
+  cronLabel,
+  firstLine,
+  groupAgents,
+  type MachineGroup,
+  machineDown,
+  machineName,
+  machineState,
+  rosterOf,
+  schedulesOf,
+  when,
+} from "./format"
+import { Group, Meta, RowLine, rowClass, Segmented, Time, Verb } from "./rows"
 import { AgentRowsSkeleton } from "./skeleton"
-import { TaskComposer } from "./task-composer"
 import { TaskUsage } from "./task-usage"
 import { useMemberNames } from "./use-member-names"
 
@@ -40,7 +52,6 @@ export function AgentsHome() {
   const header = (
     <PageHeader
       title="Agents"
-      subtitle="Give it the work. Keep the results here."
       actions={
         <Button asChild variant="outline" size="sm" data-testid="agents-new">
           <Link to="/agents/new">New agent</Link>
@@ -69,12 +80,8 @@ export function AgentsHome() {
         <AgentRowsSkeleton />
       </PageShell>
     )
-  const { needs, running, lastWorked } = groupAgents(
-    roster,
-    open.data,
-    recent.data ?? [],
-    (id) => roster.find((a) => a.id === id)?.triggers,
-  )
+  const grouped = groupAgents(roster, open.data, recent.data ?? [], me?.id)
+  const { needs, running, waiting, lastWorked } = grouped
   const allJobs = [
     ...new Map([...(recent.data ?? []), ...open.data].map((job) => [job.id, job])).values(),
   ].sort((a, b) => b.created_at.localeCompare(a.created_at))
@@ -93,10 +100,17 @@ export function AgentsHome() {
         .toLowerCase()
         .includes(search.toLowerCase()),
   )
-  const agentRow = (agent: ListedAgent) => {
+  // `groupOn`: the machine group's own state, so a row says its runner's state only when
+  // that differs (each agent has its own runner process on the same machine).
+  const agentRow = (agent: ListedAgent, groupOn?: boolean) => {
     const active = running.get(agent.id)?.[0]
+    const own =
+      agent.machine === "owner" && groupOn !== undefined ? machineState(agent.seen_at) : null
+    const differs = own !== null && (own === "On") !== groupOn
+    const queued = waiting.get(agent.id) ?? []
     const schedule = schedulesOf(agent.triggers)[0]
     const last = lastWorked.get(agent.id)
+    const oldest = queued.map((j) => j.created_at).sort()[0]
     return (
       <Link
         key={agent.id}
@@ -112,26 +126,47 @@ export function AgentsHome() {
               ? "agent-paused"
               : active
                 ? "job-running"
-                : schedule
-                  ? "agent-scheduled"
-                  : "agent"
+                : queued.length
+                  ? "job-queued"
+                  : schedule
+                    ? "agent-scheduled"
+                    : "agent"
           }
+          tone={queued.length && machineDown(agent) ? "warning" : undefined}
           title={agent.name}
-          detail={agent.description ?? "Ready when you are"}
+          detail={
+            active
+              ? firstLine(active.instruction)
+              : queued.length && oldest
+                ? `${queued.length === 1 ? "1 task" : `${queued.length} tasks`} waiting since ${when(oldest)}`
+                : (agent.description ?? undefined)
+          }
         />
         <Meta>
-          <span>
-            {agent.paused
-              ? "Paused"
-              : active
-                ? "Running"
-                : schedule?.cron
-                  ? cronLabel(schedule.cron)
-                  : "When asked"}
-          </span>
+          {agent.paused ? (
+            <span>Paused</span>
+          ) : active ? (
+            <span>Running</span>
+          ) : (
+            schedule?.cron && <span>{cronLabel(schedule.cron)}</span>
+          )}
+          {differs && <span data-testid={`agent-runner-${agent.id}`}>{own}</span>}
           {last && <Time>{when(last)}</Time>}
         </Meta>
       </Link>
+    )
+  }
+  const machineGroup = (m: MachineGroup<ListedAgent>) => {
+    const state = machineState(m.seenAt)
+    return (
+      <Group
+        key={m.owner ?? "nobody"}
+        label={machineName(m.owner, names, me?.id)}
+        aside={state}
+        testId={`agents-group-machine-${m.owner ?? "nobody"}`}
+      >
+        {m.agents.map((agent) => agentRow(agent, state === "On"))}
+      </Group>
     )
   }
   return (
@@ -145,7 +180,7 @@ export function AgentsHome() {
       >
         <TabsList variant="line" aria-label="Agent home views">
           <TabsTrigger value="agents" data-testid="agents-tab-agents">
-            Your agents
+            Agents
           </TabsTrigger>
           <TabsTrigger value="tasks" data-testid="agents-tab-tasks">
             Tasks
@@ -155,7 +190,6 @@ export function AgentsHome() {
           </TabsTrigger>
         </TabsList>
         <TabsContent value="agents" className="flex flex-col gap-8 pt-5">
-          <TaskComposer agents={roster} />
           {needs.length > 0 && (
             <Group label="Needs you" testId="agents-group-needs">
               {needs.map(({ job, agent }) => (
@@ -181,15 +215,28 @@ export function AgentsHome() {
               ))}
             </Group>
           )}
-          <Group label="Your agents" testId="agents-roster">
-            {roster.length ? (
-              roster.map(agentRow)
-            ) : (
-              <p data-testid="agents-empty" className="py-3 text-base text-muted-foreground">
-                Your first agent starts with a skill. Tell it what you want to get done.
-              </p>
-            )}
-          </Group>
+          {grouped.derive.length > 0 && (
+            <Group label="Derive" testId="agents-group-derive">
+              {grouped.derive.map((agent) => agentRow(agent))}
+            </Group>
+          )}
+          {grouped.machines.map(machineGroup)}
+          {grouped.notSetUp.length > 0 && (
+            <Group label="Not set up" testId="agents-group-not-set-up">
+              {grouped.notSetUp.map((agent) => (
+                <NotSetUpRow
+                  key={agent.id}
+                  agent={agent}
+                  machine={machineName(agent.created_by, names, me?.id)}
+                />
+              ))}
+            </Group>
+          )}
+          {roster.length === 0 && (
+            <p data-testid="agents-empty" className="py-3 text-base text-muted-foreground">
+              Your first agent starts with a skill. Tell it what you want to get done.
+            </p>
+          )}
         </TabsContent>
         <TabsContent value="tasks" className="flex flex-col gap-5 pt-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -207,7 +254,7 @@ export function AgentsHome() {
               {(
                 [
                   ["all", "All tasks"],
-                  ["running", "Running"],
+                  ["running", "Open"],
                   ["attention", "Needs you"],
                   ["done", "Completed"],
                 ] as const
@@ -297,5 +344,53 @@ export function AgentsHome() {
         </TabsContent>
       </Tabs>
     </PageShell>
+  )
+}
+
+/** An agent on a machine that has never connected. One with no skill and no tasks is a leftover
+ *  anyone who manages it can remove from here. */
+function NotSetUpRow({ agent, machine }: { agent: ListedAgent; machine: string }) {
+  const [confirming, setConfirming] = useState(false)
+  const remove = useApiMutation({
+    mutationFn: () => api.deleteAgent(agent.id),
+    invalidate: [["agents"], ["jobs"]],
+  })
+  const leftover = !agent.instructions_short_id && !agent.last_job_at
+  return (
+    <div data-testid={`agent-row-${agent.id}`} className={rowClass()}>
+      <Link
+        to="/agents/$id"
+        params={{ id: agent.id }}
+        search={{}}
+        data-testid={`agent-open-${agent.id}`}
+        className="flex min-w-0 flex-1 items-center gap-3.5"
+      >
+        <RowLine
+          icon="agent"
+          title={agent.name}
+          detail={leftover ? "No skill. Never connected." : `${machine} has never connected.`}
+        />
+      </Link>
+      <Meta>
+        {leftover && agent.can_manage && (
+          <Verb
+            testId={`agent-remove-${agent.id}`}
+            disabled={remove.isPending}
+            onClick={() => setConfirming(true)}
+          >
+            Remove
+          </Verb>
+        )}
+      </Meta>
+      <ConfirmDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        title={`Remove ${agent.name}?`}
+        description="It has no skill and has never run. Nothing else refers to it."
+        confirmLabel="Remove"
+        confirmTestId={`agent-remove-confirm-${agent.id}`}
+        onConfirm={() => remove.mutateAsync().then(() => undefined)}
+      />
+    </div>
   )
 }

@@ -1706,7 +1706,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["JobDetail"];
+                        "application/json": components["schemas"]["JobAsked"];
                     };
                 };
                 /** @description The new job. */
@@ -1715,7 +1715,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["JobDetail"];
+                        "application/json": components["schemas"]["JobAsked"];
                     };
                 };
             };
@@ -7887,6 +7887,31 @@ export interface components {
             created_at: string;
             updated_at: string;
         };
+        JobAsked: components["schemas"]["JobDetail"] & {
+            /** @description Set when nothing will pick this task up until a runner comes back. */
+            waiting_for: {
+                /** @enum {string} */
+                machine: "owner";
+                /** @description Whose machine: the agent's creator. */
+                owner: string | null;
+                /** @description When that runner last polled; null if never. */
+                seen_at: string | null;
+            } | null;
+        };
+        JobMessage: {
+            id: string;
+            /** @enum {string} */
+            author_kind: "asker" | "agent";
+            author_id: string;
+            body_md: string;
+            progress: boolean;
+            model: {
+                id: string;
+                label: string;
+            } | null;
+            tools: string[];
+            created_at: string;
+        };
         JobDetail: components["schemas"]["Job"] & {
             messages: components["schemas"]["JobMessage"][];
             turns?: {
@@ -7926,20 +7951,6 @@ export interface components {
                 label?: string | null;
                 created_at: string;
             }[];
-        };
-        JobMessage: {
-            id: string;
-            /** @enum {string} */
-            author_kind: "asker" | "agent";
-            author_id: string;
-            body_md: string;
-            progress: boolean;
-            model: {
-                id: string;
-                label: string;
-            } | null;
-            tools: string[];
-            created_at: string;
         };
         ModelAccount: {
             id: string;

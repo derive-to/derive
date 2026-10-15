@@ -112,7 +112,7 @@ export function AgentPage() {
           </TabsTrigger>
         </TabsList>
         <TabsContent value="jobs" className="flex flex-col gap-7 pt-5">
-          {agent.can_ask && <TaskComposer agents={[agent]} />}
+          {agent.can_ask && <TaskComposer agent={agent} />}
           <AgentJobs agent={agent} names={names} meId={me.id} />
         </TabsContent>
         <TabsContent value="skill" className="pt-5">

@@ -23,11 +23,12 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { useAuth } from "@/ctx"
 import { accountsQuery, agentConnectionsQuery, artifactQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 import { accountLabel } from "../settings/accounts-section"
-import { sourceName } from "./agent-jobs"
+import { sourceName, useNoAccount } from "./agent-jobs"
 import { RepositoryField } from "./agent-repository"
 import { TriggersField } from "./agent-triggers"
 import { machineOf, modelChoices, ownerMachineName, runnerCommand, when } from "./format"
@@ -47,6 +48,8 @@ type Props = {
 
 export function AgentSettings({ agent, names, isWorkspaceOwner }: Props) {
   const edit = agent.can_manage
+  const { me } = useAuth()
+  const noAccount = useNoAccount(agent, me?.id ?? "")
   const update = useApiMutation({
     mutationFn: (patch: AgentPatch) => api.updateAgent(agent.id, patch),
     invalidate: [["agents"]],
@@ -112,6 +115,18 @@ export function AgentSettings({ agent, names, isWorkspaceOwner }: Props) {
               {agent.sandbox.fresh
                 ? "A Derive sandbox, new for each task."
                 : "A Derive sandbox that keeps its files between tasks."}
+            </Sub>
+          )}
+          {agent.machine === "derive" && noAccount && (
+            <p data-testid="agent-machine-needs-account" className="text-sm text-warning">
+              Needs a model account below. A Derive machine has no login to borrow.
+            </p>
+          )}
+          {agent.machine === "derive" && agent.sources.length === 0 && !agent.repository && (
+            <Sub>
+              <span data-testid="agent-machine-no-sources">
+                Nothing on anyone’s computer reaches it. What the skill needs goes under Sources.
+              </span>
             </Sub>
           )}
         </Field>

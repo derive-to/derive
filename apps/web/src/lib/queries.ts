@@ -6,6 +6,7 @@ import {
   queryOptions,
 } from "@tanstack/react-query"
 import { API_BASE, type Artifact, api } from "@/api"
+import { stuckRowCount, stuckRows } from "./stuck-jobs"
 
 // The signed-in user (or null for an anon visitor). One key read by the thin
 // AuthProvider (useQuery) AND the route guards (ensureQueryData) — they dedupe
@@ -628,25 +629,36 @@ export const agentJobsQuery = (agentId: string) =>
       last.jobs.length === JOB_PAGE ? last.jobs[last.jobs.length - 1]?.created_at : undefined,
   })
 
-// The jobs waiting on you: needs_you, and either you asked or you manage the agent. Read by
-// the Inbox and the rail's count, so one key serves both.
+// The jobs that may wait on you: needs_you, and queued (stuck when the agent's machine is
+// down, which the Inbox works out from the agents); either you asked or you manage the agent.
 export const inboxJobsQuery = () =>
   queryOptions({
     queryKey: ["jobs", "inbox"] as const,
     queryFn: () =>
-      api.listJobs({ mine: true, status: ["needs_you"], limit: 100 }).then((r) => r.jobs),
+      api.listJobs({ mine: true, status: ["needs_you", "queued"], limit: 200 }).then((r) => r.jobs),
     // A count of what waits on you must never paint from a stale or restored copy.
     staleTime: 0,
     meta: { persist: false },
   })
 
-// How many jobs wait on you: the rail's Inbox count. Seeded by the boot batch, then kept
-// current by job events (lib/use-job-events), which invalidate everything under ["jobs"].
-export const needsYouCountQuery = () =>
+// How many things wait on you: the rail's Inbox count. Questions, plus tasks stuck on a
+// machine that is down. Seeded by the boot batch (questions only), then kept current by job
+// events (lib/use-job-events), which invalidate everything under ["jobs"].
+export const needsYouCountQuery = (meId?: string) =>
   queryOptions({
     queryKey: ["jobs", "inbox", "count"] as const,
-    queryFn: () =>
-      api.listJobs({ mine: true, status: ["needs_you"], limit: 100 }).then((r) => r.jobs.length),
+    queryFn: async () => {
+      const [{ jobs }, { agents }] = await Promise.all([
+        api.listJobs({ mine: true, status: ["needs_you", "queued"], limit: 200 }),
+        api.listAgents(),
+      ])
+      return (
+        jobs.filter((j) => j.status === "needs_you").length +
+        stuckRowCount(stuckRows(jobs, agents, meId))
+      )
+    },
+    // The boot seed counts questions only; read again on mount so stuck tasks count too.
+    staleTime: 0,
     meta: { persist: false },
   })
 

@@ -14,6 +14,7 @@ import { LoadError } from "@/components/shared/load-error"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
+import { useAuth } from "@/ctx"
 import { accountsQuery, agentJobsQuery, agentQuery, jobQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useJobEvents } from "@/lib/use-job-events"
@@ -24,6 +25,7 @@ import {
   failureOf,
   firstLine,
   JOB_ICON,
+  machineName,
   machineOf,
   schedulesOf,
   took,
@@ -44,6 +46,7 @@ export function warningFor(
   names: Map<string, string>,
   noAccount = false,
   broken: string[] = [],
+  meId?: string,
 ): string | null {
   if (agent.paused) return "This agent is paused. New tasks wait until you resume it in Settings."
   if (broken.length) return `${broken.join(", ")} needs to reconnect. Open Sources in Settings.`
@@ -52,11 +55,15 @@ export function warningFor(
   if (noAccount && agent.machine === "derive")
     return "Connect a model account in Settings to start cloud tasks."
   if (agent.machine === "derive") return null
-  if (!agent.seen_at) return "Its runner has never checked in. Tasks wait until it does."
-  const mark = machineOf(agent, names)
-  if (mark.on) return null
-  return `${mark.label.replace(/, off$/, "")} was last seen ${when(agent.seen_at)}. Tasks wait while it is off.`
+  const machine = machineName(agent.created_by, names, meId)
+  if (!agent.seen_at) return `${machine} has never connected. Tasks wait until it does.`
+  if (machineOf(agent, names).on) return null
+  return `${machine} has been off since ${when(agent.seen_at)}. Tasks wait until it is back.`
 }
+
+/** The machine's owner can fix a waiting task in one command; point them at it. */
+const canStartRunner = (agent: Pick<Agent, "machine" | "seen_at" | "created_by">, meId: string) =>
+  agent.machine === "owner" && agent.created_by === meId && !machineOf(agent, new Map()).on
 
 // The Jobs tab: what the agent does, what would stop it, where it runs, then every job it has
 // taken, newest first, one line each.
@@ -80,6 +87,7 @@ export function AgentJobs({
     names,
     useNoAccount(agent, meId),
     agent.can_manage ? brokenSources(agent) : [],
+    meId,
   )
   const schedules = schedulesOf(agent.triggers)
   const rows = jobs.data?.pages.flatMap((p) => p.jobs) ?? []
@@ -89,6 +97,19 @@ export function AgentJobs({
       {warning && (
         <p data-testid="agent-warning" role="status" className="text-sm text-warning">
           {warning}
+          {!agent.paused && canStartRunner(agent, meId) && (
+            <>
+              {" "}
+              <Link
+                to="/settings/$section"
+                params={{ section: "machines" }}
+                data-testid="agent-start-runner"
+                className="font-medium underline"
+              >
+                Start it from Settings.
+              </Link>
+            </>
+          )}
         </p>
       )}
       {schedules.length > 0 && (
@@ -318,7 +339,7 @@ export function NeedsRow({
 /** Whether the viewer can tell that no model account would resolve for this agent's jobs.
  *  Only its creator can: the fallback is the creator's own account, then a shared one, and
  *  nobody else sees the creator's accounts. */
-function useNoAccount(agent: AgentDetail, meId: string): boolean {
+export function useNoAccount(agent: AgentDetail, meId: string): boolean {
   const mine = agent.machine === "derive" && !agent.account_id && agent.created_by === meId
   const accounts = useQuery({ ...accountsQuery(), enabled: mine })
   if (!mine || !accounts.data) return false
@@ -344,14 +365,19 @@ export function taskStatus(job: Job, agent: Agent): string {
     if (["creating", "provisioning", "stopping"].includes(agent.runtime?.phase ?? ""))
       return "Getting ready"
     if (agent.runtime?.phase === "failed") return "Retrying setup"
-    return "Queued"
+    return "Waiting"
   }
   if (["creating", "provisioning", "starting"].includes(job.machine_phase ?? "")) return "Starting"
   if (job.machine_phase === "stopping") return "Saving files"
   return job.task.session ? "Session open" : "Running"
 }
 
-export function detailOf(job: Job, agent: Agent): string | undefined {
+export function detailOf(
+  job: Job,
+  agent: Agent,
+  names: Map<string, string> = new Map(),
+  meId?: string,
+): string | undefined {
   if (job.status === "needs_you") return job.needs?.question
   if (job.status === "failed" || job.status === "lost") return failureOf(job) ?? undefined
   if (job.status === "cancelled") return "Stopped before completion"
@@ -363,8 +389,14 @@ export function detailOf(job: Job, agent: Agent): string | undefined {
     return "Saving the sandbox so it is ready for your task."
   if (job.status === "queued" && agent.runtime?.phase === "failed")
     return "Sandbox setup did not finish. Derive will try again."
-  if (job.status === "queued")
-    return agent.paused ? "Resume this agent in Settings to start" : "Waiting for its turn"
+  if (job.status === "queued" && agent.paused) return "Resume this agent in Settings to start"
+  if (job.status === "queued" && agent.machine === "owner" && !machineOf(agent, names).on) {
+    const machine = machineName(agent.created_by, names, meId).replace(/^Your/, "your")
+    return agent.seen_at
+      ? `Waiting for ${machine}, off since ${when(agent.seen_at)}`
+      : `Waiting for ${machine}, never connected`
+  }
+  if (job.status === "queued") return "Waiting for its turn"
   if (job.status === "running" && job.machine_waiting)
     return `Waiting to start: ${job.machine_waiting}`
   if (job.status === "running" && job.machine_phase === "creating")
@@ -403,6 +435,7 @@ export function JobRow({
   triggers?: AgentTrigger[]
 }) {
   const [open, setOpen] = useState(false)
+  const { me } = useAuth()
   const invalidate = [["jobs"]]
   const cancel = useApiMutation({ mutationFn: () => api.cancelJob(job.id), invalidate })
   const retry = useApiMutation({ mutationFn: () => api.retryJob(job.id), invalidate })
@@ -419,7 +452,7 @@ export function JobRow({
   })
   const needs = job.status === "needs_you"
   const failed = job.status === "failed" || job.status === "lost"
-  const detail = detailOf(job, agent)
+  const detail = detailOf(job, agent, names, me?.id)
   const asker =
     job.kind === "scheduled" ? "Schedule" : job.asked_by ? first(names.get(job.asked_by)) : null
 

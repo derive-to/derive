@@ -721,7 +721,7 @@ async function reportAs(
   expect(r.ok(), await r.text()).toBeTruthy()
 }
 
-test("Agents home groups agents by what they need, and the rail leads with it", async ({
+test("Agents home groups agents by where they run, and a leftover can be removed", async ({
   owner,
 }, testInfo) => {
   const scheduled = await makeAgent(owner, {
@@ -732,7 +732,11 @@ test("Agents home groups agents by what they need, and the rail leads with it", 
   const asker = await makeAgent(owner, { name: "Reviewer", description: "reviews pull requests" })
   const busy = await makeAgent(owner, { name: "Builder", description: "builds things" })
   const idle = await makeAgent(owner, { name: "Idle helper" })
+  const { user: me } = (await (await owner.request.get("/v1/me")).json()) as {
+    user: { id: string }
+  }
 
+  await pullAs(owner, scheduled) // its runner has checked in: it belongs to this machine
   await askAgent(owner, asker, "Should I merge the stacked PRs?")
   const [held] = await pullAs(owner, asker)
   expect(held).toBeTruthy()
@@ -741,32 +745,48 @@ test("Agents home groups agents by what they need, and the rail leads with it", 
       status: "needs_you",
       needs: { kind: "decision", question: "Merge all three now?", options: ["Merge", "Wait"] },
     })
+  await askAgent(owner, asker, "Then tag the release")
   await askAgent(owner, busy, "Build the release notes")
   await pullAs(owner, busy)
 
   await owner.goto("/agents")
   await expect(owner.getByTestId("nav-agents")).toHaveAttribute("aria-current", "page")
-  // The rail is Agents, Inbox, Artifacts, Skills; the retired rows are gone but their pages
-  // still resolve.
+  // The rail is Agents, Inbox, Artifacts, Skills, Chat; the retired rows are gone but their
+  // pages still resolve.
   await expect(owner.getByTestId("nav-skills")).toHaveAttribute("href", "/skills")
-  for (const gone of ["nav-contexts", "nav-workflows", "nav-chat", "nav-templates"])
+  for (const gone of ["nav-contexts", "nav-workflows", "nav-templates"])
     await expect(owner.getByTestId(gone)).toHaveCount(0)
+  // No ask box here: you ask an agent on its own page.
+  await expect(owner.getByTestId("task-composer")).toHaveCount(0)
   await expect(owner.getByTestId("agents-group-needs")).toContainText("Merge all three now?")
-  await expect(owner.getByTestId("agents-group-running")).toContainText("Builder")
-  await expect(owner.getByTestId("agents-group-running")).toContainText("Build the release notes")
-  await expect(owner.getByTestId("agents-group-scheduled")).toContainText("Digest writer")
-  await expect(owner.getByTestId("agents-group-scheduled")).toContainText("Weekdays 9:00")
-  // The asked agent sits in its own group as well as in Needs you.
-  await expect(owner.getByTestId("agents-group-asked")).toContainText("Reviewer")
-  // Never-used agents are a count until asked for.
-  await expect(owner.getByTestId(`agent-row-${idle.id}`)).toHaveCount(0)
-  await owner.getByTestId("agents-show-never").click()
-  await expect(owner.getByTestId(`agent-row-${idle.id}`)).toBeVisible()
+  // Every agent whose runner has checked in sits under that machine, with its state.
+  const machine = owner.getByTestId(`agents-group-machine-${me.id}`)
+  await expect(machine).toContainText("Your machine")
+  await expect(owner.getByTestId(`agents-group-machine-${me.id}-state`)).toHaveText("On")
+  await expect(machine).toContainText("Builder")
+  await expect(machine).toContainText("Build the release notes")
+  await expect(machine).toContainText("Running")
+  await expect(machine).toContainText("Reviewer")
+  await expect(machine).toContainText("1 task waiting since")
+  await expect(machine).toContainText("Digest writer")
+  await expect(machine).toContainText("Weekdays 9:00")
+  // A never-connected agent with no skill is a leftover: named as such, removable here.
+  const notSetUp = owner.getByTestId("agents-group-not-set-up")
+  await expect(notSetUp).toContainText("Idle helper")
+  await expect(notSetUp).toContainText("No skill. Never connected.")
   await owner.screenshot({ path: testInfo.outputPath("agents-home.png"), fullPage: true })
+  await owner.getByTestId(`agent-remove-${idle.id}`).click()
+  await owner.getByTestId(`agent-remove-confirm-${idle.id}`).click()
+  await expect(owner.getByTestId(`agent-row-${idle.id}`)).toHaveCount(0)
+  expect((await owner.request.get(`/v1/agents/${idle.id}`)).status()).toBe(404)
 
   await owner.getByTestId(`agent-row-${scheduled.id}`).click()
   await expect(owner).toHaveURL(new RegExp(`/agents/${scheduled.id}$`))
   await expect(owner.getByTestId("agent-title")).toHaveText("Digest writer")
+  await expect(owner.getByTestId("agent-ask-input")).toHaveAttribute(
+    "placeholder",
+    "Ask Digest writer to…",
+  )
 
   // An old Context bookmark that is not an imported paper lands on the Agents home.
   await owner.goto("/contexts/ctx_legacy")
@@ -825,9 +845,11 @@ test("an agent's page answers, retries, and changes the agent", async ({ owner }
   await owner.screenshot({ path: testInfo.outputPath("agent-jobs.png"), fullPage: true })
 
   // Ask from the page opens a job.
-  await owner.getByTestId("agent-ask").click()
   await owner.getByTestId("agent-ask-input").fill("Summarize the funnel")
   await owner.getByTestId("agent-ask-send").click()
+  // Asking opens the task; its row is on the agent's page when you come back.
+  await expect(owner).toHaveURL(/\/tasks\/job_/)
+  await owner.goto(`/agents/${agent.id}`)
   await expect(owner.getByTestId("agent-jobs")).toContainText("Summarize the funnel")
 
   await owner.getByTestId("agent-tab-settings").click()
@@ -936,6 +958,7 @@ test("Inbox answers what needs you in place and lists what agents published toda
   await expect(owner.getByTestId("inbox-today")).toContainText("Release note draft")
   await expect(owner.getByTestId("inbox-today")).toContainText("Scribe")
   await owner.screenshot({ path: testInfo.outputPath("inbox.png"), fullPage: true })
+  await owner.getByTestId(`job-row-${jobId}`).click()
   await owner.getByTestId(`job-option-${jobId}-0`).click()
   await expect(row).toHaveCount(0)
   await expect(owner.getByTestId("nav-inbox")).not.toContainText("1")
@@ -963,6 +986,36 @@ test("Inbox answers what needs you in place and lists what agents published toda
   await owner.getByTestId(`job-dismiss-${askedId}`).click()
   await expect(owner.getByTestId(`inbox-job-${askedId}`)).toHaveCount(0)
   expect((await (await owner.request.get(`/v1/jobs/${askedId}`)).json()).status).toBe("cancelled")
+
+  // A task asked of an agent whose runner has never connected is stuck, and its machine's
+  // owner hears about it here, with the way to start it. The ask said so too.
+  const { user: me } = (await (await owner.request.get("/v1/me")).json()) as {
+    user: { id: string }
+  }
+  const cold = await makeAgent(owner, { name: "Night owl", role: "editor" })
+  const stuckAsk = await owner.request.post("/v1/jobs", {
+    data: { agent_id: cold.id, instruction: "Watch the error budget" },
+  })
+  expect((await stuckAsk.json()).waiting_for).toEqual({
+    machine: "owner",
+    owner: me.id,
+    seen_at: null,
+  })
+  const stuckId = (await stuckAsk.json()).id
+  await owner.goto("/inbox")
+  const stuck = owner.getByTestId(`inbox-stuck-${me.id}`)
+  await expect(stuck).toContainText("1 task is waiting for your machine")
+  await expect(stuck).toContainText("never connected")
+  await expect(stuck).toContainText("Night owl: 1")
+  await expect(owner.getByTestId("nav-inbox")).toContainText("1")
+  await expect(owner.getByTestId(`inbox-stuck-start-${me.id}`)).toHaveAttribute(
+    "href",
+    "/settings/machines",
+  )
+  await owner.screenshot({ path: testInfo.outputPath("inbox-stuck.png"), fullPage: true })
+  await owner.getByTestId(`inbox-stuck-cancel-${me.id}`).click()
+  await expect(stuck).toHaveCount(0)
+  expect((await (await owner.request.get(`/v1/jobs/${stuckId}`)).json()).status).toBe("cancelled")
 })
 
 test("a job's report page says which job it is, and the job links to it", async ({

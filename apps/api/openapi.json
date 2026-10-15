@@ -2620,6 +2620,108 @@
           "updated_at"
         ]
       },
+      "JobAsked": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/JobDetail"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "waiting_for": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "machine": {
+                    "type": "string",
+                    "enum": [
+                      "owner"
+                    ]
+                  },
+                  "owner": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Whose machine: the agent's creator."
+                  },
+                  "seen_at": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "When that runner last polled; null if never."
+                  }
+                },
+                "required": [
+                  "machine",
+                  "owner",
+                  "seen_at"
+                ],
+                "description": "Set when nothing will pick this task up until a runner comes back."
+              }
+            },
+            "required": [
+              "waiting_for"
+            ]
+          }
+        ]
+      },
+      "JobMessage": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "author_kind": {
+            "type": "string",
+            "enum": [
+              "asker",
+              "agent"
+            ]
+          },
+          "author_id": {
+            "type": "string"
+          },
+          "body_md": {
+            "type": "string"
+          },
+          "progress": {
+            "type": "boolean"
+          },
+          "model": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "label"
+            ]
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "author_kind",
+          "author_id",
+          "body_md",
+          "progress",
+          "model",
+          "tools",
+          "created_at"
+        ]
+      },
       "JobDetail": {
         "allOf": [
           {
@@ -2802,65 +2904,6 @@
               "messages"
             ]
           }
-        ]
-      },
-      "JobMessage": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "author_kind": {
-            "type": "string",
-            "enum": [
-              "asker",
-              "agent"
-            ]
-          },
-          "author_id": {
-            "type": "string"
-          },
-          "body_md": {
-            "type": "string"
-          },
-          "progress": {
-            "type": "boolean"
-          },
-          "model": {
-            "type": "object",
-            "nullable": true,
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "label": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "id",
-              "label"
-            ]
-          },
-          "tools": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "created_at": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "author_kind",
-          "author_id",
-          "body_md",
-          "progress",
-          "model",
-          "tools",
-          "created_at"
         ]
       },
       "ModelAccount": {
@@ -7329,7 +7372,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JobDetail"
+                  "$ref": "#/components/schemas/JobAsked"
                 }
               }
             }
@@ -7339,7 +7382,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JobDetail"
+                  "$ref": "#/components/schemas/JobAsked"
                 }
               }
             }
