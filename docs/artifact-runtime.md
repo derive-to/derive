@@ -145,3 +145,7 @@ The same entry owns the 25 MB asset limit. Avatar uploads retain their 2 MB limi
 The kit source asset policy uses the same type detection and upload limit.
 Its HTTP, MCP, and rendering paths use that policy.
 The generic kit default retains its existing 10 MB limit and formats.
+
+Exact Markdown writes use the shared source engine.
+The native parser supplies source ranges and renders the editor page.
+The core serializes edits, checks their rendered meaning, and retains source history.

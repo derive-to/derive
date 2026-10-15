@@ -2,7 +2,9 @@ import { DECK_CONTENT_TYPE, HTML_CONTENT_TYPE, isMarkdownLike } from "./content-
 import { VIDEO_CONTENT_TYPE } from "./videos"
 
 export {
+  type AppliedMarkdownSourceOps,
   type AppliedSourceOps,
+  applyMarkdownSourceOps,
   applySourceOps,
   hashSource,
   hostMarker,
@@ -13,6 +15,7 @@ export {
   type MarkdownSourceUnit,
   markdownHistoryEdge,
   markdownHistoryGap,
+  markdownUnit,
   parseSourceOps,
   removedSourceIn,
   SOURCE_ASSET_MAX_BYTES,
