@@ -2,6 +2,8 @@ import type { Agent, AgentTrigger, Job, JobDetail, JobStatus } from "@/api"
 import { API_BASE } from "@/api"
 import type { IconName } from "@/components/icons"
 
+export { MACHINE_DOWN_MS, machineDown, stuckJobs } from "@/lib/stuck-jobs"
+
 // Words and grouping for the agent screens. Pure, so the three screens (home, one agent,
 // Settings › Machines) say the same thing about the same agent.
 
@@ -144,20 +146,44 @@ export function askedLine(job: Job): string | null {
   return since ? `Asked ${n} times since ${when(since)}` : `Asked ${n} times`
 }
 
-export type AgentGroup = "running" | "scheduled" | "asked" | "never"
+/** "Your machine" for the viewer's own; "Rob's machine" for a teammate's. */
+export const machineName = (
+  owner: string | null,
+  names: Map<string, string>,
+  meId: string | undefined,
+): string => (owner && owner === meId ? "Your machine" : ownerMachineName(owner, names))
 
-/** The Agents home, grouped by state. Needs-you rows are per JOB (each one is a question a
- *  person answers); every agent also sits in exactly one of the other groups. */
-export function groupAgents(
-  agents: Agent[],
+/** A machine's state in words: "On", "Off since Sep 30", "Never connected". */
+export const machineState = (seenAt: string | null, now: number = Date.now()): string => {
+  if (!seenAt) return "Never connected"
+  return now - new Date(seenAt).getTime() < ONLINE_MS ? "On" : `Off since ${when(seenAt)}`
+}
+
+export type MachineGroup<A extends Agent = Agent> = {
+  /** The creator whose machine runs these agents; null when the creator left. */
+  owner: string | null
+  agents: A[]
+  /** The machine's freshest check-in across its agents. */
+  seenAt: string | null
+}
+
+/** The Agents home, grouped by where agents run. Needs-you rows are per JOB (each one is a
+ *  question a person answers). Then every agent sits in exactly one group: Derive, one group
+ *  per owner's machine (the viewer's first), and "not set up" for owner-machine agents whose
+ *  runner has never checked in. */
+export function groupAgents<A extends Agent>(
+  agents: A[],
   openJobs: Job[],
   recentJobs: Job[],
-  triggersOf: (id: string) => AgentTrigger[] | undefined,
+  meId: string | undefined,
 ): {
-  needs: { job: Job; agent: Agent }[]
-  groups: Record<AgentGroup, Agent[]>
+  needs: { job: Job; agent: A }[]
+  derive: A[]
+  machines: MachineGroup<A>[]
+  notSetUp: A[]
   lastWorked: Map<string, string>
   running: Map<string, Job[]>
+  waiting: Map<string, Job[]>
 } {
   const byId = new Map(agents.map((a) => [a.id, a]))
   const needs = openJobs
@@ -167,25 +193,38 @@ export function groupAgents(
       return agent ? [{ job, agent }] : []
     })
   const running = new Map<string, Job[]>()
-  for (const j of openJobs)
-    if (j.status === "running" || j.status === "queued")
-      running.set(j.agent_id, [...(running.get(j.agent_id) ?? []), j])
+  const waiting = new Map<string, Job[]>()
+  for (const j of openJobs) {
+    if (j.status === "running") running.set(j.agent_id, [...(running.get(j.agent_id) ?? []), j])
+    if (j.status === "queued") waiting.set(j.agent_id, [...(waiting.get(j.agent_id) ?? []), j])
+  }
   const lastWorked = new Map<string, string>()
   for (const j of [...openJobs, ...recentJobs]) {
     const at = j.finished_at ?? j.started_at ?? j.created_at
     const prev = lastWorked.get(j.agent_id)
     if (!prev || at > prev) lastWorked.set(j.agent_id, at)
   }
-  const groups: Record<AgentGroup, Agent[]> = { running: [], scheduled: [], asked: [], never: [] }
-  for (const a of agents) {
-    if (running.has(a.id)) groups.running.push(a)
-    else if (schedulesOf(triggersOf(a.id)).length) groups.scheduled.push(a)
-    else if (lastWorked.has(a.id) || a.seen_at) groups.asked.push(a)
-    else groups.never.push(a)
-  }
-  const recent = (a: Agent) => lastWorked.get(a.id) ?? a.seen_at ?? a.created_at
-  groups.asked.sort((x, y) => recent(y).localeCompare(recent(x)))
-  return { needs, groups, lastWorked, running }
+  const recent = (a: A) => lastWorked.get(a.id) ?? a.seen_at ?? a.created_at
+  const byRecent = (x: A, y: A) => recent(y).localeCompare(recent(x))
+  const derive = agents.filter((a) => a.machine === "derive").sort(byRecent)
+  const notSetUp = agents.filter((a) => a.machine === "owner" && !a.seen_at).sort(byRecent)
+  const byOwner = new Map<string | null, A[]>()
+  for (const a of agents)
+    if (a.machine === "owner" && a.seen_at)
+      byOwner.set(a.created_by, [...(byOwner.get(a.created_by) ?? []), a])
+  const machines: MachineGroup<A>[] = [...byOwner]
+    .map(([owner, list]) => ({
+      owner,
+      agents: list.sort(byRecent),
+      seenAt: list.reduce<string | null>(
+        (best, a) => (a.seen_at && (!best || a.seen_at > best) ? a.seen_at : best),
+        null,
+      ),
+    }))
+    .sort((x, y) =>
+      x.owner === meId ? -1 : y.owner === meId ? 1 : (y.seenAt ?? "").localeCompare(x.seenAt ?? ""),
+    )
+  return { needs, derive, machines, notSetUp, lastWorked, running, waiting }
 }
 
 /** The line that starts an owner-machine agent's runner, given its key. The same shape the

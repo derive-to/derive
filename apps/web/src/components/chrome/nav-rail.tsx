@@ -370,7 +370,7 @@ export function NavRail() {
   // answering a job on an agent they manage).
   useJobEvents()
   const { data: waiting } = useQuery({
-    ...needsYouCountQuery(),
+    ...needsYouCountQuery(me?.id),
     enabled: !!me && bootGate,
     refetchInterval: 120_000,
   })

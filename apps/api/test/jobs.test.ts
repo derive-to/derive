@@ -178,6 +178,31 @@ describe("jobs: ask, pull, report", () => {
     expect(detail.messages.map((m) => m.author_kind)).toEqual(["asker", "agent"])
   })
 
+  it("an ask says which machine it waits for while that runner is off", async () => {
+    const { app, meta } = await setup("jobs-waiting")
+    const a = await createAgent(app)
+    // Never connected: the ask is accepted, and says so.
+    const first = (await (await ask(app, ed.email, a.id, "Count the orgs")).json()) as {
+      status: string
+      waiting_for: { machine: string; owner: string | null; seen_at: string | null } | null
+    }
+    expect(first.status).toBe("queued")
+    expect(first.waiting_for).toEqual({ machine: "owner", owner: owner.id, seen_at: null })
+    // The runner polls: the next ask will be picked up, so it waits for nobody.
+    await pull(app, a)
+    const second = (await (await ask(app, ed.email, a.id, "Count them again")).json()) as {
+      waiting_for: unknown
+    }
+    expect(second.waiting_for).toBeNull()
+    // A check-in three minutes old is a runner that has stopped polling.
+    const stale = new Date(Date.now() - 3 * 60_000).toISOString()
+    await meta.touchAgentSeen(a.id, stale)
+    const third = (await (await ask(app, ed.email, a.id, "And once more")).json()) as {
+      waiting_for: { seen_at: string | null } | null
+    }
+    expect(third.waiting_for).toEqual({ machine: "owner", owner: owner.id, seen_at: stale })
+  })
+
   it("a follow-up reopens a settled job with its transcript; the runner sees both turns", async () => {
     const { app } = await setup("jobs-followup")
     const a = await createAgent(app)

@@ -10,29 +10,25 @@ import { useAuth } from "@/ctx"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useTaskDraft } from "@/lib/use-task-draft"
 
-/** The same task input on the home page and inside an agent. */
-export function TaskComposer({ agents }: { agents: (Agent & { can_ask: boolean })[] }) {
+/** The ask box on an agent's page: it names the agent, so there is no picker. */
+export function TaskComposer({ agent }: { agent: Agent }) {
   const navigate = useNavigate()
-  const available = agents.filter((a) => a.can_ask)
   const { me } = useAuth()
-  const draft = useTaskDraft("start", me?.id)
+  const draft = useTaskDraft(agent.id, me?.id)
   const [repo, setRepo] = useState("")
   const { text } = draft
-  const agent = available.find((a) => a.id === draft.agentId) ?? available[0]
   const runtime = useQuery({
     queryKey: ["agents", "runtime"],
     queryFn: api.agentRuntime,
-    enabled: agent?.machine === "derive",
+    enabled: agent.machine === "derive",
   })
   const ask = useApiMutation({
     errorToast: false,
-    mutationFn: () => {
-      if (!agent) throw new Error("Choose an agent first")
-      return api.askAgent(agent.id, text.trim(), undefined, {
+    mutationFn: () =>
+      api.askAgent(agent.id, text.trim(), undefined, {
         dedupe_key: `${draft.key}:${agent.id}`,
         ...(agent.machine === "derive" && repo.trim() ? { repo: repo.trim() } : {}),
-      })
-    },
+      }),
     invalidate: [["jobs"], ["agents"]],
     onSuccess: (job) => {
       draft.clear()
@@ -44,8 +40,7 @@ export function TaskComposer({ agents }: { agents: (Agent & { can_ask: boolean }
   })
   const submit = () => {
     if (!text.trim() || ask.isPending) return
-    if (agent) ask.mutate()
-    else void navigate({ to: "/agents/new", search: { brief: text.trim() } })
+    ask.mutate()
   }
   return (
     <form
@@ -57,9 +52,9 @@ export function TaskComposer({ agents }: { agents: (Agent & { can_ask: boolean }
       }}
     >
       <Textarea
-        aria-label="What are we working on?"
+        aria-label={`Ask ${agent.name}`}
         data-testid="agent-ask-input"
-        placeholder="What are we working on?"
+        placeholder={`Ask ${agent.name} to…`}
         value={text}
         maxLength={20_000}
         disabled={ask.isPending}
@@ -76,30 +71,8 @@ export function TaskComposer({ agents }: { agents: (Agent & { can_ask: boolean }
       />
       <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-muted-foreground">
-          {available.length > 1 ? (
-            <select
-              aria-label="Agent for this task"
-              data-testid="task-composer-agent"
-              className="h-8 max-w-64 rounded-lg border border-input bg-background px-2 text-foreground"
-              value={agent?.id ?? ""}
-              disabled={ask.isPending}
-              onChange={(event) => {
-                draft.choose(event.target.value)
-              }}
-            >
-              {available.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-          ) : agent ? (
-            <span>{agent.name}</span>
-          ) : (
-            <span>We’ll make an agent for this.</span>
-          )}
-          {agent?.paused && <span>Paused · this task will wait</span>}
-          {agent?.machine === "derive" && (
+          {agent.paused && <span>Paused · this task will wait</span>}
+          {agent.machine === "derive" && (
             <Input
               aria-label="Repository"
               data-testid="task-composer-repo"
@@ -110,16 +83,6 @@ export function TaskComposer({ agents }: { agents: (Agent & { can_ask: boolean }
               className="h-8 w-52 font-mono text-sm"
             />
           )}
-          {available.length > 0 && (
-            <Link
-              to="/agents/new"
-              search={{ brief: text.trim() || undefined }}
-              data-testid="task-composer-new-agent"
-              className="hover:text-foreground hover:underline"
-            >
-              New agent
-            </Link>
-          )}
         </div>
         <Button
           type="submit"
@@ -128,15 +91,15 @@ export function TaskComposer({ agents }: { agents: (Agent & { can_ask: boolean }
           disabled={!text.trim()}
           loading={ask.isPending}
         >
-          Let’s go
+          Ask
         </Button>
       </div>
       <div className="mt-2 flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
         <span>Enter to start · Shift+Enter for a new line</span>
-        {agent?.machine === "derive" && runtime.data?.enabled && (
+        {agent.machine === "derive" && runtime.data?.enabled && (
           <span>Runs in the cloud · {runtime.data.provider === "boat" ? "boat.dev" : "Ortam"}</span>
         )}
-        {agent?.machine === "derive" && runtime.data && !runtime.data.enabled && (
+        {agent.machine === "derive" && runtime.data && !runtime.data.enabled && (
           <Link
             to="/settings/$section"
             params={{ section: "sources" }}
@@ -147,7 +110,7 @@ export function TaskComposer({ agents }: { agents: (Agent & { can_ask: boolean }
           </Link>
         )}
       </div>
-      {agent?.machine === "derive" && runtime.isError && (
+      {agent.machine === "derive" && runtime.isError && (
         <StatusPanel
           tone="danger"
           layout="inline"

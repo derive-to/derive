@@ -469,6 +469,23 @@ export const retryJob = async (
   return again
 }
 
+/** A runner that has not polled for this long is off: the two-minute window the web shows. */
+export const RUNNER_ONLINE_MS = 120_000
+
+/** Whose machine a new ask would wait for, or null when it would be picked up: an agent on its
+ *  owner's machine whose runner is off (or has never polled). A Derive machine is always on. */
+export const waitingFor = (
+  agent: Pick<AgentRecord, "machine" | "seen_at" | "created_by">,
+  now: Date = new Date(),
+): { machine: "owner"; owner: string | null; seen_at: string | null } | null => {
+  if (agent.machine !== "owner") return null
+  // No creator means no account's runner may run it (pullJobs hands such a runner nothing).
+  if (!agent.created_by) return { machine: "owner", owner: null, seen_at: agent.seen_at }
+  if (agent.seen_at && now.getTime() - new Date(agent.seen_at).getTime() < RUNNER_ONLINE_MS)
+    return null
+  return { machine: "owner", owner: agent.created_by, seen_at: agent.seen_at }
+}
+
 // ---- The runner side -----------------------------------------------------------------------
 
 /** A runner pulls work for its agent: due schedule windows are materialized first (the poll IS

@@ -146,6 +146,8 @@ export function TaskPage({ id }: { id: string }) {
       <TaskRun
         job={task}
         agent={agent.data}
+        names={names}
+        meId={me?.id}
         canStop={canSteer}
         stopping={stop.isPending}
         onStop={() => stop.mutate()}

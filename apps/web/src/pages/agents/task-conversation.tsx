@@ -79,7 +79,7 @@ export function TaskConversation({
                 </div>
               )}
               {turn.status === "queued" && (
-                <p className="text-sm text-muted-foreground">Queued for its turn.</p>
+                <p className="text-sm text-muted-foreground">Waiting for its turn.</p>
               )}
               <details
                 className="text-xs text-muted-foreground"

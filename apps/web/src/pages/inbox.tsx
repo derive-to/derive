@@ -1,16 +1,18 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
-import type { Agent, Job, WorkspaceActivity } from "@/api"
+import { type Agent, api, type Job, type WorkspaceActivity } from "@/api"
 import { LoadError } from "@/components/shared/load-error"
 import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
 import { useAuth } from "@/ctx"
 import { agentsQuery, inboxJobsQuery, workspaceActivityQuery } from "@/lib/queries"
+import { stuckRowCount, stuckRows } from "@/lib/stuck-jobs"
+import { useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { useJobEvents } from "@/lib/use-job-events"
 import { NeedsRow, useCanSteer } from "./agents/agent-jobs"
-import { firstLine, when } from "./agents/format"
-import { Group, Meta, RowLine, rowClass, Time } from "./agents/rows"
+import { firstLine, machineName, when } from "./agents/format"
+import { Group, Meta, RowLine, rowClass, Time, Verb } from "./agents/rows"
 import { AgentRowsSkeleton } from "./agents/skeleton"
 import { useMemberNames } from "./agents/use-member-names"
 
@@ -22,11 +24,21 @@ export function Inbox() {
   // Job events keep this live; the slow poll is the fallback for what no event reaches.
   useJobEvents()
   const jobs = useQuery({ ...inboxJobsQuery(), refetchInterval: 60_000 })
-  const agents = useQuery(agentsQuery())
+  // Read fresh: a stuck task is judged by its agent's machine, and a restored roster can be
+  // minutes old.
+  const agents = useQuery({ ...agentsQuery(), staleTime: 0 })
   // Shared with the rail, which keeps it warm for 30s; the inbox always reads it fresh.
   const activity = useQuery({ ...workspaceActivityQuery(), refetchOnMount: "always" })
   const byId = new Map((agents.data ?? []).map((a) => [a.id, a]))
   const names = useMemberNames()
+  const { me } = useAuth()
+  const needs = (jobs.data ?? []).filter((j) => j.status === "needs_you")
+  // Queued tasks on a machine that is down, in the rows lib/stuck-jobs gives the rail too:
+  // your own machine is one row with the way to start it; a task on someone else's machine
+  // that you asked or manage is a row with Cancel.
+  const stuck = stuckRows(jobs.data ?? [], agents.data ?? [], me?.id)
+  const waiting = needs.length + stuckRowCount(stuck)
+  const loaded = !!jobs.data && !!agents.data
 
   return (
     <PageShell width="wide" className="flex flex-col gap-9">
@@ -40,13 +52,27 @@ export function Inbox() {
       ) : jobs.isPending ? (
         <AgentRowsSkeleton rows={2} />
       ) : (
-        jobs.data.length > 0 && (
+        waiting > 0 && (
           <Group label="Needs you" testId="inbox-needs">
-            {jobs.data.map((job) => (
+            {needs.map((job) => (
               <InboxNeedsRow key={job.id} job={job} agent={byId.get(job.agent_id)} names={names} />
+            ))}
+            {[...stuck.mine].map(([owner, rows]) => (
+              <StuckOnMyMachine key={owner} owner={owner} rows={rows} />
+            ))}
+            {stuck.others.map(({ job, agent }) => (
+              <StuckElsewhere key={job.id} job={job} agent={agent} names={names} meId={me?.id} />
             ))}
           </Group>
         )
+      )}
+      {agents.isError && (
+        <LoadError
+          layout="inline"
+          title="Couldn’t load agents, so tasks waiting on a machine are not shown."
+          testId="inbox-agents-retry"
+          onRetry={() => void agents.refetch()}
+        />
       )}
       {activity.isError ? (
         <LoadError
@@ -58,7 +84,7 @@ export function Inbox() {
       ) : (
         activity.data && <Today activity={activity.data} />
       )}
-      {jobs.data?.length === 0 && activity.data && todayOf(activity.data).length === 0 && (
+      {loaded && waiting === 0 && activity.data && todayOf(activity.data).length === 0 && (
         <p data-testid="inbox-empty" className="text-base text-muted-foreground">
           Nothing needs you, and no agent has published anything today.
         </p>
@@ -118,6 +144,108 @@ function InboxNeedsRow({
           ) : undefined
         }
       />
+    </div>
+  )
+}
+
+/** Tasks waiting for the viewer's own machine, which is down. One row per machine. */
+function StuckOnMyMachine({
+  owner,
+  rows,
+}: {
+  owner: string
+  rows: { agent: Agent; jobs: Job[] }[]
+}) {
+  const jobs = rows.flatMap((r) => r.jobs)
+  const seen = rows.reduce<string | null>(
+    (best, r) => (r.agent.seen_at && (!best || r.agent.seen_at > best) ? r.agent.seen_at : best),
+    null,
+  )
+  const cancelAll = useApiMutation({
+    // Every cancel is tried; the first failure is reported after the rest have settled.
+    mutationFn: async () => {
+      const results = await Promise.allSettled(jobs.map((j) => api.cancelJob(j.id)))
+      const failed = results.find((r) => r.status === "rejected")
+      if (failed) throw failed.reason
+    },
+    invalidate: [["jobs"]],
+  })
+  const oldest = jobs.map((j) => j.created_at).sort()[0]
+  return (
+    <div data-testid={`inbox-stuck-${owner}`} className={rowClass()}>
+      <RowLine
+        icon="job-queued"
+        tone="warning"
+        title={`${jobs.length === 1 ? "1 task is" : `${jobs.length} tasks are`} waiting for your machine. Its runner has ${seen ? `been off since ${when(seen)}` : "never connected"}.`}
+        detail={rows.map((r) => `${r.agent.name}: ${r.jobs.length}`).join(" · ")}
+      />
+      <Meta>
+        <Link
+          to="/settings/$section"
+          params={{ section: "machines" }}
+          data-testid={`inbox-stuck-start-${owner}`}
+          className="font-medium text-foreground hover:underline"
+        >
+          Start command
+        </Link>
+        <Verb
+          testId={`inbox-stuck-cancel-${owner}`}
+          disabled={cancelAll.isPending}
+          onClick={() => cancelAll.mutate()}
+        >
+          Cancel all
+        </Verb>
+        {oldest && <Time>{when(oldest)}</Time>}
+      </Meta>
+    </div>
+  )
+}
+
+/** A task on someone else's machine, which is down: one the viewer asked, or on an agent
+ *  they manage. */
+function StuckElsewhere({
+  job,
+  agent,
+  names,
+  meId,
+}: {
+  job: Job
+  agent: Agent
+  names: Map<string, string>
+  meId: string | undefined
+}) {
+  const cancel = useApiMutation({
+    mutationFn: () => api.cancelJob(job.id),
+    invalidate: [["jobs"]],
+  })
+  const machine = machineName(agent.created_by, names, meId)
+  const whose = job.asked_by === meId ? "your task" : "a task"
+  return (
+    <div data-testid={`inbox-stuck-job-${job.id}`} className={rowClass()}>
+      <RowLine
+        icon="job-queued"
+        tone="warning"
+        title={`${agent.name} has not started ${whose}. ${machine} has ${agent.seen_at ? `been off since ${when(agent.seen_at)}` : "never connected"}.`}
+        detail={firstLine(job.instruction)}
+      />
+      <Meta>
+        <Link
+          to="/tasks/$id"
+          params={{ id: job.id }}
+          data-testid={`inbox-stuck-open-${job.id}`}
+          className="text-sm text-muted-foreground hover:text-foreground hover:underline"
+        >
+          Open task
+        </Link>
+        <Verb
+          testId={`inbox-stuck-cancel-${job.id}`}
+          disabled={cancel.isPending}
+          onClick={() => cancel.mutate()}
+        >
+          Cancel
+        </Verb>
+        <Time>{when(job.created_at)}</Time>
+      </Meta>
     </div>
   )
 }

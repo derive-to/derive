@@ -10,17 +10,33 @@ import type { MachineMark } from "./format"
 
 export function Group({
   label,
+  aside,
   testId,
   children,
 }: {
   /** Omitted where the page title already names the list. */
   label?: string
+  /** The group's state, hard right of its label: "Off since Sep 30". */
+  aside?: string
   testId: string
   children: ReactNode
 }) {
   return (
     <section data-testid={testId} className="flex flex-col">
-      {label && <SectionHeading className="mb-3">{label}</SectionHeading>}
+      {label && (
+        <SectionHeading
+          className="mb-3"
+          action={
+            aside && (
+              <span data-testid={`${testId}-state`} className="text-sm text-muted-foreground">
+                {aside}
+              </span>
+            )
+          }
+        >
+          {label}
+        </SectionHeading>
+      )}
       <div className="flex flex-col">{children}</div>
     </section>
   )
