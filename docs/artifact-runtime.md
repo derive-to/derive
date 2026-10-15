@@ -153,3 +153,5 @@ The core serializes edits, checks their rendered meaning, and retains source his
 Signed raw viewer paths redact the capability from access and error logs. Artifact IDs, versions, and file paths remain visible.
 
 The shared runtime retains a saved code wrapper identity for HTML Undo. A code edit does not turn its unchanged wrapper into a deleted source node.
+
+New line breaks in HTML preformatted blocks save as real source newlines. Rendered code and its plain text keep the same lines. Other HTML text keeps line-break tags.
