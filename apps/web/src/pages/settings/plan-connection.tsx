@@ -187,8 +187,8 @@ export function PlanConnection({
       )}
       {!id && options.data && !options.data.device_login && (
         <p data-testid="plan-unavailable" className="text-sm text-muted-foreground">
-          Your host needs to enable Box for plan connections. You can still import a login or add an
-          API key.
+          Plan connections need cloud compute enabled for this workspace. Check Settings →
+          Connections, or import a login or add an API key.
         </p>
       )}
       {!waiting && !active && !ready && (

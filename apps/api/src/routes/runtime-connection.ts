@@ -83,7 +83,7 @@ export const runtimeConnectionRoutes = (ctx: AppContext) => {
             "application/json": {
               schema: z.object({
                 api_key: z.string().trim().min(8).max(4096),
-                provider: z.enum(["boat", "ortam"]).default("boat"),
+                provider: z.enum(["boat", "ortam"]).default("ortam"),
               }),
             },
           },

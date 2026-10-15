@@ -37,7 +37,7 @@ const Process = z.object({
 
 // Public Ortam processes use the workspace user. Install a verified Node runtime
 // on the saved writable disk only when the base image lacks Node 24+.
-const PUBLIC_RUNNER_SETUP = [
+export const ORTAM_NODE_SETUP = [
   "set -eu",
   "if ! command -v npm >/dev/null 2>&1 || ! node -e 'process.exit(Number(process.versions.node.split(\".\")[0]) < 24 ? 1 : 0)'; then",
   "  case $(uname -m) in",
@@ -347,7 +347,7 @@ export class OrtamClient implements SandboxClient {
             ? {
                 argv: launch.argv.map((arg, index) =>
                   index === 2 && launch.argv[0] === "sh" && launch.argv[1] === "-c"
-                    ? `${PUBLIC_RUNNER_SETUP}\n${arg}`
+                    ? `${ORTAM_NODE_SETUP}\n${arg}`
                     : arg,
                 ),
               }

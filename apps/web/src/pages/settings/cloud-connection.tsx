@@ -13,7 +13,7 @@ export function CloudConnection() {
   const connection = useQuery({ queryKey: ["compute-connection"], queryFn: api.computeConnection })
   const [editing, setEditing] = useState(false)
   const [removing, setRemoving] = useState(false)
-  const [provider, setProvider] = useState<"boat" | "ortam">("boat")
+  const [provider, setProvider] = useState<"boat" | "ortam">("ortam")
   const [value, setValue] = useState("")
   const [snapshot, setSnapshot] = useState<string | null>(null)
   const invalidate = [["compute-connection"], ["agents"], ["account-login-options"]]
@@ -184,7 +184,7 @@ export function CloudConnection() {
               <fieldset className="space-y-2" disabled={connect.isPending}>
                 <legend className="text-sm font-medium">Sandbox provider</legend>
                 <div className="flex gap-2">
-                  {(["boat", "ortam"] as const).map((option) => (
+                  {(["ortam", "boat"] as const).map((option) => (
                     <Button
                       key={option}
                       type="button"

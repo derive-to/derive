@@ -65,9 +65,12 @@ account stored in Derive.
 
 ## Connect company compute
 
-For boat.dev, a workspace manager connects the company account under **Settings → Connections**.
-Connect it once. Everyone in that workspace uses the connection for cloud tasks.
-Other workspaces connect their own accounts. Your company pays boat.dev directly.
+New cloud agents use managed Ortam when it is enabled on the deployment; no separate
+compute account is needed. Codex plan connections use the same compute as the workspace.
+
+To use your own compute, a workspace manager connects an Ortam or boat.dev account under
+**Settings → Connections**. Ortam is the default choice. Connect it once for everyone in that
+workspace, and pay that provider directly. Existing connections keep their selected provider.
 
 The compute key stays in the controller. It does not become an agent secret or tool.
 Model accounts remain separate. Choose the model account on the agent.

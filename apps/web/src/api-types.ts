@@ -5156,7 +5156,7 @@ export interface paths {
                     "application/json": {
                         api_key: string;
                         /**
-                         * @default boat
+                         * @default ortam
                          * @enum {string}
                          */
                         provider?: "boat" | "ortam";
