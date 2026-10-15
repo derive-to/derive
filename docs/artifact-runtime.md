@@ -155,3 +155,5 @@ Signed raw viewer paths redact the capability from access and error logs. Artifa
 The shared runtime retains a saved code wrapper identity for HTML Undo. A code edit does not turn its unchanged wrapper into a deleted source node.
 
 New line breaks in HTML preformatted blocks save as real source newlines. Rendered code and its plain text keep the same lines. Other HTML text keeps line-break tags.
+
+The generic kit edit tool retains original source formats, source metadata, and CSP. Non-HTML editing requires a host source codec. An unsupported source format refuses the edit before publication. Native Derive continues to use its authorized source adapters.
