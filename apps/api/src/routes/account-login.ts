@@ -4,10 +4,18 @@ import { z } from "zod"
 import type { AppContext } from "../context"
 import { ACCOUNT_LOGIN_SETUP } from "../lib/account-login-script"
 import { signCapabilityToken, verifyCapabilityToken } from "../lib/capability-token"
-import { decryptSecret, encryptSecret } from "../lib/crypto"
+import { decryptSecret, encryptSecret, sha256 } from "../lib/crypto"
 import { fail, readJson } from "../lib/http"
 import { hasSeat } from "../lib/job-accounts"
-import { boatClient, boatConnection, cloudEnabled } from "../lib/runtime-connection"
+import { ORTAM_NODE_SETUP, OrtamClient } from "../lib/ortam-client"
+import {
+  cloudEnabled,
+  connectionClient,
+  managedFor,
+  runtimeConnection,
+  workspaceRuntime,
+} from "../lib/runtime-connection"
+import type { SandboxClient } from "../lib/sandbox-client"
 
 const DOMAIN = "derive-account-login:"
 const Pending = z.object({
@@ -16,7 +24,11 @@ const Pending = z.object({
   expires: z.number(),
   phase: z.enum(["starting", "awaiting", "checking", "failed"]),
   sandbox_id: z.string().optional(),
-  connection_id: z.string(),
+  // Old attempts were Boat-only. New attempts pin their provider for callbacks and cleanup.
+  provider: z.enum(["boat", "ortam"]).default("boat"),
+  api_url: z.string().optional(),
+  connection_id: z.string().optional(),
+  credential_enc: z.string().optional(),
   identity: z.object({ organization_id: z.string(), user_id: z.string() }),
   verification_url: z.literal("https://auth.openai.com/codex/device").optional(),
   user_code: z
@@ -56,15 +68,57 @@ const messages: Record<string, string> = {
   setup_failed: "The connection sandbox could not start. Try again.",
 }
 
+/** Keep cleanup on the account that allocated the sandbox, even after a connection changes.
+ * Callbacks additionally require that the original compute authority is still active. */
+const clientFor = async (
+  ctx: AppContext,
+  org: string,
+  p: PendingLogin,
+  requireActive = false,
+): Promise<SandboxClient | null> => {
+  const { meta, deps } = ctx
+  if (p.connection_id) {
+    const cn = await runtimeConnection(meta, org)
+    const account =
+      p.provider === "boat"
+        ? p.identity.user_id
+        : `${p.identity.organization_id}:${p.identity.user_id}`
+    const same =
+      cn?.id === p.connection_id && cn.toolkit === p.provider && cn.broker_ref === account
+    if (requireActive && (!same || cn?.status !== "active")) return null
+    const secret_enc = same ? cn.secret_enc : p.credential_enc
+    if (!secret_enc) return null
+    return connectionClient(
+      { toolkit: p.provider, secret_enc },
+      deps.encryptionKey,
+      deps.runtimeFetch,
+    )
+  }
+  const config = deps.runtime
+  if (
+    p.provider !== "ortam" ||
+    !config?.managed?.apiKey ||
+    p.api_url !== config.apiUrl ||
+    (requireActive && !managedFor(config, org))
+  )
+    return null
+  return new OrtamClient(
+    config.apiUrl,
+    config.managed.apiKey,
+    sha256(JSON.stringify([org, "account-login", p.attempt])),
+    deps.runtimeFetch,
+  )
+}
+
+const stopConnection = async (ctx: AppContext, p: PendingLogin, org: string) => {
+  if (!p.sandbox_id) return
+  const client = await clientFor(ctx, org, p)
+  await client?.deleteSandbox(p.sandbox_id, p.attempt, p.identity)
+}
+
 export const stopAccountConnection = async (ctx: AppContext, a: AccountRecord) => {
   const p = readPending(a, ctx.deps.encryptionKey)
-  const cn = await boatConnection(ctx.meta, a.org_id)
-  if (p?.sandbox_id && cn?.id === p.connection_id && cn.broker_ref === p.identity.user_id)
-    await boatClient(cn, ctx.deps.encryptionKey, ctx.deps.runtimeFetch).deleteSandbox(
-      p.sandbox_id,
-      p.attempt,
-      p.identity,
-    )
+  if (p) await stopConnection(ctx, p, a.org_id)
 }
 
 export const accountLoginRoutes = (ctx: AppContext) => {
@@ -74,12 +128,7 @@ export const accountLoginRoutes = (ctx: AppContext) => {
   const runtime = deps.runtime
   const pending = (a: AccountRecord) => readPending(a, key)
   const available = async (org: string) =>
-    !!(
-      key &&
-      (await boatConnection(meta, org))?.status === "active" &&
-      deps.baseUrl.startsWith("https://") &&
-      (await cloudEnabled(meta, runtime, org))
-    )
+    !!(key && deps.baseUrl.startsWith("https://") && (await cloudEnabled(meta, runtime, org)))
   const view = (a: AccountRecord) => {
     const p = pending(a)
     return {
@@ -105,15 +154,7 @@ export const accountLoginRoutes = (ctx: AppContext) => {
       a.secret_enc,
     )
   }
-  const stop = async (p: PendingLogin, org: string) => {
-    const cn = await boatConnection(meta, org)
-    if (p.sandbox_id && cn?.id === p.connection_id && cn.broker_ref === p.identity.user_id)
-      await boatClient(cn, key, deps.runtimeFetch).deleteSandbox(
-        p.sandbox_id,
-        p.attempt,
-        p.identity,
-      )
-  }
+  const stop = (p: PendingLogin, org: string) => stopConnection(ctx, p, org)
   const owned = async (c: Parameters<typeof ctx.requireWorkspace>[0], id: string) => {
     const org = await ctx.requireWorkspace(c, "publish")
     if (org instanceof Response) return org
@@ -148,11 +189,8 @@ export const accountLoginRoutes = (ctx: AppContext) => {
       return fail(
         c,
         503,
-        "Connect boat.dev in Settings → Connections before connecting a plan. This server also needs an HTTPS callback.",
+        "Plan connections need cloud compute and a secure callback. Check Settings → Connections or import a login.",
       )
-    const cn = await boatConnection(meta, org)
-    if (!cn || cn.status !== "active") return fail(c, 503, "Connect boat.dev first")
-    const box = boatClient(cn, key, deps.runtimeFetch)
     const b = await readJson(
       c,
       z.object({
@@ -187,10 +225,27 @@ export const accountLoginRoutes = (ctx: AppContext) => {
         return c.json(view(existing), 202)
       if (old) await ctx.afterResponse(c, () => stop(old, org))
     }
+    const selected = await workspaceRuntime(meta, runtime, org)
+    const attempt = newId("login")
+    const box = selected.connection
+      ? connectionClient(selected.connection, key, deps.runtimeFetch)
+      : new OrtamClient(
+          selected.apiUrl,
+          runtime?.managed?.apiKey ?? "",
+          sha256(JSON.stringify([org, "account-login", attempt])),
+          deps.runtimeFetch,
+        )
     const p: PendingLogin = {
-      attempt: newId("login"),
+      attempt,
       owner: who,
-      connection_id: cn.id,
+      provider: selected.provider,
+      api_url: selected.apiUrl,
+      ...(selected.connection
+        ? {
+            connection_id: selected.connection.id,
+            credential_enc: selected.connection.secret_enc ?? undefined,
+          }
+        : {}),
       expires: Date.now() + 600000,
       phase: "starting",
       identity: await box.authenticate(),
@@ -238,7 +293,7 @@ export const accountLoginRoutes = (ctx: AppContext) => {
         {
           name: "Derive model account sign-in",
           size: "small",
-          setup_script: `${ACCOUNT_LOGIN_SETUP}\nnohup node /home/ortam/derive-account-login/connect.mjs >/dev/null 2>&1 </dev/null &`,
+          setup_script: `${p.provider === "ortam" ? `${ORTAM_NODE_SETUP}\n` : ""}${ACCOUNT_LOGIN_SETUP}\nnohup node /home/ortam/derive-account-login/connect.mjs >/dev/null 2>&1 </dev/null &`,
           auto_stop_after_seconds: 600,
           env: {
             DERIVE_TOKEN: token,
@@ -321,14 +376,12 @@ export const accountLoginRoutes = (ctx: AppContext) => {
     const claim = await verifyCapabilityToken(DOMAIN, key, token, Date.now())
     const a = await meta.getAccount(c.req.param("id"))
     const p = a && pending(a)
-    const cn = a && (await boatConnection(meta, a.org_id))
+    const client = a && p && (await clientFor(ctx, a.org_id, p, true))
     if (
       !a ||
       !p ||
       a.status !== "connecting" ||
-      cn?.status !== "active" ||
-      cn.id !== p.connection_id ||
-      cn.broker_ref !== p.identity.user_id ||
+      !client ||
       claim?.rest !== [a.id, a.org_id, p.attempt].join(".") ||
       !(await hasSeat(meta, a.org_id, p.owner))
     )

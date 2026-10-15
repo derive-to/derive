@@ -1,6 +1,6 @@
-// Runs alone in a short-lived Box. The official Codex app-server owns device login.
+// Runs alone in a short-lived sandbox. The official Codex app-server owns device login.
 // Credentials live on tmpfs and travel only in an authenticated HTTPS body. Neither
-// provider output nor credentials reach Box command logs or saved disks.
+// provider output nor credentials reach sandbox command logs or saved disks.
 export const ACCOUNT_LOGIN_SCRIPT = String.raw`
 import { spawn } from 'node:child_process'
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, statfsSync } from 'node:fs'

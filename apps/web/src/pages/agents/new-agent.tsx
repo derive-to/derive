@@ -464,7 +464,7 @@ export function NewAgent() {
           )}
           {runtime.data && !runtime.data.enabled && (
             <p className="text-sm text-warning">
-              Connect boat.dev for this workspace to run cloud work.{" "}
+              Enable cloud compute for this workspace to run cloud work.{" "}
               <Link
                 to="/settings/$section"
                 params={{ section: "sources" }}

@@ -25,7 +25,7 @@ import { purgeUserDataAndSyncSeats } from "../src/lib/account"
 import type { ModelTurn } from "../src/lib/agent-loop"
 import { signApiToken, verifyApiToken } from "../src/lib/api-token"
 import { signCapabilityToken } from "../src/lib/capability-token"
-import { encryptSecret } from "../src/lib/crypto"
+import { decryptSecret, encryptSecret } from "../src/lib/crypto"
 import { workspaceIdsFromEnv } from "../src/lib/env"
 import { advanceGraph, graphAware, graphPass } from "../src/lib/job-graph"
 import {
@@ -4861,5 +4861,264 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
       },
     ])
     expect(JSON.parse(running?.machine_json ?? "{}").process_id).toBe("process-1")
+  })
+})
+
+describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: model plan connections", () => {
+  const fixture = async (provider: "managed" | "ortam" | "boat", https = true) => {
+    const calls: Request[] = []
+    const starts: { env: Record<string, string>; setup: string; subject: string | null }[] = []
+    const deleted: string[] = []
+    const identity = { organization_id: "compute-org", user_id: "compute-user" }
+    const access = await new SignJWT({
+      organization_id: identity.organization_id,
+      scopes: ["sandboxes:read", "sandboxes:write"],
+    })
+      .setProtectedHeader({ alg: "HS256" })
+      .setSubject(identity.user_id)
+      .setExpirationTime("1h")
+      .sign(new TextEncoder().encode("test-compute-signing-key"))
+    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init)
+      calls.push(request.clone())
+      const url = new URL(request.url)
+      const boat = url.hostname === "boat.dev"
+      const path = url.pathname.replace(boat ? "/api/v1" : "/v1", "")
+      if (path === "/integration") return Response.json(identity)
+      if (path === "/auth/token") return Response.json({ token: access })
+      if (path === "/me") return Response.json({ user: { id: identity.user_id } })
+      if (path === "/sandboxes" && request.method === "POST") {
+        const body = await request.json()
+        starts.push({
+          env: boat ? body.env : body.variables,
+          setup: boat ? body.setupScript : body.setup_script,
+          subject: request.headers.get("X-Ortam-Integration-Subject"),
+        })
+        const id = `login-sandbox-${starts.length}`
+        return Response.json(
+          boat
+            ? { sandbox: { id, state: "provisioned" } }
+            : {
+                sandbox: {
+                  id,
+                  state: "creating",
+                  current_operation_id: "create",
+                  auto_stop_after_seconds: 600,
+                },
+                operation: { id: "create", sandbox_id: id, kind: "create", state: "queued" },
+              },
+        )
+      }
+      const id = path.split("/")[2] ?? ""
+      if (request.method === "DELETE" || path.endsWith("/stop")) {
+        deleted.push(id)
+        return Response.json(
+          boat ? {} : { id: "delete", sandbox_id: id, kind: "delete", state: "queued" },
+        )
+      }
+      if (boat && path.startsWith("/sandboxes/"))
+        return Response.json({ sandbox: { id, state: "running", createdById: identity.user_id } })
+      throw new Error(`Unexpected account compute request: ${request.method} ${url}`)
+    }) as typeof fetch
+    const workspaceIds = new Set(["default"])
+    const made = await setup(`plan-${provider}-${newId("test")}`, {
+      baseUrl: `${https ? "https" : "http"}://derive.test`,
+      runtime: {
+        apiUrl: "https://api.ortam.dev/v1",
+        runnerPath: "/opt/derive/bin/derive.js",
+        managed: { apiKey: "managed-compute-key", workspaceIds },
+        limits: { global: 100, workspace: 20 },
+      },
+      runtimeFetch: fetcher,
+    })
+    if (provider !== "managed") {
+      const connected = await made.app.request(
+        "/v1/runtime/connection",
+        jsonAs(
+          as(owner.email),
+          {
+            api_key: "workspace-compute-key",
+            // An omitted provider must now select Ortam. Boat is an explicit choice.
+            ...(provider === "boat" ? { provider } : {}),
+          },
+          "PUT",
+        ),
+      )
+      expect(connected.status).toBe(200)
+      expect(await connected.json()).toMatchObject({ provider, connected: true })
+    }
+    const start = async (body: Record<string, unknown> = {}) => {
+      const response = await made.app.request("/v1/accounts/login", jsonAs(as(owner.email), body))
+      expect(response.status).toBe(202)
+      const result = (await response.json()) as { id: string; phase: string }
+      expect(result.phase).toBe("starting")
+      const sandbox = starts.at(-1)
+      if (!sandbox) throw new Error("No login sandbox")
+      const callback = (body?: unknown) =>
+        made.app.request(sandbox.env.DERIVE_ACCOUNT_CALLBACK ?? "", {
+          method: body ? "POST" : "GET",
+          headers: {
+            ...bearer(sandbox.env.DERIVE_TOKEN ?? ""),
+            "content-type": "application/json",
+          },
+          ...(body ? { body: JSON.stringify(body) } : {}),
+        })
+      return { ...result, callback, sandbox }
+    }
+    return { ...made, starts, calls, deleted, start, workspaceIds }
+  }
+
+  it.each([
+    "managed",
+    "ortam",
+    "boat",
+  ] as const)("%s compute connects a private Codex plan, checks access, and cleans up its own sandbox", async (provider) => {
+    const f = await fixture(provider)
+    expect(
+      await (
+        await f.app.request("/v1/accounts/login-options", { headers: as(owner.email) })
+      ).json(),
+    ).toEqual({ device_login: true })
+    expect(
+      await (await f.app.request("/v1/agents/runtime", { headers: as(owner.email) })).json(),
+    ).toMatchObject({ enabled: true, provider: provider === "boat" ? "boat" : "ortam" })
+    const login = await f.start()
+    expect(Object.keys(login.sandbox.env).sort()).toEqual([
+      "DERIVE_ACCOUNT_CALLBACK",
+      "DERIVE_TOKEN",
+    ])
+    expect(login.sandbox.setup).toContain("@openai/codex@0.162.1")
+    if (provider !== "boat") expect(login.sandbox.setup).toContain("node-v24.14.0")
+    if (provider === "managed") expect(login.sandbox.subject).toMatch(/^[0-9a-f]{64}$/)
+    expect(await (await login.callback()).json()).toEqual({ kind: "login", secret: null })
+    expect(
+      (await f.app.request(`/v1/accounts/${login.id}/login`, { headers: as(ed.email) })).status,
+    ).toBe(404)
+    expect(
+      (await login.callback({ phase: "ready", kind: "login", secret: "unchecked" })).status,
+    ).toBe(409)
+    expect(
+      (
+        await login.callback({
+          phase: "awaiting",
+          verification_url: "https://auth.openai.com/codex/device",
+          user_code: "ABCD-1234",
+        })
+      ).status,
+    ).toBe(200)
+    expect((await login.callback({ phase: "checking" })).status).toBe(200)
+    const secret = JSON.stringify({ tokens: { access_token: "test-codex-login-value" } })
+    expect((await login.callback({ phase: "ready", kind: "login", secret })).status).toBe(200)
+    const account = await f.meta.getAccount(login.id)
+    expect(account).toMatchObject({ user_id: owner.id, status: "ready", kind: "login" })
+    expect(decryptSecret(account?.secret_enc ?? "", "test-encryption-key")).toBe(secret)
+    expect(f.deleted).toEqual(["login-sandbox-1"])
+    expect((await login.callback()).status).toBe(403)
+    const shown = await f.app.request(`/v1/accounts/${login.id}/login`, {
+      headers: as(owner.email),
+    })
+    expect(await shown.text()).not.toContain("test-codex-login-value")
+  })
+
+  it("managed login stays pinned when a workspace adds compute, and cancellation restores its previous account", async () => {
+    const f = await fixture("managed")
+    const secret = JSON.stringify({ tokens: { access_token: "test-existing-codex-login" } })
+    const existing = (await (
+      await f.app.request(
+        "/v1/accounts",
+        jsonAs(as(owner.email), {
+          provider: "codex",
+          kind: "login",
+          secret,
+        }),
+      )
+    ).json()) as { id: string }
+    const login = await f.start({ account_id: existing.id })
+    const connected = await f.app.request(
+      "/v1/runtime/connection",
+      jsonAs(
+        as(owner.email),
+        {
+          provider: "boat",
+          api_key: "workspace-compute-key",
+        },
+        "PUT",
+      ),
+    )
+    expect(connected.status).toBe(200)
+    expect((await login.callback()).status).toBe(200)
+    expect(
+      (
+        await f.app.request(`/v1/accounts/${login.id}/login`, {
+          method: "DELETE",
+          headers: as(owner.email),
+        })
+      ).status,
+    ).toBe(200)
+    expect((await login.callback()).status).toBe(403)
+    expect(f.deleted).toEqual(["login-sandbox-1"])
+    expect(f.calls.at(-1)?.url).toContain("api.ortam.dev")
+    expect(
+      decryptSecret(
+        (await f.meta.getAccount(existing.id))?.secret_enc ?? "",
+        "test-encryption-key",
+      ),
+    ).toBe(secret)
+  })
+
+  it("revoking managed compute ends callbacks but preserves cleanup authority", async () => {
+    const f = await fixture("managed")
+    const login = await f.start()
+    f.workspaceIds.clear()
+    expect(
+      await (
+        await f.app.request("/v1/accounts/login-options", { headers: as(owner.email) })
+      ).json(),
+    ).toEqual({ device_login: false })
+    expect((await login.callback()).status).toBe(403)
+    expect((await f.app.request("/v1/accounts/login", jsonAs(as(owner.email), {}))).status).toBe(
+      503,
+    )
+    await f.app.request(`/v1/accounts/${login.id}/login`, {
+      method: "DELETE",
+      headers: as(owner.email),
+    })
+    expect(f.deleted).toEqual(["login-sandbox-1"])
+  })
+
+  it("legacy Boat attempts still clean up after disconnect and cannot submit credentials", async () => {
+    const f = await fixture("boat")
+    const login = await f.start()
+    const account = await f.meta.getAccount(login.id)
+    const pending = JSON.parse(decryptSecret(account?.secret_enc ?? "", "test-encryption-key"))
+    delete pending.provider
+    delete pending.api_url
+    delete pending.credential_enc
+    await f.meta.updateAccount(login.id, "default", {
+      secret_enc: encryptSecret(JSON.stringify(pending), "test-encryption-key"),
+    })
+    expect(
+      (
+        await f.app.request("/v1/runtime/connection", {
+          method: "DELETE",
+          headers: as(owner.email),
+        })
+      ).status,
+    ).toBe(200)
+    expect(f.deleted).toEqual(["login-sandbox-1"])
+    expect((await login.callback()).status).toBe(403)
+  })
+
+  it("an HTTP-only host does not offer device login or allocate compute", async () => {
+    const f = await fixture("managed", false)
+    expect(
+      await (
+        await f.app.request("/v1/accounts/login-options", { headers: as(owner.email) })
+      ).json(),
+    ).toEqual({ device_login: false })
+    expect((await f.app.request("/v1/accounts/login", jsonAs(as(owner.email), {}))).status).toBe(
+      503,
+    )
+    expect(f.calls).toHaveLength(0)
   })
 })

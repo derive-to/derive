@@ -70,9 +70,9 @@ export function AccountsSection() {
 
   return (
     <SettingsSection title="Model accounts">
-      {runtime.data?.provider === "boat" && !runtime.data.enabled && (
+      {runtime.data && !runtime.data.enabled && (
         <p className="mb-4 text-sm text-muted-foreground">
-          Connect boat.dev for this workspace before connecting a plan.{" "}
+          Enable cloud compute for this workspace before connecting a plan.{" "}
           <Link
             to="/settings/$section"
             params={{ section: "sources" }}
