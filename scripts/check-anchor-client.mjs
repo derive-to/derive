@@ -5,6 +5,10 @@
 
 import { readFileSync } from "node:fs"
 import { generateAnchorClient, OUT } from "./build-anchor-client.mjs"
+import {
+  generateSharedCollectionClient,
+  OUT as SHARED_OUT,
+} from "./build-shared-collection-client.mjs"
 
 const fresh = await generateAnchorClient()
 let committed = ""
@@ -24,3 +28,8 @@ if (fresh !== committed) {
   process.exit(1)
 }
 console.log("anchor-client: ok — generated bundle is in sync with source")
+
+if (readFileSync(SHARED_OUT, "utf8") !== (await generateSharedCollectionClient())) {
+  console.error("shared-client: generated bundle is stale — run `pnpm build:shared-client`")
+  process.exit(1)
+}

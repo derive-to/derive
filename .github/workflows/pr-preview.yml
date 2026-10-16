@@ -23,9 +23,9 @@ name: PR preview
 # A separately-named Worker is therefore the mechanism, and it is what derive-staging uses. The
 # cost is that secrets are per-script, so CI has to push them (below) instead of inheriting.
 #
-# THE PREVIEW SHARES PRODUCTION'S DATA. Same D1, same Hyperdrive → Neon, same R2. That is
-# deliberate: a preview you cannot sign into, or that shows an empty library, cannot tell you
-# whether a change is right. It is also why this never runs for a fork — see the `if` below.
+# THE PREVIEW OWNS ITS DATA. Each PR gets a D1 database and R2 bucket. No Hyperdrive
+# binding reaches production. Preview accounts and artifacts belong only to that preview.
+# The same-repo guard still protects the deployment credentials.
 # What it does NOT share is anything that would let it act as production: no routes, no cron,
 # no queue consumer, no ordinary-preview sweep, no vanity-subdomain base (scripts/preview-config.mjs
 # enforces each one and fails the build if any survives).
@@ -52,8 +52,8 @@ permissions:
 
 jobs:
   preview:
-    # SAME-REPO PULL REQUESTS ONLY. A preview holds production's bindings and secrets, so a fork
-    # PR could read and write real data by editing this workflow. GitHub does not expose secrets
+    # SAME-REPO PULL REQUESTS ONLY. A preview uses deployment credentials, so a fork
+    # PR could reach real resources by editing this workflow. GitHub does not expose secrets
     # to fork PRs by default; this makes the intent explicit rather than relying on that.
     if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
@@ -70,41 +70,27 @@ jobs:
       - name: Build web client
         run: pnpm --filter @derive/api build:web
 
-      # wrangler.toml ships all-zero placeholder ids so the public tree carries no production
-      # identifiers. Same substitution the deploy job makes, for the same reason.
-      - name: Inject binding ids
-        env:
-          D1_ID: ${{ secrets.CLOUDFLARE_D1_DATABASE_ID }}
-          HD_ID: ${{ secrets.CLOUDFLARE_HYPERDRIVE_ID }}
-        run: |
-          : "${D1_ID:?CLOUDFLARE_D1_DATABASE_ID is unset — refusing to build a preview against the placeholder id}"
-          : "${HD_ID:?CLOUDFLARE_HYPERDRIVE_ID is unset — refusing to build a preview against the placeholder id}"
-          sed -i \
-            -e "s/^database_id = \"00000000-0000-0000-0000-000000000000\"$/database_id = \"$D1_ID\"/" \
-            -e "s/^id = \"00000000000000000000000000000000\"$/id = \"$HD_ID\"/" \
-            apps/api/wrangler.toml
-
-      - name: Generate the preview config
+      - name: Generate the isolated preview config
         id: cfg
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           NAME="derive-pr-${{ github.event.pull_request.number }}"
           URL="https://$NAME.${{ vars.CLOUDFLARE_WORKERS_SUBDOMAIN || 'derive-to' }}.workers.dev"
-          node apps/api/scripts/preview-config.mjs "$NAME" "$URL" > apps/api/wrangler.preview.toml
+          pnpm --filter @derive/api --silent preview:provision "$NAME" > /tmp/preview-bindings.json
+          node apps/api/scripts/preview-config.mjs "$NAME" "$URL" /tmp/preview-bindings.json > apps/api/wrangler.preview.toml
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
 
-      # The preview reads the shared Postgres database, so an export route cannot be
-      # dogfooded until its additive table/column schema exists there. Use the same
-      # idempotent reconciler as production rather than a preview-only migration path.
-      # This workflow is same-repo-only because it already carries production bindings
-      # and secrets; schema is applied before code so a failed apply cannot ship a Worker
-      # that queries a shape which does not exist.
-      - name: Apply additive app schema
+      - name: Apply the isolated preview schema
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DERIVE_D1_NAME: derive-pr-${{ github.event.pull_request.number }}
         run: |
-          : "${DATABASE_URL:?DATABASE_URL is unset — refusing to deploy preview code against a stale schema}"
-          pnpm --filter @derive/api exec tsx scripts/apply-pg-schema.ts --app-only
+          pnpm --filter @derive/api exec node scripts/apply-d1-schema.mjs --config wrangler.preview.toml
+          pnpm --filter @derive/api exec tsx migrate-auth-d1.ts --apply --config wrangler.preview.toml
 
       # Retried, for the reason the production deploy in ci.yml is retried: Cloudflare
       # answers `Received a malformed response from the API` on a healthy upload often
@@ -134,10 +120,8 @@ jobs:
       # Secrets are per-Worker, so a freshly-created preview has none and every authenticated
       # route 500s without them.
       #
-      # DERIVE_AUTH_SECRET MUST MATCH PRODUCTION'S. Better Auth encrypts its JWKS private key
-      # with this secret and stores it in the shared database; a preview with a different one
-      # signs in fine and then throws "Failed to decrypt private key" on the first getSession.
-      # Reproduced locally (two instances, one database, two secrets) before writing this.
+      # The existing secret distribution supplies the signing key. Preview sessions and
+      # JWKS live in the isolated database. The preview never opens production rows.
       - name: Push preview secrets
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -155,8 +139,8 @@ jobs:
           # the chat model picker, which does not render when there is only one model to pick.
           MODEL_NAMES: ${{ vars.DERIVE_MODEL_NAMES }}
         run: |
-          : "${AUTH_SECRET:?DERIVE_AUTH_SECRET is unset. Add it as a repo secret with the SAME
-             value the production Worker uses, or every signed-in page of the preview 500s.}"
+          : "${AUTH_SECRET:?DERIVE_AUTH_SECRET is unset. Configure the existing signing secret distribution,
+             or signed-in preview routes cannot start.}"
           put() { printf '%s' "$2" | pnpm --filter @derive/api exec wrangler secret put "$1" --config wrangler.preview.toml; }
           put DERIVE_AUTH_SECRET "$AUTH_SECRET"
           # `if`, not `[ -n "$X" ] && put ...`. Actions runs `bash -e`, so a false test is a
@@ -227,8 +211,8 @@ jobs:
             const marker = '<!-- derive-pr-preview -->'
             const body = `${marker}\n### Preview\n\n${url}\n\n` +
               `Deployed from \`${context.sha.slice(0, 7)}\` as \`${process.env.PREVIEW_NAME}\`.\n\n` +
-              `It shares **production's database** — sign in with your real account, and treat ` +
-              `anything you change here as changed for real. It has no routes, no cron, no ` +
+              `It uses its own **D1 database and R2 bucket**. Create a preview account. ` +
+              `It has no production bindings, routes, cron, or ` +
               `queue consumer or ordinary-preview sweep, so it cannot serve derive.to, run ` +
               `scheduled work, or overwrite real artifacts' social-card images. Browser ` +
               `Rendering is enabled only for export jobs scoped to this exact preview origin.\n\n` +

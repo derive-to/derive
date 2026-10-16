@@ -9,6 +9,7 @@ import type {
 } from "@derive/core"
 import { sql } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/d1"
+import { d1ArtifactVersions } from "./d1-artifact-versions"
 import {
   composeArtifactDetail,
   composeBootstrap,
@@ -29,15 +30,15 @@ const LAST_24H_MS = 86400_000
 /**
  * Cloudflare D1 driver. The bulk of the MetaStore comes from the cross-dialect
  * repos (same SQLite query builder as better-sqlite3); D1 adds only the raw
- * analytics SQL + Better-Auth user directory. D1 has no interactive
- * transactions, so the repos' sequential writes are used as-is — addVersion
- * relies on UNIQUE(artifact_id, n) to turn a race into a clean error.
+ * analytics SQL and the Better-Auth user directory. Native D1 batches make artifact
+ * creation, version appends, and attended replacements atomic. Conditional writes
+ * guard the current version and blob key inside the same batch.
  *
  * Apply deploy/d1-schema.sql once before first use (generated from the shared
  * SCHEMA_STATEMENTS; see src/d1-schema.ts).
  *
  * The shared store contract also runs against a real D1 database in CI. Derive
- * still ships no D1 Worker entrypoint; deployments provide that composition.
+ * supplies the Workers composition in apps/api/src/worker.ts.
  */
 export function createD1Store(d1: D1Database): MetaStore {
   const db = drizzle(d1, { schema })
@@ -59,6 +60,7 @@ export function createD1Store(d1: D1Database): MetaStore {
     | "orgContext"
   > = {
     ...repos,
+    ...d1ArtifactVersions(d1, db),
 
     // D1 batch is transactional. A failed second statement cannot strand an
     // empty library after its entries were deleted.

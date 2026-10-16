@@ -14,6 +14,7 @@
 //
 // Like `applyEdits`, the batch is atomic: any failure applies NOTHING.
 
+import { serializeSourceText } from "@aniraga/open-artifact-protocol/source"
 import { type PageTextSegment, pageTextParts } from "./anchor"
 import { clip, findQuoteContextUnique, findQuoteMatches } from "./anchor-shared"
 import { isHtmlLike, isLatexLike, isMarkdownLike } from "./content-types"
@@ -356,7 +357,14 @@ const spanToRaw = (
   start: number,
   end: number,
   label: string,
-): { rStart: number; rEnd: number; before: string; after: string; crossesMarkup: boolean } => {
+): {
+  rStart: number
+  rEnd: number
+  before: string
+  after: string
+  crossesMarkup: boolean
+  literal?: true
+} => {
   const firstIdx = segmentIndexAt(segments, start)
   const lastIdx = segmentIndexAt(segments, end - 1)
   if (firstIdx < 0 || lastIdx < 0)
@@ -364,8 +372,12 @@ const spanToRaw = (
   // Gaps may be inline formatting tags. Structural tags are still rejected by the
   // boundary repair below.
   let crossesMarkup = false
+  const literal = segments[firstIdx]?.kind === "literal"
   for (let i = firstIdx; i <= lastIdx; i++) {
-    if ((segments[i] as PageTextSegment).kind === "gap") crossesMarkup = true
+    const segment = segments[i] as PageTextSegment
+    if (literal !== (segment.kind === "literal"))
+      throw new EditError(`${label} failed: the edit crosses a literal HTML text boundary.`)
+    if (segment.kind === "gap") crossesMarkup = true
   }
   const first = segments[firstIdx] as PageTextSegment
   const lastSeg = segments[lastIdx] as PageTextSegment
@@ -382,7 +394,7 @@ const spanToRaw = (
   const repair = crossesMarkup ? inlineBoundaryRepair(src, rStart, rEnd, label) : null
   return repair
     ? { ...repair, crossesMarkup }
-    : { rStart, rEnd, before: "", after: "", crossesMarkup }
+    : { rStart, rEnd, before: "", after: "", crossesMarkup, ...(literal ? { literal: true } : {}) }
 }
 
 /** LaTeX's spanToRaw. The projection's gaps are macros, braces, math and line breaks,
@@ -798,14 +810,21 @@ export function applyQuoteEdits(
     // Typed text is text in every language: `%` would comment out the rest of a LaTeX
     // line and `&` would start a table cell, so the special characters are escaped the
     // way HTML's are.
+    const literal = "literal" in raw && raw.literal === true
+    if (literal && newHtml !== undefined)
+      throw new EditError(`${label} failed: literal HTML text requires a text replacement.`)
     const replacement =
       newHtml !== undefined
         ? sanitizeInline(newHtml)
         : isHtml
-          ? escapeHtml(newText ?? "")
+          ? literal
+            ? serializeSourceText(newText ?? "", true)
+            : escapeHtml(newText ?? "")
           : isLatex
             ? escapeLatex(newText ?? "")
             : (newText ?? "")
+    if (replacement === null)
+      throw new EditError(`${label} failed: use a source edit for literal less-than characters.`)
     spans.push({ ...raw, replacement: raw.before + replacement + raw.after, label })
   }
 

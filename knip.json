@@ -31,7 +31,7 @@
       "ignore": ["src/job-runner.d.ts", "src/secrets.d.ts"]
     },
     "packages/core": {
-      "entry": ["src/anchor-client.ts"]
+      "entry": ["src/anchor-client.ts", "src/shared-collection-client.ts"]
     },
     "packages/facts": {
       "ignore": ["examples/**"]

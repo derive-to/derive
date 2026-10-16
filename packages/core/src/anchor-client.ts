@@ -21,16 +21,31 @@
  *                  edit-undo / edit-redo / edit-format / edit-mention-insert /
  *                  edit-mention-close / deck-drive
  *
- * Keep its imports DOM-free + pure so it bundles into one small self-contained script.
+ * Keep its imports browser-safe so it bundles into one small self-contained script.
  */
 
+import { nextVideoSceneId } from "@aniraga/open-artifact-protocol/source"
 import {
-  BLOCK_TEXT_ELEMENTS,
-  findQuoteMatches,
-  findQuoteWithContext,
-  fingerprintFrom,
-  normWs,
-} from "./anchor-shared"
+  changedVideoSceneAttributes,
+  elementCssPath as cssPath,
+  type DomElementSelector,
+  elementAlternative as elAlt,
+  elementFingerprint as elFp,
+  elementOrdinal as elOrdinal,
+  elementSource as elSrc,
+  elementText as elText,
+  authoredElementId as looksAuthoredId,
+  elementNeighbors as neighborText,
+  recordSourceCopy,
+  resolveDomElement,
+  resolveSourceTextAnchor,
+  sourceCopyId,
+  sourceTextNodes as textNodes,
+  type VideoSceneAttributes,
+  VideoSceneController,
+  videoSceneAttributes,
+} from "@aniraga/open-artifact-runtime/source"
+import { BLOCK_TEXT_ELEMENTS, findQuoteMatches, normWs } from "./anchor-shared"
 import {
   isMentionHandle,
   MENTION_NON_PROSE_SELECTOR,
@@ -48,6 +63,7 @@ import {
   patchRoot,
   renumber,
   renumberHtml,
+  retainedCodeIds,
   STALE_ATTR,
   type SyncReply,
   tagOf,
@@ -84,18 +100,10 @@ import {
 } from "./structural-width"
 import { updatedStyle } from "./style-attribute"
 
-// The element-anchor selector as it arrives from the host (mirrors core's ElementSelector).
-interface ElWire {
+// Keep the host fields alongside the shared browser selector.
+type ElWire = DomElementSelector & {
   type: "ElementSelector"
-  tag: string
   role?: string
-  id?: string
-  css?: string
-  fingerprint: string
-  ordinal: number
-  docFraction: number
-  before?: string
-  after?: string
   slide?: number
   slide_identity?: string
   snapshot?: unknown
@@ -830,97 +838,9 @@ interface ElReg {
      Pin a comment to a non-text element (image, chart, table, embed, code, figure).
      We capture several independent signals and resolve by agreement — a cascade:
      id -> css -> content fingerprint -> structural ordinal -> geometry -> neighbors.
-     The fingerprint primitives come from the shared `anchor-shared` module, so a
-     fingerprint made here equals one made on the server. */
-  const elSrc = (el: Element): string => el.getAttribute("src") || el.getAttribute("href") || ""
-  const elAlt = (el: Element): string =>
-    el.getAttribute("alt") || el.getAttribute("aria-label") || el.getAttribute("title") || ""
-  const elText = (el: Element): string => normWs(el.textContent || "")
-  const elFp = (el: Element): string =>
-    fingerprintFrom(el.tagName.toLowerCase(), elSrc(el), elAlt(el), elText(el))
-  const elOrdinal = (el: Element): number => {
-    const list = document.getElementsByTagName(el.tagName)
-    let ordinal = 0
-    for (let i = 0; i < list.length; i++) {
-      const candidate = list[i]
-      // Editor/comment overlays are appended to the artifact DOM but do not exist in
-      // stored source. Leaving them in this count can shift selectors for content a
-      // client-side app mounts after the overlay.
-      if (candidate?.closest?.(".derive-edit-ui,.derive-el-hl")) continue
-      if (candidate === el) return ordinal
-      ordinal++
-    }
-    return 0
-  }
-  /* nearest preceding/following text block, in document order. Walks OUTWARD from el
-     (prev/next siblings, then up a level) instead of scanning every block in the doc —
-     the old querySelectorAll+compareDocumentPosition was O(blocks) PER candidate, so a
-     large gallery froze the frame for seconds (1500 imgs ~1.7s). The nearest block is
-     almost always a sibling or one level up, so this is effectively O(1). */
+     The shared runtime owns capture properties and resolution. Its fingerprints
+     use the same protocol rules as the server. */
   const BLOCKS = "p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th,figcaption,dd,dt,pre"
-  const isBlock = (n: Element): boolean => n.nodeType === 1 && !!n.matches && n.matches(BLOCKS)
-  /* deepest block at the trailing (last=true) or leading edge of root's subtree, incl root */
-  const edgeBlockText = (root: Element, last: boolean): string | null => {
-    if (root.nodeType !== 1) return null
-    const bl = root.querySelectorAll
-      ? root.querySelectorAll(BLOCKS)
-      : ([] as unknown as NodeListOf<Element>)
-    for (let i = 0; i < bl.length; i++) {
-      const b = bl[last ? bl.length - 1 - i : i]
-      const t = normWs(b?.textContent || "")
-      if (t.length >= 2) return t
-    }
-    if (isBlock(root)) {
-      const rt = normWs(root.textContent || "")
-      if (rt.length >= 2) return rt
-    }
-    return null
-  }
-  const neighborText = (el: Element): { before: string | null; after: string | null } => {
-    let before: string | null = null
-    let after: string | null = null
-    let hops = 0
-    for (let n: Element | null = el; n?.parentElement && !before && hops < 400; n = n.parentElement)
-      for (
-        let s = n.previousElementSibling;
-        s && !before && hops < 400;
-        s = s.previousElementSibling
-      ) {
-        hops++
-        before = edgeBlockText(s, true)
-      }
-    hops = 0
-    for (let m: Element | null = el; m?.parentElement && !after && hops < 400; m = m.parentElement)
-      for (let p = m.nextElementSibling; p && !after && hops < 400; p = p.nextElementSibling) {
-        hops++
-        after = edgeBlockText(p, false)
-      }
-    return { before, after }
-  }
-  /* structural css path of tag:nth-of-type up to a stable ancestor (authored id or body) */
-  const cssPath = (el: Element): string => {
-    const parts: string[] = []
-    let n: Element | null = el
-    for (let depth = 0; n && n.nodeType === 1 && depth < 8; depth++) {
-      const tag = n.tagName.toLowerCase()
-      if (looksAuthoredId(n.id)) {
-        parts.unshift(`#${n.id}`)
-        break
-      }
-      if (tag === "body") {
-        parts.unshift("body")
-        break
-      }
-      let k = 1
-      for (let c = n.previousElementSibling; c; c = c.previousElementSibling)
-        if (c.tagName === n.tagName) k++
-      parts.unshift(`${tag}:nth-of-type(${k})`)
-      n = n.parentElement
-    }
-    return parts.join(">")
-  }
-  const looksAuthoredId = (id: string): boolean =>
-    !!id && !/[0-9a-f]{8}|^[0-9]|^(radix|headlessui|react|mui|:r)/i.test(id)
   const ANCHORABLE = "img,picture,svg,canvas,video,audio,iframe,embed,object,table,pre,figure"
   const anchorEl = (t: Element | null): Element | null => {
     if (!t?.closest) return null
@@ -1071,141 +991,7 @@ interface ElReg {
     if (reviewOn) setReviewHover(null)
   })
 
-  /* -- the in-browser cascade: score every candidate by signal agreement and pick
-        the best over threshold (mirrors resolveElement in core) -- */
-  const textClose = (a: string, b: string): boolean => {
-    if (typeof a !== "string" || typeof b !== "string") return false
-    const x = a.toLowerCase()
-    const y = b.toLowerCase()
-    if (x === y) return true
-    const sh = x.length < y.length ? x : y
-    const lo = x.length < y.length ? y : x
-    if (sh.length >= 8 && lo.indexOf(sh) >= 0) return true
-    const w = Math.min(16, sh.length)
-    return w >= 8 && lo.slice(0, w) === sh.slice(0, w)
-  }
-  const scoreEl = (el: Element, a: ElWire, fpM: number): { c: number; signals: string[] } => {
-    let score = 0
-    let max = 0
-    const signals: string[] = []
-    if (a.id) {
-      max += 5
-      if (el.id === a.id) {
-        score += 5
-        signals.push("id")
-      }
-    }
-    max += 5
-    if (elFp(el) === a.fingerprint) {
-      score += 5
-      signals.push("content")
-    }
-    if (a.css) {
-      max += 3
-      if (cssPath(el) === a.css) {
-        score += 3
-        signals.push("css")
-      }
-    }
-    /* drop ordinal when content repeats across candidates (same logo per slide) — it's
-       the signal an insertion scrambles; let neighbors/geometry pick the instance */
-    if (fpM <= 1) {
-      max += 3
-      if (el.tagName.toLowerCase() === a.tag) {
-        if (elOrdinal(el) === a.ordinal) {
-          score += 3
-          signals.push("position")
-        } else score += 1
-      }
-    }
-    if (a.before || a.after) {
-      const nb = neighborText(el)
-      if (a.before) {
-        max += 1
-        if (textClose(a.before, nb.before || "")) {
-          score += 1
-          signals.push("nb")
-        }
-      }
-      if (a.after) {
-        max += 1
-        if (textClose(a.after, nb.after || "")) {
-          score += 1
-          signals.push("nb")
-        }
-      }
-    }
-    max += 1
-    const r = el.getBoundingClientRect()
-    const dh = document.documentElement.scrollHeight || 1
-    const f = (r.top + scrollTop()) / dh
-    score += 1 * (1 - Math.min(1, Math.abs(f - (a.docFraction || 0))))
-    return { c: max > 0 ? score / max : 0, signals }
-  }
-  const resolveEl = (
-    a: ElWire,
-  ): { el: Element; confidence: number; band: Band; signals: string[] } | null => {
-    const cand: Element[] = []
-    const seen: Element[] = []
-    if (a.tag) {
-      const bt = document.getElementsByTagName(a.tag)
-      for (let i = 0; i < bt.length; i++) {
-        const el = bt[i]
-        if (el) {
-          cand.push(el)
-          seen.push(el)
-        }
-      }
-    }
-    if (a.id) {
-      const byId = document.getElementById(a.id)
-      if (byId && seen.indexOf(byId) < 0) cand.push(byId)
-    }
-    /* count how many candidates share the recorded fingerprint / id — a strong
-       signal matching MANY candidates isn't identifying (a gallery of identical
-       thumbnails), so it can't grant high confidence (mirrors core's grade()). */
-    let fpM = 0
-    let idM = 0
-    for (const c of cand) {
-      if (elFp(c) === a.fingerprint) fpM++
-      if (a.id && c.id === a.id) idM++
-    }
-    let best: { c: number; signals: string[] } | null = null
-    let bestEl: Element | null = null
-    let runnerUp = 0
-    for (const c of cand) {
-      const s = scoreEl(c, a, fpM)
-      if (!best || s.c > best.c) {
-        if (best && best.c > runnerUp) runnerUp = best.c
-        best = s
-        bestEl = c
-      } else if (s.c > runnerUp) runnerUp = s.c
-    }
-    if (!best || best.c < 0.42 || !bestEl) return null
-    const g = gradeEl(best.signals, best.c, fpM, idM, best.c - runnerUp)
-    return { el: bestEl, confidence: g.c, band: g.band, signals: best.signals }
-  }
-  const gradeEl = (
-    sig: string[],
-    conf: number,
-    fpM: number,
-    idM: number,
-    margin: number,
-  ): { band: Band; c: number } => {
-    const mId = sig.indexOf("id") >= 0
-    const mContent = sig.indexOf("content") >= 0
-    const nb = sig.indexOf("nb") >= 0
-    const uniq = (mId && idM === 1) || (mContent && fpM === 1)
-    const ambig = (mId && idM > 1) || (mContent && fpM > 1)
-    /* id and content point at different elements (swapped content) -> never high */
-    const conflict = (mId && !mContent && fpM > 0) || (mContent && !mId && idM > 0)
-    if (ambig && !uniq && !nb) return { band: "low", c: Math.min(conf, 0.45) }
-    if (conflict) return { band: "medium", c: Math.min(conf, 0.6) }
-    if (uniq && conf >= 0.6 && margin >= 0.12) return { band: "high", c: conf }
-    if ((uniq || nb || sig.indexOf("position") >= 0) && conf >= 0.5)
-      return { band: "medium", c: Math.min(conf, 0.75) }
-    return { band: "low", c: Math.min(conf, 0.5) }
-  }
+  const resolveEl = (selector: ElWire) => resolveDomElement(document, selector)
 
   /* overlay registry: each resolved element anchor gets an absolutely-positioned
      outline (in document coords, so it glides with scroll) + a corner badge. */
@@ -1301,30 +1087,6 @@ interface ElReg {
         reTick = 0
         if (lastAnchors) applyAnchors(lastAnchors)
       }, 150)
-  }
-
-  const textNodes = (root: Node): Text[] => {
-    const w = document.createTreeWalker(root || document.body, NodeFilter.SHOW_TEXT, {
-      acceptNode: (n) => {
-        const p = n.parentNode ? n.parentNode.nodeName : ""
-        if (p === "SCRIPT" || p === "STYLE" || p === "NOSCRIPT") return NodeFilter.FILTER_REJECT
-        // Our OWN injected UI (the element-overlay badges) is not page text: it must
-        // never leak into quote context windows or edit snapshots — a suffix containing
-        // a badge glyph can't resolve against the stored source.
-        const el = (n as Text).parentElement
-        if (el?.closest?.(".derive-el-hl,.derive-edit-ui")) return NodeFilter.FILTER_REJECT
-        // Typeset math is glyph soup the server never has: the TeX rides in an
-        // attribute and the source projection counts a formula as no characters.
-        // Skipping it keeps quotes, context windows and edit snapshots in step.
-        if (el?.closest?.("[data-derive-math]")) return NodeFilter.FILTER_REJECT
-        return NodeFilter.FILTER_ACCEPT
-      },
-    })
-    const out: Text[] = []
-    let n: Node | null
-    // biome-ignore lint/suspicious/noAssignInExpressions: standard TreeWalker iteration
-    while ((n = w.nextNode())) out.push(n as Text)
-    return out
   }
 
   /* === Rendered document @mentions ===========================================
@@ -1424,35 +1186,6 @@ interface ElReg {
     if (flashHl) flashHl.priority = 3
   }
 
-  /* A DOM Range spanning [s,e) of root's concatenated text — the counterpart to the
-     old wrapIn, but it MUTATES NOTHING: it just locates the boundary text nodes. */
-  const rangeAt = (root: Node, s: number, e: number): Range | null => {
-    const nodes = textNodes(root)
-    const range = document.createRange()
-    let acc = 0
-    let started = false
-    let lastNode: Text | null = null
-    for (const node of nodes) {
-      const len = node.nodeValue?.length ?? 0
-      if (!started && s <= acc + len) {
-        range.setStart(node, Math.max(0, Math.min(len, s - acc)))
-        started = true
-      }
-      if (started && e <= acc + len) {
-        range.setEnd(node, Math.max(0, Math.min(len, e - acc)))
-        return range
-      }
-      acc += len
-      lastNode = node
-    }
-    // `e` ran past the available text — clamp the end to the last node so a slightly
-    // over-long stored quote still paints (never returns a half-open range).
-    if (started && lastNode) {
-      range.setEnd(lastNode, lastNode.nodeValue?.length ?? 0)
-      return range
-    }
-    return null
-  }
   const clearText = () => {
     textEntries = []
     quietEls = []
@@ -1531,17 +1264,6 @@ interface ElReg {
       } catch (_e) {}
     }
     return best?.id ?? null
-  }
-  /* root's concatenated-text span for a text anchor — context match first (to
-     disambiguate a repeated quote), then the exact, both WHITESPACE-FLEXIBLE via the
-     SHARED findQuoteWithContext, so a quote spanning block elements (whose inter-block
-     whitespace differs between the Selection, the DOM text, and the source) still
-     resolves, and identically to the server's reanchor. Returns the exact's span. */
-  const findIn = (root: Node, a: Anchor): { start: number; end: number } | null => {
-    const nodes = textNodes(root)
-    let full = ""
-    for (const node of nodes) full += node.nodeValue
-    return findQuoteWithContext(full, a.exact || "", a.prefix, a.suffix)
   }
   // The element ancestor of a range's start (its start is a text node) — for slide lookup.
   const rangeStartEl = (r: Range): Element | null => {
@@ -1693,139 +1415,9 @@ interface ElReg {
      small common runtime: scene position, playback and host control. Authors keep
      complete control of each scene's visual design; Derive only toggles `hidden`
      and reads the four data attributes that form the editing contract. */
-  const videoRoot = (): HTMLElement | null =>
-    document.querySelector<HTMLElement>("[data-derive-video]")
-  const videoScenes = (): HTMLElement[] =>
-    Array.from(document.querySelectorAll<HTMLElement>("[data-derive-scene]"))
-  let videoAt = 0
-  let videoPlaying = false
-  let videoStarted = 0
-  let videoElapsed = 0
-  let videoTimer = 0
-  const videoDuration = (el: HTMLElement | undefined): number =>
-    Math.max(1000, Math.min(30000, Number(el?.dataset.durationMs) || 5000))
-  const videoTotalDuration = (scenes = videoScenes()): number =>
-    scenes.reduce((total, scene) => total + videoDuration(scene), 0)
-  const videoPosition = (scenes = videoScenes()): number =>
-    scenes.slice(0, videoAt).reduce((total, scene) => total + videoDuration(scene), 0) +
-    videoElapsed
-  const animateVideoScene = (scene: HTMLElement) => {
-    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return
-    const transition = scene.dataset.transition || "cut"
-    if (transition === "cut") return
-    const duration = Math.max(100, Math.min(2000, Number(scene.dataset.transitionMs) || 300))
-    const keyframes: Keyframe[] =
-      transition === "slide"
-        ? [
-            { opacity: 0, transform: "translateX(4%)" },
-            { opacity: 1, transform: "translateX(0)" },
-          ]
-        : transition === "dissolve"
-          ? [
-              { opacity: 0, filter: "blur(8px)" },
-              { opacity: 1, filter: "blur(0)" },
-            ]
-          : [{ opacity: 0 }, { opacity: 1 }]
-    scene.animate(keyframes, { duration, easing: "ease-out" })
-  }
-  const postVideoSniff = () => {
-    const scenes = videoScenes()
-    const scene = scenes[videoAt]
-    if (!videoRoot() || !scene) return
-    post({
-      type: "video-sniff",
-      i: videoAt,
-      total: scenes.length,
-      id: scene.dataset.deriveScene || `scene-${videoAt + 1}`,
-      durationMs: videoDuration(scene),
-      transition: scene.dataset.transition || "cut",
-      transitionMs: Number(scene.dataset.transitionMs) || 300,
-      caption: scene.dataset.deriveCaption || "",
-      playing: videoPlaying,
-      elapsedMs: videoElapsed,
-      positionMs: videoPosition(scenes),
-      totalDurationMs: videoTotalDuration(scenes),
-    })
-  }
-  const showVideoScene = (index: number) => {
-    const scenes = videoScenes()
-    if (!scenes.length) return
-    videoAt = Math.max(0, Math.min(scenes.length - 1, index))
-    for (let i = 0; i < scenes.length; i++) {
-      const scene = scenes[i] as HTMLElement
-      scene.hidden = i !== videoAt
-      scene.toggleAttribute("data-derive-video-active", i === videoAt)
-      if (i === videoAt) animateVideoScene(scene)
-    }
-    videoElapsed = 0
-    videoStarted = performance.now()
-    postVideoSniff()
-  }
-  const activeVideoSceneId = (): string | undefined => videoScenes()[videoAt]?.dataset.deriveScene
-  const restoreActiveVideoScene = (id: string | undefined) => {
-    const scenes = videoScenes()
-    if (!scenes.length) return
-    const byId = id ? scenes.findIndex((scene) => scene.dataset.deriveScene === id) : -1
-    showVideoScene(byId >= 0 ? byId : Math.min(videoAt, scenes.length - 1))
-  }
-  const stopVideoClock = () => {
-    if (videoTimer) cancelAnimationFrame(videoTimer)
-    videoTimer = 0
-  }
-  const tickVideo = (now: number) => {
-    if (!videoPlaying) return
-    videoElapsed = now - videoStarted
-    const scenes = videoScenes()
-    const duration = videoDuration(scenes[videoAt])
-    if (videoElapsed >= duration) {
-      if (videoAt < scenes.length - 1) showVideoScene(videoAt + 1)
-      else {
-        videoPlaying = false
-        videoElapsed = duration
-      }
-    }
-    postVideoSniff()
-    if (videoPlaying) videoTimer = requestAnimationFrame(tickVideo)
-  }
-  const driveVideo = (action: string, n?: number, id?: string) => {
-    if (action === "next") showVideoScene(videoAt + 1)
-    else if (action === "prev") showVideoScene(videoAt - 1)
-    else if (action === "goto") showVideoScene(Number.isInteger(n) ? (n as number) : 0)
-    else if (action === "play") {
-      videoPlaying = true
-      videoStarted = performance.now() - videoElapsed
-      stopVideoClock()
-      videoTimer = requestAnimationFrame(tickVideo)
-    } else if (action === "pause") {
-      videoElapsed = performance.now() - videoStarted
-      videoPlaying = false
-      stopVideoClock()
-      postVideoSniff()
-    } else if (action === "restart") {
-      showVideoScene(0)
-      driveVideo("play")
-    } else if (action === "seek" && typeof n === "number") {
-      const scenes = videoScenes()
-      let remaining = Math.max(0, Math.min(videoTotalDuration(scenes), n))
-      let at = 0
-      while (at < scenes.length - 1 && remaining >= videoDuration(scenes[at])) {
-        remaining -= videoDuration(scenes[at])
-        at++
-      }
-      showVideoScene(at)
-      videoElapsed = Math.min(videoDuration(scenes[at]), remaining)
-      videoStarted = performance.now() - videoElapsed
-      postVideoSniff()
-    } else if (action === "seek-scene" && id) {
-      const scenes = videoScenes()
-      const at = scenes.findIndex((scene) => scene.dataset.deriveScene === id)
-      if (at < 0) return
-      showVideoScene(at)
-      videoElapsed = Math.max(0, Math.min(videoDuration(scenes[at]), Number(n) || 0))
-      videoStarted = performance.now() - videoElapsed
-      postVideoSniff()
-    }
-  }
+  let videoAttrsBase = new Map<Element, VideoSceneAttributes>()
+  const video = new VideoSceneController(post)
+  window.addEventListener("pagehide", () => video.dispose())
   type WireSceneEdit =
     | {
         op: "scene-update"
@@ -1846,13 +1438,14 @@ interface ElReg {
     activeAfter: string | undefined
   }
   const videoSceneById = (id: string): HTMLElement | null =>
-    videoScenes().find((scene) => scene.dataset.deriveScene === id) ?? null
+    video.scenes().find((scene) => scene.dataset.deriveScene === id) ?? null
   const applySceneFromHost = (wire: WireSceneEdit) => {
     if (!editOn) return
     const scene = videoSceneById(wire.id)
-    const root = videoRoot()
+    const root = video.root()
     if (!scene || !root) return
-    const activeId = activeVideoSceneId()
+    const activeId = video.activeId()
+    if (saved && wire.op !== "scene-update") snapKids(root)
     let undoScene = () => {}
     let redoScene = () => {}
     if (wire.op === "scene-update") {
@@ -1879,39 +1472,37 @@ interface ElReg {
         restore("data-derive-caption", before.caption)
       }
     } else if (wire.op === "scene-move") {
-      const originalNext = scene.nextSibling
-      redoScene = () => {
-        if (wire.direction === "previous") {
-          const prev = scene.previousElementSibling
-          if (prev?.hasAttribute("data-derive-scene")) root.insertBefore(scene, prev)
-        } else {
-          const next = scene.nextElementSibling
-          if (next?.hasAttribute("data-derive-scene")) root.insertBefore(next, scene)
-        }
-      }
-      undoScene = () => root.insertBefore(scene, originalNext)
+      const before = video.scenes()
+      const at = before.indexOf(scene)
+      const to = at + (wire.direction === "previous" ? -1 : 1)
+      if (to < 0 || to >= before.length) return
+      const after = [...before]
+      after.splice(at, 1)
+      after.splice(to, 0, scene)
+      redoScene = () => reorderInPlace(after)
+      undoScene = () => reorderInPlace(before)
     } else if (wire.op === "scene-duplicate") {
       const copy = scene.cloneNode(true) as HTMLElement
-      const used = new Set(videoScenes().map((s) => s.dataset.deriveScene))
-      let n = videoScenes().length + 1
-      while (used.has(`scene-${n}`)) n++
-      copy.dataset.deriveScene = `scene-${n}`
+      const used = new Set(video.scenes().map((s) => s.dataset.deriveScene ?? ""))
+      copy.dataset.deriveScene = nextVideoSceneId(used)
+      recordSourceCopy(scene, copy, copyOrigins)
+      videoAttrsBase.set(copy, videoSceneAttributes(copy))
       redoScene = () => scene.after(copy)
       undoScene = () => copy.remove()
     } else {
-      if (videoScenes().length <= 1) return
+      if (video.scenes().length <= 1) return
       const originalNext = scene.nextSibling
       redoScene = () => scene.remove()
       undoScene = () => root.insertBefore(scene, originalNext)
     }
     redoScene()
-    restoreActiveVideoScene(activeId)
+    video.restore(activeId)
     const entry = {
       wire,
       undo: undoScene,
       redo: redoScene,
       activeBefore: activeId,
-      activeAfter: activeVideoSceneId(),
+      activeAfter: video.activeId(),
     }
     sceneEdits.push(entry)
     remember({ kind: "scene", entry, activeAfter: false })
@@ -2228,29 +1819,15 @@ interface ElReg {
          phrase on two slides can't collide), then fall back to a whole-document
          search if the text moved off that slide. Builds a Range (no DOM mutation) from
          the resolved span; the highlight is painted from every range together, below. */
-      const identityAt = a.slide_identity
-        ? slides.findIndex(
-            (candidate) => candidate.getAttribute("data-derive-slide") === a.slide_identity,
-          )
-        : -1
-      const preferredAt = identityAt >= 0 ? identityAt : a.slide
-      const slide = preferredAt != null ? slides[preferredAt] : undefined
-      let range: Range | null = null
-      let where: number | null = null
-      if (preferredAt != null && slide) {
-        const span = findIn(slide, a)
-        if (span) {
-          range = rangeAt(slide, span.start, span.end)
-          where = preferredAt
-        }
-      }
-      if (!range) {
-        const span = findIn(document.body, a)
-        if (span) {
-          range = rangeAt(document.body, span.start, span.end)
-          where = slides.length && range ? slideOfEl(rangeStartEl(range), slides) : null
-        }
-      }
+      const range = resolveSourceTextAnchor(document.body, {
+        type: "TextQuoteSelector",
+        exact: a.exact || "",
+        prefix: a.prefix,
+        suffix: a.suffix,
+        slide: a.slide,
+        slide_identity: a.slide_identity,
+      })
+      const where = slides.length && range ? slideOfEl(rangeStartEl(range), slides) : null
       if (range) addText(a.id, range, a.quiet)
       resolved[a.id] = !!range
       landed[a.id] = range ? where : null
@@ -2324,7 +1901,7 @@ interface ElReg {
       postDeckSniff()
       postDeckOutline()
     }, 400)
-    if (videoRoot()) showVideoScene(videoAt)
+    if (video.root()) video.show(video.index)
   })
   /* The artifact's OWN scripts can mutate the DOM after load (a chart library renders,
      content animates, an accordion expands) — none of which fire scroll/resize/load. So
@@ -2851,11 +2428,11 @@ interface ElReg {
       if (entry.activeAfter) {
         entry.entry.redo()
         if (!sceneEdits.includes(entry.entry)) sceneEdits.push(entry.entry)
-        restoreActiveVideoScene(entry.entry.activeAfter)
+        video.restore(entry.entry.activeAfter)
       } else {
         entry.entry.undo()
         sceneEdits = sceneEdits.filter((candidate) => candidate !== entry.entry)
-        restoreActiveVideoScene(entry.entry.activeBefore)
+        video.restore(entry.entry.activeBefore)
       }
       return { ...entry, activeAfter: !entry.activeAfter }
     }
@@ -4196,6 +3773,9 @@ interface ElReg {
   let blockClip: { el: HTMLElement; copy: boolean } | null = null
   /** Blocks this session copied (Duplicate, a pasted copy). */
   const copies = new WeakSet<Element>()
+  const copyOrigins = new WeakMap<Element, Element>()
+  /** Immutable source identities for blocks retained by this session's Undo. */
+  const sourceHistory = new Map<Element, { src: number; version: number; parts: SigParts }>()
   interface BlockDrag {
     el: HTMLElement
     pointerId: number
@@ -4518,6 +4098,7 @@ interface ElReg {
    *  snapshot, but the save compares it with its original's (source-tokens). */
   const copyOf = (el: HTMLElement): HTMLElement => {
     const copy = el.cloneNode(true) as HTMLElement
+    recordSourceCopy(el, copy, copyOrigins)
     copy.classList.remove("derive-edited", "derive-edit-hover", "derive-block-dragging")
     // The block itself may be armed too: a copy is armed when it is typed in.
     const armed = Array.from(copy.querySelectorAll("[data-derive-editable]"))
@@ -5045,7 +4626,7 @@ interface ElReg {
         revert: () => {
           s.undo()
           sceneEdits = sceneEdits.filter((x) => x !== s)
-          restoreActiveVideoScene(s.activeBefore)
+          video.restore(s.activeBefore)
         },
       })
     return out.sort((a, b) =>
@@ -5177,6 +4758,7 @@ interface ElReg {
     editOn = on
     elementEditsOn = on && allowElementEdits
     if (on) {
+      sourceHistory.clear()
       clearResizeUi()
       // The pre-edit snapshot every quote is built from. normalize() first so the
       // per-node offsets recorded at enable time can't be split later by typing.
@@ -5203,6 +4785,7 @@ interface ElReg {
         saved = baselineOf(document.body)
       } else saved = null
       sceneEdits = []
+      videoAttrsBase = new Map(video.scenes().map((scene) => [scene, videoSceneAttributes(scene)]))
       enableBlocks()
       enableResizeFocus()
       setHover(null)
@@ -5239,7 +4822,9 @@ interface ElReg {
       // History belongs to the session that made it. Carrying it across would offer
       // to undo into a document that has already been saved and reloaded.
       resetEditHistory()
+      sourceHistory.clear()
       sceneEdits = []
+      videoAttrsBase = new Map()
       clearEditMention()
       post({ type: "edit-mention-close" })
     }
@@ -6355,6 +5940,7 @@ interface ElReg {
     attrs: [Element, string | null, Record<string, string | null> | null][]
     /** The words of each block the save rewrote, as sent. */
     words: Map<Element, string>
+    videoAttrs: Map<Element, VideoSceneAttributes>
   }
   let lastCollect: CollectRecord | null = null
   /** Sizes and structural layout as the server holds them (a save moves them on). */
@@ -6420,19 +6006,28 @@ interface ElReg {
   const collectOps = (base: Baseline) => {
     // Only what the person changed is theirs to save: the page's own scripts keep running.
     const touched = touchedSet()
+    const videoChanges = new Map<Element, VideoSceneAttributes>()
+    for (const scene of video.scenes()) {
+      const before = videoAttrsBase.get(scene)
+      if (!before) continue
+      const attrs = base.has(scene)
+        ? changedVideoSceneAttributes(scene, before)
+        : videoSceneAttributes(scene)
+      if (Object.keys(attrs).length) videoChanges.set(scene, attrs)
+    }
     const { ops, ok, emit } = collectSourceOps(
       document.body,
-      snapshotOf(base, document.body, idsOf(base)),
+      snapshotOf(base, document.body, idsOf(base), sourceHistory),
       touched,
+      videoChanges,
     )
     let uncaptured = ok && !blockResize ? 0 : 1
-    // A block the current version no longer has (a save deleted it, undo put it back)
-    // can't be written from here: the save is refused, not guessed.
+    // A removed block needs its retained source identity. Unknown stale markup refuses.
     let stale = 0
     for (const el of Array.from(document.body.querySelectorAll(`[${STALE_ATTR}]`)))
       for (let e: Element | null = el; e; e = e.parentElement)
         if (touched.has(e)) {
-          stale++
+          if (!sourceHistory.has(el)) stale++
           break
         }
     const changed = new Map<
@@ -6471,6 +6066,8 @@ interface ElReg {
         }
         sent.push([node.el, rawStyle(node.el), now])
       }
+    for (const [scene, attrs] of videoChanges)
+      if (base.has(scene)) Object.assign(change(scene, null).attrs, attrs)
     for (const [el, { orig, style, attrs }] of changed) {
       const src = srcOf(el)
       if (src === null) uncaptured++
@@ -6479,7 +6076,7 @@ interface ElReg {
           op: "attrs",
           src,
           hash: "",
-          style: updatedStyle(orig ?? "", style) || null,
+          ...(Object.keys(style).length ? { style: updatedStyle(orig ?? "", style) || null } : {}),
           ...(Object.keys(attrs).length ? { attrs } : {}),
         })
     }
@@ -6487,6 +6084,9 @@ interface ElReg {
       order: layoutOf(document.body, emit),
       rev,
       attrs: sent,
+      videoAttrs: new Map(
+        [...videoChanges.keys()].map((scene) => [scene, videoSceneAttributes(scene)]),
+      ),
       words: new Map([...emit.keys()].map((el) => [el, wordsIn(el)])),
     }
     const { deriveSrcVersion, deriveSrcSha } = document.documentElement.dataset
@@ -6506,6 +6106,14 @@ interface ElReg {
       if (touched.has(el) && (!was || !sameParts(sigParts(el), was))) return true
     }
     return (
+      video.scenes().some((scene) => {
+        const before = videoAttrsBase.get(scene)
+        return (
+          x.contains(scene) &&
+          !!before &&
+          Object.keys(changedVideoSceneAttributes(scene, before)).length > 0
+        )
+      }) ||
       resizeTargets.some((t) => x.contains(t.el) && resized(t)) ||
       structureRegions.some((r) => r.nodes.some((n) => x.contains(n.el) && relaidOut(n)))
     )
@@ -6644,6 +6252,7 @@ interface ElReg {
         if (!p) return reload
         roots.set(patch.old, p)
       }
+      for (const [old, next] of retainedCodeIds(base, roots)) oldToNew.set(old, next)
       const page = newPageOf(base, r.remap, roots)
       const lined = page && linePage(own.order, page)
       if (!page || !lined) return reload
@@ -6689,6 +6298,8 @@ interface ElReg {
           const now = ne.made ? adopt(d, ne.made, moved) : d
           // Most of a long page keeps its id: writing it again is a mutation for nothing.
           if (!ne.made && o !== ne.id) now.setAttribute(SRC_ATTR, String(ne.id))
+          now.removeAttribute(STALE_ATTR)
+          sourceHistory.delete(d)
           if (o !== ne.id) renamed = true
           pageFor.set(ne.id, now)
           if (spacedSet.has(d)) became.set(d, now)
@@ -6749,8 +6360,8 @@ interface ElReg {
     for (const el of Array.from(document.body.querySelectorAll(`[${SRC_ATTR}]`))) consider(el)
     for (const el of base.keys()) consider(el)
     for (const root of detachedRoots()) for (const e of stampedIn(root)) consider(e)
-    // What the new version no longer has (a save removed it and undo brought it back)
-    // saves as a copy of a block that opens the same way, or else refuses to save.
+    // A saved deletion can leave an empty Markdown element on the page. Keep its
+    // verified source history, as well as the detached elements held by Undo.
     for (const [el, n] of plan)
       if (n !== null && srcOf(el) !== n) {
         renumber(el, n)
@@ -6774,8 +6385,18 @@ interface ElReg {
     }
     /** Elements this sync took the id off. */
     const cleared = new Set<Element>()
+    const previousVersion = Number(document.documentElement.dataset.deriveSrcVersion)
     for (const [el, n] of plan)
       if (n === null) {
+        const original = oldId.get(el)
+        const parts = base.get(el)
+        if (original !== undefined && parts && previousVersion > 0) {
+          sourceHistory.set(el, { src: original, version: previousVersion, parts })
+          cleared.add(el)
+          renumber(el, null)
+          renamed = true
+          continue
+        }
         // On the page only a neighbour will do (what an Enter makes); for one undo holds,
         // any that opens the same way.
         const sibling = el.isConnected
@@ -6784,11 +6405,13 @@ interface ElReg {
                 !!c && !unresolved.has(c) && srcOf(c) !== null && openingOf(c) === openingOf(el),
             )
           : undefined
-        const like = /^(?:b|strong|i|em|br|a)$/.test(el.localName)
-          ? undefined
-          : el.isConnected
-            ? sibling && (srcOf(sibling) ?? undefined)
-            : opening(el)
+        const like =
+          sourceCopyId(el, copyOrigins) ??
+          (/^(?:b|strong|i|em|br|a)$/.test(el.localName)
+            ? undefined
+            : el.isConnected
+              ? sibling && (srcOf(sibling) ?? undefined)
+              : opening(el))
         if (like !== undefined) standIns.add(el)
         else cleared.add(el)
         renumber(el, like ?? null)
@@ -6804,6 +6427,9 @@ interface ElReg {
       } else markRemote(p, by)
     }
     for (const now of spacedNow) if (now.isConnected) made.push([now, sigParts(now)])
+    if (own) for (const [scene, attrs] of own.videoAttrs) videoAttrsBase.set(scene, attrs)
+    else
+      videoAttrsBase = new Map(video.scenes().map((scene) => [scene, videoSceneAttributes(scene)]))
     if (own)
       for (const [el, style, lay] of own.attrs) {
         savedStyle.set(el, style)
@@ -6950,7 +6576,7 @@ interface ElReg {
     // `deck` message, which it answers itself.
     else if (d.type === "deck-drive") driveDeck(String(d.action || ""), d.n)
     else if (d.type === "video-drive")
-      driveVideo(String(d.action || ""), d.n, typeof d.id === "string" ? d.id : undefined)
+      video.drive(String(d.action || ""), d.n, typeof d.id === "string" ? d.id : undefined)
     else if (d.type === "video-edit") {
       const op = String(d.op || "")
       const id = String(d.id || "")
@@ -7049,6 +6675,7 @@ interface ElReg {
       lastOutline = ""
       postDeckSniff()
       postDeckOutline()
+      video.announce()
       reportScroll()
       lastPosition = null
       post({ type: "mention-resolve", handles: mentionHandlesInDocument() })

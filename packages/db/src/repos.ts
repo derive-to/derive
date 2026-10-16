@@ -80,7 +80,6 @@ import type {
   NewSlackSubscription,
   NewTemplateLibrary,
   NewTemplateLibraryEntry,
-  NewVersion,
   NewVersionData,
   NewWebhook,
   NotificationRecord,
@@ -159,7 +158,6 @@ import {
   like,
   lt,
   lte,
-  max,
   ne,
   notExists,
   or,
@@ -168,6 +166,7 @@ import {
 } from "drizzle-orm"
 import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core"
 import { agentModelRepos, skillJobUsage } from "./agent-model-repos"
+import { readCommentActivity } from "./comment-activity"
 import {
   DYNAMIC_STATE_PREFIX,
   dynamicRecord,
@@ -302,6 +301,18 @@ export function artifactListConditions(
     conds.push(sql`(${art.listed} != 'none' OR ${isMember})`)
   }
   // A trusted caller (operator token / internal jobs, no viewerId) sees everything.
+  if (opts?.textSearch) {
+    const literal = opts.textSearch.toLowerCase().replace(/[\\%_]/g, "\\$&")
+    const pattern = `%${literal}%`
+    conds.push(sql`(
+      lower(${art.title}) LIKE ${pattern} ESCAPE '\\'
+      OR EXISTS (
+        SELECT 1 FROM version v
+        WHERE v.artifact_id = ${art.id} AND v.n = ${art.current_version}
+          AND lower(v.summary) LIKE ${pattern} ESCAPE '\\'
+      )
+    )`)
+  }
   if (opts?.q) {
     const pattern = `%${opts.q.toLowerCase()}%`
     const collectionAccess =
@@ -358,6 +369,12 @@ export function artifactListConditions(
   }
   if (opts?.ids) conds.push(inArray(art.id, opts.ids))
   if (opts?.orgId) conds.push(eq(art.org_id, opts.orgId))
+  if (opts?.firstAuthorId !== undefined)
+    conds.push(sql`EXISTS (
+      SELECT 1 FROM version v
+      WHERE v.artifact_id = ${art.id} AND v.n = 1
+        AND coalesce(v.author_id, v.agent_id, 'anonymous') = ${opts.firstAuthorId}
+    )`)
   return conds
 }
 
@@ -686,16 +703,19 @@ export function makeRepos(db: SqliteDb) {
     return (updated as SharedStateRecord | undefined) ?? null
   }
 
-  const appendSharedStateActivity = async (a: NewSharedStateActivity): Promise<void> => {
+  const appendSharedStateActivity = async (
+    a: NewSharedStateActivity,
+    keep = SHARED_STATE_ACTIVITY_LIMIT,
+  ): Promise<void> => {
     await db.insert(sharedStateActivity).values(a).run()
-    if (a.version <= SHARED_STATE_ACTIVITY_LIMIT) return
+    if (a.version <= keep) return
     await db
       .delete(sharedStateActivity)
       .where(
         and(
           eq(sharedStateActivity.artifact_id, a.artifact_id),
           eq(sharedStateActivity.key, a.key),
-          lte(sharedStateActivity.version, a.version - SHARED_STATE_ACTIVITY_LIMIT),
+          lte(sharedStateActivity.version, a.version - keep),
         ),
       )
       .run()
@@ -1015,7 +1035,7 @@ export function makeRepos(db: SqliteDb) {
 
   const versionsForArtifacts = async (
     artifactIds: string[],
-    opts: { createdFrom?: string; createdTo?: string; limit?: number } = {},
+    opts: { createdFrom?: string; createdTo?: string; limit?: number; n?: number } = {},
   ): Promise<VersionRecord[]> => {
     if (artifactIds.length === 0) return []
     const limit = Math.max(1, Math.min(opts.limit ?? 100, 1_000))
@@ -1025,6 +1045,7 @@ export function makeRepos(db: SqliteDb) {
       .where(
         and(
           inArray(version.artifact_id, artifactIds),
+          opts.n !== undefined ? eq(version.n, opts.n) : undefined,
           opts.createdFrom ? gte(version.created_at, opts.createdFrom) : undefined,
           opts.createdTo ? lte(version.created_at, opts.createdTo) : undefined,
         ),
@@ -1032,146 +1053,6 @@ export function makeRepos(db: SqliteDb) {
       .orderBy(desc(version.created_at), asc(version.artifact_id), desc(version.n))
       .limit(limit)
       .all()) as VersionRecord[]
-  }
-
-  // Sequential add (used by D1, which has no interactive transactions; the
-  // UNIQUE(artifact_id, n) constraint turns a race into a clean error). The
-  // better-sqlite3 driver overrides this with a synchronous transaction.
-  const addVersion = async (artifactId: string, v: NewVersion): Promise<VersionRecord> => {
-    const row = await db
-      .select({ cv: artifact.current_version })
-      .from(artifact)
-      .where(eq(artifact.id, artifactId))
-      .get()
-    if (!row) throw new Error(`artifact not found: ${artifactId}`)
-    const n = row.cv + 1
-    await db
-      .insert(version)
-      .values({ ...v, artifact_id: artifactId, n })
-      .run()
-    await db
-      .update(artifact)
-      .set({
-        current_version: n,
-        current_content_type: v.content_type,
-        updated_at: new Date().toISOString(),
-        // Denormalize the new version's author onto the artifact (its CURRENT author),
-        // for the list view + author filter. `author_name` is always the display name;
-        // the GitHub fields are null for a manual/anonymous publish.
-        author_name: v.author,
-        author_login: v.author_login ?? null,
-        author_avatar: v.author_avatar ?? null,
-        author_gh_id: v.author_gh_id ?? null,
-        author_id: v.author_id ?? null,
-      })
-      .where(eq(artifact.id, artifactId))
-      .run()
-    return (await getVersion(artifactId, n)) as VersionRecord
-  }
-
-  /** addVersion's conditional twin: the bump is one statement guarded on the version the
-   *  caller read, so of two writers revising version N only one moves it to N+1 and the
-   *  other writes nothing. D1 has no transactions, so the winner's version row lands just
-   *  after the bump, the same shape as this driver's other multi-statement writes. */
-  const addVersionIfCurrent = async (
-    artifactId: string,
-    expectedCurrent: number,
-    v: NewVersion,
-  ): Promise<VersionRecord | null> => {
-    const n = expectedCurrent + 1
-    const won = await db
-      .update(artifact)
-      .set({
-        current_version: n,
-        current_content_type: v.content_type,
-        updated_at: new Date().toISOString(),
-        author_name: v.author,
-        author_login: v.author_login ?? null,
-        author_avatar: v.author_avatar ?? null,
-        author_gh_id: v.author_gh_id ?? null,
-        author_id: v.author_id ?? null,
-      })
-      .where(and(eq(artifact.id, artifactId), eq(artifact.current_version, expectedCurrent)))
-      .returning({ id: artifact.id })
-      .all()
-    if (won.length === 0) return null
-    await db
-      .insert(version)
-      .values({ ...v, artifact_id: artifactId, n })
-      .run()
-    return (await getVersion(artifactId, n)) as VersionRecord
-  }
-
-  const replaceCurrentVersion = async (
-    artifactId: string,
-    expected: { n: number; blobKey: string },
-    v: NewVersion,
-  ): Promise<VersionRecord | null> => {
-    const current = await db
-      .select({ n: artifact.current_version })
-      .from(artifact)
-      .where(eq(artifact.id, artifactId))
-      .get()
-    if (current?.n !== expected.n) return null
-
-    const now = new Date().toISOString()
-    const replaced = await db
-      .update(version)
-      .set({
-        blob_key: v.blob_key,
-        content_type: v.content_type,
-        size_bytes: v.size_bytes ?? 0,
-        author: v.author,
-        author_login: v.author_login ?? null,
-        author_avatar: v.author_avatar ?? null,
-        author_gh_id: v.author_gh_id ?? null,
-        author_id: v.author_id ?? null,
-        source: v.source ?? null,
-        message: v.message,
-        name: v.name ?? null,
-        preview_key: null,
-        preview_status: null,
-        preview_error: null,
-        preview_full_key: null,
-        preview_full_status: null,
-        preview_full_error: null,
-        preview_marked_key: null,
-        preview_marked_status: null,
-        preview_marked_error: null,
-        summary: null,
-        summary_src_hash: null,
-        edit_session: v.edit_session ?? null,
-        created_at: now,
-      })
-      .where(
-        and(
-          eq(version.artifact_id, artifactId),
-          eq(version.n, expected.n),
-          eq(version.blob_key, expected.blobKey),
-        ),
-      )
-      .returning()
-      .get()
-    if (!replaced) return null
-
-    await db
-      .delete(versionData)
-      .where(and(eq(versionData.artifact_id, artifactId), eq(versionData.n, expected.n)))
-      .run()
-    await db
-      .update(artifact)
-      .set({
-        current_content_type: v.content_type,
-        updated_at: now,
-        author_name: v.author,
-        author_login: v.author_login ?? null,
-        author_avatar: v.author_avatar ?? null,
-        author_gh_id: v.author_gh_id ?? null,
-        author_id: v.author_id ?? null,
-      })
-      .where(and(eq(artifact.id, artifactId), eq(artifact.current_version, expected.n)))
-      .run()
-    return replaced as VersionRecord
   }
 
   const listVersions = async (artifactId: string): Promise<VersionRecord[]> =>
@@ -3725,10 +3606,9 @@ export function makeRepos(db: SqliteDb) {
     opts: { since: string; limit: number; openOn?: string[] },
   ): Promise<CommentRecord[]> => {
     const recent = gte(comment.created_at, opts.since)
-    const open =
-      opts.openOn && opts.openOn.length
-        ? and(eq(comment.state, "open"), inArray(comment.artifact_id, opts.openOn))
-        : null
+    const open = opts.openOn?.length
+      ? and(eq(comment.state, "open"), inArray(comment.artifact_id, opts.openOn))
+      : null
     return (
       await db
         .select({ c: comment })
@@ -5254,9 +5134,6 @@ export function makeRepos(db: SqliteDb) {
     appendDynamicRevision,
     listDynamicRevisions,
     deleteDynamicSlot,
-    addVersion,
-    addVersionIfCurrent,
-    replaceCurrentVersion,
     closeEditSession,
     listIdleEditSessions,
     listVersions,
@@ -5301,6 +5178,8 @@ export function makeRepos(db: SqliteDb) {
     updateComment,
     listComments,
     commentAuthorIds,
+    commentActivity: (artifactIds: string[]) =>
+      readCommentActivity(async (statement) => await db.all(statement), artifactIds),
     setThreadState,
     deleteThread,
     commentSignals,

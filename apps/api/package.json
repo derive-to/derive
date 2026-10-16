@@ -23,7 +23,7 @@
     "deploy:pg-schema": "tsx scripts/apply-pg-schema.ts",
     "slack:probe": "tsx scripts/slack-live-probe.ts",
     "smoke:deck-export": "tsx scripts/smoke-deck-export.ts",
-    "deploy:smoke": "gh workflow run e2e-smoke.yml --ref main || echo 'post-deploy smoke not triggered (gh CLI unavailable) — run: gh workflow run e2e-smoke.yml'",
+    "deploy:smoke": "gh workflow run e2e-smoke.yml --ref main || echo 'post-deploy smoke not triggered (gh CLI unavailable) \u2014 run: gh workflow run e2e-smoke.yml'",
     "typecheck": "tsgo --noEmit && tsgo --noEmit -p tsconfig.worker.json",
     "typecheck:tsc": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json",
     "test": "vitest run",
@@ -31,7 +31,8 @@
     "test:worker": "vitest run --config vitest.worker.config.ts",
     "test:coverage": "vitest run --coverage",
     "gen:env": "node ../../scripts/check-env.mjs --write",
-    "gen:openapi": "vitest run test/openapi.test.ts -u"
+    "gen:openapi": "vitest run test/openapi.test.ts -u",
+    "preview:provision": "node scripts/provision-preview.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai": "4.0.25",

@@ -1,4 +1,6 @@
+import { HttpError } from "@aniraga/open-artifact-server/source"
 import { unzipSync } from "fflate"
+import { publishArtifactSource } from "./artifact-publication"
 import { isHtmlLike, isMarkdownLike } from "./content-types"
 import { isDeckDocument } from "./decks"
 import { dynamicSeedErrors } from "./dynamic-data"
@@ -249,6 +251,7 @@ export const cleanPath = (raw: string): string | null => {
 
 /** A piece of stored content, ready to become a version. */
 interface StoredContent {
+  bytes: Uint8Array
   blobKey: string
   contentType: string
   kind: ArtifactKind
@@ -397,8 +400,10 @@ async function storeContent(
       const name = parseFrontmatter(skillMd).attrs.name
       if (name) suggestedTitle = name
     }
+    const sourceBytes = new TextEncoder().encode(JSON.stringify(manifest))
     return {
-      blobKey: await put(new TextEncoder().encode(JSON.stringify(manifest))),
+      bytes: sourceBytes,
+      blobKey: await put(sourceBytes),
       contentType: fileBundle
         ? FILE_BUNDLE_CONTENT_TYPE
         : isSkill
@@ -468,7 +473,7 @@ async function storeContent(
     const refused = dynamicSeedErrors(text, contentType)
     if (refused.length) throw new PublishError(413, refused.join(" "))
   }
-  return { blobKey: await put(bytes), contentType, kind: "file", blobWriteMs }
+  return { bytes, blobKey: await put(bytes), contentType, kind: "file", blobWriteMs }
 }
 
 /** Resolve every exact Skill reference before committing a version. Relations are part of the
@@ -541,21 +546,26 @@ export async function publish(
   if (input.fileBundle && !input.isBundle)
     throw new PublishError(400, "File inputs must be a bundle")
   const storeStartedAt = performance.now()
-  const { blobKey, contentType, kind, suggestedTitle, skillSidecar, blobWriteMs } =
-    await storeContent(
-      blobs,
-      input.bytes,
-      input.filename,
-      input.isBundle,
-      !!input.spa,
-      input.isBundle ? input.files : undefined,
-      input.isBundle ? input.entry : undefined,
-      input.isBundle
-        ? { maxFiles: input.maxFiles, maxBundleBytes: input.maxBundleBytes }
-        : undefined,
-      input.isBundle ? input.stored : undefined,
-      input.fileBundle,
-    )
+  const {
+    bytes: sourceBytes,
+    blobKey,
+    contentType,
+    kind,
+    suggestedTitle,
+    skillSidecar,
+    blobWriteMs,
+  } = await storeContent(
+    blobs,
+    input.bytes,
+    input.filename,
+    input.isBundle,
+    !!input.spa,
+    input.isBundle ? input.files : undefined,
+    input.isBundle ? input.entry : undefined,
+    input.isBundle ? { maxFiles: input.maxFiles, maxBundleBytes: input.maxBundleBytes } : undefined,
+    input.isBundle ? input.stored : undefined,
+    input.fileBundle,
+  )
   const timings = { blobWriteMs, storeContentMs: performance.now() - storeStartedAt }
   const sizeBytes =
     input.isBundle && (input.files || input.stored)
@@ -606,18 +616,24 @@ export async function publish(
     // A revision of the version the caller read appends conditionally: a publish that
     // slipped in while this one was prepared is refused instead of landing on top of it.
     const expectedCurrent = replaceCurrent ? undefined : input.expectedCurrentVersion
-    const version = replaceCurrent
-      ? await meta.replaceCurrentVersion(artifact.id, replaceCurrent, nextVersion)
-      : expectedCurrent !== undefined
-        ? await meta.addVersionIfCurrent(artifact.id, expectedCurrent, nextVersion)
-        : await meta.addVersion(artifact.id, nextVersion)
-    if (!version)
+    let version: VersionRecord
+    try {
+      version = (
+        await publishArtifactSource(meta, blobs, {
+          bytes: sourceBytes,
+          version: nextVersion,
+          target: { artifact, expected: expectedCurrent, replacement: replaceCurrent },
+        })
+      ).version
+    } catch (error) {
+      if (!(error instanceof HttpError) || error.status !== 409) throw error
       throw new PublishError(
         409,
         expectedCurrent !== undefined
           ? `this artifact moved past version ${expectedCurrent} while you were preparing: read it again and publish from the version you read`
           : "artifact changed while editing — reload and try again",
       )
+    }
     // Rename on republish only when a title is explicitly supplied (the in-browser
     // editor sends it; a CLI republish without --title leaves the name untouched).
     const newTitle = input.title?.trim()
@@ -699,13 +715,12 @@ export async function publish(
     message: input.message ?? "first publish",
     name: input.name ?? null,
   }
-  const artifact = await meta.createArtifact(newArtifact)
-  const version = await meta.addVersion(artifact.id, nextVersion)
-  return {
-    artifact: (await meta.getByShortId(artifact.short_id)) as ArtifactRecord,
-    version,
-    timings,
-  }
+  const saved = await publishArtifactSource(meta, blobs, {
+    bytes: sourceBytes,
+    version: nextVersion,
+    target: { create: newArtifact },
+  })
+  return { ...saved, timings }
 }
 
 // Name-first ref: the slug reads first, the short id is the final token. parseRef

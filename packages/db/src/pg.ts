@@ -180,6 +180,7 @@ import {
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
 import { Pool } from "pg"
 import { agentModelRepos, skillJobUsage } from "./agent-model-repos"
+import { readCommentActivity } from "./comment-activity"
 import {
   DYNAMIC_STATE_PREFIX,
   dynamicRecord,
@@ -257,6 +258,7 @@ import {
   workspace,
   workspaceJoinLink,
 } from "./pg-schema"
+import { publishedArtifactFields } from "./publication-fields"
 import {
   artifactListConditions,
   artifactListOrder,
@@ -722,6 +724,22 @@ export class PgMetaStore implements MetaStore {
     return (await this.getByShortId(a.short_id)) as ArtifactRecord
   }
 
+  async createPublishedArtifact(a: NewArtifact, v: NewVersion) {
+    return this.db.transaction(async (tx) => {
+      const at = new Date().toISOString()
+      const [created] = await tx
+        .insert(artifact)
+        .values(publishedArtifactFields(a, v, at))
+        .returning()
+      const [first] = await tx
+        .insert(version)
+        .values({ ...v, artifact_id: a.id, n: 1, created_at: at })
+        .returning()
+      if (!created || !first) throw new Error("Publication did not create both records")
+      return { artifact: created as ArtifactRecord, version: first as VersionRecord }
+    })
+  }
+
   async setAccess(
     artifactId: string,
     workspaceAccess: WorkspaceAccess,
@@ -894,16 +912,19 @@ export class PgMetaStore implements MetaStore {
     return rows[0] ?? null
   }
 
-  async appendSharedStateActivity(a: NewSharedStateActivity): Promise<void> {
+  async appendSharedStateActivity(
+    a: NewSharedStateActivity,
+    keep = SHARED_STATE_ACTIVITY_LIMIT,
+  ): Promise<void> {
     await this.db.insert(sharedStateActivity).values(a)
-    if (a.version <= SHARED_STATE_ACTIVITY_LIMIT) return
+    if (a.version <= keep) return
     await this.db
       .delete(sharedStateActivity)
       .where(
         and(
           eq(sharedStateActivity.artifact_id, a.artifact_id),
           eq(sharedStateActivity.key, a.key),
-          lte(sharedStateActivity.version, a.version - SHARED_STATE_ACTIVITY_LIMIT),
+          lte(sharedStateActivity.version, a.version - keep),
         ),
       )
   }
@@ -1151,6 +1172,7 @@ export class PgMetaStore implements MetaStore {
           size_bytes = ${v.size_bytes ?? 0}, author = ${v.author},
           author_login = ${v.author_login ?? null}, author_avatar = ${v.author_avatar ?? null},
           author_gh_id = ${v.author_gh_id ?? null}, author_id = ${v.author_id ?? null},
+          agent_id = ${v.agent_id ?? null}, agent_name = ${v.agent_name ?? null},
           source = ${v.source ?? null}, message = ${v.message ?? null}, name = ${v.name ?? null},
           preview_key = null, preview_status = null, preview_error = null,
           preview_full_key = null, preview_full_status = null, preview_full_error = null,
@@ -1247,7 +1269,7 @@ export class PgMetaStore implements MetaStore {
 
   async versionsForArtifacts(
     artifactIds: string[],
-    opts: { createdFrom?: string; createdTo?: string; limit?: number } = {},
+    opts: { createdFrom?: string; createdTo?: string; limit?: number; n?: number } = {},
   ): Promise<VersionRecord[]> {
     if (artifactIds.length === 0) return []
     const limit = Math.max(1, Math.min(opts.limit ?? 100, 1_000))
@@ -1256,9 +1278,10 @@ export class PgMetaStore implements MetaStore {
         WHERE artifact_id = ANY($1)
           AND ($2::text IS NULL OR created_at >= $2::text)
           AND ($3::text IS NULL OR created_at <= $3::text)
+          AND ($5::integer IS NULL OR n = $5::integer)
         ORDER BY created_at DESC, artifact_id ASC, n DESC
         LIMIT $4`,
-      [artifactIds, opts.createdFrom ?? null, opts.createdTo ?? null, limit],
+      [artifactIds, opts.createdFrom ?? null, opts.createdTo ?? null, limit, opts.n ?? null],
     )
     return rows
   }
@@ -1732,6 +1755,13 @@ export class PgMetaStore implements MetaStore {
       .from(comment)
       .where(and(eq(comment.artifact_id, artifactId), isNotNull(comment.author_id)))
     return rows.map((r) => r.id).filter((x): x is string => !!x)
+  }
+
+  commentActivity(artifactIds: string[]) {
+    return readCommentActivity(
+      async (statement) => (await this.db.execute(statement)).rows,
+      artifactIds,
+    )
   }
 
   async commentsPage(
@@ -4750,10 +4780,9 @@ export class PgMetaStore implements MetaStore {
     opts: { since: string; limit: number; openOn?: string[] },
   ): Promise<CommentRecord[]> {
     const recent = gte(comment.created_at, opts.since)
-    const open =
-      opts.openOn && opts.openOn.length
-        ? and(eq(comment.state, "open"), inArray(comment.artifact_id, opts.openOn))
-        : null
+    const open = opts.openOn?.length
+      ? and(eq(comment.state, "open"), inArray(comment.artifact_id, opts.openOn))
+      : null
     const rows = await this.db
       .select({ c: comment })
       .from(comment)

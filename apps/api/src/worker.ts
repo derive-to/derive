@@ -538,8 +538,19 @@ const appHostRequest = (req: Request, env: Env): boolean => {
 
 const needsApp = (path: string): boolean => isApiPath(path) || isServerRenderedPath(path)
 
-const assetResponse = (req: Request, env: Env, path: string): Promise<Response> =>
-  env.ASSETS.fetch(new URL(path, req.url).toString()) as unknown as Promise<Response>
+const assetResponse = async (req: Request, env: Env, path: string): Promise<Response> => {
+  const response = (await env.ASSETS.fetch(
+    new URL(path, req.url).toString(),
+  )) as unknown as Response
+  // The SPA fallback is HTML. Caching it as an immutable module prevents the
+  // reader from loading even after the module becomes available.
+  if (path.startsWith("/assets/") && response.headers.get("Content-Type")?.includes("text/html"))
+    return new Response(req.method === "HEAD" ? null : "Not found", {
+      status: 404,
+      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
+    })
+  return response
+}
 
 const staticNotFound = async (req: Request, env: Env): Promise<Response> => {
   const page = await assetResponse(req, env, "/404")

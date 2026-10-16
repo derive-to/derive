@@ -128,6 +128,9 @@ export function useArtifactFrame(p: {
   } = p
   const { setHoverThread, setActiveThread, setPanel, onOpenComments, onEsc, onOpenExternal } = p
   const frame = useRef<HTMLIFrameElement>(null)
+  const frameGeneration = useRef(0)
+  const requestScope = useRef({ shortId, authenticated: p.authenticated })
+  requestScope.current = { shortId, authenticated: p.authenticated }
   const onVisualPinRef = useRef(p.onVisualPin)
   onVisualPinRef.current = p.onVisualPin
   const onPositionRef = useRef(p.onPosition)
@@ -289,9 +292,22 @@ export function useArtifactFrame(p: {
         typeof d.requestId === "string" &&
         typeof d.key === "string"
       ) {
+        const target = frame.current
+        const generation = frameGeneration.current
+        const current = () =>
+          target?.isConnected &&
+          target === frame.current &&
+          generation === frameGeneration.current &&
+          requestScope.current.shortId === shortId &&
+          requestScope.current.authenticated === p.authenticated
+        const reply = (message: Record<string, unknown>) => {
+          if (current())
+            target?.contentWindow?.postMessage({ source: "derive-host", ...message }, "*")
+        }
         const authRequired = () => {
+          if (!current()) return
           p.onSharedStateAuthRequired()
-          post({
+          reply({
             type: "shared-result",
             requestId: d.requestId,
             key: d.key,
@@ -309,7 +325,7 @@ export function useArtifactFrame(p: {
         // activate the ancestor window long enough for their synchronous request.
         const activation = navigator.userActivation
         if (d.type === "shared-mutate" && activation && !activation.isActive) {
-          post({
+          reply({
             type: "shared-result",
             requestId: d.requestId,
             key: d.key,
@@ -326,7 +342,7 @@ export function useArtifactFrame(p: {
               : api.mutateSharedState(shortId, d.key, d.mutation as SharedStateMutation)
         void request
           .then((result) =>
-            post({
+            reply({
               type: "shared-result",
               requestId: d.requestId,
               key: d.key,
@@ -341,7 +357,7 @@ export function useArtifactFrame(p: {
               authRequired()
               return
             }
-            post({
+            reply({
               type: "shared-result",
               requestId: d.requestId,
               key: d.key,
@@ -489,7 +505,6 @@ export function useArtifactFrame(p: {
     p.authenticated,
     p.onSharedStateAuthRequired,
     updateGeom,
-    post,
     shortId,
     deckState,
   ])
@@ -661,6 +676,7 @@ export function useArtifactFrame(p: {
     // (pins go unlocated/invisible until the new doc reports) instead of pinning
     // stale cards over the new document.
     onFrameLoad: () => {
+      frameGeneration.current++
       runtimeReadyRef.current = false
       setRuntimeReady(false)
       setRuntimeError(null)

@@ -34,10 +34,13 @@ export const user = sqliteTable("user", {
   image: text("image"),
   createdAt: isoDate("createdAt").notNull(),
   updatedAt: isoDate("updatedAt").notNull(),
+  twoFactorEnabled: integer("twoFactorEnabled", { mode: "boolean" }),
   username: text("username"),
   discoverable: integer("discoverable", { mode: "boolean" }),
   profession: text("profession"),
   about: text("about"),
+  onboarded: integer("onboarded", { mode: "boolean" }),
+  brandprint: text("brandprint"),
 })
 
 export const session = sqliteTable("session", {
@@ -82,6 +85,30 @@ export const jwks = sqliteTable("jwks", {
   privateKey: text("privateKey").notNull(),
   createdAt: isoDate("createdAt").notNull(),
   expiresAt: isoDate("expiresAt"),
+})
+
+export const passkey = sqliteTable("passkey", {
+  id: text("id").primaryKey(),
+  name: text("name"),
+  publicKey: text("publicKey").notNull(),
+  userId: text("userId").notNull(),
+  credentialID: text("credentialID").notNull(),
+  counter: integer("counter").notNull(),
+  deviceType: text("deviceType").notNull(),
+  backedUp: integer("backedUp", { mode: "boolean" }).notNull(),
+  transports: text("transports"),
+  createdAt: isoDate("createdAt"),
+  aaguid: text("aaguid"),
+})
+
+export const twoFactor = sqliteTable("twoFactor", {
+  id: text("id").primaryKey(),
+  secret: text("secret").notNull(),
+  backupCodes: text("backupCodes").notNull(),
+  userId: text("userId").notNull(),
+  verified: integer("verified", { mode: "boolean" }),
+  failedVerificationCount: integer("failedVerificationCount"),
+  lockedUntil: isoDate("lockedUntil"),
 })
 
 export const oauthClient = sqliteTable("oauthClient", {
@@ -162,6 +189,8 @@ export const authSchema = {
   account,
   verification,
   jwks,
+  passkey,
+  twoFactor,
   oauthClient,
   oauthAccessToken,
   oauthRefreshToken,

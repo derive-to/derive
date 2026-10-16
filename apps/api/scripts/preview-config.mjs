@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 // Derive a PREVIEW Worker config from wrangler.toml.
 //
-// A preview is the same Worker under a different name, on its own workers.dev URL, sharing
-// production's data. That last part is the point — a preview you cannot sign into, or that
-// shows an empty database, tells you nothing about a change — and it is also the reason this
-// script is careful about what it strips.
+// A preview is the same Worker under a different name. PR deployments pass owned
+// D1 and R2 bindings as the fourth argument. The legacy three-argument form keeps
+// its existing bindings for callers that already own their target configuration.
 //
 // WHAT IT REMOVES, and why each one would otherwise reach production:
 //   [[routes]]            derive.to / app.derive.to / derive.page → the preview would SERVE the
@@ -18,9 +17,8 @@
 //                         table and then be served by PRODUCTION — the opposite of the
 //                         self-served bytes this config is arranging.
 //
-// WHAT IT KEEPS: the D1 / Hyperdrive / R2 bindings, so the preview reads and writes the same
-// data production does. Weigh that before opening previews to untrusted PRs — see the fork guard
-// in .github/workflows/pr-preview.yml.
+// PR previews replace D1 and R2 with their own resources and remove Hyperdrive.
+// The legacy three-argument form retains the caller's configured data bindings.
 //
 // WHAT IT UNSETS: DERIVE_SANDBOX_URL. Production serves artifact bytes from a separate
 // registrable domain (raw.derive.page) and 302s /raw/* there from the app host. A preview
@@ -48,12 +46,21 @@
 // unauthenticated, so treat a preview like any other place you would not enter a password
 // after following a link.
 //
-//   node scripts/preview-config.mjs <name> <base-url> > wrangler.preview.toml
+//   node scripts/preview-config.mjs <name> <base-url> <bindings.json> > wrangler.preview.toml
 import { readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
-const [, , name, baseUrl] = process.argv
+const [, , name, baseUrl, fixturePath] = process.argv
+const fixture = fixturePath ? JSON.parse(readFileSync(fixturePath, "utf8")) : null
+if (
+  fixture &&
+  (fixture.databaseName !== name ||
+    fixture.bucketName !== `${name}-blobs` ||
+    !/^[a-f0-9-]{36}$/.test(fixture.databaseId))
+) {
+  throw new Error("Preview data stores must belong to this preview")
+}
 if (!name || !baseUrl) {
   console.error("usage: preview-config.mjs <worker-name> <base-url>")
   process.exit(1)
@@ -85,6 +92,7 @@ for (const b of blocks) {
   const h = headerOf(b)
   const body = b.join("\n")
   if (h && DROP.has(h)) continue
+  if (fixture && (h === "[[hyperdrive]]" || h === "[ai]")) continue
   // The retired hosted-run container class was created and deleted on production's script
   // only; a preview script never had it, so deleting it there would fail the deploy.
   if (h === "[[migrations]]" && body.includes('"RunContainer"')) continue
@@ -114,6 +122,19 @@ out = out.replace(
   "# DERIVE_SUBDOMAIN_BASE intentionally unset for previews (preview-config.mjs): the vanity\n" +
     "# host has no preview route, and minting one would write a domain row into production.",
 )
+if (fixture) {
+  out = out.replace(/^database_name = "[^"]*"$/m, `database_name = "${fixture.databaseName}"`)
+  out = out.replace(/^database_id = "[^"]*"$/m, `database_id = "${fixture.databaseId}"`)
+  out = out.replace(/^bucket_name = "[^"]*"$/m, `bucket_name = "${fixture.bucketName}"`)
+  if (
+    out.includes("[[hyperdrive]]") ||
+    !out.includes(`database_id = "${fixture.databaseId}"`) ||
+    !out.includes(`bucket_name = "${fixture.bucketName}"`)
+  ) {
+    throw new Error("Isolated preview bindings did not apply")
+  }
+}
+
 // Serve on workers.dev — a preview with no hostname is not a preview.
 out = out.replace(/^main = "src\/worker\.ts"$/m, 'main = "src/worker.ts"\nworkers_dev = true')
 

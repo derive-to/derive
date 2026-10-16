@@ -27,6 +27,8 @@ import { parseExpectedColumns, partitionStatements, planColumnAdds } from "./d1-
 
 const DB = process.env.DERIVE_D1_NAME ?? "derive"
 const TARGET = process.argv.includes("--local") ? "--local" : "--remote"
+const configAt = process.argv.indexOf("--config")
+const configArgs = configAt < 0 ? [] : ["--config", process.argv[configAt + 1]]
 
 // Postgres tier: skip. When Hyperdrive → Neon is bound, the worker reads Postgres and
 // the D1 database "sits idle" (see apps/api/wrangler.toml) — its schema never serves a
@@ -45,7 +47,7 @@ const here = dirname(fileURLToPath(import.meta.url))
 const schemaPath = join(here, "../../../deploy/d1-schema.sql")
 
 const wrangler = (args, capture = false) =>
-  execFileSync("wrangler", ["d1", "execute", DB, TARGET, ...args], {
+  execFileSync("wrangler", ["d1", "execute", DB, TARGET, ...configArgs, ...args], {
     encoding: "utf8",
     stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
     maxBuffer: 16 * 1024 * 1024,

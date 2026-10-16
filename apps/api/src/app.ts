@@ -1,4 +1,4 @@
-import { type ArtifactRecord, parseRef } from "@derive/core"
+import { ArtifactError, type ArtifactRecord, parseRef } from "@derive/core"
 import { OpenAPIHono } from "@hono/zod-openapi"
 import { Scalar } from "@scalar/hono-api-reference"
 import type { Context, Hono } from "hono"
@@ -154,6 +154,7 @@ export function createApp(deps: AppDeps): Hono {
   // Uncaught errors become a consistent JSON 500 (never a stack trace to the
   // client) and a structured server log line.
   app.onError((err, c) => {
+    if (err instanceof ArtifactError) return fail(c, err.status, err.message)
     if (err instanceof JobCommandError) return fail(c, err.status, err.message)
     if (
       (c.req.path.startsWith("/v1/jobs") || c.req.path.startsWith("/v1/agents")) &&

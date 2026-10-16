@@ -44,9 +44,13 @@ const opsMessage = (ops: SourceOp[]): string => {
 }
 
 /** Ops as sent: every element they name carries its hash from the source map. */
-const withHashes = (ops: SourceOp[], hashes: string[]): SourceOp[] => {
-  const hash = (n: number) => {
-    const h = hashes[n]
+const withHashes = (
+  ops: SourceOp[],
+  hashes: string[],
+  history: ReadonlyMap<number, string[]>,
+): SourceOp[] => {
+  const hash = (n: number, version?: number) => {
+    const h = (version === undefined ? hashes : history.get(version))?.[n]
     if (h === undefined) throw new Error("The page is out of date. Reload it and edit again.")
     // The source doesn't say where this element ends (misnested markup).
     if (!h)
@@ -59,7 +63,7 @@ const withHashes = (ops: SourceOp[], hashes: string[]): SourceOp[] => {
     "keep" in t || "tag" in t
       ? {
           ...t,
-          ...("keep" in t && { hash: hash(t.keep) }),
+          ...("keep" in t && { hash: hash(t.keep, t.version) }),
           ...(t.children && { children: t.children.map(token) }),
         }
       : t
@@ -293,6 +297,7 @@ export function useAutoSave(p: {
       }
       const edits = c.edits ?? []
       if (!(c.ops ?? edits).length) {
+        queueSave(P.shortId, null)
         x.savedRev = Math.max(x.savedRev, rev)
         x.offline = false
         x.waiting = 0
@@ -302,7 +307,24 @@ export function useAutoSave(p: {
       if (!art) throw new Error("save fired before the artifact loaded")
       if (c.ops && c.base) {
         const table = await tableFor(c.base)
-        const sent = withHashes(c.ops, table.hashes)
+        const history = new Map<number, string[]>()
+        const historicalVersions = new Set<number>()
+        const visit = (tokens: SourceToken[]): void => {
+          for (const token of tokens) {
+            if ("keep" in token && token.version !== undefined)
+              historicalVersions.add(token.version)
+            if ("children" in token && token.children) visit(token.children)
+          }
+        }
+        for (const op of c.ops) if (op.op === "content") visit(op.children)
+        await Promise.all(
+          [...historicalVersions].map(async (version) => {
+            const historical = await api.sourceMap(P.shortId, version)
+            history.set(version, historical.hashes)
+          }),
+        )
+        if (frame !== x.frame) return
+        const sent = withHashes(c.ops, table.hashes, history)
         const message = opsMessage(c.ops)
         x.waiting = c.ops.length
         queueSave(P.shortId, {
@@ -331,7 +353,7 @@ export function useAutoSave(p: {
         if (frame !== x.frame) return
         await syncIn(true, wire)
       } else {
-        // Quotes (LaTeX) and video scenes resolve against the current head, and the
+        // Quote edits (LaTeX and unstamped documents) resolve against the current head, and the
         // page's text becomes the new baseline — unless it moved on while this saved.
         const a = await api.publishEdits(
           P.shortId,
@@ -524,8 +546,13 @@ export function useAutoSave(p: {
       const y = s.current
       window.clearTimeout(y.timer)
       window.clearTimeout(y.remoteTimer)
-      if (y.session && y.savedRev > 0)
-        api.finishEditSession(pr.current.shortId, y.session).catch(() => {})
+      if (y.session && y.savedRev > 0) {
+        const page = pr.current
+        api
+          .finishEditSession(page.shortId, y.session)
+          .then(page.load)
+          .catch(() => {})
+      }
       y.session = ""
       y.frame++
     },

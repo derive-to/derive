@@ -1,4 +1,10 @@
-import { elementSelectorForId, newId, roleAllows } from "@derive/core"
+import {
+  ArtifactError,
+  elementSelectorForId,
+  newId,
+  postArtifactComment,
+  roleAllows,
+} from "@derive/core"
 import { z } from "zod"
 import { commentCreatedAction } from "../lib/comment-actions"
 import {
@@ -161,7 +167,7 @@ export function registerCommentTool(tc: ToolContext): void {
             )
           anchor = JSON.stringify(selector)
         }
-        await ctx.meta.createComment({
+        const created = await postArtifactComment(ctx.meta, a, {
           id: commentId,
           artifact_id: a.id,
           thread_id: thread,
@@ -187,29 +193,27 @@ export function registerCommentTool(tc: ToolContext): void {
         // participants + the artifact's owners, plus webhooks, email, and connected Slack
         // channels. This path used to bell only, so an agent's comment reached no channel at
         // all. It now sends the same resolved mention payload as the web composer too.
-        const created = await ctx.meta.getComment(commentId)
         // Through ctx.background, exactly as the HTTP route runs it: the fan-out is
         // best-effort, and the comment is already durable by now. Awaiting it bare would turn
         // any channel-side failure (such as a Slack install lookup)
         // into a tool error for a comment that WAS written — and an agent that believes its
         // comment failed retries and duplicates it. background() catches + logs, and on
         // Workers rides waitUntil; on Node it still settles inline.
-        if (created)
-          await ctx.background(
-            commentCreatedAction(
-              {
-                meta: ctx.meta,
-                bus: ctx.bus,
-                baseUrl: ctx.deps.baseUrl,
-                notify: ctx.notify,
-                pokeWebhooks: ctx.deps.pokeWebhooks,
-                answerDeriveMention: ctx.answerDeriveMention,
-              },
-              a,
-              created,
-              { mentions, actorId: agent.id, onBehalfOf: ownerId },
-            ),
-          )
+        await ctx.background(
+          commentCreatedAction(
+            {
+              meta: ctx.meta,
+              bus: ctx.bus,
+              baseUrl: ctx.deps.baseUrl,
+              notify: ctx.notify,
+              pokeWebhooks: ctx.deps.pokeWebhooks,
+              answerDeriveMention: ctx.answerDeriveMention,
+            },
+            a,
+            created,
+            { mentions, actorId: agent.id, onBehalfOf: ownerId },
+          ),
+        )
       }
       // The ack: land the emoji on the thread's newest comment by someone ELSE
       // (the human being acknowledged), falling back to its newest comment.
@@ -238,23 +242,21 @@ export function registerCommentTool(tc: ToolContext): void {
       }
       if (set_state) {
         if (!thread) return err("`set_state` needs `reply_to` (the thread id to resolve/reopen).")
-        // The HTTP resolve route 404s on a thread that isn't on this artifact; this path has to
-        // check too, because resolveThreadAction discards its update count and fans
-        // comment.resolved out regardless. Without it an agent could emit unbounded "a thread was
-        // resolved" events — into every webhook subscriber and any connected Slack channel — for
-        // threads that never existed.
-        const known = (await ctx.meta.listComments(a.id, { threadId: thread })).length > 0
-        if (!known) return err(`No thread "${thread}" on "${short_id}".`)
-        // Shared with the HTTP resolve route and the Slack Resolve button (lib/thread-actions.ts)
-        // — it flips the thread, publishes on the bus AND fans comment.resolved out to webhooks.
-        // The hand-rolled pair of calls this replaced skipped that last step.
-        await resolveThreadAction(
-          { meta: ctx.meta, bus: ctx.bus, notify: ctx.notify, baseUrl: ctx.deps.baseUrl },
-          a,
-          thread,
-          set_state,
-          { id: agent.id, name: agent.name },
-        )
+        // The shared thread module refuses missing targets before host notifications.
+        // Keep the native MCP wording without a second existence query.
+        try {
+          await resolveThreadAction(
+            { meta: ctx.meta, bus: ctx.bus, notify: ctx.notify, baseUrl: ctx.deps.baseUrl },
+            a,
+            thread,
+            set_state,
+            { id: agent.id, name: agent.name },
+          )
+        } catch (error) {
+          if (error instanceof ArtifactError && error.status === 404)
+            return err(`No thread "${thread}" on "${short_id}".`)
+          throw error
+        }
       }
       return json({
         short_id,
