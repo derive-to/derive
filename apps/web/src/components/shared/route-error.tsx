@@ -14,7 +14,9 @@ import { Button } from "@/components/ui/button"
 // dev-only (a thrown error can carry internals).
 export function RouteError({ error, reset }: ErrorComponentProps) {
   const router = useRouter()
-  const detail = import.meta.env.DEV ? error.message : "Something went wrong loading this page."
+  // The router hands the boundary whatever was thrown, typed `unknown` since 1.170.44.
+  const message = error instanceof Error ? error.message : String(error)
+  const detail = import.meta.env.DEV ? message : "Something went wrong loading this page."
   return (
     <div className="flex flex-1 items-center justify-center p-6">
       <StatusPanel
