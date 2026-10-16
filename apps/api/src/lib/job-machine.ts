@@ -173,6 +173,8 @@ export const stoppedBeforeReport = (exit?: ProcessExit): string => {
   if (!exit) return base
   if (exit.status === "deadline")
     return "The job reached its run budget before it reported back. Raise the agent's run time or make the task smaller."
+  if (exit.status === "not_ready")
+    return `The machine came back from the provider in a shape Derive will not launch on (${exit.reason}), so it was stopped before the runner started.`
   const how =
     exit.status === "exited"
       ? `The runner exited with code ${exit.code ?? "unknown"}`
@@ -915,7 +917,13 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
           observed.auto_stop_after_seconds >
             Math.max(CREATE_TTL_SECONDS, ttlFor(m.deadline_at, at)) + TTL_SLACK_SECONDS)
       ) {
-        await move("stopping")
+        // Say what the provider showed: the state and timer are ids and numbers, not output.
+        await move("stopping", {
+          exit: {
+            status: "not_ready",
+            reason: `state ${observed.state}, stop timer ${observed.auto_stop_after_seconds}s`,
+          },
+        })
         return
       }
       const launching = await move("launching", {

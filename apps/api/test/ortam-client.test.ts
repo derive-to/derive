@@ -419,5 +419,10 @@ describe("runner output in a failure", () => {
       "The machine stopped before the job reported back. The runner process failed (out_of_memory), SIGKILL.",
     )
     expect(stoppedBeforeReport({ status: "deadline" })).toMatch(/run budget/)
+    expect(
+      stoppedBeforeReport({ status: "not_ready", reason: "state starting, stop timer 0s" }),
+    ).toBe(
+      "The machine came back from the provider in a shape Derive will not launch on (state starting, stop timer 0s), so it was stopped before the runner started.",
+    )
   })
 })
