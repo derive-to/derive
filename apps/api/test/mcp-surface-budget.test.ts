@@ -216,9 +216,16 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // `editor` (set by the view, never the model) and `thread` (the question to ask), and `comment`
 // gains `options` (a new thread becomes a question). Three params, each one short line, all
 // trimmed first; no tool or description was added. Measured 8,463 of 8,650.
+// PARAMS 8,650 -> 8,800 and SURFACE 12,450 -> 12,800 (2026-10-15) for the run budget on
+// `agents`: `max_run_ms` and `max_concurrency` were real REST fields the MCP tool silently
+// dropped, so every agent a coding session made ran on the 15-minute default and was stopped
+// mid-command. The one new description has to say the default and that the deadline stops the
+// job, or the parameter is as invisible as before; `max_concurrency` carries none. Trimmed from
+// 230 to 135 chars first. Main stood 8 chars under the surface cap before this, so the raise was
+// due whatever came next. Measured 3,943 / 8,634 / 12,577, keeping the ~2% headroom.
 const TOOL_DESCRIPTIONS_BUDGET = 3_950
-const PARAM_DESCRIPTIONS_BUDGET = 8_650
-const SURFACE_BUDGET = 12_450
+const PARAM_DESCRIPTIONS_BUDGET = 8_800
+const SURFACE_BUDGET = 12_800
 const INSTRUCTIONS_BUDGET = 2_950
 
 /** No single tool may sprawl: one sentence of routing, the one thing that silently breaks,

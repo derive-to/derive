@@ -38,8 +38,14 @@ model account yet comes back with `needs_browser`: a link where a person signs o
 link on; do not try to do it yourself.
 
 Everything else (status, schedule, machine, model account, sources, environment variables,
-publishing, access, delete) can be changed later with `agents({ action: "update" })`, or by a
-person on the agent's Settings tab in Derive.
+run budget, concurrency, publishing, access, delete) can be changed later with
+`agents({ action: "update" })`, or by a person on the agent's Settings tab in Derive.
+
+**Give a long job the time it needs.** `max_run_ms` is the most one job may run: 30 seconds
+to 6 hours. A Derive-machine job with none set gets 15 minutes and is STOPPED at that
+deadline, mid-command, with no report; an owner-machine claim lapses after 10 minutes. A
+skill that installs tools, runs a test suite or waits on anything should set it on create
+(`max_run_ms: 3_600_000`) or later with `update`. `null` restores the default.
 
 ## Sources
 

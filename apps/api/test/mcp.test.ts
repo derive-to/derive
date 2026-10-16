@@ -327,6 +327,44 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(toolIsError(notTheirs)).toBe(true)
   })
 
+  it("agents create and update carry the run budget and concurrency, coercing a stale client's text", async () => {
+    const { app, token } = appWithGrant(dir, "agentbudget", "openid derive:read derive:publish")
+    const made = JSON.parse(
+      toolText(
+        await call(app, token, "agents", {
+          action: "create",
+          name: "Long runner",
+          max_run_ms: 3_600_000,
+          max_concurrency: 2,
+        }),
+      ),
+    )
+    expect(made).toMatchObject({ max_run_ms: 3_600_000, max_concurrency: 2 })
+    // A client that connected before the parameter existed sends it as text.
+    const bumped = JSON.parse(
+      toolText(
+        await call(app, token, "agents", {
+          action: "update",
+          agent: made.id,
+          max_run_ms: "1800000",
+        }),
+      ),
+    )
+    expect(bumped.max_run_ms).toBe(1_800_000)
+    const cleared = JSON.parse(
+      toolText(
+        await call(app, token, "agents", { action: "update", agent: made.id, max_run_ms: null }),
+      ),
+    )
+    expect(cleared).toMatchObject({ max_run_ms: null, max_concurrency: 2 })
+    // Below the 30-second floor is refused, not silently clamped.
+    expect(
+      toolIsError(
+        await call(app, token, "agents", { action: "update", agent: made.id, max_run_ms: 1_000 }),
+      ),
+    ).toBe(true)
+  })
+
   it("stage target:'doc' mints a URL an anonymous shell can publish a whole file through", async () => {
     const { app, token, meta } = appWithGrant(
       dir,

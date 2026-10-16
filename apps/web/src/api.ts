@@ -480,6 +480,8 @@ export type AgentPatch = Partial<
     | "sandbox"
     | "paused"
     | "machine"
+    | "max_run_ms"
+    | "max_concurrency"
   >
 >
 export type ScheduleInput = { cron: string; tz: string; instruction: string }
