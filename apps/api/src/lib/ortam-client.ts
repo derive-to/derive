@@ -15,6 +15,7 @@ const Sandbox = z.object({
   state: z.string(),
   current_operation_id: z.string().nullable(),
   auto_stop_after_seconds: z.number(),
+  lifetime_ends_at: z.string().nullable().optional(),
 })
 const Operation = z.object({
   id: z.string(),

@@ -908,20 +908,24 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
     }
     case "ready": {
       const observed = await client.sandbox(sandbox, state.identity)
-      // Deadline timers bound compute after resume; idle timers reset with activity and are
-      // held by the runner process. Both keep the controller deadline and process timeout.
+      // The provider must stop the machine by itself if this controller never does: a deadline
+      // timer bounds compute after resume; an idle timer resets with activity; a maximum
+      // lifetime ends it whatever happens (Ortam stops machines for nothing else since
+      // 2026-10-16). All keep the controller deadline and process timeout.
       if (
         observed.state !== "ready" ||
-        observed.auto_stop_after_seconds <= 0 ||
+        providerStopSeconds(observed, at) <= 0 ||
         (client.stopTimer === "deadline" &&
           observed.auto_stop_after_seconds >
             Math.max(CREATE_TTL_SECONDS, ttlFor(m.deadline_at, at)) + TTL_SLACK_SECONDS)
       ) {
-        // Say what the provider showed: the state and timer are ids and numbers, not output.
+        // Say what the provider showed: the state, timer and deadline are not output.
+        const lifetime =
+          client.stopTimer === "idle" ? `, lifetime ${observed.lifetime_ends_at ?? "none"}` : ""
         await move("stopping", {
           exit: {
             status: "not_ready",
-            reason: `state ${observed.state}, stop timer ${observed.auto_stop_after_seconds}s`,
+            reason: `state ${observed.state}, stop timer ${observed.auto_stop_after_seconds}s${lifetime}`,
           },
         })
         return
@@ -995,7 +999,7 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
         )
         if (
           after?.status === "queued" &&
-          observed.auto_stop_after_seconds >=
+          providerStopSeconds(observed, at) >=
             ttlFor(new Date(next.deadline).toISOString(), at) - RELAUNCH_SLACK_SECONDS
         ) {
           await recordCompute(sandbox, at)
@@ -1041,6 +1045,19 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
     default:
       return
   }
+}
+
+/** How long the provider lets the machine run if nothing here stops it: its idle timer, or
+ *  the time left to its maximum lifetime when the provider has no idle stop. Zero when
+ *  nothing would stop it. */
+const providerStopSeconds = (
+  observed: { auto_stop_after_seconds: number; lifetime_ends_at?: string | null },
+  at: string,
+): number => {
+  if (observed.auto_stop_after_seconds > 0) return observed.auto_stop_after_seconds
+  if (!observed.lifetime_ends_at) return 0
+  const ends = Date.parse(observed.lifetime_ends_at)
+  return Number.isFinite(ends) ? Math.max(0, Math.floor((ends - Date.parse(at)) / 1000)) : 0
 }
 
 /** A provider stop timer that covers the turn's deadline with room to stop cleanly. */

@@ -3691,6 +3691,8 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
       snapshot?: string
       reserveOnly?: boolean
       fresh?: boolean
+      /** The provider's maximum lifetime for the sandbox; null while compute is not ready. */
+      lifetimeEndsAt?: string | null
     } = {},
   ) => {
     const identity = { organization_id: "ortam-org", user_id: "ortam-user" }
@@ -3723,6 +3725,9 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
         state: stopped ? "stopped" : "ready",
         current_operation_id: null,
         auto_stop_after_seconds: idleSeconds,
+        ...(options.lifetimeEndsAt !== undefined
+          ? { lifetime_ends_at: options.lifetimeEndsAt }
+          : {}),
       }
       const operation = (kind: string) => ({
         id: `op-${kind}`,
@@ -3936,6 +3941,36 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
     expect(failed?.status).toBe("failed")
     expect(JSON.parse(failed?.result_json ?? "{}").failure.reason).toMatch(
       /run budget before it reported back/,
+    )
+  })
+
+  it("launches on a machine whose only provider stop is its maximum lifetime", async () => {
+    const { meta, deps, job, until, launches } = await cloudSetup("jobs-ortam-lifetime", 0, {
+      lifetimeEndsAt: new Date(Date.now() + 24 * 3600_000).toISOString(),
+    })
+    await until("running")
+    const running = await meta.getJob(job.id)
+    if (!running) throw new Error("missing running Ortam job")
+    expect(launches).toHaveLength(1)
+    const machine = JSON.parse(running.machine_json ?? "{}")
+    await advanceMachineJob(
+      { ...deps, now: () => new Date(Date.parse(machine.deadline_at) + 1) },
+      running,
+    )
+    expect((await meta.getJob(job.id))?.machine_phase).toBe("stopping")
+    await until("parked")
+  })
+
+  it("will not launch on a machine that nothing stops, and says what it saw", async () => {
+    const { meta, job, until, launches } = await cloudSetup("jobs-ortam-no-stop", 0, {
+      lifetimeEndsAt: null,
+    })
+    await until("parked")
+    expect(launches).toEqual([])
+    const failed = await meta.getJob(job.id)
+    expect(failed?.status).toBe("failed")
+    expect(JSON.parse(failed?.result_json ?? "{}").failure.reason).toBe(
+      "The machine came back from the provider in a shape Derive will not launch on (state ready, stop timer 0s, lifetime none), so it was stopped before the runner started.",
     )
   })
 

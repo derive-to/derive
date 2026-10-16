@@ -38,7 +38,11 @@ type Sandbox = {
   id: string
   state: string
   current_operation_id: string | null
+  /** The idle timer. Zero on providers that no longer stop a machine for inactivity. */
   auto_stop_after_seconds: number
+  /** When the provider stops the machine whatever it is doing; null until compute is ready,
+   *  absent on providers without a lifetime cap. */
+  lifetime_ends_at?: string | null
 }
 type Process = {
   id: string
