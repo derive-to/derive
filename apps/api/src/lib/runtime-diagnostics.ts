@@ -39,3 +39,40 @@ export function runtimeFailureReason(error: unknown): string {
   }
   return "unknown"
 }
+
+// Terminal control sequences (ESC [ ... final byte), built so the escape byte stays out of source.
+const ANSI = new RegExp(`${String.fromCharCode(0x1b)}\\[[0-9;?]*[ -/]*[@-~]`, "g")
+// What a runner's output may carry: URL userinfo, env-style assignments of secrets, the token
+// shapes Derive and the harnesses use, JWTs, and any long opaque string.
+const SECRETS: Array<[RegExp, string]> = [
+  [/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+:[^\s@]+@/gi, "$1[redacted]@"],
+  [
+    /([A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|PRIVATE_KEY|CREDENTIALS?)[A-Za-z0-9_]*\s*[=:]\s*)\S+/gi,
+    "$1[redacted]",
+  ],
+  [/\bbearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, "[redacted]"],
+  [/\bdk[a-z]*_[A-Za-z0-9_]{8,}/g, "[redacted]"],
+  [/\bsk-[A-Za-z0-9_-]{8,}/g, "[redacted]"],
+  [/\bgh[pousr]_[A-Za-z0-9]{16,}/g, "[redacted]"],
+  [/\bgithub_pat_[A-Za-z0-9_]{16,}/g, "[redacted]"],
+  [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, "[redacted]"],
+  [/\b[A-Fa-f0-9]{32,}\b/g, "[redacted]"],
+  [/[A-Za-z0-9+/_-]{40,}={0,2}/g, "[redacted]"],
+]
+
+/** The end of a runner's output, fit for a failure a person reads: control sequences gone,
+ *  lines joined, anything shaped like a credential replaced, and at most `max` characters,
+ *  keeping the end. Null when nothing readable is left. */
+export function redactedOutputTail(text: string | null | undefined, max = 400): string | null {
+  if (!text) return null
+  let out = text.replace(ANSI, "")
+  for (const [pattern, replacement] of SECRETS) out = out.replace(pattern, replacement)
+  out = out
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join(" | ")
+  if (!out) return null
+  return out.length > max ? `\u2026${out.slice(out.length - max + 1)}` : out
+}

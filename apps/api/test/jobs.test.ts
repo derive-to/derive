@@ -3704,6 +3704,9 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
       status: 200,
       holdNext: undefined as Promise<void> | undefined,
     }
+    // What a process read returns once the runner is gone, and the tails each read asked for.
+    const processOutcome = { finished: undefined as Record<string, unknown> | undefined }
+    const processReads: Array<string | null> = []
     let deleted = false
     const certificates: Array<unknown> = []
     const certificateExpiry = new Date(Date.now() + 60_000).toISOString()
@@ -3788,8 +3791,12 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
         }
         return Response.json({ id: process.id, status: "running" })
       }
-      if (path.startsWith("/sandboxes/sbx/processes/"))
-        return Response.json({ id: path.split("/").at(-1), status: "running" })
+      if (path.startsWith("/sandboxes/sbx/processes/")) {
+        processReads.push(new URL(request.url).searchParams.get("tail_bytes"))
+        const id = path.split("/").at(-1)
+        if (processOutcome.finished) return Response.json({ id, ...processOutcome.finished })
+        return Response.json({ id, status: "running" })
+      }
       throw new Error(`Unexpected Ortam request: ${request.method} ${path}`)
     }) as typeof fetch
     const runtime = {
@@ -3865,11 +3872,72 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
       responseLoss,
       creates,
       createOutcome,
+      processOutcome,
+      processReads,
       provisioning,
       certificates,
       certificateExpiry,
     }
   }
+
+  it("tells the job how its runner ended when the machine stops before it reports", async () => {
+    const { meta, deps, job, until, processOutcome, processReads } = await cloudSetup(
+      "jobs-ortam-runner-exit",
+      2700,
+    )
+    await until("running")
+    const running = await meta.getJob(job.id)
+    if (!running) throw new Error("missing running Ortam job")
+    expect(processReads).toEqual([])
+    processOutcome.finished = {
+      status: "exited",
+      exit_code: 1,
+      reason: "exited",
+      stdout: "",
+      stderr: [
+        "\u001b[33mnpm WARN\u001b[0m deprecated",
+        "Authorization: Bearer dkjob_0123456789abcdef",
+        "+ test '2.1.302 (Claude Code)' = '2.1.141 (Claude Code)'",
+        "",
+      ].join("\n"),
+    }
+    await advanceMachineJob(deps, running)
+    const stopping = await meta.getJob(job.id)
+    expect(stopping?.machine_phase).toBe("stopping")
+    expect(processReads.at(-1)).toBe("4096")
+    expect(JSON.parse(stopping?.machine_json ?? "{}").exit).toEqual({
+      status: "exited",
+      code: 1,
+      reason: "exited",
+      tail: "npm WARN deprecated | Authorization: [redacted] | + test '2.1.302 (Claude Code)' = '2.1.141 (Claude Code)'",
+    })
+    await until("parked")
+    const failed = await meta.getJob(job.id)
+    expect(failed?.status).toBe("failed")
+    const failure = JSON.parse(failed?.result_json ?? "{}").failure
+    expect(failure.retryable).toBe(true)
+    expect(failure.reason).toBe(
+      "The machine stopped before the job reported back. The runner exited with code 1. Last output: npm WARN deprecated | Authorization: [redacted] | + test '2.1.302 (Claude Code)' = '2.1.141 (Claude Code)'",
+    )
+    expect(failure.reason).not.toContain("dkjob_")
+  })
+
+  it("names the run budget when the deadline stops a runner that never reported", async () => {
+    const { meta, deps, job, until } = await cloudSetup("jobs-ortam-runner-deadline", 2700)
+    await until("running")
+    const running = await meta.getJob(job.id)
+    if (!running) throw new Error("missing running Ortam job")
+    const machine = JSON.parse(running.machine_json ?? "{}")
+    const late = { ...deps, now: () => new Date(Date.parse(machine.deadline_at) + 1) }
+    await advanceMachineJob(late, running)
+    expect((await meta.getJob(job.id))?.machine_phase).toBe("stopping")
+    await until("parked")
+    const failed = await meta.getJob(job.id)
+    expect(failed?.status).toBe("failed")
+    expect(JSON.parse(failed?.result_json ?? "{}").failure.reason).toMatch(
+      /run budget before it reported back/,
+    )
+  })
 
   it("freezes shared creation and retires a lost response after admission is removed", async () => {
     const fixture = await cloudSetup("jobs-ortam-shared-create-recovery", 2700, {

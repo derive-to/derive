@@ -20,7 +20,7 @@ import { OrtamClient } from "./ortam-client"
 import { MAX_RUN_CEILING_MS, machineClock, tokenExpiryAfter } from "./run-lifecycle"
 import { signWorkToken } from "./run-token"
 import { cloudEnabled, connectionClient, workspaceRuntime } from "./runtime-connection"
-import { runtimeFailureReason } from "./runtime-diagnostics"
+import { redactedOutputTail, runtimeFailureReason } from "./runtime-diagnostics"
 import type { RuntimeConfig } from "./runtime-setup"
 import { runnerRunsJobs, runtimeSetup } from "./runtime-setup"
 import {
@@ -132,6 +132,54 @@ interface MachineState {
   own?: OwnSandbox
   /** The provider refused to start a machine for now; the step waits until `until`. */
   waiting?: { reason: string; until: string }
+  /** Why the runner is no longer running, read while the provider still held its record. */
+  exit?: ProcessExit
+}
+
+/** How a turn's runner process ended. The tail is already redacted (runtime-diagnostics). */
+interface ProcessExit {
+  status: string
+  code?: number
+  signal?: string
+  reason?: string
+  tail?: string
+}
+
+/** How much recent output to read from a process that stopped running: enough for the last
+ *  shell error or stack trace, trimmed to a sentence before anyone sees it. */
+const OUTPUT_TAIL_BYTES = 4096
+
+const processExit = (process: {
+  status: string
+  exit_code?: number
+  signal?: string
+  reason?: string
+  stdout?: string
+  stderr?: string
+}): ProcessExit => {
+  const exit: ProcessExit = { status: process.status }
+  if (process.exit_code !== undefined) exit.code = process.exit_code
+  if (process.signal) exit.signal = process.signal
+  if (process.reason) exit.reason = process.reason
+  const tail = redactedOutputTail(process.stderr) ?? redactedOutputTail(process.stdout)
+  if (tail) exit.tail = tail
+  return exit
+}
+
+/** The failure a person reads when the runner never reported. What the machine recorded about
+ *  the exit turns the bare fact into something to act on. */
+export const stoppedBeforeReport = (exit?: ProcessExit): string => {
+  const base = "The machine stopped before the job reported back."
+  if (!exit) return base
+  if (exit.status === "deadline")
+    return "The job reached its run budget before it reported back. Raise the agent's run time or make the task smaller."
+  const how =
+    exit.status === "exited"
+      ? `The runner exited with code ${exit.code ?? "unknown"}`
+      : `The runner process ${exit.status}${
+          exit.reason && exit.reason !== exit.status ? ` (${exit.reason})` : ""
+        }${exit.signal ? `, ${exit.signal}` : ""}`
+  return exit.tail ? `${base} ${how}. Last output: ${exit.tail}` : `${base} ${how}.`
 }
 
 const parse = <T>(s: string | null): T | null => {
@@ -818,7 +866,7 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
     job.machine_phase !== "stopping" &&
     (expired || !open || !(await admitted(deps, agent, state)))
   ) {
-    await move("stopping")
+    await move("stopping", expired && !m.exit ? { exit: { status: "deadline" } } : {})
     return
   }
   switch (job.machine_phase) {
@@ -895,12 +943,14 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
         await move("stopping")
         return
       }
-      const process = await client.process(sandbox, m.process_id, state.identity)
+      // Ask for the tail now: once the sandbox stops, the provider keeps no output.
+      const process = await client.process(sandbox, m.process_id, state.identity, OUTPUT_TAIL_BYTES)
       if (process.status === "starting") {
         await launch(job)
         return
       }
-      if (!["starting", "running"].includes(process.status)) await move("stopping")
+      if (!["starting", "running"].includes(process.status))
+        await move("stopping", { exit: processExit(process) })
       return
     }
     case "stopping": {
@@ -963,7 +1013,7 @@ export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Prom
         if (again.state !== "stopped") return
       }
       // Stopped, files saved. A runner that never reported fails the job so it can retry.
-      await failIfOpen(deps, agent, job, "The machine stopped before the job reported back.")
+      await failIfOpen(deps, agent, job, stoppedBeforeReport(m.exit))
       await recordCompute(sandbox, iso(deps))
       // A job's own sandbox parks with its files for the next turn, unless the task was
       // stopped for good; a shared one goes back to its agent.

@@ -3,7 +3,9 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
+import { stoppedBeforeReport } from "../src/lib/job-machine"
 import { OrtamClient, ortamId } from "../src/lib/ortam-client"
+import { redactedOutputTail } from "../src/lib/runtime-diagnostics"
 import { runtimeSetup } from "../src/lib/runtime-setup"
 import { SandboxCreateRejected } from "../src/lib/sandbox-client"
 
@@ -322,5 +324,99 @@ describe("managed Ortam SSH access", () => {
           : Response.json({ host_public_key, certificate, valid_before, principal: "identity" }),
     )
     await expect(client.sshKey(sandbox, "ssh-ed25519 AAAAclient", identity)).rejects.toThrow()
+  })
+})
+
+describe("Ortam process reads", () => {
+  const identity = { organization_id: "org", user_id: "usr" }
+  const finished = {
+    id: "prc_01h455vb4pex5vsknk084sn02q",
+    status: "exited",
+    argv: ["sh", "-c", "exit 1"],
+    cwd: "/home/ortam",
+    started_at: "2026-10-16T20:04:44Z",
+    finished_at: "2026-10-16T20:05:30Z",
+    exit_code: 1,
+    reason: "exited",
+    stdout: "",
+    stderr: "+ test '2.1.302 (Claude Code)' = '2.1.141 (Claude Code)'\n",
+    stdout_truncated: false,
+    stderr_truncated: true,
+  }
+  const reads: URL[] = []
+  const client = new OrtamClient("https://ortam.test/v1", "key", "subject", (async (input) => {
+    const url = new URL(String(input))
+    if (url.pathname === "/v1/integration") return Response.json(identity)
+    reads.push(url)
+    return Response.json(finished)
+  }) as typeof fetch)
+
+  it("reads status only by default", async () => {
+    reads.length = 0
+    const process = await client.process("sbx", finished.id, identity)
+    expect(reads[0]?.searchParams.get("tail_bytes")).toBe("1")
+    expect(process.status).toBe("exited")
+    expect(process.exit_code).toBe(1)
+  })
+
+  it("reads a bounded output tail when asked, and keeps how the process ended", async () => {
+    reads.length = 0
+    const process = await client.process("sbx", finished.id, identity, 4096)
+    expect(reads[0]?.searchParams.get("tail_bytes")).toBe("4096")
+    expect(process.reason).toBe("exited")
+    expect(process.stderr).toContain("2.1.141 (Claude Code)")
+    reads.length = 0
+    await client.process("sbx", finished.id, identity, 10_000_000)
+    expect(reads[0]?.searchParams.get("tail_bytes")).toBe("1048576")
+  })
+})
+
+describe("runner output in a failure", () => {
+  it("drops control sequences, joins lines and keeps the end", () => {
+    const tail = redactedOutputTail("\u001b[31mnpm ERR!\u001b[0m code E404\r\n\n  not found\n")
+    expect(tail).toBe("npm ERR! code E404 | not found")
+    const long = redactedOutputTail(`${"a ".repeat(300)}END`, 40)
+    expect(long?.length).toBe(40)
+    expect(long?.startsWith("\u2026")).toBe(true)
+    expect(long?.endsWith("END")).toBe(true)
+    expect(redactedOutputTail("")).toBeNull()
+    expect(redactedOutputTail("\n \n")).toBeNull()
+    expect(redactedOutputTail(undefined)).toBeNull()
+  })
+
+  it.each([
+    ["postgres://user:hunter2@db.example.com/app", "postgres://[redacted]@db.example.com/app"],
+    ["DERIVE_TOKEN=dkjob_abcdefghijklmnop", "DERIVE_TOKEN=[redacted]"],
+    ["api_key: abc12345", "api_key: [redacted]"],
+    ["authorization: Bearer abcdefghijklmnop", "authorization: [redacted]"],
+    ["token dk_agt_7351fe7f6b6d4f4a93 refused", "token [redacted] refused"],
+    ["ANTHROPIC key sk-ant-api03-abcdefgh", "ANTHROPIC key [redacted]"],
+    ["remote: ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ12 rejected", "remote: [redacted] rejected"],
+    ["github_pat_11ABCDEFG0123456789_abc", "[redacted]"],
+    [
+      "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+      "jwt [redacted]",
+    ],
+    [`sha ${"ab".repeat(32)} mismatch`, "sha [redacted] mismatch"],
+    [`blob ${"Qm".repeat(24)}== here`, "blob [redacted] here"],
+    ["npm ERR! code ENOTFOUND registry.npmjs.org", "npm ERR! code ENOTFOUND registry.npmjs.org"],
+  ])("redacts %s", (input, expected) => {
+    expect(redactedOutputTail(input)).toBe(expected)
+  })
+
+  it("says how the runner ended when it never reported", () => {
+    expect(stoppedBeforeReport()).toBe("The machine stopped before the job reported back.")
+    expect(stoppedBeforeReport({ status: "exited", code: 1, tail: "test failed" })).toBe(
+      "The machine stopped before the job reported back. The runner exited with code 1. Last output: test failed",
+    )
+    expect(stoppedBeforeReport({ status: "exited" })).toBe(
+      "The machine stopped before the job reported back. The runner exited with code unknown.",
+    )
+    expect(
+      stoppedBeforeReport({ status: "failed", reason: "out_of_memory", signal: "SIGKILL" }),
+    ).toBe(
+      "The machine stopped before the job reported back. The runner process failed (out_of_memory), SIGKILL.",
+    )
+    expect(stoppedBeforeReport({ status: "deadline" })).toMatch(/run budget/)
   })
 })

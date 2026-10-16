@@ -43,6 +43,14 @@ type Sandbox = {
 type Process = {
   id: string
   status: "starting" | "running" | "exited" | "failed" | "timed_out" | "stopped" | "interrupted"
+  /** How a finished process ended, when the provider reports it. */
+  exit_code?: number
+  signal?: string
+  reason?: string
+  /** Bounded log tails, as many bytes as the read asked for; absent once the provider no
+   *  longer holds the record. */
+  stdout?: string
+  stderr?: string
 }
 export interface SandboxCreate {
   name: string
@@ -93,7 +101,8 @@ export interface SandboxClient {
     machine?: SandboxMachine,
   ): Promise<Operation>
   launch(id: string, body: SandboxLaunch, key: string, identity: Identity): Promise<Process>
-  process(sandboxId: string, id: string, identity: Identity): Promise<Process>
+  /** `tailBytes` asks for that much recent output per stream; the default reads status only. */
+  process(sandboxId: string, id: string, identity: Identity, tailBytes?: number): Promise<Process>
   deleteSandbox(id: string, key: string, identity: Identity): Promise<Operation>
   isSandboxDeleted(id: string, identity: Identity): Promise<boolean>
   /** Authorize an OpenSSH public key on a running sandbox; where to connect, and the host key
