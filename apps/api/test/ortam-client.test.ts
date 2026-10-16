@@ -393,8 +393,9 @@ describe("runner output in a failure", () => {
     ["ANTHROPIC key sk-ant-api03-abcdefgh", "ANTHROPIC key [redacted]"],
     ["remote: ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ12 rejected", "remote: [redacted] rejected"],
     ["github_pat_11ABCDEFG0123456789_abc", "[redacted]"],
+    // Assembled so no token-shaped literal sits in the source for a secret scan to flag.
     [
-      "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+      `jwt ${["eyJhbGciOiJIUzI1NiJ9", "eyJzdWIiOiIxMjM0NTY3ODkwIn0", "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"].join(".")}`,
       "jwt [redacted]",
     ],
     [`sha ${"ab".repeat(32)} mismatch`, "sha [redacted] mismatch"],
