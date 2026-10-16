@@ -112,12 +112,9 @@ export function registerAgentsTool(tc: ToolContext): void {
           .nullable()
           .optional()
           .describe(
-            "The most one job may run, in milliseconds (30s to 6h). null restores the default: 15 minutes on a Derive machine, a 10-minute claim on an owner machine. A Derive-machine job still running at its deadline is stopped.",
+            "Most one job may run, in ms (30s to 6h). Unset is 15 min on a Derive machine, which stops the job at that deadline; null restores it.",
           ),
-        max_concurrency: tc
-          .num("max_concurrency", { int: true, min: 1, max: 10 })
-          .optional()
-          .describe("How many jobs may run at once (default 1)."),
+        max_concurrency: tc.num("max_concurrency", { int: true, min: 1, max: 10 }).optional(),
         workspace: wsArg,
       },
     },
