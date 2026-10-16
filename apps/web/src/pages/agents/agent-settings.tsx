@@ -132,6 +132,7 @@ export function AgentSettings({ agent, names, isWorkspaceOwner }: Props) {
         </Field>
         <AccountField agent={agent} edit={edit} onSave={set} />
         <ModelField agent={agent} edit={edit} onSave={set} />
+        <RunBudgetField agent={agent} edit={edit} onSave={set} />
         {agent.provider === "codex" && (
           <Field label="Effort">
             <Segmented
@@ -341,6 +342,53 @@ function InstructionsField({
 }
 
 const DEFAULT = "default"
+
+// The run budget (`max_run_ms`). A Derive machine stops a task at this deadline, so a skill
+// that installs tools or runs a long suite needs more than the 15-minute default; an owner
+// machine's claim lapses after it. Milliseconds on the wire, minutes and hours to a person.
+const RUN_BUDGETS = [
+  { value: DEFAULT, label: "Default" },
+  { value: "900000", label: "15 min" },
+  { value: "1800000", label: "30 min" },
+  { value: "3600000", label: "1 hour" },
+  { value: "7200000", label: "2 hours" },
+  { value: "21600000", label: "6 hours" },
+]
+
+function RunBudgetField({
+  agent,
+  edit,
+  onSave,
+}: {
+  agent: AgentDetail
+  edit: boolean
+  onSave: (p: AgentPatch) => void
+}) {
+  const current = agent.max_run_ms === null ? DEFAULT : String(agent.max_run_ms)
+  // A budget set over the API to a value the picker doesn't list still shows as itself.
+  const options = RUN_BUDGETS.some((o) => o.value === current)
+    ? RUN_BUDGETS
+    : [
+        ...RUN_BUDGETS,
+        { value: current, label: `${Math.round((agent.max_run_ms ?? 0) / 60_000)} min` },
+      ]
+  return (
+    <Field label="Run time">
+      <Segmented
+        testId="agent-max-run"
+        value={current}
+        disabled={!edit}
+        onChange={(v) => onSave({ max_run_ms: v === DEFAULT ? null : Number(v) })}
+        options={options}
+      />
+      <Sub>
+        {agent.machine === "derive"
+          ? "The most one task may run. Default is 15 minutes; a task still going at its deadline is stopped without a report."
+          : "The most one task may run before its claim lapses and it is handed out again. Default is 10 minutes."}
+      </Sub>
+    </Field>
+  )
+}
 
 // The server picks the account a job runs on: the one assigned here; else, on an owner
 // machine, the agent creator's own account (on a Derive machine, the asker's); then the

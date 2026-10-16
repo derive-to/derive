@@ -107,6 +107,17 @@ export function registerAgentsTool(tc: ToolContext): void {
           ),
         account_id: z.string().nullable().optional(),
         paused: z.boolean().optional(),
+        max_run_ms: tc
+          .num("max_run_ms", { int: true, min: 30_000, max: 6 * 60 * 60_000 })
+          .nullable()
+          .optional()
+          .describe(
+            "The most one job may run, in milliseconds (30s to 6h). null restores the default: 15 minutes on a Derive machine, a 10-minute claim on an owner machine. A Derive-machine job still running at its deadline is stopped.",
+          ),
+        max_concurrency: tc
+          .num("max_concurrency", { int: true, min: 1, max: 10 })
+          .optional()
+          .describe("How many jobs may run at once (default 1)."),
         workspace: wsArg,
       },
     },
@@ -169,6 +180,8 @@ export function registerAgentsTool(tc: ToolContext): void {
           write_policy: a.write_policy,
           connection_ids: a.sources,
           environment: a.environment,
+          max_run_ms: a.max_run_ms ?? undefined,
+          max_concurrency: a.max_concurrency,
           schedule: a.schedule ?? undefined,
         })
         if (!r.ok) return err(r.error)
@@ -218,6 +231,8 @@ export function registerAgentsTool(tc: ToolContext): void {
         environment: a.environment,
         account_id: a.account_id,
         paused: a.paused,
+        max_run_ms: a.max_run_ms,
+        max_concurrency: a.max_concurrency,
       }
       const r = await call(tc, org, path, "PATCH", patch)
       if (!r.ok) return err(r.error)
