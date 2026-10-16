@@ -33,6 +33,11 @@ const Process = z.object({
     "stopped",
     "interrupted",
   ]),
+  exit_code: z.number().int().optional(),
+  signal: z.string().optional(),
+  reason: z.string().optional(),
+  stdout: z.string().optional(),
+  stderr: z.string().optional(),
 })
 
 // Public Ortam processes use the workspace user. Install a verified Node runtime
@@ -362,11 +367,13 @@ export class OrtamClient implements SandboxClient {
     sandboxId: string,
     id: string,
     identity: { organization_id: string; user_id: string },
+    tailBytes = 1,
   ) {
     sandboxId = ortamId("sbx", sandboxId)
+    const tail = Math.min(1_048_576, Math.max(1, Math.floor(tailBytes)))
     const process = Process.parse(
       await this.request(
-        `/sandboxes/${encodeURIComponent(sandboxId)}/processes/${encodeURIComponent(id)}?tail_bytes=1`,
+        `/sandboxes/${encodeURIComponent(sandboxId)}/processes/${encodeURIComponent(id)}?tail_bytes=${tail}`,
         identity,
       ),
     )
