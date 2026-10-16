@@ -34,12 +34,14 @@ describe("Ortam IDs", () => {
         id: "sbx_01h455vb4pex5vsknk084sn02q",
         state: "stopped",
         current_operation_id: null,
-        auto_stop_after_seconds: 1200,
+        auto_stop_after_seconds: 0,
+        lifetime_ends_at: "2026-10-17T19:45:00Z",
       })
     }) as typeof fetch
     const client = new OrtamClient("https://ortam.test/v1", "key", "subject", fetcher)
     const sandbox = await client.sandbox("01890a5d-ac96-774b-bcce-b302099a8057", identity)
     expect(sandbox.state).toBe("stopped")
+    expect(sandbox.lifetime_ends_at).toBe("2026-10-17T19:45:00Z")
     expect(paths).toContain("/v1/sandboxes/sbx_01h455vb4pex5vsknk084sn02q")
   })
 })
