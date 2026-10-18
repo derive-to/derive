@@ -395,8 +395,48 @@ const sharedState = (agent: AgentRecord) =>
 
 // ---- An agent's shared sandbox ---------------------------------------------------------------
 
+/** Whether `error`, from a call about sandbox `id`, means the provider no longer has it: the
+ *  provider said not found, and a read of the sandbox itself agrees. */
+async function vanished(
+  client: SandboxClient,
+  error: unknown,
+  id: string,
+  identity: SandboxState["identity"],
+): Promise<boolean> {
+  if (!client.notFound?.(error)) return false
+  return client.isSandboxDeleted(id, identity).catch(() => false)
+}
+
 /** Advance one agent's shared sandbox a step. Returns the agent as it now stands. */
 export async function advanceSandbox(
+  deps: MachineDeps,
+  agent: AgentRecord,
+  actorId?: string | null,
+): Promise<AgentRecord | null> {
+  try {
+    return await advanceSandboxStep(deps, agent, actorId)
+  } catch (error) {
+    const state = sharedState(agent)
+    if (!agent.sandbox_id || !state) throw error
+    const client = await clientFor(deps, agent, state)
+    if (!(await vanished(client, error, agent.sandbox_id, state.identity))) throw error
+    // The provider no longer has the sandbox (as Ortam did to every existing sandbox on
+    // 2026-10-17, without a word to its holders). There is nothing left to stop or to wait
+    // for: finish the deletion on this side, and count it like a failed sandbox so the next
+    // job builds a fresh one after the usual backoff rather than in a tight loop.
+    return deps.meta.transitionAgentSandbox(agent.id, agent.org_id, agent.sandbox_rev, {
+      phase: "deleting",
+      state_json: JSON.stringify({
+        ...state,
+        stop_op: undefined,
+        delete_op: undefined,
+        failures: (state.failures ?? 0) + (agent.sandbox_phase === "deleting" ? 0 : 1),
+      }),
+    })
+  }
+}
+
+async function advanceSandboxStep(
   deps: MachineDeps,
   agent: AgentRecord,
   actorId?: string | null,
@@ -633,6 +673,57 @@ async function borrow(
 
 /** Advance one job's turn a step. */
 export async function advanceMachineJob(deps: MachineDeps, job: JobRecord): Promise<void> {
+  try {
+    await advanceMachineJobStep(deps, job)
+  } catch (error) {
+    const { meta } = deps
+    const agent = await meta.getAgent(job.agent_id)
+    const m = parse<MachineState>(job.machine_json)
+    const own = m?.own ?? null
+    const shared = agent && !own ? parse<SandboxState>(agent.sandbox_state_json) : null
+    const state = own ?? shared
+    const sandbox = own ? own.sandbox_id : agent?.sandbox_id
+    if (!agent || !m || !state || !sandbox) throw error
+    const client = await clientFor(deps, agent, state)
+    if (!(await vanished(client, error, sandbox, state.identity))) throw error
+    // The provider no longer has the machine (as Ortam did to every existing sandbox on
+    // 2026-10-17, without a word to its holders). Whatever ran on it is lost: fail the work
+    // if it is open, and let go of the machine so the next turn, or the agent's next job,
+    // builds a fresh one instead of asking after this one every pass with no end.
+    await failIfOpen(
+      deps,
+      agent,
+      job,
+      "The machine for this job is gone from the provider, so it was given up before the runner reported back.",
+    )
+    if (own) {
+      await meta.transitionJobMachine(job.id, job.machine_rev, {
+        phase: "deleting",
+        machine_json: JSON.stringify({
+          ...m,
+          own: { ...own, stop_op: undefined, delete_op: undefined },
+        }),
+      })
+      return
+    }
+    const released = await meta.transitionJobMachine(job.id, job.machine_rev, {
+      phase: "released",
+    })
+    if (released && shared?.holder === job.id)
+      await meta.transitionAgentSandbox(agent.id, agent.org_id, agent.sandbox_rev, {
+        phase: "deleting",
+        state_json: JSON.stringify({
+          ...shared,
+          holder: null,
+          stop_op: undefined,
+          delete_op: undefined,
+          failures: (shared.failures ?? 0) + 1,
+        }),
+      })
+  }
+}
+
+async function advanceMachineJobStep(deps: MachineDeps, job: JobRecord): Promise<void> {
   const { meta } = deps
   const agent = await meta.getAgent(job.agent_id)
   const m = parse<MachineState>(job.machine_json)

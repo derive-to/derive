@@ -109,6 +109,9 @@ export interface SandboxClient {
   process(sandboxId: string, id: string, identity: Identity, tailBytes?: number): Promise<Process>
   deleteSandbox(id: string, key: string, identity: Identity): Promise<Operation>
   isSandboxDeleted(id: string, identity: Identity): Promise<boolean>
+  /** Whether the provider answered the call that raised `error` with "not found". It says the
+   *  sandbox may be gone, not that it is: a sandbox read settles that. */
+  notFound?(error: unknown): boolean
   /** Authorize an OpenSSH public key on a running sandbox; where to connect, and the host key
    *  to pin. */
   sshKey?(id: string, publicKey: string, identity: Identity): Promise<SandboxSshAccess>
