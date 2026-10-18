@@ -279,6 +279,9 @@ export class OrtamClient implements SandboxClient {
     if (sandbox.id !== id) throw new Error("Ortam sandbox mismatch")
     return sandbox
   }
+  notFound(error: unknown) {
+    return error instanceof OrtamHttpError && error.status === 404
+  }
   async isSandboxDeleted(id: string, identity: { organization_id: string; user_id: string }) {
     id = ortamId("sbx", id)
     try {

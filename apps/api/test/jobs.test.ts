@@ -3710,6 +3710,9 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
     const processOutcome = { finished: undefined as Record<string, unknown> | undefined }
     const processReads: Array<string | null> = []
     let deleted = false
+    // Once set, the provider answers every call about the sandbox with 404, as Ortam did for
+    // every existing sandbox on 2026-10-17.
+    const gone = { now: false }
     const certificates: Array<unknown> = []
     const certificateExpiry = new Date(Date.now() + 60_000).toISOString()
     let stopped = false
@@ -3757,6 +3760,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
         }
         return Response.json({ sandbox, operation: operation("create") })
       }
+      if (gone.now && path.startsWith("/sandboxes/sbx")) return new Response(null, { status: 404 })
       if (path === "/sandboxes/sbx") {
         if (request.method === "DELETE") {
           deleted = true
@@ -3882,6 +3886,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
       provisioning,
       certificates,
       certificateExpiry,
+      gone,
     }
   }
 
@@ -3972,6 +3977,53 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
     expect(JSON.parse(failed?.result_json ?? "{}").failure.reason).toBe(
       "The machine came back from the provider in a shape Derive will not launch on (state ready, stop timer 0s, lifetime none), so it was stopped before the runner started.",
     )
+  })
+
+  const VANISHED =
+    "The machine for this job is gone from the provider, so it was given up before the runner reported back."
+
+  it("lets go of a machine the provider no longer has instead of asking after it every pass", async () => {
+    const { meta, job, until, launches, gone } = await cloudSetup("jobs-ortam-vanished", 2700)
+    await until("running")
+    expect(launches).toHaveLength(1)
+    gone.now = true
+    await until("released")
+    const failed = await meta.getJob(job.id)
+    expect(failed?.status).toBe("failed")
+    expect(JSON.parse(failed?.result_json ?? "{}").failure).toEqual({
+      reason: VANISHED,
+      retryable: true,
+    })
+  })
+
+  it("rebuilds a shared sandbox the provider no longer has for the agent's next job", async () => {
+    const fixture = await cloudSetup("jobs-ortam-shared-vanished", 2700, { fresh: false })
+    const { meta, deps, job, until, creates, gone } = fixture
+    await until("running")
+    expect(creates).toHaveLength(1)
+    gone.now = true
+    await until("released")
+    expect((await meta.getJob(job.id))?.status).toBe("failed")
+    expect(JSON.parse((await meta.getJob(job.id))?.result_json ?? "{}").failure.reason).toBe(
+      VANISHED,
+    )
+    const deleting = await meta.getAgent(fixture.agent.id)
+    expect(deleting?.sandbox_phase).toBe("deleting")
+    expect(JSON.parse(deleting?.sandbox_state_json ?? "{}").holder).toBeNull()
+    if (!deleting) throw new Error("missing deleting agent")
+    const retired = await advanceSandbox(deps, deleting)
+    expect(retired?.sandbox_phase).toBe("failed")
+    expect(JSON.parse(retired?.sandbox_state_json ?? "{}").failures).toBe(1)
+    gone.now = false
+    const next = await fixture.app.request(
+      "/v1/jobs",
+      jsonAs(as(ed.email), { agent_id: fixture.agent.id, instruction: "Fix the parser again" }),
+    )
+    expect(next.status).toBe(201)
+    const later = { ...deps, now: () => new Date(Date.now() + 11 * 60_000) }
+    for (let i = 0; i < 6 && creates.length < 2; i++)
+      await machinePass(later, { maxRequests: 400, maxTransitions: 2 })
+    expect(creates).toHaveLength(2)
   })
 
   it("freezes shared creation and retires a lost response after admission is removed", async () => {
