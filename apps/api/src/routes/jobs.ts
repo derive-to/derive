@@ -66,10 +66,10 @@ import {
 import { oauthScopeRole } from "../lib/oauth-agent"
 import {
   continuePageAsk,
+  dispatchPageTurn,
   isPageAsk,
   openPageAsk,
   type PageTurnGrant,
-  servePageTurn,
 } from "../lib/page-ask"
 import { MAX_RUN_CEILING_MS } from "../lib/run-lifecycle"
 import { signWorkToken } from "../lib/run-token"
@@ -716,7 +716,7 @@ export const jobRoutes = (ctx: AppContext) => {
           modelId: b.model_id,
         })
         const asker = await askerOf(who.id)
-        await ctx.afterResponse(c, () => servePageTurn(ctx, job, asker, page, grant))
+        await dispatchPageTurn(ctx, c, job, asker, page, grant)
         const messages = (await meta.listJobMessages(job.id)).map(messageJson)
         return c.json(
           { ...(await showOne((await meta.getJob(job.id)) ?? job)), messages, waiting_for: null },
@@ -844,7 +844,7 @@ export const jobRoutes = (ctx: AppContext) => {
         const next = await continuePageAsk(ctx, job, who.id, b.body_md)
         if (!next) return bail(fail(c, 409, "Derive is already answering; wait for it to finish"))
         const asker = await askerOf(who.id)
-        await ctx.afterResponse(c, () => servePageTurn(ctx, next, asker, page, grant))
+        await dispatchPageTurn(ctx, c, next, asker, page, grant)
         const messages = (await meta.listJobMessages(job.id)).map(messageJson)
         return c.json({ ...(await showOne((await meta.getJob(job.id)) ?? next)), messages })
       }
@@ -1095,10 +1095,7 @@ export const jobRoutes = (ctx: AppContext) => {
         whoId,
         "Retry the last request. Re-read the artifact. Do not repeat any successful writes recorded in this chat.",
       )
-      if (next)
-        await ctx.afterResponse(c, () =>
-          servePageTurn(ctx, next, { id: whoId, name: null }, page, grant),
-        )
+      if (next) await dispatchPageTurn(ctx, c, next, { id: whoId, name: null }, page, grant)
       return next
     },
     true,
@@ -1150,9 +1147,7 @@ export const jobRoutes = (ctx: AppContext) => {
           }
         const next = await continuePageAsk(ctx, job, whoId, text)
         if (!next) return { error: "An answer was already accepted. Refresh this chat." }
-        await ctx.afterResponse(c, () =>
-          servePageTurn(ctx, next, { id: whoId, name: null }, page, grant),
-        )
+        await dispatchPageTurn(ctx, c, next, { id: whoId, name: null }, page, grant)
         return next
       }
       return answerJob(jobDeps, job, whoId, b)

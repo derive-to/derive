@@ -11,8 +11,10 @@ import {
   type OrgSettings,
   type Role,
 } from "@derive/core"
+import type { Context } from "hono"
 import type { AppContext } from "../context"
 import { log } from "../log"
+import { chatArrival, refusalMessage } from "./chat-gate"
 import { buildChatTools } from "./chat-tools"
 import { runChatTurn } from "./chat-turn"
 import type { JobDeps } from "./job-policy"
@@ -30,8 +32,14 @@ const TRANSCRIPT_CONTEXT = 12
  * itself inside that ceiling, so a lease a little past it only ever lapses for an isolate that
  * died, and the reaper (every minute) frees the job soon after. Without a ceiling (Node) a turn
  * may legitimately run for minutes, so the lease stays long enough not to reap a live one.
+ *
+ * A turn handed to a runner of its own (chatTurnRunner) is off the request's clock whatever
+ * ceiling the request has, so it takes the long lease; the runner settles inside it.
  */
-const leaseMsFor = (ctx: AppContext) => (ctx.attendedTurnBudgetMs ? 2 * 60_000 : 10 * 60_000)
+const REQUEST_LEASE_MS = 2 * 60_000
+const DETACHED_LEASE_MS = 10 * 60_000
+const leaseMsFor = (ctx: AppContext) =>
+  ctx.attendedTurnBudgetMs && !ctx.chatTurnRunner ? REQUEST_LEASE_MS : DETACHED_LEASE_MS
 
 /** The tools a page ask holds: Derive's own, and not the workspace's connected sources. A page
  *  ask reads pages that teammates and agents wrote, so the text in front of the model is not the
@@ -175,6 +183,165 @@ const startTurn = (ctx: AppContext, job: JobRecord) =>
     },
     { status: job.status, updated_at: job.updated_at, needs_json: job.needs_json },
   )
+
+/**
+ * Serve the turn once this response is sent — or, where the deploy has a runner that outlives
+ * the request (a Durable Object per conversation on Workers), hand it the job id and the claim
+ * and let it serve the turn on its own clock. A runner that cannot take the turn does not lose
+ * the question: the request serves it after the response, as it always did.
+ */
+export const dispatchPageTurn = async (
+  ctx: AppContext,
+  c: Context,
+  job: JobRecord,
+  asker: { id: string; name: string | null },
+  page: ArtifactRecord | null,
+  grant: PageTurnGrant,
+): Promise<void> => {
+  const startedAt = job.started_at
+  if (!ctx.chatTurnRunner || !startedAt)
+    return ctx.afterResponse(c, () => servePageTurn(ctx, job, asker, page, grant))
+  try {
+    await ctx.chatTurnRunner({
+      jobId: job.id,
+      startedAt,
+      run: () => runPageTurnById(ctx, job.id, startedAt),
+    })
+  } catch (e) {
+    log.warn("chat turn runner declined the turn; serving it after the response", {
+      job: job.id,
+      error: e instanceof Error ? e.message : String(e),
+    })
+    // The runner may have taken the turn before its answer failed to arrive (a Durable Object
+    // arms its alarm before it replies), so this side takes a claim of its own — a fresh
+    // started_at, fenced on the old one — which the runner's fence then refuses. Strictly
+    // later than the old claim, which a reclaim inside the same millisecond would otherwise
+    // repeat. And the request's own lease, since the turn is back on the request's clock.
+    const mine = await ctx.meta
+      .updateJob(
+        job.id,
+        {
+          started_at: new Date(Math.max(Date.now(), Date.parse(startedAt) + 1)).toISOString(),
+          lease_until: new Date(
+            Date.now() + (ctx.attendedTurnBudgetMs ? REQUEST_LEASE_MS : DETACHED_LEASE_MS),
+          ).toISOString(),
+        },
+        { status: "running", started_at: startedAt },
+      )
+      .catch(() => null)
+    if (!mine) {
+      log.warn("chat turn moved before the request could take it back", { job: job.id })
+      return
+    }
+    await ctx.afterResponse(c, () => servePageTurn(ctx, mine, asker, page, grant))
+  }
+}
+
+/**
+ * The turn from the job id alone, for a runner that holds nothing else: the asker, the page
+ * and the grant are read again from the row. The request walked every gate (membership, page
+ * access, rate, budget, model) moments before handing the job over; this re-reads what the
+ * turn needs — the asker's seat in the workspace, the page in that workspace, the model — and
+ * if the world moved in between it writes that refusal into the job rather than leaving it
+ * running until its lease lapses. (A page's own share rules are not re-walked here: that
+ * needs a request, and the request checked them a moment ago.)
+ *
+ * `startedAt` is the claim the runner was handed. A runner is at-least-once (an alarm that
+ * died is run again), so a job that has since settled, been claimed by another turn, or was
+ * left mid-save by the turn that died is refused rather than served twice.
+ */
+export const runPageTurnById = async (
+  ctx: AppContext,
+  jobId: string,
+  startedAt?: string,
+): Promise<void> => {
+  const { meta } = ctx
+  const deps: JobDeps = { meta, bus: ctx.backplane }
+  const job = await meta.getJob(jobId)
+  if (!job || !isPageAsk(job) || job.status !== "running" || !job.asked_by) return
+  if (startedAt && job.started_at !== startedAt) return
+  if ((JSON.parse(job.meta_json ?? "{}") as { saving?: boolean }).saving === true)
+    return declineTurn(deps, job, SAVE_INTERRUPTED)
+  // The lease was taken on the request's reading of the clock; this turn knows its own budget,
+  // so it leases for that plus the reaper's slack, fenced on the claim it was handed.
+  const held = await meta
+    .updateJob(
+      job.id,
+      {
+        lease_until: new Date(
+          Date.now() + (ctx.attendedTurnBudgetMs ?? DETACHED_LEASE_MS) + REQUEST_LEASE_MS,
+        ).toISOString(),
+      },
+      { status: "running", started_at: job.started_at },
+    )
+    .catch(() => null)
+  if (!held) return
+  // A runner is at-least-once, and not every death throws (an evicted object, a CPU ceiling):
+  // a turn that had already written its reply and died before settling is settled now, not
+  // answered again. A turn that published and died before replying is not caught here; the
+  // next turn sees the version in its completed effects.
+  const last = (await meta.listJobMessages(held.id)).filter((m) => !isServerNote(m)).at(-1)
+  if (last?.author_kind === "agent" && held.started_at && last.created_at >= held.started_at) {
+    const done = await meta
+      .updateJob(
+        held.id,
+        { status: "succeeded", finished_at: new Date().toISOString(), lease_until: null },
+        { status: "running", started_at: held.started_at },
+      )
+      .catch(() => null)
+    if (done) wakeSettled(deps, done)
+    return
+  }
+  const about = JSON.parse(held.subject_json ?? "{}") as { id?: string }
+  const page = about.id ? await meta.getByShortId(about.id) : null
+  if (about.id && (!page || page.org_id !== held.org_id))
+    return declineTurn(deps, held, "The scoped artifact is no longer accessible.")
+  const modelId = (JSON.parse(held.meta_json ?? "{}") as { model_id?: string | null }).model_id
+  const { catalog, slots } = await ctx.modelsFor()
+  const gate = await chatArrival(
+    { meta, models: catalog ?? undefined, chatAllowlist: ctx.chatAllowlist },
+    { org: held.org_id, userId: job.asked_by, modelId: modelId ?? slots.chat ?? null },
+  )
+  if (!gate.ok) return declineTurn(deps, held, refusalMessage(gate.reason))
+  const asker = {
+    id: job.asked_by,
+    name: (await meta.getUsers([job.asked_by]).catch(() => []))[0]?.name ?? null,
+  }
+  await servePageTurn(ctx, held, asker, page, gate)
+}
+
+/** What a chat says when the turn that was saving died: the same words the retry route uses,
+ *  because it is the same refusal. */
+export const SAVE_INTERRUPTED =
+  "A save was interrupted. Check Activity and artifact versions before starting a new chat. This run cannot safely retry."
+
+/** A turn that cannot run says so on the job and settles it failed, fenced on the claim the
+ *  request took, so the person reads a reason rather than waiting on a lease. */
+export const declineTurn = async (deps: JobDeps, job: JobRecord, reason: string): Promise<void> => {
+  const { meta } = deps
+  await meta
+    .addJobMessage({
+      id: newId("jm"),
+      job_id: job.id,
+      author_kind: "agent",
+      author_id: DERIVE_AGENT_ID,
+      body_md: reason,
+    })
+    .catch(() => null)
+  const done = await meta
+    .updateJob(
+      job.id,
+      {
+        status: "failed",
+        finished_at: new Date().toISOString(),
+        needs_json: null,
+        lease_until: null,
+      },
+      { status: "running", started_at: job.started_at },
+    )
+    .catch(() => null)
+  if (done) wakeSettled(deps, done)
+}
 
 /**
  * Serve one turn on a running page job, then settle it. Never throws: this runs after the

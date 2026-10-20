@@ -161,6 +161,20 @@ export interface AppDeps {
    * still write its own failure. Unset on Node, where nothing reclaims the turn.
    */
   attendedTurnBudgetMs?: number
+  /**
+   * Where a built-in Derive chat turn runs when it should outlive the request: handed the job
+   * id and the turn rebuilt from it (lib/page-ask.ts). The Workers entry sets this to a Durable
+   * Object per conversation, so a turn is neither capped by the after-response window above
+   * nor lost with the request isolate. Unset ⇒ the turn runs after the response, as on Node.
+   * A runner that throws declines the turn, and the request serves it itself.
+   */
+  chatTurnRunner?: (turn: {
+    jobId: string
+    /** The claim this turn runs under (the job's started_at): a runner that serves a stale
+     *  claim is told so and stays silent. */
+    startedAt: string
+    run: () => Promise<void>
+  }) => Promise<void>
   /** Optional dense/semantic search index. Unset ⇒ workspace search stays lexical-only. Both the
    *  edge and a Postgres self-host inject a pgvector adapter (embeddings from Workers AI or, on
    *  self-host, a local ONNX model); it's absent on SQLite / when no embedder is configured. */
@@ -1942,6 +1956,7 @@ export function buildContext(input: AppDeps) {
     afterResponse,
     detachesAfterResponse,
     attendedTurnBudgetMs: deps.attendedTurnBudgetMs,
+    chatTurnRunner: deps.chatTurnRunner,
     overKnownUsage,
     recountUsage: usage.recount,
     rememberSource,

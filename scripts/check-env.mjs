@@ -43,6 +43,7 @@ const NON_CONFIG = new Set([
   "SEND_EMAIL",
   "WEBHOOK_OUTBOX",
   "PREVIEW_RENDERER",
+  "CHAT_TURNS",
   "BROWSER",
   "LOADER",
   // Injected only by scripts/preview-config.mjs for same-repo PR deployments. These

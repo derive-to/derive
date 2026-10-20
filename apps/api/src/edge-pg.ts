@@ -28,36 +28,69 @@ export type PgConn = Pick<Pool, "query" | "connect" | "end">
 
 /** Pool-shaped facade over a SINGLE client — Hyperdrive multiplexes, so one socket
  *  is all we open, and `connect()` hands back that same socket (release is a no-op:
- *  there is no pool to return it to). */
-const pgFacade = (client: Client): PgConn => {
-  // An invocation socket dropping must not escalate to an isolate crash.
-  client.on("error", () => {})
+ *  there is no pool to return it to).
+ *
+ *  A socket that drops while IDLE is re-dialled on the next query. A request holds its
+ *  socket for seconds, but a chat turn on its Durable Object (chat-turn-do.ts) holds one
+ *  across a model call that can take minutes, and an idle socket Hyperdrive or the runtime
+ *  closes in that time must not fail the turn's first query afterwards. Only a drop seen
+ *  BEFORE a query is issued re-dials: a query in flight when the socket drops fails as it
+ *  always did, because the server may already have run it. */
+const pgFacade = (make: () => Client): PgConn => {
+  let client: Client | null = null
   let connected: Promise<unknown> | null = null
-  const ensure = () => {
-    connected ??= client.connect()
-    return connected
+  let closed = false
+  const dial = () => {
+    const c = make()
+    // An invocation socket dropping must not escalate to an isolate crash; it marks the
+    // socket dead so the next query dials again.
+    const dead = () => {
+      if (client === c) {
+        client = null
+        connected = null
+      }
+    }
+    c.on("error", dead)
+    c.on("end", dead)
+    client = c
+    connected = c.connect()
+    return c
+  }
+  const ensure = async (): Promise<Client> => {
+    if (closed) throw new Error("connection closed")
+    const c = client ?? dial()
+    await connected
+    return c
   }
   // biome-ignore lint/suspicious/noExplicitAny: pass args straight to node-postgres's overloaded query().
   const query = (async (...args: any[]) => {
-    await ensure()
+    const c = await ensure()
     // biome-ignore lint/suspicious/noExplicitAny: same passthrough.
-    return (client.query as (...a: any[]) => unknown)(...args)
+    return (c.query as (...a: any[]) => unknown)(...args)
   }) as Pool["query"]
   const connect = (async () => {
     await ensure()
     return { query, release: () => {} } as unknown as PoolClient
   }) as Pool["connect"]
-  return { query, connect, end: () => client.end() }
+  const end = async () => {
+    closed = true
+    const c = client
+    client = null
+    connected = null
+    if (c) await c.end()
+  }
+  return { query, connect, end }
 }
 
 /** One invocation's Postgres handle — a single Hyperdrive-multiplexed connection. */
 export const hyperdriveConn = (hd: Hyperdrive): PgConn =>
   pgFacade(
-    new Client({
-      connectionString: hd.connectionString,
-      statement_timeout: 30_000,
-      connectionTimeoutMillis: 10_000,
-    }),
+    () =>
+      new Client({
+        connectionString: hd.connectionString,
+        statement_timeout: 30_000,
+        connectionTimeoutMillis: 10_000,
+      }),
   )
 
 /** MetaStore for one DO tick: Postgres (fresh connection, released via `close`) when
