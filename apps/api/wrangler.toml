@@ -78,6 +78,14 @@ class_name = "WebhookOutbox"
 name = "PREVIEW_RENDERER"
 class_name = "PreviewRenderer"
 
+# Chat turns, one instance per conversation (chat-turn-do.ts). A built-in Derive turn runs
+# here on the object's own clock instead of in the request's after-response window, which
+# ends seconds after the response and dies with the isolate. Omit this block to serve turns
+# after the response.
+[[durable_objects.bindings]]
+name = "CHAT_TURNS"
+class_name = "ChatTurn"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["ArtifactRoom"]
@@ -109,6 +117,16 @@ deleted_classes = ["RepoSyncRunner"]
 [[migrations]]
 tag = "v7"
 deleted_classes = ["RunContainer"]
+
+[[migrations]]
+tag = "v8"
+new_sqlite_classes = ["ChatTurn"]
+
+# A ChatTurn alarm carries a whole turn: minutes of model streaming, tool calls and the
+# publish fan-out. The default CPU ceiling per invocation is 30 s; this lifts it so a long
+# turn is cut by its own budget rather than the runtime's. Wall time is not limited by this.
+[limits]
+cpu_ms = 300_000
 
 # Cloudflare Browser Rendering binding — required for the PreviewRenderer DO.
 # Leave commented if Browser Rendering is not enabled on your account; the worker

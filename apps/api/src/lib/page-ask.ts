@@ -11,8 +11,10 @@ import {
   type OrgSettings,
   type Role,
 } from "@derive/core"
+import type { Context } from "hono"
 import type { AppContext } from "../context"
 import { log } from "../log"
+import { chatArrival, refusalMessage } from "./chat-gate"
 import { buildChatTools } from "./chat-tools"
 import { runChatTurn } from "./chat-turn"
 import type { JobDeps } from "./job-policy"
@@ -23,15 +25,34 @@ import type { ResolvedChatModel } from "./model-catalog"
  *  the oldest turns fall away rather than growing every call. */
 const TRANSCRIPT_CONTEXT = 12
 
-/**
- * How long a turn holds its job before the reaper may call it lost.
- *
- * Where the runtime puts a ceiling on the turn (attendedTurnBudgetMs, Workers), the turn settles
- * itself inside that ceiling, so a lease a little past it only ever lapses for an isolate that
- * died, and the reaper (every minute) frees the job soon after. Without a ceiling (Node) a turn
- * may legitimately run for minutes, so the lease stays long enough not to reap a live one.
- */
-const leaseMsFor = (ctx: AppContext) => (ctx.attendedTurnBudgetMs ? 2 * 60_000 : 10 * 60_000)
+/** Lease past a turn's budget, so a turn that settles itself inside its budget never lapses
+ *  and the reaper (every minute) still frees a job whose isolate died soon after. */
+const LEASE_SLACK_MS = 2 * 60_000
+/** The lease where nothing caps the turn (Node) or where a runner serves it off this clock. */
+const DETACHED_LEASE_MS = 10 * 60_000
+
+/** The lease for a turn served on this context's own clock. */
+const ownLeaseMs = (ctx: AppContext) =>
+  ctx.attendedTurnBudgetMs ? ctx.attendedTurnBudgetMs + LEASE_SLACK_MS : DETACHED_LEASE_MS
+
+/** The lease the request takes when it starts a turn: its own, unless a runner serves it. */
+const leaseMsFor = (ctx: AppContext) => (ctx.chatTurnRunner ? DETACHED_LEASE_MS : ownLeaseMs(ctx))
+
+/** The refusal a turn writes when the turn before it died mid-save. The retry route says the
+ *  same thing, because it is the same refusal. */
+export const SAVE_INTERRUPTED =
+  "A save was interrupted. Check Activity and artifact versions before starting a new chat. This run cannot safely retry."
+
+/** What a turn says when it failed for a reason the person cannot act on. */
+export const TURN_FAILED =
+  "Something went wrong on my side, so I have not answered that. Try again."
+
+/** The refusal when the page a chat is scoped to cannot be read any more. */
+export const PAGE_GONE = "The scoped artifact is no longer accessible."
+
+/** The refusal when the page moved on since the person asked; the same words the ask route
+ *  uses for a stale base_version, because it is the same refusal. */
+export const PAGE_MOVED = "This artifact changed. Refresh before asking."
 
 /** The tools a page ask holds: Derive's own, and not the workspace's connected sources. A page
  *  ask reads pages that teammates and agents wrote, so the text in front of the model is not the
@@ -175,6 +196,163 @@ const startTurn = (ctx: AppContext, job: JobRecord) =>
     },
     { status: job.status, updated_at: job.updated_at, needs_json: job.needs_json },
   )
+
+/**
+ * Serve the turn after this response, or hand it to the deploy's runner (chatTurnRunner, a
+ * Durable Object per conversation on Workers) to serve on its own clock. A runner that cannot
+ * take the turn does not lose it: the request serves it as before.
+ */
+export const dispatchPageTurn = async (
+  ctx: AppContext,
+  c: Context,
+  job: JobRecord,
+  asker: { id: string; name: string | null },
+  page: ArtifactRecord | null,
+  grant: PageTurnGrant,
+): Promise<void> => {
+  const startedAt = job.started_at
+  if (!ctx.chatTurnRunner || !startedAt)
+    return ctx.afterResponse(c, () => servePageTurn(ctx, job, asker, page, grant))
+  const baseVersion = page?.current_version ?? null
+  try {
+    await ctx.chatTurnRunner({
+      jobId: job.id,
+      startedAt,
+      baseVersion,
+      run: () => runPageTurnById(ctx, job.id, startedAt, baseVersion),
+    })
+  } catch (e) {
+    log.warn("chat turn runner declined the turn; serving it after the response", {
+      job: job.id,
+      error: e instanceof Error ? e.message : String(e),
+    })
+    // The runner may have taken the turn before its answer failed to arrive, so take a claim
+    // of our own: a started_at strictly later than the one it was handed (a reclaim in the
+    // same millisecond would repeat it), fenced on the old one, with the request's lease.
+    let mine: JobRecord | null
+    try {
+      mine = await ctx.meta.updateJob(
+        job.id,
+        {
+          started_at: new Date(Math.max(Date.now(), Date.parse(startedAt) + 1)).toISOString(),
+          lease_until: new Date(Date.now() + ownLeaseMs(ctx)).toISOString(),
+        },
+        { status: "running", started_at: startedAt },
+      )
+    } catch (err) {
+      log.error("chat turn could not be taken back from its runner", {
+        job: job.id,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      await declineTurn({ meta: ctx.meta, bus: ctx.backplane }, job, TURN_FAILED).catch(() => null)
+      return
+    }
+    if (!mine) {
+      log.warn("chat turn moved before the request could take it back", { job: job.id })
+      return
+    }
+    await ctx.afterResponse(c, () => servePageTurn(ctx, mine, asker, page, grant))
+  }
+}
+
+/**
+ * Serve the turn from the job id alone, for a runner that holds nothing else. The request
+ * walked every gate before handing the job over; this re-reads what the turn needs (the
+ * asker's seat and budget, the page in the job's workspace at the version the request saw,
+ * the model) and writes a refusal into the job if any of it moved. The page's own share rules
+ * are not re-walked: that needs a request, and tool calls check them per call anyway.
+ *
+ * Runners are at-least-once, and not every death throws (an evicted object, a CPU ceiling).
+ * A stale claim, a settled job, a job left mid-save, and a turn that replied but died before
+ * settling are each refused or settled instead of served again.
+ */
+export const runPageTurnById = async (
+  ctx: AppContext,
+  jobId: string,
+  startedAt?: string,
+  baseVersion?: number | null,
+): Promise<void> => {
+  const { meta } = ctx
+  const deps: JobDeps = { meta, bus: ctx.backplane }
+  const claimed = await meta.getJob(jobId)
+  if (!claimed || !isPageAsk(claimed) || claimed.status !== "running" || !claimed.asked_by) return
+  if (startedAt && claimed.started_at !== startedAt) return
+  if ((JSON.parse(claimed.meta_json ?? "{}") as { saving?: boolean }).saving === true)
+    return declineTurn(deps, claimed, SAVE_INTERRUPTED)
+  const askerId = claimed.asked_by
+  // The request leased the job for its own clock; this turn knows its budget.
+  const job = await meta.updateJob(
+    claimed.id,
+    { lease_until: new Date(Date.now() + ownLeaseMs(ctx)).toISOString() },
+    { status: "running", started_at: claimed.started_at },
+  )
+  if (!job) return
+  // Already answered under this claim: settle as that reply said, do not answer again. The
+  // reply's cost is not recorded again. (A turn that published and died before replying is
+  // not caught here; the next turn sees the version in its effects.)
+  const last = (await meta.listJobMessages(job.id)).filter((m) => !isServerNote(m)).at(-1)
+  if (last?.author_kind === "agent" && job.started_at && last.created_at >= job.started_at) {
+    const said = JSON.parse(last.meta_json ?? "{}") as { outcome?: string; needs?: JobNeeds }
+    const status =
+      said.outcome === "failed" ? "failed" : said.needs ? ("needs_you" as const) : "succeeded"
+    const done = await meta.updateJob(
+      job.id,
+      {
+        status,
+        finished_at: status === "needs_you" ? null : new Date().toISOString(),
+        needs_json: said.needs ? JSON.stringify(said.needs) : null,
+        lease_until: null,
+      },
+      { status: "running", started_at: job.started_at },
+    )
+    if (done) wakeSettled(deps, done)
+    return
+  }
+  const about = JSON.parse(job.subject_json ?? "{}") as { id?: string }
+  const page = about.id ? await meta.getByShortId(about.id) : null
+  if (about.id && (!page || page.org_id !== job.org_id)) return declineTurn(deps, job, PAGE_GONE)
+  if (page && baseVersion != null && page.current_version !== baseVersion)
+    return declineTurn(deps, job, PAGE_MOVED)
+  const modelId = (JSON.parse(job.meta_json ?? "{}") as { model_id?: string | null }).model_id
+  const { catalog, slots } = await ctx.modelsFor()
+  const gate = await chatArrival(
+    { meta, models: catalog ?? undefined, chatAllowlist: ctx.chatAllowlist },
+    { org: job.org_id, userId: askerId, modelId: modelId ?? slots.chat ?? null },
+  )
+  if (!gate.ok) return declineTurn(deps, job, refusalMessage(gate.reason))
+  const asker = {
+    id: askerId,
+    name: (await meta.getUsers([askerId]).catch(() => []))[0]?.name ?? null,
+  }
+  await servePageTurn(ctx, job, asker, page, gate)
+}
+
+/** Write `reason` on the job and settle it failed, fenced on its current claim. Throws if the
+ *  settle fails, so a runner's retry gets to settle it. */
+export const declineTurn = async (deps: JobDeps, job: JobRecord, reason: string): Promise<void> => {
+  const { meta } = deps
+  await meta
+    .addJobMessage({
+      id: newId("jm"),
+      job_id: job.id,
+      author_kind: "agent",
+      author_id: DERIVE_AGENT_ID,
+      body_md: reason,
+      meta_json: JSON.stringify({ outcome: "failed" }),
+    })
+    .catch(() => null)
+  const done = await meta.updateJob(
+    job.id,
+    {
+      status: "failed",
+      finished_at: new Date().toISOString(),
+      needs_json: null,
+      lease_until: null,
+    },
+    { status: "running", started_at: job.started_at },
+  )
+  if (done) wakeSettled(deps, done)
+}
 
 /**
  * Serve one turn on a running page job, then settle it. Never throws: this runs after the
@@ -404,6 +582,9 @@ export const servePageTurn = async (
       body_md: res.reply,
       meta_json: JSON.stringify({
         outcome: res.outcome,
+        // Kept with the reply so a runner that finds the reply written but the job unsettled
+        // (runPageTurnById) can settle it the way this turn would have.
+        needs: res.needs ?? null,
         model: res.model,
         model_ms: res.modelMs,
         tools: res.tools,
@@ -428,7 +609,7 @@ export const servePageTurn = async (
         job_id: job.id,
         author_kind: "agent",
         author_id: DERIVE_AGENT_ID,
-        body_md: "Something went wrong on my side, so I have not answered that. Try again.",
+        body_md: TURN_FAILED,
       })
       .catch(() => null)
     await settle("failed", null)

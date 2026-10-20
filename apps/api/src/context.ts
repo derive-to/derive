@@ -161,6 +161,22 @@ export interface AppDeps {
    * still write its own failure. Unset on Node, where nothing reclaims the turn.
    */
   attendedTurnBudgetMs?: number
+  /**
+   * Serves a built-in Derive chat turn off the request's clock (lib/page-ask.ts
+   * dispatchPageTurn). The Workers entry sets a Durable Object per conversation; unset, the
+   * turn runs after the response and is subject to the ceiling above. A runner that throws
+   * declines the turn, and the request serves it itself.
+   */
+  chatTurnRunner?: (turn: {
+    jobId: string
+    /** The job's started_at at hand-over; the runner stays silent if the claim has moved. */
+    startedAt: string
+    /** The scoped page's version as the request saw it, or null for a workspace chat; the
+     *  runner refuses the turn if the page moved on. */
+    baseVersion: number | null
+    /** The turn, rebuilt from the job id, for a runner in the same process. */
+    run: () => Promise<void>
+  }) => Promise<void>
   /** Optional dense/semantic search index. Unset ⇒ workspace search stays lexical-only. Both the
    *  edge and a Postgres self-host inject a pgvector adapter (embeddings from Workers AI or, on
    *  self-host, a local ONNX model); it's absent on SQLite / when no embedder is configured. */
@@ -1942,6 +1958,7 @@ export function buildContext(input: AppDeps) {
     afterResponse,
     detachesAfterResponse,
     attendedTurnBudgetMs: deps.attendedTurnBudgetMs,
+    chatTurnRunner: deps.chatTurnRunner,
     overKnownUsage,
     recountUsage: usage.recount,
     rememberSource,

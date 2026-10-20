@@ -845,6 +845,156 @@ describe("jobs: the built-in Derive, asked from a page", () => {
     expect(after.messages.map((m) => m.author_kind)).toEqual(["asker", "agent", "asker", "agent"])
   })
 
+  it("hands the turn to a runner that outlives the request, and serves it itself when the runner refuses", async () => {
+    // A deploy that ends after-response work on its own clock (Workers) hands the turn to a
+    // runner by job id alone, so the runner has to rebuild the turn from the job row.
+    const handed: {
+      jobId: string
+      startedAt: string
+      baseVersion: number | null
+      run: () => Promise<void>
+    }[] = []
+    let refuse = false
+    const { app, meta } = await setup("jobs-derive-runner", {
+      models: pageReader(),
+      // A request ceiling, as on Workers: with a runner the lease must not follow it.
+      attendedTurnBudgetMs: 60_000,
+      chatTurnRunner: async (turn) => {
+        // A refusal AFTER taking the turn, as a Durable Object that armed its alarm and then
+        // failed to answer the poke: the request must take the turn back from it.
+        handed.push(turn)
+        if (refuse) throw new Error("no runner")
+      },
+    })
+    const page = (await (
+      await publishAs(app, "# Pricing\n\nSeats are billed annually.", {}, as(owner.email))
+    ).json()) as { short_id: string }
+    const job = (await (
+      await ask(app, ed.email, "derive", "What does this say about seats?", {
+        subject: { kind: "artifact", id: page.short_id },
+      })
+    ).json()) as { id: string; status: string }
+    // Running, handed over, and not answered by the request itself.
+    expect(job.status).toBe("running")
+    expect(handed.map((t) => t.jobId)).toEqual([job.id])
+    const read = async () =>
+      (await (await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })).json()) as {
+        status: string
+        messages: { author_kind: string; body_md: string }[]
+      }
+    expect((await read()).messages.map((m) => m.author_kind)).toEqual(["asker"])
+    // The lease outlasts a turn that is no longer on the request's clock.
+    const held = await meta.getJob(job.id)
+    expect(new Date(held?.lease_until ?? 0).getTime() - Date.now()).toBeGreaterThan(5 * 60_000)
+    expect(handed[0]?.startedAt).toBe(held?.started_at)
+    expect(handed[0]?.baseVersion).toBe(1)
+    // The runner, from the id alone, gives the answer the request path would have — once: a
+    // runner is at-least-once, and a run after the job settled says nothing.
+    await handed[0]?.run()
+    await handed[0]?.run()
+    const answered = await read()
+    expect(answered.status).toBe("succeeded")
+    expect(answered.messages.map((m) => m.author_kind)).toEqual(["asker", "agent"])
+    expect(answered.messages.at(-1)?.body_md).toBe("It says seats are billed annually.")
+    // A follow-up is handed over the same way, under a new claim: the first turn's runner,
+    // run again now, is stale and stays silent.
+    const follow = await app.request(
+      `/v1/jobs/${job.id}/messages`,
+      jsonAs(as(ed.email), { body_md: "And monthly?" }),
+    )
+    expect(follow.status).toBe(200)
+    expect(handed.map((t) => t.jobId)).toEqual([job.id, job.id])
+    expect(handed[1]?.startedAt).not.toBe(handed[0]?.startedAt)
+    await handed[0]?.run()
+    expect((await read()).status).toBe("running")
+    await handed[1]?.run()
+    expect((await read()).messages.map((m) => m.author_kind)).toEqual([
+      "asker",
+      "agent",
+      "asker",
+      "agent",
+    ])
+    // A turn that wrote its reply and died before settling is settled as that reply said, not
+    // answered again; here the reply was a question, so the job waits on the person.
+    const asked = await app.request(
+      `/v1/jobs/${job.id}/messages`,
+      jsonAs(as(ed.email), { body_md: "Which plan?" }),
+    )
+    expect(asked.status).toBe(200)
+    const needs = {
+      kind: "decision",
+      question: "Which plan do you mean?",
+      question_id: "q1",
+      target_version: 1,
+    }
+    await meta.addJobMessage({
+      id: newId("jm"),
+      job_id: job.id,
+      author_kind: "agent",
+      author_id: "derive",
+      body_md: "Which plan do you mean?",
+      meta_json: JSON.stringify({ outcome: "needs_you", needs }),
+    })
+    await handed[2]?.run()
+    const waiting = (await (
+      await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
+    ).json()) as { status: string; needs: { question_id?: string } | null; messages: unknown[] }
+    expect(waiting.status).toBe("needs_you")
+    expect(waiting.needs?.question_id).toBe("q1")
+    expect(waiting.messages).toHaveLength(6)
+    const answered2 = await app.request(
+      `/v1/jobs/${job.id}/answer`,
+      jsonAs(as(ed.email), { text: "The annual one", question_id: "q1" }),
+    )
+    expect(answered2.status).toBe(200)
+    expect(handed).toHaveLength(4)
+    await handed[3]?.run()
+    expect((await read()).status).toBe("succeeded")
+    // A turn that died mid-save is not replayed: the runner refuses it the way Retry does.
+    const third = await app.request(
+      `/v1/jobs/${job.id}/messages`,
+      jsonAs(as(ed.email), { body_md: "Yearly too?" }),
+    )
+    expect(third.status).toBe(200)
+    const mid = await meta.getJob(job.id)
+    await meta.updateJob(
+      job.id,
+      { meta_json: JSON.stringify({ ...JSON.parse(mid?.meta_json ?? "{}"), saving: true }) },
+      { status: "running" },
+    )
+    await handed[4]?.run()
+    const interrupted = await read()
+    expect(interrupted.status).toBe("failed")
+    expect(interrupted.messages.at(-1)?.body_md).toMatch(/A save was interrupted/)
+    await meta.updateJob(
+      job.id,
+      { meta_json: JSON.stringify({ ...JSON.parse(mid?.meta_json ?? "{}"), saving: false }) },
+      { status: "failed" },
+    )
+    expect((await app.request(`/v1/jobs/${job.id}/retry`, jsonAs(as(ed.email), {}))).status).toBe(
+      200,
+    )
+    expect(handed).toHaveLength(6)
+    await handed[5]?.run()
+    expect((await read()).status).toBe("succeeded")
+    // A runner that cannot take the turn does not lose it: the request serves it as before.
+    refuse = true
+    const again = await app.request(
+      `/v1/jobs/${job.id}/messages`,
+      jsonAs(as(ed.email), { body_md: "Any discounts?" }),
+    )
+    expect(again.status).toBe(200)
+    expect(handed).toHaveLength(7)
+    const served = await read()
+    expect(served.status).toBe("succeeded")
+    expect(served.messages).toHaveLength(14)
+    // The request took the turn back under a claim of its own, so the runner's late run of
+    // the claim it was handed says nothing more.
+    expect((await meta.getJob(job.id))?.started_at).not.toBe(handed[6]?.startedAt)
+    await handed[6]?.run()
+    expect((await read()).messages).toHaveLength(14)
+  })
+
   it("a page ask that publishes links the version it made, and a page's asks list by subject", async () => {
     // Revises the page the prompt names, then says so.
     const reviser = catalogOf([
