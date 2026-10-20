@@ -141,9 +141,6 @@ export interface Env {
   DERIVE_MODEL_NAMES?: string
   /** Preferred upstream backends, best first, on a gateway that ROUTES one model id to several
    *  of them. Unset ⇒ the gateway routes however it likes. */
-  /** "off", or an effort level — how much the model may think before answering. */
-  /** Preferred upstream backends, best first, on a gateway that ROUTES one model id to several
-   *  of them. Unset ⇒ the gateway routes however it likes. */
   DERIVE_MODEL_PROVIDERS?: string
   /** Eligible upstream backends for live performance routing. Takes precedence over the fixed
    *  DERIVE_MODEL_PROVIDERS order when present. */
@@ -196,7 +193,7 @@ export interface Env {
 export const fetchSite = (site: Fetcher, req: Request): Promise<Response> =>
   site.fetch(req as unknown as Parameters<Fetcher["fetch"]>[0]) as unknown as Promise<Response>
 
-export function siteUpstream(env: Env): ((req: Request) => Promise<Response>) | undefined {
+function siteUpstream(env: Env): ((req: Request) => Promise<Response>) | undefined {
   const site = env.SITE
   if (!site) return undefined
   return (req: Request) => fetchSite(site, req)
@@ -237,15 +234,19 @@ export const CHAT_TURN_PATH = "/turn"
 
 /** Hand a built-in Derive turn to its conversation's Durable Object. Throws when the object
  *  cannot take it, so the caller can serve the turn itself. */
-export async function pokeChatTurn(
+async function pokeChatTurn(
   ns: DurableObjectNamespace,
-  turn: { jobId: string; startedAt: string },
+  turn: { jobId: string; startedAt: string; baseVersion: number | null },
 ): Promise<void> {
   const stub = ns.get(ns.idFromName(turn.jobId))
   const res = await stub.fetch(`https://chat-turn${CHAT_TURN_PATH}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ job_id: turn.jobId, started_at: turn.startedAt }),
+    body: JSON.stringify({
+      job_id: turn.jobId,
+      started_at: turn.startedAt,
+      base_version: turn.baseVersion,
+    }),
   })
   if (!res.ok) throw new Error(`chat turn runner answered ${res.status}`)
 }
@@ -276,7 +277,8 @@ export function edgeAppDeps(env: Env, baseUrl: string): AppDeps {
   // livePgPool), never a captured binding or socket — anything captured at
   // construction goes stale once its originating request context is reclaimed
   // and then hangs every query. The proxies always resolve to the in-flight
-  // request's handle (bound via requestD1.run / requestPg.run in fetch).
+  // request's handle (bound via requestD1.run / requestPg.run in fetch, and by the ChatTurn
+  // alarm, which has no request and binds its own).
   const meta = env.HYPERDRIVE ? PgMetaStore.fromPool(livePgPool) : createD1Store(liveD1)
   // Auth datastore: Postgres rides Better Auth's Kysely core on an explicit
   // PostgresDialect (declared, not duck-typed — livePgPool is a Proxy). D1 rides

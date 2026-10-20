@@ -171,7 +171,10 @@ export interface AppDeps {
     jobId: string
     /** The job's started_at at hand-over; the runner stays silent if the claim has moved. */
     startedAt: string
-    /** The turn, rebuilt from the job id. For a runner in the same process (tests). */
+    /** The scoped page's version as the request saw it, or null for a workspace chat; the
+     *  runner refuses the turn if the page moved on. */
+    baseVersion: number | null
+    /** The turn, rebuilt from the job id, for a runner in the same process. */
     run: () => Promise<void>
   }) => Promise<void>
   /** Optional dense/semantic search index. Unset ⇒ workspace search stays lexical-only. Both the

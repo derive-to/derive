@@ -848,7 +848,12 @@ describe("jobs: the built-in Derive, asked from a page", () => {
   it("hands the turn to a runner that outlives the request, and serves it itself when the runner refuses", async () => {
     // A deploy that ends after-response work on its own clock (Workers) hands the turn to a
     // runner by job id alone, so the runner has to rebuild the turn from the job row.
-    const handed: { jobId: string; startedAt: string; run: () => Promise<void> }[] = []
+    const handed: {
+      jobId: string
+      startedAt: string
+      baseVersion: number | null
+      run: () => Promise<void>
+    }[] = []
     let refuse = false
     const { app, meta } = await setup("jobs-derive-runner", {
       models: pageReader(),
@@ -882,6 +887,7 @@ describe("jobs: the built-in Derive, asked from a page", () => {
     const held = await meta.getJob(job.id)
     expect(new Date(held?.lease_until ?? 0).getTime() - Date.now()).toBeGreaterThan(5 * 60_000)
     expect(handed[0]?.startedAt).toBe(held?.started_at)
+    expect(handed[0]?.baseVersion).toBe(1)
     // The runner, from the id alone, gives the answer the request path would have — once: a
     // runner is at-least-once, and a run after the job settled says nothing.
     await handed[0]?.run()
@@ -908,6 +914,42 @@ describe("jobs: the built-in Derive, asked from a page", () => {
       "asker",
       "agent",
     ])
+    // A turn that wrote its reply and died before settling is settled as that reply said, not
+    // answered again; here the reply was a question, so the job waits on the person.
+    const asked = await app.request(
+      `/v1/jobs/${job.id}/messages`,
+      jsonAs(as(ed.email), { body_md: "Which plan?" }),
+    )
+    expect(asked.status).toBe(200)
+    const needs = {
+      kind: "decision",
+      question: "Which plan do you mean?",
+      question_id: "q1",
+      target_version: 1,
+    }
+    await meta.addJobMessage({
+      id: newId("jm"),
+      job_id: job.id,
+      author_kind: "agent",
+      author_id: "derive",
+      body_md: "Which plan do you mean?",
+      meta_json: JSON.stringify({ outcome: "needs_you", needs }),
+    })
+    await handed[2]?.run()
+    const waiting = (await (
+      await app.request(`/v1/jobs/${job.id}`, { headers: as(ed.email) })
+    ).json()) as { status: string; needs: { question_id?: string } | null; messages: unknown[] }
+    expect(waiting.status).toBe("needs_you")
+    expect(waiting.needs?.question_id).toBe("q1")
+    expect(waiting.messages).toHaveLength(6)
+    const answered2 = await app.request(
+      `/v1/jobs/${job.id}/answer`,
+      jsonAs(as(ed.email), { text: "The annual one", question_id: "q1" }),
+    )
+    expect(answered2.status).toBe(200)
+    expect(handed).toHaveLength(4)
+    await handed[3]?.run()
+    expect((await read()).status).toBe("succeeded")
     // A turn that died mid-save is not replayed: the runner refuses it the way Retry does.
     const third = await app.request(
       `/v1/jobs/${job.id}/messages`,
@@ -920,7 +962,7 @@ describe("jobs: the built-in Derive, asked from a page", () => {
       { meta_json: JSON.stringify({ ...JSON.parse(mid?.meta_json ?? "{}"), saving: true }) },
       { status: "running" },
     )
-    await handed[2]?.run()
+    await handed[4]?.run()
     const interrupted = await read()
     expect(interrupted.status).toBe("failed")
     expect(interrupted.messages.at(-1)?.body_md).toMatch(/A save was interrupted/)
@@ -932,8 +974,8 @@ describe("jobs: the built-in Derive, asked from a page", () => {
     expect((await app.request(`/v1/jobs/${job.id}/retry`, jsonAs(as(ed.email), {}))).status).toBe(
       200,
     )
-    expect(handed).toHaveLength(4)
-    await handed[3]?.run()
+    expect(handed).toHaveLength(6)
+    await handed[5]?.run()
     expect((await read()).status).toBe("succeeded")
     // A runner that cannot take the turn does not lose it: the request serves it as before.
     refuse = true
@@ -942,15 +984,15 @@ describe("jobs: the built-in Derive, asked from a page", () => {
       jsonAs(as(ed.email), { body_md: "Any discounts?" }),
     )
     expect(again.status).toBe(200)
-    expect(handed).toHaveLength(5)
+    expect(handed).toHaveLength(7)
     const served = await read()
     expect(served.status).toBe("succeeded")
-    expect(served.messages).toHaveLength(10)
+    expect(served.messages).toHaveLength(14)
     // The request took the turn back under a claim of its own, so the runner's late run of
     // the claim it was handed says nothing more.
-    expect((await meta.getJob(job.id))?.started_at).not.toBe(handed[4]?.startedAt)
-    await handed[4]?.run()
-    expect((await read()).messages).toHaveLength(10)
+    expect((await meta.getJob(job.id))?.started_at).not.toBe(handed[6]?.startedAt)
+    await handed[6]?.run()
+    expect((await read()).messages).toHaveLength(14)
   })
 
   it("a page ask that publishes links the version it made, and a page's asks list by subject", async () => {

@@ -69,6 +69,7 @@ import {
   dispatchPageTurn,
   isPageAsk,
   openPageAsk,
+  PAGE_GONE,
   type PageTurnGrant,
   SAVE_INTERRUPTED,
 } from "../lib/page-ask"
@@ -1077,7 +1078,7 @@ export const jobRoutes = (ctx: AppContext) => {
       if (JSON.parse(job.meta_json ?? "{}").saving === true) return { error: SAVE_INTERRUPTED }
       const about = JSON.parse(job.subject_json ?? "{}") as { id?: string }
       const page = about.id ? await readablePage(c, job.org_id, about.id) : null
-      if (page instanceof Response) return { error: "The scoped artifact is no longer accessible." }
+      if (page instanceof Response) return { error: PAGE_GONE }
       const grant = await deriveGate(
         c,
         job.org_id,
