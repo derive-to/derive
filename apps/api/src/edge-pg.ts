@@ -30,20 +30,18 @@ export type PgConn = Pick<Pool, "query" | "connect" | "end">
  *  is all we open, and `connect()` hands back that same socket (release is a no-op:
  *  there is no pool to return it to).
  *
- *  A socket that drops while IDLE is re-dialled on the next query. A request holds its
- *  socket for seconds, but a chat turn on its Durable Object (chat-turn-do.ts) holds one
- *  across a model call that can take minutes, and an idle socket Hyperdrive or the runtime
- *  closes in that time must not fail the turn's first query afterwards. Only a drop seen
- *  BEFORE a query is issued re-dials: a query in flight when the socket drops fails as it
- *  always did, because the server may already have run it. */
+ *  A socket that dropped while idle is re-dialled on the next query: a chat turn on its
+ *  Durable Object (chat-turn-do.ts) holds the socket across a model call that can take
+ *  minutes. Only a drop seen before the query is issued re-dials. A query in flight when the
+ *  socket drops still fails, because the server may already have run it. */
 const pgFacade = (make: () => Client): PgConn => {
   let client: Client | null = null
   let connected: Promise<unknown> | null = null
   let closed = false
   const dial = () => {
     const c = make()
-    // An invocation socket dropping must not escalate to an isolate crash; it marks the
-    // socket dead so the next query dials again.
+    // A dropped socket must not escalate to an isolate crash; it is marked dead so the next
+    // query dials again.
     const dead = () => {
       if (client === c) {
         client = null

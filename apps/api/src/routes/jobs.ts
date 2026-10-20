@@ -70,6 +70,7 @@ import {
   isPageAsk,
   openPageAsk,
   type PageTurnGrant,
+  SAVE_INTERRUPTED,
 } from "../lib/page-ask"
 import { MAX_RUN_CEILING_MS } from "../lib/run-lifecycle"
 import { signWorkToken } from "../lib/run-token"
@@ -1073,11 +1074,7 @@ export const jobRoutes = (ctx: AppContext) => {
     async (job, c, whoId) => {
       if (!isPageAsk(job)) return retryJob(jobDeps, job, whoId, c.req.header("Idempotency-Key"))
       if (job.status !== "failed" && job.status !== "lost") return null
-      if (JSON.parse(job.meta_json ?? "{}").saving === true)
-        return {
-          error:
-            "A save was interrupted. Check Activity and artifact versions before starting a new chat. This run cannot safely retry.",
-        }
+      if (JSON.parse(job.meta_json ?? "{}").saving === true) return { error: SAVE_INTERRUPTED }
       const about = JSON.parse(job.subject_json ?? "{}") as { id?: string }
       const page = about.id ? await readablePage(c, job.org_id, about.id) : null
       if (page instanceof Response) return { error: "The scoped artifact is no longer accessible." }

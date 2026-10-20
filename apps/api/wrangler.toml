@@ -78,10 +78,10 @@ class_name = "WebhookOutbox"
 name = "PREVIEW_RENDERER"
 class_name = "PreviewRenderer"
 
-# Chat turns (one instance per conversation, named by the job id). A built-in Derive turn —
-# the Chat page, a page's Ask — runs here on the object's own clock instead of in the request
-# isolate's after-response window, which ends seconds after the response and dies with the
-# isolate. Omit this block to serve turns after the response, as the worker did before.
+# Chat turns, one instance per conversation (chat-turn-do.ts). A built-in Derive turn runs
+# here on the object's own clock instead of in the request's after-response window, which
+# ends seconds after the response and dies with the isolate. Omit this block to serve turns
+# after the response.
 [[durable_objects.bindings]]
 name = "CHAT_TURNS"
 class_name = "ChatTurn"
@@ -122,10 +122,9 @@ deleted_classes = ["RunContainer"]
 tag = "v8"
 new_sqlite_classes = ["ChatTurn"]
 
-# A chat turn's alarm (ChatTurn) now carries a whole turn — minutes of model streaming, tool
-# calls and the publish fan-out — where a request carried 22 seconds of it. The default CPU
-# ceiling per invocation is 30 s; this lifts it so a long turn is cut by its own budget, not
-# the runtime's. Wall time is not limited by this.
+# A ChatTurn alarm carries a whole turn: minutes of model streaming, tool calls and the
+# publish fan-out. The default CPU ceiling per invocation is 30 s; this lifts it so a long
+# turn is cut by its own budget rather than the runtime's. Wall time is not limited by this.
 [limits]
 cpu_ms = 300_000
 

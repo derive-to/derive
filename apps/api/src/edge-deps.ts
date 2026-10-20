@@ -55,11 +55,11 @@ import { bindingSummarizer, type TextGenAiLike } from "./summarizer"
 import { enqueueChannelDelivery } from "./webhooks"
 
 /**
- * The Workers tier's bindings and the app deps built from them, in one module so every edge
- * entry that needs the application context — the request Worker (worker.ts) and a Durable
- * Object that serves work on its own clock (chat-turn-do.ts) — builds it from the same source.
+ * The Workers tier's bindings and the app deps built from them, shared by the request Worker
+ * (worker.ts) and the Durable Objects that need the application context (chat-turn-do.ts).
  * Edge-safe only: NEVER import node.ts / config.ts / @derive/storage/fs / webhooks-node here.
  */
+
 // The webhook outbox DO is a singleton: every isolate pokes the same instance by a
 // fixed name, so one alarm loop drains the shared outbox.
 const OUTBOX_NAME = "outbox"
@@ -235,8 +235,8 @@ let shellCache: string | null = null
 /** The path a chat turn is poked at on its Durable Object (chat-turn-do.ts). */
 export const CHAT_TURN_PATH = "/turn"
 
-/** Hand a built-in Derive turn to its conversation's Durable Object, which serves it on its own
- *  clock. Throws when the object cannot take it, so the caller can serve the turn itself. */
+/** Hand a built-in Derive turn to its conversation's Durable Object. Throws when the object
+ *  cannot take it, so the caller can serve the turn itself. */
 export async function pokeChatTurn(
   ns: DurableObjectNamespace,
   turn: { jobId: string; startedAt: string },
@@ -250,10 +250,8 @@ export async function pokeChatTurn(
   if (!res.ok) throw new Error(`chat turn runner answered ${res.status}`)
 }
 
-/** The chat turn runner, when this deploy can run one: the object is bound and the deploy
- *  knows its own origin (the object builds the app context from it, with no request to read it
- *  from). Said once per isolate when the binding is there but the origin is not, since the
- *  turns would otherwise quietly fall back to the request's clock. */
+/** The chat turn runner, when the object is bound and the deploy knows its own origin (the
+ *  object builds the app context from BASE_URL; it has no request to read one from). */
 function chatTurnRunnerFor(env: Env): AppDeps["chatTurnRunner"] {
   const ns = env.CHAT_TURNS
   if (!ns) return undefined
@@ -400,9 +398,7 @@ export function edgeAppDeps(env: Env, baseUrl: string): AppDeps {
     // leaves the turn several seconds of live isolate to settle its own job instead. Set only
     // here; Node has no such ceiling.
     attendedTurnBudgetMs: 22_000,
-    // A chat turn escapes that ceiling: the request hands it to its conversation's Durable
-    // Object (chat-turn-do.ts), which serves it on its own clock. The object needs the
-    // deploy's own origin to build the context, so both must be bound.
+    // A chat turn escapes that ceiling on its own Durable Object (chat-turn-do.ts).
     chatTurnRunner: chatTurnRunnerFor(env),
     rateLimiters: {
       auth: nativeLimiter(env.RL_AUTH, 60),

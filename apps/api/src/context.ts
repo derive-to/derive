@@ -162,17 +162,16 @@ export interface AppDeps {
    */
   attendedTurnBudgetMs?: number
   /**
-   * Where a built-in Derive chat turn runs when it should outlive the request: handed the job
-   * id and the turn rebuilt from it (lib/page-ask.ts). The Workers entry sets this to a Durable
-   * Object per conversation, so a turn is neither capped by the after-response window above
-   * nor lost with the request isolate. Unset ⇒ the turn runs after the response, as on Node.
-   * A runner that throws declines the turn, and the request serves it itself.
+   * Serves a built-in Derive chat turn off the request's clock (lib/page-ask.ts
+   * dispatchPageTurn). The Workers entry sets a Durable Object per conversation; unset, the
+   * turn runs after the response and is subject to the ceiling above. A runner that throws
+   * declines the turn, and the request serves it itself.
    */
   chatTurnRunner?: (turn: {
     jobId: string
-    /** The claim this turn runs under (the job's started_at): a runner that serves a stale
-     *  claim is told so and stays silent. */
+    /** The job's started_at at hand-over; the runner stays silent if the claim has moved. */
     startedAt: string
+    /** The turn, rebuilt from the job id. For a runner in the same process (tests). */
     run: () => Promise<void>
   }) => Promise<void>
   /** Optional dense/semantic search index. Unset ⇒ workspace search stays lexical-only. Both the

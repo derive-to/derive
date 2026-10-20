@@ -51,10 +51,14 @@ export { WebhookOutbox } from "./webhook-do"
  * retry/crash backstop. SSRF re-validation uses the edge guard (Cloudflare egress
  * blocks private-space subrequests), so no `node:dns` is pulled into this bundle.
  *
- * Edge/Node separation: this entry imports ONLY `webhook-do` (edge-safe). The Node
+ * Built-in chat turns run on the `ChatTurn` Durable Object (chat-turn-do.ts), one per
+ * conversation, rather than in a request's after-response window.
+ *
+ * The bindings (`Env`) and the app deps built from them live in edge-deps.ts, shared with
+ * the Durable Objects that need the application context. Edge/Node separation: the Node
  * SSRF guard lives in `webhooks-node` (`node:dns`) and is imported solely by node.ts;
  * `webhooks.ts` itself is runtime-neutral. NEVER import node.ts / config.ts /
- * @derive/storage/fs / webhooks-node here — those pull Node built-ins.
+ * @derive/storage/fs / webhooks-node here or in edge-deps.ts — those pull Node built-ins.
  */
 
 /** Idle inline edit sessions are finalized through the app's route (see node.ts). Needs the
