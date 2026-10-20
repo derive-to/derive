@@ -9,130 +9,50 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as WelcomeRouteImport } from './routes/welcome'
-import { Route as UnlistedRouteImport } from './routes/unlisted'
-import { Route as SkillsRouteImport } from './routes/skills'
-import { Route as SharedRouteImport } from './routes/shared'
-import { Route as SettingsRouteImport } from './routes/settings'
-import { Route as SearchRouteImport } from './routes/search'
-import { Route as ResetPasswordRouteImport } from './routes/reset-password'
-import { Route as PeopleRouteImport } from './routes/people'
-import { Route as NewRouteImport } from './routes/new'
-import { Route as LoginRouteImport } from './routes/login'
-import { Route as InboxRouteImport } from './routes/inbox'
-import { Route as FollowingRouteImport } from './routes/following'
-import { Route as FeedbackRouteImport } from './routes/feedback'
-import { Route as FavoritesRouteImport } from './routes/favorites'
-import { Route as ChatRouteImport } from './routes/chat'
-import { Route as BrandprintRouteImport } from './routes/brandprint'
-import { Route as ArchivedRouteImport } from './routes/archived'
-import { Route as ActivityRouteImport } from './routes/activity'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as TemplatesIndexRouteImport } from './routes/templates.index'
-import { Route as TemplateLibrariesIndexRouteImport } from './routes/template-libraries.index'
-import { Route as SettingsIndexRouteImport } from './routes/settings.index'
+import { Route as ActivityRouteImport } from './routes/activity'
+import { Route as ArchivedRouteImport } from './routes/archived'
+import { Route as BrandprintRouteImport } from './routes/brandprint'
+import { Route as ChatRouteImport } from './routes/chat'
+import { Route as FavoritesRouteImport } from './routes/favorites'
+import { Route as FeedbackRouteImport } from './routes/feedback'
+import { Route as FollowingRouteImport } from './routes/following'
+import { Route as InboxRouteImport } from './routes/inbox'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as NewRouteImport } from './routes/new'
+import { Route as PeopleRouteImport } from './routes/people'
+import { Route as ResetPasswordRouteImport } from './routes/reset-password'
+import { Route as SearchRouteImport } from './routes/search'
+import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as SharedRouteImport } from './routes/shared'
+import { Route as SkillsRouteImport } from './routes/skills'
+import { Route as UnlistedRouteImport } from './routes/unlisted'
+import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as AgentsIndexRouteImport } from './routes/agents.index'
-import { Route as UsersHandleRouteImport } from './routes/users.$handle'
-import { Route as TemplatesRefRouteImport } from './routes/templates.$ref'
-import { Route as TemplateLibrariesIdRouteImport } from './routes/template-libraries.$id'
-import { Route as TasksIdRouteImport } from './routes/tasks.$id'
-import { Route as SettingsSectionRouteImport } from './routes/settings.$section'
-import { Route as PapersNewRouteImport } from './routes/papers.new'
-import { Route as PapersIdRouteImport } from './routes/papers.$id'
-import { Route as JoinTokenRouteImport } from './routes/join.$token'
-import { Route as InviteTokenRouteImport } from './routes/invite.$token'
-import { Route as ContextsIdRouteImport } from './routes/contexts.$id'
-import { Route as CollectionsIdRouteImport } from './routes/collections.$id'
-import { Route as ClaimTokenRouteImport } from './routes/claim.$token'
-import { Route as ArtifactsRefRouteImport } from './routes/artifacts.$ref'
-import { Route as AgentsNewRouteImport } from './routes/agents.new'
 import { Route as AgentsIdRouteImport } from './routes/agents.$id'
-import { Route as InviteCTokenRouteImport } from './routes/invite.c.$token'
+import { Route as AgentsNewRouteImport } from './routes/agents.new'
+import { Route as ArtifactsRefRouteImport } from './routes/artifacts.$ref'
+import { Route as ClaimTokenRouteImport } from './routes/claim.$token'
+import { Route as CollectionsIdRouteImport } from './routes/collections.$id'
+import { Route as ContextsIdRouteImport } from './routes/contexts.$id'
+import { Route as InviteTokenRouteImport } from './routes/invite.$token'
+import { Route as JoinTokenRouteImport } from './routes/join.$token'
+import { Route as PapersIdRouteImport } from './routes/papers.$id'
+import { Route as PapersNewRouteImport } from './routes/papers.new'
+import { Route as SettingsIndexRouteImport } from './routes/settings.index'
+import { Route as SettingsSectionRouteImport } from './routes/settings.$section'
+import { Route as TasksIdRouteImport } from './routes/tasks.$id'
+import { Route as TemplateLibrariesIndexRouteImport } from './routes/template-libraries.index'
+import { Route as TemplateLibrariesIdRouteImport } from './routes/template-libraries.$id'
+import { Route as TemplatesIndexRouteImport } from './routes/templates.index'
+import { Route as TemplatesRefRouteImport } from './routes/templates.$ref'
+import { Route as UsersHandleRouteImport } from './routes/users.$handle'
 import { Route as InviteATokenRouteImport } from './routes/invite.a.$token'
+import { Route as InviteCTokenRouteImport } from './routes/invite.c.$token'
 
-const WelcomeRoute = WelcomeRouteImport.update({
-  id: '/welcome',
-  path: '/welcome',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const UnlistedRoute = UnlistedRouteImport.update({
-  id: '/unlisted',
-  path: '/unlisted',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SkillsRoute = SkillsRouteImport.update({
-  id: '/skills',
-  path: '/skills',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SharedRoute = SharedRouteImport.update({
-  id: '/shared',
-  path: '/shared',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SettingsRoute = SettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SearchRoute = SearchRouteImport.update({
-  id: '/search',
-  path: '/search',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ResetPasswordRoute = ResetPasswordRouteImport.update({
-  id: '/reset-password',
-  path: '/reset-password',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PeopleRoute = PeopleRouteImport.update({
-  id: '/people',
-  path: '/people',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const NewRoute = NewRouteImport.update({
-  id: '/new',
-  path: '/new',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LoginRoute = LoginRouteImport.update({
-  id: '/login',
-  path: '/login',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const InboxRoute = InboxRouteImport.update({
-  id: '/inbox',
-  path: '/inbox',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const FollowingRoute = FollowingRouteImport.update({
-  id: '/following',
-  path: '/following',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const FeedbackRoute = FeedbackRouteImport.update({
-  id: '/feedback',
-  path: '/feedback',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const FavoritesRoute = FavoritesRouteImport.update({
-  id: '/favorites',
-  path: '/favorites',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ChatRoute = ChatRouteImport.update({
-  id: '/chat',
-  path: '/chat',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const BrandprintRoute = BrandprintRouteImport.update({
-  id: '/brandprint',
-  path: '/brandprint',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ArchivedRoute = ArchivedRouteImport.update({
-  id: '/archived',
-  path: '/archived',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ActivityRoute = ActivityRouteImport.update({
@@ -140,99 +60,94 @@ const ActivityRoute = ActivityRouteImport.update({
   path: '/activity',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const ArchivedRoute = ArchivedRouteImport.update({
+  id: '/archived',
+  path: '/archived',
   getParentRoute: () => rootRouteImport,
 } as any)
-const TemplatesIndexRoute = TemplatesIndexRouteImport.update({
-  id: '/templates/',
-  path: '/templates/',
+const BrandprintRoute = BrandprintRouteImport.update({
+  id: '/brandprint',
+  path: '/brandprint',
   getParentRoute: () => rootRouteImport,
 } as any)
-const TemplateLibrariesIndexRoute = TemplateLibrariesIndexRouteImport.update({
-  id: '/template-libraries/',
-  path: '/template-libraries/',
+const ChatRoute = ChatRouteImport.update({
+  id: '/chat',
+  path: '/chat',
   getParentRoute: () => rootRouteImport,
 } as any)
-const SettingsIndexRoute = SettingsIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => SettingsRoute,
+const FavoritesRoute = FavoritesRouteImport.update({
+  id: '/favorites',
+  path: '/favorites',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FeedbackRoute = FeedbackRouteImport.update({
+  id: '/feedback',
+  path: '/feedback',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FollowingRoute = FollowingRouteImport.update({
+  id: '/following',
+  path: '/following',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InboxRoute = InboxRouteImport.update({
+  id: '/inbox',
+  path: '/inbox',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NewRoute = NewRouteImport.update({
+  id: '/new',
+  path: '/new',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PeopleRoute = PeopleRouteImport.update({
+  id: '/people',
+  path: '/people',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ResetPasswordRoute = ResetPasswordRouteImport.update({
+  id: '/reset-password',
+  path: '/reset-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SearchRoute = SearchRouteImport.update({
+  id: '/search',
+  path: '/search',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SharedRoute = SharedRouteImport.update({
+  id: '/shared',
+  path: '/shared',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SkillsRoute = SkillsRouteImport.update({
+  id: '/skills',
+  path: '/skills',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const UnlistedRoute = UnlistedRouteImport.update({
+  id: '/unlisted',
+  path: '/unlisted',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WelcomeRoute = WelcomeRouteImport.update({
+  id: '/welcome',
+  path: '/welcome',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const AgentsIndexRoute = AgentsIndexRouteImport.update({
   id: '/agents/',
   path: '/agents/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const UsersHandleRoute = UsersHandleRouteImport.update({
-  id: '/users/$handle',
-  path: '/users/$handle',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const TemplatesRefRoute = TemplatesRefRouteImport.update({
-  id: '/templates/$ref',
-  path: '/templates/$ref',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const TemplateLibrariesIdRoute = TemplateLibrariesIdRouteImport.update({
-  id: '/template-libraries/$id',
-  path: '/template-libraries/$id',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const TasksIdRoute = TasksIdRouteImport.update({
-  id: '/tasks/$id',
-  path: '/tasks/$id',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SettingsSectionRoute = SettingsSectionRouteImport.update({
-  id: '/$section',
-  path: '/$section',
-  getParentRoute: () => SettingsRoute,
-} as any)
-const PapersNewRoute = PapersNewRouteImport.update({
-  id: '/papers/new',
-  path: '/papers/new',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PapersIdRoute = PapersIdRouteImport.update({
-  id: '/papers/$id',
-  path: '/papers/$id',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const JoinTokenRoute = JoinTokenRouteImport.update({
-  id: '/join/$token',
-  path: '/join/$token',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const InviteTokenRoute = InviteTokenRouteImport.update({
-  id: '/invite/$token',
-  path: '/invite/$token',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ContextsIdRoute = ContextsIdRouteImport.update({
-  id: '/contexts/$id',
-  path: '/contexts/$id',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CollectionsIdRoute = CollectionsIdRouteImport.update({
-  id: '/collections/$id',
-  path: '/collections/$id',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ClaimTokenRoute = ClaimTokenRouteImport.update({
-  id: '/claim/$token',
-  path: '/claim/$token',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ArtifactsRefRoute = ArtifactsRefRouteImport.update({
-  id: '/artifacts/$ref',
-  path: '/artifacts/$ref',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AgentsNewRoute = AgentsNewRouteImport.update({
-  id: '/agents/new',
-  path: '/agents/new',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AgentsIdRoute = AgentsIdRouteImport.update({
@@ -240,14 +155,99 @@ const AgentsIdRoute = AgentsIdRouteImport.update({
   path: '/agents/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
-const InviteCTokenRoute = InviteCTokenRouteImport.update({
-  id: '/invite/c/$token',
-  path: '/invite/c/$token',
+const AgentsNewRoute = AgentsNewRouteImport.update({
+  id: '/agents/new',
+  path: '/agents/new',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ArtifactsRefRoute = ArtifactsRefRouteImport.update({
+  id: '/artifacts/$ref',
+  path: '/artifacts/$ref',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ClaimTokenRoute = ClaimTokenRouteImport.update({
+  id: '/claim/$token',
+  path: '/claim/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CollectionsIdRoute = CollectionsIdRouteImport.update({
+  id: '/collections/$id',
+  path: '/collections/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ContextsIdRoute = ContextsIdRouteImport.update({
+  id: '/contexts/$id',
+  path: '/contexts/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InviteTokenRoute = InviteTokenRouteImport.update({
+  id: '/invite/$token',
+  path: '/invite/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const JoinTokenRoute = JoinTokenRouteImport.update({
+  id: '/join/$token',
+  path: '/join/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PapersIdRoute = PapersIdRouteImport.update({
+  id: '/papers/$id',
+  path: '/papers/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PapersNewRoute = PapersNewRouteImport.update({
+  id: '/papers/new',
+  path: '/papers/new',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsIndexRoute = SettingsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsSectionRoute = SettingsSectionRouteImport.update({
+  id: '/$section',
+  path: '/$section',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const TasksIdRoute = TasksIdRouteImport.update({
+  id: '/tasks/$id',
+  path: '/tasks/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TemplateLibrariesIndexRoute = TemplateLibrariesIndexRouteImport.update({
+  id: '/template-libraries/',
+  path: '/template-libraries/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TemplateLibrariesIdRoute = TemplateLibrariesIdRouteImport.update({
+  id: '/template-libraries/$id',
+  path: '/template-libraries/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TemplatesIndexRoute = TemplatesIndexRouteImport.update({
+  id: '/templates/',
+  path: '/templates/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TemplatesRefRoute = TemplatesRefRouteImport.update({
+  id: '/templates/$ref',
+  path: '/templates/$ref',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const UsersHandleRoute = UsersHandleRouteImport.update({
+  id: '/users/$handle',
+  path: '/users/$handle',
   getParentRoute: () => rootRouteImport,
 } as any)
 const InviteATokenRoute = InviteATokenRouteImport.update({
   id: '/invite/a/$token',
   path: '/invite/a/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InviteCTokenRoute = InviteCTokenRouteImport.update({
+  id: '/invite/c/$token',
+  path: '/invite/c/$token',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -548,123 +548,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/welcome': {
-      id: '/welcome'
-      path: '/welcome'
-      fullPath: '/welcome'
-      preLoaderRoute: typeof WelcomeRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/unlisted': {
-      id: '/unlisted'
-      path: '/unlisted'
-      fullPath: '/unlisted'
-      preLoaderRoute: typeof UnlistedRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/skills': {
-      id: '/skills'
-      path: '/skills'
-      fullPath: '/skills'
-      preLoaderRoute: typeof SkillsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/shared': {
-      id: '/shared'
-      path: '/shared'
-      fullPath: '/shared'
-      preLoaderRoute: typeof SharedRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings': {
-      id: '/settings'
-      path: '/settings'
-      fullPath: '/settings'
-      preLoaderRoute: typeof SettingsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/search': {
-      id: '/search'
-      path: '/search'
-      fullPath: '/search'
-      preLoaderRoute: typeof SearchRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/reset-password': {
-      id: '/reset-password'
-      path: '/reset-password'
-      fullPath: '/reset-password'
-      preLoaderRoute: typeof ResetPasswordRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/people': {
-      id: '/people'
-      path: '/people'
-      fullPath: '/people'
-      preLoaderRoute: typeof PeopleRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/new': {
-      id: '/new'
-      path: '/new'
-      fullPath: '/new'
-      preLoaderRoute: typeof NewRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/login': {
-      id: '/login'
-      path: '/login'
-      fullPath: '/login'
-      preLoaderRoute: typeof LoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/inbox': {
-      id: '/inbox'
-      path: '/inbox'
-      fullPath: '/inbox'
-      preLoaderRoute: typeof InboxRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/following': {
-      id: '/following'
-      path: '/following'
-      fullPath: '/following'
-      preLoaderRoute: typeof FollowingRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/feedback': {
-      id: '/feedback'
-      path: '/feedback'
-      fullPath: '/feedback'
-      preLoaderRoute: typeof FeedbackRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/favorites': {
-      id: '/favorites'
-      path: '/favorites'
-      fullPath: '/favorites'
-      preLoaderRoute: typeof FavoritesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/chat': {
-      id: '/chat'
-      path: '/chat'
-      fullPath: '/chat'
-      preLoaderRoute: typeof ChatRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/brandprint': {
-      id: '/brandprint'
-      path: '/brandprint'
-      fullPath: '/brandprint'
-      preLoaderRoute: typeof BrandprintRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/archived': {
-      id: '/archived'
-      path: '/archived'
-      fullPath: '/archived'
-      preLoaderRoute: typeof ArchivedRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/activity': {
@@ -674,137 +562,130 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ActivityRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/archived': {
+      id: '/archived'
+      path: '/archived'
+      fullPath: '/archived'
+      preLoaderRoute: typeof ArchivedRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/templates/': {
-      id: '/templates/'
-      path: '/templates'
-      fullPath: '/templates/'
-      preLoaderRoute: typeof TemplatesIndexRouteImport
+    '/brandprint': {
+      id: '/brandprint'
+      path: '/brandprint'
+      fullPath: '/brandprint'
+      preLoaderRoute: typeof BrandprintRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/template-libraries/': {
-      id: '/template-libraries/'
-      path: '/template-libraries'
-      fullPath: '/template-libraries/'
-      preLoaderRoute: typeof TemplateLibrariesIndexRouteImport
+    '/chat': {
+      id: '/chat'
+      path: '/chat'
+      fullPath: '/chat'
+      preLoaderRoute: typeof ChatRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/settings/': {
-      id: '/settings/'
-      path: '/'
-      fullPath: '/settings/'
-      preLoaderRoute: typeof SettingsIndexRouteImport
-      parentRoute: typeof SettingsRoute
+    '/favorites': {
+      id: '/favorites'
+      path: '/favorites'
+      fullPath: '/favorites'
+      preLoaderRoute: typeof FavoritesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/feedback': {
+      id: '/feedback'
+      path: '/feedback'
+      fullPath: '/feedback'
+      preLoaderRoute: typeof FeedbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/following': {
+      id: '/following'
+      path: '/following'
+      fullPath: '/following'
+      preLoaderRoute: typeof FollowingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/inbox': {
+      id: '/inbox'
+      path: '/inbox'
+      fullPath: '/inbox'
+      preLoaderRoute: typeof InboxRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/new': {
+      id: '/new'
+      path: '/new'
+      fullPath: '/new'
+      preLoaderRoute: typeof NewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/people': {
+      id: '/people'
+      path: '/people'
+      fullPath: '/people'
+      preLoaderRoute: typeof PeopleRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reset-password': {
+      id: '/reset-password'
+      path: '/reset-password'
+      fullPath: '/reset-password'
+      preLoaderRoute: typeof ResetPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/search': {
+      id: '/search'
+      path: '/search'
+      fullPath: '/search'
+      preLoaderRoute: typeof SearchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/shared': {
+      id: '/shared'
+      path: '/shared'
+      fullPath: '/shared'
+      preLoaderRoute: typeof SharedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/skills': {
+      id: '/skills'
+      path: '/skills'
+      fullPath: '/skills'
+      preLoaderRoute: typeof SkillsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/unlisted': {
+      id: '/unlisted'
+      path: '/unlisted'
+      fullPath: '/unlisted'
+      preLoaderRoute: typeof UnlistedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/welcome': {
+      id: '/welcome'
+      path: '/welcome'
+      fullPath: '/welcome'
+      preLoaderRoute: typeof WelcomeRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/agents/': {
       id: '/agents/'
       path: '/agents'
       fullPath: '/agents/'
       preLoaderRoute: typeof AgentsIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/users/$handle': {
-      id: '/users/$handle'
-      path: '/users/$handle'
-      fullPath: '/users/$handle'
-      preLoaderRoute: typeof UsersHandleRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/templates/$ref': {
-      id: '/templates/$ref'
-      path: '/templates/$ref'
-      fullPath: '/templates/$ref'
-      preLoaderRoute: typeof TemplatesRefRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/template-libraries/$id': {
-      id: '/template-libraries/$id'
-      path: '/template-libraries/$id'
-      fullPath: '/template-libraries/$id'
-      preLoaderRoute: typeof TemplateLibrariesIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/tasks/$id': {
-      id: '/tasks/$id'
-      path: '/tasks/$id'
-      fullPath: '/tasks/$id'
-      preLoaderRoute: typeof TasksIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings/$section': {
-      id: '/settings/$section'
-      path: '/$section'
-      fullPath: '/settings/$section'
-      preLoaderRoute: typeof SettingsSectionRouteImport
-      parentRoute: typeof SettingsRoute
-    }
-    '/papers/new': {
-      id: '/papers/new'
-      path: '/papers/new'
-      fullPath: '/papers/new'
-      preLoaderRoute: typeof PapersNewRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/papers/$id': {
-      id: '/papers/$id'
-      path: '/papers/$id'
-      fullPath: '/papers/$id'
-      preLoaderRoute: typeof PapersIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/join/$token': {
-      id: '/join/$token'
-      path: '/join/$token'
-      fullPath: '/join/$token'
-      preLoaderRoute: typeof JoinTokenRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/invite/$token': {
-      id: '/invite/$token'
-      path: '/invite/$token'
-      fullPath: '/invite/$token'
-      preLoaderRoute: typeof InviteTokenRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/contexts/$id': {
-      id: '/contexts/$id'
-      path: '/contexts/$id'
-      fullPath: '/contexts/$id'
-      preLoaderRoute: typeof ContextsIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/collections/$id': {
-      id: '/collections/$id'
-      path: '/collections/$id'
-      fullPath: '/collections/$id'
-      preLoaderRoute: typeof CollectionsIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/claim/$token': {
-      id: '/claim/$token'
-      path: '/claim/$token'
-      fullPath: '/claim/$token'
-      preLoaderRoute: typeof ClaimTokenRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/artifacts/$ref': {
-      id: '/artifacts/$ref'
-      path: '/artifacts/$ref'
-      fullPath: '/artifacts/$ref'
-      preLoaderRoute: typeof ArtifactsRefRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agents/new': {
-      id: '/agents/new'
-      path: '/agents/new'
-      fullPath: '/agents/new'
-      preLoaderRoute: typeof AgentsNewRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/agents/$id': {
@@ -814,11 +695,123 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AgentsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/invite/c/$token': {
-      id: '/invite/c/$token'
-      path: '/invite/c/$token'
-      fullPath: '/invite/c/$token'
-      preLoaderRoute: typeof InviteCTokenRouteImport
+    '/agents/new': {
+      id: '/agents/new'
+      path: '/agents/new'
+      fullPath: '/agents/new'
+      preLoaderRoute: typeof AgentsNewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/artifacts/$ref': {
+      id: '/artifacts/$ref'
+      path: '/artifacts/$ref'
+      fullPath: '/artifacts/$ref'
+      preLoaderRoute: typeof ArtifactsRefRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/claim/$token': {
+      id: '/claim/$token'
+      path: '/claim/$token'
+      fullPath: '/claim/$token'
+      preLoaderRoute: typeof ClaimTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/collections/$id': {
+      id: '/collections/$id'
+      path: '/collections/$id'
+      fullPath: '/collections/$id'
+      preLoaderRoute: typeof CollectionsIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/contexts/$id': {
+      id: '/contexts/$id'
+      path: '/contexts/$id'
+      fullPath: '/contexts/$id'
+      preLoaderRoute: typeof ContextsIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/invite/$token': {
+      id: '/invite/$token'
+      path: '/invite/$token'
+      fullPath: '/invite/$token'
+      preLoaderRoute: typeof InviteTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/join/$token': {
+      id: '/join/$token'
+      path: '/join/$token'
+      fullPath: '/join/$token'
+      preLoaderRoute: typeof JoinTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/papers/$id': {
+      id: '/papers/$id'
+      path: '/papers/$id'
+      fullPath: '/papers/$id'
+      preLoaderRoute: typeof PapersIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/papers/new': {
+      id: '/papers/new'
+      path: '/papers/new'
+      fullPath: '/papers/new'
+      preLoaderRoute: typeof PapersNewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/': {
+      id: '/settings/'
+      path: '/'
+      fullPath: '/settings/'
+      preLoaderRoute: typeof SettingsIndexRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/$section': {
+      id: '/settings/$section'
+      path: '/$section'
+      fullPath: '/settings/$section'
+      preLoaderRoute: typeof SettingsSectionRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/tasks/$id': {
+      id: '/tasks/$id'
+      path: '/tasks/$id'
+      fullPath: '/tasks/$id'
+      preLoaderRoute: typeof TasksIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/template-libraries/': {
+      id: '/template-libraries/'
+      path: '/template-libraries'
+      fullPath: '/template-libraries/'
+      preLoaderRoute: typeof TemplateLibrariesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/template-libraries/$id': {
+      id: '/template-libraries/$id'
+      path: '/template-libraries/$id'
+      fullPath: '/template-libraries/$id'
+      preLoaderRoute: typeof TemplateLibrariesIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/templates/': {
+      id: '/templates/'
+      path: '/templates'
+      fullPath: '/templates/'
+      preLoaderRoute: typeof TemplatesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/templates/$ref': {
+      id: '/templates/$ref'
+      path: '/templates/$ref'
+      fullPath: '/templates/$ref'
+      preLoaderRoute: typeof TemplatesRefRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/users/$handle': {
+      id: '/users/$handle'
+      path: '/users/$handle'
+      fullPath: '/users/$handle'
+      preLoaderRoute: typeof UsersHandleRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/invite/a/$token': {
@@ -826,6 +819,13 @@ declare module '@tanstack/react-router' {
       path: '/invite/a/$token'
       fullPath: '/invite/a/$token'
       preLoaderRoute: typeof InviteATokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/invite/c/$token': {
+      id: '/invite/c/$token'
+      path: '/invite/c/$token'
+      fullPath: '/invite/c/$token'
+      preLoaderRoute: typeof InviteCTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
