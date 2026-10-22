@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { getInitials } from "@/lib/initials"
-import { ago } from "@/lib/time"
+import { ago, clock, dayLabel } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { trendSeries } from "./insights-stats"
 
@@ -230,21 +230,8 @@ export function Insights({
   )
 }
 
-// Quiet, Docs-style history in a side drawer: time-grouped sessions (named
-// checkpoints pinned), not every raw revision. Controlled by "⋯ More".
-const clock = (iso: string) =>
-  new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-const dayLabel = (iso: string): string => {
-  const d = new Date(iso)
-  const today = new Date()
-  const y = new Date(today)
-  y.setDate(today.getDate() - 1)
-  const same = (a: Date, b: Date) => a.toDateString() === b.toDateString()
-  if (same(d, today)) return "Today"
-  if (same(d, y)) return "Yesterday"
-  return d.toLocaleDateString([], { month: "short", day: "numeric" })
-}
-
+// Quiet, Docs-style history in a side drawer: every version, one row each, newest
+// first, under day headers. Named checkpoints are pinned. Controlled by "⋯ More".
 export function HistoryDrawer({
   art,
   shown,
@@ -258,29 +245,7 @@ export function HistoryDrawer({
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
-  const sessions =
-    art.sessions ??
-    [...art.versions]
-      .sort((a, b) => b.n - a.n)
-      .map((v) => ({
-        n: v.n,
-        from_n: v.n,
-        count: 1,
-        author: v.author,
-        name: v.name,
-        created_at: v.created_at,
-      }))
-  // Grouped sessions expand to their individual versions so every vN is reachable,
-  // not just each session's head. Expansion is derived-by-default — the session
-  // holding the shown version starts open so its highlight is visible — with the
-  // user's explicit toggles layered on top.
-  const [toggled, setToggled] = useState<Map<number, boolean>>(new Map())
-  const isExpanded = (s: { n: number; from_n: number }) =>
-    toggled.get(s.n) ?? (shown >= s.from_n && shown < s.n)
-  // A session is the latest version in a time group; its `n` is that version, so
-  // we resolve the rich author identity (avatar, login, the Derive handle for the
-  // profile link) from the matching version.
-  const versionByN = new Map(art.versions.map((v) => [v.n, v]))
+  const rows = [...(art.versions ?? [])].sort((a, b) => b.n - a.n)
   let lastDay = ""
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -292,13 +257,13 @@ export function HistoryDrawer({
           </SheetTitle>
         </SheetHeader>
         <div className="min-h-0 flex-1 overflow-y-auto p-2">
-          {sessions.map((s) => {
-            const cur = s.n === shown
-            const day = dayLabel(s.created_at)
+          {rows.map((v) => {
+            const cur = v.n === shown
+            const day = dayLabel(v.created_at)
             const header = day !== lastDay ? day : null
             if (header !== null) lastDay = day
             return (
-              <div key={s.n}>
+              <div key={v.n}>
                 {header && (
                   <Eyebrow as="div" className="px-2 pb-1 pt-3">
                     {header}
@@ -316,98 +281,44 @@ export function HistoryDrawer({
                 >
                   <button
                     type="button"
-                    data-testid={`history-version-${s.n}`}
+                    data-testid={`history-version-${v.n}`}
                     onClick={() => {
-                      goTo(s.n)
+                      goTo(v.n)
                       onOpenChange(false)
                     }}
                     className="block w-full text-left outline-none after:absolute after:inset-0 after:z-1 after:rounded-md after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
                   >
                     <div className="flex items-center gap-1.5">
-                      {s.name ? (
+                      {v.name ? (
                         <Icon name="pin" size={16} />
                       ) : (
                         <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground" />
                       )}
                       <span className="truncate text-sm font-medium text-foreground">
-                        {s.name ?? clock(s.created_at)}
+                        {v.name ?? clock(v.created_at)}
                       </span>
-                      {s.n === art.current_version && (
+                      {v.n === art.current_version && (
                         // The live version gets the sanctioned soft brand chip.
                         <Badge shape="pill" variant="brand">
                           current
                         </Badge>
                       )}
-                      {s.count === 1 && (
-                        <span className="ml-auto font-mono text-2xs text-muted-foreground tabular-nums">
-                          v{s.n}
-                        </span>
-                      )}
+                      <span className="ml-auto font-mono text-2xs text-muted-foreground tabular-nums">
+                        v{v.n}
+                      </span>
                     </div>
                   </button>
-                  {s.count > 1 && (
-                    // Sits above the stretched link (z-20) so toggling never navigates.
-                    <button
-                      type="button"
-                      data-testid={`history-expand-${s.n}`}
-                      aria-expanded={isExpanded(s)}
-                      onClick={() => setToggled((prev) => new Map(prev).set(s.n, !isExpanded(s)))}
-                      className="absolute right-2 top-2 z-20 flex items-center gap-0.5 rounded font-mono text-2xs text-muted-foreground tabular-nums hover:text-foreground"
-                    >
-                      {s.count} edits
-                      <Icon name={isExpanded(s) ? "caret" : "chevron-right"} size={12} />
-                    </button>
-                  )}
-                  {(() => {
-                    const v = versionByN.get(s.n)
-                    return (
-                      <div className="relative z-20 mt-0.5 flex pl-4.5">
-                        <AuthorChip
-                          name={s.author || v?.author || null}
-                          login={v?.author_login ?? null}
-                          avatar={v?.author_avatar ?? null}
-                          handle={v?.handle ?? null}
-                          size="xs"
-                          data-testid={`history-version-author-${s.n}`}
-                        />
-                      </div>
-                    )
-                  })()}
-                </div>
-                {s.count > 1 && isExpanded(s) && (
-                  <div className="mb-px flex flex-col">
-                    {[...art.versions]
-                      .filter((v) => v.n >= s.from_n && v.n <= s.n)
-                      .sort((a, b) => b.n - a.n)
-                      .map((v) => (
-                        <button
-                          key={v.n}
-                          type="button"
-                          data-testid={`history-edit-${v.n}`}
-                          onClick={() => {
-                            goTo(v.n)
-                            onOpenChange(false)
-                          }}
-                          className={cn(
-                            "flex w-full items-center gap-1.5 rounded-md py-1 pl-7 pr-2 text-left outline-none hover:bg-secondary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
-                            v.n === shown && "bg-accent",
-                          )}
-                        >
-                          <span className="truncate text-sm text-foreground">
-                            {clock(v.created_at)}
-                          </span>
-                          {v.n === art.current_version && (
-                            <Badge shape="pill" variant="brand">
-                              current
-                            </Badge>
-                          )}
-                          <span className="ml-auto font-mono text-2xs text-muted-foreground tabular-nums">
-                            v{v.n}
-                          </span>
-                        </button>
-                      ))}
+                  <div className="relative z-20 mt-0.5 flex pl-4.5">
+                    <AuthorChip
+                      name={v.author || null}
+                      login={v.author_login ?? null}
+                      avatar={v.author_avatar ?? null}
+                      handle={v.handle ?? null}
+                      size="xs"
+                      data-testid={`history-version-author-${v.n}`}
+                    />
                   </div>
-                )}
+                </div>
               </div>
             )
           })}
