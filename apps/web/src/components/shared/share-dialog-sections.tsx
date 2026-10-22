@@ -365,6 +365,7 @@ export function ShareCopyLinkButton({
   testPrefix,
   reach,
   children,
+  actions,
   onCopy,
 }: {
   copied: boolean
@@ -372,16 +373,20 @@ export function ShareCopyLinkButton({
   reach?: string | null
   /** Sibling copy actions that share the row above the note. */
   children?: ReactNode
+  /** Quiet verbs at the row's far right (export, embed). The note below keeps the
+   *  full width, so it never wraps against them. */
+  actions?: ReactNode
   onCopy: () => void
 }) {
   return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex gap-1.5">
+    <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+      <div className="flex items-center gap-1.5">
         <Button data-testid={`${testPrefix}-url-copy`} variant="outline" size="sm" onClick={onCopy}>
           <Icon name={copied ? "check" : "link"} />
           {copied ? "Copied" : "Copy link"}
         </Button>
         {children}
+        {actions && <div className="ml-auto flex items-center gap-1">{actions}</div>}
       </div>
       {reach && (
         <p

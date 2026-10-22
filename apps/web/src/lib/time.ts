@@ -29,3 +29,25 @@ export const agoShort = (iso: string): string => {
   if (s < 86400) return `${Math.floor(s / 3600)}h`
   return `${Math.floor(s / 86400)}d`
 }
+
+// Absolute stamps for pickers and history, where "3h ago" is too vague to tell two
+// versions apart: "Today at 5:14 PM", "Yesterday at 9:02 AM", "Oct 20 at 5:14 PM",
+// and the year once it stops being this one.
+export const clock = (iso: string): string =>
+  new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+export const dayLabel = (iso: string): string => {
+  const d = new Date(iso)
+  const today = new Date()
+  const y = new Date(today)
+  y.setDate(today.getDate() - 1)
+  const same = (a: Date, b: Date) => a.toDateString() === b.toDateString()
+  if (same(d, today)) return "Today"
+  if (same(d, y)) return "Yesterday"
+  return d.toLocaleDateString(
+    [],
+    d.getFullYear() === today.getFullYear()
+      ? { month: "short", day: "numeric" }
+      : { month: "short", day: "numeric", year: "numeric" },
+  )
+}
+export const stamp = (iso: string): string => `${dayLabel(iso)} at ${clock(iso)}`

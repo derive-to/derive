@@ -1,6 +1,5 @@
 import { useState } from "react"
 import { api, type ExportJob, type ExportKind } from "@/api"
-import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -76,8 +75,13 @@ export function ExportButton({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button data-testid="share-export-trigger" variant="outline" size="sm">
-          <Icon name="copy" /> Export &amp; email
+        <Button
+          data-testid="share-export-trigger"
+          variant="ghost"
+          size="sm"
+          className="text-muted-foreground"
+        >
+          Export
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-xl" aria-describedby={undefined}>

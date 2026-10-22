@@ -468,7 +468,7 @@ export function ShareButton({
           coarse-grained setting first, then the roster it governs, then the
           way to extend it. Embed + domains fold behind a disclosure — the
           dialog's job is access, and everything applies as it's chosen (no Save). */}
-      <DialogContent className="sm:max-w-lg" aria-describedby={undefined}>
+      <DialogContent className="grid-cols-[minmax(0,1fr)] sm:max-w-lg" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle className="line-clamp-1 pr-6">
             {art?.title ? `Share “${art.title}”` : "Share"}
@@ -665,9 +665,10 @@ export function ShareButton({
           />
         </div>
 
-        {/* Footer: the universal action on the left, distribution mechanics folded
-            behind a quiet disclosure on the right. */}
-        <div className="flex items-center justify-between border-t border-border pt-4">
+        {/* Footer: copy link leads, with export and the embed disclosure as quiet verbs
+            at the far right of the same row. The reach note takes the full width
+            underneath, so it never wraps against the verbs. */}
+        <div className="flex items-center border-t border-border pt-4">
           <ShareCopyLinkButton
             copied={copiedLink}
             testPrefix="share"
@@ -677,6 +678,26 @@ export function ShareButton({
               locked: hasLock,
             })}
             onCopy={copyLink}
+            actions={
+              <>
+                <ExportButton
+                  shortId={shortId}
+                  version={version}
+                  isDeck={art?.current_content_type === "text/x-derive-deck"}
+                />
+                <Button
+                  data-testid="share-more-toggle"
+                  variant="ghost"
+                  size="sm"
+                  aria-expanded={more}
+                  onClick={() => setMore((v) => !v)}
+                  className="text-muted-foreground"
+                >
+                  {domainBase || workspaceDomains.length > 0 ? "Embed & domains" : "Embed"}
+                  <Icon name={more ? "caret-up" : "caret"} />
+                </Button>
+              </>
+            }
           >
             {momentUrl && (
               <Button
@@ -689,24 +710,6 @@ export function ShareButton({
               </Button>
             )}
           </ShareCopyLinkButton>
-          <div className="flex items-center gap-1.5">
-            <ExportButton
-              shortId={shortId}
-              version={version}
-              isDeck={art?.current_content_type === "text/x-derive-deck"}
-            />
-            <Button
-              data-testid="share-more-toggle"
-              variant="ghost"
-              size="sm"
-              aria-expanded={more}
-              onClick={() => setMore((v) => !v)}
-              className="text-muted-foreground"
-            >
-              Embed &amp; domains
-              <Icon name={more ? "caret-up" : "caret"} />
-            </Button>
-          </div>
         </div>
 
         {more && (

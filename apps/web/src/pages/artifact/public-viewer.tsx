@@ -7,12 +7,6 @@ import { Logo } from "@/components/shared/logo"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import { artifactTypeLabel } from "@/lib/artifact"
 import { signupSourceSearch } from "@/lib/signup-source"
 import { ago } from "@/lib/time"
@@ -27,6 +21,7 @@ import { commentNudgeCopy, shouldPromptSignInToComment } from "./lib/comment-acc
 import { markUseIntent } from "./lib/use-intent"
 import { refFor } from "./parse-ref"
 import { Presence } from "./rail-deck"
+import { VersionMenu } from "./version-menu"
 
 const footerLink =
   "rounded-md outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
@@ -121,41 +116,17 @@ export function PublicViewer({
             {/* With public history on, the version reads as a menu: every version,
                 one line each, navigating the @vN refs the router already serves.
                 Off (or a single version), it stays the inert text it always was. */}
-            {art.public_history && (art.versions?.length ?? 0) > 1 ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  data-testid="public-version-menu"
-                  className="rounded-sm text-foreground underline decoration-dotted underline-offset-2 outline-none hover:decoration-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-                >
-                  v{shown} ▾
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="max-w-[420px]">
-                  {[...(art.versions ?? [])].reverse().map((v) => (
-                    <DropdownMenuItem key={v.n} asChild data-testid={`public-version-${v.n}`}>
-                      <Link
-                        to={template ? "/templates/$ref" : "/artifacts/$ref"}
-                        params={{
-                          ref: v.n === art.current_version ? baseRef : `${baseRef}@v${v.n}`,
-                        }}
-                        className="flex w-full min-w-0 items-baseline gap-2 font-mono text-xs"
-                      >
-                        <span className={cn("shrink-0", v.n === shown && "font-semibold")}>
-                          v{v.n}
-                        </span>
-                        <span className="shrink-0 text-muted-foreground">
-                          {v.created_at ? ago(v.created_at) : ""}
-                        </span>
-                        {v.author && (
-                          <span className="shrink-0 text-muted-foreground">· {v.author}</span>
-                        )}
-                        {v.message && (
-                          <span className="truncate text-muted-foreground">· {v.message}</span>
-                        )}
-                      </Link>
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
+            {art.public_history ? (
+              <VersionMenu
+                versions={art.versions ?? []}
+                shown={shown}
+                current={art.current_version}
+                testPrefix="public"
+                linkFor={(n) => ({
+                  to: template ? "/templates/$ref" : "/artifacts/$ref",
+                  params: { ref: n === art.current_version ? baseRef : `${baseRef}@v${n}` },
+                })}
+              />
             ) : (
               <>v{shown}</>
             )}

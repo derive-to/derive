@@ -82,6 +82,7 @@ import { type EditChange, unsavedEditsCopy, useInlineEdit } from "./use-inline-e
 import { useSeenCursor } from "./use-seen-cursor"
 import { useUrlPlace } from "./use-url-place"
 import { useVersionDiff } from "./use-version-diff"
+import { VersionMenu } from "./version-menu"
 import { WorkbenchSkeleton } from "./workbench-skeleton"
 
 // The source editor's discard wording: one spelling for the three doors out of a dirty
@@ -1586,8 +1587,16 @@ export function Artifact({ template = false }: { template?: boolean }) {
               of icons — the actions collapse to the right. */}
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">
             <ArtifactBreadcrumb art={art} focusMode={focus} />
-            <span className="truncate font-mono text-2xs tabular-nums text-muted-foreground">
-              {artifactTypeLabel(art)} · v{art.current_version}
+            <span className="flex min-w-0 items-center gap-1 truncate font-mono text-2xs tabular-nums text-muted-foreground">
+              {artifactTypeLabel(art)} ·{" "}
+              {/* The version is a menu: pick any version by when it was published. */}
+              <VersionMenu
+                versions={art.versions ?? []}
+                shown={shown}
+                current={art.current_version}
+                testPrefix="artifact"
+                onPick={goToVersion}
+              />
               {art.updated_at ? ` · updated ${ago(art.updated_at)}` : ""}
             </span>
           </div>
