@@ -293,6 +293,16 @@ CREATE TABLE IF NOT EXISTS agent_artifact_pin (
   FOREIGN KEY (artifact_id) REFERENCES artifact(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS agent_member (
+  agent_id TEXT NOT NULL,
+  org_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  role TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (agent_id, user_id),
+  FOREIGN KEY (agent_id) REFERENCES agent(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS job (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,

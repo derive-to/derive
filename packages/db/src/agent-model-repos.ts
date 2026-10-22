@@ -1,6 +1,7 @@
 import type {
   AccountPatch,
   AccountRecord,
+  AgentMemberRecord,
   AgentModelStore,
   AgentPatch,
   AgentRecord,
@@ -57,7 +58,6 @@ const AGENT_FIELDS = [
   "repositories_json",
   "environment_json",
   "ask_policy",
-  "askers_json",
   "spend_policy",
   "write_policy",
   "paused_at",
@@ -151,6 +151,27 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
       else
         await execute(
           sql`DELETE FROM agent_artifact_pin WHERE agent_id = ${agentId} AND org_id = ${orgId} AND artifact_id = ${artifactId} RETURNING agent_id`,
+        )
+    },
+    async listAgentMembers(agentId, orgId) {
+      return rows<AgentMemberRecord>(
+        sql`SELECT * FROM agent_member WHERE agent_id = ${agentId} AND org_id = ${orgId} ORDER BY created_at, user_id`,
+      )
+    },
+    async listAgentGrants(orgId, userId) {
+      return rows<AgentMemberRecord>(
+        sql`SELECT * FROM agent_member WHERE org_id = ${orgId} AND user_id = ${userId}`,
+      )
+    },
+    async setAgentMember(agentId, orgId, userId, role) {
+      if (role)
+        await execute(sql`INSERT INTO agent_member (agent_id, org_id, user_id, role, created_at)
+        SELECT a.id, a.org_id, ${userId}, ${role}, ${new Date().toISOString()} FROM agent a
+        WHERE a.id = ${agentId} AND a.org_id = ${orgId}
+        ON CONFLICT (agent_id, user_id) DO UPDATE SET role = excluded.role RETURNING agent_id`)
+      else
+        await execute(
+          sql`DELETE FROM agent_member WHERE agent_id = ${agentId} AND org_id = ${orgId} AND user_id = ${userId} RETURNING agent_id`,
         )
     },
     async updateAgent(id, orgId, patch) {

@@ -15,6 +15,7 @@ import { AgentSettings } from "./agent-settings"
 import { AgentSkill } from "./agent-skill"
 import { machineOf, modelChoices } from "./format"
 import { NewTaskDialog } from "./new-task-dialog"
+import { ShareAgentDialog } from "./share-agent-dialog"
 import { AgentPending } from "./skeleton"
 import { useMemberNames } from "./use-member-names"
 
@@ -63,7 +64,12 @@ export function AgentPage() {
   return (
     <PageShell width="wide" className="flex min-h-full flex-col gap-6 bg-card">
       <PageHeader
-        actions={agent.can_ask ? <NewTaskDialog agent={agent} /> : undefined}
+        actions={
+          <div className="flex items-center gap-2">
+            <ShareAgentDialog agent={agent} />
+            {agent.can_ask && <NewTaskDialog agent={agent} />}
+          </div>
+        }
         title={agent.name}
         titleTestId="agent-title"
         eyebrow={

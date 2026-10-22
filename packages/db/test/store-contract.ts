@@ -3230,6 +3230,35 @@ export function runStoreContract(
       expect(await store.listAgentArtifactPins(a.id, ORG)).toEqual([])
     })
 
+    it("shares an agent with people at a role, re-roles in place, scoped and removed with it", async () => {
+      const a = await mkAgent()
+      const other = await mkAgent()
+      await store.setAgentMember(a.id, ORG, "u_share_ed", "editor")
+      await store.setAgentMember(a.id, ORG, "u_share_ed", "owner")
+      await store.setAgentMember(other.id, ORG, "u_share_ed", "editor")
+      await store.setAgentMember(a.id, "org_other", "u_share_x", "owner")
+      expect(await store.listAgentMembers(a.id, ORG)).toEqual([
+        expect.objectContaining({
+          agent_id: a.id,
+          org_id: ORG,
+          user_id: "u_share_ed",
+          role: "owner",
+        }),
+      ])
+      expect(
+        (await store.listAgentGrants(ORG, "u_share_ed")).map((g) => [g.agent_id, g.role]).sort(),
+      ).toEqual(
+        [
+          [a.id, "owner"],
+          [other.id, "editor"],
+        ].sort(),
+      )
+      await store.setAgentMember(a.id, ORG, "u_share_ed", null)
+      expect(await store.listAgentMembers(a.id, ORG)).toEqual([])
+      await store.deleteAgent(other.id, ORG)
+      expect(await store.listAgentGrants(ORG, "u_share_ed")).toEqual([])
+    })
+
     it("claims an agent's queued jobs oldest first, disjointly, and not before scheduled_for", async () => {
       const a = await mkAgent()
       const other = await mkAgent()

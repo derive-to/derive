@@ -1,7 +1,7 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { AppContext } from "../context"
 import { bail, fail } from "../lib/http"
-import { agentAccess } from "../lib/job-policy"
+import { agentAccess, agentGrant } from "../lib/job-policy"
 
 /** Pins are explicit agent/document relationships, never inferred from job effects.
  * Permission is checked again on every read: pinning does not share a private document. */
@@ -78,7 +78,12 @@ export function agentArtifactRoutes(ctx: AppContext) {
         if (
           !agent ||
           agent.org_id !== org ||
-          !agentAccess(agent, member, await ctx.agentFor(c)).can_manage
+          !agentAccess(
+            agent,
+            member,
+            await ctx.agentFor(c),
+            await agentGrant(ctx.meta, agent, who.id),
+          ).can_manage
         )
           return bail(fail(c, 404, "agent not found"))
         const art = await ctx.requireArtifact(c, "read", { shortId: c.req.param("ref") })

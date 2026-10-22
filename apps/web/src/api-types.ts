@@ -1311,6 +1311,111 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The people an agent is shared with, its creator first. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The roster. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            members: components["schemas"]["ArtifactMember"][];
+                        };
+                    };
+                };
+            };
+        };
+        /** Share an agent with a workspace member, or change their role. */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The roster. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            members: components["schemas"]["ArtifactMember"][];
+                        };
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{id}/members/{userId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Stop sharing an agent with someone. */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    userId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The roster. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            members: components["schemas"]["ArtifactMember"][];
+                        };
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/runtime": {
         parameters: {
             query?: never;
@@ -1414,8 +1519,6 @@ export interface paths {
                         sandbox?: components["schemas"]["AgentSandbox"];
                         /** @enum {string} */
                         ask_policy?: "workspace" | "invited";
-                        /** @description Members who may ask an invited agent besides its creator and the owners. */
-                        askers?: string[];
                         /**
                          * @description creator: everyone who may ask runs on your model account and your secrets bound to it. Only the creator sets it.
                          * @enum {string}
@@ -7846,8 +7949,6 @@ export interface components {
             sandbox: components["schemas"]["AgentSandbox"];
             /** @enum {string} */
             ask_policy: "workspace" | "invited";
-            /** @description Who may ask an invited agent besides its creator and the workspace's owners. */
-            askers: string[];
             /**
              * @description asker: each job runs on its asker's model account and secrets. creator: on its creator's, lent to everyone who may ask.
              * @enum {string}

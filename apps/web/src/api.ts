@@ -470,7 +470,6 @@ export type AgentPatch = Partial<
     | "description"
     | "instructions_short_id"
     | "ask_policy"
-    | "askers"
     | "spend_policy"
     | "write_policy"
     | "connection_ids"
@@ -1807,6 +1806,16 @@ export const api = {
       method: "DELETE",
       credentials: "include",
     }).then(() => undefined),
+  listAgentMembers: (id: string): Promise<{ members: ArtifactMember[] }> =>
+    f(`/v1/agents/${id}/members`, opts()).then(j),
+  setAgentMember: (
+    id: string,
+    user: string,
+    role: "editor" | "owner",
+  ): Promise<{ members: ArtifactMember[] }> =>
+    f(`/v1/agents/${id}/members`, { ...opts({ user, role }), method: "PUT" }).then(j),
+  removeAgentMember: (id: string, userId: string): Promise<{ members: ArtifactMember[] }> =>
+    f(`/v1/agents/${id}/members/${userId}`, { method: "DELETE", credentials: "include" }).then(j),
   listCollectionMembers: (
     id: string,
   ): Promise<{ created_by: string; members: ArtifactMember[]; invites: ArtifactInvite[] }> =>

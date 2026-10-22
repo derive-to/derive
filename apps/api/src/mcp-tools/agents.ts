@@ -99,7 +99,6 @@ export function registerAgentsTool(tc: ToolContext): void {
           .optional()
           .describe("Default editor (can publish), capped at your seat."),
         ask_policy: z.enum(["workspace", "invited"]).optional(),
-        askers: z.array(z.string()).optional().describe("invited: user ids who may ask."),
         spend_policy: z
           .enum(["asker", "creator"])
           .optional()
@@ -179,7 +178,6 @@ export function registerAgentsTool(tc: ToolContext): void {
           effort: a.effort ?? undefined,
           sandbox: a.sandbox,
           ask_policy: a.ask_policy,
-          askers: a.askers,
           spend_policy: a.spend_policy,
           write_policy: a.write_policy,
           connection_ids: a.sources,
@@ -230,7 +228,6 @@ export function registerAgentsTool(tc: ToolContext): void {
         effort: a.effort,
         sandbox: a.sandbox,
         ask_policy: a.ask_policy,
-        askers: a.askers,
         spend_policy: a.spend_policy,
         write_policy: a.write_policy,
         connection_ids: a.sources,

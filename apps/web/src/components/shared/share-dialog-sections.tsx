@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button"
 import { getInitials } from "@/lib/initials"
 
 export type ShareSegment = "invite" | "workspace" | "anyone"
-type ShareTestPrefix = "share" | "collection-share"
+type ShareTestPrefix = "share" | "collection-share" | "agent-share"
 
 const SHARE_SEGMENTS: { value: ShareSegment; label: string; icon: IconName }[] = [
   { value: "invite", label: "Invited", icon: "lock" },
@@ -75,6 +75,8 @@ export function ShareAccessSection({
   canManage,
   pending,
   segment,
+  segments = ["invite", "workspace", "anyone"],
+  title = "Who can open this",
   testPrefix,
   inviteCopy,
   workspaceCopy,
@@ -89,12 +91,16 @@ export function ShareAccessSection({
   canManage: boolean
   pending: boolean
   segment: ShareSegment
+  /** The segments offered, in order; Invited, Workspace and Anyone by default. */
+  segments?: ShareSegment[]
+  title?: string
   testPrefix: ShareTestPrefix
   inviteCopy: ReactNode
   workspaceCopy: ReactNode
   readOnlyIcon: IconName
   readOnlyCopy: ReactNode
-  world: {
+  /** Required where the Anyone segment is offered. */
+  world?: {
     role: Exclude<LinkRole, "none">
     hasLock: boolean
     lockDraft: boolean
@@ -113,13 +119,11 @@ export function ShareAccessSection({
 }) {
   return (
     <div>
-      <SectionTitle action={pending && <Spinner className="size-3" />}>
-        Who can open this
-      </SectionTitle>
+      <SectionTitle action={pending && <Spinner className="size-3" />}>{title}</SectionTitle>
       {canManage ? (
         <div className="mt-2 flex flex-col">
           <AccessSegmentToggle
-            segments={SHARE_SEGMENTS}
+            segments={SHARE_SEGMENTS.filter((s) => segments.includes(s.value))}
             value={segment}
             onChange={onSegmentChange}
             disabled={pending}
@@ -134,7 +138,7 @@ export function ShareAccessSection({
               {workspaceChildren}
             </>
           )}
-          {segment === "anyone" && (
+          {segment === "anyone" && world && testPrefix !== "agent-share" && (
             <WorldLinkControls
               role={world.role}
               pending={pending}
@@ -167,6 +171,8 @@ export function ShareAccessSection({
 export function SharePeopleSection({
   members,
   invites,
+  roles,
+  placeholder = "Add people by @username or email…",
   currentUserId,
   canManage,
   email,
@@ -183,6 +189,9 @@ export function SharePeopleSection({
 }: {
   members: ArtifactMember[]
   invites: ArtifactInvite[]
+  /** The roles this surface grants; every role by default. */
+  roles?: Role[]
+  placeholder?: string
   currentUserId?: string
   canManage: boolean
   email: string
@@ -242,6 +251,7 @@ export function SharePeopleSection({
                       className="w-25 shrink-0"
                     >
                       <RoleSelect
+                        roles={roles}
                         value={member.role}
                         onChange={(next) => onMemberRoleChange(member, next)}
                         aria-label={`Role for ${label}`}
@@ -311,11 +321,12 @@ export function SharePeopleSection({
             <PersonSearchInput
               value={email}
               onChange={onEmailChange}
-              placeholder="Add people by @username or email…"
+              placeholder={placeholder}
               testId={`${testPrefix}-email`}
             />
             <div data-testid={`${testPrefix}-role`} className="w-28 shrink-0">
               <RoleSelect
+                roles={roles}
                 value={role}
                 onChange={onRoleChange}
                 aria-label="Role for new member"

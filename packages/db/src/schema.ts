@@ -4,6 +4,7 @@ import type {
   AccountStatus,
   AgentAskPolicy,
   AgentMachine,
+  AgentMemberRole,
   AgentMentionKind,
   AgentMentionState,
   AgentSandboxPhase,
@@ -668,6 +669,7 @@ export const agent = sqliteTable(
     repositories_json: text("repositories_json"),
     environment_json: text("environment_json"),
     ask_policy: text("ask_policy").$type<AgentAskPolicy>().notNull().default("workspace"),
+    // Unused: superseded by agent_member. Kept because the schema only ever adds.
     askers_json: text("askers_json"),
     spend_policy: text("spend_policy").$type<AgentSpendPolicy>().notNull().default("asker"),
     write_policy: text("write_policy").$type<AgentWritePolicy>().notNull().default("publish"),
@@ -700,6 +702,21 @@ export const agentArtifactPin = sqliteTable(
       .references(() => artifact.id, { onDelete: "cascade" }),
   },
   (t) => [uniqueIndex("agent_artifact_pin_pair").on(t.agent_id, t.artifact_id)],
+)
+
+// The people an agent is shared with, beyond its creator (core AgentMemberRecord).
+export const agentMember = sqliteTable(
+  "agent_member",
+  {
+    agent_id: text("agent_id")
+      .notNull()
+      .references(() => agent.id, { onDelete: "cascade" }),
+    org_id: text("org_id").notNull(),
+    user_id: text("user_id").notNull(),
+    role: text("role").$type<AgentMemberRole>().notNull(),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("agent_member_pair").on(t.agent_id, t.user_id)],
 )
 
 // ---- The agent model (core agent-model.ts) ------------------------------------------------
@@ -1639,6 +1656,7 @@ const TABLES = [
   notification,
   agent,
   agentArtifactPin,
+  agentMember,
   job,
   jobMessage,
   agentTrigger,
