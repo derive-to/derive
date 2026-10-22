@@ -327,20 +327,33 @@ describe("jobs: who may ask, see, and run", () => {
       can_manage: boolean
     }
     expect(detail).toMatchObject({ can_ask: false, can_manage: false })
-    // Naming Ed lets him ask; nothing else about the agent opens to him.
-    await app.request(`/v1/agents/${a.id}`, {
-      ...jsonAs(as(owner.email), { askers: [ed.id] }),
-      method: "PATCH",
-    })
+    // Sharing it with Ed as an editor lets him ask, and nothing more; as an owner he also
+    // manages it and who it is shared with. Its creator always owns it.
+    const share = (who: string, body: Record<string, unknown>) =>
+      app.request(`/v1/agents/${a.id}/members`, { ...jsonAs(as(who), body), method: "PUT" })
+    const rename = (who: string) =>
+      app.request(`/v1/agents/${a.id}`, {
+        ...jsonAs(as(who), { description: "Shared" }),
+        method: "PATCH",
+      })
+    expect((await share(owner.email, { user: outsider.email, role: "editor" })).status).toBe(404)
+    expect((await share(owner.email, { user: owner.email, role: "editor" })).status).toBe(409)
+    expect((await share(owner.email, { user: ed.email, role: "editor" })).status).toBe(200)
     expect((await ask(app, ed.email, a.id, "hi")).status).toBe(201)
-    expect(
-      (
-        await app.request(`/v1/agents/${a.id}`, {
-          ...jsonAs(as(ed.email), { askers: [] }),
-          method: "PATCH",
-        })
-      ).status,
-    ).toBe(404)
+    expect((await rename(ed.email)).status).toBe(404)
+    expect((await share(ed.email, { user: ed.email, role: "owner" })).status).toBe(404)
+    const shared = await share(owner.email, { user: ed.email, role: "owner" })
+    expect(((await shared.json()) as { members: unknown[] }).members).toEqual([
+      expect.objectContaining({ user_id: owner.id, role: "owner" }),
+      expect.objectContaining({ user_id: ed.id, role: "owner" }),
+    ])
+    expect((await rename(ed.email)).status).toBe(200)
+    const unshare = await app.request(`/v1/agents/${a.id}/members/${ed.id}`, {
+      method: "DELETE",
+      headers: as(owner.email),
+    })
+    expect(unshare.status).toBe(200)
+    expect((await ask(app, ed.email, a.id, "again")).status).toBe(404)
   })
 
   it("a retired work token (dkrun_, dksess_, dkwfr_) resolves to nobody, even when well signed", async () => {
@@ -3380,13 +3393,15 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     const patch = (who: string, body: Record<string, unknown>) =>
       app.request(`/v1/agents/${agent.id}`, { ...jsonAs(as(who), body), method: "PATCH" })
     expect((await ask(app, ed.email, agent.id, "revenue by plan")).status).toBe(404)
-    // A named asker must hold a seat.
-    expect((await patch(owner.email, { askers: [outsider.id] })).status).toBe(400)
-    expect((await patch(owner.email, { askers: [ed.id] })).status).toBe(200)
+    const share = await app.request(`/v1/agents/${agent.id}/members`, {
+      ...jsonAs(as(owner.email), { user: ed.email, role: "editor" }),
+      method: "PUT",
+    })
+    expect(share.status).toBe(200)
     // Ed may ask now, but has no model account and may not spend the owner's secret.
     expect((await ask(app, ed.email, agent.id, "revenue by plan")).status).toBe(409)
     const lending = await patch(owner.email, { spend_policy: "creator" })
-    expect(await lending.json()).toMatchObject({ askers: [ed.id], spend_policy: "creator" })
+    expect(await lending.json()).toMatchObject({ spend_policy: "creator" })
     const lent = await ask(app, ed.email, agent.id, "revenue by plan")
     expect(lent.status).toBe(201)
     const job = await meta.getJob(((await lent.json()) as { id: string }).id)
@@ -3403,6 +3418,11 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     const ownerEdits = (body: Record<string, unknown>) =>
       app.request(`/v1/agents/${edsId}`, { ...jsonAs(as(owner.email), body), method: "PATCH" })
     expect((await ownerEdits({ model: "opus" })).status).toBe(403)
+    const widen = await app.request(`/v1/agents/${edsId}/members`, {
+      ...jsonAs(as(owner.email), { user: owner.email, role: "editor" }),
+      method: "PUT",
+    })
+    expect(widen.status).toBe(403)
     expect((await ownerEdits({ spend_policy: "asker" })).status).toBe(200)
     expect((await ownerEdits({ spend_policy: "creator" })).status).toBe(403)
     expect((await ownerEdits({ model: "opus" })).status).toBe(200)

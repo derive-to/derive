@@ -77,7 +77,8 @@ The same rule covers both: your own personal ones, or the workspace's if you man
 **Lending.** By default a Derive-machine job runs on the asker's model account and only on
 secrets that are the asker's or the workspace's. `spend_policy: "creator"` lends the creator's
 model account and their bound secrets to everyone who may ask; only the creator sets it. Pair it
-with `ask_policy: "invited"` and `askers: [user ids]` to choose who those people are.
+with `ask_policy: "invited"` and share the agent with the people who should ask it, from its
+Share button in Derive (an editor may ask; an owner may also manage it).
 
 ## Ask it
 

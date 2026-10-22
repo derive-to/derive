@@ -177,14 +177,17 @@ if none can be read, the job fails with an error.
 
 ### Who may ask, and whose account it spends
 
-**Access** on the Settings tab says who may ask the agent for work. `Workspace` lets every
-member ask. `Chosen people` lets its creator, the workspace owners and the members you add ask.
+**Share** on the agent's page says who may ask it, the same way you share a page or a
+collection. `Workspace` lets every member ask. `Invited` lets its creator, the workspace owners
+and the people it is shared with ask. Share it with someone as an editor and they can ask it for
+work; as an owner they can also change its settings and who it is shared with. Only members of
+the workspace can be added.
 
 On a Derive machine, each job normally runs on the asker's own model account (or the shared
 one), and only on secrets that are the asker's or the workspace's. A teammate without an
 account cannot use your agent, and your personal secrets stay yours.
 
-**Runs on** changes that. Set it to your account and every job, whoever asks, runs on your
+**Runs on**, on the Settings tab, changes that. Set it to your account and every job, whoever asks, runs on your
 model account and the personal secrets you bound to the agent, and bills you. Askers never see
 the secret values, but the agent's commands can use them, so lend only to people you would
 trust with what those secrets reach. Only the creator can turn lending on. While it is on, a

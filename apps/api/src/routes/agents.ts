@@ -22,11 +22,12 @@ import { sha256 } from "../lib/crypto"
 import { GithubOn, githubEventsSetup, parseOn } from "../lib/github-events"
 import { bail, fail, readJson } from "../lib/http"
 import { machineDepsFrom, replaceIdleSandbox, retireSandbox } from "../lib/job-machine"
-import { agentAccess, agentAskers } from "../lib/job-policy"
+import { agentAccess, agentGrant } from "../lib/job-policy"
 import { agentRepository, cancelJob } from "../lib/jobs"
 import { cloudEnabled, workspaceRuntime } from "../lib/runtime-connection"
 import { previousOccurrence } from "../lib/schedule"
 import { agentArtifactRoutes } from "./agent-artifacts"
+import { agentMemberRoutes } from "./agent-members"
 
 /** The machine an agent's Derive jobs run on (core AgentSandbox). */
 const AgentSandboxSchema = z
@@ -75,6 +76,7 @@ export const agentRoutes = (ctx: AppContext) => {
   const { meta, deps, agentFor, privateOwnerId, requireUser, requireWorkspace } = ctx
   const app = new OpenAPIHono<BlankEnv>()
   app.route("/", agentArtifactRoutes(ctx))
+  app.route("/", agentMemberRoutes(ctx))
 
   app.openapi(
     createRoute({
@@ -190,7 +192,6 @@ export const agentRoutes = (ctx: AppContext) => {
       effort: a.effort,
       sandbox: parseAgentSandbox(a.sandbox_json),
       ask_policy: a.ask_policy,
-      askers: agentAskers(a),
       spend_policy: a.spend_policy,
       write_policy: a.write_policy,
       paused: a.paused_at !== null,
@@ -284,9 +285,6 @@ export const agentRoutes = (ctx: AppContext) => {
         "The machine its Derive jobs run on. Empty uses the workspace default.",
       ),
       ask_policy: z.enum(["workspace", "invited"]),
-      askers: z
-        .array(z.string())
-        .describe("Who may ask an invited agent besides its creator and the workspace's owners."),
       spend_policy: z
         .enum(["asker", "creator"])
         .describe(
@@ -399,6 +397,9 @@ export const agentRoutes = (ctx: AppContext) => {
       const who = await ctx.actingHuman(c)
       const member = who ? await meta.getMembership(org, who.id) : null
       const caller = await ctx.agentFor(c)
+      const grants = new Map(
+        who ? (await meta.listAgentGrants(org, who.id)).map((g) => [g.agent_id, g.role]) : [],
+      )
       // What the Agents screen groups by, in two queries rather than one per agent: each
       // agent's schedules, and when it last had work.
       const triggers = await meta.listTriggers(org)
@@ -427,7 +428,7 @@ export const agentRoutes = (ctx: AppContext) => {
             })),
             triggers: triggers.filter((t) => t.agent_id === a.id).map(triggerJson),
             last_job_at: lastJob.get(a.id) ?? null,
-            ...agentAccess(a, member, caller),
+            ...agentAccess(a, member, caller, grants.get(a.id)),
           })),
         ),
       })
@@ -445,8 +446,12 @@ export const agentRoutes = (ctx: AppContext) => {
     if (!agent) return null
     const who = await ctx.actingHuman(c)
     if (!who) return null
-    return agentAccess(agent, await meta.getMembership(agent.org_id, who.id), await ctx.agentFor(c))
-      .can_manage
+    return agentAccess(
+      agent,
+      await meta.getMembership(agent.org_id, who.id),
+      await ctx.agentFor(c),
+      await agentGrant(meta, agent, who.id),
+    ).can_manage
       ? who.id
       : null
   }
@@ -491,14 +496,6 @@ export const agentRoutes = (ctx: AppContext) => {
     )
   }
 
-  /** Askers must hold a seat in the agent's workspace when they are named. */
-  const askersError = async (org: string, askers: string[] | undefined) => {
-    for (const id of new Set(askers ?? []))
-      if (!(await meta.getMembership(org, id).catch(() => null)))
-        return "askers must be members of this workspace"
-    return null
-  }
-
   /** A default repository works only through a GitHub source for its owner the agent holds. */
   const repositoryError = async (
     repository: string | null | undefined,
@@ -532,10 +529,6 @@ export const agentRoutes = (ctx: AppContext) => {
     effort: z.enum(EXECUTION_EFFORTS).nullable(),
     sandbox: AgentSandboxSchema,
     ask_policy: z.enum(["workspace", "invited"]),
-    askers: z
-      .array(z.string().min(1).max(64))
-      .max(200)
-      .describe("Members who may ask an invited agent besides its creator and the owners."),
     spend_policy: z
       .enum(["asker", "creator"])
       .describe(
@@ -654,7 +647,6 @@ export const agentRoutes = (ctx: AppContext) => {
       const refused =
         (await definitionError(c, org, creator, b)) ??
         (await repositoryError(b.repository, b.connection_ids ?? [])) ??
-        (await askersError(org, b.askers)) ??
         (b.spend_policy === "creator" && !creator
           ? "only a person can lend their model account and secrets"
           : null)
@@ -705,7 +697,6 @@ export const agentRoutes = (ctx: AppContext) => {
           effort: b.effort ?? null,
           sandbox_json: sandboxJson(b.sandbox) ?? null,
           ask_policy: b.ask_policy ?? "workspace",
-          askers_json: b.askers?.length ? JSON.stringify([...new Set(b.askers)]) : null,
           spend_policy: b.spend_policy ?? "asker",
           write_policy: b.write_policy ?? "publish",
           connection_ids_json: b.connection_ids?.length ? JSON.stringify(b.connection_ids) : null,
@@ -792,7 +783,7 @@ export const agentRoutes = (ctx: AppContext) => {
           sources: await sourcesOfOne(agent),
         })),
         triggers: (await meta.listTriggers(agent.org_id, agent.id)).map(triggerJson),
-        ...agentAccess(agent, member, await ctx.agentFor(c)),
+        ...agentAccess(agent, member, await ctx.agentFor(c), await agentGrant(meta, agent, who.id)),
       })
     },
   )
@@ -854,8 +845,7 @@ export const agentRoutes = (ctx: AppContext) => {
         (await repositoryError(
           b.repository,
           b.connection_ids ?? parseConnectionIds(agent.connection_ids_json),
-        )) ??
-        (await askersError(org, b.askers))
+        ))
       if (refused) return bail(fail(c, 400, refused))
       if (b.machine === "derive" && !(await cloudEnabled(meta, deps.runtime, org)))
         return bail(
@@ -886,12 +876,6 @@ export const agentRoutes = (ctx: AppContext) => {
           effort: b.effort,
           sandbox_json: sandboxJson(b.sandbox),
           ask_policy: b.ask_policy,
-          askers_json:
-            b.askers === undefined
-              ? undefined
-              : b.askers.length
-                ? JSON.stringify([...new Set(b.askers)])
-                : null,
           spend_policy: b.spend_policy,
           write_policy: b.write_policy,
           connection_ids_json:

@@ -16,6 +16,16 @@ export type AgentAskPolicy = "workspace" | "invited"
 /** Whose model account and personal secrets an agent's jobs spend: each asker's own, or the
  *  creator's, lent to everyone who may ask. Only the creator turns lending on. */
 export type AgentSpendPolicy = "asker" | "creator"
+/** What sharing an agent with a person grants, beyond their workspace seat: an `editor` may
+ *  ask it for work; an `owner` may also manage it, as its creator does. */
+export type AgentMemberRole = "editor" | "owner"
+export interface AgentMemberRecord {
+  agent_id: string
+  org_id: string
+  user_id: string
+  role: AgentMemberRole
+  created_at: string
+}
 export type AgentWritePolicy = "publish" | "review"
 
 export type JobKind = "ask" | "scheduled" | "graph" | "node"
@@ -308,7 +318,6 @@ export interface AgentPatch {
   repositories_json?: string | null
   environment_json?: string | null
   ask_policy?: AgentAskPolicy
-  askers_json?: string | null
   spend_policy?: AgentSpendPolicy
   write_policy?: AgentWritePolicy
   paused_at?: string | null
@@ -371,6 +380,17 @@ export interface AccountPatch {
 /** The store half of the agent model. Generic over the agent row so this file never imports
  *  ports.ts (which imports it): MetaStore binds it to AgentRecord. */
 export interface AgentModelStore<Agent = unknown> {
+  /** The people an agent is shared with. Its creator holds it without a row. */
+  listAgentMembers(agentId: string, orgId: string): Promise<AgentMemberRecord[]>
+  /** One person's shares across a workspace's agents. */
+  listAgentGrants(orgId: string, userId: string): Promise<AgentMemberRecord[]>
+  /** Share an agent with a person at `role`, or stop sharing it with them (null). */
+  setAgentMember(
+    agentId: string,
+    orgId: string,
+    userId: string,
+    role: AgentMemberRole | null,
+  ): Promise<void>
   listAgentArtifactPins(
     agentId: string,
     orgId: string,

@@ -28,9 +28,9 @@ import { accountsQuery, agentConnectionsQuery, artifactQuery } from "@/lib/queri
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 import { accountLabel } from "../settings/accounts-section"
-import { AccessFields } from "./agent-access"
 import { sourceName, useNoAccount } from "./agent-jobs"
 import { RepositoryField } from "./agent-repository"
+import { RunsOnField } from "./agent-runs-on"
 import { TriggersField } from "./agent-triggers"
 import { machineOf, modelChoices, ownerMachineName, runnerCommand, when } from "./format"
 import { Field, Group, Segmented, Sub, Verb } from "./rows"
@@ -180,7 +180,7 @@ export function AgentSettings({ agent, names, isWorkspaceOwner }: Props) {
             ]}
           />
         </Field>
-        <AccessFields agent={agent} edit={edit} meId={me?.id ?? ""} names={names} onSave={set} />
+        <RunsOnField agent={agent} edit={edit} meId={me?.id ?? ""} names={names} onSave={set} />
         {agent.machine === "owner" && (
           <KeyField agent={agent} canReplace={edit && isWorkspaceOwner} />
         )}

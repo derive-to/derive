@@ -1959,13 +1959,6 @@
               "invited"
             ]
           },
-          "askers": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Who may ask an invited agent besides its creator and the workspace's owners."
-          },
           "spend_policy": {
             "type": "string",
             "enum": [
@@ -2050,7 +2043,6 @@
           "effort",
           "sandbox",
           "ask_policy",
-          "askers",
           "spend_policy",
           "write_policy",
           "paused",
@@ -6874,6 +6866,135 @@
         }
       }
     },
+    "/v1/agents/{id}/members": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "The people an agent is shared with, its creator first.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The roster.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "members": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ArtifactMember"
+                      }
+                    }
+                  },
+                  "required": [
+                    "members"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Share an agent with a workspace member, or change their role.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The roster.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "members": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ArtifactMember"
+                      }
+                    }
+                  },
+                  "required": [
+                    "members"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/agents/{id}/members/{userId}": {
+      "delete": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Stop sharing an agent with someone.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "userId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The roster.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "members": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ArtifactMember"
+                      }
+                    }
+                  },
+                  "required": [
+                    "members"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/agents/runtime": {
       "get": {
         "tags": [
@@ -7051,16 +7172,6 @@
                       "workspace",
                       "invited"
                     ]
-                  },
-                  "askers": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 64
-                    },
-                    "maxItems": 200,
-                    "description": "Members who may ask an invited agent besides its creator and the owners."
                   },
                   "spend_policy": {
                     "type": "string",

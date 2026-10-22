@@ -1,4 +1,5 @@
 import {
+  type AgentMemberRole,
   type AgentRecord,
   type JobRecord,
   type MembershipRecord,
@@ -23,44 +24,43 @@ export interface JobDeps {
 
 // ---- Who may ask -------------------------------------------------------------------------
 
-/** The members an `invited` agent names as askers. A malformed column names nobody. */
-export const agentAskers = (agent: Pick<AgentRecord, "askers_json">): string[] => {
-  try {
-    const ids: unknown = JSON.parse(agent.askers_json ?? "[]")
-    return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : []
-  } catch {
-    return []
-  }
-}
-
-/** One policy for detail reads and the roster's batched membership read. */
+/** One policy for detail reads and the roster's batched membership read. `grant` is the role
+ *  the agent is shared with this person at, if any: an `editor` may ask it; an `owner` may
+ *  also manage it, as its creator does. */
 export const agentAccess = (
   agent: AgentRecord,
   member: MembershipRecord | null,
   caller?: Pick<AgentRecord, "id" | "role" | "org_id"> | null,
+  grant?: AgentMemberRole | null,
 ) => {
   if (!member || member.org_id !== agent.org_id) return { can_ask: false, can_manage: false }
-  const creator = agent.created_by === member.user_id
+  const owns = agent.created_by === member.user_id || grant === "owner"
   return {
     can_ask:
       (!caller || (caller.org_id === agent.org_id && roleAllows(caller.role, "publish"))) &&
       agent.managed !== 1 &&
-      (agent.ask_policy === "workspace" ||
-        creator ||
-        member.role === "owner" ||
-        agentAskers(agent).includes(member.user_id)),
+      (agent.ask_policy === "workspace" || owns || grant === "editor" || member.role === "owner"),
     can_manage:
-      (member.role === "owner" || (creator && member.role !== "viewer")) &&
+      (member.role === "owner" || (owns && member.role !== "viewer")) &&
       (!caller ||
         (caller.id.startsWith("oauth:") &&
           caller.org_id === agent.org_id &&
-          (roleAllows(caller.role, "manage") || (roleAllows(caller.role, "publish") && creator)))),
+          (roleAllows(caller.role, "manage") || (roleAllows(caller.role, "publish") && owns)))),
   }
 }
 
+/** The role an agent is shared with this person at, or null. */
+export const agentGrant = async (
+  meta: MetaStore,
+  agent: AgentRecord,
+  userId: string,
+): Promise<AgentMemberRole | null> =>
+  (await meta.listAgentMembers(agent.id, agent.org_id)).find((m) => m.user_id === userId)?.role ??
+  null
+
 /** A person may ask an agent when they are a member of its workspace and the agent's ask
  *  policy lets them: `workspace` lets every member ask; `invited` lets the agent's creator,
- *  workspace owners and the members it names ask. */
+ *  workspace owners and the people it is shared with ask. */
 export const canAskAgent = async (
   meta: MetaStore,
   agent: AgentRecord,
@@ -68,11 +68,11 @@ export const canAskAgent = async (
   caller?: Pick<AgentRecord, "id" | "role" | "org_id"> | null,
 ): Promise<boolean> => {
   const m = await meta.getMembership(agent.org_id, userId).catch(() => null)
-  return agentAccess(agent, m, caller).can_ask
+  return agentAccess(agent, m, caller, await agentGrant(meta, agent, userId)).can_ask
 }
 
-/** A person may manage an agent (edit, pause, triggers, delete) when they created it or own
- *  the workspace. */
+/** A person may manage an agent (edit, pause, triggers, share, delete) when they created it,
+ *  it is shared with them as an owner, or they own the workspace. */
 export const canManageAgent = async (
   meta: MetaStore,
   agent: AgentRecord,
@@ -80,7 +80,7 @@ export const canManageAgent = async (
 ): Promise<boolean> => {
   // Both doors need a live seat: a creator who has left the workspace manages nothing.
   const m = await meta.getMembership(agent.org_id, userId).catch(() => null)
-  return agentAccess(agent, m).can_manage
+  return agentAccess(agent, m, null, await agentGrant(meta, agent, userId)).can_manage
 }
 
 /** A person may act on a job (follow up, cancel, retry, answer) when they asked it or manage
@@ -92,7 +92,12 @@ export const canSteerJob = async (
   userId: string,
   caller?: Pick<AgentRecord, "id" | "role" | "org_id"> | null,
 ): Promise<boolean> => {
-  const access = agentAccess(agent, await meta.getMembership(agent.org_id, userId), caller)
+  const access = agentAccess(
+    agent,
+    await meta.getMembership(agent.org_id, userId),
+    caller,
+    await agentGrant(meta, agent, userId),
+  )
   return (job.asked_by === userId && access.can_ask) || access.can_manage
 }
 
@@ -107,9 +112,14 @@ export const inboxScope = async (
   const seat = await meta.getMembership(orgId, userId).catch(() => null)
   if (!seat) return null
   if (seat.role === "owner") return "all"
+  const shared = new Set(
+    (await meta.listAgentGrants(orgId, userId))
+      .filter((g) => g.role === "owner")
+      .map((g) => g.agent_id),
+  )
   const own =
     seat.role === "viewer"
       ? []
-      : (await meta.listAgents(orgId)).filter((a) => a.created_by === userId)
+      : (await meta.listAgents(orgId)).filter((a) => a.created_by === userId || shared.has(a.id))
   return { askedBy: userId, agentIds: own.map((a) => a.id) }
 }

@@ -313,6 +313,7 @@ const _schemaShapes: Shapes<typeof schema, import("./parity").PgExecutionTables>
   reviewRound: true,
   agent: true,
   agentArtifactPin: true,
+  agentMember: true,
   agentMention: true,
   artifactScanEvent: true,
   artifactScanCoverage: true,
@@ -593,6 +594,9 @@ export class PgMetaStore implements MetaStore {
   )
   listAgentArtifactPins = this.agentModel.listAgentArtifactPins
   setAgentArtifactPin = this.agentModel.setAgentArtifactPin
+  listAgentMembers = this.agentModel.listAgentMembers
+  listAgentGrants = this.agentModel.listAgentGrants
+  setAgentMember = this.agentModel.setAgentMember
   updateAgent = this.agentModel.updateAgent
   touchAgentSeen = this.agentModel.touchAgentSeen
   createJob = this.agentModel.createJob

@@ -3109,8 +3109,7 @@ export interface AgentRecord {
   /** Encrypted env bindings, NAME → credential id. Never values. */
   environment_json: string | null
   ask_policy: import("./agent-model").AgentAskPolicy
-  /** Who may ask an `invited` agent besides its creator and the workspace's owners: a JSON
-   *  array of user ids. Each is re-checked for a seat at ask time. */
+  /** Unused: superseded by agent_member. The column stays because the schema only adds. */
   askers_json: string | null
   spend_policy: import("./agent-model").AgentSpendPolicy
   write_policy: import("./agent-model").AgentWritePolicy
@@ -3143,7 +3142,6 @@ export interface NewAgent {
   repositories_json?: string | null
   environment_json?: string | null
   ask_policy?: import("./agent-model").AgentAskPolicy
-  askers_json?: string | null
   spend_policy?: import("./agent-model").AgentSpendPolicy
   write_policy?: import("./agent-model").AgentWritePolicy
   max_run_ms?: number | null

@@ -28,10 +28,13 @@ export function RoleSelect({
   className,
   "aria-label": ariaLabel = "Role",
   "data-testid": testId,
+  roles = ROLES,
 }: {
   value: Role
   onChange: (role: Role) => void
   className?: string
+  /** The roles this surface grants; every role by default. */
+  roles?: Role[]
   "aria-label"?: string
   "data-testid"?: string
 }) {
@@ -41,7 +44,7 @@ export function RoleSelect({
         {ROLE_LABELS[value]}
       </SelectMenuTrigger>
       <SelectMenuContent>
-        {ROLES.map((r) => (
+        {roles.map((r) => (
           <SelectMenuItem key={r} value={r}>
             {ROLE_LABELS[r]}
           </SelectMenuItem>
