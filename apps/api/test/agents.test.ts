@@ -196,3 +196,66 @@ describe("agents: the record says who did the work", () => {
     expect(mine.resolution).toMatchObject({ by: "Owner", by_id: owner.id, by_kind: "user" })
   })
 })
+
+describe("agents: maintained artifact pins", () => {
+  const owner: TestUser = { id: "u_pin_owner", email: "pin-owner@derive.test", name: "Owner" }
+  const viewer: TestUser = { id: "u_pin_viewer", email: "pin-viewer@derive.test", name: "Viewer" }
+  const { app, meta } = makeAuthedApp("agent-pins", [owner, viewer], "viewer")
+  it("requires a manager to pin and rechecks document access when listing latest versions", async () => {
+    await app.request("/v1/me", { headers: as(owner.email) })
+    await app.request("/v1/me", { headers: as(viewer.email) })
+    const agent = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Maintainer" }))
+    ).json()
+    const art = await (
+      await publishAs(
+        app,
+        "<h1>Private report</h1>",
+        { workspace_access: "none", link_role: "none" },
+        as(owner.email),
+      )
+    ).json()
+    const path = `/v1/agents/${agent.id}/artifacts/${art.short_id}`
+    expect((await app.request(path, { method: "PUT", headers: as(viewer.email) })).status).toBe(404)
+    expect((await app.request(path, { method: "PUT", headers: as(owner.email) })).status).toBe(200)
+    expect((await app.request(path, { method: "PUT", headers: as(owner.email) })).status).toBe(200)
+    const list = async (email: string) =>
+      (await app.request(`/v1/agents/${agent.id}/artifacts`, { headers: as(email) })).json()
+    expect((await list(owner.email)).artifacts).toMatchObject([
+      { short_id: art.short_id, version: 1 },
+    ])
+    expect((await list(viewer.email)).artifacts).toEqual([])
+    await publishAs(app, "<h1>Updated report</h1>", {}, as(owner.email), art.short_id)
+    expect((await list(owner.email)).artifacts).toMatchObject([
+      { short_id: art.short_id, version: 2 },
+    ])
+    const [stored] = await meta.getByShortIds([art.short_id])
+    if (!stored) throw new Error("missing artifact")
+    const foreign = await meta.createArtifact({
+      ...stored,
+      id: "art_pin_other",
+      short_id: "pinother",
+      org_id: "other_workspace",
+      workspace_access: "none",
+      link_role: "viewer",
+    })
+    expect(
+      (
+        await app.request(`/v1/agents/${agent.id}/artifacts/${foreign.short_id}`, {
+          method: "PUT",
+          headers: as(owner.email),
+        })
+      ).status,
+    ).toBe(400)
+    await meta.setArtifactRemoved(stored.id, new Date().toISOString())
+    expect((await list(owner.email)).artifacts).toEqual([])
+    expect((await app.request(path, { method: "PUT", headers: as(owner.email) })).status).toBe(400)
+    await meta.setArtifactRemoved(stored.id, null)
+    await meta.setArtifactArchived(stored.id, new Date().toISOString())
+    expect((await list(owner.email)).artifacts).toEqual([])
+    expect((await app.request(path, { method: "DELETE", headers: as(owner.email) })).status).toBe(
+      200,
+    )
+    expect(await meta.listAgentArtifactPins(agent.id, stored.org_id)).toEqual([])
+  })
+})

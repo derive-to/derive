@@ -135,6 +135,22 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
 
   return {
     // ---- Agents -----------------------------------------------------------------------
+    async listAgentArtifactPins(agentId, orgId) {
+      return rows<{ agent_id: string; org_id: string; artifact_id: string }>(
+        sql`SELECT * FROM agent_artifact_pin WHERE agent_id = ${agentId} AND org_id = ${orgId} ORDER BY artifact_id`,
+      )
+    },
+    async setAgentArtifactPin(agentId, orgId, artifactId, pinned) {
+      if (pinned)
+        await execute(sql`INSERT INTO agent_artifact_pin (agent_id, org_id, artifact_id)
+        SELECT a.id, a.org_id, p.id FROM agent a JOIN artifact p ON p.org_id = a.org_id
+        WHERE a.id = ${agentId} AND a.org_id = ${orgId} AND p.id = ${artifactId}
+        ON CONFLICT (agent_id, artifact_id) DO NOTHING RETURNING agent_id`)
+      else
+        await execute(
+          sql`DELETE FROM agent_artifact_pin WHERE agent_id = ${agentId} AND org_id = ${orgId} AND artifact_id = ${artifactId} RETURNING agent_id`,
+        )
+    },
     async updateAgent(id, orgId, patch) {
       const set = assignments(patch, AGENT_FIELDS)
       if (set.length === 0)
@@ -171,7 +187,8 @@ export function agentModelRepos(execute: Exec): AgentModelStore<AgentRecord> {
       if (q.kind?.length) where.push(sql`kind IN (${list(q.kind)})`)
       if (q.parentId) where.push(sql`parent_id = ${q.parentId}`)
       if (q.askedBy) where.push(sql`asked_by = ${q.askedBy}`)
-      if (q.triggerId) where.push(sql`trigger_id = ${q.triggerId}`)
+      if (q.triggerId === null) where.push(sql`trigger_id IS NULL`)
+      else if (q.triggerId) where.push(sql`trigger_id = ${q.triggerId}`)
       if (q.reportArtifactId) where.push(sql`report_artifact_id = ${q.reportArtifactId}`)
       if (q.subjectJson?.length) where.push(sql`subject_json IN (${list(q.subjectJson)})`)
       if (q.askedByOrAgent) {

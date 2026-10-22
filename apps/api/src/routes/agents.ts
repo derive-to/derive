@@ -26,6 +26,7 @@ import { agentAccess } from "../lib/job-policy"
 import { agentRepository, cancelJob } from "../lib/jobs"
 import { cloudEnabled, workspaceRuntime } from "../lib/runtime-connection"
 import { previousOccurrence } from "../lib/schedule"
+import { agentArtifactRoutes } from "./agent-artifacts"
 
 /** The machine an agent's Derive jobs run on (core AgentSandbox). */
 const AgentSandboxSchema = z
@@ -73,6 +74,7 @@ const sandboxJson = (spec: AgentSandbox | undefined) => {
 export const agentRoutes = (ctx: AppContext) => {
   const { meta, deps, agentFor, privateOwnerId, requireUser, requireWorkspace } = ctx
   const app = new OpenAPIHono<BlankEnv>()
+  app.route("/", agentArtifactRoutes(ctx))
 
   app.openapi(
     createRoute({

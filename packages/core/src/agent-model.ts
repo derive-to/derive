@@ -322,8 +322,8 @@ export interface JobQuery {
   kind?: readonly JobKind[]
   parentId?: string
   askedBy?: string
-  /** Only jobs opened by this schedule. */
-  triggerId?: string
+  /** Only jobs opened by this trigger. Null selects work without a trigger. */
+  triggerId?: string | null
   /** Only the job whose report page is this artifact. */
   reportArtifactId?: string
   /** Only jobs whose subject_json is one of these (a page's selector, by short id or id). */
@@ -366,6 +366,16 @@ export interface AccountPatch {
 /** The store half of the agent model. Generic over the agent row so this file never imports
  *  ports.ts (which imports it): MetaStore binds it to AgentRecord. */
 export interface AgentModelStore<Agent = unknown> {
+  listAgentArtifactPins(
+    agentId: string,
+    orgId: string,
+  ): Promise<{ agent_id: string; org_id: string; artifact_id: string }[]>
+  setAgentArtifactPin(
+    agentId: string,
+    orgId: string,
+    artifactId: string,
+    pinned: boolean,
+  ): Promise<void>
   // ---- Agents -------------------------------------------------------------------------
   /** Partial update, org-scoped. Null when the agent is not in this workspace. */
   updateAgent(id: string, orgId: string, patch: AgentPatch): Promise<Agent | null>

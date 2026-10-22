@@ -86,6 +86,7 @@ export interface TypedTables {
   notification: NotificationRecord
   follow: FollowRecord
   reviewRound: ReviewRoundRecord
+  agentArtifactPin: { agent_id: string; org_id: string; artifact_id: string }
   agent: AgentRecord
   job: import("@derive/core").JobRecord
   jobMessage: import("@derive/core").JobMessageRecord

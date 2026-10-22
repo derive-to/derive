@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { Mention } from "@/api"
-import { mdToHtml } from "./markdown"
+import { mdBlocksToHtml, mdToHtml } from "./markdown"
 
 const m = (...names: string[]): Mention[] =>
   names.map((name, i) => ({ id: `u${i}`, name }) as Mention)
@@ -67,5 +67,26 @@ describe("mdToHtml — root-relative links (agent citations)", () => {
     // `//evil.com` would be a link to ANOTHER ORIGIN that looks root-relative. The second
     // character must be alphanumeric, so it stays inert text.
     expect(mdToHtml("[x](//evil.com)")).toBe("[x](//evil.com)")
+  })
+})
+
+describe("agent report markdown", () => {
+  it("renders the recovery report as headings and a real table", () => {
+    const out = mdBlocksToHtml(
+      "## Recovery rate\n\nAcross **427** organizations.\n\n| Metric | Value |\n|---|---|\n| Campaigns recovered | **43.98%** |",
+    )
+    expect(out).toContain("<h2>Recovery rate</h2>")
+    expect(out).toContain('<th scope="col">Metric</th>')
+    expect(out).toContain("<td><strong>43.98%</strong></td>")
+    expect(out).not.toContain("|---|")
+  })
+  it("preserves fenced code, ordered lists and quotes without executing HTML", () => {
+    const out = mdBlocksToHtml(
+      '1. First\n2. Second\n\n> **Evidence**\n\n```html\n<img onerror="alert(1)">\n\n**literal**\n```',
+    )
+    expect(out).toContain("<ol><li>First</li><li>Second</li></ol>")
+    expect(out).toContain("<blockquote><p><strong>Evidence</strong></p></blockquote>")
+    expect(out).toContain("&lt;img onerror=&quot;alert(1)&quot;&gt;\n\n**literal**")
+    expect(out).not.toContain("<img")
   })
 })

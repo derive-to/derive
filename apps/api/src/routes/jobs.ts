@@ -5,6 +5,7 @@ import {
   DERIVE_AGENT_ID,
   type JobNeeds,
   type JobRecord,
+  jobResult,
   newId,
   normalizeSelectors,
   parseAgentSandbox,
@@ -266,6 +267,7 @@ const JobTurn = z.object({
   body_md: z.string(),
   status: z.enum(["queued", "running", "succeeded", "failed", "needs_you", "cancelled"]),
   body_result_md: z.string().nullable(),
+  effects: z.array(JobEffectSchema),
   started_at: z.string().nullable(),
   finished_at: z.string().nullable(),
   resumable: z.boolean(),
@@ -358,6 +360,7 @@ export const jobRoutes = (ctx: AppContext) => {
         body_md: turn.body_md,
         status: turn.status,
         body_result_md: turn.body_result_md,
+        effects: jobResult(turn).effects ?? [],
         started_at: turn.started_at,
         finished_at: turn.finished_at,
         resumable: !!turn.session_id && turn.has_checkpoint,
@@ -562,6 +565,10 @@ export const jobRoutes = (ctx: AppContext) => {
       request: {
         query: z.object({
           agent: z.string().optional(),
+          trigger: z
+            .string()
+            .optional()
+            .describe("Only tasks from this trigger; none selects work without a trigger."),
           status: z.string().optional().describe("Comma-separated statuses."),
           kind: z.string().optional().describe("Comma-separated kinds."),
           parent: z.string().optional(),
@@ -628,6 +635,7 @@ export const jobRoutes = (ctx: AppContext) => {
       const jobs = await meta.listJobs({
         orgId: org,
         agentId: q.agent || undefined,
+        triggerId: q.trigger === "none" ? null : q.trigger || undefined,
         status: split(q.status, STATUSES),
         kind: split(q.kind, KINDS),
         parentId: q.parent || undefined,

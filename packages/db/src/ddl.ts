@@ -79,7 +79,13 @@ export function generateDdl(tables: Any[], getConfig: (t: Any) => Any, o: DdlOpt
       const r = fk.reference()
       const local = r.columns.map((x: Any) => x.name).join(", ")
       const cols = r.foreignColumns.map((x: Any) => x.name).join(", ")
-      lines.push(`FOREIGN KEY (${local}) REFERENCES ${tableName(r.foreignTable)}(${cols})`)
+      const onDelete =
+        fk.onDelete && fk.onDelete !== "no action" ? ` ON DELETE ${fk.onDelete.toUpperCase()}` : ""
+      const onUpdate =
+        fk.onUpdate && fk.onUpdate !== "no action" ? ` ON UPDATE ${fk.onUpdate.toUpperCase()}` : ""
+      lines.push(
+        `FOREIGN KEY (${local}) REFERENCES ${tableName(r.foreignTable)}(${cols})${onDelete}${onUpdate}`,
+      )
     }
     return `CREATE TABLE IF NOT EXISTS ${cfg.name} (\n  ${lines.join(",\n  ")}\n)`
   }

@@ -48,39 +48,89 @@ export function mdToHtml(src: string, mentions?: Mention[]): string {
   return h.replace(/\n/g, "<br/>")
 }
 
-/** Block-level markdown for an agent's report-style message: headings, bullet lists, and
- *  paragraphs, each line through the inline renderer above. Not a full parser: what a runner
- *  writes in body_md, no more. */
+/** Safe report markdown. Block structure is emitted here; all prose still goes through the
+ * shared escaped inline renderer. Fenced code bypasses inline formatting entirely. */
 export function mdBlocksToHtml(src: string): string {
+  const lines = src.replace(/\r\n?/g, "\n").split("\n")
   const out: string[] = []
-  let list: string[] | null = null
-  const flush = () => {
-    if (list) out.push(`<ul>${list.map((l) => `<li>${l}</li>`).join("")}</ul>`)
-    list = null
-  }
-  for (const block of src.replace(/\r\n?/g, "\n").split(/\n{2,}/)) {
-    const lines = block.split("\n").filter((l) => l.trim())
-    if (!lines.length) continue
-    const para: string[] = []
-    for (const line of lines) {
-      const h = /^(#{1,6})\s+(.*)$/.exec(line)
-      const li = /^\s*[-*+]\s+(.*)$/.exec(line) ?? /^\s*\d+[.)]\s+(.*)$/.exec(line)
-      if (h) {
-        flush()
-        if (para.length) out.push(`<p>${para.splice(0).join("<br>")}</p>`)
-        const level = Math.min(h[1]?.length ?? 2, 4)
-        out.push(`<h${level}>${mdToHtml(h[2] ?? "")}</h${level}>`)
-      } else if (li) {
-        if (para.length) out.push(`<p>${para.splice(0).join("<br>")}</p>`)
-        list = list ?? []
-        list.push(mdToHtml(li[1] ?? ""))
-      } else {
-        flush()
-        para.push(mdToHtml(line))
-      }
+  const cells = (line: string) =>
+    line
+      .trim()
+      .replace(/^\||\|$/g, "")
+      .split(/(?<!\\)\|/)
+      .map((c) => c.trim().replace(/\\\|/g, "|"))
+  const tableRule = (line: string) =>
+    line.includes("|") && cells(line).every((c) => /^:?-{3,}:?$/.test(c))
+  const listItem = (line: string) => /^\s*([-*+]|\d+[.)])\s+(.*)$/.exec(line)
+  for (let i = 0; i < lines.length; ) {
+    const line = lines[i] ?? ""
+    if (!line.trim()) {
+      i++
+      continue
     }
-    flush()
-    if (para.length) out.push(`<p>${para.join("<br>")}</p>`)
+    const fence = /^\s*(`{3,}|~{3,})(.*)$/.exec(line)
+    if (fence) {
+      const marker = fence[1] ?? "```"
+      const code: string[] = []
+      i++
+      while (i < lines.length && !(lines[i] ?? "").trim().startsWith(marker))
+        code.push(lines[i++] ?? "")
+      i++
+      out.push(`<pre><code>${esc(code.join("\n"))}</code></pre>`)
+      continue
+    }
+    const heading = /^(#{1,6})\s+(.*)$/.exec(line)
+    if (heading) {
+      const level = Math.min(heading[1]?.length ?? 2, 4)
+      out.push(`<h${level}>${mdToHtml(heading[2] ?? "")}</h${level}>`)
+      i++
+      continue
+    }
+    if (line.includes("|") && tableRule(lines[i + 1] ?? "")) {
+      const header = cells(line)
+      i += 2
+      const rows: string[] = []
+      while (i < lines.length && (lines[i] ?? "").includes("|") && (lines[i] ?? "").trim()) {
+        const row = cells(lines[i++] ?? "")
+        rows.push(`<tr>${header.map((_, n) => `<td>${mdToHtml(row[n] ?? "")}</td>`).join("")}</tr>`)
+      }
+      out.push(
+        `<div class="markdown-table"><table><thead><tr>${header.map((c) => `<th scope="col">${mdToHtml(c)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`,
+      )
+      continue
+    }
+    const item = listItem(line)
+    if (item) {
+      const ordered = /^\d/.test(item[1] ?? "")
+      const tag = ordered ? "ol" : "ul"
+      const items: string[] = []
+      while (i < lines.length) {
+        const next = listItem(lines[i] ?? "")
+        if (!next || /^\d/.test(next[1] ?? "") !== ordered) break
+        items.push(`<li>${mdToHtml(next[2] ?? "")}</li>`)
+        i++
+      }
+      out.push(`<${tag}>${items.join("")}</${tag}>`)
+      continue
+    }
+    if (/^>\s?/.test(line)) {
+      const quote: string[] = []
+      while (i < lines.length && /^>\s?/.test(lines[i] ?? ""))
+        quote.push((lines[i++] ?? "").replace(/^>\s?/, ""))
+      out.push(`<blockquote>${mdBlocksToHtml(quote.join("\n"))}</blockquote>`)
+      continue
+    }
+    const paragraph = [line]
+    i++
+    while (
+      i < lines.length &&
+      (lines[i] ?? "").trim() &&
+      !/^(#{1,6}\s|\s*```|\s*~~~|>)/.test(lines[i] ?? "") &&
+      !listItem(lines[i] ?? "") &&
+      !tableRule(lines[i + 1] ?? "")
+    )
+      paragraph.push(lines[i++] ?? "")
+    out.push(`<p>${mdToHtml(paragraph.join("\n"))}</p>`)
   }
   return out.join("")
 }

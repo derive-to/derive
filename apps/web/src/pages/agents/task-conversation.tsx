@@ -1,23 +1,28 @@
 import { Link } from "@tanstack/react-router"
 import type { JobDetail } from "@/api"
-import { mdToHtml } from "../artifact/lib/markdown"
+import { parseRef } from "../artifact/parse-ref"
 import { eventLine } from "./format"
+import { TaskEffects } from "./task-effects"
+import { TaskMarkdown } from "./task-markdown"
 import { TaskReceipt } from "./task-usage"
 
 export function TaskConversation({
   job,
   agentName,
   names,
+  canPin = false,
+  showReceipt = true,
 }: {
   job: JobDetail
   agentName: string
   names: Map<string, string>
+  canPin?: boolean
+  showReceipt?: boolean
 }) {
   const effects = job.result.effects ?? []
-  const id = job.id
   const events = job.events ?? []
   return (
-    <div data-testid={`task-conversation-${job.id}`} className="flex flex-col gap-6">
+    <div data-testid={`task-conversation-${job.id}`} className="flex flex-col gap-8">
       {job.result.failure && (job.status === "failed" || job.status === "lost") && (
         <div
           role="alert"
@@ -52,29 +57,25 @@ export function TaskConversation({
             <section
               key={turn.id}
               data-testid={`task-turn-${turn.id}`}
-              className="flex flex-col gap-4"
+              className="flex flex-col gap-7"
             >
-              <div className="border-l-2 border-border pl-4">
+              <div className="rounded-lg bg-secondary/50 px-4 py-3">
                 <p className="text-xs font-medium text-muted-foreground">
-                  {turn.actor_id ? (names.get(turn.actor_id) ?? "Teammate") : "Schedule"} · Turn{" "}
-                  {turn.ordinal}
+                  {turn.actor_id ? (names.get(turn.actor_id) ?? "Teammate") : "Schedule"}
                 </p>
-                <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">{turn.body_md}</p>
+                <div className="mt-2">
+                  <TaskMarkdown text={turn.body_md} />
+                </div>
               </div>
               {turn.body_result_md && (
-                <div className="rounded-xl border border-border bg-card p-4">
-                  <p className="mb-2 text-xs font-medium text-muted-foreground">{agentName}</p>
-                  <div
-                    className="text-sm leading-relaxed [&_a]:underline"
-                    // biome-ignore lint/security/noDangerouslySetInnerHtml: mdToHtml escapes text and validates links.
-                    dangerouslySetInnerHTML={{
-                      __html: mdToHtml(
-                        turn.body_result_md.replace(
-                          /\[([^\]]+)\]\((\/(?:home|tmp|Users)\/[^)]+)\)/g,
-                          "$1",
-                        ),
-                      ),
-                    }}
+                <div className="min-w-0">
+                  <p className="mb-3 text-xs font-medium text-muted-foreground">{agentName}</p>
+                  <TaskMarkdown text={turn.body_result_md} />
+                  <TaskEffects
+                    effects={turn.effects ?? []}
+                    id={turn.id}
+                    agentId={job.agent_id}
+                    canPin={canPin}
                   />
                 </div>
               )}
@@ -85,7 +86,7 @@ export function TaskConversation({
                 className="text-xs text-muted-foreground"
                 data-testid={`task-turn-details-${turn.id}`}
               >
-                <summary className="cursor-pointer">Turn details</summary>
+                <summary className="cursor-pointer">Run details</summary>
                 <p className="mt-2">
                   {turn.execution.provider} · {turn.execution.model ?? "Account default"}
                   {turn.execution.skill && ` · Skill v${turn.execution.skill.version}`}
@@ -98,83 +99,84 @@ export function TaskConversation({
         : job.messages
             .filter((m) => !m.progress)
             .map((message) => (
-              <div key={message.id} className="border-l-2 border-border pl-4">
+              <div
+                key={message.id}
+                className={
+                  message.author_kind === "agent"
+                    ? "min-w-0"
+                    : "rounded-lg bg-secondary/50 px-4 py-3"
+                }
+              >
                 <p className="text-xs font-medium text-muted-foreground">
                   {message.author_kind === "agent"
                     ? agentName
                     : (names.get(message.author_id) ?? "Teammate")}
                 </p>
-                <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">
-                  {message.body_md}
-                </p>
+                <div className="mt-2">
+                  <TaskMarkdown text={message.body_md} />
+                </div>
               </div>
             ))}
-      <details className="text-sm" data-testid={`task-usage-${job.id}`}>
-        <summary className="cursor-pointer text-muted-foreground">Usage and activity</summary>
-        <div className="mt-4">
-          <TaskReceipt job={job} />
-        </div>
-        {events.map((event) => (
-          <p
-            key={`${event.turn_id}:${event.seq}`}
-            className="mt-2 truncate text-xs text-muted-foreground"
-          >
-            {eventLine(event)}
-          </p>
-        ))}
-        {job.messages
-          .filter((m) => m.progress)
-          .map((m) => (
-            <p key={m.id} className="mt-2 text-sm text-muted-foreground">
-              {m.body_md}
+      {(showReceipt || events.length > 0 || job.messages.some((m) => m.progress)) && (
+        <details className="text-sm" data-testid={`task-usage-${job.id}`}>
+          <summary className="cursor-pointer text-muted-foreground">
+            {showReceipt ? "Usage and activity" : "Activity"} · {events.length}
+          </summary>
+          {showReceipt && (
+            <div className="mt-4">
+              <TaskReceipt job={job} />
+            </div>
+          )}
+          {events.map((event) => (
+            <p
+              key={`${event.turn_id}:${event.seq}`}
+              className="mt-2 break-all font-mono text-xs text-muted-foreground"
+            >
+              {eventLine(event)}
             </p>
           ))}
-      </details>
-      {(effects.length > 0 || job.report_short_id) && (
-        <div className="flex flex-wrap gap-2">
-          {job.report_short_id && (
-            <Link
-              to="/artifacts/$ref"
-              params={{ ref: job.report_short_id }}
-              data-testid={`job-report-${id}`}
-              className="rounded-lg border border-border px-2.5 py-1.5 text-sm font-medium hover:bg-secondary"
-            >
-              Report
-            </Link>
-          )}
-          {effects.map((e, i) =>
-            e.kind === "page" && e.ref ? (
-              <Link
-                key={`${e.kind}-${e.ref}-${e.label}`}
-                to="/artifacts/$ref"
-                params={{ ref: e.ref }}
-                data-testid={`job-effect-${id}-${i}`}
-                className="rounded-lg border border-border px-2.5 py-1.5 text-sm hover:bg-secondary"
-              >
-                {e.label}
-              </Link>
-            ) : e.url && /^https?:\/\//i.test(e.url) ? (
-              <a
-                key={`${e.kind}-${e.url}-${e.label}`}
-                href={e.url}
-                target="_blank"
-                rel="noreferrer"
-                data-testid={`job-effect-${id}-${i}`}
-                className="rounded-lg border border-border px-2.5 py-1.5 text-sm hover:bg-secondary"
-              >
-                {e.label}
-              </a>
-            ) : (
-              <span
-                key={`${e.kind}-${e.label}`}
-                className="rounded-lg border border-border px-2.5 py-1.5 text-sm"
-              >
-                {e.label}
-              </span>
-            ),
-          )}
-        </div>
+          {job.messages
+            .filter((m) => m.progress)
+            .map((m) => (
+              <p key={m.id} className="mt-2 text-sm text-muted-foreground">
+                {m.body_md}
+              </p>
+            ))}
+        </details>
       )}
+      <TaskEffects
+        effects={effects.filter(
+          (e) =>
+            !job.turns?.some((t) =>
+              t.effects?.some(
+                (other) =>
+                  other.kind === e.kind &&
+                  other.ref === e.ref &&
+                  other.version === e.version &&
+                  other.url === e.url &&
+                  other.label === e.label,
+              ),
+            ),
+        )}
+        id={job.id}
+        agentId={job.agent_id}
+        canPin={canPin}
+      />
+      {job.report_short_id &&
+        !effects
+          .concat(job.turns?.flatMap((t) => t.effects ?? []) ?? [])
+          .some(
+            (e) => e.kind === "page" && e.ref && parseRef(e.ref).shortId === job.report_short_id,
+          ) && (
+          <Link
+            to="/artifacts/$ref"
+            params={{ ref: job.report_short_id }}
+            data-testid={`job-report-${job.id}`}
+            className="text-sm text-primary hover:underline"
+          >
+            Open report · latest version →
+          </Link>
+        )}
     </div>
   )
 }

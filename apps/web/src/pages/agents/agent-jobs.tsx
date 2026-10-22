@@ -19,22 +19,23 @@ import { accountsQuery, agentJobsQuery, agentQuery, jobQuery } from "@/lib/queri
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useJobEvents } from "@/lib/use-job-events"
 import { cn } from "@/lib/utils"
+import { AgentArtifacts } from "./agent-artifacts"
+import { AgentTaskList } from "./agent-task-list"
 import {
   askedLine,
-  cronLabel,
   failureOf,
   firstLine,
   JOB_ICON,
   machineName,
   machineOf,
-  schedulesOf,
   took,
   when,
 } from "./format"
-import { Group, Meta, RowLine, Time } from "./rows"
+import { Meta, RowLine, Time } from "./rows"
 import { AgentRowsSkeleton } from "./skeleton"
 import { TaskConversation } from "./task-conversation"
 import { TaskSchedule } from "./task-schedule"
+import { taskStatus } from "./task-status"
 import { TaskUsage } from "./task-usage"
 
 const first = (name: string | undefined) => name?.trim().split(/\s+/)[0] || undefined
@@ -80,7 +81,12 @@ export function AgentJobs({
 }) {
   // Job events keep this live; the slow poll catches teammates' asks, which send you nothing.
   useJobEvents()
-  const jobs = useInfiniteQuery({ ...agentJobsQuery(agent.id), refetchInterval: 10_000 })
+  const [source, setSource] = useState("all")
+  const [needsOnly, setNeedsOnly] = useState(false)
+  const jobs = useInfiniteQuery({
+    ...agentJobsQuery(agent.id, usage ? "all" : source, !usage && needsOnly),
+    refetchInterval: 10_000,
+  })
   useQuery({ ...agentQuery(agent.id), refetchInterval: 10_000 })
   const warning = warningFor(
     agent,
@@ -89,11 +95,11 @@ export function AgentJobs({
     agent.can_manage ? brokenSources(agent) : [],
     meId,
   )
-  const schedules = schedulesOf(agent.triggers)
   const rows = jobs.data?.pages.flatMap((p) => p.jobs) ?? []
 
+  const needs = rows.filter((job) => job.status === "needs_you")
   return (
-    <div className="flex flex-col gap-9">
+    <div className="flex flex-col gap-6">
       {warning && (
         <p data-testid="agent-warning" role="status" className="text-sm text-warning">
           {warning}
@@ -112,11 +118,22 @@ export function AgentJobs({
           )}
         </p>
       )}
-      {schedules.length > 0 && (
-        <p className="text-sm text-muted-foreground">
-          {schedules.map((t) => `${cronLabel(t.cron ?? "")} · ${t.tz ?? "UTC"}`).join(", ")}
-        </p>
+      {!usage && needs.length > 0 && (
+        <Link
+          to="/tasks/$id"
+          params={{ id: needs[0]?.id ?? "" }}
+          data-testid="agent-attention"
+          className="rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-sm"
+        >
+          <span className="font-medium">
+            {needs.length} {needs.length === 1 ? "task needs" : "tasks need"} your attention
+          </span>
+          <span className="ml-2 text-muted-foreground">
+            {needs[0]?.needs?.question ?? "Open task to continue"} →
+          </span>
+        </Link>
       )}
+      {!usage && <AgentArtifacts agent={agent} />}
       {jobs.isError ? (
         <LoadError
           title="Couldn’t load tasks."
@@ -127,36 +144,28 @@ export function AgentJobs({
         <AgentRowsSkeleton rows={3} />
       ) : usage ? (
         <TaskUsage jobs={rows} />
-      ) : rows.length === 0 ? (
-        <p data-testid="agent-jobs-empty" className="text-base text-muted-foreground">
-          Ready for its first task.
-        </p>
       ) : (
-        <Group label="Tasks" testId="agent-jobs">
-          {rows.map((job) => (
-            <JobRow
-              key={job.id}
-              job={job}
-              agent={agent}
-              names={names}
-              canAsk={agent.can_ask}
-              canSchedule={agent.can_manage}
-              triggers={agent.triggers}
-              canSteer={agent.can_manage || (job.asked_by === meId && agent.can_ask)}
-            />
-          ))}
-          {jobs.hasNextPage && (
-            <button
-              type="button"
-              data-testid="agent-jobs-more"
-              disabled={jobs.isFetchingNextPage}
-              onClick={() => void jobs.fetchNextPage()}
-              className="self-start pt-1.5 text-sm text-muted-foreground hover:text-foreground"
-            >
-              Older tasks
-            </button>
-          )}
-        </Group>
+        <div className="flex flex-col gap-3">
+          <AgentTaskList
+            jobs={rows}
+            agent={agent}
+            source={source}
+            onSource={setSource}
+            needsOnly={needsOnly}
+            onNeedsOnly={setNeedsOnly}
+          />
+        </div>
+      )}
+      {jobs.hasNextPage && (
+        <button
+          type="button"
+          data-testid="agent-jobs-more"
+          disabled={jobs.isFetchingNextPage}
+          onClick={() => void jobs.fetchNextPage()}
+          className="self-start pt-1.5 text-sm text-muted-foreground hover:text-foreground"
+        >
+          Older tasks
+        </button>
       )}
     </div>
   )
@@ -346,30 +355,6 @@ export function useNoAccount(agent: AgentDetail, meId: string): boolean {
   return !accounts.data.some(
     (a) => a.provider === (agent.provider === "codex" ? "codex" : "claude") && (a.mine || a.shared),
   )
-}
-
-/** Mirrors @derive/core machineHoldsCompute (the web imports core types only). */
-const holdsCompute = (phase: string | null | undefined) =>
-  !!phase && phase !== "released" && phase !== "parked"
-
-export function taskStatus(job: Job, agent: Agent): string {
-  const stopping = holdsCompute(job.machine_phase)
-  if (job.status === "succeeded") return stopping ? "Result ready · stopping compute…" : "Done"
-  if (job.status === "needs_you") return stopping ? "Needs you · stopping compute…" : "Needs you"
-  if (job.status === "failed" || job.status === "lost")
-    return stopping ? "Failed · stopping compute…" : "Failed"
-  if (job.status === "cancelled") return stopping ? "Stopping compute…" : "Stopped"
-  if (job.status === "queued" && job.machine_phase === "parked") return "Resuming"
-  if (job.status === "queued") {
-    if (agent.paused) return "Paused"
-    if (["creating", "provisioning", "stopping"].includes(agent.runtime?.phase ?? ""))
-      return "Getting ready"
-    if (agent.runtime?.phase === "failed") return "Retrying setup"
-    return "Waiting"
-  }
-  if (["creating", "provisioning", "starting"].includes(job.machine_phase ?? "")) return "Starting"
-  if (job.machine_phase === "stopping") return "Saving files"
-  return job.task.session ? "Session open" : "Running"
 }
 
 export function detailOf(

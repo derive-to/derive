@@ -1393,6 +1393,15 @@ export const api = {
   deleteAgent: (id: string): Promise<void> =>
     f(`/v1/agents/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
   getAgent: (id: string): Promise<AgentDetail> => f(`/v1/agents/${id}`, opts()).then(j),
+  agentArtifacts: (
+    id: string,
+  ): Promise<{ artifacts: components["schemas"]["AgentArtifactPin"][] }> =>
+    f(`/v1/agents/${id}/artifacts`, opts()).then(j),
+  pinAgentArtifact: (id: string, ref: string, pinned: boolean): Promise<{ ok: true }> =>
+    f(`/v1/agents/${id}/artifacts/${encodeURIComponent(ref)}`, {
+      ...opts(),
+      method: pinned ? "PUT" : "DELETE",
+    }).then(j),
   updateAgent: (id: string, patch: AgentPatch): Promise<Agent> =>
     f(`/v1/agents/${id}`, { ...opts(patch), method: "PATCH" }).then(j),
   addTrigger: (agentId: string, body: ScheduleInput | EventTriggerInput): Promise<AgentTrigger> =>
@@ -1408,6 +1417,8 @@ export const api = {
   listJobs: (
     q: {
       agent?: string
+      trigger?: string
+      kind?: Job["kind"][]
       status?: JobStatus[]
       before?: string
       limit?: number
@@ -1421,6 +1432,8 @@ export const api = {
   ): Promise<{ jobs: Job[] }> => {
     const qs = new URLSearchParams()
     if (q.agent) qs.set("agent", q.agent)
+    if (q.trigger) qs.set("trigger", q.trigger)
+    if (q.kind?.length) qs.set("kind", q.kind.join(","))
     if (q.mine) qs.set("mine", "1")
     if (q.report) qs.set("report", q.report)
     if (q.subject) qs.set("subject", q.subject)
