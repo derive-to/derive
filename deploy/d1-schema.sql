@@ -268,6 +268,8 @@ CREATE TABLE IF NOT EXISTS agent (
   repositories_json TEXT,
   environment_json TEXT,
   ask_policy TEXT NOT NULL DEFAULT 'workspace',
+  askers_json TEXT,
+  spend_policy TEXT NOT NULL DEFAULT 'asker',
   write_policy TEXT NOT NULL DEFAULT 'publish',
   paused_at TEXT,
   seen_at TEXT,

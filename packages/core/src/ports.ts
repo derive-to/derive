@@ -3109,6 +3109,10 @@ export interface AgentRecord {
   /** Encrypted env bindings, NAME → credential id. Never values. */
   environment_json: string | null
   ask_policy: import("./agent-model").AgentAskPolicy
+  /** Who may ask an `invited` agent besides its creator and the workspace's owners: a JSON
+   *  array of user ids. Each is re-checked for a seat at ask time. */
+  askers_json: string | null
+  spend_policy: import("./agent-model").AgentSpendPolicy
   write_policy: import("./agent-model").AgentWritePolicy
   paused_at: string | null
   /** Last claim by this agent's runner (any lane). */
@@ -3139,6 +3143,8 @@ export interface NewAgent {
   repositories_json?: string | null
   environment_json?: string | null
   ask_policy?: import("./agent-model").AgentAskPolicy
+  askers_json?: string | null
+  spend_policy?: import("./agent-model").AgentSpendPolicy
   write_policy?: import("./agent-model").AgentWritePolicy
   max_run_ms?: number | null
   max_concurrency?: number
@@ -3170,6 +3176,8 @@ export const syntheticAgent = (
   repositories_json: null,
   environment_json: null,
   ask_policy: "workspace",
+  askers_json: null,
+  spend_policy: "asker",
   write_policy: "publish",
   paused_at: null,
   seen_at: null,

@@ -470,6 +470,8 @@ export type AgentPatch = Partial<
     | "description"
     | "instructions_short_id"
     | "ask_policy"
+    | "askers"
+    | "spend_policy"
     | "write_policy"
     | "connection_ids"
     | "repository"

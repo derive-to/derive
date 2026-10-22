@@ -13,6 +13,9 @@ export type AgentMachine = "owner" | "derive"
  *  it; its jobs are private to their asker. */
 export const DERIVE_AGENT_ID = "derive"
 export type AgentAskPolicy = "workspace" | "invited"
+/** Whose model account and personal secrets an agent's jobs spend: each asker's own, or the
+ *  creator's, lent to everyone who may ask. Only the creator turns lending on. */
+export type AgentSpendPolicy = "asker" | "creator"
 export type AgentWritePolicy = "publish" | "review"
 
 export type JobKind = "ask" | "scheduled" | "graph" | "node"
@@ -305,6 +308,8 @@ export interface AgentPatch {
   repositories_json?: string | null
   environment_json?: string | null
   ask_policy?: AgentAskPolicy
+  askers_json?: string | null
+  spend_policy?: AgentSpendPolicy
   write_policy?: AgentWritePolicy
   paused_at?: string | null
   max_run_ms?: number | null

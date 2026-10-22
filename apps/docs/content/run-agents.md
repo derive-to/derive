@@ -175,6 +175,22 @@ A stored account that cannot be read never falls back to the machine's own login
 try the next stored account in line (the creator's or asker's own, then the shared one), and
 if none can be read, the job fails with an error.
 
+### Who may ask, and whose account it spends
+
+**Access** on the Settings tab says who may ask the agent for work. `Workspace` lets every
+member ask. `Chosen people` lets its creator, the workspace owners and the members you add ask.
+
+On a Derive machine, each job normally runs on the asker's own model account (or the shared
+one), and only on secrets that are the asker's or the workspace's. A teammate without an
+account cannot use your agent, and your personal secrets stay yours.
+
+**Runs on** changes that. Set it to your account and every job, whoever asks, runs on your
+model account and the personal secrets you bound to the agent, and bills you. Askers never see
+the secret values, but the agent's commands can use them, so lend only to people you would
+trust with what those secrets reach. Only the creator can turn lending on. While it is on, a
+workspace owner can still pause the agent or turn lending off, and nothing else changes except
+by the creator.
+
 ### Keep a runner running
 
 `runner serve` runs in the foreground. To keep it running across logouts and restarts, put it

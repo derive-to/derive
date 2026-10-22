@@ -28,6 +28,7 @@ import { accountsQuery, agentConnectionsQuery, artifactQuery } from "@/lib/queri
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 import { accountLabel } from "../settings/accounts-section"
+import { AccessFields } from "./agent-access"
 import { sourceName, useNoAccount } from "./agent-jobs"
 import { RepositoryField } from "./agent-repository"
 import { TriggersField } from "./agent-triggers"
@@ -179,19 +180,7 @@ export function AgentSettings({ agent, names, isWorkspaceOwner }: Props) {
             ]}
           />
         </Field>
-        <Field label="Access">
-          <Segmented
-            testId="agent-ask-policy"
-            value={agent.ask_policy}
-            disabled={!edit}
-            onChange={(v) => set({ ask_policy: v as AgentDetail["ask_policy"] })}
-            options={[
-              { value: "workspace", label: "Workspace" },
-              { value: "invited", label: "Creator and owners" },
-            ]}
-          />
-          <Sub>Who can ask it for work.</Sub>
-        </Field>
+        <AccessFields agent={agent} edit={edit} meId={me?.id ?? ""} names={names} onSave={set} />
         {agent.machine === "owner" && (
           <KeyField agent={agent} canReplace={edit && isWorkspaceOwner} />
         )}

@@ -62,9 +62,15 @@ export const hasSeat = async (meta: MetaStore, orgId: string, userId: string): P
 export const creatorLeft = async (meta: MetaStore, agent: AgentRecord): Promise<boolean> =>
   !!agent.created_by && !(await hasSeat(meta, agent.org_id, agent.created_by))
 
+/** The person whose model account and personal secrets an agent lends to everyone who may
+ *  ask it, or null when each asker spends their own. */
+export const lenderOf = (agent: Pick<AgentRecord, "spend_policy" | "created_by">): string | null =>
+  agent.spend_policy === "creator" ? agent.created_by : null
+
 /** WHO A JOB BILLS, picked the way resolveJobCredential picks its account: the owner of the
- *  account assigned to the agent; else the asker, where the asker's key would be the one used
- *  (a Derive machine, or the asker's own agent); else the agent's creator. Null = the
+ *  account assigned to the agent; else the creator of an agent that lends; else the asker,
+ *  where the asker's key would be the one used (a Derive machine, or the asker's own agent);
+ *  else the agent's creator. Null = the
  *  workspace pool. The budget check reads this at ask, pull, schedule, dispatch and graph
  *  steps alike, so a job accepted at ask is never held later against another person's limit.
  *  On an owner machine the answer never depends on the asker. */
@@ -78,6 +84,8 @@ export const jobPayer = async (
     if (acct && acct.org_id === agent.org_id)
       return acct.user_id === WORKSPACE_ACCOUNT_OWNER ? null : acct.user_id
   }
+  const lender = lenderOf(agent)
+  if (lender) return lender
   if (askedBy && (agent.machine === "derive" || askedBy === agent.created_by)) return askedBy
   return agent.created_by ?? null
 }
@@ -137,9 +145,10 @@ export const resolveJobCredential = async (
   if (assigned) return assigned
   if (agent.account_id) return { credential: null, reason: sawUnreadable ? "unreadable" : "none" }
   const payer =
-    job.asked_by && (agent.machine === "derive" || job.asked_by === agent.created_by)
+    lenderOf(agent) ??
+    (job.asked_by && (agent.machine === "derive" || job.asked_by === agent.created_by)
       ? job.asked_by
-      : agent.created_by
+      : agent.created_by)
   if (payer) {
     const mine = await tryAccount(
       accounts.find((a) => a.user_id === payer && a.provider === want),

@@ -57,6 +57,8 @@ const AGENT_FIELDS = [
   "repositories_json",
   "environment_json",
   "ask_policy",
+  "askers_json",
+  "spend_policy",
   "write_policy",
   "paused_at",
   "max_run_ms",
