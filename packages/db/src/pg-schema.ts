@@ -617,6 +617,21 @@ export const agent = pgTable(
   ],
 )
 
+// Explicit maintained documents. Task outputs remain independent versioned references.
+export const agentArtifactPin = pgTable(
+  "agent_artifact_pin",
+  {
+    agent_id: text("agent_id")
+      .notNull()
+      .references(() => agent.id, { onDelete: "cascade" }),
+    org_id: text("org_id").notNull(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id, { onDelete: "cascade" }),
+  },
+  (t) => [uniqueIndex("agent_artifact_pin_pair").on(t.agent_id, t.artifact_id)],
+)
+
 // ---- The agent model (core agent-model.ts) ------------------------------------------------
 // One unit of agent work. Replaces run, run_attempt, context_session, workflow_run and
 // workflow_step_attempt: one lifecycle, one lease, one attempt counter, one transcript.
@@ -1468,6 +1483,7 @@ export const PG_SCHEMA = {
   artifactMember,
   notification,
   agent,
+  agentArtifactPin,
   job,
   jobMessage,
   jobCommand,

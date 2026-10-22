@@ -319,6 +319,7 @@ function PageLabel({ pathname, newSkill }: { pathname: string; newSkill: boolean
   if (pathname === "/inbox") return "Inbox"
   if (pathname === "/agents/new") return "New agent"
   if (pathname.startsWith("/agents")) return "Agents"
+  if (pathname.startsWith("/tasks")) return "Task"
   if (pathname.startsWith("/settings")) return "Settings"
   if (pathname.startsWith("/artifacts/")) return "Artifact"
   if (pathname.startsWith("/users/")) return "Profile"

@@ -282,6 +282,15 @@ CREATE TABLE IF NOT EXISTS agent (
   UNIQUE (org_id, name)
 );
 
+CREATE TABLE IF NOT EXISTS agent_artifact_pin (
+  agent_id TEXT NOT NULL,
+  org_id TEXT NOT NULL,
+  artifact_id TEXT NOT NULL,
+  UNIQUE (agent_id, artifact_id),
+  FOREIGN KEY (agent_id) REFERENCES agent(id) ON DELETE CASCADE,
+  FOREIGN KEY (artifact_id) REFERENCES artifact(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS job (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,

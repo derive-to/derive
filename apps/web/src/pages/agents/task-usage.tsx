@@ -386,3 +386,33 @@ export function TaskReceipt({ job }: { job: Job }) {
     </div>
   )
 }
+
+/** A quiet task-level summary using the same completeness rules as the full usage view. */
+export function TaskUsageSummary({ job }: { job: Job }) {
+  const estimated = taskEstimate(job)
+  const compute = job.result.compute ?? []
+  const computeTotal = sumKnown(compute.map((c) => c.cost_micro_usd))
+  return (
+    <div className="flex flex-col gap-3" data-testid="task-usage-summary">
+      <h2 className="text-xs font-medium">Usage</h2>
+      <dl className="grid grid-cols-2 gap-x-3 gap-y-3 text-xs">
+        <dt className="text-muted-foreground">Reported AI</dt>
+        <dd className="text-right tabular-nums">
+          {job.cost_micro_usd === null ? "Unknown" : dollars(job.cost_micro_usd)}
+        </dd>
+        <dt className="text-muted-foreground">Model estimate</dt>
+        <dd className="text-right tabular-nums">
+          {estimated === null ? "Unknown" : dollars(estimated)}
+        </dd>
+        <dt className="text-muted-foreground">Sandbox</dt>
+        <dd className="text-right tabular-nums">
+          {computeTotal === null ? "Unknown" : dollars(computeTotal)}
+        </dd>
+      </dl>
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        Estimates compare model usage at API or CLI rates. They aren’t a plan charge. Missing
+        receipts stay unknown.
+      </p>
+    </div>
+  )
+}

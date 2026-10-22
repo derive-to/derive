@@ -1557,6 +1557,33 @@
           "already_member"
         ]
       },
+      "AgentArtifactPin": {
+        "type": "object",
+        "properties": {
+          "short_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "version": {
+            "type": "number"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "short_id",
+          "title",
+          "kind",
+          "version",
+          "updated_at"
+        ]
+      },
       "AgentSandbox": {
         "type": "object",
         "properties": {
@@ -2769,6 +2796,40 @@
                       "type": "string",
                       "nullable": true
                     },
+                    "effects": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "page",
+                              "pr",
+                              "email",
+                              "rows",
+                              "other"
+                            ]
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "ref": {
+                            "type": "string"
+                          },
+                          "version": {
+                            "type": "number"
+                          },
+                          "url": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "label"
+                        ]
+                      }
+                    },
                     "started_at": {
                       "type": "string",
                       "nullable": true
@@ -2862,6 +2923,7 @@
                     "body_md",
                     "status",
                     "body_result_md",
+                    "effects",
                     "started_at",
                     "finished_at",
                     "resumable",
@@ -6654,6 +6716,147 @@
         }
       }
     },
+    "/v1/agents/{id}/artifacts": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Readable documents pinned to an agent, at their latest version.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pinned documents visible to this caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "artifacts": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AgentArtifactPin"
+                      }
+                    }
+                  },
+                  "required": [
+                    "artifacts"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/agents/{id}/artifacts/{ref}": {
+      "put": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Pin a document to an agent.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "required": true,
+            "name": "ref",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pin updated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Unpin an agent document.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "required": true,
+            "name": "ref",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pin updated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/agents/runtime": {
       "get": {
         "tags": [
@@ -7258,6 +7461,16 @@
             },
             "required": false,
             "name": "agent",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Only tasks from this trigger; none selects work without a trigger."
+            },
+            "required": false,
+            "description": "Only tasks from this trigger; none selects work without a trigger.",
+            "name": "trigger",
             "in": "query"
           },
           {

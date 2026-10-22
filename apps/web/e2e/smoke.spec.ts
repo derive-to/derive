@@ -783,6 +783,7 @@ test("Agents home groups agents by where they run, and a leftover can be removed
   await owner.getByTestId(`agent-row-${scheduled.id}`).click()
   await expect(owner).toHaveURL(new RegExp(`/agents/${scheduled.id}$`))
   await expect(owner.getByTestId("agent-title")).toHaveText("Digest writer")
+  await owner.getByTestId("agent-new-task").click()
   await expect(owner.getByTestId("agent-ask-input")).toHaveAttribute(
     "placeholder",
     "Ask Digest writer to…",
@@ -829,22 +830,24 @@ test("an agent's page answers, retries, and changes the agent", async ({ owner }
     })
 
   await owner.goto(`/agents/${agent.id}`)
-  const failedRow = owner.getByTestId(`job-${failedId}`)
-  await expect(failedRow).toContainText("the warehouse refused the query")
-  await owner.getByTestId(`job-retry-${failedId}`).click()
-  await expect(failedRow).toHaveAttribute("data-status", "queued")
-
-  const needsRow = owner.getByTestId(`job-${needsId}`)
-  await expect(needsRow).toContainText("Publish it to the team?")
-  await owner.getByTestId(`job-option-${needsId}-0`).click()
-  await expect(needsRow).toHaveAttribute("data-status", "queued")
-
-  // Opening a row reads its transcript.
-  await owner.getByTestId(`job-row-${needsId}`).click()
-  await expect(owner.getByTestId(`job-transcript-${needsId}`)).toContainText("Publish the chart?")
+  await owner.getByTestId(`job-open-${failedId}`).click()
+  await expect(owner.getByTestId("task-failure")).toContainText("the warehouse refused the query")
+  await owner.getByTestId("task-retry-turn").click()
+  await expect(owner.getByTestId("task-status")).toContainText("Waiting")
+  await owner.getByTestId("task-agent-back").click()
+  await owner.getByTestId(`job-open-${needsId}`).click()
+  await expect(owner.getByTestId("task-question")).toContainText("Publish it to the team?")
+  await owner.getByTestId("task-option-Publish").click()
+  await owner.getByTestId("task-send").click()
+  await expect(owner.getByTestId("task-status")).toContainText("Waiting")
+  await expect(owner.getByTestId(`task-conversation-${needsId}`)).toContainText(
+    "Publish the chart?",
+  )
+  await owner.getByTestId("task-agent-back").click()
   await owner.screenshot({ path: testInfo.outputPath("agent-jobs.png"), fullPage: true })
 
   // Ask from the page opens a job.
+  await owner.getByTestId("agent-new-task").click()
   await owner.getByTestId("agent-ask-input").fill("Summarize the funnel")
   await owner.getByTestId("agent-ask-send").click()
   // Asking opens the task; its row is on the agent's page when you come back.
@@ -1097,4 +1100,83 @@ test("a paper from arXiv is imported from Templates, on its own page", async ({ 
   await expect(owner.getByTestId("context-arxiv-submit")).toBeDisabled()
   await owner.getByTestId("context-arxiv-link").fill("2401.12345")
   await expect(owner.getByTestId("context-arxiv-submit")).toBeEnabled()
+})
+
+test("task workspace renders reports, follows up in place, pins artifacts and keeps mobile usage", async ({
+  owner,
+}, testInfo) => {
+  await owner.setViewportSize({ width: 1280, height: 900 })
+  const agent = await makeAgent(owner, {
+    name: "Analytics",
+    description: "Answers questions about payment recovery",
+  })
+  const artifact = await publishAsAgent(owner, agent, "Recovery benchmark")
+  const id = await askAgent(owner, agent, "Payment recovery across organizations")
+  const [held] = await pullAs(owner, agent)
+  if (!held) throw new Error("task was not claimed")
+  await reportAs(owner, agent, held, {
+    status: "succeeded",
+    body_md:
+      "## 43.98% of failed-payment campaigns recover.\n\nRecovery by invoice value is lower because unrecovered invoices are substantially larger.\n\n| Measure | Recovery rate |\n|---|---|\n| Campaigns recovered | **43.98%** |\n| Organization rate | **39.67%** |\n| Dollars recovered | **12.4%** |\n\n427 organizations · 7.70M campaigns · Last 18 months.\n\n### Method\n\n1. Exclude campaigns less than 30 days old.\n2. Compare campaign and dollar recovery separately.\n\n```sql\nSELECT recovered / campaigns AS recovery_rate;\n```",
+    result: { effects: [{ kind: "page", label: "Recovery benchmark", ref: artifact, version: 1 }] },
+  })
+  await owner.goto(`/tasks/${id}`)
+  await expect(owner.getByTestId("task-title")).toHaveText("Payment recovery across organizations")
+  const thread = owner.getByTestId(`task-conversation-${id}`)
+  await expect(
+    thread.getByRole("heading", { name: "43.98% of failed-payment campaigns recover." }),
+  ).toBeVisible()
+  await expect(thread.getByRole("table")).toBeVisible()
+  await expect(thread.locator("pre code")).toContainText("SELECT recovered")
+  await expect(thread.getByRole("link", { name: "Recovery benchmark v1" })).toHaveAttribute(
+    "href",
+    `/artifacts/${artifact}%40v1`,
+  )
+  await expect(owner.getByTestId("task-usage-summary")).toContainText("Unknown")
+  await owner.screenshot({ path: testInfo.outputPath("task-desktop.png") })
+  await thread.getByRole("button", { name: "Pin to agent" }).click()
+  await expect(thread.getByRole("button", { name: "Pinned" })).toBeVisible()
+  await owner.getByTestId("task-reply").fill("Break this down by industry")
+  await owner.getByTestId("task-send").click()
+  await expect(owner).toHaveURL(new RegExp(`/tasks/${id}$`))
+  await expect(thread).toContainText("Break this down by industry")
+  const [followup] = await pullAs(owner, agent)
+  if (!followup) throw new Error("follow-up was not claimed")
+  expect(followup.id).toBe(id)
+  await reportAs(owner, agent, followup, {
+    status: "succeeded",
+    body_md: "### By industry\n\nThe original report remains above. SaaS leads recovery.",
+  })
+  await expect(thread.getByRole("heading", { name: "By industry" })).toBeInViewport()
+  await expect(thread.getByRole("table")).toHaveCount(1)
+  // Scheduling creates a trigger; the conversation remains the same task.
+  await owner.getByTestId("task-make-daily").click()
+  await owner.getByTestId("task-schedule-time").fill("09:00")
+  await owner.getByTestId("task-schedule-save").click()
+  await expect(owner.getByTestId("task-make-daily")).toHaveText("On a schedule")
+  await owner.setViewportSize({ width: 390, height: 844 })
+  await expect(owner.getByTestId("task-reply")).toBeVisible()
+  await owner.getByTestId("task-view-receipt").filter({ visible: true }).click()
+  await expect(owner.getByRole("dialog")).toContainText("Missing receipts stay unknown")
+  await owner.getByRole("button", { name: "Close", exact: true }).click()
+  await expect(owner.getByRole("dialog")).toHaveCount(0)
+  expect(
+    await owner.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+  ).toBe(true)
+  await owner.screenshot({ path: testInfo.outputPath("task-mobile.png") })
+  await owner.getByTestId("task-agent-back").click()
+  await expect(owner.getByTestId(`agent-pin-${artifact}`)).toContainText("Latest version · v1")
+  await owner.reload()
+  await expect(owner.getByTestId(`agent-pin-${artifact}`)).toBeVisible()
+  await owner.setViewportSize({ width: 1280, height: 900 })
+  await owner.screenshot({ path: testInfo.outputPath("agent-desktop.png") })
+  await owner.getByTestId("agent-task-source").selectOption("manual")
+  await expect(owner.getByTestId(`job-open-${id}`)).toBeVisible()
+  const current = await (await owner.request.get(`/v1/agents/${agent.id}`)).json()
+  await owner.getByTestId("agent-task-source").selectOption(current.triggers[0].id)
+  await expect(owner.getByTestId("agent-jobs-empty")).toHaveText("No tasks from this source yet.")
+  await owner.getByTestId("agent-tab-usage").click()
+  await expect(owner.getByTestId("task-usage-empty")).toBeVisible()
+  await owner.getByTestId("nav-usage").click()
+  await expect(owner).toHaveURL(/tab=usage/)
 })

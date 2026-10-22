@@ -3208,6 +3208,28 @@ export function runStoreContract(
       expect((await store.getAgent(a.id))?.seen_at).toBe("2026-09-30T01:00:00.000Z")
     })
 
+    it("artifact pins are explicit, idempotent, workspace scoped and removed with their agent", async () => {
+      const a = await mkAgent()
+      const art = await store.createArtifact(newArtifact())
+      const foreign = await store.createArtifact(newArtifact({ org_id: "org_pin_other" }))
+      await Promise.all([
+        store.setAgentArtifactPin(a.id, ORG, art.id, true),
+        store.setAgentArtifactPin(a.id, ORG, art.id, true),
+      ])
+      await store.setAgentArtifactPin(a.id, ORG, foreign.id, true)
+      expect(await store.listAgentArtifactPins(a.id, ORG)).toEqual([
+        { agent_id: a.id, org_id: ORG, artifact_id: art.id },
+      ])
+      expect(await store.listAgentArtifactPins(a.id, "org_other")).toEqual([])
+      await store.setAgentArtifactPin(a.id, "org_other", art.id, false)
+      expect(await store.listAgentArtifactPins(a.id, ORG)).toHaveLength(1)
+      await store.setAgentArtifactPin(a.id, ORG, art.id, false)
+      expect(await store.listAgentArtifactPins(a.id, ORG)).toEqual([])
+      await store.setAgentArtifactPin(a.id, ORG, art.id, true)
+      await store.deleteAgent(a.id, ORG)
+      expect(await store.listAgentArtifactPins(a.id, ORG)).toEqual([])
+    })
+
     it("claims an agent's queued jobs oldest first, disjointly, and not before scheduled_for", async () => {
       const a = await mkAgent()
       const other = await mkAgent()

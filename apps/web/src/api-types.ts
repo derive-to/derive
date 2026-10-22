@@ -1203,6 +1203,114 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{id}/artifacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Readable documents pinned to an agent, at their latest version. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Pinned documents visible to this caller. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            artifacts: components["schemas"]["AgentArtifactPin"][];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{id}/artifacts/{ref}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Pin a document to an agent. */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    ref: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Pin updated. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @enum {boolean} */
+                            ok: true;
+                        };
+                    };
+                };
+            };
+        };
+        post?: never;
+        /** Unpin an agent document. */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    ref: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Pin updated. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @enum {boolean} */
+                            ok: true;
+                        };
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/runtime": {
         parameters: {
             query?: never;
@@ -1655,6 +1763,8 @@ export interface paths {
             parameters: {
                 query?: {
                     agent?: string;
+                    /** @description Only tasks from this trigger; none selects work without a trigger. */
+                    trigger?: string;
                     /** @description Comma-separated statuses. */
                     status?: string;
                     /** @description Comma-separated kinds. */
@@ -7611,6 +7721,13 @@ export interface components {
             /** @description True when the caller was already a member; their role is never changed. */
             already_member: boolean;
         };
+        AgentArtifactPin: {
+            short_id: string;
+            title: string;
+            kind: string;
+            version: number;
+            updated_at: string;
+        };
         /** @description The machine its Derive jobs run on. Empty uses the workspace default. */
         AgentSandbox: {
             /** @description A prepared provider image, such as a Boat named snapshot. */
@@ -7922,6 +8039,14 @@ export interface components {
                 /** @enum {string} */
                 status: "queued" | "running" | "succeeded" | "failed" | "needs_you" | "cancelled";
                 body_result_md: string | null;
+                effects: {
+                    /** @enum {string} */
+                    kind: "page" | "pr" | "email" | "rows" | "other";
+                    label: string;
+                    ref?: string;
+                    version?: number;
+                    url?: string;
+                }[];
                 started_at: string | null;
                 finished_at: string | null;
                 resumable: boolean;

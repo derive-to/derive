@@ -619,11 +619,21 @@ export const recentJobsQuery = () =>
 
 const JOB_PAGE = 50
 // One agent's jobs, newest first, keyset-paged on created_at.
-export const agentJobsQuery = (agentId: string) =>
+export const agentJobsQuery = (agentId: string, source = "all", needsOnly = false) =>
   infiniteQueryOptions({
-    queryKey: ["jobs", "agent", agentId] as const,
+    queryKey: ["jobs", "agent", agentId, source, needsOnly] as const,
     queryFn: ({ pageParam }) =>
-      api.listJobs({ agent: agentId, before: pageParam || undefined, limit: JOB_PAGE }),
+      api.listJobs({
+        agent: agentId,
+        ...(needsOnly ? { status: ["needs_you" as const] } : {}),
+        before: pageParam || undefined,
+        limit: JOB_PAGE,
+        ...(source === "manual"
+          ? { trigger: "none", kind: ["ask" as const, "graph" as const] }
+          : source !== "all"
+            ? { trigger: source }
+            : {}),
+      }),
     initialPageParam: "",
     getNextPageParam: (last) =>
       last.jobs.length === JOB_PAGE ? last.jobs[last.jobs.length - 1]?.created_at : undefined,

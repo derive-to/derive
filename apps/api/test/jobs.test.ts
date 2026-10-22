@@ -1300,6 +1300,40 @@ describe("jobs: schedules", () => {
     ).toBe(204)
   })
 
+  it("filters one agent's tasks by the exact schedule without mixing manual asks", async () => {
+    const { app, meta } = await setup("jobs-schedule-filter")
+    const agent = await createAgent(app)
+    const add = async (instruction: string) =>
+      (
+        await app.request(
+          `/v1/agents/${agent.id}/triggers`,
+          jsonAs(as(owner.email), { cron: "0 9 * * *", tz: "UTC", instruction }),
+        )
+      ).json()
+    const first = await add("Refresh the forecast")
+    const second = await add("Review quarterback availability")
+    const day = new Date(Date.now() + 2 * 86_400_000)
+    await jobTick(
+      { meta },
+      new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 9, 30)),
+    )
+    await ask(app, owner.email, agent.id, "Explain the current forecast")
+    const list = async (query: string) =>
+      (
+        await app.request(`/v1/jobs?agent=${agent.id}&${query}`, { headers: as(owner.email) })
+      ).json()
+    expect((await list(`trigger=${first.id}`)).jobs).toMatchObject([
+      { trigger_id: first.id, instruction: "Refresh the forecast" },
+    ])
+    expect((await list(`trigger=${second.id}`)).jobs).toMatchObject([
+      { trigger_id: second.id, instruction: "Review quarterback availability" },
+    ])
+    expect((await list("trigger=none&kind=ask,graph")).jobs).toMatchObject([
+      { trigger_id: null, instruction: "Explain the current forecast" },
+    ])
+    expect((await list("trigger=removed-trigger")).jobs).toEqual([])
+  })
+
   it("a schedule that asks again closes its earlier unanswered ask and counts the asks", async () => {
     const { app, meta } = await setup("jobs-supersede")
     const created = await app.request(

@@ -39,6 +39,10 @@ for (const [dialect, { schema, statements }] of Object.entries(dialects)) {
     const createFor = (name: string) =>
       statements.find((s) => s.startsWith(`CREATE TABLE IF NOT EXISTS ${name} (`))
 
+    it("maintained artifact pins are removed with their agent or artifact", () => {
+      expect(createFor("agent_artifact_pin")).toContain("REFERENCES agent(id) ON DELETE CASCADE")
+      expect(createFor("agent_artifact_pin")).toContain("REFERENCES artifact(id) ON DELETE CASCADE")
+    })
     for (const [key, table] of Object.entries(schema as Record<string, Table>)) {
       it(`${key}: every column is in the CREATE; migratable ones are also migrated`, () => {
         const name = getTableName(table)

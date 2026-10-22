@@ -147,7 +147,9 @@ function NavItem({
   to,
   active,
   testId,
+  search,
 }: {
+  search?: { tab: "usage" }
   icon: IconName
   label: string
   count?: number
@@ -159,7 +161,7 @@ function NavItem({
   return (
     <SidebarMenuItem>
       <SidebarMenuButton asChild isActive={active} tooltip={label}>
-        <Link to={to} {...linkProps}>
+        <Link to={to} search={search} {...linkProps}>
           <RowGlyph icon={icon} label={label} count={count} />
         </Link>
       </SidebarMenuButton>
@@ -385,7 +387,9 @@ export function NavRail() {
   // Feeds are routes now; the home library reads "active > All" only when no collection
   // filter narrows it. (A ?query= search doesn't change which feed you're in.)
   const isAll = onLibrary && !search.collection
-  const onAgents = loc.pathname.startsWith("/agents")
+  const onUsage = loc.pathname === "/agents" && "tab" in loc.search && loc.search.tab === "usage"
+  const onAgents =
+    (loc.pathname.startsWith("/agents") || loc.pathname.startsWith("/tasks")) && !onUsage
   const onInbox = loc.pathname === "/inbox"
   const onSkills = loc.pathname.startsWith("/skills")
   const onSettings = loc.pathname.startsWith("/settings")
@@ -424,6 +428,14 @@ export function NavRail() {
                 to="/agents"
                 active={onAgents}
                 testId="nav-agents"
+              />
+              <NavItem
+                icon="insights"
+                label="Usage"
+                to="/agents"
+                search={{ tab: "usage" }}
+                active={onUsage}
+                testId="nav-usage"
               />
               <NavItem
                 icon="inbox"

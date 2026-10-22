@@ -178,6 +178,7 @@ import type { Exhaustive, Shapes } from "./parity"
 import {
   activitySeen,
   agent,
+  agentArtifactPin,
   agentMention,
   agentTrigger,
   artifact,
@@ -417,6 +418,7 @@ export const schema = {
   artifactTag,
   reviewRound,
   agent,
+  agentArtifactPin,
   job,
   jobMessage,
   agentTrigger,
@@ -479,6 +481,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   follow: true,
   reviewRound: true,
   agent: true,
+  agentArtifactPin: true,
   job: true,
   jobMessage: true,
   agentTrigger: true,

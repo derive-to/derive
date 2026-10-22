@@ -14,8 +14,8 @@ import { AgentJobs } from "./agent-jobs"
 import { AgentSettings } from "./agent-settings"
 import { AgentSkill } from "./agent-skill"
 import { machineOf, modelChoices } from "./format"
+import { NewTaskDialog } from "./new-task-dialog"
 import { AgentPending } from "./skeleton"
-import { TaskComposer } from "./task-composer"
 import { useMemberNames } from "./use-member-names"
 
 const route = getRouteApi("/agents/$id")
@@ -58,10 +58,12 @@ export function AgentPage() {
   }
   if (q.isPending || !me) return <AgentPending />
   const agent = q.data
+  const schedules = agent.triggers.filter((t) => t.kind === "schedule" && t.enabled).length
 
   return (
-    <PageShell width="wide" className="flex flex-col gap-6">
+    <PageShell width="wide" className="flex min-h-full flex-col gap-6 bg-card">
       <PageHeader
+        actions={agent.can_ask ? <NewTaskDialog agent={agent} /> : undefined}
         title={agent.name}
         titleTestId="agent-title"
         eyebrow={
@@ -79,6 +81,7 @@ export function AgentPage() {
         {modelChoices(agent.provider).find((choice) => choice.id === agent.model)?.label ??
           agent.model ??
           "Account default"}
+        {schedules > 0 && ` · ${schedules} active ${schedules === 1 ? "schedule" : "schedules"}`}
         {agent.max_run_ms !== null && ` · ${Math.round(agent.max_run_ms / 60_000)} min maximum`}
       </p>
       {workspace.isError && (
@@ -90,7 +93,7 @@ export function AgentPage() {
         />
       )}
       <Tabs
-        value={tab ?? "jobs"}
+        value={tab === "skill" ? "settings" : (tab ?? "jobs")}
         onValueChange={(v) =>
           void navigate({
             search: v === "settings" || v === "skill" || v === "usage" ? { tab: v } : {},
@@ -101,9 +104,6 @@ export function AgentPage() {
           <TabsTrigger value="jobs" data-testid="agent-tab-jobs">
             Tasks
           </TabsTrigger>
-          <TabsTrigger value="skill" data-testid="agent-tab-skill">
-            Skill
-          </TabsTrigger>
           <TabsTrigger value="usage" data-testid="agent-tab-usage">
             Usage
           </TabsTrigger>
@@ -112,16 +112,26 @@ export function AgentPage() {
           </TabsTrigger>
         </TabsList>
         <TabsContent value="jobs" className="flex flex-col gap-7 pt-5">
-          {agent.can_ask && <TaskComposer agent={agent} />}
           <AgentJobs agent={agent} names={names} meId={me.id} />
-        </TabsContent>
-        <TabsContent value="skill" className="pt-5">
-          <AgentSkill agent={agent} />
         </TabsContent>
         <TabsContent value="usage" className="pt-5">
           <AgentJobs agent={agent} names={names} meId={me.id} usage />
         </TabsContent>
-        <TabsContent value="settings" className="pt-7">
+        <TabsContent value="settings" className="flex flex-col gap-8 pt-7">
+          {agent.instructions_short_id && (
+            <details
+              open={tab === "skill" ? true : undefined}
+              data-testid="agent-instructions-preview"
+              className="rounded-lg border border-border p-4"
+            >
+              <summary className="cursor-pointer text-sm font-medium">
+                Instructions · preview and edit
+              </summary>
+              <div className="pt-4">
+                <AgentSkill agent={agent} />
+              </div>
+            </details>
+          )}
           <AgentSettings
             // Remount on a server change so the form fields re-seed from the saved values.
             key={`${agent.name}\u0000${agent.description ?? ""}`}
