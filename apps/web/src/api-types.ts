@@ -1414,6 +1414,13 @@ export interface paths {
                         sandbox?: components["schemas"]["AgentSandbox"];
                         /** @enum {string} */
                         ask_policy?: "workspace" | "invited";
+                        /** @description Members who may ask an invited agent besides its creator and the owners. */
+                        askers?: string[];
+                        /**
+                         * @description creator: everyone who may ask runs on your model account and your secrets bound to it. Only the creator sets it.
+                         * @enum {string}
+                         */
+                        spend_policy?: "asker" | "creator";
                         /** @enum {string} */
                         write_policy?: "publish" | "review";
                         connection_ids?: string[];
@@ -7839,6 +7846,13 @@ export interface components {
             sandbox: components["schemas"]["AgentSandbox"];
             /** @enum {string} */
             ask_policy: "workspace" | "invited";
+            /** @description Who may ask an invited agent besides its creator and the workspace's owners. */
+            askers: string[];
+            /**
+             * @description asker: each job runs on its asker's model account and secrets. creator: on its creator's, lent to everyone who may ask.
+             * @enum {string}
+             */
+            spend_policy: "asker" | "creator";
             /**
              * @description publish: its writes go live like a person's. review: they still go live, and every new version it writes to an existing page opens a review round for the person it acts for.
              * @enum {string}

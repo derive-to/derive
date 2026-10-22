@@ -327,6 +327,20 @@ describe("jobs: who may ask, see, and run", () => {
       can_manage: boolean
     }
     expect(detail).toMatchObject({ can_ask: false, can_manage: false })
+    // Naming Ed lets him ask; nothing else about the agent opens to him.
+    await app.request(`/v1/agents/${a.id}`, {
+      ...jsonAs(as(owner.email), { askers: [ed.id] }),
+      method: "PATCH",
+    })
+    expect((await ask(app, ed.email, a.id, "hi")).status).toBe(201)
+    expect(
+      (
+        await app.request(`/v1/agents/${a.id}`, {
+          ...jsonAs(as(ed.email), { askers: [] }),
+          method: "PATCH",
+        })
+      ).status,
+    ).toBe(404)
   })
 
   it("a retired work token (dkrun_, dksess_, dkwfr_) resolves to nobody, even when well signed", async () => {
@@ -3344,6 +3358,55 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: Derive machines on bo
     }
     return { ...made, boat, pass, until, runTurn }
   }
+
+  it("an agent lends its creator's account and secrets to the people it names, and only its creator changes it", async () => {
+    const { app, meta } = await cloudSetup("jobs-machine-lend")
+    // The workspace's shared account is Codex, so nothing covers a Claude agent but a person's.
+    const account = await app.request(
+      "/v1/accounts",
+      jsonAs(as(owner.email), { provider: "claude", kind: "api_key", secret: "sk-lend-0001" }),
+    )
+    expect(account.status).toBe(201)
+    const secret = await app.request(
+      "/v1/connections",
+      jsonAs(as(owner.email), { kind: "secret", toolkit: "environment", secret: "warehouse-url" }),
+    )
+    const agent = await createAgent(app, {
+      machine: "derive",
+      provider: "claude-code",
+      ask_policy: "invited",
+      environment: { DB_URL: ((await secret.json()) as { id: string }).id },
+    })
+    const patch = (who: string, body: Record<string, unknown>) =>
+      app.request(`/v1/agents/${agent.id}`, { ...jsonAs(as(who), body), method: "PATCH" })
+    expect((await ask(app, ed.email, agent.id, "revenue by plan")).status).toBe(404)
+    // A named asker must hold a seat.
+    expect((await patch(owner.email, { askers: [outsider.id] })).status).toBe(400)
+    expect((await patch(owner.email, { askers: [ed.id] })).status).toBe(200)
+    // Ed may ask now, but has no model account and may not spend the owner's secret.
+    expect((await ask(app, ed.email, agent.id, "revenue by plan")).status).toBe(409)
+    const lending = await patch(owner.email, { spend_policy: "creator" })
+    expect(await lending.json()).toMatchObject({ askers: [ed.id], spend_policy: "creator" })
+    const lent = await ask(app, ed.email, agent.id, "revenue by plan")
+    expect(lent.status).toBe(201)
+    const job = await meta.getJob(((await lent.json()) as { id: string }).id)
+    expect(job?.payer_id).toBe(owner.id)
+
+    // Lending is its creator's alone: a workspace owner managing a teammate's agent may stop
+    // the lending or pause it, and change nothing else while it lends.
+    const edsAgent = await app.request(
+      "/v1/agents",
+      jsonAs(as(ed.email), { name: "Ed's reports", machine: "derive", spend_policy: "creator" }),
+    )
+    expect(edsAgent.status).toBe(201)
+    const edsId = ((await edsAgent.json()) as { id: string }).id
+    const ownerEdits = (body: Record<string, unknown>) =>
+      app.request(`/v1/agents/${edsId}`, { ...jsonAs(as(owner.email), body), method: "PATCH" })
+    expect((await ownerEdits({ model: "opus" })).status).toBe(403)
+    expect((await ownerEdits({ spend_policy: "asker" })).status).toBe(200)
+    expect((await ownerEdits({ spend_policy: "creator" })).status).toBe(403)
+    expect((await ownerEdits({ model: "opus" })).status).toBe(200)
+  })
 
   it("a fresh agent gives each task its own machine: parallel, parked between turns, resumed, retired on stop", async () => {
     const { app, meta, boat, until, runTurn } = await cloudSetup("jobs-machine-own")

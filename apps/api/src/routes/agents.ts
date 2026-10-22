@@ -22,7 +22,7 @@ import { sha256 } from "../lib/crypto"
 import { GithubOn, githubEventsSetup, parseOn } from "../lib/github-events"
 import { bail, fail, readJson } from "../lib/http"
 import { machineDepsFrom, replaceIdleSandbox, retireSandbox } from "../lib/job-machine"
-import { agentAccess } from "../lib/job-policy"
+import { agentAccess, agentAskers } from "../lib/job-policy"
 import { agentRepository, cancelJob } from "../lib/jobs"
 import { cloudEnabled, workspaceRuntime } from "../lib/runtime-connection"
 import { previousOccurrence } from "../lib/schedule"
@@ -190,6 +190,8 @@ export const agentRoutes = (ctx: AppContext) => {
       effort: a.effort,
       sandbox: parseAgentSandbox(a.sandbox_json),
       ask_policy: a.ask_policy,
+      askers: agentAskers(a),
+      spend_policy: a.spend_policy,
       write_policy: a.write_policy,
       paused: a.paused_at !== null,
       seen_at: a.seen_at,
@@ -282,6 +284,14 @@ export const agentRoutes = (ctx: AppContext) => {
         "The machine its Derive jobs run on. Empty uses the workspace default.",
       ),
       ask_policy: z.enum(["workspace", "invited"]),
+      askers: z
+        .array(z.string())
+        .describe("Who may ask an invited agent besides its creator and the workspace's owners."),
+      spend_policy: z
+        .enum(["asker", "creator"])
+        .describe(
+          "asker: each job runs on its asker's model account and secrets. creator: on its creator's, lent to everyone who may ask.",
+        ),
       write_policy: z
         .enum(["publish", "review"])
         .describe(
@@ -481,6 +491,14 @@ export const agentRoutes = (ctx: AppContext) => {
     )
   }
 
+  /** Askers must hold a seat in the agent's workspace when they are named. */
+  const askersError = async (org: string, askers: string[] | undefined) => {
+    for (const id of new Set(askers ?? []))
+      if (!(await meta.getMembership(org, id).catch(() => null)))
+        return "askers must be members of this workspace"
+    return null
+  }
+
   /** A default repository works only through a GitHub source for its owner the agent holds. */
   const repositoryError = async (
     repository: string | null | undefined,
@@ -514,6 +532,15 @@ export const agentRoutes = (ctx: AppContext) => {
     effort: z.enum(EXECUTION_EFFORTS).nullable(),
     sandbox: AgentSandboxSchema,
     ask_policy: z.enum(["workspace", "invited"]),
+    askers: z
+      .array(z.string().min(1).max(64))
+      .max(200)
+      .describe("Members who may ask an invited agent besides its creator and the owners."),
+    spend_policy: z
+      .enum(["asker", "creator"])
+      .describe(
+        "creator: everyone who may ask runs on your model account and your secrets bound to it. Only the creator sets it.",
+      ),
     write_policy: z.enum(["publish", "review"]),
     connection_ids: z.array(z.string().min(1).max(64)).max(20),
     repository: z
@@ -626,7 +653,11 @@ export const agentRoutes = (ctx: AppContext) => {
       const creator = (await privateOwnerId(c)) ?? null
       const refused =
         (await definitionError(c, org, creator, b)) ??
-        (await repositoryError(b.repository, b.connection_ids ?? []))
+        (await repositoryError(b.repository, b.connection_ids ?? [])) ??
+        (await askersError(org, b.askers)) ??
+        (b.spend_policy === "creator" && !creator
+          ? "only a person can lend their model account and secrets"
+          : null)
       if (refused) return bail(fail(c, 400, refused))
       // No role named: an editor, so it can publish the reports its jobs produce, capped at its
       // creator's own seat (a commenter's agent comments). A role named above that seat was
@@ -674,6 +705,8 @@ export const agentRoutes = (ctx: AppContext) => {
           effort: b.effort ?? null,
           sandbox_json: sandboxJson(b.sandbox) ?? null,
           ask_policy: b.ask_policy ?? "workspace",
+          askers_json: b.askers?.length ? JSON.stringify([...new Set(b.askers)]) : null,
+          spend_policy: b.spend_policy ?? "asker",
           write_policy: b.write_policy ?? "publish",
           connection_ids_json: b.connection_ids?.length ? JSON.stringify(b.connection_ids) : null,
           repositories_json: b.repository ? JSON.stringify([b.repository]) : null,
@@ -792,6 +825,20 @@ export const agentRoutes = (ctx: AppContext) => {
         }),
       )
       if (b instanceof Response) return bail(b)
+      // An agent that lends its creator's account and secrets changes only by their hand:
+      // anyone else managing it may pause it or stop the lending, nothing more.
+      if (who !== agent.created_by) {
+        if (b.spend_policy === "creator")
+          return bail(fail(c, 403, "only an agent's creator can lend their account and secrets"))
+        const lending = agent.spend_policy === "creator" && b.spend_policy !== "asker"
+        const edits = Object.keys(b).filter(
+          (k) => k !== "paused" && k !== "spend_policy" && b[k as keyof typeof b] !== undefined,
+        )
+        if (lending && edits.length)
+          return bail(
+            fail(c, 403, "this agent runs on its creator's account: only they can change it"),
+          )
+      }
       let instructions_artifact_id: string | null | undefined
       if (b.instructions_short_id !== undefined) {
         if (b.instructions_short_id === null) instructions_artifact_id = null
@@ -807,7 +854,8 @@ export const agentRoutes = (ctx: AppContext) => {
         (await repositoryError(
           b.repository,
           b.connection_ids ?? parseConnectionIds(agent.connection_ids_json),
-        ))
+        )) ??
+        (await askersError(org, b.askers))
       if (refused) return bail(fail(c, 400, refused))
       if (b.machine === "derive" && !(await cloudEnabled(meta, deps.runtime, org)))
         return bail(
@@ -838,6 +886,13 @@ export const agentRoutes = (ctx: AppContext) => {
           effort: b.effort,
           sandbox_json: sandboxJson(b.sandbox),
           ask_policy: b.ask_policy,
+          askers_json:
+            b.askers === undefined
+              ? undefined
+              : b.askers.length
+                ? JSON.stringify([...new Set(b.askers)])
+                : null,
+          spend_policy: b.spend_policy,
           write_policy: b.write_policy,
           connection_ids_json:
             b.connection_ids === undefined

@@ -1959,6 +1959,21 @@
               "invited"
             ]
           },
+          "askers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Who may ask an invited agent besides its creator and the workspace's owners."
+          },
+          "spend_policy": {
+            "type": "string",
+            "enum": [
+              "asker",
+              "creator"
+            ],
+            "description": "asker: each job runs on its asker's model account and secrets. creator: on its creator's, lent to everyone who may ask."
+          },
           "write_policy": {
             "type": "string",
             "enum": [
@@ -2035,6 +2050,8 @@
           "effort",
           "sandbox",
           "ask_policy",
+          "askers",
+          "spend_policy",
           "write_policy",
           "paused",
           "seen_at",
@@ -7034,6 +7051,24 @@
                       "workspace",
                       "invited"
                     ]
+                  },
+                  "askers": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64
+                    },
+                    "maxItems": 200,
+                    "description": "Members who may ask an invited agent besides its creator and the owners."
+                  },
+                  "spend_policy": {
+                    "type": "string",
+                    "enum": [
+                      "asker",
+                      "creator"
+                    ],
+                    "description": "creator: everyone who may ask runs on your model account and your secrets bound to it. Only the creator sets it."
                   },
                   "write_policy": {
                     "type": "string",

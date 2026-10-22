@@ -23,6 +23,16 @@ export interface JobDeps {
 
 // ---- Who may ask -------------------------------------------------------------------------
 
+/** The members an `invited` agent names as askers. A malformed column names nobody. */
+export const agentAskers = (agent: Pick<AgentRecord, "askers_json">): string[] => {
+  try {
+    const ids: unknown = JSON.parse(agent.askers_json ?? "[]")
+    return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : []
+  } catch {
+    return []
+  }
+}
+
 /** One policy for detail reads and the roster's batched membership read. */
 export const agentAccess = (
   agent: AgentRecord,
@@ -35,7 +45,10 @@ export const agentAccess = (
     can_ask:
       (!caller || (caller.org_id === agent.org_id && roleAllows(caller.role, "publish"))) &&
       agent.managed !== 1 &&
-      (agent.ask_policy === "workspace" || creator || member.role === "owner"),
+      (agent.ask_policy === "workspace" ||
+        creator ||
+        member.role === "owner" ||
+        agentAskers(agent).includes(member.user_id)),
     can_manage:
       (member.role === "owner" || (creator && member.role !== "viewer")) &&
       (!caller ||
@@ -46,8 +59,8 @@ export const agentAccess = (
 }
 
 /** A person may ask an agent when they are a member of its workspace and the agent's ask
- *  policy lets them: `workspace` lets every member ask; `invited` lets the agent's creator
- *  and workspace owners ask. */
+ *  policy lets them: `workspace` lets every member ask; `invited` lets the agent's creator,
+ *  workspace owners and the members it names ask. */
 export const canAskAgent = async (
   meta: MetaStore,
   agent: AgentRecord,

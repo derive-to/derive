@@ -12,7 +12,7 @@ import { parseConnectionIds, spendableConnections } from "./broker"
 import { jobsOverBudget, OVER_BUDGET } from "./budget"
 import { readEnvironmentBindings } from "./context-environment"
 import { sha256 } from "./crypto"
-import { jobPayer, resolveJobCredential } from "./job-accounts"
+import { jobPayer, lenderOf, resolveJobCredential } from "./job-accounts"
 import { canAskAgent, canSteerJob, type JobDeps } from "./job-policy"
 import { cloudEnabled, workspaceRuntime } from "./runtime-connection"
 
@@ -85,7 +85,7 @@ export const commandJob = async (
       reject("Your model account needs attention. Connect it in Settings before starting.")
     else {
       const row = await deps.meta.getAccount(account.account_id)
-      if (!row || (actor && row.user_id !== actor && row.user_id !== WORKSPACE_ACCOUNT_OWNER))
+      if (!row || (actor && !spendsAccount(agent, actor, row.user_id)))
         reject("This model account is private. Use your account or a shared workspace account.")
     }
     const skill = agent.instructions_artifact_id
@@ -211,6 +211,11 @@ export const turnAgent = (agent: AgentRecord, execution: JobExecution): AgentRec
 
 export const commandKey = (key?: string | null) => key || newId("cmd")
 
+/** May a turn this person starts spend an account owned by `owner`? Their own, the
+ *  workspace's, or the creator's when the agent lends. */
+const spendsAccount = (agent: AgentRecord, actor: string, owner: string): boolean =>
+  owner === actor || owner === WORKSPACE_ACCOUNT_OWNER || owner === lenderOf(agent)
+
 /** Recheck identities before spending credentials or allocating compute. */
 export const turnProblem = async (
   deps: JobDeps,
@@ -238,7 +243,7 @@ export const turnProblem = async (
   if (!credential.credential)
     return "This task waits for its model account. Reconnect it in Settings → Model accounts."
   const account = await deps.meta.getAccount(credential.account_id)
-  if (!account || (account.user_id !== actor && account.user_id !== WORKSPACE_ACCOUNT_OWNER))
+  if (!account || !spendsAccount(agent, actor, account.user_id))
     return "This model account is private. Use your account or a shared workspace account."
   if (choice.skill) {
     const skill = await deps.meta.getArtifactById(choice.skill.artifact_id)
@@ -257,7 +262,11 @@ export const turnProblem = async (
   if (
     ids.some(
       (id) =>
-        !available.some((cn) => cn.id === id && (cn.scope === "workspace" || cn.user_id === actor)),
+        !available.some(
+          (cn) =>
+            cn.id === id &&
+            (cn.scope === "workspace" || cn.user_id === actor || cn.user_id === lenderOf(agent)),
+        ),
     )
   )
     return "A connection for this task is unavailable. Check the agent’s connections in Settings."
