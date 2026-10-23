@@ -12,6 +12,7 @@ The account is Mobile QA. The workspace is Personal.
 | Agents: recent tasks and member names | Route waits for both reads | Reads run in the background |
 | Settings: other sections | Profile downloads all sections | Each section loads when selected |
 | Browser view transitions | Enabled globally | Disabled, as the router comments intend |
+| Page error recovery | Repeats a rejected module import | Reloads the document at the current URL |
 
 ## Delayed history
 
@@ -68,3 +69,38 @@ The local fault reproduces one loading failure, not the exact reported phone ses
 Mobile checks use real iframe viewports in Aside, not a physical phone or Safari.
 The screenshots use the existing dark theme.
 This branch is not deployed. No CI status is inspected.
+
+## Reported Profile error and recovery
+
+The reported URL is `/settings/profile`.
+The supplied screenshot shows the route error boundary. It does not show a 404.
+
+A production-build check reproduces that screen with a missing Settings module.
+The local account and database stay the same.
+The built app runs on port 8117, with a temporary viewport proxy on port 8127.
+The proxy removes framing headers only from local responses to permit iframe viewports.
+No deployed response or app security configuration changes.
+
+1. Open the built app. Temporarily move its Settings route module out of the asset directory.
+2. Select Settings. Confirm the module GET returns 404 and the page error appears.
+3. Restore the module. Click the original **Try again** button.
+4. Confirm the error remains. The browser retains the rejected import.
+5. Refresh the browser. Confirm Profile opens at the same URL.
+6. Repeat with the changed **Reload page** button at 390 × 844.
+7. Restore the module and select **Reload page**. Confirm Profile opens with the signed-in session.
+8. Repeat for the Agents route module at 320 × 568. Confirm Agents opens at `/agents`.
+
+The changed recovery reloads the current URL. It does not switch workspaces.
+The production build passes. The phone checks use its compiled JavaScript, not the development server.
+
+![Settings module fails at 390 pixels](settings-error-390.png)
+
+![Reload recovers Profile at the same URL](settings-recovered-390.png)
+
+![Agents module fails at 320 pixels](agents-error-320.png)
+
+![Reload recovers Agents at the same URL](agents-recovered-320.png)
+
+This proves the failed-download recovery defect and its repair.
+The screenshot alone cannot establish the original phone's exception or failed request.
+The deployed mobile session and physical Safari remain unverified.

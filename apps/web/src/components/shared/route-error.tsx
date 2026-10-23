@@ -1,4 +1,4 @@
-import { type ErrorComponentProps, Link, useRouter } from "@tanstack/react-router"
+import { type ErrorComponentProps, Link } from "@tanstack/react-router"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { StatusPanel } from "@/components/shared/status-panel"
@@ -8,15 +8,16 @@ import { Button } from "@/components/ui/button"
 // mobile bar) stays mounted above this, so the user can always navigate away.
 // Failures go through the ONE status grammar — a centered `StatusPanel` (danger
 // tone, which announces `role="alert"`) with the sanctioned quiet actions (outline
-// "Try again", like every inline failure; ghost navigate; no filled primary on a
+// reload, ghost navigation; no filled primary on a
 // failure) — so a route-level failure reads the same as an inline list failure.
-// "Try again" resets the boundary and re-runs the loader; the raw message is
-// dev-only (a thrown error can carry internals).
-export function RouteError({ error, reset }: ErrorComponentProps) {
-  const router = useRouter()
+// Reload the document to retry failed module downloads too. Resetting the route
+// boundary alone reuses the browser's rejected module. The raw message stays dev-only.
+export function RouteError({ error }: ErrorComponentProps) {
   // The router hands the boundary whatever was thrown, typed `unknown` since 1.170.44.
   const message = error instanceof Error ? error.message : String(error)
-  const detail = import.meta.env.DEV ? message : "Something went wrong loading this page."
+  const detail = import.meta.env.DEV
+    ? message
+    : "Something went wrong loading this page. Reload to try again."
   return (
     <div className="flex flex-1 items-center justify-center p-6">
       <StatusPanel
@@ -31,11 +32,10 @@ export function RouteError({ error, reset }: ErrorComponentProps) {
               data-testid="route-error-retry"
               variant="outline"
               onClick={() => {
-                reset()
-                router.invalidate()
+                window.location.reload() // reload-ignore: retry this page's modules; no workspace change.
               }}
             >
-              Try again
+              Reload page
             </Button>
             <Button asChild variant="ghost" data-testid="route-error-home">
               <Link to="/">Go home</Link>
