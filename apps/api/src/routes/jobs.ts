@@ -175,6 +175,13 @@ const JobResultSchema = z.object({
     .array(z.object({ label: z.string(), url: z.string().optional(), ref: z.string().optional() }))
     .optional(),
   failure: z.object({ reason: z.string(), retryable: z.boolean() }).optional(),
+  summary: z
+    .string()
+    .max(2_000)
+    .optional()
+    .describe(
+      "One line saying what the run did, kept to 200 characters. Derived from the report when the runner sends none; empty when the run said nothing.",
+    ),
   superseded_by: z.string().optional(),
   route: z
     .array(

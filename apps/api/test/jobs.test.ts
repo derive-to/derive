@@ -159,7 +159,7 @@ describe("jobs: ask, pull, report", () => {
     const ok = await report(app, a.token, job.id, {
       started_at: pulled.started_at,
       status: "succeeded",
-      body_md: "357 orgs.",
+      body_md: "## **357 orgs** had sessions.\n\nThat is 12 more than the day before.",
       cost_micro_usd: 1200,
       result: { effects: [{ kind: "page", label: "Active orgs", ref: manifest.short_id }] },
     })
@@ -169,13 +169,32 @@ describe("jobs: ask, pull, report", () => {
     ).json()) as {
       status: string
       cost_micro_usd: number
-      result: { effects: unknown[] }
+      result: { effects: unknown[]; summary?: string }
       messages: { author_kind: string; body_md: string }[]
     }
     expect(detail.status).toBe("succeeded")
     expect(detail.cost_micro_usd).toBe(1200)
     expect(detail.result.effects).toHaveLength(1)
+    // The row's one line is the report's first sentence, marks dropped, unless the runner
+    // sends its own.
+    expect(detail.result.summary).toBe("357 orgs had sessions.")
     expect(detail.messages.map((m) => m.author_kind)).toEqual(["asker", "agent"])
+
+    const again = await ask(app, ed.email, a.id, "And the week before?")
+    const [second] = await pull(app, a)
+    await report(app, a.token, ((await again.json()) as { id: string }).id, {
+      started_at: second?.started_at ?? null,
+      status: "succeeded",
+      body_md: "Long report follows.\n\n…",
+      result: { summary: "Nothing due, 93 completed games." },
+    })
+    const list = (await (
+      await app.request(`/v1/jobs?agent=${a.id}`, { headers: as(owner.email) })
+    ).json()) as { jobs: { result: { summary?: string } }[] }
+    expect(list.jobs.map((j) => j.result.summary)).toEqual([
+      "Nothing due, 93 completed games.",
+      "357 orgs had sessions.",
+    ])
   })
 
   it("an ask says which machine it waits for while that runner is off", async () => {

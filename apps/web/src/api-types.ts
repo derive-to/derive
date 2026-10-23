@@ -8099,6 +8099,8 @@ export interface components {
                     reason: string;
                     retryable: boolean;
                 };
+                /** @description One line saying what the run did, kept to 200 characters. Derived from the report when the runner sends none; empty when the run said nothing. */
+                summary?: string;
                 superseded_by?: string;
                 route?: {
                     node_id: string;

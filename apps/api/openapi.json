@@ -2557,6 +2557,11 @@
                   "retryable"
                 ]
               },
+              "summary": {
+                "type": "string",
+                "maxLength": 2000,
+                "description": "One line saying what the run did, kept to 200 characters. Derived from the report when the runner sends none; empty when the run said nothing."
+              },
               "superseded_by": {
                 "type": "string"
               },

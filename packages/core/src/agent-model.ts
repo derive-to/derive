@@ -111,6 +111,9 @@ export interface JobResult {
   effects?: JobEffect[]
   evidence?: { label: string; url?: string; ref?: string }[]
   failure?: { reason: string; retryable: boolean }
+  /** One line saying what the run did, read off the row. The runner's own when it sent one,
+   *  else the first sentence of its report. */
+  summary?: string
   /** Closed without an answer because a later run of the same schedule asked again. */
   superseded_by?: string
   /** A graph job's recorded route: which node ran, which attempt, where it went next. */
@@ -556,4 +559,88 @@ export const questionHistory = (
 }
 export const jobResult = (j: Pick<JobRecord, "result_json">): JobResult =>
   parseJson<JobResult>(j.result_json) ?? {}
+
+/** The one line a row shows for a run: the first sentence of what the agent reported, with
+ *  markdown dropped. A heading that only labels the report ("## Verdict") is skipped for the
+ *  paragraph after it; rules, tables and images are skipped too. Only the head of the body is
+ *  read, so a runner cannot make this slow with a long one. */
+export const JOB_SUMMARY_MAX = 200
+const SUMMARY_READ = 4_000
+const ABBREVIATIONS =
+  /(?:\b(?:e\.g|i\.e|vs|etc|approx|a\.m|p\.m|no|dr|mr|mrs|ms|st|fig|jr|sr)|\b[A-Za-z])\.$/i
+
+/** The visible words of one markdown line. */
+function plainLine(line: string): string {
+  return line
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/`+/g, "")
+    .replace(/\*\*|__|~~/g, "")
+    .replace(/(^|[\s(])[*_](?=\S)/g, "$1")
+    .replace(/(\S)[*_](?=[\s.,;:!?)]|$)/g, "$1")
+    .replace(/\s+/g, " ")
+    .replace(/ ([.,;:!?])/g, "$1")
+    .trim()
+}
+
+export function jobSummaryOf(bodyMd: string | null | undefined): string | undefined {
+  const lines = (bodyMd ?? "").slice(0, SUMMARY_READ).split("\n")
+  const paragraphs: { heading: boolean; text: string }[] = []
+  let current: string[] = []
+  let heading = false
+  let fence = false
+  const close = () => {
+    const text = plainLine(current.join(" "))
+    if (text) paragraphs.push({ heading, text })
+    current = []
+    heading = false
+  }
+  for (const raw of lines) {
+    const line = raw.trim()
+    if (line.startsWith("```") || line.startsWith("~~~")) {
+      fence = !fence
+      continue
+    }
+    if (fence) continue
+    if (!line) {
+      close()
+      continue
+    }
+    // A line of = or - under one line of text makes that line a heading.
+    if (current.length === 1 && /^(?:={3,}|-{3,})$/.test(line)) {
+      heading = true
+      continue
+    }
+    // Rules and table rows carry no words of their own.
+    if (/^(?:[-*_]\s*){3,}$/.test(line) || line.startsWith("|")) continue
+    const item = /^(?:[-*+]|\d+[.)])\s+/.test(line)
+    if (item && current.length) close()
+    if (!current.length && /^#{1,6}\s/.test(line)) heading = true
+    current.push(
+      line
+        .replace(/^#{1,6}\s+/, "")
+        .replace(/^>\s?/, "")
+        .replace(/^(?:[-*+]|\d+[.)])\s+/, ""),
+    )
+    if (paragraphs.length > 1) break
+  }
+  close()
+  const first = paragraphs[0]
+  if (!first) return undefined
+  // A heading that only labels the report ("Verdict", "By industry") gives way to the
+  // paragraph under it; one that says something ("357 orgs had sessions.") is the line.
+  const label = first.heading && !/[.!?]/.test(first.text) && first.text.split(" ").length <= 4
+  const pick = label && paragraphs[1] ? paragraphs[1].text : first.text
+  let line = pick
+  const re = /[.?!](?=\s|$)/g
+  for (let m = re.exec(pick); m; m = re.exec(pick)) {
+    const head = pick.slice(0, m.index + 1)
+    if (head.length >= 12 && !ABBREVIATIONS.test(head)) {
+      line = head
+      break
+    }
+  }
+  return line.length > JOB_SUMMARY_MAX ? `${line.slice(0, JOB_SUMMARY_MAX - 1).trimEnd()}…` : line
+}
 export const isJobOpen = (s: JobStatus): boolean => JOB_OPEN_STATUSES.includes(s)

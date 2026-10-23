@@ -846,8 +846,8 @@ test("an agent's page answers, retries, and changes the agent", async ({ owner }
   await owner.getByTestId("task-agent-back").click()
   await owner.screenshot({ path: testInfo.outputPath("agent-jobs.png"), fullPage: true })
 
-  // Ask from the page opens a job.
-  await owner.getByTestId("agent-new-task").click()
+  // An agent people ask leads with its ask box: no button to find first.
+  await expect(owner.getByTestId("agent-new-task")).toHaveCount(0)
   await owner.getByTestId("agent-ask-input").fill("Summarize the funnel")
   await owner.getByTestId("agent-ask-send").click()
   // Asking opens the task; its row is on the agent's page when you come back.
@@ -863,7 +863,8 @@ test("an agent's page answers, retries, and changes the agent", async ({ owner }
   await owner.getByTestId("agent-schedule-cron").fill("0 8 * * 1")
   await owner.getByTestId("agent-trigger-instruction").fill("Write the Monday numbers.")
   await owner.getByTestId("agent-trigger-save").click()
-  await expect(owner.getByText("Mondays 8:00")).toBeVisible()
+  // The new schedule reads in words under the agent's name, with the pause it waits on.
+  await expect(owner.getByTestId("agent-schedule")).toContainText("Mondays 8:00 · Paused")
   await owner.getByTestId("agent-write-policy-review").click()
   await expect(owner.getByTestId("agent-write-policy-review")).toHaveAttribute("data-state", "on")
   // A value pasted here becomes a secret named after the variable, and the row says so.
@@ -1165,16 +1166,23 @@ test("task workspace renders reports, follows up in place, pins artifacts and ke
   ).toBe(true)
   await owner.screenshot({ path: testInfo.outputPath("task-mobile.png") })
   await owner.getByTestId("task-agent-back").click()
-  await expect(owner.getByTestId(`agent-pin-${artifact}`)).toContainText("Latest version · v1")
+  // Pinned pages sit under the agent's name, with their version; the schedule it just got
+  // makes this a scheduled agent, so the ask moves to a quiet header verb and runs read by day.
+  await expect(owner.getByTestId("agent-pages")).toContainText("v1 · updated")
+  await expect(owner.getByTestId(`agent-pin-${artifact}`)).toHaveText("Recovery benchmark")
   await owner.reload()
   await expect(owner.getByTestId(`agent-pin-${artifact}`)).toBeVisible()
+  await expect(owner.getByTestId("agent-schedule")).toContainText("Every day 9:00")
+  await expect(owner.getByTestId("agent-new-task")).toHaveText("Ask")
+  await expect(owner.getByTestId("task-composer")).toHaveCount(0)
   await owner.setViewportSize({ width: 1280, height: 900 })
   await owner.screenshot({ path: testInfo.outputPath("agent-desktop.png") })
-  await owner.getByTestId("agent-task-source").selectOption("manual")
-  await expect(owner.getByTestId(`job-open-${id}`)).toBeVisible()
-  const current = await (await owner.request.get(`/v1/agents/${agent.id}`)).json()
-  await owner.getByTestId("agent-task-source").selectOption(current.triggers[0].id)
-  await expect(owner.getByTestId("agent-jobs-empty")).toHaveText("No tasks from this source yet.")
+  // A run's row says what it did: the first sentence of its report, past its heading.
+  await expect(owner.getByTestId(`job-open-${id}`)).toContainText(
+    "The original report remains above.",
+  )
+  await owner.getByTestId("agent-tab-settings").click()
+  await expect(owner.getByTestId(`agent-pin-row-${artifact}`)).toBeVisible()
   await owner.getByTestId("agent-tab-usage").click()
   await expect(owner.getByTestId("task-usage-empty")).toBeVisible()
   await owner.getByTestId("nav-usage").click()

@@ -15,6 +15,8 @@ import {
 import { Input } from "@/components/ui/input"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { parseRef } from "../artifact/parse-ref"
+import { when } from "./format"
+import { Field, Sub, Verb } from "./rows"
 
 export const agentArtifactsQuery = (id: string) => ({
   queryKey: ["agents", id, "artifacts"] as const,
@@ -22,10 +24,40 @@ export const agentArtifactsQuery = (id: string) => ({
   refetchInterval: 30_000,
 })
 
-export function AgentArtifacts({ agent }: { agent: AgentDetail }) {
+/** The pages an agent keeps (its log, its casebook), one line each under the page's title.
+ *  Nothing at all when none are pinned: pinning lives in Settings. */
+export function AgentPages({ agent }: { agent: AgentDetail }) {
+  const pins = useQuery(agentArtifactsQuery(agent.id))
+  if (!pins.data?.artifacts.length) return null
+  return (
+    <div data-testid="agent-pages" className="flex flex-col gap-1.5">
+      {pins.data.artifacts.map((art) => (
+        <div key={art.short_id} className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Icon name="page" size={15} strokeWidth={1.75} className="shrink-0" />
+          <Link
+            to="/artifacts/$ref"
+            params={{ ref: art.short_id }}
+            data-testid={`agent-pin-${art.short_id}`}
+            className="truncate font-medium text-foreground hover:underline"
+          >
+            {art.title}
+          </Link>
+          <span className="shrink-0">
+            · v{art.version} · updated {when(art.updated_at)}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** Settings › Pages: pin and unpin the pages an agent keeps. A pin opens the latest version;
+ *  page permissions stay the page's own. */
+export function PagesField({ agent }: { agent: AgentDetail }) {
   const pins = useQuery(agentArtifactsQuery(agent.id))
   const [open, setOpen] = useState(false)
   const [ref, setRef] = useState("")
+  const invalidate = [["agents", agent.id, "artifacts"]]
   const pin = useApiMutation({
     mutationFn: () => {
       const path = ref.trim().split(/[?#]/)[0] ?? ""
@@ -35,7 +67,7 @@ export function AgentArtifacts({ agent }: { agent: AgentDetail }) {
         true,
       )
     },
-    invalidate: [["agents", agent.id, "artifacts"]],
+    invalidate,
     onSuccess: () => {
       setOpen(false)
       setRef("")
@@ -43,36 +75,25 @@ export function AgentArtifacts({ agent }: { agent: AgentDetail }) {
   })
   const remove = useApiMutation({
     mutationFn: (id: string) => api.pinAgentArtifact(agent.id, id, false),
-    invalidate: [["agents", agent.id, "artifacts"]],
+    invalidate,
   })
-  if (pins.isError)
-    return (
-      <LoadError
-        title="Couldn’t load pinned artifacts."
-        testId="agent-artifacts-retry"
-        onRetry={() => void pins.refetch()}
-      />
-    )
-  if (!agent.can_manage && !pins.data?.artifacts.length) return null
+  const edit = agent.can_manage
+  if (!edit && !pins.data?.artifacts.length) return null
   return (
-    <section
-      aria-label="Pinned artifacts"
-      data-testid="agent-artifacts"
-      className="flex flex-col gap-3"
-    >
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-xs font-medium text-muted-foreground">Pinned artifacts</h2>
-        {agent.can_manage && (
+    <Field
+      label="Pages"
+      action={
+        edit && (
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
-              <Button variant="ghost" size="xs" data-testid="agent-pin-add">
-                Pin artifact
-              </Button>
+              <Verb testId="agent-pin-add" onClick={() => setOpen(true)}>
+                Add
+              </Verb>
             </DialogTrigger>
             <DialogContent>
-              <DialogTitle>Pin an artifact</DialogTitle>
+              <DialogTitle>Pin a page</DialogTitle>
               <DialogDescription>
-                Keep a document this agent maintains here. Pins open its latest version. Document
+                A page this agent keeps, shown under its name. Pins open the latest version. Page
                 permissions stay the same.
               </DialogDescription>
               <form
@@ -83,8 +104,8 @@ export function AgentArtifacts({ agent }: { agent: AgentDetail }) {
                 }}
               >
                 <Input
-                  aria-label="Artifact link or ID"
-                  placeholder="Paste an artifact link or ID"
+                  aria-label="Page link or ID"
+                  placeholder="Paste a page link or ID"
                   data-testid="agent-pin-ref"
                   value={ref}
                   onChange={(e) => setRef(e.target.value)}
@@ -95,57 +116,49 @@ export function AgentArtifacts({ agent }: { agent: AgentDetail }) {
                   disabled={!ref.trim()}
                   loading={pin.isPending}
                 >
-                  Pin artifact
+                  Pin page
                 </Button>
               </form>
             </DialogContent>
           </Dialog>
-        )}
-      </div>
-      {pins.isPending ? (
-        <p className="text-sm text-muted-foreground">Loading artifacts…</p>
-      ) : pins.data.artifacts.length ? (
-        <div className="grid gap-3 sm:grid-cols-2">
+        )
+      }
+    >
+      {pins.isError ? (
+        <LoadError
+          layout="inline"
+          title="Couldn’t load its pages."
+          testId="agent-artifacts-retry"
+          onRetry={() => void pins.refetch()}
+        />
+      ) : pins.data?.artifacts.length ? (
+        <ul className="flex flex-col gap-1.5" data-testid="agent-artifacts">
           {pins.data.artifacts.map((art) => (
-            <div
-              key={art.short_id}
-              className="flex min-w-0 items-center rounded-lg border border-border"
-            >
+            <li key={art.short_id} className="flex items-center gap-2">
               <Link
                 to="/artifacts/$ref"
                 params={{ ref: art.short_id }}
-                data-testid={`agent-pin-${art.short_id}`}
-                className="flex min-w-0 flex-1 items-center gap-3 p-3 hover:bg-secondary"
+                data-testid={`agent-pin-row-${art.short_id}`}
+                className="truncate text-foreground underline-offset-4 hover:underline"
               >
-                <Icon name="link" className="size-4 shrink-0 text-muted-foreground" />
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">{art.title}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Latest version · v{art.version}
-                  </p>
-                </div>
+                {art.title}
               </Link>
-              {agent.can_manage && (
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  className="mr-2"
-                  aria-label={`Unpin ${art.title}`}
-                  data-testid={`agent-unpin-${art.short_id}`}
+              {edit && (
+                <Verb
+                  testId={`agent-unpin-${art.short_id}`}
                   disabled={remove.isPending}
                   onClick={() => remove.mutate(art.short_id)}
                 >
-                  <Icon name="close" />
-                </Button>
+                  Unpin
+                </Verb>
               )}
-            </div>
+            </li>
           ))}
-        </div>
+        </ul>
       ) : (
-        <p className="text-sm text-muted-foreground">
-          Pin the artifacts this agent maintains to keep them within reach.
-        </p>
+        <span className="text-muted-foreground">None</span>
       )}
-    </section>
+      <Sub>The pages it maintains, such as a log or a casebook.</Sub>
+    </Field>
   )
 }

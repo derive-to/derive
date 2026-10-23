@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query"
-import { getRouteApi, Link } from "@tanstack/react-router"
-import { ApiError } from "@/api"
+import { getRouteApi, Link, useNavigate } from "@tanstack/react-router"
+import { useRef } from "react"
+import { type AgentDetail, type AgentTrigger, ApiError, api } from "@/api"
+import { Icon } from "@/components/icons"
 import { LoadError } from "@/components/shared/load-error"
 import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
@@ -9,19 +11,27 @@ import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useAuth } from "@/ctx"
 import { agentQuery, workspaceQuery } from "@/lib/queries"
+import { useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
+import { AgentPages } from "./agent-artifacts"
 import { AgentJobs } from "./agent-jobs"
 import { AgentSettings } from "./agent-settings"
 import { AgentSkill } from "./agent-skill"
-import { machineOf, modelChoices } from "./format"
+import { cronLabel, isScheduled, nextRun, whenNext, zoneLabel } from "./format"
 import { NewTaskDialog } from "./new-task-dialog"
+import { Verb } from "./rows"
 import { ShareAgentDialog } from "./share-agent-dialog"
 import { AgentPending } from "./skeleton"
+import { TaskComposer } from "./task-composer"
 import { useMemberNames } from "./use-member-names"
 
 const route = getRouteApi("/agents/$id")
 
 // Agent views ride the URL. Existing MCP links to Settings keep their destination.
+//
+// The page has two shapes with one grammar. An agent people ask leads with the ask box: it is
+// the page's one filled button. An agent a schedule runs leads with that schedule and whatever
+// it is waiting on; asking it is a quiet verb in the header.
 export function AgentPage() {
   const { id } = route.useParams()
   const { tab } = route.useSearch()
@@ -59,15 +69,15 @@ export function AgentPage() {
   }
   if (q.isPending || !me) return <AgentPending />
   const agent = q.data
-  const schedules = agent.triggers.filter((t) => t.kind === "schedule" && t.enabled).length
+  const scheduled = isScheduled(agent.triggers)
 
   return (
     <PageShell width="wide" className="flex min-h-full flex-col gap-6 bg-card">
       <PageHeader
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
+            {scheduled && agent.can_ask && <NewTaskDialog agent={agent} quiet />}
             <ShareAgentDialog agent={agent} />
-            {agent.can_ask && <NewTaskDialog agent={agent} />}
           </div>
         }
         title={agent.name}
@@ -79,17 +89,18 @@ export function AgentPage() {
         }
         subtitle={agent.description ?? undefined}
       />
-      <p data-testid="agent-run-config" className="text-sm text-muted-foreground">
-        {agent.machine === "derive"
-          ? `Cloud · ${agent.runtime?.provider === "boat" ? "boat.dev" : "Ortam"}`
-          : machineOf(agent, names).label}
-        {" · "}
-        {modelChoices(agent.provider).find((choice) => choice.id === agent.model)?.label ??
-          agent.model ??
-          "Account default"}
-        {schedules > 0 && ` · ${schedules} active ${schedules === 1 ? "schedule" : "schedules"}`}
-        {agent.max_run_ms !== null && ` · ${Math.round(agent.max_run_ms / 60_000)} min maximum`}
-      </p>
+      {(scheduled || agent.paused) && (
+        <div className="flex flex-col gap-1.5">
+          {agent.triggers
+            .filter((t) => t.enabled)
+            .map((t) => (
+              <ScheduleLine key={t.id} agent={agent} trigger={t} />
+            ))}
+          <AgentPages agent={agent} />
+        </div>
+      )}
+      {!scheduled && !agent.paused && <AgentPages agent={agent} />}
+      {!scheduled && agent.can_ask && <TaskComposer agent={agent} />}
       {workspace.isError && (
         <LoadError
           layout="inline"
@@ -149,5 +160,54 @@ export function AgentPage() {
         </TabsContent>
       </Tabs>
     </PageShell>
+  )
+}
+
+/** One enabled trigger in words, with when it next fires and a verb to run it now. "Run now"
+ *  asks the agent the schedule's instruction, so the run reads like any other task. */
+function ScheduleLine({ agent, trigger }: { agent: AgentDetail; trigger: AgentTrigger }) {
+  const navigate = useNavigate()
+  const key = useRef(crypto.randomUUID())
+  // Only a schedule can be run by hand, and only one whose subject an ask can carry: an
+  // event trigger's instruction assumes the event, a collection or tag subject has no ask.
+  const raw = trigger.subject as { kind?: string; id?: string } | null
+  const subject =
+    raw?.kind === "artifact" && typeof raw.id === "string"
+      ? { kind: "artifact" as const, id: raw.id }
+      : undefined
+  const runnable = trigger.kind === "schedule" && (!raw || !!subject)
+  const run = useApiMutation({
+    mutationFn: () =>
+      api.askAgent(agent.id, trigger.instruction, subject, { dedupe_key: key.current }),
+    invalidate: [["jobs"], ["agents"]],
+    onSuccess: (job) => {
+      key.current = crypto.randomUUID()
+      void navigate({ to: "/tasks/$id", params: { id: job.id } })
+    },
+  })
+  const next = trigger.cron ? nextRun(trigger.cron, trigger.tz) : null
+  const zone = trigger.cron ? zoneLabel(trigger.tz) : null
+  return (
+    <div
+      data-testid={`agent-schedule-${trigger.id}`}
+      className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground"
+    >
+      <Icon name="agent-scheduled" size={15} strokeWidth={1.75} className="shrink-0" />
+      <span data-testid="agent-schedule">
+        {trigger.kind === "schedule" && trigger.cron
+          ? `${cronLabel(trigger.cron)}${zone ? ` ${zone}` : ""}`
+          : "On an event"}
+        {agent.paused ? " · Paused" : next ? ` · Next ${whenNext(next)}` : ""}
+      </span>
+      {runnable && agent.can_ask && !agent.paused && (
+        <Verb
+          testId={`agent-run-now-${trigger.id}`}
+          disabled={run.isPending}
+          onClick={() => run.mutate()}
+        >
+          {run.isPending ? "Starting…" : "Run now"}
+        </Verb>
+      )}
+    </div>
   )
 }

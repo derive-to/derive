@@ -19,12 +19,12 @@ import { accountsQuery, agentJobsQuery, agentQuery, jobQuery } from "@/lib/queri
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useJobEvents } from "@/lib/use-job-events"
 import { cn } from "@/lib/utils"
-import { AgentArtifacts } from "./agent-artifacts"
 import { AgentTaskList } from "./agent-task-list"
 import {
   askedLine,
-  failureOf,
+  detailOf,
   firstLine,
+  isScheduled,
   JOB_ICON,
   machineName,
   machineOf,
@@ -66,8 +66,9 @@ export function warningFor(
 const canStartRunner = (agent: Pick<Agent, "machine" | "seen_at" | "created_by">, meId: string) =>
   agent.machine === "owner" && agent.created_by === meId && !machineOf(agent, new Map()).on
 
-// The Jobs tab: what the agent does, what would stop it, where it runs, then every job it has
-// taken, newest first, one line each.
+// The Tasks tab: what would stop the agent, any question waiting on a person, then every
+// task it has taken, newest first, one line each. The list's shape follows the agent's:
+// grouped by state when people ask it, by day when a schedule does.
 export function AgentJobs({
   agent,
   names,
@@ -81,12 +82,7 @@ export function AgentJobs({
 }) {
   // Job events keep this live; the slow poll catches teammates' asks, which send you nothing.
   useJobEvents()
-  const [source, setSource] = useState("all")
-  const [needsOnly, setNeedsOnly] = useState(false)
-  const jobs = useInfiniteQuery({
-    ...agentJobsQuery(agent.id, usage ? "all" : source, !usage && needsOnly),
-    refetchInterval: 10_000,
-  })
+  const jobs = useInfiniteQuery({ ...agentJobsQuery(agent.id), refetchInterval: 10_000 })
   useQuery({ ...agentQuery(agent.id), refetchInterval: 10_000 })
   const warning = warningFor(
     agent,
@@ -96,7 +92,7 @@ export function AgentJobs({
     meId,
   )
   const rows = jobs.data?.pages.flatMap((p) => p.jobs) ?? []
-
+  const scheduled = isScheduled(agent.triggers)
   const needs = rows.filter((job) => job.status === "needs_you")
   return (
     <div className="flex flex-col gap-6">
@@ -118,22 +114,14 @@ export function AgentJobs({
           )}
         </p>
       )}
-      {!usage && needs.length > 0 && (
-        <Link
-          to="/tasks/$id"
-          params={{ id: needs[0]?.id ?? "" }}
-          data-testid="agent-attention"
-          className="rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-sm"
-        >
-          <span className="font-medium">
-            {needs.length} {needs.length === 1 ? "task needs" : "tasks need"} your attention
-          </span>
-          <span className="ml-2 text-muted-foreground">
-            {needs[0]?.needs?.question ?? "Open task to continue"} →
-          </span>
-        </Link>
-      )}
-      {!usage && <AgentArtifacts agent={agent} />}
+      {!usage &&
+        needs.map((job) => (
+          <QuestionBlock
+            key={job.id}
+            job={job}
+            canSteer={!!(agent.can_manage || (job.asked_by === meId && agent.can_ask))}
+          />
+        ))}
       {jobs.isError ? (
         <LoadError
           title="Couldn’t load tasks."
@@ -145,16 +133,7 @@ export function AgentJobs({
       ) : usage ? (
         <TaskUsage jobs={rows} />
       ) : (
-        <div className="flex flex-col gap-3">
-          <AgentTaskList
-            jobs={rows}
-            agent={agent}
-            source={source}
-            onSource={setSource}
-            needsOnly={needsOnly}
-            onNeedsOnly={setNeedsOnly}
-          />
-        </div>
+        <AgentTaskList jobs={rows} agent={agent} names={names} meId={meId} scheduled={scheduled} />
       )}
       {jobs.hasNextPage && (
         <button
@@ -164,10 +143,59 @@ export function AgentJobs({
           onClick={() => void jobs.fetchNextPage()}
           className="self-start pt-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
-          Older tasks
+          {scheduled ? "Older runs" : "Older tasks"}
         </button>
       )}
     </div>
+  )
+}
+
+/** A question waiting on a person, in full, with its choices and a line to answer: the one
+ *  thing to do on the page while it is open. */
+export function QuestionBlock({ job, canSteer }: { job: Job; canSteer: boolean }) {
+  const asked = askedLine(job)
+  const dismiss = useApiMutation({
+    mutationFn: () => api.cancelJob(job.id),
+    invalidate: [["jobs"]],
+  })
+  return (
+    <section
+      data-testid={`agent-question-${job.id}`}
+      aria-label="Needs you"
+      className="flex flex-col gap-3 rounded-r-lg border-l-2 border-warning/60 bg-warning/5 py-3.5 pr-4 pl-4"
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-sm">
+        <span className="font-medium text-warning">Needs you</span>
+        <span className="flex items-center gap-3 text-muted-foreground">
+          {asked && <span>{asked}</span>}
+          <Link
+            to="/tasks/$id"
+            params={{ id: job.id }}
+            data-testid={`job-task-link-${job.id}`}
+            className="font-medium text-foreground hover:underline"
+          >
+            Open task
+          </Link>
+          {canSteer && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              data-testid={`job-dismiss-${job.id}`}
+              loading={dismiss.isPending}
+              onClick={() => dismiss.mutate()}
+              className="text-muted-foreground"
+            >
+              Dismiss
+            </Button>
+          )}
+        </span>
+      </div>
+      <p className="max-w-3xl text-base break-words whitespace-pre-wrap text-pretty">
+        {job.needs?.question ?? job.instruction}
+      </p>
+      {canSteer && <AnswerBox job={job} bare />}
+    </section>
   )
 }
 
@@ -357,51 +385,6 @@ export function useNoAccount(agent: AgentDetail, meId: string): boolean {
   )
 }
 
-export function detailOf(
-  job: Job,
-  agent: Agent,
-  names: Map<string, string> = new Map(),
-  meId?: string,
-): string | undefined {
-  if (job.status === "needs_you") return job.needs?.question
-  if (job.status === "failed" || job.status === "lost") return failureOf(job) ?? undefined
-  if (job.status === "cancelled") return "Stopped before completion"
-  if (job.status === "queued" && agent.runtime?.phase === "creating")
-    return "Preparing its first sandbox. This can take a few minutes."
-  if (job.status === "queued" && agent.runtime?.phase === "provisioning")
-    return "Installing its tools. Your task starts when setup finishes."
-  if (job.status === "queued" && agent.runtime?.phase === "stopping")
-    return "Saving the sandbox so it is ready for your task."
-  if (job.status === "queued" && agent.runtime?.phase === "failed")
-    return "Sandbox setup did not finish. Derive will try again."
-  if (job.status === "queued" && agent.paused) return "Resume this agent in Settings to start"
-  if (job.status === "queued" && agent.machine === "owner" && !machineOf(agent, names).on) {
-    const machine = machineName(agent.created_by, names, meId).replace(/^Your/, "your")
-    return agent.seen_at
-      ? `Waiting for ${machine}, off since ${when(agent.seen_at)}`
-      : `Waiting for ${machine}, never connected`
-  }
-  if (job.status === "queued") return "Waiting for its turn"
-  if (job.status === "running" && job.machine_waiting)
-    return `Waiting to start: ${job.machine_waiting}`
-  if (job.status === "running" && job.machine_phase === "creating")
-    return "Building its own machine from the agent's image…"
-  if (job.status === "running" && job.machine_phase === "provisioning")
-    return "Setting up its machine. The first start takes a minute or two."
-  if (job.status === "running" && job.machine_phase === "starting") return "Waking its machine…"
-  if (job.status === "running" && ["ready", "launching"].includes(job.machine_phase ?? ""))
-    return "Starting the task…"
-  if (job.status === "running" && job.machine_phase === "stopping") return "Saving its files…"
-  if (job.status === "succeeded" && job.machine_phase === "stopping")
-    return "Your result is ready. Stopping compute and collecting its receipt."
-  if (job.machine_phase === "parked")
-    return job.task.session
-      ? "Paused with its files kept. Attach to pick it up where it left off."
-      : "Its machine is paused with the files kept, ready for a follow-up."
-  if (job.status === "succeeded") return job.result.effects?.[0]?.label
-  return undefined
-}
-
 export function JobRow({
   job,
   agent,
@@ -583,7 +566,7 @@ export function useCanSteer(job: Job | undefined, meId: string | undefined): boo
 }
 
 /** A needs-you job's question, answered here: one of its options, or in words. */
-export function AnswerBox({ job }: { job: Job }) {
+export function AnswerBox({ job, bare = false }: { job: Job; bare?: boolean }) {
   const [text, setText] = useState("")
   const answer = useApiMutation({
     mutationFn: (a: { text?: string; option?: string }) =>
@@ -602,7 +585,10 @@ export function AnswerBox({ job }: { job: Job }) {
   return (
     <form
       onSubmit={submit}
-      className="mb-3 ml-8 flex flex-wrap items-center gap-2 border-l-2 border-warning/50 pl-3"
+      className={cn(
+        "flex flex-wrap items-center gap-2",
+        !bare && "mb-3 ml-8 border-l-2 border-warning/50 pl-3",
+      )}
     >
       {options.map((o, i) => (
         <Button
