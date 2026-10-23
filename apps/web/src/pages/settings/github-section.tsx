@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { AlertTriangle, ArrowUpRight, ChevronRight } from "lucide-react"
 import { useEffect, useState } from "react"
-import { api, type GithubIntegrationAccount } from "@/api"
+import { api, type GithubIntegrationAccount, type GithubStatus } from "@/api"
 import { AdminNote } from "@/components/shared/admin-note"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { ListRow } from "@/components/shared/list-row"
@@ -8,7 +9,9 @@ import { LoadError } from "@/components/shared/load-error"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { StatusPanel } from "@/components/shared/status-panel"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
+import { toast } from "@/components/ui/sonner"
 import {
   connectionsQuery,
   githubQuery,
@@ -17,272 +20,157 @@ import {
 } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useOneShotParams } from "@/lib/use-one-shot-params"
+import { cn } from "@/lib/utils"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
+
+// Settings › Sources › GitHub: which GitHub accounts this workspace reaches, and the
+// repositories each one covers. Connecting always goes through /v1/github/install, which
+// offers installations not yet connected here beside GitHub's own account picker; it never
+// binds one on its own. Agents are given a GitHub account on their Settings tab.
+
+const CONNECT_URL = "/v1/github/install"
 
 const INSTALL_MESSAGES: Record<string, { title: string; description: string }> = {
   requested: {
-    title: "Waiting for organization approval",
-    description:
-      "A GitHub organization owner must approve your request. Connect again after approval.",
+    title: "Waiting for an organization owner",
+    description: "GitHub sent them your request. Connect again once they approve it.",
   },
   canceled: {
     title: "GitHub connection canceled",
-    description: "Nothing changed. Connect again when you are ready.",
+    description: "Nothing changed.",
   },
   expired: {
-    title: "GitHub sign-in expired",
-    description: "Start the connection again to sign in and return to this workspace.",
+    title: "The GitHub sign-in expired",
+    description: "Start again to sign in and come back to this workspace.",
   },
   config: {
-    title: "GitHub needs configuration",
-    description: "Ask the instance operator to check the shared GitHub App.",
+    title: "GitHub isn't set up correctly",
+    description: "Ask whoever runs this Derive instance to check its GitHub App.",
   },
   save: {
-    title: "GitHub access could not be confirmed",
-    description: "Derive could not verify and save this connection. Try connecting again.",
+    title: "Derive couldn't confirm that account",
+    description: "GitHub didn't let Derive read its repositories. Try connecting again.",
   },
 }
 
-/** Connection state and repository access belong here; skills and agent grants stay separate. */
 export function GithubSection() {
   const qc = useQueryClient()
   const { data: workspace } = useQuery(workspaceQuery())
   const isAdmin = workspace?.role === "owner"
   const github = useQuery(githubQuery())
   const { github_connected, github_error } = useOneShotParams("github_connected", "github_error")
-  const [result, setResult] = useState<{ connected: boolean; error?: string }>(() => ({
-    connected: github_connected === "1",
-    error: github_error,
-  }))
+  const [result] = useState(() => ({ connected: github_connected === "1", error: github_error }))
   const [disconnecting, setDisconnecting] = useState<GithubIntegrationAccount | null>(null)
-  const [expanded, setExpanded] = useState<string | null>(null)
   const disconnect = useApiMutation({
     mutationFn: (id: string) => api.disconnectGithub(id),
-    success: "GitHub disconnected",
-    onSuccess: () => setResult({ connected: false }),
+    success: "GitHub account disconnected",
     invalidate: [githubQuery().queryKey, connectionsQuery().queryKey],
   })
   useEffect(() => {
     if (!result.connected && !result.error) return
     void qc.invalidateQueries({ queryKey: githubQuery().queryKey })
     void qc.invalidateQueries({ queryKey: connectionsQuery().queryKey })
+    if (result.connected) toast.success("GitHub connected")
   }, [result, qc])
 
   const data = github.data
-  const verified =
-    data?.accounts.some(
-      (account) => account.state === "active" && account.permissions_state !== "unknown",
-    ) && data.app_permissions_state !== "unknown"
-  const message = result.error ? INSTALL_MESSAGES[result.error] : null
+  const hasAccounts = !!data?.accounts.length
+  const message = result.error
+    ? (INSTALL_MESSAGES[result.error] ?? {
+        title: "GitHub couldn't be connected",
+        description: "Start the connection again.",
+      })
+    : null
+
   return (
     <SettingsGroup
       title="GitHub"
-      description="Connect your account and choose repositories on GitHub."
+      description="Agents work in the repositories you choose on GitHub."
+      action={
+        isAdmin && data?.available && hasAccounts ? (
+          <Button variant="outline" size="sm" data-testid="github-add-account" asChild>
+            <a href={CONNECT_URL}>Connect account</a>
+          </Button>
+        ) : undefined
+      }
     >
-      {result.error && (
+      {message && (
         <StatusPanel
           layout="inline"
-          tone={["requested", "canceled"].includes(result.error) ? "warning" : "danger"}
-          title={message?.title ?? "GitHub could not be connected"}
-          description={message?.description ?? "Start the connection again."}
-        />
-      )}
-      {github.isPending ? (
-        <SettingsListSkeleton />
-      ) : github.isError ? (
-        <LoadError
-          layout="inline"
-          title="Could not load GitHub access"
-          testId="github-retry"
-          onRetry={() => github.refetch()}
-        />
-      ) : data && !data.available ? (
-        <ListRow
-          title="GitHub is not configured"
-          meta="An instance operator must configure the shared GitHub App."
-          actions={
-            data.can_manage_app ? (
-              <Button variant="ghost" size="sm" data-testid="github-setup" asChild>
-                <a href="/settings/github/app/new">Set up App</a>
+          tone={result.error === "requested" || result.error === "canceled" ? "warning" : "danger"}
+          icon={<AlertTriangle aria-hidden />}
+          title={message.title}
+          description={message.description}
+          action={
+            isAdmin && result.error !== "canceled" && result.error !== "config" ? (
+              <Button variant="outline" size="sm" data-testid="github-install-retry" asChild>
+                <a href={CONNECT_URL}>Connect again</a>
               </Button>
             ) : undefined
           }
         />
-      ) : data ? (
-        <>
-          {result.connected && (
-            <StatusPanel
-              layout="inline"
-              tone={github.isFetching ? "neutral" : verified ? "success" : "warning"}
-              title={
-                github.isFetching
-                  ? "Checking the GitHub connection…"
-                  : verified
-                    ? "GitHub connected"
-                    : "GitHub access could not be confirmed"
-              }
-              description={
-                github.isFetching
-                  ? "Derive is checking your installation."
-                  : verified
-                    ? "Your account is connected. View its repositories below."
-                    : "Refresh access or connect again."
-              }
-            />
-          )}
-          {data.app_permissions_state === "update_required" && (
-            <StatusPanel
-              layout="inline"
-              tone="warning"
-              title="GitHub App update required"
-              description={`${data.app_owner_login ? `The App owner, @${data.app_owner_login},` : "The App owner"} must update its permissions. Existing supported access stays available.`}
-              action={
-                data.can_manage_app && data.app_settings_url ? (
-                  <Button variant="outline" size="sm" data-testid="github-update-app" asChild>
-                    <a href={data.app_settings_url}>Review App settings</a>
-                  </Button>
-                ) : undefined
-              }
-            />
-          )}
-          {data.accounts.map((account) => {
-            const unknown =
-              account.permissions_state === "unknown" || data.app_permissions_state === "unknown"
-            const approval = account.permissions_state === "approval_required"
-            const active = account.state === "active"
-            return (
-              <ListRow
-                className="[&>div:first-child]:flex-wrap [&>div:first-child>div:last-child]:max-w-full"
-                key={account.installation_id}
-                title={
-                  <span className="flex flex-wrap items-center gap-2">
-                    {account.account_login ?? "GitHub account"}
-                    <StatusBadge
-                      tone={!active || approval ? "attention" : unknown ? "muted" : "ok"}
-                    >
-                      {!active
-                        ? account.state === "needs_reauth"
-                          ? "Reconnect needed"
-                          : "Disconnected"
-                        : approval
-                          ? "Approval required"
-                          : unknown
-                            ? "Access not verified"
-                            : "Connected"}
-                    </StatusBadge>
-                  </span>
-                }
-                meta={
-                  !active
-                    ? "Connect again to restore repository access."
-                    : approval
-                      ? "A GitHub account owner must approve updated permissions."
-                      : unknown
-                        ? "GitHub could not be checked. Refresh access to try again."
-                        : "Available to this workspace. Assign this source to an agent when needed."
-                }
-                actions={
-                  <>
-                    {active && account.connection_id && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        data-testid={`github-repositories-${account.installation_id}`}
-                        onClick={() =>
-                          setExpanded(
-                            expanded === account.connection_id ? null : account.connection_id,
-                          )
-                        }
-                      >
-                        {expanded === account.connection_id
-                          ? "Hide repositories"
-                          : "View repositories"}
-                      </Button>
-                    )}
-                    {isAdmin && account.installation_url && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        data-testid={`github-manage-${account.installation_id}`}
-                        asChild
-                      >
-                        <a href={account.installation_url}>Manage access on GitHub</a>
-                      </Button>
-                    )}
-                    {isAdmin &&
-                      (!active ? (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          data-testid={`github-reconnect-${account.installation_id}`}
-                          asChild
-                        >
-                          <a href="/v1/github/install">Reconnect</a>
-                        </Button>
-                      ) : (
-                        <Button
-                          variant="destructive-ghost"
-                          size="sm"
-                          data-testid={`github-disconnect-${account.installation_id}`}
-                          onClick={() => setDisconnecting(account)}
-                        >
-                          Disconnect
-                        </Button>
-                      ))}
-                  </>
-                }
-                below={
-                  expanded === account.connection_id && account.connection_id ? (
-                    <Repositories connectionId={account.connection_id} />
-                  ) : undefined
-                }
-              />
-            )
-          })}
-          <ListRow
-            title={data.accounts.length ? "Connect another account" : "Connect GitHub"}
-            meta={<span>Use an existing installation or choose repositories on GitHub.</span>}
-            actions={
-              isAdmin ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  data-testid={data.accounts.length ? "github-add-account" : "github-connect"}
-                  asChild
-                >
-                  <a href="/v1/github/install">
-                    {data.accounts.length ? "Connect account" : "Connect GitHub"}
-                  </a>
-                </Button>
-              ) : undefined
-            }
-          />
-          {data.accounts.length > 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              data-testid="github-refresh"
-              loading={github.isFetching}
-              onClick={() => {
-                setExpanded(null)
-                void qc.invalidateQueries({ queryKey: githubQuery().queryKey })
-              }}
-            >
-              Refresh access
+      )}
+      {github.isPending ? (
+        <SettingsListSkeleton rows={1} />
+      ) : github.isError ? (
+        <LoadError
+          layout="inline"
+          title="Couldn't load GitHub"
+          testId="github-retry"
+          onRetry={() => github.refetch()}
+        />
+      ) : !data ? null : !data.available ? (
+        <div className="flex flex-col items-start gap-3 py-1">
+          <p className="text-sm text-muted-foreground">
+            GitHub isn't set up on this Derive instance yet.
+            {data.can_manage_app ? "" : " Whoever runs it can create the GitHub App."}
+          </p>
+          {data.can_manage_app && (
+            <Button variant="outline" size="sm" data-testid="github-setup" asChild>
+              <a href="/settings/github/app/new">Set up GitHub App</a>
             </Button>
           )}
-          {!isAdmin && <AdminNote can="manage the GitHub connection" />}
+        </div>
+      ) : (
+        <>
+          {data.can_manage_app && data.app_permissions_state === "update_required" && (
+            <AppUpdate status={data} />
+          )}
+          {data.accounts.map((account) => (
+            <AccountRow
+              key={account.installation_id}
+              account={account}
+              appUnknown={data.app_permissions_state === "unknown"}
+              isAdmin={isAdmin}
+              onCheck={() => github.refetch()}
+              onDisconnect={() => setDisconnecting(account)}
+            />
+          ))}
+          {!hasAccounts && (
+            <div className="flex flex-col items-start gap-3 py-1">
+              <p className="text-sm text-muted-foreground">
+                Connect a GitHub organization or personal account, then pick which of its
+                repositories agents can use.
+              </p>
+              {isAdmin && (
+                <Button variant="outline" size="sm" data-testid="github-connect" asChild>
+                  <a href={CONNECT_URL}>Connect GitHub</a>
+                </Button>
+              )}
+            </div>
+          )}
+          {!isAdmin && <AdminNote can="connect GitHub accounts" />}
         </>
-      ) : null}
+      )}
       <ConfirmDialog
         open={!!disconnecting}
         onOpenChange={(open) => !open && setDisconnecting(null)}
-        title="Disconnect GitHub?"
-        description="Agents lose access immediately. The App stays installed on GitHub, so you can reconnect."
+        title={`Disconnect ${disconnecting?.account_login ?? "this GitHub account"}?`}
+        description="Agents lose access to its repositories right away. Derive stays installed on GitHub, so you can connect it again later."
         confirmLabel="Disconnect"
         confirmTestId="github-disconnect-confirm"
         onConfirm={() => {
-          if (disconnecting?.connection_id) disconnect.mutate(disconnecting.connection_id)
+          if (disconnecting) disconnect.mutate(disconnecting.connection_id)
           setDisconnecting(null)
         }}
       />
@@ -290,59 +178,219 @@ export function GithubSection() {
   )
 }
 
-function Repositories({ connectionId }: { connectionId: string }) {
+/** Only an instance operator can act on this, so only they see it. */
+function AppUpdate({ status }: { status: GithubStatus }) {
+  return (
+    <StatusPanel
+      layout="inline"
+      tone="warning"
+      icon={<AlertTriangle aria-hidden />}
+      title="The GitHub App needs new permissions"
+      description={`Save them on GitHub${status.app_owner_login ? ` as @${status.app_owner_login}` : ""}, then each connected account approves them. Current access keeps working until then.`}
+      action={
+        status.app_settings_url ? (
+          <Button variant="outline" size="sm" data-testid="github-update-app" asChild>
+            <a href={status.app_settings_url}>Review on GitHub</a>
+          </Button>
+        ) : undefined
+      }
+    />
+  )
+}
+
+function AccountRow({
+  account,
+  appUnknown,
+  isAdmin,
+  onCheck,
+  onDisconnect,
+}: {
+  account: GithubIntegrationAccount
+  appUnknown: boolean
+  isAdmin: boolean
+  onCheck: () => Promise<unknown>
+  onDisconnect: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [checking, setChecking] = useState(false)
+  const id = account.installation_id
+  const login = account.account_login ?? "GitHub account"
+  const reconnect = account.state === "needs_reauth"
+  const approval = !reconnect && account.permissions_state === "approval_required"
+  const unknown = !reconnect && !approval && (appUnknown || account.permissions_state === "unknown")
+  const browsable = !reconnect && !unknown
+  const listId = `github-repositories-list-${id}`
+  const kind =
+    account.account_type === "organization"
+      ? "Organization"
+      : account.account_type === "user"
+        ? "Personal account"
+        : "GitHub account"
+  // A healthy account says nothing about its health; only a state that needs someone does.
+  const note = reconnect
+    ? "Derive can't reach it. Disconnect, then connect it again."
+    : approval
+      ? "An owner must approve Derive's new permissions on GitHub."
+      : unknown
+        ? "GitHub didn't answer, so this account wasn't checked."
+        : null
+
+  return (
+    <ListRow
+      data-testid={`github-account-${id}`}
+      leading={
+        <Avatar className="size-7 rounded-md">
+          {account.account_login && (
+            <AvatarImage
+              className="rounded-md"
+              src={`https://github.com/${encodeURIComponent(account.account_login)}.png?size=56`}
+              alt=""
+            />
+          )}
+          <AvatarFallback className="rounded-md text-xs">
+            {login.slice(0, 1).toUpperCase()}
+          </AvatarFallback>
+        </Avatar>
+      }
+      title={
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate">{login}</span>
+          {(reconnect || approval) && (
+            <StatusBadge tone="attention">
+              {reconnect ? "Reconnect needed" : "Approval needed"}
+            </StatusBadge>
+          )}
+          {unknown && <StatusBadge tone="muted">Not checked</StatusBadge>}
+        </span>
+      }
+      meta={note ?? kind}
+      stackActions
+      actions={
+        <>
+          {browsable && (
+            <Button
+              variant="ghost"
+              size="sm"
+              data-testid={`github-repositories-${id}`}
+              aria-expanded={open}
+              aria-controls={listId}
+              onClick={() => setOpen(!open)}
+            >
+              Repositories
+              <ChevronRight
+                aria-hidden
+                data-icon="inline-end"
+                className={cn("transition-transform", open && "rotate-90")}
+              />
+            </Button>
+          )}
+          {unknown && (
+            <Button
+              variant="ghost"
+              size="sm"
+              data-testid={`github-check-${id}`}
+              loading={checking}
+              onClick={() => {
+                setChecking(true)
+                void onCheck().finally(() => setChecking(false))
+              }}
+            >
+              Check again
+            </Button>
+          )}
+          {isAdmin && !reconnect && account.installation_url && (
+            <Button variant="ghost" size="sm" data-testid={`github-manage-${id}`} asChild>
+              <a href={account.permissions_url ?? account.installation_url}>
+                {approval ? "Approve" : "Manage"}
+                <ArrowUpRight aria-hidden data-icon="inline-end" />
+              </a>
+            </Button>
+          )}
+          {isAdmin && (
+            <Button
+              variant="destructive-ghost"
+              size="sm"
+              data-testid={`github-disconnect-${id}`}
+              onClick={onDisconnect}
+            >
+              Disconnect
+            </Button>
+          )}
+        </>
+      }
+      below={
+        open && browsable ? (
+          <Repositories id={listId} connectionId={account.connection_id} />
+        ) : undefined
+      }
+    />
+  )
+}
+
+function Repositories({ id, connectionId }: { id: string; connectionId: string }) {
   const [page, setPage] = useState(1)
   const repos = useQuery(githubRepositoriesQuery(connectionId, page))
-  if (repos.isPending) return <SettingsListSkeleton />
-  if (repos.isError)
-    return (
-      <LoadError
-        layout="inline"
-        title={repos.error.message}
-        testId="github-repositories-retry"
-        onRetry={() => repos.refetch()}
-      />
-    )
   return (
-    <div
-      className="flex flex-col gap-3 rounded-lg bg-muted p-4"
-      data-testid="github-repository-list"
-    >
-      <p className="text-sm font-medium">{repos.data.total_count} repositories available</p>
-      {repos.data.repositories.length === 0 ? (
+    <div id={id} className="ml-10" data-testid="github-repository-list">
+      {repos.isPending ? (
+        <SettingsListSkeleton rows={2} trailing={false} />
+      ) : repos.isError ? (
+        <LoadError
+          layout="inline"
+          title={repos.error.message}
+          testId="github-repositories-retry"
+          onRetry={() => repos.refetch()}
+        />
+      ) : repos.data.repositories.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          No repositories are selected. Manage access on GitHub to choose repositories.
+          No repositories chosen yet. Choose them under Manage on GitHub.
         </p>
       ) : (
-        repos.data.repositories.map((repo) => (
-          <div key={repo.id} className="flex flex-wrap items-center gap-2 text-sm">
-            <a href={repo.html_url} className="break-all underline underline-offset-4">
-              {repo.full_name}
-            </a>
-            <StatusBadge tone="muted">{repo.private ? "Private" : "Public"}</StatusBadge>
+        <div className="flex flex-col gap-2">
+          <ul className="flex flex-col divide-y divide-border-soft">
+            {repos.data.repositories.map((repo) => (
+              <li key={repo.id} className="flex items-center justify-between gap-3 py-2 text-sm">
+                <a
+                  href={repo.html_url}
+                  className="min-w-0 truncate font-mono text-xs hover:underline hover:underline-offset-4"
+                >
+                  {repo.full_name}
+                </a>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {repo.private ? "Private" : "Public"}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-muted-foreground tabular-nums">
+              {repos.data.total_count === 1
+                ? "1 repository"
+                : `${repos.data.total_count} repositories`}
+            </span>
+            {(page > 1 || repos.data.has_more) && (
+              <span className="flex gap-1">
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  data-testid="github-repositories-previous"
+                  disabled={page === 1}
+                  onClick={() => setPage(page - 1)}
+                >
+                  Previous
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  data-testid="github-repositories-next"
+                  disabled={!repos.data.has_more}
+                  onClick={() => setPage(page + 1)}
+                >
+                  Next
+                </Button>
+              </span>
+            )}
           </div>
-        ))
-      )}
-      {(page > 1 || repos.data.has_more) && (
-        <div className="flex gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            data-testid="github-repositories-previous"
-            disabled={page === 1}
-            onClick={() => setPage(page - 1)}
-          >
-            Previous
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            data-testid="github-repositories-next"
-            disabled={!repos.data.has_more}
-            onClick={() => setPage(page + 1)}
-          >
-            Next
-          </Button>
         </div>
       )}
     </div>

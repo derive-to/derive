@@ -3560,15 +3560,22 @@
                   "type": "string",
                   "nullable": true
                 },
-                "connection_id": {
+                "account_type": {
                   "type": "string",
-                  "nullable": true
+                  "nullable": true,
+                  "enum": [
+                    "organization",
+                    "user",
+                    null
+                  ]
+                },
+                "connection_id": {
+                  "type": "string"
                 },
                 "state": {
                   "type": "string",
                   "enum": [
                     "active",
-                    "disconnected",
                     "needs_reauth"
                   ]
                 },
@@ -3592,6 +3599,7 @@
               "required": [
                 "installation_id",
                 "account_login",
+                "account_type",
                 "connection_id",
                 "state",
                 "permissions_state",

@@ -367,9 +367,7 @@ test("settings destinations and their retired paths resolve", async ({ owner }) 
   await expect(owner.getByRole("heading", { name: "GitHub", exact: true })).toBeVisible()
   await owner.goto("/settings/integrations")
   await expect(owner).toHaveURL(/\/settings\/sources$/)
-  await expect(
-    owner.getByText("Ask an instance operator to configure the shared GitHub App."),
-  ).toBeVisible()
+  await expect(owner.getByText("GitHub isn't set up on this Derive instance yet.")).toBeVisible()
   await expect(owner.getByTestId("toggle-github-post")).toHaveCount(0)
   await expect(owner.getByTestId("toggle-github-mirror")).toHaveCount(0)
   await expect(owner.getByTestId("toggle-github-preview-link")).toHaveCount(0)

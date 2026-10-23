@@ -1,7 +1,7 @@
 import { createHash, createHmac } from "node:crypto"
 import type { GitHubAppRecord } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
-import type { Handler } from "hono"
+import type { Context, Handler } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import {
@@ -11,6 +11,7 @@ import {
 } from "../github-app-setup"
 import { decryptSecret, safeEqual, signState, verifyState } from "../lib/crypto"
 import {
+  type AppInstallation,
   exchangeGithubUserCode,
   GitHubError,
   getAppInfo,
@@ -59,6 +60,10 @@ interface SelectionState {
   installationId: string
   iat: number
 }
+
+/** GitHub also has Enterprise accounts; only the two kinds a person would recognize get a name. */
+const accountType = (type: string | undefined): "organization" | "user" | null =>
+  type === "Organization" ? "organization" : type === "User" ? "user" : null
 
 const installationIdIsValid = (value: string | undefined): value is string =>
   !!value && /^[1-9][0-9]*$/.test(value)
@@ -139,33 +144,54 @@ export const githubRoutes = (ctx: AppContext) => {
     return upsertGithubConnection(meta, input)
   }
 
-  const selectionPage = (
+  // Connecting never binds an installation by itself. It offers the installations this
+  // workspace has not connected yet, beside the way onto GitHub's own account picker; with none
+  // to offer it goes straight there. Picking the only installation for the person made every
+  // other GitHub account unreachable once one was connected.
+  const offerInstallations = async (
+    c: Context,
     org: string,
     uid: string,
-    installations: Awaited<ReturnType<typeof listAppInstallations>>,
+    installations: AppInstallation[],
     encryptionKey: string,
-  ): string =>
-    installationPickerHTML({
-      installations: installations.map((installation) => ({
-        login: installation.account?.login || `Installation ${installation.id}`,
-        state: signState(
-          {
-            kind: "github-install-select",
-            org,
-            uid,
-            installationId: String(installation.id),
-          },
-          encryptionKey,
-        ),
-      })),
-      installUrl: "/v1/github/install/new",
-    })
+  ): Promise<Response> => {
+    const connected = new Set(
+      (await meta.listConnections(org, undefined, "workspace"))
+        .filter((cn) => cn.kind === "github_app" && cn.status === "active")
+        .map((cn) => cn.broker_ref),
+    )
+    const offered = installations.filter((installation) => !connected.has(String(installation.id)))
+    if (!offered.length) return c.redirect("/v1/github/install/new")
+    return c.html(
+      installationPickerHTML({
+        installations: offered.map((installation) => ({
+          login: installation.account?.login || `Installation ${installation.id}`,
+          type: accountType(installation.account?.type),
+          avatarUrl: installation.account?.login
+            ? `https://github.com/${encodeURIComponent(installation.account.login)}.png?size=64`
+            : null,
+          state: signState(
+            {
+              kind: "github-install-select",
+              org,
+              uid,
+              installationId: String(installation.id),
+            },
+            encryptionKey,
+          ),
+        })),
+        installUrl: "/v1/github/install/new",
+        cancelUrl: "/settings/sources",
+      }),
+    )
+  }
 
   const Account = z.object({
     installation_id: z.string(),
     account_login: z.string().nullable(),
-    connection_id: z.string().nullable(),
-    state: z.enum(["active", "disconnected", "needs_reauth"]),
+    account_type: z.enum(["organization", "user"]).nullable(),
+    connection_id: z.string(),
+    state: z.enum(["active", "needs_reauth"]),
     permissions_state: z.enum(["ready", "approval_required", "unknown"]),
     permissions_url: z.string().nullable(),
     installation_url: z.string().nullable(),
@@ -254,7 +280,11 @@ export const githubRoutes = (ctx: AppContext) => {
         }
       }
 
-      const githubConnections = connections.filter((cn) => cn.kind === "github_app")
+      // A disconnected installation is gone from this workspace. Its row is kept only so
+      // reconnecting the same installation restores the agents bound to it.
+      const githubConnections = connections.filter(
+        (cn) => cn.kind === "github_app" && cn.status === "active",
+      )
       // A connection row is not proof the installation still exists. Check each account live so
       // Settings can distinguish a working connection from an App GitHub has removed. Treat
       // only definitive auth/not-found responses as stale; a transient GitHub outage must not
@@ -262,7 +292,12 @@ export const githubRoutes = (ctx: AppContext) => {
       const staleInstallations = new Set<string>()
       const installationPermissions = new Map<
         string,
-        { state: "ready" | "approval_required"; url: string | null; installationUrl: string | null }
+        {
+          state: "ready" | "approval_required"
+          url: string | null
+          installationUrl: string | null
+          accountType: "organization" | "user" | null
+        }
       >()
       if (loaded && available) {
         await Promise.all(
@@ -283,6 +318,7 @@ export const githubRoutes = (ctx: AppContext) => {
                 state: permissionsReady ? "ready" : "approval_required",
                 url: permissionsReady ? null : live.htmlUrl,
                 installationUrl: live.htmlUrl,
+                accountType: accountType(live.account?.type),
               })
             } catch (err) {
               if (
@@ -296,33 +332,19 @@ export const githubRoutes = (ctx: AppContext) => {
           }),
         )
       }
-      const accounts: {
-        installation_id: string
-        account_login: string | null
-        connection_id: string | null
-        state: "active" | "disconnected" | "needs_reauth"
-        permissions_state: "ready" | "approval_required" | "unknown"
-        permissions_url: string | null
-        installation_url: string | null
-      }[] = githubConnections.map((connection) => {
+      const accounts: z.infer<typeof Account>[] = githubConnections.map((connection) => {
         const permissions = installationPermissions.get(connection.broker_ref)
         const usable =
-          connection.status === "active" &&
-          available &&
-          !basePermissionsMissing &&
-          !staleInstallations.has(connection.broker_ref)
+          available && !basePermissionsMissing && !staleInstallations.has(connection.broker_ref)
         return {
           installation_id: connection.broker_ref,
           account_login: connection.scopes_label,
+          account_type: permissions?.accountType ?? null,
           connection_id: connection.id,
           permissions_state: permissions?.state ?? "unknown",
           permissions_url: permissions?.url ?? null,
           installation_url: permissions?.installationUrl ?? null,
-          state: usable
-            ? ("active" as const)
-            : connection.status === "active"
-              ? ("needs_reauth" as const)
-              : ("disconnected" as const),
+          state: usable ? ("active" as const) : ("needs_reauth" as const),
         }
       })
 
@@ -479,19 +501,7 @@ export const githubRoutes = (ctx: AppContext) => {
     if (await isSuperAdmin(c)) {
       try {
         const installations = await listAppInstallations(loaded.app.app_id, loaded.pem)
-        if (!installations.length) return c.redirect("/v1/github/install/new")
-        if (installations.length === 1) {
-          const installation = installations[0]
-          if (!installation) return c.redirect(settingsRedirect("save"))
-          await saveConnection({
-            orgId: org,
-            userId: me.id,
-            installationId: String(installation.id),
-            accountLogin: installation.account?.login ?? null,
-          })
-          return c.redirect(settingsRedirect("connected"))
-        }
-        return c.html(selectionPage(org, me.id, installations, deps.encryptionKey))
+        return await offerInstallations(c, org, me.id, installations, deps.encryptionKey)
       } catch (err) {
         log.warn("github operator installation recovery failed", {
           user_id: me.id,
@@ -507,8 +517,8 @@ export const githubRoutes = (ctx: AppContext) => {
     return c.redirect(authorizationUrl(loaded.app.client_id, state))
   })
 
-  // No accessible installation exists yet. GitHub returns through the setup callback after the
-  // manager chooses an account and repositories.
+  // GitHub's own account picker: install on a new account, or change which repositories an
+  // existing installation covers. GitHub returns through the setup callback afterwards.
   app.get("/v1/github/install/new", async (c) => {
     const org = await requireWorkspace(c, "manage")
     if (org instanceof Response) return org
@@ -619,19 +629,7 @@ export const githubRoutes = (ctx: AppContext) => {
       })
       if (state.kind === "github-install-discover") {
         const installations = await listUserInstallations(userToken)
-        if (!installations.length) return c.redirect("/v1/github/install/new")
-        if (installations.length === 1) {
-          const installation = installations[0]
-          if (!installation) return c.redirect(settingsRedirect("save"))
-          await saveConnection({
-            orgId: state.org,
-            userId: me.id,
-            installationId: String(installation.id),
-            accountLogin: installation.account?.login ?? null,
-          })
-          return c.redirect(settingsRedirect("connected"))
-        }
-        return c.html(selectionPage(state.org, me.id, installations, encryptionKey))
+        return await offerInstallations(c, state.org, me.id, installations, encryptionKey)
       }
       const installation = await getUserInstallation(userToken, state.installationId)
       if (!installation) {

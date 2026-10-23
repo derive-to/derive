@@ -17,6 +17,7 @@ export function ListRow({
   meta,
   actions,
   below,
+  stackActions = false,
   className,
   ...rest
 }: {
@@ -31,10 +32,14 @@ export function ListRow({
   actions?: ReactNode
   /** Full-width content under the row line (an expanded log, a token reveal). */
   below?: ReactNode
+  /** Several verbs: on a narrow screen they wrap under the text so the title is never
+   *  squeezed out. The indent lines a size="sm" ghost verb's label up with the title (a size-7
+   *  leading slot, gap-3, minus the verb's own px-2.5); other sizes will sit slightly off. */
+  stackActions?: boolean
 } & Omit<ComponentPropsWithoutRef<"div">, "title">) {
   return (
     <div {...rest} className={cn("flex flex-col gap-2 py-3.5", className)}>
-      <div className="flex items-center gap-3">
+      <div className={cn("flex items-center gap-3", stackActions && "flex-wrap sm:flex-nowrap")}>
         {leading}
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <div
@@ -58,7 +63,15 @@ export function ListRow({
           )}
         </div>
         {actions && (
-          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">{actions}</div>
+          <div
+            className={cn(
+              "flex shrink-0 flex-wrap items-center justify-end gap-2",
+              stackActions && "-my-1 basis-full justify-start sm:my-0 sm:basis-auto sm:justify-end",
+              stackActions && leading != null && "pl-7.5 sm:pl-0",
+            )}
+          >
+            {actions}
+          </div>
         )}
       </div>
       {below}

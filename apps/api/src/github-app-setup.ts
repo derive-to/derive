@@ -76,25 +76,59 @@ export const buildManifest = (baseUrl: string, host: string) => ({
   default_events: GITHUB_EVENTS.filter((e) => e !== "issues" && e !== "issue_comment") as string[],
 })
 
+const PICKER_STYLE = `<style>
+  .accounts{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:14px;overflow:hidden;margin:0 0 12px}
+  .accounts form{margin:0}
+  .accounts form+form{border-top:1px solid var(--line)}
+  .account{display:flex;align-items:center;gap:12px;width:100%;padding:12px 14px;border:0;background:transparent;
+    color:var(--ink);font:inherit;text-align:left;cursor:default}
+  .account:hover{background:var(--paper)}
+  .account:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+  .account img,.account .glyph{width:32px;height:32px;border-radius:999px;flex:none;background:var(--paper);
+    outline:1px solid var(--line);outline-offset:-1px}
+  .account .who{display:flex;flex-direction:column;min-width:0;flex:1}
+  .account .login{font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .account .kind{color:var(--muted);font-size:12.5px}
+  .account .go{font-weight:600;font-size:13px;color:var(--ink-soft)}
+  .other{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;
+    border:1px dashed var(--line);border-radius:14px;color:var(--ink);text-decoration:none;font-size:14px}
+  .other:hover{background:var(--paper)}
+  .other span{color:var(--muted);font-size:12.5px;white-space:nowrap}
+  .foot a{color:var(--ink-soft);text-underline-offset:3px}
+</style>`
+
+/** The chooser every Connect passes through when existing installations are on offer. It never
+ *  binds one by itself: installing on another GitHub account is always one click away. */
 export function installationPickerHTML(props: {
-  installations: { login: string; state: string }[]
+  installations: {
+    login: string
+    type: "organization" | "user" | null
+    avatarUrl: string | null
+    state: string
+  }[]
   installUrl: string
+  cancelUrl: string
 }): string {
   const choices = props.installations
     .map(
-      (installation) => `<form class="field" method="post" action="/v1/github/select">
+      (installation) => `<form method="post" action="/v1/github/select">
         <input type="hidden" name="state" value="${esc(installation.state)}"/>
-        <button class="btn ghost" type="submit">${esc(installation.login)}</button>
+        <button class="account" type="submit">
+          ${installation.avatarUrl ? `<img src="${esc(installation.avatarUrl)}" alt=""/>` : `<span class="glyph"></span>`}
+          <span class="who"><span class="login">${esc(installation.login)}</span><span class="kind">${installation.type === "organization" ? "Organization" : installation.type === "user" ? "Personal account" : "GitHub account"}</span></span>
+          <span class="go">Connect</span>
+        </button>
       </form>`,
     )
     .join("")
   return SHELL(
-    "Choose GitHub account",
+    "Connect GitHub",
     "",
-    `<h1>Choose a GitHub account</h1>
-    <p class="sub">Choose the existing App installation to connect to this Derive workspace.</p>
-    ${choices}
-    <p class="foot"><a href="${esc(props.installUrl)}">Install the App on another account</a></p>`,
+    `${PICKER_STYLE}<h1>Connect a GitHub account</h1>
+    <p class="sub">Derive is already installed on ${props.installations.length === 1 ? "this account" : "these accounts"}. Connect one to this workspace, or install Derive on another account.</p>
+    <div class="accounts">${choices}</div>
+    <a class="other" href="${esc(props.installUrl)}">Install on another account <span>Opens GitHub</span></a>
+    <p class="foot"><a href="${esc(props.cancelUrl)}">Cancel</a></p>`,
   )
 }
 

@@ -515,6 +515,7 @@ describe("standard GitHub integration", () => {
         {
           installation_id: "44001",
           account_login: "derive-to",
+          account_type: "organization",
           connection_id: created?.id,
           state: "active",
           permissions_state: "ready",
@@ -580,8 +581,25 @@ describe("standard GitHub integration", () => {
     })
     expect(disconnected.status).toBe(204)
     expect(await meta.getConnection(created?.id ?? "")).toMatchObject({ status: "revoked" })
+    expect(
+      await (await app.request("/v1/github", { headers: as(owner.email) })).json(),
+    ).toMatchObject({ connected: false, accounts: [] })
 
-    const recovered = await authorize(install.headers.get("location"), "reconnect")
+    // Connect offers the disconnected installation back; it never binds one by itself.
+    const offered = await authorize(install.headers.get("location"), "reconnect")
+    expect(offered.status).toBe(200)
+    const offeredHtml = await offered.text()
+    expect(offeredHtml).toContain("derive-to")
+    expect(offeredHtml).toContain("/v1/github/install/new")
+    expect(await meta.getConnection(created?.id ?? "")).toMatchObject({ status: "revoked" })
+    const [offeredState] = [...offeredHtml.matchAll(/name="state" value="([^"]+)"/g)].map(
+      (match) => match[1] ?? "",
+    )
+    const recovered = await app.request("/v1/github/select", {
+      method: "POST",
+      headers: { ...as(owner.email), "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ state: offeredState ?? "" }),
+    })
     expect(recovered.headers.get("location")).toContain("github_connected=1")
     expect(await meta.getConnection(created?.id ?? "")).toMatchObject({ status: "active" })
     expect(
@@ -589,6 +607,12 @@ describe("standard GitHub integration", () => {
         (connection) => connection.kind === "github_app",
       ),
     ).toHaveLength(1)
+
+    // With every visible installation already connected, Connect goes to GitHub's own account
+    // picker so another organization can be installed.
+    const another = await app.request("/v1/github/install", { headers: as(owner.email) })
+    const anotherOffer = await authorize(another.headers.get("location"), "another")
+    expect(anotherOffer.headers.get("location")).toBe("/v1/github/install/new")
   })
 
   it("recovers the shared App for an instance operator without GitHub OAuth", async () => {
@@ -617,17 +641,34 @@ describe("standard GitHub integration", () => {
         if (repositoryAccess) return repositoryAccess
         if (parsed.pathname === "/app/installations")
           return new Response(JSON.stringify(installations), { status: 200 })
+        if (parsed.pathname === "/app/installations/56001")
+          return new Response(JSON.stringify(installations[0]), { status: 200 })
         return new Response("not found", { status: 404 })
       }),
     )
 
-    const recovered = await app.request("/v1/github/install", { headers: as(owner.email) })
+    const picker = await app.request("/v1/github/install", { headers: as(owner.email) })
+    expect(picker.status).toBe(200)
+    const html = await picker.text()
+    expect(html).toContain("derive-operator")
+    expect(html).toContain("/v1/github/install/new")
+    expect(await meta.listConnections("default", undefined, "workspace")).toEqual([])
+    const [selection] = [...html.matchAll(/name="state" value="([^"]+)"/g)].map(
+      (match) => match[1] ?? "",
+    )
+    const recovered = await app.request("/v1/github/select", {
+      method: "POST",
+      headers: { ...as(owner.email), "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ state: selection ?? "" }),
+    })
     expect(recovered.headers.get("location")).toContain("github_connected=1")
     expect(
       (await meta.listConnections("default", undefined, "workspace")).filter(
         (connection) => connection.kind === "github_app",
       ),
     ).toMatchObject([{ broker_ref: "56001", scopes_label: "derive-operator", status: "active" }])
+    const connectedAlready = await app.request("/v1/github/install", { headers: as(owner.email) })
+    expect(connectedAlready.headers.get("location")).toBe("/v1/github/install/new")
 
     installations = []
     const fresh = await app.request("/v1/github/install", { headers: as(owner.email) })
@@ -679,7 +720,6 @@ describe("standard GitHub integration", () => {
     )
     expect(picker.status).toBe(200)
     const html = await picker.text()
-    expect(html).toContain("Choose a GitHub account")
     expect(html).toContain("derive-one")
     expect(html).toContain("derive-two")
     expect(html).toContain("/v1/github/install/new")
@@ -687,6 +727,26 @@ describe("standard GitHub integration", () => {
       (match) => match[1] ?? "",
     )
     expect(selectionStates).toHaveLength(2)
+
+    // A choice offered in one workspace cannot bind the installation to another.
+    await meta.setWorkspace("second", "Second workspace")
+    await meta.setMembership({
+      id: "m_gh_choice",
+      org_id: "second",
+      user_id: owner.id,
+      role: "owner",
+    })
+    const elsewhere = await app.request("/v1/github/select", {
+      method: "POST",
+      headers: {
+        ...as(owner.email),
+        cookie: "derive_ws=second",
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ state: selectionStates[0] ?? "" }),
+    })
+    expect(elsewhere.headers.get("location")).toContain("github_error=expired")
+    expect(await meta.listConnections("second", undefined, "workspace")).toEqual([])
 
     const forged = await app.request("/v1/github/select", {
       method: "POST",
@@ -707,6 +767,15 @@ describe("standard GitHub integration", () => {
         (connection) => connection.kind === "github_app",
       ),
     ).toMatchObject([{ broker_ref: "55002", scopes_label: "derive-two", status: "active" }])
+
+    const again = await app.request("/v1/github/install", { headers: as(owner.email) })
+    const remaining = await app.request(
+      `/v1/github/authorize?code=again&state=${encodeURIComponent(new URL(again.headers.get("location") ?? "").searchParams.get("state") ?? "")}`,
+      { headers: as(owner.email) },
+    )
+    const remainingHtml = await remaining.text()
+    expect(remainingHtml).toContain("derive-one")
+    expect(remainingHtml).not.toContain("derive-two")
 
     installations = []
     const emptyInstall = await app.request("/v1/github/install", { headers: as(owner.email) })
