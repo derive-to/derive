@@ -58,17 +58,19 @@ export function SlackSubscriptionRow({
   return (
     <ListRow
       title={
-        <span className="flex items-center gap-2">
-          {sub.channel_name ? `#${sub.channel_name}` : sub.channel_id}
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate">
+            {sub.channel_name ? `#${sub.channel_name}` : sub.channel_id}
+          </span>
           {/* Name the collection. A channel can carry several scoped subscriptions, and a row that
-              just says "collection" gives an admin no way to tell which one Remove would delete. */}
-          <Badge>
-            {sub.scope_kind === "collection"
-              ? (sub.scope_title ?? "deleted collection")
-              : "workspace"}
-          </Badge>
+              just says "collection" gives an admin no way to tell which one Remove would delete.
+              The whole workspace is the default, so it goes unsaid. */}
+          {sub.scope_kind === "collection" && (
+            <Badge>{sub.scope_title ?? "Deleted collection"}</Badge>
+          )}
         </span>
       }
+      stackActions
       actions={
         <>
           <Select
