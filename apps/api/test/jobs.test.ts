@@ -4193,7 +4193,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
       stderr: [
         "\u001b[33mnpm WARN\u001b[0m deprecated",
         "Authorization: Bearer dkjob_0123456789abcdef",
-        "+ test '2.1.302 (Claude Code)' = '2.1.141 (Claude Code)'",
+        "+ test '2.1.302 (Claude Code)' = '2.1.309 (Claude Code)'",
         "",
       ].join("\n"),
     }
@@ -4205,7 +4205,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
       status: "exited",
       code: 1,
       reason: "exited",
-      tail: "npm WARN deprecated | Authorization: [redacted] | + test '2.1.302 (Claude Code)' = '2.1.141 (Claude Code)'",
+      tail: "npm WARN deprecated | Authorization: [redacted] | + test '2.1.302 (Claude Code)' = '2.1.309 (Claude Code)'",
     })
     await until("parked")
     const failed = await meta.getJob(job.id)
@@ -4213,7 +4213,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
     const failure = JSON.parse(failed?.result_json ?? "{}").failure
     expect(failure.retryable).toBe(true)
     expect(failure.reason).toBe(
-      "The machine stopped before the job reported back. The runner exited with code 1. Last output: npm WARN deprecated | Authorization: [redacted] | + test '2.1.302 (Claude Code)' = '2.1.141 (Claude Code)'",
+      "The machine stopped before the job reported back. The runner exited with code 1. Last output: npm WARN deprecated | Authorization: [redacted] | + test '2.1.302 (Claude Code)' = '2.1.309 (Claude Code)'",
     )
     expect(failure.reason).not.toContain("dkjob_")
   })

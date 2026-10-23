@@ -179,7 +179,7 @@ while [ "$#" -gt 0 ]; do
     --prefix) shift; prefix=$1 ;;
     @derive-to/cli@*) package=runner ;;
     @openai/codex@0.162.1) package=codex ;;
-    @anthropic-ai/claude-code@2.1.141) package=claude ;;
+    @anthropic-ai/claude-code@2.1.309) package=claude ;;
   esac
   shift
 done
@@ -187,7 +187,7 @@ test -n "$prefix" || { printf 'root npm prefix refused\n' >&2; exit 1; }
 case "$package" in
   runner) mkdir -p "$prefix/node_modules/@derive-to/cli/bin"; printf '' > "$prefix/node_modules/@derive-to/cli/bin/derive.js" ;;
   codex) mkdir -p "$prefix/bin"; printf '#!/bin/sh\nprintf "codex-cli 0.162.1\\n"\n' > "$prefix/bin/codex"; chmod 755 "$prefix/bin/codex" ;;
-  claude) mkdir -p "$prefix/bin"; printf '#!/bin/sh\nprintf "2.1.141 (Claude Code)\\n"\n' > "$prefix/bin/claude"; chmod 755 "$prefix/bin/claude" ;;
+  claude) mkdir -p "$prefix/bin"; printf '#!/bin/sh\nprintf "2.1.309 (Claude Code)\\n"\n' > "$prefix/bin/claude"; chmod 755 "$prefix/bin/claude" ;;
 esac
 `,
     )
@@ -217,7 +217,7 @@ esac
       expect({ status: result.status, stderr: result.stderr, stdout: result.stdout }).toEqual({
         status: 0,
         stderr: "",
-        stdout: "codex-cli 0.162.1\n2.1.141 (Claude Code)\n",
+        stdout: "codex-cli 0.162.1\n2.1.309 (Claude Code)\n",
       })
     } finally {
       rmSync(directory, { recursive: true, force: true })
@@ -341,7 +341,7 @@ describe("Ortam process reads", () => {
     exit_code: 1,
     reason: "exited",
     stdout: "",
-    stderr: "+ test '2.1.302 (Claude Code)' = '2.1.141 (Claude Code)'\n",
+    stderr: "+ test '2.1.302 (Claude Code)' = '2.1.309 (Claude Code)'\n",
     stdout_truncated: false,
     stderr_truncated: true,
   }
@@ -366,7 +366,7 @@ describe("Ortam process reads", () => {
     const process = await client.process("sbx", finished.id, identity, 4096)
     expect(reads[0]?.searchParams.get("tail_bytes")).toBe("4096")
     expect(process.reason).toBe("exited")
-    expect(process.stderr).toContain("2.1.141 (Claude Code)")
+    expect(process.stderr).toContain("2.1.309 (Claude Code)")
     reads.length = 0
     await client.process("sbx", finished.id, identity, 10_000_000)
     expect(reads[0]?.searchParams.get("tail_bytes")).toBe("1048576")
