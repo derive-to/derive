@@ -274,9 +274,11 @@ export const buildChatTools = (
  * cannot open that page. On an owner's machine the model has whatever Derive login that machine
  * has; here, the tool route runs these in-process instead, as the agent itself.
  *
- * `agents`, `ask`, `jobs` and `pull` stay out (handing work on is a person's decision, and a job
- * pulling work would be a runner), as do `stage` (an upload workflow for a shell holding a real
- * bearer) and `derive_code`.
+ * `stage` is in for pages and images only: a job's machine has a shell, and a page too big for
+ * `publish` (a bundle holding a video, say) goes up as a zip through the short-lived link it
+ * mints. Its `api` and `secret` targets stay out (JOB_REFUSALS): a job never mints a bearer or
+ * saves a secret. `agents`, `ask`, `jobs` and `pull` stay out too (handing work on is a person's
+ * decision, and a job pulling work would be a runner), as does `derive_code`.
  */
 export const JOB_TOOLS: ReadonlySet<string> = new Set([
   "find",
@@ -284,7 +286,14 @@ export const JOB_TOOLS: ReadonlySet<string> = new Set([
   "catch_up",
   "comment",
   "publish",
+  "stage",
 ])
+
+/** What a job may not do with a tool it holds. */
+const jobRefusal = (name: string, args: Record<string, unknown>): string | null =>
+  name === "stage" && args.target !== "doc" && args.target !== "asset"
+    ? "A job stages a page (target doc) or an image or font (target asset), nothing else."
+    : null
 
 // The chat fields, plus what a standing agent keeps up with: tags on what it publishes, the
 // threads an edit answers, and the comment loop. Sharing controls stay on MCP.
@@ -292,6 +301,7 @@ const JOB_FIELDS: Record<string, readonly string[]> = {
   ...CHAT_FIELDS,
   publish: [...(CHAT_FIELDS.publish ?? []), "tags", "addresses"],
   comment: ["short_id", "body", "reply_to", "quote", "react", "set_state", "mentions"],
+  stage: ["target", "short_id"],
 }
 
 /** The prefix a job's Derive tools carry, so they can never be confused with a source's. */
@@ -334,7 +344,7 @@ export const buildJobTools = async (
     },
     JOB_TOOLS,
     // The agent's own write policy governs its edits; the publish tool applies it.
-    { fields: JOB_FIELDS, descriptions: {}, policy: (_n, a) => a },
+    { fields: JOB_FIELDS, descriptions: {}, policy: (_n, a) => a, refuse: jobRefusal },
   )
 }
 
@@ -342,6 +352,8 @@ interface SurfaceOptions {
   fields: Record<string, readonly string[]>
   descriptions: Record<string, string>
   policy: (name: string, args: Record<string, unknown>) => Record<string, unknown>
+  /** A reason this surface declines a call its tools would otherwise take, or null. */
+  refuse?: (name: string, args: Record<string, unknown>) => string | null
   writesOff?: boolean
 }
 
@@ -394,6 +406,8 @@ const surfaceFor = (
         name,
         input && typeof input === "object" ? (input as Record<string, unknown>) : {},
       )
+      const refused = opts.refuse?.(name, args)
+      if (refused) return { error: refused }
       // Some compatible models send null for optional arguments. Omit only optional,
       // non-nullable fields. Required and intentionally nullable inputs still validate.
       const normalized = Object.fromEntries(

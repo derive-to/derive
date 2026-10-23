@@ -1,8 +1,14 @@
 import { DEFAULT_ORG_SETTINGS } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import { boundSources } from "../src/lib/chat-sources"
-import { buildChatTools, CHAT_TOOLS, chatPolicy } from "../src/lib/chat-tools"
-import { as, makeAuthedApp, publishAs } from "./helpers"
+import {
+  buildChatTools,
+  buildJobTools,
+  CHAT_TOOLS,
+  chatPolicy,
+  JOB_TOOLS,
+} from "../src/lib/chat-tools"
+import { as, jsonAs, makeAuthedApp, publishAs } from "./helpers"
 
 // THE CHAT PRINCIPAL. These are the tests that matter most in this feature: the chat turn runs
 // Derive's REAL MCP tool handlers, so what stops it doing something the asker could not do by
@@ -138,6 +144,31 @@ describe("the chat tool surface", () => {
     // returning an empty list that reads as "no work waiting".
     const out = JSON.stringify(await tools.execute("catch_up", {}))
     expect(out).toMatch(/no inbox/i)
+  })
+})
+
+describe("the job tool surface", () => {
+  it("stages a page or an image upload, and never a bearer or a secret", async () => {
+    const owner = { id: "u_jt", email: "jt@x.com", name: "J" }
+    const { app, ctx, meta } = makeAuthedApp("ct-job-stage", [owner], "owner", {
+      deps: { encryptionKey: "test-encryption-key" },
+    })
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const made = await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Videos" }))
+    const agent = await meta.getAgent(((await made.json()) as { id: string }).id)
+    if (!agent) throw new Error("no agent")
+    const tools = await buildJobTools(ctx, agent)
+    if (!tools) throw new Error("no job tools")
+    expect(tools.tools.map((t) => t.name).sort()).toEqual([...JOB_TOOLS].sort())
+    const page = JSON.parse(String(await tools.execute("stage", { target: "doc" }))) as {
+      upload_url?: string
+    }
+    expect(page.upload_url).toMatch(/^https?:\/\//)
+    for (const target of ["api", "secret"]) {
+      const out = (await tools.execute("stage", { target })) as { error?: string; token?: string }
+      expect(out.token).toBeUndefined()
+      expect(out.error).toMatch(/page|image/)
+    }
   })
 })
 
