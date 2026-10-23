@@ -147,9 +147,7 @@ function NavItem({
   to,
   active,
   testId,
-  search,
 }: {
-  search?: { tab: "usage" }
   icon: IconName
   label: string
   count?: number
@@ -161,7 +159,7 @@ function NavItem({
   return (
     <SidebarMenuItem>
       <SidebarMenuButton asChild isActive={active} tooltip={label}>
-        <Link to={to} search={search} {...linkProps}>
+        <Link to={to} {...linkProps}>
           <RowGlyph icon={icon} label={label} count={count} />
         </Link>
       </SidebarMenuButton>
@@ -387,9 +385,7 @@ export function NavRail() {
   // Feeds are routes now; the home library reads "active > All" only when no collection
   // filter narrows it. (A ?query= search doesn't change which feed you're in.)
   const isAll = onLibrary && !search.collection
-  const onUsage = loc.pathname === "/agents" && "tab" in loc.search && loc.search.tab === "usage"
-  const onAgents =
-    (loc.pathname.startsWith("/agents") || loc.pathname.startsWith("/tasks")) && !onUsage
+  const onAgents = loc.pathname.startsWith("/agents") || loc.pathname.startsWith("/tasks")
   const onInbox = loc.pathname === "/inbox"
   const onSkills = loc.pathname.startsWith("/skills")
   const onSettings = loc.pathname.startsWith("/settings")
@@ -420,31 +416,10 @@ export function NavRail() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              {/* Agents, Inbox, Artifacts, Skills, Chat; Search is the launcher above and Settings
-                  sits at the foot. Templates stays reachable by URL and from the palette. */}
-              <NavItem
-                icon="agent"
-                label="Agents"
-                to="/agents"
-                active={onAgents}
-                testId="nav-agents"
-              />
-              <NavItem
-                icon="insights"
-                label="Usage"
-                to="/agents"
-                search={{ tab: "usage" }}
-                active={onUsage}
-                testId="nav-usage"
-              />
-              <NavItem
-                icon="inbox"
-                label="Inbox"
-                to="/inbox"
-                count={waiting || undefined}
-                active={onInbox}
-                testId="nav-inbox"
-              />
+              {/* Artifacts, Agents, Skills, Chat: what you make, what makes it, and how to
+                  work with it. Search is the launcher above. Inbox, notifications, Activity
+                  and Settings sit at the foot. Usage is a tab of the Agents home, not a
+                  destination of its own. Templates stays reachable by URL and from the palette. */}
               <FilterItem
                 icon="all"
                 label="Artifacts"
@@ -452,6 +427,13 @@ export function NavRail() {
                 search={{}}
                 active={isAll}
                 testId="sidebar-all"
+              />
+              <NavItem
+                icon="agent"
+                label="Agents"
+                to="/agents"
+                active={onAgents}
+                testId="nav-agents"
               />
               <NavItem
                 icon="skill"
@@ -493,11 +475,20 @@ export function NavRail() {
           </SidebarGroup>
         )}
 
-        {/* Tools — notifications and Settings. Pinned to the foot of
-            the scroll (mt-auto); the whitespace above sets them apart, no divider. */}
+        {/* What is waiting for you — Inbox (agent asks), notifications, Activity — and
+            Settings. Pinned to the foot of the scroll (mt-auto); the whitespace above sets
+            them apart from the destinations, no divider. */}
         <SidebarGroup className="mt-auto">
           <SidebarGroupContent>
             <SidebarMenu>
+              <NavItem
+                icon="inbox"
+                label="Inbox"
+                to="/inbox"
+                count={waiting || undefined}
+                active={onInbox}
+                testId="nav-inbox"
+              />
               <NotificationBell />
               <ActivityRow />
               <SidebarMenuItem>
