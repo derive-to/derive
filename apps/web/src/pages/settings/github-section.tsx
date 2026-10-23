@@ -2,14 +2,15 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { AlertTriangle, ArrowUpRight, ChevronRight } from "lucide-react"
 import { useEffect, useState } from "react"
 import { api, type GithubIntegrationAccount, type GithubStatus } from "@/api"
+import { AccountMark } from "@/components/shared/account-mark"
 import { AdminNote } from "@/components/shared/admin-note"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import { ConnectPrompt } from "@/components/shared/connect-prompt"
 import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { StatusPanel } from "@/components/shared/status-panel"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { toast } from "@/components/ui/sonner"
 import {
@@ -120,21 +121,22 @@ export function GithubSection() {
           onRetry={() => github.refetch()}
         />
       ) : !data ? null : !data.available ? (
-        <div className="flex flex-col items-start gap-3 py-1">
-          <p className="text-sm text-muted-foreground">
-            GitHub isn't set up on this Derive instance yet.
-            {data.can_manage_app ? "" : " Whoever runs it can create the GitHub App."}
-          </p>
-          {data.can_manage_app && (
-            <Button variant="outline" size="sm" data-testid="github-setup" asChild>
-              <a href="/settings/github/app/new">Set up GitHub App</a>
-            </Button>
-          )}
-        </div>
+        <ConnectPrompt
+          action={
+            data.can_manage_app ? (
+              <Button variant="outline" size="sm" data-testid="github-setup" asChild>
+                <a href="/settings/github/app/new">Set up GitHub App</a>
+              </Button>
+            ) : undefined
+          }
+        >
+          GitHub isn't set up on this Derive instance yet.
+          {data.can_manage_app ? "" : " Whoever runs it can create the GitHub App."}
+        </ConnectPrompt>
       ) : (
         <>
-          {data.can_manage_app && data.app_permissions_state === "update_required" && (
-            <AppUpdate status={data} />
+          {data.app_permissions_state === "update_required" && (
+            <AppUpdate status={data} canOpen={isAdmin || data.can_manage_app} />
           )}
           {data.accounts.map((account) => (
             <AccountRow
@@ -147,17 +149,18 @@ export function GithubSection() {
             />
           ))}
           {!hasAccounts && (
-            <div className="flex flex-col items-start gap-3 py-1">
-              <p className="text-sm text-muted-foreground">
-                Connect a GitHub organization or personal account, then pick which of its
-                repositories agents can use.
-              </p>
-              {isAdmin && (
-                <Button variant="outline" size="sm" data-testid="github-connect" asChild>
-                  <a href={CONNECT_URL}>Connect GitHub</a>
-                </Button>
-              )}
-            </div>
+            <ConnectPrompt
+              action={
+                isAdmin ? (
+                  <Button variant="outline" size="sm" data-testid="github-connect" asChild>
+                    <a href={CONNECT_URL}>Connect GitHub</a>
+                  </Button>
+                ) : undefined
+              }
+            >
+              Connect a GitHub organization or personal account, then pick which of its repositories
+              agents can use.
+            </ConnectPrompt>
           )}
           {!isAdmin && <AdminNote can="connect GitHub accounts" />}
         </>
@@ -178,17 +181,18 @@ export function GithubSection() {
   )
 }
 
-/** Only an instance operator can act on this, so only they see it. */
-function AppUpdate({ status }: { status: GithubStatus }) {
+/** The App owner on GitHub acts on this, and that is often someone in this workspace. GitHub
+ *  decides who may save the change, so the link is offered to anyone who manages GitHub here. */
+function AppUpdate({ status, canOpen }: { status: GithubStatus; canOpen: boolean }) {
   return (
     <StatusPanel
       layout="inline"
       tone="warning"
       icon={<AlertTriangle aria-hidden />}
-      title="The GitHub App needs new permissions"
-      description={`Save them on GitHub${status.app_owner_login ? ` as @${status.app_owner_login}` : ""}, then each connected account approves them. Current access keeps working until then.`}
+      title="Derive's GitHub App needs new permissions"
+      description={`${status.app_owner_login ? `An owner of @${status.app_owner_login}` : "Its owner"} must add them on GitHub, then each connected account accepts them. Current access keeps working until then.`}
       action={
-        status.app_settings_url ? (
+        canOpen && status.app_settings_url ? (
           <Button variant="outline" size="sm" data-testid="github-update-app" asChild>
             <a href={status.app_settings_url}>Review on GitHub</a>
           </Button>
@@ -239,18 +243,14 @@ function AccountRow({
     <ListRow
       data-testid={`github-account-${id}`}
       leading={
-        <Avatar className="size-7 rounded-md">
-          {account.account_login && (
-            <AvatarImage
-              className="rounded-md"
-              src={`https://github.com/${encodeURIComponent(account.account_login)}.png?size=56`}
-              alt=""
-            />
-          )}
-          <AvatarFallback className="rounded-md text-xs">
-            {login.slice(0, 1).toUpperCase()}
-          </AvatarFallback>
-        </Avatar>
+        <AccountMark
+          name={login}
+          src={
+            account.account_login
+              ? `https://github.com/${encodeURIComponent(account.account_login)}.png?size=56`
+              : null
+          }
+        />
       }
       title={
         <span className="flex min-w-0 items-center gap-2">
