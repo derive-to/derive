@@ -378,6 +378,12 @@ test("settings destinations and their retired paths resolve", async ({ owner }) 
 test("Artifacts is the front door and Archived remains one of its filters", async ({ owner }) => {
   await owner.goto("/")
   await expect(owner.getByTestId("sidebar-all")).toContainText("Artifacts")
+  // The rail leads with Artifacts, then Agents; Inbox sits at the foot with what else waits
+  // for you (notifications, Activity), not among the destinations.
+  const rail = owner.locator('[data-testid="sidebar-all"], [data-testid^="nav-"]')
+  await expect(rail.first()).toHaveAttribute("data-testid", "sidebar-all")
+  await expect(rail.nth(1)).toHaveAttribute("data-testid", "nav-agents")
+  await expect(rail.last()).toHaveAttribute("data-testid", "nav-inbox")
   await expect(owner.getByRole("heading", { name: /^Artifacts\b/ })).toBeVisible()
   await expect(owner.getByTestId("library-view")).toHaveAttribute("aria-label", "Artifact views")
   await expect(owner.getByTestId("library-view-artifacts")).toHaveText("All")
@@ -1185,6 +1191,9 @@ test("task workspace renders reports, follows up in place, pins artifacts and ke
   await expect(owner.getByTestId(`agent-pin-row-${artifact}`)).toBeVisible()
   await owner.getByTestId("agent-tab-usage").click()
   await expect(owner.getByTestId("task-usage-empty")).toBeVisible()
-  await owner.getByTestId("nav-usage").click()
+  // Usage is a tab of the Agents home, not a rail destination.
+  await owner.getByTestId("nav-agents").click()
+  await owner.getByTestId("agents-tab-usage").click()
   await expect(owner).toHaveURL(/tab=usage/)
+  await expect(owner.getByTestId("nav-usage")).toHaveCount(0)
 })
