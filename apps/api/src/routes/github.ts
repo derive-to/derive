@@ -247,6 +247,7 @@ export const githubRoutes = (ctx: AppContext) => {
       let appOwnerLogin: string | null = null
       let appOwnerType: string | null = null
       let basePermissionsMissing = false
+      let appPermissions: Record<string, string> | null = null
       // Null means GitHub could not be checked. Do not turn a transient outage into a false
       // permission-upgrade prompt.
       let appPermissionsState: "ready" | "update_required" | "unknown" | null = loaded
@@ -259,6 +260,7 @@ export const githubRoutes = (ctx: AppContext) => {
           slug = live.slug || slug
           appOwnerLogin = live.owner?.login || null
           appOwnerType = live.owner?.type || null
+          appPermissions = live.permissions
           if (slug && slug !== loaded.app.slug) await meta.setGithubApp({ ...loaded.app, slug })
           basePermissionsMissing = Object.entries(REQUIRED_PERMISSIONS).some(
             ([permission, level]) =>
@@ -309,10 +311,17 @@ export const githubRoutes = (ctx: AppContext) => {
                 connection.broker_ref,
               )
               if (live.suspended) staleInstallations.add(connection.broker_ref)
+              // An account can only approve what the App already asks for. While the App itself
+              // lacks a permission, that is the App owner's step, not this account's, so the
+              // account is measured against what the App holds today.
               const permissionsReady = Object.entries(MANIFEST_PERMISSIONS).every(
-                ([permission, level]) =>
-                  !!live.permissions[permission] &&
-                  (rank[live.permissions[permission] ?? ""] ?? 0) >= (rank[level] ?? 0),
+                ([permission, level]) => {
+                  const wanted = Math.min(
+                    rank[level] ?? 0,
+                    appPermissions ? (rank[appPermissions[permission] ?? ""] ?? 0) : Infinity,
+                  )
+                  return (rank[live.permissions[permission] ?? ""] ?? 0) >= wanted
+                },
               )
               installationPermissions.set(connection.broker_ref, {
                 state: permissionsReady ? "ready" : "approval_required",
