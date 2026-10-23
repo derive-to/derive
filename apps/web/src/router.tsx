@@ -17,10 +17,6 @@ export function getRouter() {
     // ("/?tag=…", "/?collection=…") shares the "/" pathname, and one shared key means
     // switching filters inherits a stale offset. Each filter now keeps its own.
     getScrollRestorationKey: (location) => location.href,
-    // Route changes cross-fade via the View Transitions API where the browser has it
-    // (a no-op elsewhere). globals.css disables the animation under
-    // prefers-reduced-motion, which the API alone does not honor.
-    defaultViewTransition: true,
     defaultPreload: "intent",
     // React Query owns staleness. Setting the router's preload stale time to 0
     // means an intent hover always reaches the loader, which dedupes through the
@@ -32,8 +28,9 @@ export function getRouter() {
     // View transitions are deliberately OFF. With intent-preloading + shape-matched
     // skeletons most navs already swap cleanly, but a global cross-fade dissolves the
     // outgoing page THROUGH the pending skeleton on any cold nav — which reads as a
-    // flash. Opt a specific navigation in per-link (viewTransition) if it ever earns
-    // a deliberate transition.
+    // flash. A hidden document can also abort the browser transition during a navigation.
+    // Opt a specific navigation in per-link (viewTransition) if it earns a transition.
+    defaultViewTransition: false,
     // Perceived-perf: hold the current page for delayMs before showing the pending
     // frame (most cache-warm navs resolve first, so nothing flashes), and once shown
     // keep it at least minShownMs so a just-too-slow load doesn't strobe. The same
