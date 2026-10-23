@@ -35,7 +35,7 @@ export function SecretsGroup() {
         action={
           credentials.data ? (
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
               data-testid="credentials-add"
               onClick={() => setCreating(true)}
@@ -47,6 +47,7 @@ export function SecretsGroup() {
       >
         {credentials.isError ? (
           <LoadError
+            layout="inline"
             title="Couldn’t load secrets"
             testId="credentials-retry"
             onRetry={() => void credentials.refetch()}

@@ -43,6 +43,7 @@ export function SourcesSection() {
   useEffect(() => {
     if (justConnected) void qc.invalidateQueries({ queryKey: connectionsQuery().queryKey })
   }, [justConnected, qc])
+  const [adding, setAdding] = useState(false)
   const servers = (connections ?? []).filter((c) => c.status !== "revoked" && c.kind === "mcp")
 
   return (
@@ -65,11 +66,30 @@ export function SourcesSection() {
         <SettingsGroup
           title="MCP servers"
           description="Tools are recorded when you connect. If the server's tool list changes later, the source goes quiet until you reconnect."
+          action={
+            adding ? undefined : (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                data-testid="sources-add-open"
+                onClick={() => setAdding(true)}
+              >
+                Add MCP server
+              </Button>
+            )
+          }
         >
+          {adding && (
+            <div className="pb-3.5">
+              <AddSource onAdded={reload} onClose={() => setAdding(false)} />
+            </div>
+          )}
           {isPending ? (
             <SettingsListSkeleton />
           ) : isError ? (
             <LoadError
+              layout="inline"
               title="Couldn’t load your sources"
               description="This is usually temporary. Your connected sources are unaffected."
               testId="sources-retry"
@@ -81,7 +101,6 @@ export function SourcesSection() {
             servers.map((c) => <SourceRow key={c.id} conn={c} onRevoked={reload} />)
           )}
         </SettingsGroup>
-        <AddSource onAdded={reload} />
       </section>
 
       <SecretsGroup />
@@ -89,8 +108,7 @@ export function SourcesSection() {
   )
 }
 
-function AddSource({ onAdded }: { onAdded: () => void }) {
-  const [open, setOpen] = useState(false)
+function AddSource({ onAdded, onClose }: { onAdded: () => void; onClose: () => void }) {
   const [name, setName] = useState("")
   const [url, setUrl] = useState("")
   const [secret, setSecret] = useState("")
@@ -121,7 +139,7 @@ function AddSource({ onAdded }: { onAdded: () => void }) {
       setUrl("")
       setSecret("")
       setError(null)
-      setOpen(false)
+      onClose()
       onAdded()
       if (authorize_url) window.location.href = authorize_url
     },
@@ -134,20 +152,6 @@ function AddSource({ onAdded }: { onAdded: () => void }) {
   // Enough to know the button would do something, and no more. The server owns the URL policy
   // and its refusal is already what the reader sees (`source-error`, in the server's own words).
   const ready = name.trim().length > 0 && url.trim().length > 0
-
-  if (!open)
-    return (
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        data-testid="sources-add-open"
-        onClick={() => setOpen(true)}
-        className="self-start"
-      >
-        Add MCP server
-      </Button>
-    )
 
   return (
     <form
@@ -224,7 +228,7 @@ function AddSource({ onAdded }: { onAdded: () => void }) {
           variant="ghost"
           size="sm"
           data-testid="source-cancel"
-          onClick={() => setOpen(false)}
+          onClick={onClose}
         >
           Cancel
         </Button>
@@ -290,7 +294,7 @@ function SourceRow({ conn, onRevoked }: { conn: Connection; onRevoked: () => voi
         <>
           {needsSignIn ? (
             <Button
-              variant="secondary"
+              variant="ghost"
               size="sm"
               data-testid={`source-signin-${conn.id}`}
               disabled={signIn.isPending}
