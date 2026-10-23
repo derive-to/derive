@@ -156,17 +156,22 @@ feature twice, and each half is only proven where it has actually run.
 
 ## Connecting GitHub
 
-In Settings → Sources, use **Connect GitHub**. GitHub asks you to sign in and
-select an account and repositories. Derive reuses an existing installation when
-one is available. An organization approval request returns as **Waiting for
-organization approval**. Connect again after the organization owner approves it.
+In Settings → Sources, use **Connect GitHub** (or **Connect account** once one
+is connected). Derive lists the GitHub accounts it is already installed on that
+this workspace has not connected yet. Pick one, or choose **Install on another
+account** to open GitHub's account picker. Derive never connects an account on
+its own. An organization approval request returns as **Waiting for an
+organization owner**. Connect again after the owner approves it.
 
 Derive checks repository access before it saves the connection. It returns to
-Settings → Sources. Use **View repositories** to read the current repository
-list. Use **Manage access on GitHub** to change the installation's repositories.
-Repository lists load one page at a time. **Refresh access** checks the connection
-again. Temporary provider failures preserve the saved connection and show that
-access is not verified. Removed or suspended installations require reconnection.
+Settings → Sources. Each connected account has **Repositories**, which reads its
+repository list one page at a time, and **Manage**, which changes the
+installation's repositories on GitHub. When GitHub has new permissions to
+approve, Manage becomes **Approve**. A temporary provider failure keeps the saved
+connection and marks it **Not checked**, with **Check again**. A removed or
+suspended installation shows **Reconnect needed**: disconnect it, then connect
+again. **Disconnect** removes the account from this workspace. Connecting the
+same installation later restores the agents that used it.
 
 Connection access and agent access are separate. Assign the GitHub source to an
 agent on its Settings tab. A connected source does not give every agent access.

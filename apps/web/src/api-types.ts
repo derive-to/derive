@@ -8391,9 +8391,11 @@ export interface components {
             accounts: {
                 installation_id: string;
                 account_login: string | null;
-                connection_id: string | null;
+                /** @enum {string|null} */
+                account_type: "organization" | "user" | null;
+                connection_id: string;
                 /** @enum {string} */
-                state: "active" | "disconnected" | "needs_reauth";
+                state: "active" | "needs_reauth";
                 /** @enum {string} */
                 permissions_state: "ready" | "approval_required" | "unknown";
                 permissions_url: string | null;
