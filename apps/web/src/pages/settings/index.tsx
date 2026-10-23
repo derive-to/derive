@@ -1,27 +1,44 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { getRouteApi } from "@tanstack/react-router"
+import { getRouteApi, lazyRouteComponent } from "@tanstack/react-router"
+import { Suspense } from "react"
 import { PageShell } from "@/components/shared/page-shell"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Badge } from "@/components/ui/badge"
 import { useAuth } from "@/ctx"
 import { billingQuery, modelLibraryQuery, reportsQuery } from "@/lib/queries"
 import { useDocumentTitle } from "@/lib/use-document-title"
-import { AccountsSection } from "./accounts-section"
-import { AppearanceSection } from "./appearance-section"
-import { BillingSection } from "./billing-section"
-import { BrandprintSettings } from "./brandprint-settings"
-import { CustomDomainsSection } from "./custom-domains-section"
-import { GeneralSection } from "./general-section"
-import { MachinesSection } from "./machines-section"
-import { MembersSection } from "./members-section"
-import { ModelsSection } from "./models-section"
-import { NotificationsSection } from "./notifications-section"
 import { ProfileSection } from "./profile-section"
-import { ReportsSection } from "./reports-section"
-import { SecuritySection } from "./security-section"
+import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsNav, type SettingsNavGroup } from "./settings-nav"
-import { SourcesSection } from "./sources-section"
-import { WebhooksSection } from "./webhooks-section"
+
+// Load only the selected section. Profile opens without downloading every integration and
+// account-management screen, while the navigation stays available during section loads.
+const AccountsSection = lazyRouteComponent(() => import("./accounts-section"), "AccountsSection")
+const AppearanceSection = lazyRouteComponent(
+  () => import("./appearance-section"),
+  "AppearanceSection",
+)
+const BillingSection = lazyRouteComponent(() => import("./billing-section"), "BillingSection")
+const BrandprintSettings = lazyRouteComponent(
+  () => import("./brandprint-settings"),
+  "BrandprintSettings",
+)
+const CustomDomainsSection = lazyRouteComponent(
+  () => import("./custom-domains-section"),
+  "CustomDomainsSection",
+)
+const GeneralSection = lazyRouteComponent(() => import("./general-section"), "GeneralSection")
+const MachinesSection = lazyRouteComponent(() => import("./machines-section"), "MachinesSection")
+const MembersSection = lazyRouteComponent(() => import("./members-section"), "MembersSection")
+const ModelsSection = lazyRouteComponent(() => import("./models-section"), "ModelsSection")
+const NotificationsSection = lazyRouteComponent(
+  () => import("./notifications-section"),
+  "NotificationsSection",
+)
+const ReportsSection = lazyRouteComponent(() => import("./reports-section"), "ReportsSection")
+const SecuritySection = lazyRouteComponent(() => import("./security-section"), "SecuritySection")
+const SourcesSection = lazyRouteComponent(() => import("./sources-section"), "SourcesSection")
+const WebhooksSection = lazyRouteComponent(() => import("./webhooks-section"), "WebhooksSection")
 
 // The active section rides the URL path (/settings/$section); getRouteApi avoids a
 // circular import back to routes/settings.$section.tsx while still giving typed
@@ -144,26 +161,28 @@ export function Settings() {
           </div>
 
           <div className="min-w-0">
-            {active === "profile" && <ProfileSection />}
-            {active === "security" && <SecuritySection />}
-            {active === "notifications" && <NotificationsSection />}
-            {active === "accounts" && <AccountsSection />}
-            {active === "appearance" && <AppearanceSection />}
-            {active === "general" && <GeneralSection />}
-            {active === "machines" && <MachinesSection />}
-            {active === "members" && <MembersSection meId={me.id} />}
-            {active === "billing" && <BillingSection />}
-            {active === "sources" && <SourcesSection />}
-            {active === "brandprint" && <BrandprintSettings />}
-            {active === "webhooks" && <WebhooksSection />}
-            {active === "domains" && <CustomDomainsSection />}
-            {active === "models" && <ModelsSection />}
-            {active === "reports" && (
-              <ReportsSection
-                reports={openReports}
-                reload={() => qc.invalidateQueries({ queryKey: reportsQuery().queryKey })}
-              />
-            )}
+            <Suspense key={active} fallback={<SettingsListSkeleton />}>
+              {active === "profile" && <ProfileSection />}
+              {active === "security" && <SecuritySection />}
+              {active === "notifications" && <NotificationsSection />}
+              {active === "accounts" && <AccountsSection />}
+              {active === "appearance" && <AppearanceSection />}
+              {active === "general" && <GeneralSection />}
+              {active === "machines" && <MachinesSection />}
+              {active === "members" && <MembersSection meId={me.id} />}
+              {active === "billing" && <BillingSection />}
+              {active === "sources" && <SourcesSection />}
+              {active === "brandprint" && <BrandprintSettings />}
+              {active === "webhooks" && <WebhooksSection />}
+              {active === "domains" && <CustomDomainsSection />}
+              {active === "models" && <ModelsSection />}
+              {active === "reports" && (
+                <ReportsSection
+                  reports={openReports}
+                  reload={() => qc.invalidateQueries({ queryKey: reportsQuery().queryKey })}
+                />
+              )}
+            </Suspense>
           </div>
         </div>
       </div>

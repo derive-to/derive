@@ -8,13 +8,15 @@ export const Route = createFileRoute("/agents/")({
   beforeLoad: requireOnboarded,
   validateSearch: (search: Record<string, unknown>): { tab?: "tasks" | "usage" } =>
     search.tab === "tasks" || search.tab === "usage" ? { tab: search.tab } : {},
-  loader: ({ context }) =>
-    Promise.all([
+  loader: ({ context }) => {
+    // History and member names enrich the roster; a slow read must not hold the page.
+    void context.queryClient.prefetchQuery(recentJobsQuery())
+    void context.queryClient.prefetchQuery(workspaceQuery())
+    return Promise.all([
       context.queryClient.ensureQueryData(agentsQuery()).catch(() => {}),
       context.queryClient.ensureQueryData(openJobsQuery()).catch(() => {}),
-      context.queryClient.prefetchQuery(recentJobsQuery()),
-      context.queryClient.prefetchQuery(workspaceQuery()),
-    ]),
+    ])
+  },
   pendingComponent: AgentsPending,
   component: AgentsHome,
 })
