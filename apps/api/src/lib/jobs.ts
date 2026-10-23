@@ -2,11 +2,13 @@ import {
   type AgentRecord,
   DERIVE_AGENT_ID,
   isJobOpen,
+  JOB_SUMMARY_MAX,
   type JobNeeds,
   type JobRecord,
   type JobResult,
   type JobStatus,
   jobResult,
+  jobSummaryOf,
   type MetaStore,
   newId,
   priceJobRun,
@@ -564,6 +566,19 @@ export interface JobReport {
 
 /** A runner settles or ticks the job it holds. Fenced on status and on the claim's started_at,
  *  so a superseded claim's late answer lands nowhere. Returns the job, or an error string. */
+/** The line a row shows for this run: the runner's own summary, else the report's first
+ *  sentence. Always set, so a settle that says nothing clears an earlier attempt's line
+ *  rather than wearing it. */
+const summaryFor = (r: Pick<JobReport, "result" | "body_md">): { summary: string } => {
+  const own = r.result?.summary?.replace(/\s+/g, " ").trim() ?? ""
+  const summary = own
+    ? own.length > JOB_SUMMARY_MAX
+      ? `${own.slice(0, JOB_SUMMARY_MAX - 1).trimEnd()}…`
+      : own
+    : (jobSummaryOf(r.body_md) ?? "")
+  return { summary }
+}
+
 export const reportJob = async (
   deps: JobDeps,
   agent: AgentRecord,
@@ -603,6 +618,7 @@ export const reportJob = async (
           ]
       const result = {
         ...(r.result ?? {}),
+        ...summaryFor(r),
         claim_ledger_version: jobResult(job).claim_ledger_version,
         ...(r.status === "failed"
           ? {
@@ -707,6 +723,7 @@ export const reportJob = async (
   const result: JobResult = {
     ...previous,
     ...(r.result ?? {}),
+    ...summaryFor(r),
     attempt_offset: previous.attempt_offset ?? 0,
   }
   if (r.result?.runs?.length)

@@ -28,6 +28,7 @@ import { accountsQuery, agentConnectionsQuery, artifactQuery } from "@/lib/queri
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 import { accountLabel } from "../settings/accounts-section"
+import { PagesField } from "./agent-artifacts"
 import { sourceName, useNoAccount } from "./agent-jobs"
 import { RepositoryField } from "./agent-repository"
 import { RunsOnField } from "./agent-runs-on"
@@ -87,6 +88,7 @@ export function AgentSettings({ agent, names, isWorkspaceOwner }: Props) {
         </Field>
         <NameFields agent={agent} edit={edit} onSave={set} saving={update.isPending} />
         <InstructionsField agent={agent} edit={edit} onSave={set} />
+        <PagesField agent={agent} />
       </Group>
 
       <Group label="Running" testId="agent-running">

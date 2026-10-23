@@ -3,8 +3,7 @@ import type { Agent, JobDetail } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { detailOf } from "./agent-jobs"
-import { eventLine, JOB_ICON } from "./format"
+import { detailOf, eventLine, JOB_ICON } from "./format"
 import { taskStatus } from "./task-status"
 
 /** Seconds since `from`, refreshed every second while `live`. */

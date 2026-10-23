@@ -9,13 +9,15 @@ import {
 } from "@/components/ui/dialog"
 import { TaskComposer } from "./task-composer"
 
-/** The existing composer owns draft recovery, account setup and submission semantics. */
-export function NewTaskDialog({ agent }: { agent: Agent }) {
+/** The existing composer owns draft recovery, account setup and submission semantics. Where
+ *  the ask is not the page's main act (a scheduled agent, a task page) it opens from a quiet
+ *  verb instead of a filled button. */
+export function NewTaskDialog({ agent, quiet = false }: { agent: Agent; quiet?: boolean }) {
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button size="sm" data-testid="agent-new-task">
-          New task
+        <Button variant={quiet ? "ghost" : "default"} size="sm" data-testid="agent-new-task">
+          {quiet ? "Ask" : "New task"}
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-xl">
