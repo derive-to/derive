@@ -104,3 +104,16 @@ The production build passes. The phone checks use its compiled JavaScript, not t
 This proves the failed-download recovery defect and its repair.
 The screenshot alone cannot establish the original phone's exception or failed request.
 The deployed mobile session and physical Safari remain unverified.
+
+## Dependency scan during merge preparation
+
+The updated dependency scan flags Zod 3.25.76 and 4.4.3.
+The [advisory updated on October 23](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5) lists 4.6.6 as the fixed version.
+Main's unchanged lockfile contains both flagged versions.
+The lockfile now contains only Zod 4.6.7.
+The Cloudflare test pool moves to 0.23.0 to remove its Zod 3 dependency.
+Its existing `cloudflareTest` configuration stays intact.
+
+OSV-Scanner 2.3.8 reports **No issues found** with the existing exception file.
+This change adds no exception and disables no check.
+The production web build also passes with the updated dependencies.
