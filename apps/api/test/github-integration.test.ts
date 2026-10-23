@@ -532,8 +532,16 @@ describe("standard GitHub integration", () => {
     expect(
       await (await app.request("/v1/github", { headers: as(owner.email) })).json(),
     ).toMatchObject({ app_permissions_state: "update_required", connected: true })
-    actionsPermission = "write"
+    // The account holds everything the App asks for today, so its owner has nothing to
+    // approve yet: the missing permission is the App owner's step.
     installationActionsPermission = undefined
+    expect(
+      await (await app.request("/v1/github", { headers: as(owner.email) })).json(),
+    ).toMatchObject({
+      app_permissions_state: "update_required",
+      accounts: [{ permissions_state: "ready", permissions_url: null }],
+    })
+    actionsPermission = "write"
     expect(
       await (await app.request("/v1/github", { headers: as(owner.email) })).json(),
     ).toMatchObject({

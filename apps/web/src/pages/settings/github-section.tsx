@@ -133,8 +133,8 @@ export function GithubSection() {
         </div>
       ) : (
         <>
-          {data.can_manage_app && data.app_permissions_state === "update_required" && (
-            <AppUpdate status={data} />
+          {data.app_permissions_state === "update_required" && (
+            <AppUpdate status={data} canOpen={isAdmin || data.can_manage_app} />
           )}
           {data.accounts.map((account) => (
             <AccountRow
@@ -178,17 +178,18 @@ export function GithubSection() {
   )
 }
 
-/** Only an instance operator can act on this, so only they see it. */
-function AppUpdate({ status }: { status: GithubStatus }) {
+/** The App owner on GitHub acts on this, and that is often someone in this workspace. GitHub
+ *  decides who may save the change, so the link is offered to anyone who manages GitHub here. */
+function AppUpdate({ status, canOpen }: { status: GithubStatus; canOpen: boolean }) {
   return (
     <StatusPanel
       layout="inline"
       tone="warning"
       icon={<AlertTriangle aria-hidden />}
-      title="The GitHub App needs new permissions"
-      description={`Save them on GitHub${status.app_owner_login ? ` as @${status.app_owner_login}` : ""}, then each connected account approves them. Current access keeps working until then.`}
+      title="Derive's GitHub App needs new permissions"
+      description={`${status.app_owner_login ? `An owner of @${status.app_owner_login}` : "Its owner"} must add them on GitHub, then each connected account accepts them. Current access keeps working until then.`}
       action={
-        status.app_settings_url ? (
+        canOpen && status.app_settings_url ? (
           <Button variant="outline" size="sm" data-testid="github-update-app" asChild>
             <a href={status.app_settings_url}>Review on GitHub</a>
           </Button>
