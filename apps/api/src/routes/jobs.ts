@@ -38,6 +38,7 @@ import { chatArrival, refusalMessage } from "../lib/chat-gate"
 import { buildJobTools, JOB_TOOL_PREFIX } from "../lib/chat-tools"
 import { readEnvironmentBindings } from "../lib/context-environment"
 import { decryptSecret, encryptSecret, sha256 } from "../lib/crypto"
+import { githubConnectionFor } from "../lib/github-connection"
 import { bail, fail, readJson } from "../lib/http"
 import { creatorLeft, resolveJobCredential } from "../lib/job-accounts"
 import { turnAgent } from "../lib/job-command"
@@ -45,7 +46,7 @@ import { advanceGraph, graphAware } from "../lib/job-graph"
 import {
   attachSession,
   machineDepsFrom,
-  machinePass,
+  machineWakeFor,
   sessionClaim,
   sessionTunnelRequest,
 } from "../lib/job-machine"
@@ -53,12 +54,12 @@ import { canAskAgent, canManageAgent, canSteerJob, inboxScope } from "../lib/job
 import {
   answerJob,
   askAgent,
+  askBudgetRefusal,
   cancelJob,
   followUpJob,
   isServerNote,
   jobJson,
   jobOverBudget,
-  overBudgetFor,
   pullJobs,
   reportJob,
   retryJob,
@@ -344,18 +345,19 @@ export const jobRoutes = (ctx: AppContext) => {
     announce: ctx.announceJob,
   })
   const wakeCloud = async (c: Context, job: JobRecord) => {
-    if (!meta.jobExecution || job.kind === "graph" || job.attended === 1) return
-    const agent = await meta.getAgent(job.agent_id)
-    if (agent?.machine !== "derive") return
-    const machine = machineDepsFrom(meta, {
-      secret: deps.encryptionKey,
-      server: deps.baseUrl,
-      config: deps.runtime,
-      fetcher: deps.runtimeFetch,
-      bus: ctx.backplane,
-      announce: ctx.announceJob,
-    })
-    if (machine) await ctx.afterResponse(c, () => machinePass(machine))
+    const wake = await machineWakeFor(
+      meta,
+      {
+        secret: deps.encryptionKey,
+        server: deps.baseUrl,
+        config: deps.runtime,
+        fetcher: deps.runtimeFetch,
+        bus: ctx.backplane,
+        announce: ctx.announceJob,
+      },
+      job,
+    )
+    if (wake) await ctx.afterResponse(c, wake)
   }
   const turnsFor = async (job: JobRecord) =>
     ((await meta.jobExecution?.turns(job.id, job.org_id)) ?? []).map((turn) => {
@@ -748,14 +750,9 @@ export const jobRoutes = (ctx: AppContext) => {
       // for that. Repositories work on both.
       if (b.session && agent.machine !== "derive")
         return bail(fail(c, 400, "Interactive sessions need an agent that runs on Derive"))
-      // A workspace past its monthly model budget takes no new work. Checked before anything
-      // is written, so a refused ask leaves no job behind. A dedupe key naming an open job
-      // still finds it: that work is already asked for.
-      const open = b.dedupe_key
-        ? await meta.findOpenJobByDedupe(agent.id, who.id, b.dedupe_key)
-        : null
-      if (agent.machine !== "derive" && !open && (await overBudgetFor(meta, agent, who.id)))
-        return bail(fail(c, 402, OVER_BUDGET))
+      // A workspace past its monthly model budget takes no new work (lib/jobs.ts).
+      const overBudget = await askBudgetRefusal(meta, agent, who.id, b.dedupe_key ?? null)
+      if (overBudget) return bail(fail(c, 402, overBudget))
       const subject: Selector | null = b.subject
         ? (normalizeSelectors([b.subject])[0] ?? null)
         : null
@@ -1551,11 +1548,7 @@ export const jobRoutes = (ctx: AppContext) => {
     if (!deps.encryptionKey) return fail(c, 503, "Secret encryption is not configured")
     const [full = "", ref = null] = repo.split("@")
     const [owner = "", name = ""] = full.split("/")
-    const github = (
-      await spendableConnections(meta, agent.org_id, parseConnectionIds(agent.connection_ids_json))
-    ).find(
-      (cn) => cn.kind === "github_app" && cn.scopes_label?.toLowerCase() === owner.toLowerCase(),
-    )
+    const github = await githubConnectionFor(meta, agent, full)
     if (!github)
       return fail(c, 409, `Bind a GitHub connection for ${owner} to this agent to work in ${full}.`)
     try {

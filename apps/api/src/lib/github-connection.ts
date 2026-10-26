@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
-import type { ConnectionRecord, MetaStore, NewConnection } from "@derive/core"
+import type { AgentRecord, ConnectionRecord, MetaStore, NewConnection } from "@derive/core"
+import { parseConnectionIds, spendableConnections } from "./broker"
 
 const connectionId = (orgId: string, installationId: string): string =>
   `conn_gh_${createHash("sha256").update(`${orgId}\0${installationId}`).digest("hex").slice(0, 24)}`
@@ -69,4 +70,31 @@ export async function upsertGithubConnection(
     if (!updated) throw err
     return updated
   }
+}
+
+/**
+ * The GitHub connection through which an agent works in `owner/name`: one bound to the agent,
+ * active, and installed on the account that owns the repository. Null when there is none.
+ *
+ * Judged by the installation's account rather than by a live repository list, because that is
+ * what the task's checkout does (routes/jobs.ts, /git) and a check that is stricter or looser
+ * than the checkout would refuse work that runs, or accept work that cannot. An installation
+ * limited to selected repositories is the one case this admits and the checkout then refuses,
+ * with GitHub's own answer.
+ */
+export const githubConnectionFor = async (
+  meta: MetaStore,
+  agent: Pick<AgentRecord, "org_id" | "connection_ids_json">,
+  repository: string,
+): Promise<ConnectionRecord | null> => {
+  const owner = repository.split("@")[0]?.split("/")[0]?.toLowerCase() ?? ""
+  if (!owner) return null
+  const bound = await spendableConnections(
+    meta,
+    agent.org_id,
+    parseConnectionIds(agent.connection_ids_json),
+  )
+  return (
+    bound.find((cn) => cn.kind === "github_app" && cn.scopes_label?.toLowerCase() === owner) ?? null
+  )
 }

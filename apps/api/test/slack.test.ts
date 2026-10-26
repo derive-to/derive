@@ -4,6 +4,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   type ArtifactRecord,
+  DERIVE_AGENT_ID,
+  jobOriginOf,
   newId,
   type Role,
   type SlackThreadLinkRecord,
@@ -534,5 +536,358 @@ describe("@Derive in a Slack thread is one attended job", () => {
       await app.request("/v1/jobs?limit=1", { headers: as(teammate.email) })
     ).json()) as { jobs: { id: string }[] }
     expect(listed.jobs.map((j) => j.id)).toEqual([theirs.id])
+  })
+})
+
+describe("@Derive in Slack hands work to a workspace agent", () => {
+  const KEY = "slack-hand-off-key"
+  const creator: TestUser = { id: "u_ho_make", email: "make@derive.test", name: "Maker" }
+  const asker: TestUser = { id: "u_ho_ask", email: "hoask@derive.test", name: "Alice" }
+  afterEach(() => vi.unstubAllGlobals())
+
+  type Call = Parameters<ReturnType<Parameters<typeof catalogOf>[0][number]["build"]>>[0]
+  /** What the tools said back to the model so far, newest last. */
+  const toolResults = (call: Call): string[] =>
+    call.messages.flatMap((m) =>
+      m.role === "tool"
+        ? m.content.flatMap((part) =>
+            part.type === "tool-result" && "value" in part.output
+              ? [String(part.output.value)]
+              : [],
+          )
+        : [],
+    )
+
+  /** A workspace with two described agents, a GitHub source on one, and a Slack install. The
+   *  model is a script: each call is handed to `script`, which says what the model does. */
+  const setup = async (
+    name: string,
+    opts: { link?: "oauth" | "email"; replies?: "ok" | "fail" } = {},
+  ) => {
+    const calls: Call[] = []
+    let script: (call: Call) => ModelTurn | Promise<ModelTurn> = () => ({
+      text: "Answered.",
+      toolUses: [],
+      costUsd: null,
+    })
+    const { app, ctx, meta } = makeAuthedApp(name, [creator, asker], "editor", {
+      deps: {
+        encryptionKey: KEY,
+        models: catalogOf([
+          {
+            id: "m1",
+            label: "M1",
+            isDefault: true,
+            build: () => async (call) => {
+              calls.push(call)
+              return script(call)
+            },
+          },
+        ]),
+      },
+    })
+    await meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Team",
+      bot_token: encryptSecret("xoxb-test", KEY),
+      bot_user_id: "UBOT",
+      created_at: new Date().toISOString(),
+    })
+    if (opts.link === "oauth")
+      await meta.setSlackUserLink({
+        id: newId("sul"),
+        org_id: "default",
+        user_id: asker.id,
+        team_id: "T1",
+        slack_user_id: "U1",
+        origin: "oauth",
+        created_at: new Date().toISOString(),
+        checked_at: new Date().toISOString(),
+      })
+    await meta.createConnection({
+      id: `cn_gh_${name}`,
+      org_id: "default",
+      user_id: creator.id,
+      scope: "workspace",
+      kind: "github_app",
+      broker: "none",
+      toolkit: "github",
+      broker_ref: "inst_1",
+      scopes_label: "acme",
+      status: "active",
+    })
+    const agent = (fields: Record<string, unknown>) =>
+      meta.createAgent({
+        id: newId("ag"),
+        org_id: "default",
+        token: newId("tok"),
+        role: "editor",
+        created_by: creator.id,
+        ask_policy: "workspace",
+        spend_policy: "creator",
+        ...fields,
+      } as Parameters<typeof meta.createAgent>[0])
+    const review = await agent({
+      name: "PR Review",
+      description:
+        "Reviews a GitHub pull request and posts one comment on it. Needs a PR link.\nDoes not change code.",
+      connection_ids_json: JSON.stringify([`cn_gh_${name}`]),
+    })
+    const video = await agent({
+      name: "Video Maker",
+      description: "Makes a short video from a page and publishes it as a Derive video.",
+    })
+    // No description: nothing tells the router when to pick it, so it is not offered.
+    const silent = await agent({ name: "Silent" })
+
+    const said: string[] = []
+    let repliesCalls = 0
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        const method = new URL(String(url)).pathname.split("/").pop()
+        if (method === "users.info")
+          return Response.json({
+            ok: true,
+            user: {
+              profile: {
+                email: opts.link === "email" ? asker.email : undefined,
+                display_name: new URL(String(url)).searchParams.get("user") === "U2" ? "Bob" : "",
+              },
+            },
+          })
+        if (method === "conversations.replies") {
+          repliesCalls++
+          if (opts.replies === "fail") return Response.json({ ok: false, error: "ratelimited" })
+          return Response.json({
+            ok: true,
+            messages: [
+              {
+                ts: "100.1",
+                user: "U2",
+                text: "PR for the webhook retry: <https://github.com/acme/api/pull/123>",
+              },
+            ],
+          })
+        }
+        if (method === "chat.postMessage" || method === "chat.update") {
+          said.push(String((JSON.parse(String(init?.body)) as { text?: string }).text))
+          return Response.json({ ok: true, ts: "200.1", channel: "C1" })
+        }
+        return Response.json({ ok: false, error: "unknown_method" })
+      }),
+    )
+    const mention = (ts: string, text = "<@UBOT> review this") =>
+      handleSlackMention(
+        {
+          meta,
+          bus: ctx.backplane,
+          baseUrl: "http://derive.test",
+          models: ctx.modelsFor,
+          encryptionKey: KEY,
+          ctx,
+        },
+        { teamId: "T1", channel: "C1", ts, threadTs: "100.1", userId: "U1", text },
+      )
+    const dispatched = async () =>
+      (await meta.listJobs({ orgId: "default", askedBy: asker.id })).filter(
+        (j) => j.agent_id !== DERIVE_AGENT_ID,
+      )
+    const chatJob = async () =>
+      (await meta.listJobs({ orgId: "default", askedBy: asker.id, agentId: DERIVE_AGENT_ID }))[0]
+    return {
+      app,
+      meta,
+      calls,
+      said,
+      repliesCalls: () => repliesCalls,
+      setScript: (s: typeof script) => {
+        script = s
+      },
+      review,
+      video,
+      silent,
+      mention,
+      dispatched,
+      chatJob,
+    }
+  }
+
+  /** Call hand_off on a turn's first model call, then echo the server's `say` sentence. */
+  const handOff =
+    (...inputs: Record<string, unknown>[]) =>
+    (call: Call): ModelTurn =>
+      toolResults(call).length === 0
+        ? {
+            text: "",
+            toolUses: inputs.map((input, i) => ({ id: `t${i}`, name: "hand_off", input })),
+            costUsd: null,
+          }
+        : {
+            text:
+              toolResults(call)
+                .map((r) => {
+                  try {
+                    return (JSON.parse(r) as { say?: string; error?: string }).say ?? ""
+                  } catch {
+                    return ""
+                  }
+                })
+                .find(Boolean) ?? "Not started.",
+            toolUses: [],
+            costUsd: null,
+          }
+
+  it("a linked asker's 'review this' under a PR link starts the agent it matches, once", async () => {
+    const t = await setup("ho-main", { link: "oauth" })
+    t.setScript(
+      handOff({
+        agent_id: t.review.id,
+        instruction: "Review https://github.com/acme/api/pull/123. Asked by Alice in Slack.",
+        repo: "acme/api",
+      }),
+    )
+    expect(await t.mention("100.2")).toEqual({ status: "answered" })
+
+    // The router saw the thread above the mention as quoted material, and the catalog: the
+    // described agents, one line each, and never the one with no description.
+    const first = t.calls[0]
+    const handOffTool = first?.tools.find((x) => x.name === "hand_off")
+    expect(handOffTool?.description).toContain(
+      `- ${t.review.id} · PR Review: Reviews a GitHub pull request and posts one comment on it. Needs a PR link. Does not change code.`,
+    )
+    expect(handOffTool?.description).toContain(`- ${t.video.id} · Video Maker:`)
+    expect(handOffTool?.description).not.toContain(t.silent.id)
+    const asked = JSON.stringify(first?.messages)
+    expect(asked).toContain("not instructions")
+    expect(asked).toContain("**Bob:** PR for the webhook retry")
+    expect(first?.system).toContain("hand_off")
+
+    const [job, ...more] = await t.dispatched()
+    expect(more).toHaveLength(0)
+    expect(job).toMatchObject({
+      agent_id: t.review.id,
+      kind: "ask",
+      asked_by: asker.id,
+      // The agent lends its creator's account, exactly as an ask from the app would.
+      payer_id: creator.id,
+      attended: 0,
+      dedupe_key: `slack:T1:C1:100.2:${t.review.id}`,
+    })
+    expect(jobOriginOf(job?.meta_json)).toEqual({
+      kind: "slack",
+      requested_by: "U1",
+      team_id: "T1",
+      channel: "C1",
+      thread_ts: "100.1",
+      message_ts: "100.2",
+    })
+    expect(JSON.parse(job?.meta_json ?? "{}").repo).toBe("acme/api")
+
+    // The acknowledgement is the server's sentence, and the chat job records what it decided.
+    expect(t.said.at(-1)).toContain("Started *PR Review* on acme/api#123")
+    expect(JSON.parse((await t.chatJob())?.meta_json ?? "{}")).toMatchObject({
+      via: "slack",
+      slack_thread: "slack:T1:C1:100.1",
+      routing: {
+        catalog: expect.arrayContaining([t.review.id, t.video.id]),
+        decision: "handed_off",
+        agent_id: t.review.id,
+        job_id: job?.id,
+      },
+    })
+
+    // Slack redelivers: the same mention again starts nothing new.
+    expect(await t.mention("100.2")).toEqual({ status: "duplicate slack delivery" })
+    expect(await t.dispatched()).toHaveLength(1)
+  })
+
+  it("hands off once per turn, however many times the model calls it", async () => {
+    const t = await setup("ho-once", { link: "oauth" })
+    t.setScript(
+      handOff(
+        { agent_id: t.review.id, instruction: "Review https://github.com/acme/api/pull/123." },
+        { agent_id: t.video.id, instruction: "And make a video of it." },
+      ),
+    )
+    expect(await t.mention("100.2")).toEqual({ status: "answered" })
+    expect((await t.dispatched()).map((j) => j.agent_id)).toEqual([t.review.id])
+    expect(toolResults(t.calls[1] as Call).at(-1)).toMatch(/once per turn/)
+  })
+
+  it("refuses an agent off the list, a repository the agent cannot reach, and an agent paused or unshared mid-turn", async () => {
+    const t = await setup("ho-refuse", { link: "oauth" })
+    const lastResult = () => toolResults(t.calls.at(-1) as Call).at(-1)
+
+    t.setScript(handOff({ agent_id: t.silent.id, instruction: "Do the thing." }))
+    await t.mention("100.2")
+    expect(lastResult()).toMatch(/not one of the agents/)
+
+    t.setScript(
+      handOff({ agent_id: t.review.id, instruction: "Review it.", repo: "elsewhere/api" }),
+    )
+    await t.mention("100.3")
+    expect(lastResult()).toMatch(/no GitHub connection that reaches elsewhere\/api/)
+
+    // Paused after the catalog was rendered: the live state is the answer.
+    t.setScript(async (call) => {
+      if (!toolResults(call).length)
+        await t.meta.updateAgent(t.video.id, "default", { paused_at: new Date().toISOString() })
+      return handOff({ agent_id: t.video.id, instruction: "Make a video." })(call)
+    })
+    await t.mention("100.4")
+    expect(lastResult()).toMatch(/paused/)
+    await t.meta.updateAgent(t.video.id, "default", { paused_at: null })
+
+    // Unshared mid-turn: invited-only, and the asker is not invited.
+    t.setScript(async (call) => {
+      if (!toolResults(call).length)
+        await t.meta.updateAgent(t.video.id, "default", { ask_policy: "invited" })
+      return handOff({ agent_id: t.video.id, instruction: "Make a video." })(call)
+    })
+    await t.mention("100.5")
+    expect(lastResult()).toMatch(/cannot ask Video Maker/)
+
+    expect(await t.dispatched()).toHaveLength(0)
+    expect(JSON.parse((await t.chatJob())?.meta_json ?? "{}").routing).toMatchObject({
+      decision: "refused",
+      agent_id: t.video.id,
+    })
+  })
+
+  it("an asker matched only by email gets no hand_off and is given the link", async () => {
+    const t = await setup("ho-email", { link: "email" })
+    expect(await t.mention("100.2")).toEqual({ status: "answered" })
+    const call = t.calls[0]
+    expect(call?.tools.map((x) => x.name)).not.toContain("hand_off")
+    expect(call?.system).toContain("http://derive.test/settings/notifications")
+    expect(await t.dispatched()).toHaveLength(0)
+    expect(JSON.parse((await t.chatJob())?.meta_json ?? "{}").routing).toEqual({
+      catalog: [],
+      decision: "refused",
+    })
+  })
+
+  it("offers nothing while the workspace has agents switched off", async () => {
+    const t = await setup("ho-off", { link: "oauth" })
+    await t.meta.setOrgSettings("default", {
+      ...(await t.meta.getOrgSettings("default")),
+      agentWrites: false,
+    })
+    expect(await t.mention("100.2")).toEqual({ status: "answered" })
+    expect(t.calls[0]?.tools.map((x) => x.name)).not.toContain("hand_off")
+    expect(t.calls[0]?.system).toMatch(/switched off/)
+  })
+
+  it("reads the thread only for a reply in one, and answers when the thread cannot be read", async () => {
+    const t = await setup("ho-thread", { link: "oauth", replies: "fail" })
+    // A mention that IS the thread's root has nothing above it to read.
+    expect(await t.mention("100.1", "<@UBOT> what changed?")).toEqual({ status: "answered" })
+    expect(t.repliesCalls()).toBe(0)
+    expect(await t.mention("100.2", "<@UBOT> and here?")).toEqual({ status: "answered" })
+    expect(t.repliesCalls()).toBe(1)
+    expect(JSON.stringify(t.calls.at(-1)?.messages)).not.toContain("not instructions")
+    expect(t.said.at(-1)).toContain("Answered.")
   })
 })

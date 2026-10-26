@@ -86,6 +86,11 @@ export interface ChatTurnInput {
      */
     note?: string
   }
+  /** One sentence about the lane the turn runs in, rendered verbatim: what the model must say
+   *  that no tool it holds can tell it. Slack sets it when `hand_off` is withheld, so a request
+   *  for an agent's work is answered with why and, for an unproven asker, the link that fixes
+   *  it (lib/slack-mention.ts). */
+  lane?: string
   /** The page this conversation is about, when it was asked from one (the Ask panel). Named in
    *  the prompt so "this page" resolves; the turn reads it with its `read` tool rather than
    *  being handed the whole body, so a long page costs nothing on a turn that does not need it. */
@@ -141,6 +146,7 @@ const systemPrompt = (input: ChatTurnInput): string => {
   return `You are Chat, the assistant inside Derive. You help people find, understand, create, and revise artifacts.
 Workspace: ${JSON.stringify(input.workspaceName)}. Person: ${JSON.stringify(input.asker.name)}. Seat: ${roleWord(input.asker.role)}.
 ${input.asker.note ?? ""}
+${input.lane ?? ""}
 Scope: ${input.page ? `artifact ${input.page.shortId}, version ${input.page.version ?? "current"}` : "this workspace"}. This is a private conversation. It is not shared artifact content.
 ${input.page ? `"This", "it", and "the current artifact" mean ${input.page.shortId}. Read its source before discussing or editing it. Keep edits on the same artifact URL. Use base_version from the read. Prefer focused edits over rebuilding the document.` : "Find likely artifacts, then read the best matches before answering. A search title alone is not evidence."}
 ${input.page?.selection ? `Selection: ${JSON.stringify(input.page.selection)}. Only this selection is the edit target. The rest is context.` : ""}

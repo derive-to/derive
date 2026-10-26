@@ -47,8 +47,15 @@ import { AGENT_WRITES_OFF } from "./agent-writes"
  * `list_workspaces` + the library tools + `checkpoint` (the workspace is pinned and there is
  * no agent state to save), `comment` (a chat turn talking into a document's comment threads is a
  * different feature with its own notification fan-out), the agent tools (`agents`, `ask`, `jobs`,
- * `pull`: handing work to an agent is a person's decision, not a chat turn's), `derive_code` (it exists to collapse many approvals into one, which is a problem
- * attended chat does not have).
+ * `pull`: handing work to an agent is a person's decision, not a chat turn's), `derive_code` (it
+ * exists to collapse many approvals into one, which is a problem attended chat does not have).
+ *
+ * The Slack lane composes one narrower tool on top, `hand_off` (lib/hand-off.ts), and that is
+ * not `ask` by another name. The person made the decision by addressing @Derive with a request;
+ * the turn only picks which agent, from a catalog built for that asker, once per turn, with
+ * every pick rechecked by the server against live access, pause state, repository reach and
+ * budget, and only for an asker proven by a deliberate link. `ask` would take any agent, any
+ * number of times, on whatever a document read mid-turn suggested.
  *
  * Absent tools are NOT REGISTERED, so there is no handler to reach — the subset is enforced by
  * construction rather than by a check that could be skipped.

@@ -1578,6 +1578,22 @@ export async function sessionTunnelRequest(deps: MachineDeps, job: JobRecord) {
   return client.sshTunnel ? client.sshTunnel(own.sandbox_id, own.identity) : null
 }
 
+/** The pass that starts a just-opened job on its Derive machine now rather than at the next
+ *  tick, or null when nothing would start: an attended or graph job is served elsewhere, and an
+ *  owner-machine job waits for its runner to pull. Returned rather than run, because every
+ *  caller has already answered somebody and runs it on its own after-response clock. */
+export const machineWakeFor = async (
+  meta: MetaStore,
+  opts: Parameters<typeof machineDepsFrom>[1],
+  job: JobRecord,
+): Promise<(() => Promise<unknown>) | null> => {
+  if (!meta.jobExecution || job.kind === "graph" || job.attended === 1) return null
+  const agent = await meta.getAgent(job.agent_id)
+  if (agent?.machine !== "derive") return null
+  const machine = machineDepsFrom(meta, opts)
+  return machine ? () => machinePass(machine) : null
+}
+
 /** For the tick's callers: the pass, or nothing when this deploy has no Derive machines. */
 export const machineDepsFrom = (
   meta: MetaStore,
