@@ -495,6 +495,7 @@ describe("standard GitHub integration", () => {
     let actionsPermission: string | undefined = "write"
     let installationActionsPermission: string | undefined = "write"
     let installationPullPermission: string | undefined = "write"
+    let issuesPermission: string | undefined = "read"
     let appStatus = 200
     let installationStatus = 200
     const oauthCodes: string[] = []
@@ -517,6 +518,7 @@ describe("standard GitHub integration", () => {
                   ? { actions: installationActionsPermission }
                   : {}),
                 metadata: "read",
+                issues: "read",
                 ...(installationPullPermission
                   ? { pull_requests: installationPullPermission, contents: "write" }
                   : {}),
@@ -552,6 +554,7 @@ describe("standard GitHub integration", () => {
                 metadata: "read",
                 pull_requests: pullPermission,
                 contents: "write",
+                ...(issuesPermission ? { issues: issuesPermission } : {}),
               },
               events: [],
             }),
@@ -652,6 +655,17 @@ describe("standard GitHub integration", () => {
       await (await app.request("/v1/github", { headers: as(owner.email) })).json(),
     ).toMatchObject({ app_permissions_state: "update_required" })
     pullPermission = "write"
+    // An App created before PR mentions lacks Issues, so GitHub never delivers a mention: its
+    // owner is asked to add it, and every account keeps working in the meantime.
+    issuesPermission = undefined
+    expect(
+      await (await app.request("/v1/github", { headers: as(owner.email) })).json(),
+    ).toMatchObject({
+      app_permissions_state: "update_required",
+      connected: true,
+      accounts: [{ state: "active", permissions_state: "ready" }],
+    })
+    issuesPermission = "read"
     actionsPermission = undefined
     expect(
       await (await app.request("/v1/github", { headers: as(owner.email) })).json(),

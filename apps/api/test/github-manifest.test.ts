@@ -2,15 +2,17 @@ import { describe, expect, it } from "vitest"
 import { buildManifest } from "../src/github-app-setup"
 
 // Locks the standard-source manifest. New installs query GitHub on demand and deliver the
-// events agent triggers start on. Actions write is server-narrowed to workflow discovery, dispatch, status, artifacts,
+// events agent triggers start on, plus pull request comments that mention the App. Actions write is server-narrowed to workflow discovery, dispatch, status, artifacts,
 // and cancellation.
 describe("GitHub App manifest", () => {
   const m = buildManifest("https://derive.example.com", "derive.example.com")
 
-  it("delivers the events agent triggers start on to Derive's webhook", () => {
+  it("delivers the events agent triggers start on, and PR comments, to Derive's webhook", () => {
+    // `issue_comment` is how "@derive" on a pull request arrives; plain issues never answer.
     expect(m.default_events).toEqual([
       "pull_request",
       "push",
+      "issue_comment",
       "pull_request_review",
       "release",
       "workflow_run",
@@ -26,9 +28,11 @@ describe("GitHub App manifest", () => {
   })
 
   it("requests repository contents for explicit workflow grants alongside existing tools", () => {
+    // Issues read is what GitHub requires before it delivers `issue_comment` at all.
     expect(m.default_permissions).toEqual({
       actions: "write",
       contents: "write",
+      issues: "read",
       metadata: "read",
       pull_requests: "write",
     })
