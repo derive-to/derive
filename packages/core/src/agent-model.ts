@@ -101,6 +101,11 @@ export type JobOrigin =
       /** The pull request or issue number, when the event had one. */
       number: number | null
       delivery_id: string
+      /** The pull request comment that asked, when a person mentioned the App in one. */
+      comment_id?: number
+      /** Derive's own reply to that comment: the one comment the outcome edits. Absent for an
+       *  automation, which answers nowhere on GitHub; its agent posts for itself. */
+      ack_comment_id?: number
     }
 
 /** The `meta_json.origin` of a job, or null when it was asked for inside Derive. */
@@ -125,9 +130,21 @@ export const jobOriginOf = (metaJson: string | null | undefined): JobOrigin | nu
       const requested_by = str("requested_by")
       const repository = str("repository")
       const delivery_id = str("delivery_id")
-      const number = typeof o.number === "number" && Number.isInteger(o.number) ? o.number : null
+      const int = (k: string) =>
+        typeof o[k] === "number" && Number.isSafeInteger(o[k]) ? (o[k] as number) : null
+      const number = int("number")
+      const comment_id = int("comment_id")
+      const ack_comment_id = int("ack_comment_id")
       return requested_by && repository && delivery_id
-        ? { kind: "github", requested_by, repository, number, delivery_id }
+        ? {
+            kind: "github",
+            requested_by,
+            repository,
+            number,
+            delivery_id,
+            ...(comment_id ? { comment_id } : {}),
+            ...(ack_comment_id ? { ack_comment_id } : {}),
+          }
         : null
     }
     return null

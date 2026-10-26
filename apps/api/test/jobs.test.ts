@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process"
+import { generateKeyPairSync } from "node:crypto"
 import { once } from "node:events"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
@@ -1999,6 +2000,188 @@ describe("jobs: telling people", () => {
       await t.app.request(`/v1/jobs/${dropped.id}/cancel`, jsonAs(as(owner.email), {}))
       expect((await t.meta.getJob(dropped.id))?.status).toBe("cancelled")
       expect(t.posts).toHaveLength(0)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  // THE PULL REQUEST COMMENT REPLY (docs/agent-dispatch.md §17): a job handed off from
+  // "@derive review this" on a pull request appends its outcome to the one comment Derive
+  // answered with, so the comment reads as the request's history.
+  const PR_ORIGIN = {
+    kind: "github",
+    requested_by: "alice-gh",
+    repository: "acme/api",
+    number: 123,
+    delivery_id: "dlv-1",
+    comment_id: 501,
+    ack_comment_id: 7001,
+  }
+  const STARTED =
+    "Started **PR Review** on acme/api#123. I'll update this comment when it finishes."
+  const commentSetup = async (name: string, edit: "ok" | "refuse" = "ok") => {
+    const made = await setup(name)
+    const { app, meta } = made
+    const { privateKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      privateKeyEncoding: { type: "pkcs1", format: "pem" },
+      publicKeyEncoding: { type: "spki", format: "pem" },
+    })
+    await meta.setGithubApp({
+      id: "default",
+      app_id: "1",
+      slug: "derive-test",
+      client_id: "Iv1.x",
+      client_secret: encryptSecret("cs", "test-encryption-key"),
+      private_key: encryptSecret(privateKey, "test-encryption-key"),
+      created_at: "2026-06-15T00:00:00.000Z",
+    })
+    await meta.createConnection({
+      id: `cn_gh_${name}`,
+      org_id: "default",
+      user_id: owner.id,
+      scope: "workspace",
+      kind: "github_app",
+      broker: "none",
+      toolkit: "github",
+      broker_ref: "55001",
+      scopes_label: "acme",
+      status: "active",
+    })
+    // Slack too, so the asker has a DM for the reply to stand in for.
+    await meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Team",
+      bot_token: encryptSecret("xoxb-test", "test-encryption-key"),
+      bot_user_id: "UBOT",
+      created_at: new Date().toISOString(),
+    })
+    const calls: { method: string; path: string; body?: { body?: string } }[] = []
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname
+      const method = init?.method ?? "GET"
+      if (path.endsWith("/access_tokens"))
+        return Response.json(
+          { token: "t", expires_at: new Date(Date.now() + 3_600_000).toISOString() },
+          { status: 201 },
+        )
+      calls.push({ method, path, ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}) })
+      if (path === "/repos/acme/api/installation") return Response.json({ id: 55001 })
+      if (path === "/repos/acme/api/issues/comments/7001" && method === "GET")
+        return Response.json({ id: 7001, body: STARTED, user: { login: "derive-test[bot]" } })
+      if (path === "/repos/acme/api/issues/comments/7001" && method === "PATCH")
+        return edit === "refuse"
+          ? Response.json({ message: "Resource not accessible by integration" }, { status: 403 })
+          : Response.json({ id: 7001 })
+      if (path === "/repos/acme/api/issues/123/comments" && method === "POST")
+        return Response.json({ id: 7002 }, { status: 201 })
+      return Response.json({ ok: false, error: "unknown" })
+    })
+    const a = await createAgent(app, { name: "PR Review" })
+    const handedOff = (origin: Record<string, unknown> = PR_ORIGIN) =>
+      meta.createJob({
+        id: newId("job"),
+        org_id: "default",
+        agent_id: a.id,
+        kind: "ask",
+        instruction: "Review https://github.com/acme/api/pull/123",
+        asked_by: ed.id,
+        meta_json: JSON.stringify({ repo: "acme/api@abc123", origin }),
+      })
+    const settle = async (jobId: string, body: Record<string, unknown>) => {
+      const [p] = await pull(app, a)
+      const sent = { started_at: p?.started_at ?? null, ...body }
+      expect((await report(app, a.token, jobId, sent)).status).toBe(200)
+      return sent
+    }
+    const writes = () => calls.filter((c) => c.method === "PATCH" || c.method === "POST")
+    const replies = async (jobId: string) =>
+      (JSON.parse((await meta.getJob(jobId))?.meta_json ?? "{}") as { origin_replies?: unknown[] })
+        .origin_replies ?? []
+    const dms = async () =>
+      (await outbox(meta)).filter(
+        (d) => d.kind === "slack_dm" && JSON.parse(d.payload).userId === ed.id,
+      )
+    return { ...made, a, calls, writes, handedOff, settle, replies, dms }
+  }
+
+  it("a job handed off from a pull request comment edits that comment with its outcome, once", async () => {
+    const t = await commentSetup("jobs-pr-finished")
+    try {
+      const job = await t.handedOff()
+      const done = await t.settle(job.id, {
+        status: "succeeded",
+        body_md: "Reviewed the PR.",
+        result: {
+          summary: "Two findings, posted on the PR. cc @acme/backend",
+          effects: [
+            {
+              kind: "pr",
+              label: "acme/api#123",
+              url: "https://github.com/acme/api/pull/123#issuecomment-55",
+            },
+          ],
+        },
+      })
+      const [edit, ...more] = t.writes()
+      expect(more).toEqual([])
+      expect(edit).toMatchObject({ method: "PATCH", path: "/repos/acme/api/issues/comments/7001" })
+      const body = edit?.body?.body ?? ""
+      // What started stays above how it ended: the comment reads as the request's history.
+      expect(body.startsWith(`${STARTED}\n\n✅ **PR Review** finished: Two findings`)).toBe(true)
+      // A mention in an agent's words never pages anybody in Derive's name.
+      expect(body).toContain("cc @\u200bacme/backend")
+      expect(body).toContain(
+        "- [acme/api#123](https://github.com/acme/api/pull/123#issuecomment-55)",
+      )
+      expect(body).toContain(`[Open in Derive](http://derive.test/tasks/${job.id})`)
+      expect(await t.replies(job.id)).toEqual([
+        expect.objectContaining({ announcement: "job.finished", status: "succeeded", ts: "7001" }),
+      ])
+      // They read it on the pull request; the bell still rings.
+      expect(await t.dms()).toHaveLength(0)
+
+      expect((await report(t.app, t.a.token, job.id, done)).status).toBe(409)
+      const settled = await t.meta.getJob(job.id)
+      if (!settled) throw new Error("no job")
+      await notifyJob(
+        { meta: t.meta, baseUrl: "http://derive.test", encryptionKey: "test-encryption-key" },
+        settled,
+      )
+      expect(t.writes()).toHaveLength(1)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it("a pull request comment GitHub will not let Derive edit gets the outcome as a new one", async () => {
+    const t = await commentSetup("jobs-pr-refused", "refuse")
+    try {
+      const job = await t.handedOff()
+      await t.settle(job.id, {
+        status: "failed",
+        result: { failure: { reason: "The PR branch was deleted.", retryable: false } },
+      })
+      const posted = t.writes().filter((c) => c.method === "POST")
+      expect(posted).toHaveLength(1)
+      expect(posted[0]?.path).toBe("/repos/acme/api/issues/123/comments")
+      expect(posted[0]?.body?.body).toContain("❌ **PR Review** failed: The PR branch was deleted.")
+      expect(await t.replies(job.id)).toEqual([expect.objectContaining({ ts: "7002" })])
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it("a job from a GitHub automation, with no comment of Derive's, writes nothing to GitHub", async () => {
+    const t = await commentSetup("jobs-pr-automation")
+    try {
+      const { comment_id: _c, ack_comment_id: _a, ...automation } = PR_ORIGIN
+      const job = await t.handedOff(automation)
+      await t.settle(job.id, { status: "succeeded", body_md: "Reviewed." })
+      expect(t.calls).toEqual([])
+      expect(await t.replies(job.id)).toEqual([])
+      expect(await t.dms()).toHaveLength(1)
     } finally {
       vi.unstubAllGlobals()
     }

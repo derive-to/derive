@@ -15,7 +15,7 @@
 // the graph's asker and manager, since the graph waits on it.
 //
 // How: a bell row and the live `u:<id>` events for every one of those; then, for a job asked
-// for in a Slack thread, a reply in that thread (lib/slack-thread-reply.ts); then the interrupts,
+// for in a Slack thread or a pull request comment, a reply there (lib/origin-reply.ts); then the interrupts,
 // an email (workspace email on and the person's agent-email opt-in) and a Slack DM (the
 // workspace has Slack and the person has not turned DMs off). A finished job nobody asked
 // rings the bell only. Every needs-you is its own email and DM; finishes collapse per agent,
@@ -35,9 +35,11 @@ import {
 import type { Backplane } from "../bus"
 import { log } from "../log"
 import { enqueueJobEvent } from "../webhooks"
+import { githubCommentReply } from "./github-comment-reply"
 import { canManageAgent } from "./job-policy"
+import { type OriginReplier, type OriginReplyOutcome, replyToOrigin } from "./origin-reply"
 import { enqueueJobInterrupts } from "./slack-dm"
-import { replyToThread, type ThreadReplyOutcome } from "./slack-thread-reply"
+import { slackThreadReply } from "./slack-thread-reply"
 import { truncate } from "./text"
 
 export type JobAnnouncement = "job.needs_you" | "job.finished"
@@ -46,7 +48,7 @@ export interface JobNotifyDeps {
   meta: MetaStore
   bus?: Pick<Backplane, "publish">
   baseUrl: string
-  /** Decrypts the Slack bot token a thread reply posts with. */
+  /** Decrypts the Slack bot token, or the GitHub App key, a reply is written with. */
   encryptionKey?: string
   /** Drain the outbox now rather than on the next tick. */
   pokeWebhooks?: () => void
@@ -76,6 +78,16 @@ const firstLine = (s: string) =>
     .split("\n")
     .find((l) => l.trim())
     ?.trim() ?? ""
+
+/** Where a job asked outside Derive is answered: its Slack thread, or the pull request comment
+ *  Derive answered a mention with. A GitHub automation asked nobody in a comment, and its agent
+ *  posts its own, so nothing replies to it. */
+const replierFor: OriginReplier = (origin) => {
+  if (origin.kind === "slack") return (deps, a) => slackThreadReply(deps, origin, a)
+  const ack = origin.ack_comment_id
+  if (ack) return (deps, a) => githubCommentReply(deps, { ...origin, ack_comment_id: ack }, a)
+  return null
+}
 
 /** Who hears about this job: the asker (or, for a job nobody asked, the agent's creator), plus
  *  the agent's manager on needs_you. Only people still seated in the workspace. */
@@ -189,12 +201,12 @@ export const notifyJob = async (
       })
     })
 
-  // A job asked for in a Slack thread answers in that thread, and the asker, who reads it
-  // there, is spared the DM and email that would repeat it. Only once the thread has it: a
-  // reply that failed leaves the interrupts exactly as they were.
-  let thread = "none" as ThreadReplyOutcome
+  // A job asked for in a Slack thread or a pull request comment answers there, and the asker,
+  // who reads it there, is spared the DM and email that would repeat it. Only once it is there:
+  // a reply that failed leaves the interrupts exactly as they were.
+  let thread = "none" as OriginReplyOutcome
   await step("thread", async () => {
-    thread = await replyToThread(deps, { owner, job, event, agent, report })
+    thread = await replyToOrigin(deps, { owner, job, event, agent, report }, replierFor)
   })
   const interrupted =
     (thread === "posted" || thread === "skipped_marker") && owner.asked_by

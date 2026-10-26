@@ -8034,6 +8034,8 @@ export interface components {
                 repository: string;
                 number: number | null;
                 delivery_id: string;
+                comment_id?: number;
+                ack_comment_id?: number;
             } | unknown;
             subject: {
                 /** @enum {string} */
