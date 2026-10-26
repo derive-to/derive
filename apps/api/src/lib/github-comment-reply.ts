@@ -35,11 +35,12 @@ const LINE_MAX_CHARS = 1000
  * A GitHub @mention made inert. The text here is the agent's summary or the model's answer,
  * shaped by whatever the pull request said, and on GitHub `@someone` or `@org/team` in a
  * comment notifies them: a comment that says "ping @org/everyone" would page a whole team in
- * Derive's name. A zero-width space after the `@` keeps the text and drops the notification. An
- * email address (a word character before the `@`) is left alone.
+ * Derive's name. A zero-width space after the `@` keeps the text and drops the notification, in
+ * code too, since GitHub cannot be trusted to agree on where code ends. An email address (a
+ * word character before the `@`) is left alone.
  */
 export const quietMentions = (text: string): string =>
-  text.replace(/(^|[^\w`])@(?=[A-Za-z0-9])/g, "$1@​")
+  text.replace(/(^|[^\w])@(?=[A-Za-z0-9])/g, "$1@​")
 
 /** The outcome, in GitHub markdown, or null when it says nothing (cancelled). */
 const outcomeMarkdown = ({
@@ -106,11 +107,16 @@ export const githubCommentReply = async (
     return { ok: true as const, ts: String(made.id) }
   }
   // Read first, so what the comment already says stays above the new line. A comment somebody
-  // deleted, or one GitHub will not show us, is replaced by a new one rather than lost.
-  const current = await getIssueComment(token, origin.repository, origin.ack_comment_id).catch(
-    () => null,
-  )
-  if (!current) return post()
+  // deleted, or one GitHub will not show us, is replaced by a new one rather than lost; any
+  // other failure is a failed reply, so the interrupts go out instead of a stray second comment.
+  const refused = (e: unknown) => e instanceof GitHubError && (e.status === 403 || e.status === 404)
+  let current: { body: string }
+  try {
+    current = await getIssueComment(token, origin.repository, origin.ack_comment_id)
+  } catch (e) {
+    if (refused(e)) return post()
+    throw e
+  }
   try {
     await updateIssueComment(
       token,
@@ -120,7 +126,7 @@ export const githubCommentReply = async (
     )
     return { ok: true, ts: String(origin.ack_comment_id) }
   } catch (e) {
-    if (e instanceof GitHubError && (e.status === 403 || e.status === 404)) return post()
+    if (refused(e)) return post()
     throw e
   }
 }

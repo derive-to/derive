@@ -936,8 +936,11 @@ same delivery and neither can break the other (17.2).
   agent's narrowed one): `GET /repos/{o}/{r}/pulls/{n}` for the title, body, author, base, head
   sha, and whether the head is a fork; and `GET /repos/{o}/{r}/issues/{n}/comments`, newest last.
   Capped at `PR_CONTEXT_MAX_COMMENTS = 30` and `PR_CONTEXT_MAX_CHARS = 12000`, the description
-  always kept, the newest comments that fit. Each comment is labelled with its author's login,
-  Derive's own as "Derive (you)". The block is quoted inside the asker's turn text under a label
+  always kept, the newest comments that fit. Only comments by an `OWNER`, `MEMBER`, or
+  `COLLABORATOR`, and Derive's own, are read; the rest are counted, not quoted, because on a
+  public repository a stranger's comment would otherwise steer a turn that reads the workspace and
+  answers in public. Each comment is labelled with its author's login, Derive's own as "Derive
+  (you)". The block is quoted inside the asker's turn text under a label
   that says it is source material, not instructions, exactly as Slack quotes a thread. The
   triggering comment with the mention removed is "their message", and the only instruction.
 - **Best effort.** A failed read costs the context, not the turn: one warn log, and the turn runs
@@ -988,8 +991,9 @@ same delivery and neither can break the other (17.2).
   - `failed`: "❌ **Agent** failed: reason", and the task link.
   - `lost`: "⚠️ **Agent** was interrupted before it finished.", and the task link.
   - `cancelled`: nothing.
-- An edit GitHub refuses (403), or a comment that is gone, gets a new comment instead; the
-  marker records the new comment's id.
+- An edit GitHub refuses (403), or a comment that is gone (404), gets a new comment instead; the
+  marker records the new comment's id. Any other failure to read or edit it is a failed reply:
+  no marker, and the asker's interrupts go out.
 - The asker's bell is unchanged. Their Slack DM and email for that announcement are skipped once
   the comment has it, as 8.3.
 - An edit notifies nobody. That is deliberate: the person is told by the agent's own comment on

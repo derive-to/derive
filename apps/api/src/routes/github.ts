@@ -488,8 +488,20 @@ export const githubRoutes = (ctx: AppContext) => {
           log.warn("github: event triggers failed", { delivery, reason: String(error) })
           return [] as string[]
         })
-        // Someone wrote "@derive" on a pull request (lib/github-mention.ts). No model on the
-        // deploy means nothing answers, as in Slack.
+        const machines = started.length
+          ? machineDepsFrom(meta, {
+              secret: deps.encryptionKey,
+              server: deps.baseUrl,
+              config: deps.runtime,
+              fetcher: deps.runtimeFetch,
+              bus: ctx.backplane,
+              announce: ctx.announceJob,
+            })
+          : null
+        if (machines) await machinePass(machines)
+        // Someone wrote "@derive" on a pull request (lib/github-mention.ts). After the triggers'
+        // machines are woken, so their jobs never wait on a model turn. No model on the deploy
+        // means nothing answers, as in Slack.
         if (deps.models)
           await handleGithubMention(
             {
@@ -505,17 +517,6 @@ export const githubRoutes = (ctx: AppContext) => {
           ).catch((error) =>
             log.warn("github: mention failed", { delivery, reason: String(error) }),
           )
-        const machines = started.length
-          ? machineDepsFrom(meta, {
-              secret: deps.encryptionKey,
-              server: deps.baseUrl,
-              config: deps.runtime,
-              fetcher: deps.runtimeFetch,
-              bus: ctx.backplane,
-              announce: ctx.announceJob,
-            })
-          : null
-        if (machines) await machinePass(machines)
       })
     return c.body(null, 202)
   }

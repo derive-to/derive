@@ -530,13 +530,21 @@ export async function getPullRequest(
 export interface IssueComment {
   id: number
   author: string | null
+  /** OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, NONE…: the author's standing in the repository. */
+  association: string | null
   body: string
 }
 
-type RawComment = { id?: number; user?: { login?: string } | null; body?: string | null }
+type RawComment = {
+  id?: number
+  user?: { login?: string } | null
+  author_association?: string
+  body?: string | null
+}
 const commentOf = (c: RawComment): IssueComment => ({
   id: c.id ?? 0,
   author: c.user?.login ?? null,
+  association: c.author_association ?? null,
   body: c.body ?? "",
 })
 
