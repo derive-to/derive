@@ -2019,7 +2019,7 @@ describe("jobs: telling people", () => {
   }
   const STARTED =
     "Started **PR Review** on acme/api#123. I'll update this comment when it finishes."
-  const commentSetup = async (name: string, edit: "ok" | "refuse" = "ok") => {
+  const commentSetup = async (name: string, edit: "ok" | "refuse" | "unreadable" = "ok") => {
     const made = await setup(name)
     const { app, meta } = made
     const { privateKey } = generateKeyPairSync("rsa", {
@@ -2069,7 +2069,9 @@ describe("jobs: telling people", () => {
       calls.push({ method, path, ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}) })
       if (path === "/repos/acme/api/installation") return Response.json({ id: 55001 })
       if (path === "/repos/acme/api/issues/comments/7001" && method === "GET")
-        return Response.json({ id: 7001, body: STARTED, user: { login: "derive-test[bot]" } })
+        return edit === "unreadable"
+          ? new Response("unavailable", { status: 502 })
+          : Response.json({ id: 7001, body: STARTED, user: { login: "derive-test[bot]" } })
       if (path === "/repos/acme/api/issues/comments/7001" && method === "PATCH")
         return edit === "refuse"
           ? Response.json({ message: "Resource not accessible by integration" }, { status: 403 })
@@ -2168,6 +2170,19 @@ describe("jobs: telling people", () => {
       expect(posted[0]?.path).toBe("/repos/acme/api/issues/123/comments")
       expect(posted[0]?.body?.body).toContain("❌ **PR Review** failed: The PR branch was deleted.")
       expect(await t.replies(job.id)).toEqual([expect.objectContaining({ ts: "7002" })])
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it("a pull request comment GitHub cannot show just now is not replaced; the asker's DM goes", async () => {
+    const t = await commentSetup("jobs-pr-unreadable", "unreadable")
+    try {
+      const job = await t.handedOff()
+      await t.settle(job.id, { status: "succeeded", body_md: "Reviewed." })
+      expect(t.writes()).toEqual([])
+      expect(await t.replies(job.id)).toEqual([])
+      expect(await t.dms()).toHaveLength(1)
     } finally {
       vi.unstubAllGlobals()
     }
