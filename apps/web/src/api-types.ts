@@ -8018,6 +8018,23 @@ export interface components {
             parent_id: string | null;
             node_id: string | null;
             trigger_id: string | null;
+            /** @description Where the task was asked for, when that was outside Derive: a Slack thread or a GitHub event. `requested_by` is that system's handle, for display only. */
+            origin: {
+                /** @enum {string} */
+                kind: "slack";
+                requested_by: string;
+                team_id: string;
+                channel: string;
+                thread_ts: string;
+                message_ts: string;
+            } | {
+                /** @enum {string} */
+                kind: "github";
+                requested_by: string;
+                repository: string;
+                number: number | null;
+                delivery_id: string;
+            } | unknown;
             subject: {
                 /** @enum {string} */
                 kind: "artifact";

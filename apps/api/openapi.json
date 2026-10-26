@@ -2203,6 +2203,79 @@
             "type": "string",
             "nullable": true
           },
+          "origin": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "slack"
+                    ]
+                  },
+                  "requested_by": {
+                    "type": "string"
+                  },
+                  "team_id": {
+                    "type": "string"
+                  },
+                  "channel": {
+                    "type": "string"
+                  },
+                  "thread_ts": {
+                    "type": "string"
+                  },
+                  "message_ts": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "requested_by",
+                  "team_id",
+                  "channel",
+                  "thread_ts",
+                  "message_ts"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "github"
+                    ]
+                  },
+                  "requested_by": {
+                    "type": "string"
+                  },
+                  "repository": {
+                    "type": "string"
+                  },
+                  "number": {
+                    "type": "number",
+                    "nullable": true
+                  },
+                  "delivery_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "requested_by",
+                  "repository",
+                  "number",
+                  "delivery_id"
+                ]
+              },
+              {
+                "nullable": true
+              }
+            ],
+            "description": "Where the task was asked for, when that was outside Derive: a Slack thread or a GitHub event. `requested_by` is that system's handle, for display only."
+          },
           "subject": {
             "anyOf": [
               {
@@ -2655,6 +2728,7 @@
           "parent_id",
           "node_id",
           "trigger_id",
+          "origin",
           "subject",
           "needs",
           "result",

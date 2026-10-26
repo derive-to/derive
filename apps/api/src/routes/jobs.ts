@@ -239,6 +239,28 @@ const Job = z
     parent_id: z.string().nullable(),
     node_id: z.string().nullable(),
     trigger_id: z.string().nullable(),
+    origin: z
+      .union([
+        z.object({
+          kind: z.literal("slack"),
+          requested_by: z.string(),
+          team_id: z.string(),
+          channel: z.string(),
+          thread_ts: z.string(),
+          message_ts: z.string(),
+        }),
+        z.object({
+          kind: z.literal("github"),
+          requested_by: z.string(),
+          repository: z.string(),
+          number: z.number().nullable(),
+          delivery_id: z.string(),
+        }),
+      ])
+      .nullable()
+      .describe(
+        "Where the task was asked for, when that was outside Derive: a Slack thread or a GitHub event. `requested_by` is that system's handle, for display only.",
+      ),
     subject: SubjectSchema.nullable(),
     needs: JobNeedsSchema.nullable(),
     result: JobResultSchema,
