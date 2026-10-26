@@ -784,6 +784,9 @@ describe("@Derive in Slack hands work to a workspace agent", () => {
       message_ts: "100.2",
     })
     expect(JSON.parse(job?.meta_json ?? "{}").repo).toBe("acme/api")
+    // The agent page says where the task came from.
+    const shown = await t.app.request(`/v1/jobs/${job?.id}`, { headers: as(asker.email) })
+    expect(((await shown.json()) as { origin?: { kind?: string } }).origin?.kind).toBe("slack")
 
     // The acknowledgement is the server's sentence, and the chat job records what it decided.
     expect(t.said.at(-1)).toContain("Started *PR Review* on acme/api#123")

@@ -122,6 +122,10 @@ function Row({
       ? firstName(names.get(job.asked_by))
       : null
   const spend = scheduled ? jobSpend(job) : null
+  // A task asked for in Slack or by a GitHub event says so: nothing else on the row explains
+  // a task nobody typed here. (The generated type widens a nullable union to unknown.)
+  const from = (job.origin as { kind?: string } | null)?.kind
+  const origin = from === "slack" ? "From Slack" : from === "github" ? "From GitHub" : null
   return (
     <Link
       to="/tasks/$id"
@@ -162,6 +166,11 @@ function Row({
         {outcome && <span className="truncate text-sm text-muted-foreground">{outcome}</span>}
       </span>
       <Meta>
+        {origin && (
+          <span className="max-sm:hidden" data-testid={`job-origin-${job.id}`}>
+            {origin}
+          </span>
+        )}
         {asker && <span className="max-sm:hidden">{asker}</span>}
         {job.started_at && job.status === "running" ? (
           <Time>{took(job.started_at)}</Time>

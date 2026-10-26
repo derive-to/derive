@@ -254,6 +254,13 @@ function NameFields({
           data-testid="agent-description"
           maxLength={280}
         />
+        {/* @Derive in Slack picks an agent by this text alone (docs/agent-dispatch.md §5.2),
+            so it teaches the shape a router can choose by. */}
+        <Sub>
+          @Derive in Slack reads this to decide when to use the agent. Start with what it does and
+          what it returns. Name the input it needs, like a PR link, and say what to use instead for
+          nearby work.
+        </Sub>
       </Field>
     </form>
   )
