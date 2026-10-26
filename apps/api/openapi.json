@@ -2260,6 +2260,12 @@
                   },
                   "delivery_id": {
                     "type": "string"
+                  },
+                  "comment_id": {
+                    "type": "number"
+                  },
+                  "ack_comment_id": {
+                    "type": "number"
                   }
                 },
                 "required": [

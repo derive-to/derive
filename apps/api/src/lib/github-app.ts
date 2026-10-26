@@ -444,3 +444,162 @@ export async function convertManifestCode(code: string): Promise<ManifestConvers
     pem: d.pem,
   }
 }
+
+// ---- A pull request's conversation, for the mention lane (lib/github-mention.ts) ------------
+// Called with the server's own installation token, minted for the one repository the event
+// named. A conversation comment is an issue comment, so these are the Issues routes; on a pull
+// request GitHub accepts Pull requests access for them.
+
+const REPOSITORY = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/
+
+const repoPath = (repository: string): string => {
+  if (!REPOSITORY.test(repository)) throw new Error("invalid GitHub repository")
+  return `${API}/repos/${repository}`
+}
+
+const ghJson = async <T>(
+  token: string,
+  url: string,
+  what: string,
+  init: { method?: string; body?: unknown } = {},
+): Promise<{ data: T; link: string | null }> => {
+  const res = await fetch(url, {
+    method: init.method ?? "GET",
+    redirect: "manual",
+    signal: AbortSignal.timeout(20_000),
+    headers: {
+      ...ghHeaders(`Bearer ${token}`),
+      ...(init.body === undefined ? {} : { "content-type": "application/json" }),
+    },
+    ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+  })
+  if (!res.ok) return raise(res, what)
+  return { data: (await res.json()) as T, link: res.headers.get("link") }
+}
+
+/** The installation that covers a repository, as its id. App-JWT auth: the outcome of a job
+ *  is posted long after the event, and the App may have been reinstalled since. */
+export async function repositoryInstallation(
+  appId: string,
+  privateKeyPem: string,
+  repository: string,
+): Promise<string> {
+  const res = await fetch(`${repoPath(repository)}/installation`, {
+    headers: ghHeaders(`Bearer ${appJwt(appId, privateKeyPem)}`),
+    redirect: "manual",
+    signal: AbortSignal.timeout(20_000),
+  })
+  if (!res.ok) return raise(res, "reading the repository's GitHub App installation")
+  const id = ((await res.json()) as { id?: unknown }).id
+  if (typeof id !== "number") throw new Error("GitHub returned no installation id")
+  return String(id)
+}
+
+export interface PullRequestInfo {
+  title: string
+  body: string
+  author: string | null
+  base: string | null
+  headSha: string | null
+  /** Opened from another repository. */
+  fork: boolean
+}
+
+export async function getPullRequest(
+  token: string,
+  repository: string,
+  number: number,
+): Promise<PullRequestInfo> {
+  const { data } = await ghJson<{
+    title?: string
+    body?: string | null
+    user?: { login?: string } | null
+    base?: { ref?: string } | null
+    head?: { sha?: string; repo?: { full_name?: string } | null } | null
+  }>(token, `${repoPath(repository)}/pulls/${number}`, "reading the pull request")
+  return {
+    title: data.title ?? "",
+    body: data.body ?? "",
+    author: data.user?.login ?? null,
+    base: data.base?.ref ?? null,
+    headSha: data.head?.sha ?? null,
+    fork: (data.head?.repo?.full_name ?? "").toLowerCase() !== repository.toLowerCase(),
+  }
+}
+
+export interface IssueComment {
+  id: number
+  author: string | null
+  body: string
+}
+
+type RawComment = { id?: number; user?: { login?: string } | null; body?: string | null }
+const commentOf = (c: RawComment): IssueComment => ({
+  id: c.id ?? 0,
+  author: c.user?.login ?? null,
+  body: c.body ?? "",
+})
+
+/** The conversation's newest comments, oldest first. A long conversation is read from its
+ *  last two pages, because the end of it is where the request is. */
+export async function listIssueComments(
+  token: string,
+  repository: string,
+  number: number,
+): Promise<IssueComment[]> {
+  const url = (page: number) =>
+    `${repoPath(repository)}/issues/${number}/comments?per_page=100&page=${page}`
+  const what = "reading the pull request's comments"
+  const first = await ghJson<RawComment[]>(token, url(1), what)
+  const last = Number(/[?&]page=(\d+)[^>]*>;\s*rel="last"/.exec(first.link ?? "")?.[1] ?? 1)
+  if (!(last > 1)) return first.data.map(commentOf)
+  const tail = await Promise.all(
+    [Math.max(2, last - 1), last]
+      .filter((n, i, all) => all.indexOf(n) === i)
+      .map(async (n) => (await ghJson<RawComment[]>(token, url(n), what)).data),
+  )
+  return (last - 1 > 1 ? tail.flat() : [...first.data, ...tail.flat()]).map(commentOf)
+}
+
+export async function getIssueComment(
+  token: string,
+  repository: string,
+  id: number,
+): Promise<IssueComment> {
+  const { data } = await ghJson<RawComment>(
+    token,
+    `${repoPath(repository)}/issues/comments/${id}`,
+    "reading a pull request comment",
+  )
+  return commentOf(data)
+}
+
+export async function createIssueComment(
+  token: string,
+  repository: string,
+  number: number,
+  body: string,
+): Promise<IssueComment> {
+  const { data } = await ghJson<RawComment>(
+    token,
+    `${repoPath(repository)}/issues/${number}/comments`,
+    "posting a pull request comment",
+    { method: "POST", body: { body } },
+  )
+  return commentOf(data)
+}
+
+export async function updateIssueComment(
+  token: string,
+  repository: string,
+  id: number,
+  body: string,
+): Promise<IssueComment> {
+  const { data } = await ghJson<RawComment>(
+    token,
+    `${repoPath(repository)}/issues/comments/${id}`,
+    "editing a pull request comment",
+    { method: "PATCH", body: { body } },
+  )
+  return commentOf(data)
+}

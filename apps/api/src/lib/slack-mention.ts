@@ -36,9 +36,10 @@ import {
   slackUserName,
   updateSlackMessage,
 } from "./slack"
-import { absoluteLinks, mrkdwnBody } from "./slack-cards"
+import { mrkdwnBody } from "./slack-cards"
 import { postWithRecovery, resolveBotToken } from "./slack-delivery"
 import { CHAT_UNVERIFIED_NOTE, chatSeatFor, isVerifiedLink } from "./slack-identity"
+import { absoluteLinks } from "./text"
 
 /** How much of a Slack thread the turn is given. A mention usually arrives with a little
  *  context above it and the answer belongs to that, not to the channel's whole day. */

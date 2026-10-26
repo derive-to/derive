@@ -255,6 +255,8 @@ const Job = z
           repository: z.string(),
           number: z.number().nullable(),
           delivery_id: z.string(),
+          comment_id: z.number().optional(),
+          ack_comment_id: z.number().optional(),
         }),
       ])
       .nullable()
