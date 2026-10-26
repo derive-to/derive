@@ -316,11 +316,14 @@ export const slackThreadReplies = async (
  *  needs no membership: the sender self-joins on the first `not_in_channel` (postWithRecovery's
  *  autoJoin). A private one cannot be joined by the app at all, and that is the case worth
  *  catching early, because otherwise the subscription is accepted and every delivery to it
- *  quietly dead-letters. Returns null when Slack could not be asked — never block on a maybe. */
+ *  quietly dead-letters. Returns null when Slack could not be asked — never block on a maybe.
+ *
+ *  `isPrivate` covers a private channel and a group DM: who can read what is said there is not
+ *  the workspace, which is what a reader that copies the conversation anywhere has to know. */
 export const slackChannelReach = async (
   token: string,
   channel: string,
-): Promise<{ reachable: boolean; name: string | null } | null> => {
+): Promise<{ reachable: boolean; name: string | null; isPrivate: boolean } | null> => {
   try {
     const q = new URLSearchParams({ channel })
     const res = await fetch(`${API}/conversations.info?${q}`, {
@@ -330,12 +333,18 @@ export const slackChannelReach = async (
     const data = (await res.json()) as {
       ok: boolean
       error?: string
-      channel?: { is_private?: boolean; is_member?: boolean; name?: string }
+      channel?: { is_private?: boolean; is_mpim?: boolean; is_member?: boolean; name?: string }
     }
     if (!data.ok)
-      return data.error === "channel_not_found" ? { reachable: false, name: null } : null
+      return data.error === "channel_not_found"
+        ? { reachable: false, name: null, isPrivate: true }
+        : null
     const c = data.channel ?? {}
-    return { reachable: !c.is_private || c.is_member === true, name: c.name ?? null }
+    return {
+      reachable: !c.is_private || c.is_member === true,
+      name: c.name ?? null,
+      isPrivate: c.is_private === true || c.is_mpim === true,
+    }
   } catch {
     return null
   }

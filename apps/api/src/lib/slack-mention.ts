@@ -30,6 +30,7 @@ import { isServerNote } from "./jobs"
 import type { ModelSource } from "./model-library"
 import {
   type SlackThreadMessage,
+  slackChannelReach,
   slackThreadReplies,
   slackUserEmail,
   slackUserName,
@@ -147,6 +148,11 @@ export interface SlackMentionDeps {
   askLimiter?: ((key: string) => Promise<{ ok: boolean; retryAfter?: number }>) | null
 }
 
+/** Slack writes a mention as `<@U123>` or, from some clients, `<@U123|name>`. */
+const MENTION = /<@([A-Z0-9]+)(?:\|[^>]*)?>/g
+const mentionOf = (userId: string) =>
+  new RegExp(`<@${userId.replace(/[^A-Z0-9]/gi, "")}(?:\\|[^>]*)?>`, "g")
+
 /** What a routing record says a turn did with the agents it could hand to (spec §11). */
 type RoutingDecision = "handed_off" | "answered" | "refused"
 
@@ -158,15 +164,25 @@ type RoutingDecision = "handed_off" | "answered" | "refused"
  * only instruction. The bot's own messages are included, so the turn can see what it already
  * said and started.
  *
- * Best effort: a thread that cannot be read costs the context, never the answer.
+ * NOT IN A PRIVATE CONVERSATION. What the turn reads can end up in a hand-off's instruction,
+ * and a dispatched job is readable by the whole workspace, so a private channel's or a group
+ * DM's messages would be copied to people who were never in it. A 1:1 DM is only the asker and
+ * the bot, so it is read. When Slack cannot say which kind a conversation is, it is treated as
+ * private: this one fails closed, because what it guards is who sees other people's words.
+ *
+ * Best effort otherwise: a thread that cannot be read costs the context, never the answer.
  */
 const threadContext = async (
   token: string,
   p: SlackMentionPayload,
   botUserId: string | null,
-): Promise<string | null> => {
+): Promise<string | "private" | null> => {
   const root = p.threadTs
   if (!root || root === p.ts) return null
+  if (!p.channel.startsWith("D")) {
+    const reach = p.channel.startsWith("G") ? null : await slackChannelReach(token, p.channel)
+    if (!reach || reach.isPrivate) return "private"
+  }
   let messages: SlackThreadMessage[]
   try {
     messages = await slackThreadReplies(token, p.channel, root, { latest: p.ts })
@@ -196,7 +212,7 @@ const threadContext = async (
         ? (m.botName ?? "an app")
         : (names.get(m.user ?? "") ?? m.user ?? "someone")
     let text = m.text
-      .replace(/<@([A-Z0-9]+)>/g, (_t, id: string) =>
+      .replace(MENTION, (_t, id: string) =>
         id === botUserId ? "@Derive" : `@${names.get(id) ?? id}`,
       )
       .trim()
@@ -229,7 +245,7 @@ const threadContext = async (
 
 /** Strip the `<@BOT>` token(s) so the model reads the question, not Slack's wire format. */
 export const questionFrom = (text: string, botUserId: string | null): string =>
-  (botUserId ? text.replaceAll(`<@${botUserId}>`, " ") : text).replace(/\s+/g, " ").trim()
+  (botUserId ? text.replace(mentionOf(botUserId), " ") : text).replace(/\s+/g, " ").trim()
 
 /**
  * A Derive artifact named in the message — the closest thing Slack has to a subject.
@@ -703,6 +719,14 @@ export const handleSlackMention = async (
   // around it can (a dropped connection mid-settle, a store error), and the failure mode that
   // costs the most trust is silence: the bot was mentioned in front of the channel and simply
   // never spoke. So the tail answers even when it fails.
+  //
+  // Held outside the try: once a hand-off has started a job, every exit says so, including the
+  // failed ones, or the person reads "try again" and opens a second job.
+  let handOff: HandOffSurface | null = null
+  const startedSay = (): string | null => {
+    const o = handOff?.outcome()
+    return o?.kind === "handed_off" ? o.say : null
+  }
   try {
     // The whole enforcement for this lane: an email-matched asker acts at `viewer`, and the
     // tools take their ceiling from the seat, so every write stops without a check of its own.
@@ -723,14 +747,14 @@ export const handleSlackMention = async (
     const catalog = await agentCatalogFor(meta, install.org_id, asker.id).catch(() => [])
     const writesOn = settings.agentWrites !== false
     const offered = resolved.verified && writesOn && catalog.length > 0
-    const lane = offered
-      ? undefined
+    const withheld = offered
+      ? null
       : !resolved.verified
         ? `Starting a workspace agent from Slack needs their Slack and Derive accounts linked. If they ask for an agent's work, say so in one sentence and give this link: ${linkUrl}`
         : catalog.length && !writesOn
           ? "Agents are switched off in this workspace, so none can be started from here. If they ask for an agent's work, say so in one sentence."
-          : undefined
-    const handOff: HandOffSurface | null = offered
+          : null
+    handOff = offered
       ? withHandOff(chatTools, {
           meta,
           jobDeps: graphAware({
@@ -758,6 +782,15 @@ export const handleSlackMention = async (
     // waiting on it: the transcript keeps their own words, and the next mention reads the
     // thread as it is then.
     const quoted = await threadContext(bot.token, p, bot.install.bot_user_id)
+    const lane =
+      [
+        withheld,
+        quoted === "private"
+          ? "The thread above this message was not read, because the conversation is private. Use only what this message says and links."
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" ") || undefined
     const res = await runChatTurn(
       // This runs after Slack's ack, on the same waitUntil clock as a page ask.
       { model, budgetMs: deps.ctx.attendedTurnBudgetMs },
@@ -770,7 +803,8 @@ export const handleSlackMention = async (
             .slice(-THREAD_CONTEXT),
           {
             author_kind: "asker",
-            body_md: quoted ? `${quoted}\n\nTheir message: ${grounded}` : grounded,
+            body_md:
+              quoted && quoted !== "private" ? `${quoted}\n\nTheir message: ${grounded}` : grounded,
           },
         ],
         tools,
@@ -793,9 +827,15 @@ export const handleSlackMention = async (
       },
     )
 
+    // The server's sentence, not the model's, once a job exists: the turn may have timed out
+    // or failed on the step after the tool, and its own text would then say the opposite.
+    const said = startedSay()
+    const reply = said ?? res.reply
+    const outcome = said ? "answered" : res.outcome
     const held = await meta.getJob(jobId)
     if (held?.status !== "running" || held.started_at !== startedAt) {
       if (res.costMicroUsd) await meta.addJobCost(jobId, res.costMicroUsd).catch(() => null)
+      if (said) await settle(mrkdwnBody(said))
       return quiet("thread claim ended")
     }
     // The transcript is the record: the Slack message is a rendering of the answer, not the
@@ -805,9 +845,9 @@ export const handleSlackMention = async (
       job_id: jobId,
       author_kind: "agent",
       author_id: DERIVE_AGENT_ID,
-      body_md: res.reply,
+      body_md: reply,
       meta_json: JSON.stringify({
-        outcome: res.outcome,
+        outcome,
         model: res.model,
         model_ms: res.modelMs,
         via: "slack",
@@ -832,9 +872,9 @@ export const handleSlackMention = async (
         }
       : undefined
     await settleJob(
-      res.outcome === "failed" ? "failed" : res.needs ? "needs_you" : "succeeded",
+      outcome === "failed" ? "failed" : !said && res.needs ? "needs_you" : "succeeded",
       res.costMicroUsd,
-      res.needs,
+      said ? undefined : res.needs,
       routing,
     )
 
@@ -849,7 +889,7 @@ export const handleSlackMention = async (
     // stays strict for the same reason it is strict in the web renderer: a leading slash then an
     // alphanumeric admits /artifacts/x and excludes both `javascript:` and the protocol-relative
     // `//evil.com`.
-    const withLinks = res.reply.replace(
+    const withLinks = reply.replace(
       /\]\((\/[A-Za-z0-9][\w\-./?=&#%]*)\)/g,
       (_m, path: string) => `](${deps.baseUrl}${path})`,
     )
@@ -888,8 +928,13 @@ export const handleSlackMention = async (
     })
     // Through settle, so a crash REPLACES "thinking…" rather than leaving it there for ever —
     // a placeholder that never resolves reads as a hung bot, which is worse than an error.
-    await settle("Something went wrong on my side, so I have not answered that. Try me again.")
-    await settleJob("failed", null)
+    const said = startedSay()
+    await settle(
+      said
+        ? mrkdwnBody(said)
+        : "Something went wrong on my side, so I have not answered that. Try me again.",
+    )
+    await settleJob(said ? "succeeded" : "failed", null)
     return quiet("turn failed")
   }
   return { status: "answered" }

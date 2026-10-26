@@ -303,8 +303,12 @@ The catalog is rendered into the `hand_off` tool's description for each turn. It
 on every turn, never cached across turns. One line per agent:
 
 ```
-- <agent_id> · <name>: <description>
+- <agent_id> · <name>: "<description>"
 ```
+
+Descriptions are written by any workspace editor, so they reach the model as quoted claims about
+what an agent does, under a line saying so, never as rules. The routing rules (7.3) follow the
+list and are the only rules.
 
 The rest of an agent's package is not included: instructions, sources, and machine stay out.
 This follows progressive opening. The router needs to know when to use an agent, not how the
@@ -424,6 +428,11 @@ the thread's earlier messages:
 Reading the thread MUST be best-effort. If the read fails, the turn still runs on the mention
 alone.
 
+The thread MUST NOT be read in a private channel or a group DM (13, Visibility). A 1:1 DM with
+the bot is read. A conversation whose kind cannot be determined counts as private. When the
+thread is not read for this reason, the turn gets one `lane` sentence: the thread above was not
+read because the conversation is private, so use only what this message says and links.
+
 ### 7.3 The Router Turn
 
 The chat turn gets one more tool, `hand_off`, when every one of these holds:
@@ -462,6 +471,8 @@ refusal to say why in one sentence and not try a different agent.
 
 - Input: 4.1.3.
 - Server checks:
+  - A job already open under the 4.2 dedupe key (a replay after a crash) is returned as the
+    hand-off's result, before any other effect.
   - Once per turn. The first call uses the turn whatever its outcome: a second call, even after
     a refused first, is refused and does nothing.
   - The agent is in this turn's catalog, then rechecked live: same workspace, not managed, not
@@ -488,6 +499,15 @@ started and where the result will appear:
 > Started **PR Review** on acme/api#123. I'll post the result in this thread.
 
 Until the thread reply (section 8) ships, the sentence is "You'll get a DM when it finishes."
+
+When the job waits for an owner machine (its runner is not online, or its creator has left the
+workspace), the sentence says so instead, as the app does:
+
+> Queued **PR Review** on acme/api#123; it starts when its machine is online.
+
+Once a hand-off has started a job, the turn's reply is that sentence whatever else the turn did:
+a timeout, a failed model call after the tool, or a failed transcript write never turns a started
+job into "try again".
 
 ### 7.5 Principal and Payer
 
@@ -631,6 +651,10 @@ No new agent field. No new workspace setting.
   push.
 - **Visibility.** A thread reply exposes the summary and the links in the channel. The links keep
   their own access, and a person without access who opens a report sees the usual access screen.
+  In the other direction, a dispatched job is visible to the whole workspace, and the router
+  writes its instruction from what it read. So the router never reads the thread of a private
+  channel or a group DM, whose members are not the workspace (7.2). A 1:1 DM is only the asker
+  and the bot, and is read.
 
 ## 14. Reference Algorithms
 
