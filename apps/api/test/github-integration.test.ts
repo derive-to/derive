@@ -1,4 +1,5 @@
 import { generateKeyPairSync } from "node:crypto"
+import { jobOriginOf } from "@derive/core"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { encryptSecret, signState } from "../src/lib/crypto"
 import { githubWebhookSecret, githubWebhookSignature } from "../src/lib/github-app"
@@ -215,7 +216,7 @@ describe("standard GitHub integration", () => {
     expect(job).toMatchObject({ agent_id: reviewer.id, trigger_id: trigger.id })
     expect(job?.instruction).toContain("Review this pull request.")
     expect(job?.instruction).toContain("GitHub pull_request.opened on acme/web#7: Speed up search")
-    expect(JSON.parse(job?.meta_json ?? "{}")).toEqual({ repo: "acme/web@a1b2c3d4e5f6" })
+    expect(JSON.parse(job?.meta_json ?? "{}")).toMatchObject({ repo: "acme/web@a1b2c3d4e5f6" })
 
     // Nothing else starts work: another action, another base, a fork, a draft, its own bot,
     // or an installation this agent does not hold.
@@ -247,6 +248,123 @@ describe("standard GitHub integration", () => {
     await deliver({ ...merged, pull_request: { ...merged.pull_request, merged: true } }, "d-9")
     expect(await jobs()).toHaveLength(3)
     expect(await meta.listEnabledScheduleTriggers(["default"])).toEqual([])
+  })
+
+  it("runs a review agent only when a listed login is asked to review", async () => {
+    const { app, meta } = makeAuthedApp("gh-reviewers", [owner], "owner", {
+      deps: { encryptionKey: KEY },
+    })
+    await seedApp(meta)
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{}", { status: 200 })),
+    )
+    const source = await upsertGithubConnection(meta, {
+      orgId: "default",
+      userId: owner.id,
+      installationId: "44020",
+      accountLogin: "acme",
+    })
+    const agent = (await (
+      await app.request(
+        "/v1/agents",
+        jsonAs(as(owner.email), { name: "PR review", connection_ids: [source.id] }),
+      )
+    ).json()) as { id: string }
+    const addTrigger = (github: object) =>
+      app.request(
+        `/v1/agents/${agent.id}/triggers`,
+        jsonAs(as(owner.email), {
+          on: { github: { event: "pull_request", repository: "acme/api", ...github } },
+          instruction: "Review this pull request.",
+        }),
+      )
+    const tooMany = Array.from({ length: 21 }, (_, i) => `dev${i}`)
+    expect((await addTrigger({ reviewers: tooMany })).status).toBe(400)
+    expect((await addTrigger({ reviewers: ["not a login"] })).status).toBe(400)
+    expect((await addTrigger({ reviewers: ["@octocat"] })).status).toBe(400)
+    // An `on` keyed by a source this server does not read is refused at the door.
+    const unknown = await app.request(
+      `/v1/agents/${agent.id}/triggers`,
+      jsonAs(as(owner.email), { on: { slack: { channel: "C1" } }, instruction: "x" }),
+    )
+    expect(unknown.status).toBe(400)
+    // `actions` is left open on purpose: the reviewer filter alone keeps other actions out.
+    const added = await addTrigger({ reviewers: [" OctoCat "] })
+    expect(added.status).toBe(201)
+    const trigger = (await added.json()) as { id: string; on: { github: { reviewers: string[] } } }
+    expect(trigger.on.github.reviewers).toEqual(["OctoCat"])
+    // One stored before a later server's source key existed reads as no match, not an error.
+    await meta.createTrigger({
+      id: "trg_future_source",
+      org_id: "default",
+      agent_id: agent.id,
+      kind: "event",
+      on_event: JSON.stringify({ slack: { channel: "C1" } }),
+      instruction: "x",
+      subject_json: null,
+    })
+
+    const request = (over: { action?: string; reviewer?: object | null; team?: object } = {}) => ({
+      action: over.action ?? "review_requested",
+      installation: { id: 44020 },
+      repository: { full_name: "acme/api" },
+      sender: { login: "author" },
+      ...(over.reviewer === null
+        ? {}
+        : { requested_reviewer: over.reviewer ?? { login: "octocat" } }),
+      ...(over.team ? { requested_team: over.team } : {}),
+      pull_request: {
+        number: 123,
+        title: "Retry failed webhooks",
+        html_url: "https://github.com/acme/api/pull/123",
+        draft: false,
+        base: { ref: "main" },
+        head: { sha: "e4f1a9", repo: { full_name: "acme/api" } },
+      },
+    })
+    const deliver = async (payload: object, delivery: string) => {
+      const body = JSON.stringify(payload)
+      const res = await app.request("/v1/github/webhook", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-github-event": "pull_request",
+          "x-github-delivery": delivery,
+          "x-hub-signature-256": githubWebhookSignature(body, githubWebhookSecret("1", KEY)),
+        },
+        body,
+      })
+      expect(res.status).toBe(202)
+    }
+    const jobs = () => meta.listJobs({ orgId: "default", agentId: agent.id })
+
+    await deliver(request(), "rv-1")
+    const [job, ...rest] = await jobs()
+    expect(rest).toEqual([])
+    expect(job?.trigger_id).toBe(trigger.id)
+    expect(job?.instruction).toContain("Review this pull request.")
+    expect(job?.instruction).toContain("Review requested from octocat")
+    expect(jobOriginOf(job?.meta_json)).toEqual({
+      kind: "github",
+      requested_by: "author",
+      repository: "acme/api",
+      number: 123,
+      delivery_id: "rv-1",
+    })
+
+    // Another person's request, a team's, and every other action start nothing.
+    await deliver(request({ reviewer: { login: "someone-else" } }), "rv-2")
+    await deliver(request({ reviewer: null, team: { slug: "reviewers" } }), "rv-3")
+    await deliver(request({ action: "opened", reviewer: null }), "rv-4")
+    await deliver(request({ action: "synchronize" }), "rv-5")
+    expect(await jobs()).toHaveLength(1)
+    // Logins compare without case; a withdrawn request says so.
+    await deliver(request({ reviewer: { login: "OCTOCAT" } }), "rv-6")
+    await deliver(request({ action: "review_request_removed" }), "rv-7")
+    const instructions = (await jobs()).map((j) => j.instruction)
+    expect(instructions).toHaveLength(3)
+    expect(instructions.some((i) => i.includes("Review request removed for octocat"))).toBe(true)
   })
 
   it("runs an agent's tasks in its repository when an ask names none", async () => {

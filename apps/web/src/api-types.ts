@@ -7906,6 +7906,8 @@ export interface components {
                 branches?: string[];
                 /** @description Also run on draft pull requests. */
                 drafts?: boolean;
+                /** @description Only review requests for these GitHub logins (review_requested, review_request_removed); a team request never matches. Omit for any. */
+                reviewers?: string[];
             };
         } | null;
         Agent: {

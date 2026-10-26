@@ -54,6 +54,7 @@ const EVENTS: Record<
       { value: "ready_for_review", label: "Ready for review", chip: "Ready" },
       { value: "reopened", label: "Reopened" },
       { value: "merged", label: "Merged" },
+      { value: "review_requested", label: "Review requested" },
     ],
     branches: "Base branches",
   },
@@ -191,7 +192,11 @@ function TriggerRow({
 }) {
   const Glyph = t.on ? KIND_ICON[t.on.github.event] : Clock
   const detail = t.on
-    ? [t.on.github.branches?.join(", "), t.on.github.drafts ? "drafts too" : null]
+    ? [
+        t.on.github.branches?.join(", "),
+        t.on.github.reviewers?.join(", "),
+        t.on.github.drafts ? "drafts too" : null,
+      ]
     : [t.tz]
   return (
     <li
@@ -503,6 +508,7 @@ function GithubForm({
   )
   const [branches, setBranches] = useState((was?.branches ?? []).join(", "))
   const [drafts, setDrafts] = useState(was?.drafts ?? false)
+  const [reviewers, setReviewers] = useState((was?.reviewers ?? []).join(", "))
   const spec = EVENTS[event]
   const names = repos.data?.repositories.map((r) => r.full_name) ?? []
   const save = useApiMutation({
@@ -513,12 +519,14 @@ function GithubForm({
             .map((b) => b.trim())
             .filter(Boolean)
         : []
+      const logins = event === "pull_request" ? reviewers.split(/[\s,]+/).filter(Boolean) : []
       const on: GithubTriggerOn = {
         github: {
           event,
           repository: repository.trim(),
           ...(actions.length ? { actions } : {}),
           ...(list.length ? { branches: list } : {}),
+          ...(logins.length ? { reviewers: logins } : {}),
           ...(drafts && (event === "pull_request" || event === "pull_request_review")
             ? { drafts: true }
             : {}),
@@ -630,6 +638,21 @@ function GithubForm({
               />
               Drafts too
             </label>
+          )}
+        </div>
+      )}
+      {event === "pull_request" && (
+        <div className="flex flex-col gap-1.5">
+          <Input
+            value={reviewers}
+            onChange={(e) => setReviewers(e.target.value)}
+            placeholder="Reviewers: anyone"
+            aria-label="Reviewers"
+            data-testid="agent-trigger-reviewers"
+            className="w-full font-mono sm:w-64"
+          />
+          {reviewers.trim() && actions.length > 0 && !actions.includes("review_requested") && (
+            <Sub>Reviewers apply only to review requests.</Sub>
           )}
         </div>
       )}
