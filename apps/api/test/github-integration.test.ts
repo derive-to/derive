@@ -359,9 +359,15 @@ describe("standard GitHub integration", () => {
     await deliver(request({ action: "opened", reviewer: null }), "rv-4")
     await deliver(request({ action: "synchronize" }), "rv-5")
     expect(await jobs()).toHaveLength(1)
-    // Logins compare without case; a withdrawn request says so.
+    // Logins compare without case. A withdrawn request runs nothing unless `actions` asks for it,
+    // and then it says so.
     await deliver(request({ reviewer: { login: "OCTOCAT" } }), "rv-6")
     await deliver(request({ action: "review_request_removed" }), "rv-7")
+    expect(await jobs()).toHaveLength(2)
+    expect(
+      (await addTrigger({ actions: ["review_request_removed"], reviewers: ["octocat"] })).status,
+    ).toBe(201)
+    await deliver(request({ action: "review_request_removed" }), "rv-8")
     const instructions = (await jobs()).map((j) => j.instruction)
     expect(instructions).toHaveLength(3)
     expect(instructions.some((i) => i.includes("Review request removed for octocat"))).toBe(true)

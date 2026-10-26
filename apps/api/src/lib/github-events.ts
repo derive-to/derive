@@ -50,7 +50,7 @@ export const GithubOn = z
         .max(20)
         .optional()
         .describe(
-          "Only review requests for these GitHub logins (review_requested, review_request_removed); a team request never matches. Omit for any.",
+          "Only review requests for these GitHub logins; a team request never matches. Matches review_requested, and review_request_removed only when actions lists it. Omit for any.",
         ),
     }),
   })
@@ -196,12 +196,13 @@ export const githubMatches = (on: GithubOn, e: GithubEvent): boolean => {
   }
   if (g.branches?.length && !(e.branch && g.branches.some((b) => glob(b).test(e.branch ?? ""))))
     return false
-  // GitHub sends one delivery per requested user, so each is judged alone. Only these two
-  // actions name a user; checking them here keeps a filter with `actions` left open from
-  // running on every other pull request action.
+  // GitHub sends one delivery per requested user, so each is judged alone. With `actions` left
+  // open the filter means "asked to review": a withdrawn request would spend a whole run on
+  // nothing, so it matches only when `actions` names it.
   if (g.reviewers?.length) {
     if (e.event !== "pull_request") return false
-    if (e.action !== "review_requested" && e.action !== "review_request_removed") return false
+    const removed = e.action === "review_request_removed" && g.actions?.includes(e.action)
+    if (e.action !== "review_requested" && !removed) return false
     const login = e.requested_reviewer?.toLowerCase()
     if (!login || !g.reviewers.some((r) => r.toLowerCase() === login)) return false
   }
