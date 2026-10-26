@@ -26,6 +26,14 @@ export const REQUIRED_PERMISSIONS: Record<string, string> = {
   pull_requests: "write",
 }
 export const ACTIONS_PERMISSION = { actions: "write" } as const
+// GitHub delivers `issue_comment` only to an App that holds Issues, read being enough, and a
+// pull request's conversation comments are issue comments: "@derive review this" never arrives
+// without it. Asked for here, beside the source's own permissions rather than among them,
+// because an App that lacks it still reads and comments on pull requests exactly as before.
+// Missing, it raises the "needs new permissions" prompt (routes/github.ts); it never marks a
+// working account as one to reconnect. Replying needs nothing more: posting and editing a
+// conversation comment is the Issues route that `pull_requests:write` already covers.
+export const MENTION_PERMISSION = { issues: "read" } as const
 /** The events an agent trigger can start on, as GitHub names them. */
 export const GITHUB_EVENTS = [
   "pull_request",
@@ -39,13 +47,12 @@ export const GITHUB_EVENTS = [
 export const MANIFEST_PERMISSIONS: Record<string, string> = {
   ...REQUIRED_PERMISSIONS,
   ...ACTIONS_PERMISSION,
+  ...MENTION_PERMISSION,
   // Workflow grants narrow each Git credential to one repository and read/write choice.
   contents: "write",
 }
 /** The GitHub App manifest: what permissions/events/URLs the new App is born with.
- *  Consumes MANIFEST_PERMISSIONS so a fresh App is always current. It subscribes to no events:
- *  nothing in Derive acts on one since GitHub Actions stopped being an execution lane.
- *  Exported so a test can lock the exact shape GitHub accepts (we regressed on
+ *  Consumes MANIFEST_PERMISSIONS so a fresh App is always current. Exported so a test can lock the exact shape GitHub accepts (we regressed on
  *  default_events, public, and setup_url during the live rollout). */
 export const buildManifest = (baseUrl: string, host: string) => ({
   name: `Derive · ${host}`,
@@ -71,9 +78,10 @@ export const buildManifest = (baseUrl: string, host: string) => ({
   // signed-state callback, so a stray direct install is inert.
   public: true,
   default_permissions: MANIFEST_PERMISSIONS,
-  // What the granted permissions can deliver. Issue events need Issues access, which an owner
-  // adds in the App's settings only if they want those triggers.
-  default_events: GITHUB_EVENTS.filter((e) => e !== "issues" && e !== "issue_comment") as string[],
+  // What the granted permissions can deliver. `issue_comment` carries a mention of the App on
+  // a pull request; `issues` stays out, since nothing answers a plain issue and every one
+  // opened would be a delivery for nothing.
+  default_events: GITHUB_EVENTS.filter((e) => e !== "issues") as string[],
 })
 
 const PICKER_STYLE = `<style>
