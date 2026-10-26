@@ -29,13 +29,15 @@ import { buildChatTools, type ChatToolSurface } from "./chat-tools"
 import { runChatTurn } from "./chat-turn"
 import {
   createIssueComment,
+  getIssueComment,
   getPullRequest,
   type IssueComment,
   installationToken,
   listIssueComments,
   type PullRequestInfo,
+  updateIssueComment,
 } from "./github-app"
-import { quietMentions } from "./github-comment-reply"
+import { commentRefused, quietMentions, recordAckComment } from "./github-comment-reply"
 import type { GithubDelivery } from "./github-events"
 import { agentCatalogFor, type HandOffSurface, withHandOff } from "./hand-off"
 import { graphAware } from "./job-graph"
@@ -57,6 +59,9 @@ const GITHUB_TURN_LEASE_MS = 10 * 60 * 1000
 /** Who may cost a model call by mentioning the App. A public repository lets anybody comment;
  *  these are the people its owners already let in. */
 const TRUSTED = new Set(["OWNER", "MEMBER", "COLLABORATOR"])
+
+/** The acknowledgement, posted before the turn and replaced by its answer. */
+const LOOKING = "👀 Looking at this…"
 
 const REPOSITORY = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/
 
@@ -160,11 +165,18 @@ const conversation = (
     s.length > PR_MESSAGE_MAX_CHARS ? `${s.slice(0, PR_MESSAGE_MAX_CHARS)}…` : s
   const quote = (who: string, text: string) =>
     `> **${who}:** ${cut(text.trim()).replace(/\n/g, "\n> ")}`
+  // The description by the same rule as the comments: a fork, or an author the repository has
+  // not let in, is somebody anyone could be, and the maintainer who asked did not write it.
+  const inside = pr && !pr.fork && TRUSTED.has(pr.association ?? "")
   const head = pr
     ? [
         `> **Title:** ${pr.title}`,
         `> **Opened by** ${pr.author ?? "someone"}${pr.base ? ` into ${pr.base}` : ""}`,
-        ...(pr.body.trim() ? [quote("Description", pr.body)] : []),
+        ...(!inside
+          ? ["> (description by someone outside the repository left out)"]
+          : pr.body.trim()
+            ? [quote("Description", pr.body)]
+            : []),
       ].join("\n")
     : null
   const earlier = comments.filter((c) => c.id !== m.commentId && c.id < m.commentId)
@@ -405,25 +417,16 @@ export const handleGithubMention = async (
       )
       .catch((e) => log.warn("github mention job settle failed", { job: jobId, error: String(e) }))
   }
-  /**
-   * Record Derive's comment as the origin's `ack_comment_id`, the one comment the outcome
-   * edits. Merged onto the row as it stands and guarded on it: the dispatched job is live, and a
-   * runner's write in between is re-read rather than overwritten.
-   */
-  const recordAck = async (id: string, ack: number) => {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const row = await meta.getJob(id).catch(() => null)
-      if (!row) return
-      const parsed = JSON.parse(row.meta_json ?? "{}") as { origin?: Record<string, unknown> }
-      const meta_json = JSON.stringify({
-        ...parsed,
-        origin: { ...parsed.origin, ack_comment_id: ack },
-      })
-      if (await meta.updateJob(id, { meta_json }, { meta_json: row.meta_json }).catch(() => null))
-        return
-    }
-    log.warn("github mention reply posted but not recorded", { job: id })
-  }
+  // Acknowledged at once, as the Slack placeholder is: one comment, posted before the turn and
+  // edited into its answer. Recorded on the chat job now and carried into a hand-off's origin,
+  // so the dispatched job is born knowing which comment to edit. That matters twice: a turn cut
+  // off after `hand_off` still leaves the job a comment to update, and an agent that needs the
+  // asker before the turn ends can already say so there.
+  //
+  // Best effort, as Slack's is: if it fails, the answer is posted as a new comment at the end.
+  const placeholder = await post(LOOKING)
+  if (placeholder) await recordAckComment(meta, jobId, placeholder.id)
+  const replyOrigin = placeholder ? { ...origin, ack_comment_id: placeholder.id } : origin
 
   // FROM HERE ON, SOMEBODY IS WAITING ON THE PULL REQUEST, and once a hand-off has started a
   // job every exit says so, or they read "try again" and start a second one.
@@ -432,13 +435,36 @@ export const handleGithubMention = async (
     const o = handOff?.outcome()
     return o?.kind === "handed_off" ? o.say : null
   }
-  /** The one comment this mention gets, recorded on every job it concerns. */
+  /**
+   * Turn the placeholder into the answer. Only the placeholder's line is replaced: an agent that
+   * already reported under it (lib/github-comment-reply.ts) keeps its line. Without a
+   * placeholder, or one GitHub will not let us edit, the answer is a new comment, recorded on
+   * every job it concerns.
+   */
   const answer = async (text: string) => {
-    const made = await post(quietMentions(absoluteLinks(text, base)))
+    const body = quietMentions(absoluteLinks(text, base))
+    if (placeholder) {
+      const edited = await tokenFor()
+        .then(async (t) => {
+          const current = await getIssueComment(t, m.repository, placeholder.id)
+          const next = current.body.includes(LOOKING)
+            ? current.body.replace(LOOKING, body)
+            : `${body}\n\n${current.body.trimEnd()}`
+          await updateIssueComment(t, m.repository, placeholder.id, next)
+          return true
+        })
+        .catch((e) => {
+          if (commentRefused(e)) return false
+          log.warn("github mention reply failed", { delivery: d.id, error: String(e) })
+          return true
+        })
+      if (edited) return
+    }
+    const made = await post(body)
     if (!made) return
-    await recordAck(jobId, made.id)
+    await recordAckComment(meta, jobId, made.id)
     const o = handOff?.outcome()
-    if (o?.kind === "handed_off") await recordAck(o.job.id, made.id)
+    if (o?.kind === "handed_off") await recordAckComment(meta, o.job.id, made.id)
   }
   try {
     // Best effort: an unreadable pull request costs the context, never the answer.
@@ -489,7 +515,7 @@ export const handleGithubMention = async (
           org,
           askerId: linked.id,
           catalog,
-          origin,
+          origin: replyOrigin,
           repo: { repository: m.repository, ref: pr?.headSha ?? null },
         })
       : null

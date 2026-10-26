@@ -896,8 +896,10 @@ same delivery and neither can break the other (17.2).
   and commenting on pull requests keep working without it. Posting and editing a conversation
   comment is the Issues route that `pull_requests: write` already covers, so replying needs
   nothing more.
-- The manifest's `default_events` includes `issue_comment`. `issues` stays out: nothing answers a
-  plain issue.
+- The App MUST also be subscribed to `issue_comment`. The manifest's `default_events` includes
+  it (`issues` stays out: nothing answers a plain issue), but those apply only when an App is
+  created, so an existing App's owner turns on both the permission and the event in the App's
+  settings. The Sources page asks for that while either is missing.
 - The webhook handler runs the mention lane after `dispatchGithubEvent`, each in its own error
   boundary.
 - A delivery is a mention only when every one of these holds; anything else is dropped silently:
@@ -940,7 +942,8 @@ same delivery and neither can break the other (17.2).
   `COLLABORATOR`, and Derive's own, are read; the rest are counted, not quoted, because on a
   public repository a stranger's comment would otherwise steer a turn that reads the workspace and
   answers in public. Each comment is labelled with its author's login, Derive's own as "Derive
-  (you)". The block is quoted inside the asker's turn text under a label
+  (you)". The description is read by the same rule: from a fork, or by an author outside those
+  three, only the title is quoted and the description is left out. The block is quoted inside the asker's turn text under a label
   that says it is source material, not instructions, exactly as Slack quotes a thread. The
   triggering comment with the mention removed is "their message", and the only instruction.
 - **Best effort.** A failed read costs the context, not the turn: one warn log, and the turn runs
@@ -966,15 +969,20 @@ same delivery and neither can break the other (17.2).
 
 ### 17.5 The Reply
 
-- One comment, posted with the installation token: the model's answer, or the `say` sentence
-  after a hand-off, or the refusal or question. Markdown as GitHub renders it; Derive's relative
-  links made absolute; `@` mentions made inert (13).
-- Its id is recorded as `origin.ack_comment_id` on the chat job and, after a hand-off, on the
-  dispatched job, merged onto each row as it stands.
+- One comment, posted with the installation token as soon as the chat job is claimed ("👀 Looking
+  at this…"), as the Slack placeholder is. Its id is recorded as `origin.ack_comment_id` on the
+  chat job and carried in the origin `hand_off` passes on, so a dispatched job is created with it:
+  a turn cut off after the hand-off, or an agent that needs the asker before the turn ends, still
+  has the comment to edit.
+- When the turn ends, the placeholder line is replaced by the model's answer, or the `say`
+  sentence after a hand-off, or the refusal or question; anything an agent already appended
+  under it stays. Markdown as GitHub renders it; Derive's relative links made absolute; `@`
+  mentions made inert (13). A placeholder that failed to post, or one GitHub will not let Derive
+  edit, means the answer is a new comment, recorded on both jobs.
 - Once a hand-off has started a job, the comment is the `say` sentence on every exit, a failed
   turn included, as in 7.4.
-- A comment that fails to post is logged. The dispatched job then has no `ack_comment_id`, so its
-  outcome reaches the asker by the bell and the usual interrupts.
+- When no comment could be posted at all, that is logged. The dispatched job then has no
+  `ack_comment_id`, so its outcome reaches the asker by the bell and the usual interrupts.
 
 ### 17.6 The Outcome Edits the Comment
 
@@ -991,9 +999,10 @@ same delivery and neither can break the other (17.2).
   - `failed`: "❌ **Agent** failed: reason", and the task link.
   - `lost`: "⚠️ **Agent** was interrupted before it finished.", and the task link.
   - `cancelled`: nothing.
-- An edit GitHub refuses (403), or a comment that is gone (404), gets a new comment instead; the
-  marker records the new comment's id. Any other failure to read or edit it is a failed reply:
-  no marker, and the asker's interrupts go out.
+- An edit GitHub refuses (403, but not a 403 that is its rate limit), or a comment that is gone
+  (404), gets a new comment instead. Its id replaces `ack_comment_id`, so later outcomes edit it
+  rather than post again, and the marker records it. Any other failure to read or edit is a
+  failed reply: no marker, and the asker's interrupts go out.
 - The asker's bell is unchanged. Their Slack DM and email for that announcement are skipped once
   the comment has it, as 8.3.
 - An edit notifies nobody. That is deliberate: the person is told by the agent's own comment on
@@ -1009,6 +1018,15 @@ same delivery and neither can break the other (17.2).
 - **Unlinked commenters running as somebody else.** A mention has no trigger, so there is no
   creator to fall back to (3.4 rule 10). An unlinked commenter is told how to sign in, and
   nothing runs.
+
+Known and not covered:
+
+- Two first deliveries of an unlinked commenter's mention, arriving at the same moment, can each
+  post the sign-in reply once; the marker stops every later one.
+- A turn that outruns the Workers after-response clock leaves its chat job running until its
+  lease lapses and the reaper settles it. The placeholder comment and any dispatched job are
+  unaffected.
+- Choosing between several workspaces that hold the installation (17.3) has no test.
 
 ## Appendix A. Where the Code Is Today
 

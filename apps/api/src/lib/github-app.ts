@@ -499,6 +499,8 @@ export interface PullRequestInfo {
   title: string
   body: string
   author: string | null
+  /** OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, NONE…: the author's standing in the repository. */
+  association: string | null
   base: string | null
   headSha: string | null
   /** Opened from another repository. */
@@ -514,16 +516,20 @@ export async function getPullRequest(
     title?: string
     body?: string | null
     user?: { login?: string } | null
+    author_association?: string
     base?: { ref?: string } | null
-    head?: { sha?: string; repo?: { full_name?: string } | null } | null
+    head?: { sha?: string; repo?: { full_name?: string; fork?: boolean } | null } | null
   }>(token, `${repoPath(repository)}/pulls/${number}`, "reading the pull request")
   return {
     title: data.title ?? "",
     body: data.body ?? "",
     author: data.user?.login ?? null,
+    association: data.author_association ?? null,
     base: data.base?.ref ?? null,
     headSha: data.head?.sha ?? null,
-    fork: (data.head?.repo?.full_name ?? "").toLowerCase() !== repository.toLowerCase(),
+    fork:
+      data.head?.repo?.fork === true ||
+      (data.head?.repo?.full_name ?? "").toLowerCase() !== repository.toLowerCase(),
   }
 }
 

@@ -15,7 +15,8 @@
 // Written with the server's own installation token for the one repository, never an agent's:
 // the agent holds only its bound sources, and this comment is Derive's, not the agent's.
 
-import { type JobOrigin, jobNeeds, jobResult } from "@derive/core"
+import { type JobOrigin, jobNeeds, jobResult, type MetaStore } from "@derive/core"
+import { log } from "../log"
 import { decryptSecret } from "./crypto"
 import {
   createIssueComment,
@@ -27,6 +28,42 @@ import {
 } from "./github-app"
 import type { OriginAnnouncement, OriginDelivery, OriginReplyDeps } from "./origin-reply"
 import { absoluteLinks, truncate } from "./text"
+
+/**
+ * GitHub will not let this comment be written, for good: a refused edit (403) or a comment that
+ * is gone (404). A 403 that is GitHub's rate limit says "not now", not "never", so it is a
+ * failed reply to leave to the interrupts rather than a reason to post a second comment.
+ */
+export const commentRefused = (e: unknown): boolean =>
+  e instanceof GitHubError &&
+  (e.status === 404 || (e.status === 403 && e.rateLimitRemaining !== "0"))
+
+/**
+ * Record a comment as the job's `origin.ack_comment_id`, the one comment its outcomes edit.
+ * Merged onto the row as it stands and guarded on it: the job is live, and a runner's write in
+ * between is re-read rather than overwritten.
+ */
+export const recordAckComment = async (
+  meta: MetaStore,
+  jobId: string,
+  ack: number,
+): Promise<void> => {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const row = await meta.getJob(jobId).catch(() => null)
+    if (!row) return
+    let parsed: { origin?: Record<string, unknown> } = {}
+    try {
+      parsed = JSON.parse(row.meta_json ?? "{}")
+    } catch {}
+    const meta_json = JSON.stringify({
+      ...parsed,
+      origin: { ...parsed.origin, ack_comment_id: ack },
+    })
+    if (await meta.updateJob(jobId, { meta_json }, { meta_json: row.meta_json }).catch(() => null))
+      return
+  }
+  log.warn("github comment posted but not recorded", { job: jobId })
+}
 
 /** One line of outcome is a sentence, not a report: the rest is on the task page. */
 const LINE_MAX_CHARS = 1000
@@ -102,19 +139,21 @@ export const githubCommentReply = async (
   const token = await installationToken(app.app_id, pem, installation, "pr-comment", name)
   const outcome = absoluteLinks(md, deps.baseUrl)
 
+  // The new comment becomes the one later outcomes edit, so a refused edit costs one extra
+  // comment, not one per announcement.
   const post = async () => {
     const made = await createIssueComment(token, origin.repository, origin.number ?? 0, outcome)
+    await recordAckComment(meta, a.owner.id, made.id)
     return { ok: true as const, ts: String(made.id) }
   }
   // Read first, so what the comment already says stays above the new line. A comment somebody
   // deleted, or one GitHub will not show us, is replaced by a new one rather than lost; any
   // other failure is a failed reply, so the interrupts go out instead of a stray second comment.
-  const refused = (e: unknown) => e instanceof GitHubError && (e.status === 403 || e.status === 404)
   let current: { body: string }
   try {
     current = await getIssueComment(token, origin.repository, origin.ack_comment_id)
   } catch (e) {
-    if (refused(e)) return post()
+    if (commentRefused(e)) return post()
     throw e
   }
   try {
@@ -126,7 +165,7 @@ export const githubCommentReply = async (
     )
     return { ok: true, ts: String(origin.ack_comment_id) }
   } catch (e) {
-    if (refused(e)) return post()
+    if (commentRefused(e)) return post()
     throw e
   }
 }
