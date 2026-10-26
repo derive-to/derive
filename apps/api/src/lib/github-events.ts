@@ -15,6 +15,10 @@ import { askAgent } from "./jobs"
 // holds the GitHub source the delivery came through.
 
 const BRANCH = z.string().trim().min(1).max(200)
+const LOGIN = z
+  .string()
+  .trim()
+  .regex(/^[A-Za-z0-9-]{1,39}$/, "a GitHub login")
 export const GithubOn = z
   .object({
     github: z.object({
@@ -41,11 +45,20 @@ export const GithubOn = z
         .optional()
         .describe("Only these branches; * matches within a segment, ** across. Omit for all."),
       drafts: z.boolean().optional().describe("Also run on draft pull requests."),
+      reviewers: z
+        .array(LOGIN)
+        .max(20)
+        .optional()
+        .describe(
+          "Only review requests for these GitHub logins (review_requested, review_request_removed); a team request never matches. Omit for any.",
+        ),
     }),
   })
   .openapi("GithubTriggerOn")
 export type GithubOn = z.infer<typeof GithubOn>
 
+/** A stored `on`, or null when it is not one this server reads. `on` is keyed by source, and
+ *  a key from a later or earlier server is no match here, never a failed delivery. */
 export const parseOn = (onEvent: string | null): GithubOn | null => {
   if (!onEvent) return null
   try {
@@ -68,6 +81,8 @@ export interface GithubEvent {
   title: string
   url: string | null
   sender: string | null
+  /** The login a review was requested from (or no longer is). A team request leaves it null. */
+  requested_reviewer: string | null
   draft: boolean
   /** Opened from another repository: never run on code the repository's owners did not push. */
   fork: boolean
@@ -90,6 +105,7 @@ export const readGithubEvent = (event: string, payload: unknown): GithubEvent | 
     action: str(p.action),
     repository,
     sender: str(obj(p.sender).login),
+    requested_reviewer: null,
     draft: false,
     fork: false,
     number: null,
@@ -108,6 +124,7 @@ export const readGithubEvent = (event: string, payload: unknown): GithubEvent | 
       fork: str(obj(head.repo).full_name)?.toLowerCase() !== repository.toLowerCase(),
       number: num(pr.number),
       merged: pr.merged === true,
+      requested_reviewer: str(obj(p.requested_reviewer).login),
     }
   }
   if (event === "push") {
@@ -179,6 +196,15 @@ export const githubMatches = (on: GithubOn, e: GithubEvent): boolean => {
   }
   if (g.branches?.length && !(e.branch && g.branches.some((b) => glob(b).test(e.branch ?? ""))))
     return false
+  // GitHub sends one delivery per requested user, so each is judged alone. Only these two
+  // actions name a user; checking them here keeps a filter with `actions` left open from
+  // running on every other pull request action.
+  if (g.reviewers?.length) {
+    if (e.event !== "pull_request") return false
+    if (e.action !== "review_requested" && e.action !== "review_request_removed") return false
+    const login = e.requested_reviewer?.toLowerCase()
+    if (!login || !g.reviewers.some((r) => r.toLowerCase() === login)) return false
+  }
   if (e.fork) return false
   if (e.draft && !g.drafts) return false
   return true
@@ -198,6 +224,13 @@ export const eventInstruction = (instruction: string, e: GithubEvent): string =>
       : []),
     ...(e.url ? [e.url] : []),
     ...(e.sender ? [`By ${e.sender}`] : []),
+    ...(e.requested_reviewer
+      ? [
+          e.action === "review_request_removed"
+            ? `Review request removed for ${e.requested_reviewer}`
+            : `Review requested from ${e.requested_reviewer}`,
+        ]
+      : []),
   ].join("\n")
 }
 
@@ -239,6 +272,18 @@ export const dispatchGithubEvent = async (
         dedupeKey: `github:${delivery.id}:${t.id}`,
         triggerId: t.id,
         task: { repo: e.ref ? `${e.repository}@${e.ref}` : e.repository },
+        // Who on GitHub asked, for display; the job still runs as the agent's creator.
+        ...(e.sender
+          ? {
+              origin: {
+                kind: "github" as const,
+                requested_by: e.sender,
+                repository: e.repository,
+                number: e.number,
+                delivery_id: delivery.id,
+              },
+            }
+          : {}),
       })
       if (created) started.push(job.id)
     } catch (error) {
