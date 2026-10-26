@@ -656,6 +656,7 @@ if (cfg.backgroundWorkers) {
       meta,
       bus: backplane,
       baseUrl: cfg.baseUrl,
+      encryptionKey: authSecret,
       pokeWebhooks: webhookWorker?.poke,
     })
     const machines = machineDepsFrom(meta, {

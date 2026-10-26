@@ -231,8 +231,8 @@ export const withHandOff = (base: ChatToolSurface, opts: HandOffOptions): HandOf
         ((await creatorLeft(meta, agent)) || waitingFor(agent) !== null)
       const what = `**${agent.name}** on ${restate(instruction, repo)}`
       const say = waits
-        ? `Queued ${what}; it starts when its machine is online. You'll get a DM when it finishes.`
-        : `Started ${what}. You'll get a DM when it finishes.`
+        ? `Queued ${what}; it starts when its machine is online. I'll post the result in this thread.`
+        : `Started ${what}. I'll post the result in this thread.`
       outcome = { kind: "handed_off", agent_id: agent.id, job, say }
       return { job_id: job.id, agent_name: agent.name, status: job.status, say }
     }
