@@ -64,7 +64,7 @@
   "dependencies": {
     "fflate": "^0.8.2",
     "proper-lockfile": "4.1.2",
-    "ws": "^8.21.1"
+    "ws": "^8.22.0"
   },
   "devDependencies": {
     "vitest": "^4.1.12"

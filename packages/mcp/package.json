@@ -51,8 +51,8 @@
   },
   "dependencies": {
     "@derive-to/cli": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.12.0",
-    "tsx": "^4.19.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "tsx": "^4.23.15",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -60,7 +60,7 @@
     "@derive/core": "workspace:*",
     "@derive/db": "workspace:*",
     "@derive/storage": "workspace:*",
-    "@hono/node-server": "^2.1.0",
+    "@hono/node-server": "^2.1.5",
     "@types/node": "^25.9.3",
     "typescript": "^6.0.3",
     "vitest": "^4.1.12"
