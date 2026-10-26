@@ -241,6 +241,74 @@ export const postSlackMessage = async (
   return { ts: data.ts, channel: data.channel ?? args.channel }
 }
 
+/** One message of a Slack thread, as conversations.replies returns it, reduced to what a
+ *  reader of the thread needs. */
+export interface SlackThreadMessage {
+  ts: string
+  user: string | null
+  /** Set on a message an app posted, including ours. */
+  botId: string | null
+  /** The name an app posted under, when it is not a person. */
+  botName: string | null
+  text: string
+}
+
+/** A thread's messages, oldest first, via conversations.replies.
+ *
+ *  Pages forward, because the API has no newest-first order and a reader wants the END of a
+ *  long thread; `maxPages` bounds that walk so one huge thread cannot hold a turn. `latest`
+ *  stops at a message (exclusive), so a reader of the thread up to a mention does not also
+ *  read what arrived after it. Throws SlackApiError(code) on a Slack-level failure: what a
+ *  failed read means is the caller's decision. */
+export const slackThreadReplies = async (
+  token: string,
+  channel: string,
+  threadTs: string,
+  opts: { latest?: string; maxPages?: number; signal?: AbortSignal } = {},
+): Promise<SlackThreadMessage[]> => {
+  const out: SlackThreadMessage[] = []
+  let cursor = ""
+  for (let page = 0; page < (opts.maxPages ?? 5); page++) {
+    const q = new URLSearchParams({
+      channel,
+      ts: threadTs,
+      limit: "200",
+      ...(opts.latest ? { latest: opts.latest, inclusive: "false" } : {}),
+      ...(cursor ? { cursor } : {}),
+    })
+    const res = await fetch(`${API}/conversations.replies?${q}`, {
+      headers: { authorization: `Bearer ${token}` },
+      signal: opts.signal ?? AbortSignal.timeout(2500),
+    })
+    const data = (await res.json()) as {
+      ok: boolean
+      error?: string
+      messages?: {
+        ts?: string
+        user?: string
+        bot_id?: string
+        username?: string
+        bot_profile?: { name?: string }
+        text?: string
+      }[]
+      response_metadata?: { next_cursor?: string }
+    }
+    if (!data.ok) throw new SlackApiError(data.error ?? "unknown")
+    for (const m of data.messages ?? [])
+      if (m.ts)
+        out.push({
+          ts: m.ts,
+          user: m.user ?? null,
+          botId: m.bot_id ?? null,
+          botName: m.bot_profile?.name ?? m.username ?? null,
+          text: m.text ?? "",
+        })
+    cursor = data.response_metadata?.next_cursor ?? ""
+    if (!cursor) break
+  }
+  return out
+}
+
 /** Whether the bot can actually post in a conversation.
  *
  *  `conversations.info` answers `channel_not_found` for a PRIVATE channel the bot is not in —

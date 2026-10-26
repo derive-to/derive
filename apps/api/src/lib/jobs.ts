@@ -20,7 +20,7 @@ import {
 import { TASK_REPO, type TaskOptions, taskOptions } from "@derive-to/cli/conversation-format"
 import { log } from "../log"
 import { agentWritesOff } from "./agent-writes"
-import { jobsOverBudget } from "./budget"
+import { jobsOverBudget, OVER_BUDGET } from "./budget"
 import { creatorLeft, jobPayer } from "./job-accounts"
 import { commandJob, commandKey } from "./job-command"
 import { canAskAgent, canSteerJob, type JobDeps } from "./job-policy"
@@ -87,6 +87,22 @@ export const overBudgetFor = async (
   agent: AgentRecord,
   askedBy: string | null,
 ): Promise<boolean> => jobsOverBudget(meta, agent.org_id, await jobPayer(meta, agent, askedBy))
+
+/** Why a new ask must not open for budget, or null. Checked before anything is written, so a
+ *  refused ask leaves no job behind, and shared by every door a person asks through so Slack
+ *  refuses exactly what the app refuses. A dedupe key naming an open job still finds it: that
+ *  work is already asked for. A Derive machine is judged at admission instead (commandJob),
+ *  against the account the turn will really spend. */
+export const askBudgetRefusal = async (
+  meta: MetaStore,
+  agent: AgentRecord,
+  askedBy: string,
+  dedupeKey: string | null,
+): Promise<string | null> => {
+  if (agent.machine === "derive") return null
+  const open = dedupeKey ? await meta.findOpenJobByDedupe(agent.id, askedBy, dedupeKey) : null
+  return !open && (await overBudgetFor(meta, agent, askedBy)) ? OVER_BUDGET : null
+}
 
 /** Is the person this job bills (its payer_id, fixed when it opened) past their limit? */
 export const jobOverBudget = (meta: MetaStore, job: JobRecord): Promise<boolean> =>
