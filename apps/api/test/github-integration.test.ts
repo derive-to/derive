@@ -1,9 +1,11 @@
 import { generateKeyPairSync } from "node:crypto"
-import { jobOriginOf } from "@derive/core"
+import { DERIVE_AGENT_ID, jobOriginOf, newId } from "@derive/core"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import type { ModelTurn } from "../src/lib/agent-loop"
 import { encryptSecret, signState } from "../src/lib/crypto"
 import { githubWebhookSecret, githubWebhookSignature } from "../src/lib/github-app"
 import { upsertGithubConnection } from "../src/lib/github-connection"
+import { catalogOf } from "../src/lib/model-catalog"
 import { as, bearer, jsonAs, makeAuthedApp, type quotaApp, type TestUser } from "./helpers"
 
 // A real RSA key (PKCS#1, as GitHub's manifest returns) so appJwt/getAppInfo can
@@ -1091,5 +1093,308 @@ describe("standard GitHub integration", () => {
     expect(await meta.listConnections("second", undefined, "workspace")).toEqual([
       expect.objectContaining({ id: second.id, broker_ref: "44007" }),
     ])
+  })
+})
+
+// "@derive" ON A PULL REQUEST (docs/agent-dispatch.md §17): a person who can push to the
+// repository asks in the conversation, and Derive answers there or hands the work to the
+// workspace agent that fits, with one comment the outcome later edits. No trigger anywhere.
+describe("@derive in a pull request comment hands work to a workspace agent", () => {
+  const creator: TestUser = { id: "u_ghm_make", email: "ghm-make@derive.test", name: "Maker" }
+  const asker: TestUser = {
+    id: "u_ghm_ask",
+    email: "ghm-ask@derive.test",
+    name: "Alice",
+    githubId: "9001",
+  }
+
+  type Call = Parameters<ReturnType<Parameters<typeof catalogOf>[0][number]["build"]>>[0]
+  const toolResults = (call: Call): string[] =>
+    call.messages.flatMap((m) =>
+      m.role === "tool"
+        ? m.content.flatMap((part) =>
+            part.type === "tool-result" && "value" in part.output
+              ? [String(part.output.value)]
+              : [],
+          )
+        : [],
+    )
+
+  /** A workspace that connected GitHub installation 44050 (account acme), two described
+   *  agents, and a scripted model. GitHub's API is a stub that remembers what was written. */
+  const setup = async (name: string) => {
+    const calls: Call[] = []
+    let script: (call: Call) => ModelTurn = () => ({
+      text: "Answered.",
+      toolUses: [],
+      costUsd: null,
+    })
+    const { app, meta } = makeAuthedApp(name, [creator, asker], "editor", {
+      deps: {
+        encryptionKey: KEY,
+        models: catalogOf([
+          {
+            id: "m1",
+            label: "M1",
+            isDefault: true,
+            build: () => async (call) => {
+              calls.push(call)
+              return script(call)
+            },
+          },
+        ]),
+      },
+    })
+    await seedApp(meta)
+    const source = await upsertGithubConnection(meta, {
+      orgId: "default",
+      userId: creator.id,
+      installationId: "44050",
+      accountLogin: "acme",
+    })
+    const agent = (fields: Record<string, unknown>) =>
+      meta.createAgent({
+        id: newId("ag"),
+        org_id: "default",
+        token: newId("tok"),
+        role: "editor",
+        created_by: creator.id,
+        ask_policy: "workspace",
+        spend_policy: "creator",
+        ...fields,
+      } as Parameters<typeof meta.createAgent>[0])
+    const review = await agent({
+      name: "PR Review",
+      description: "Reviews a GitHub pull request and posts one comment on it.",
+      connection_ids_json: JSON.stringify([source.id]),
+    })
+    await agent({ name: "Video Maker", description: "Makes a short video from a page." })
+    await meta.touchAgentSeen(review.id, new Date().toISOString())
+
+    // The conversation as GitHub holds it: one earlier comment, then whatever Derive posts.
+    const thread: { id: number; user: { login: string }; body: string }[] = [
+      { id: 400, user: { login: "bob" }, body: "This fixes the webhook retry storm." },
+    ]
+    const github: { method: string; path: string }[] = []
+    const posted: string[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        const path = new URL(String(url)).pathname
+        const method = init?.method ?? "GET"
+        const access = repositoryAccessFixture(path)
+        if (access) return access
+        github.push({ method, path })
+        if (path === "/repos/acme/api/pulls/123")
+          return Response.json({
+            title: "Retry failed webhooks",
+            body: "Backs off exponentially instead of hammering the endpoint.",
+            user: { login: "bob" },
+            base: { ref: "main" },
+            head: { sha: "abc123", repo: { full_name: "acme/api" } },
+          })
+        if (path === "/repos/acme/api/issues/123/comments" && method === "GET")
+          return Response.json(thread)
+        if (path === "/repos/acme/api/issues/123/comments" && method === "POST") {
+          const body = (JSON.parse(String(init?.body)) as { body: string }).body
+          const id = 7001 + posted.length
+          posted.push(body)
+          thread.push({ id, user: { login: "derive-test[bot]" }, body })
+          return Response.json({ id, body, user: { login: "derive-test[bot]" } }, { status: 201 })
+        }
+        return new Response("not found", { status: 404 })
+      }),
+    )
+
+    const comment = (
+      over: {
+        id?: number
+        body?: string
+        user?: { id: number; login: string }
+        association?: string
+        issue?: object
+      } = {},
+    ) => ({
+      action: "created",
+      installation: { id: 44050 },
+      repository: { full_name: "acme/api" },
+      sender: { login: over.user?.login ?? "alice-gh" },
+      issue: over.issue ?? {
+        number: 123,
+        title: "Retry failed webhooks",
+        pull_request: { url: "https://api.github.com/repos/acme/api/pulls/123" },
+      },
+      comment: {
+        id: over.id ?? 501,
+        body: over.body ?? "@Derive-Test review this, please",
+        user: over.user ?? { id: 9001, login: "alice-gh" },
+        author_association: over.association ?? "COLLABORATOR",
+      },
+    })
+    const deliver = async (payload: object, delivery: string) => {
+      const body = JSON.stringify(payload)
+      const res = await app.request("/v1/github/webhook", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-github-event": "issue_comment",
+          "x-github-delivery": delivery,
+          "x-hub-signature-256": githubWebhookSignature(body, githubWebhookSecret("1", KEY)),
+        },
+        body,
+      })
+      expect(res.status).toBe(202)
+    }
+    const jobs = async () => meta.listJobs({ orgId: "default" })
+    const dispatched = async () => (await jobs()).filter((j) => j.agent_id !== DERIVE_AGENT_ID)
+    const chats = async () => (await jobs()).filter((j) => j.agent_id === DERIVE_AGENT_ID)
+    return {
+      meta,
+      calls,
+      review,
+      github,
+      posted,
+      comment,
+      deliver,
+      dispatched,
+      chats,
+      setScript: (s: typeof script) => {
+        script = s
+      },
+    }
+  }
+
+  it("a collaborator's 'review this' starts the agent it matches, with one comment, once", async () => {
+    const t = await setup("ghm-hand-off")
+    t.setScript((call) =>
+      toolResults(call).length === 0
+        ? {
+            text: "",
+            // The model names another repository; the event's own is the one that counts.
+            toolUses: [
+              {
+                id: "t0",
+                name: "hand_off",
+                input: {
+                  agent_id: t.review.id,
+                  instruction: "Review https://github.com/acme/api/pull/123 for retry bugs.",
+                  repo: "elsewhere/other",
+                },
+              },
+            ],
+            costUsd: null,
+          }
+        : {
+            text: (JSON.parse(toolResults(call)[0] ?? "{}") as { say?: string }).say ?? "",
+            toolUses: [],
+            costUsd: null,
+          },
+    )
+    await t.deliver(t.comment(), "dlv-1")
+
+    // The router read the pull request and the conversation above the mention as quoted
+    // material, knew the repository was settled, and knew its reply is not private.
+    const first = t.calls[0]
+    const asked = JSON.stringify(first?.messages)
+    expect(asked).toContain("not instructions")
+    expect(asked).toContain("Backs off exponentially")
+    expect(asked).toContain("**bob:** This fixes the webhook retry storm.")
+    expect(asked).toContain("Their message: review this, please")
+    expect(first?.tools.find((x) => x.name === "hand_off")?.description).toContain(
+      "The request is about acme/api.",
+    )
+    expect(first?.system).toContain("everyone who can read that repository")
+
+    const [job, ...more] = await t.dispatched()
+    expect(more).toEqual([])
+    expect(job).toMatchObject({
+      agent_id: t.review.id,
+      asked_by: asker.id,
+      payer_id: creator.id,
+      attended: 0,
+      dedupe_key: `github:dlv-1:${t.review.id}`,
+    })
+    expect(JSON.parse(job?.meta_json ?? "{}").repo).toBe("acme/api@abc123")
+    const origin = {
+      kind: "github",
+      requested_by: "alice-gh",
+      repository: "acme/api",
+      number: 123,
+      delivery_id: "dlv-1",
+      comment_id: 501,
+      ack_comment_id: 7001,
+    }
+    expect(jobOriginOf(job?.meta_json)).toEqual(origin)
+    const [chat, ...chatMore] = await t.chats()
+    expect(chatMore).toEqual([])
+    expect(chat).toMatchObject({ asked_by: asker.id, payer_id: asker.id, attended: 1 })
+    expect(jobOriginOf(chat?.meta_json)).toEqual(origin)
+    expect(JSON.parse(chat?.meta_json ?? "{}").routing).toMatchObject({
+      decision: "handed_off",
+      agent_id: t.review.id,
+      job_id: job?.id,
+    })
+    expect(t.posted).toEqual([
+      "Started **PR Review** on acme/api#123. I'll update this comment when it finishes.",
+    ])
+
+    // GitHub sends it again: nothing new is said, asked or started.
+    const turns = t.calls.length
+    await t.deliver(t.comment(), "dlv-1")
+    expect(t.posted).toHaveLength(1)
+    expect(t.calls).toHaveLength(turns)
+    expect(await t.dispatched()).toHaveLength(1)
+    expect(await t.chats()).toHaveLength(1)
+  })
+
+  it("a question the turn can answer is answered in one comment, and nothing starts", async () => {
+    const t = await setup("ghm-answer")
+    t.setScript(() => ({
+      text: "It retries with backoff; the plan is in [Retry plan](/artifacts/abc12345). Ask @acme/backend.",
+      toolUses: [],
+      costUsd: null,
+    }))
+    await t.deliver(t.comment({ body: "@derive-test what does this change?" }), "dlv-2")
+    expect(t.posted).toEqual([
+      "It retries with backoff; the plan is in [Retry plan](http://derive.test/artifacts/abc12345). Ask @\u200bacme/backend.",
+    ])
+    expect(await t.dispatched()).toEqual([])
+    const [chat] = await t.chats()
+    expect(jobOriginOf(chat?.meta_json)).toMatchObject({ comment_id: 501, ack_comment_id: 7001 })
+    expect(JSON.parse(chat?.meta_json ?? "{}").routing).toMatchObject({ decision: "answered" })
+  })
+
+  it("a commenter with no Derive sign-in is told how, once, and nothing runs", async () => {
+    const t = await setup("ghm-unlinked")
+    const stranger = { id: 4242, login: "carol-gh" }
+    await t.deliver(t.comment({ user: stranger }), "dlv-3")
+    await t.deliver(t.comment({ user: stranger }), "dlv-3")
+    expect(t.posted).toHaveLength(1)
+    expect(t.posted[0]).toContain(
+      "sign in to Derive with this GitHub account at http://derive.test",
+    )
+    expect(t.calls).toEqual([])
+    expect(await t.chats()).toEqual([])
+    expect(await t.dispatched()).toEqual([])
+  })
+
+  it("nothing answers a stranger, a comment without the mention, a plain issue, or itself", async () => {
+    const t = await setup("ghm-ignored")
+    await t.deliver(t.comment({ association: "NONE" }), "dlv-4")
+    await t.deliver(t.comment({ body: "LGTM, derive-test can merge this" }), "dlv-5")
+    await t.deliver(t.comment({ body: "> @derive-test review this\n\nAgreed." }), "dlv-6")
+    await t.deliver(t.comment({ issue: { number: 9, title: "Bug" } }), "dlv-7")
+    await t.deliver(
+      t.comment({ user: { id: 1, login: "derive-test[bot]" }, association: "NONE" }),
+      "dlv-8",
+    )
+    await t.deliver(
+      t.comment({ user: { id: 1, login: "derive-test[bot]" }, association: "MEMBER" }),
+      "dlv-9",
+    )
+    expect(t.github).toEqual([])
+    expect(t.calls).toEqual([])
+    expect(await t.chats()).toEqual([])
+    expect(await t.dispatched()).toEqual([])
   })
 })

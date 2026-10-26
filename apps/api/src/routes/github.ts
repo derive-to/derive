@@ -25,7 +25,8 @@ import {
   listUserInstallations,
 } from "../lib/github-app"
 import { upsertGithubConnection } from "../lib/github-connection"
-import { dispatchGithubEvent } from "../lib/github-events"
+import { dispatchGithubEvent, type GithubDelivery } from "../lib/github-events"
+import { handleGithubMention } from "../lib/github-mention"
 import { bail, fail } from "../lib/http"
 import { graphAware } from "../lib/job-graph"
 import { machineDepsFrom, machinePass } from "../lib/job-machine"
@@ -474,13 +475,36 @@ export const githubRoutes = (ctx: AppContext) => {
     const installation = (payload as { installation?: { id?: unknown } } | null)?.installation?.id
     if (typeof installation === "number")
       await ctx.afterResponse(c, async () => {
-        const started = await dispatchGithubEvent(jobDeps, {
+        const received: GithubDelivery = {
           id: delivery,
           event,
           installationId: String(installation),
           payload,
           appBot: `${loaded.app.slug}[bot]`,
+        }
+        // Two readers of one delivery, each isolated: a trigger that fails to start must not
+        // cost a person's mention its answer, nor the other way round.
+        const started = await dispatchGithubEvent(jobDeps, received).catch((error) => {
+          log.warn("github: event triggers failed", { delivery, reason: String(error) })
+          return [] as string[]
         })
+        // Someone wrote "@derive" on a pull request (lib/github-mention.ts). No model on the
+        // deploy means nothing answers, as in Slack.
+        if (deps.models)
+          await handleGithubMention(
+            {
+              meta,
+              baseUrl: deps.baseUrl,
+              models: ctx.modelsFor,
+              ctx,
+              chatAllowlist: deps.chatAllowlist,
+              askLimiter: ctx.askLimiter,
+              app: { appId: loaded.app.app_id, pem: loaded.pem },
+            },
+            received,
+          ).catch((error) =>
+            log.warn("github: mention failed", { delivery, reason: String(error) }),
+          )
         const machines = started.length
           ? machineDepsFrom(meta, {
               secret: deps.encryptionKey,

@@ -16,7 +16,7 @@
 // It composes ON TOP of a chat surface rather than joining CHAT_TOOLS, because it is not a
 // Derive MCP tool and must not become one: `ask` takes any agent and any instruction from any
 // caller, where this takes one agent from a list built for this asker, once per turn, and only
-// on a lane whose caller decided the asker is proven (lib/slack-mention.ts).
+// on a lane whose caller decided the asker is proven (lib/slack-mention.ts, lib/github-mention.ts).
 
 import {
   type AgentRecord,
@@ -94,7 +94,16 @@ const oneLine = (text: string, max: number): string => {
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat
 }
 
-const describe = (catalog: AgentRecord[], answerTools: string[]): string =>
+/** What the lane differs in: where the request was read, and whether its repository is
+ *  already known. */
+interface Venue {
+  /** The conversation the request came from, as the instruction-writing rule names it. */
+  thread: string
+  /** Set when the event named the repository, so the model is not asked to. */
+  repository: string | null
+}
+
+const describe = (catalog: AgentRecord[], answerTools: string[], venue: Venue): string =>
   [
     "Hand this request to one workspace agent. The agent works on it on its own, for minutes, and the person is told when it finishes.",
     // Any editor writes these, so they are framed as what an agent does, never as rules: a
@@ -109,10 +118,12 @@ const describe = (catalog: AgentRecord[], answerTools: string[]): string =>
     "1. If the request matches one agent's description, call hand_off once.",
     "2. If it could be either of two agents, ask which one, naming both. Do not guess.",
     `3. If it is a question your other tools (${answerTools.join(", ")}) can answer, answer it. Do not hand off what you can do yourself.`,
-    "4. If the agent's description names an input the thread does not contain (for example a PR link), ask for that input instead of handing off.",
-    "5. When the request is about a pull request or a repository, pass its owner/name as repo.",
+    `4. If the agent's description names an input ${venue.thread} does not contain (for example a PR link), ask for that input instead of handing off.`,
+    venue.repository
+      ? `5. The request is about ${venue.repository}. The agent works in it whatever repo says, so leave repo out.`
+      : "5. When the request is about a pull request or a repository, pass its owner/name as repo.",
     "6. Never call hand_off more than once per turn.",
-    "Write the instruction so the agent can do the task without the Slack thread: what to do, every link it needs, and the relevant parts of the thread, quoted.",
+    `Write the instruction so the agent can do the task without ${venue.thread}: what to do, every link it needs, and the relevant parts of it, quoted.`,
     "When it succeeds, reply with the result's `say` sentence. When it refuses, tell the person why in one sentence. Do not try a different agent instead.",
   ].join("\n")
 
@@ -156,7 +167,13 @@ export interface HandOffOptions {
   /** This turn's catalog (agentCatalogFor), read fresh for the turn. */
   catalog: AgentRecord[]
   /** Where the request came from: its reply-to address and the dedupe key's parts. */
-  origin: Extract<JobOrigin, { kind: "slack" }>
+  origin: JobOrigin
+  /**
+   * The repository the event itself named, which the agent works in whatever the model says:
+   * a mention on a pull request is about that pull request. `ref` is the commit it checks out.
+   * Absent, the model's own `repo` is the proposal the server checks.
+   */
+  repo?: { repository: string; ref: string | null }
 }
 
 export interface HandOffSurface extends ChatToolSurface {
@@ -171,11 +188,15 @@ export interface HandOffSurface extends ChatToolSurface {
 export const withHandOff = (base: ChatToolSurface, opts: HandOffOptions): HandOffSurface => {
   const { meta, origin } = opts
   const offered = new Set(opts.catalog.map((a) => a.id))
+  const fixed = opts.repo ?? null
   const tool: LoopTool = {
     name: "hand_off",
     description: describe(
       opts.catalog,
       base.tools.map((t) => t.name).filter((n) => n !== "publish"),
+      origin.kind === "slack"
+        ? { thread: "the Slack thread", repository: null }
+        : { thread: "the pull request and its comments", repository: fixed?.repository ?? null },
     ),
     params: jsonSchemaOf(handOffInput),
   }
@@ -203,7 +224,9 @@ export const withHandOff = (base: ChatToolSurface, opts: HandOffOptions): HandOf
       return refuse(
         `Invalid hand_off arguments: ${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`,
       )
-    const { agent_id, instruction, repo } = parsed.data
+    const { agent_id, instruction } = parsed.data
+    // The event's repository, when it named one, over whatever the model proposed.
+    const repo = fixed?.repository ?? parsed.data.repo
     if (!offered.has(agent_id))
       return refuse(`${agent_id} is not one of the agents listed for this person.`, agent_id)
 
@@ -221,7 +244,19 @@ export const withHandOff = (base: ChatToolSurface, opts: HandOffOptions): HandOf
     if (repo && !(await githubConnectionFor(meta, agent, repo)))
       return refuse(`${agent.name} has no GitHub connection that reaches ${repo}.`, agent_id)
 
-    const dedupeKey = `slack:${origin.team_id}:${origin.channel}:${origin.message_ts}:${agent.id}`
+    const dedupeKey =
+      origin.kind === "slack"
+        ? `slack:${origin.team_id}:${origin.channel}:${origin.message_ts}:${agent.id}`
+        : `github:${origin.delivery_id}:${agent.id}`
+    // Where the outcome will appear, said in the words of the place the person is reading.
+    const after =
+      origin.kind === "slack"
+        ? "I'll post the result in this thread."
+        : "I'll update this comment when it finishes."
+    const subject =
+      origin.kind === "github" && origin.number
+        ? `${origin.repository}#${origin.number}`
+        : restate(instruction, repo)
     const started = async (job: JobRecord) => {
       // Said the way the app says it: a job on an owner machine whose runner is not online, or
       // whose creator has left, waits; "Started" would promise work that has not begun.
@@ -229,10 +264,10 @@ export const withHandOff = (base: ChatToolSurface, opts: HandOffOptions): HandOf
         job.status === "queued" &&
         agent.machine === "owner" &&
         ((await creatorLeft(meta, agent)) || waitingFor(agent) !== null)
-      const what = `**${agent.name}** on ${restate(instruction, repo)}`
+      const what = `**${agent.name}** on ${subject}`
       const say = waits
-        ? `Queued ${what}; it starts when its machine is online. I'll post the result in this thread.`
-        : `Started ${what}. I'll post the result in this thread.`
+        ? `Queued ${what}; it starts when its machine is online. ${after}`
+        : `Started ${what}. ${after}`
       outcome = { kind: "handed_off", agent_id: agent.id, job, say }
       return { job_id: job.id, agent_name: agent.name, status: job.status, say }
     }
@@ -258,7 +293,7 @@ export const withHandOff = (base: ChatToolSurface, opts: HandOffOptions): HandOf
         // Nobody holds this open: the turn ends in seconds and the agent takes minutes.
         attended: false,
         dedupeKey,
-        task: repo ? { repo } : undefined,
+        task: repo ? { repo: fixed?.ref ? `${repo}@${fixed.ref}` : repo } : undefined,
         origin,
       })
       return await started(job)
