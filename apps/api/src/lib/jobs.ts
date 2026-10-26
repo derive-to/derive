@@ -603,6 +603,24 @@ const summaryFor = (r: Pick<JobReport, "result" | "body_md">): { summary: string
   return { summary }
 }
 
+/** The keys of a job's meta that only the ask and the thread reply write. */
+const ORIGIN_KEYS = ["origin", "origin_replies"] as const
+
+const withoutOrigin = (m: Record<string, unknown>): Record<string, unknown> => {
+  const out = { ...m }
+  for (const k of ORIGIN_KEYS) delete out[k]
+  return out
+}
+
+const originOf = (metaJson: string | null): Record<string, unknown> => {
+  try {
+    const m = JSON.parse(metaJson ?? "{}") as Record<string, unknown>
+    return Object.fromEntries(ORIGIN_KEYS.filter((k) => m[k] !== undefined).map((k) => [k, m[k]]))
+  } catch {
+    return {}
+  }
+}
+
 export const reportJob = async (
   deps: JobDeps,
   agent: AgentRecord,
@@ -766,9 +784,16 @@ export const reportJob = async (
       reason: r.body_md.trim().split("\n")[0]?.trim() ?? "",
       retryable: r.retryable === true,
     }
-  // A report's own meta never drops how the task runs (its repository, a session).
+  // A report's own meta never drops how the task runs (its repository, a session), nor where
+  // it was asked from: the origin is a reply-to address fixed at the ask, and the replies
+  // already sent there are what keep the next one from repeating. A runner can no more move
+  // either than it can pick the Slack channel the bot posts in (docs/agent-dispatch.md §3.4).
   const meta_json = r.meta
-    ? JSON.stringify({ ...r.meta, ...taskOptions(job.meta_json) })
+    ? JSON.stringify({
+        ...withoutOrigin(r.meta),
+        ...taskOptions(job.meta_json),
+        ...originOf(job.meta_json),
+      })
     : job.meta_json
   const common = {
     cost_micro_usd: cost,
