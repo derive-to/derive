@@ -10,7 +10,7 @@ import {
   Tag,
   Workflow,
 } from "lucide-react"
-import { type ReactNode, useState } from "react"
+import { type ReactNode, useRef, useState } from "react"
 import { type AgentDetail, type AgentTrigger, api, type GithubTriggerOn } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { Button } from "@/components/ui/button"
@@ -509,6 +509,17 @@ function GithubForm({
   const [branches, setBranches] = useState((was?.branches ?? []).join(", "))
   const [drafts, setDrafts] = useState(was?.drafts ?? false)
   const [reviewers, setReviewers] = useState((was?.reviewers ?? []).join(", "))
+  // A reviewer filter only ever matches review requests, so the default chips would save a
+  // trigger that never fires. The first login typed swaps them for the one action that does;
+  // after that the chips are the person's.
+  const reviewActionSet = useRef(false)
+  const typeReviewers = (next: string) => {
+    if (!reviewActionSet.current && !reviewers.trim() && next.trim()) {
+      reviewActionSet.current = true
+      if (!actions.some((a) => a.startsWith("review_request"))) setActions(["review_requested"])
+    }
+    setReviewers(next)
+  }
   const spec = EVENTS[event]
   const names = repos.data?.repositories.map((r) => r.full_name) ?? []
   const save = useApiMutation({
@@ -645,7 +656,7 @@ function GithubForm({
         <div className="flex flex-col gap-1.5">
           <Input
             value={reviewers}
-            onChange={(e) => setReviewers(e.target.value)}
+            onChange={(e) => typeReviewers(e.target.value)}
             placeholder="Reviewers: anyone"
             aria-label="Reviewers"
             data-testid="agent-trigger-reviewers"

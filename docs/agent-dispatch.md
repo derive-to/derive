@@ -237,8 +237,8 @@ One field is added to the GitHub event trigger's `on.github` object:
 
 When `reviewers` is set:
 
-- The trigger matches only events whose payload names a requested user:
-  `pull_request.review_requested` and `pull_request.review_request_removed`.
+- The trigger matches only `pull_request.review_requested` events. A
+  `pull_request.review_request_removed` event matches only when `actions` lists it.
 - The event matches when `requested_reviewer.login` is in `reviewers`. A request addressed to a
   team (`requested_team`) does not match.
 - GitHub sends one delivery per requested reviewer. Requesting three people sends three
@@ -365,6 +365,8 @@ All existing fields and drops are unchanged:
 
 ```
 if g.reviewers:
+  if e.action == review_request_removed and it is not in g.actions: no match
+  if e.action not in (review_requested, review_request_removed): no match
   if e.requested_reviewer is null: no match
   if lower(e.requested_reviewer) not in lower(g.reviewers): no match
 ```
