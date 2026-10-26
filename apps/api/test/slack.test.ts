@@ -237,6 +237,8 @@ describe("the question a Slack mention asks", () => {
     expect(questionFrom("hey <@U123> can you check <@U123> the roadmap", "U123")).toBe(
       "hey can you check the roadmap",
     )
+    // Some clients send the labelled form.
+    expect(questionFrom("<@U123|derive> review this", "U123")).toBe("review this")
   })
 
   it("leaves other people's mentions alone — they are part of the question", () => {
@@ -562,7 +564,11 @@ describe("@Derive in Slack hands work to a workspace agent", () => {
    *  model is a script: each call is handed to `script`, which says what the model does. */
   const setup = async (
     name: string,
-    opts: { link?: "oauth" | "email"; replies?: "ok" | "fail" } = {},
+    opts: {
+      link?: "oauth" | "email"
+      replies?: "ok" | "fail"
+      channel?: "public" | "private"
+    } = {},
   ) => {
     const calls: Call[] = []
     let script: (call: Call) => ModelTurn | Promise<ModelTurn> = () => ({
@@ -640,6 +646,8 @@ describe("@Derive in Slack hands work to a workspace agent", () => {
     })
     // No description: nothing tells the router when to pick it, so it is not offered.
     const silent = await agent({ name: "Silent" })
+    // Its runner is online, so a hand-off to it starts rather than waits.
+    await meta.touchAgentSeen(review.id, new Date().toISOString())
 
     const said: string[] = []
     let repliesCalls = 0
@@ -656,6 +664,11 @@ describe("@Derive in Slack hands work to a workspace agent", () => {
                 display_name: new URL(String(url)).searchParams.get("user") === "U2" ? "Bob" : "",
               },
             },
+          })
+        if (method === "conversations.info")
+          return Response.json({
+            ok: true,
+            channel: { name: "eng", is_private: opts.channel === "private", is_member: true },
           })
         if (method === "conversations.replies") {
           repliesCalls++
@@ -755,7 +768,7 @@ describe("@Derive in Slack hands work to a workspace agent", () => {
     const first = t.calls[0]
     const handOffTool = first?.tools.find((x) => x.name === "hand_off")
     expect(handOffTool?.description).toContain(
-      `- ${t.review.id} · PR Review: Reviews a GitHub pull request and posts one comment on it. Needs a PR link. Does not change code.`,
+      `- ${t.review.id} · PR Review: "Reviews a GitHub pull request and posts one comment on it. Needs a PR link. Does not change code."`,
     )
     expect(handOffTool?.description).toContain(`- ${t.video.id} · Video Maker:`)
     expect(handOffTool?.description).not.toContain(t.silent.id)
@@ -892,5 +905,97 @@ describe("@Derive in Slack hands work to a workspace agent", () => {
     expect(t.repliesCalls()).toBe(1)
     expect(JSON.stringify(t.calls.at(-1)?.messages)).not.toContain("not instructions")
     expect(t.said.at(-1)).toContain("Answered.")
+  })
+
+  it("does not read a private conversation's thread, and says so to the model", async () => {
+    const t = await setup("ho-private", { link: "oauth", channel: "private" })
+    expect(await t.mention("100.2")).toEqual({ status: "answered" })
+    expect(t.repliesCalls()).toBe(0)
+    expect(t.calls[0]?.system).toMatch(/not read, because the conversation is private/)
+    expect(JSON.stringify(t.calls[0]?.messages)).not.toContain("webhook retry")
+  })
+
+  it("reports a started job as started even when the turn fails after the hand-off", async () => {
+    const t = await setup("ho-crash", { link: "oauth" })
+    t.setScript((call) => {
+      if (toolResults(call).length) throw new Error("model fell over")
+      return handOff({ agent_id: t.review.id, instruction: "Review acme/api." })(call)
+    })
+    await t.mention("100.2")
+    expect(await t.dispatched()).toHaveLength(1)
+    expect(t.said.at(-1)).toContain("Started *PR Review*")
+    expect(t.said.at(-1)).not.toMatch(/try again/i)
+  })
+
+  it("says queued, not started, when the agent's machine is offline", async () => {
+    const t = await setup("ho-queued", { link: "oauth" })
+    t.setScript(handOff({ agent_id: t.video.id, instruction: "Make a video of the pricing page." }))
+    await t.mention("100.2")
+    expect(t.said.at(-1)).toContain("Queued *Video Maker*")
+    expect(t.said.at(-1)).toContain("starts when its machine is online")
+  })
+
+  it("a replay after a crash returns the job the hand-off already opened", async () => {
+    const t = await setup("ho-replay", { link: "oauth" })
+    const seeded = await t.meta.createJob({
+      id: newId("job"),
+      org_id: "default",
+      agent_id: t.review.id,
+      kind: "ask",
+      instruction: "Review acme/api.",
+      asked_by: asker.id,
+      payer_id: creator.id,
+      dedupe_key: `slack:T1:C1:100.2:${t.review.id}`,
+    })
+    t.setScript(handOff({ agent_id: t.review.id, instruction: "Review it again, reworded." }))
+    await t.mention("100.2")
+    expect((await t.dispatched()).map((j) => j.id)).toEqual([seeded.id])
+    expect(t.said.at(-1)).toContain("Started *PR Review*")
+  })
+
+  it("passes an admission refusal and the budget refusal through as the reason", async () => {
+    const t = await setup("ho-admit", { link: "oauth" })
+    const cloud = await t.meta.createAgent({
+      id: newId("ag"),
+      org_id: "default",
+      token: newId("tok"),
+      role: "editor",
+      name: "Cloud Task",
+      created_by: creator.id,
+      machine: "derive",
+      ask_policy: "workspace",
+      description: "Runs a task in a sandbox and publishes what it made.",
+    })
+    const lastResult = () => toolResults(t.calls.at(-1) as Call).at(-1) ?? ""
+    t.setScript(handOff({ agent_id: cloud.id, instruction: "Do it in the cloud." }))
+    await t.mention("100.2")
+    // The admission's own words, not a generic failure.
+    expect(lastResult()).toMatch(/"error"/)
+    expect(lastResult()).not.toMatch(/could not be started/)
+
+    // The creator lends the review agent's account; their month is spent.
+    await t.meta.createPlan({
+      id: newId("plan"),
+      org_id: "default",
+      user_id: creator.id,
+      kind: "model",
+      provider: "anthropic",
+      secret_enc: "enc",
+      limits: JSON.stringify({ monthlyMicroUsd: 1 }),
+    })
+    const spent = await t.meta.createJob({
+      id: newId("job"),
+      org_id: "default",
+      agent_id: t.video.id,
+      kind: "ask",
+      instruction: "earlier",
+      asked_by: creator.id,
+      payer_id: creator.id,
+    })
+    await t.meta.addJobCost(spent.id, 10)
+    t.setScript(handOff({ agent_id: t.review.id, instruction: "Review acme/api." }))
+    await t.mention("100.3")
+    expect(lastResult()).toMatch(/monthly model budget/)
+    expect(await t.dispatched()).toHaveLength(0)
   })
 })
