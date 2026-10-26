@@ -73,6 +73,69 @@ export interface JobEffect {
   url?: string
 }
 
+/**
+ * WHERE A JOB WAS ASKED FOR, when that was somewhere other than Derive: the Slack thread or
+ * the GitHub event whose person is waiting on it. Stored on the job as `meta_json.origin`,
+ * fixed when it opens.
+ *
+ * It is a reply-to address, not a principal. `asked_by` on the job row is the Derive user every
+ * access decision reads; `requested_by` here is the external handle (a Slack user id, a GitHub
+ * login) a reply mentions, and nothing is granted on its strength. See docs/agent-dispatch.md §4.1.1.
+ */
+export type JobOrigin =
+  | {
+      kind: "slack"
+      requested_by: string
+      team_id: string
+      channel: string
+      /** The thread the reply goes into: the mention's own ts when it started the thread. */
+      thread_ts: string
+      /** The mention that caused the job; part of its dedupe key. */
+      message_ts: string
+    }
+  | {
+      kind: "github"
+      requested_by: string
+      /** `owner/name`. */
+      repository: string
+      /** The pull request or issue number, when the event had one. */
+      number: number | null
+      delivery_id: string
+    }
+
+/** The `meta_json.origin` of a job, or null when it was asked for inside Derive. */
+export const jobOriginOf = (metaJson: string | null | undefined): JobOrigin | null => {
+  if (!metaJson) return null
+  try {
+    const raw = (JSON.parse(metaJson) as { origin?: unknown }).origin
+    if (!raw || typeof raw !== "object") return null
+    const o = raw as Record<string, unknown>
+    const str = (k: string) => (typeof o[k] === "string" && o[k] ? (o[k] as string) : null)
+    if (o.kind === "slack") {
+      const requested_by = str("requested_by")
+      const team_id = str("team_id")
+      const channel = str("channel")
+      const thread_ts = str("thread_ts")
+      const message_ts = str("message_ts")
+      return requested_by && team_id && channel && thread_ts && message_ts
+        ? { kind: "slack", requested_by, team_id, channel, thread_ts, message_ts }
+        : null
+    }
+    if (o.kind === "github") {
+      const requested_by = str("requested_by")
+      const repository = str("repository")
+      const delivery_id = str("delivery_id")
+      const number = typeof o.number === "number" && Number.isInteger(o.number) ? o.number : null
+      return requested_by && repository && delivery_id
+        ? { kind: "github", requested_by, repository, number, delivery_id }
+        : null
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 export interface JobResult {
   /** Set at admission only when every native claim is retained before execution. */
   claim_ledger_version?: 1

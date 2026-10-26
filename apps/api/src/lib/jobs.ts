@@ -4,6 +4,7 @@ import {
   isJobOpen,
   JOB_SUMMARY_MAX,
   type JobNeeds,
+  type JobOrigin,
   type JobRecord,
   type JobResult,
   type JobStatus,
@@ -207,6 +208,9 @@ export interface AskInput {
   task?: TaskOptions
   /** The event trigger that started it. */
   triggerId?: string
+  /** Where it was asked for, when that was outside Derive (a Slack thread, a GitHub event).
+   *  Kept on the job as `meta_json.origin` so the outcome can go back there. */
+  origin?: JobOrigin
 }
 
 /** Open a job for an agent. With a dedupe key that already names an open job, returns that
@@ -220,6 +224,9 @@ export const askAgent = async (
   const kind =
     input.kind ?? ((await deps.isGraph?.(input.agent).catch(() => false)) ? "graph" : "ask")
   const task = withRepository(input.agent, input.task)
+  // The task options are the top level of meta_json (the runner reads `repo` there); origin
+  // rides beside them under its own key.
+  const jobMeta = { ...task, ...(input.origin ? { origin: input.origin } : {}) }
   if (input.agent.machine === "derive" && !input.attended && kind !== "graph") {
     const out = await commandJob(deps, input.agent, input.askedBy, {
       intent: "start",
@@ -238,7 +245,7 @@ export const askAgent = async (
         parent_id: input.parentId ?? null,
         node_id: input.nodeId ?? null,
         trigger_id: input.triggerId ?? null,
-        ...(Object.keys(task).length ? { meta_json: JSON.stringify(task) } : {}),
+        ...(Object.keys(jobMeta).length ? { meta_json: JSON.stringify(jobMeta) } : {}),
       },
     })
     wake(deps, input.agent.id, "job.queued", out.job)
@@ -265,7 +272,7 @@ export const askAgent = async (
       parent_id: input.parentId ?? null,
       node_id: input.nodeId ?? null,
       trigger_id: input.triggerId ?? null,
-      ...(Object.keys(task).length ? { meta_json: JSON.stringify(task) } : {}),
+      ...(Object.keys(jobMeta).length ? { meta_json: JSON.stringify(jobMeta) } : {}),
     })
   } catch (error) {
     // Lost a race on the dedupe index: the winner is the job.
