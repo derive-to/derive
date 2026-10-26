@@ -7,7 +7,7 @@ import type { AddressInfo } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
-import { newId } from "@derive/core"
+import { jobOriginOf, newId } from "@derive/core"
 import { sessionApi, sessionCommand } from "@derive-to/cli/sessions"
 import { serve } from "@hono/node-server"
 import { exportJWK, generateKeyPair, SignJWT } from "jose"
@@ -2078,6 +2078,14 @@ describe("jobs: telling people", () => {
           : Response.json({ id: 7001 })
       if (path === "/repos/acme/api/issues/123/comments" && method === "POST")
         return Response.json({ id: 7002 }, { status: 201 })
+      if (path === "/repos/acme/api/issues/comments/7002" && method === "GET")
+        return Response.json({
+          id: 7002,
+          body: "earlier outcome",
+          user: { login: "derive-test[bot]" },
+        })
+      if (path === "/repos/acme/api/issues/comments/7002" && method === "PATCH")
+        return Response.json({ id: 7002 })
       return Response.json({ ok: false, error: "unknown" })
     })
     const a = await createAgent(app, { name: "PR Review" })
@@ -2157,19 +2165,37 @@ describe("jobs: telling people", () => {
     }
   })
 
-  it("a pull request comment GitHub will not let Derive edit gets the outcome as a new one", async () => {
+  it("a pull request comment GitHub will not let Derive edit is replaced once, and the new one is edited", async () => {
     const t = await commentSetup("jobs-pr-refused", "refuse")
     try {
       const job = await t.handedOff()
       await t.settle(job.id, {
+        status: "needs_you",
+        needs: { kind: "decision", question: "Post the findings as a blocking review?" },
+      })
+      const [posted, ...more] = t.writes().filter((c) => c.method === "POST")
+      expect(more).toEqual([])
+      expect(posted?.path).toBe("/repos/acme/api/issues/123/comments")
+      expect(posted?.body?.body).toContain("❓ **PR Review** needs you: Post the findings")
+      // The new comment is the one later outcomes edit.
+      expect(jobOriginOf((await t.meta.getJob(job.id))?.meta_json)).toMatchObject({
+        ack_comment_id: 7002,
+      })
+      await t.app.request(`/v1/jobs/${job.id}/answer`, jsonAs(as(ed.email), { text: "Yes" }))
+      await t.settle(job.id, {
         status: "failed",
         result: { failure: { reason: "The PR branch was deleted.", retryable: false } },
       })
-      const posted = t.writes().filter((c) => c.method === "POST")
-      expect(posted).toHaveLength(1)
-      expect(posted[0]?.path).toBe("/repos/acme/api/issues/123/comments")
-      expect(posted[0]?.body?.body).toContain("❌ **PR Review** failed: The PR branch was deleted.")
-      expect(await t.replies(job.id)).toEqual([expect.objectContaining({ ts: "7002" })])
+      const last = t.writes().at(-1)
+      expect(t.writes().filter((c) => c.method === "POST")).toHaveLength(1)
+      expect(last).toMatchObject({ method: "PATCH", path: "/repos/acme/api/issues/comments/7002" })
+      expect(last?.body?.body).toContain(
+        "earlier outcome\n\n❌ **PR Review** failed: The PR branch was deleted.",
+      )
+      expect((await t.replies(job.id)).map((r) => (r as { ts: string }).ts)).toEqual([
+        "7002",
+        "7002",
+      ])
     } finally {
       vi.unstubAllGlobals()
     }

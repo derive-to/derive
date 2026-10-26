@@ -273,7 +273,11 @@ export const githubRoutes = (ctx: AppContext) => {
               !!live.permissions[permission] &&
               (rank[live.permissions[permission] ?? ""] ?? 0) >= (rank[level] ?? 0),
           )
-          appPermissionsState = permissionsReady ? "ready" : "update_required"
+          // An App made before PR mentions may hold Issues and still not be subscribed to the
+          // event that carries them: the manifest's events apply only when an App is created,
+          // so the owner turns this one on in the same settings page.
+          const eventsReady = live.events.includes("issue_comment")
+          appPermissionsState = permissionsReady && eventsReady ? "ready" : "update_required"
         } catch (err) {
           // Deleted/revoked is definitive. A network/5xx failure must not hide a working App.
           if (err instanceof GitHubError && (err.status === 401 || err.status === 404)) {
@@ -473,50 +477,49 @@ export const githubRoutes = (ctx: AppContext) => {
     // Signed and well-formed: acknowledged at once. Matching event triggers start their tasks
     // after the response, so GitHub never waits on a machine.
     const installation = (payload as { installation?: { id?: unknown } } | null)?.installation?.id
-    if (typeof installation === "number")
+    if (typeof installation !== "number") return c.body(null, 202)
+    const received: GithubDelivery = {
+      id: delivery,
+      event,
+      installationId: String(installation),
+      payload,
+      appBot: `${loaded.app.slug}[bot]`,
+    }
+    // Two readers of one delivery, each on its own after-response clock: neither waits on the
+    // other, and a trigger that fails to start cannot cost a person's mention its answer.
+    await ctx.afterResponse(c, async () => {
+      const started = await dispatchGithubEvent(jobDeps, received).catch((error) => {
+        log.warn("github: event triggers failed", { delivery, reason: String(error) })
+        return [] as string[]
+      })
+      const machines = started.length
+        ? machineDepsFrom(meta, {
+            secret: deps.encryptionKey,
+            server: deps.baseUrl,
+            config: deps.runtime,
+            fetcher: deps.runtimeFetch,
+            bus: ctx.backplane,
+            announce: ctx.announceJob,
+          })
+        : null
+      if (machines) await machinePass(machines)
+    })
+    // Someone wrote "@derive" on a pull request (lib/github-mention.ts). No model on the deploy
+    // means nothing answers, as in Slack.
+    if (deps.models)
       await ctx.afterResponse(c, async () => {
-        const received: GithubDelivery = {
-          id: delivery,
-          event,
-          installationId: String(installation),
-          payload,
-          appBot: `${loaded.app.slug}[bot]`,
-        }
-        // Two readers of one delivery, each isolated: a trigger that fails to start must not
-        // cost a person's mention its answer, nor the other way round.
-        const started = await dispatchGithubEvent(jobDeps, received).catch((error) => {
-          log.warn("github: event triggers failed", { delivery, reason: String(error) })
-          return [] as string[]
-        })
-        const machines = started.length
-          ? machineDepsFrom(meta, {
-              secret: deps.encryptionKey,
-              server: deps.baseUrl,
-              config: deps.runtime,
-              fetcher: deps.runtimeFetch,
-              bus: ctx.backplane,
-              announce: ctx.announceJob,
-            })
-          : null
-        if (machines) await machinePass(machines)
-        // Someone wrote "@derive" on a pull request (lib/github-mention.ts). After the triggers'
-        // machines are woken, so their jobs never wait on a model turn. No model on the deploy
-        // means nothing answers, as in Slack.
-        if (deps.models)
-          await handleGithubMention(
-            {
-              meta,
-              baseUrl: deps.baseUrl,
-              models: ctx.modelsFor,
-              ctx,
-              chatAllowlist: deps.chatAllowlist,
-              askLimiter: ctx.askLimiter,
-              app: { appId: loaded.app.app_id, pem: loaded.pem },
-            },
-            received,
-          ).catch((error) =>
-            log.warn("github: mention failed", { delivery, reason: String(error) }),
-          )
+        await handleGithubMention(
+          {
+            meta,
+            baseUrl: deps.baseUrl,
+            models: ctx.modelsFor,
+            ctx,
+            chatAllowlist: deps.chatAllowlist,
+            askLimiter: ctx.askLimiter,
+            app: { appId: loaded.app.app_id, pem: loaded.pem },
+          },
+          received,
+        ).catch((error) => log.warn("github: mention failed", { delivery, reason: String(error) }))
       })
     return c.body(null, 202)
   }
