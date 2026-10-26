@@ -84,6 +84,16 @@ const makePgStore = (name: string, users: TestUser[], team: Seat[]): TestStore =
             u.discoverable === undefined ? null : u.discoverable,
           ],
         )
+      const github = users.filter((u) => u.githubId)
+      if (github.length)
+        await boot.query(
+          `CREATE TABLE IF NOT EXISTS ${schema}."account" (id text primary key, "accountId" text, "providerId" text, "userId" text)`,
+        )
+      for (const u of github)
+        await boot.query(
+          `INSERT INTO ${schema}."account" (id, "accountId", "providerId", "userId") VALUES ($1, $2, 'github', $3) ON CONFLICT (id) DO NOTHING`,
+          [`acct_${u.id}`, u.githubId, u.id],
+        )
     } finally {
       await boot.end()
     }
@@ -165,6 +175,16 @@ const seedSqliteUsers = (path: string, users: TestUser[]): void => {
       u.username ?? null,
       u.discoverable === undefined ? null : u.discoverable ? 1 : 0,
     )
+  const github = users.filter((u) => u.githubId)
+  if (github.length) {
+    raw.exec(
+      `CREATE TABLE IF NOT EXISTS account (id TEXT PRIMARY KEY, "accountId" TEXT, "providerId" TEXT, "userId" TEXT)`,
+    )
+    const link = raw.prepare(
+      `INSERT OR IGNORE INTO account (id, "accountId", "providerId", "userId") VALUES (?,?,'github',?)`,
+    )
+    for (const u of github) link.run(`acct_${u.id}`, u.githubId, u.id)
+  }
   raw.close()
 }
 
@@ -298,6 +318,8 @@ export type TestUser = {
   username?: string | null
   discoverable?: boolean
   emailVerified?: boolean
+  /** A GitHub sign-in: the numeric GitHub user id Better Auth's `account` row carries. */
+  githubId?: string
 }
 
 const fakeAuth = (users: TestUser[]): AppDeps["auth"] =>
