@@ -163,6 +163,21 @@ export const mrkdwnBody = (md: string, max = MAX_SECTION): string => {
   return dropped ? `${body}…` : body
 }
 
+/** Point the ROOT-RELATIVE links in markdown at this instance, so mrkdwnBody renders them.
+ *
+ *  Derive's own text links by path (an agent cites `/artifacts/x`, knowing no hostname), and
+ *  mrkdwnBody only linkifies absolute http(s) targets — correctly, since a relative href means
+ *  nothing in Slack. The pattern stays strict for the same reason it is strict in the web
+ *  renderer: a leading slash then an alphanumeric admits /artifacts/x and excludes both
+ *  `javascript:` and the protocol-relative `//evil.com`. */
+export const absoluteLinks = (md: string, baseUrl: string): string => {
+  const base = baseUrl.replace(/\/$/, "")
+  return md.replace(
+    /\]\((\/[A-Za-z0-9][\w\-./?=&#%]*)\)/g,
+    (_m, path: string) => `](${base}${path})`,
+  )
+}
+
 // Block Kit primitives, shared by every Slack message builder (the comment mirror, DMs)
 // so block scaffolding lives in one place.
 //

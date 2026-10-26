@@ -36,7 +36,7 @@ import {
   slackUserName,
   updateSlackMessage,
 } from "./slack"
-import { mrkdwnBody } from "./slack-cards"
+import { absoluteLinks, mrkdwnBody } from "./slack-cards"
 import { postWithRecovery, resolveBotToken } from "./slack-delivery"
 import { CHAT_UNVERIFIED_NOTE, chatSeatFor, isVerifiedLink } from "./slack-identity"
 
@@ -527,13 +527,7 @@ export const handleSlackMention = async (
     }
   }
 
-  const renderReply = (reply: string) =>
-    mrkdwnBody(
-      reply.replace(
-        /\]\((\/[A-Za-z0-9][\w\-./?=&#%]*)\)/g,
-        (_match, path: string) => `](${deps.baseUrl}${path})`,
-      ),
-    )
+  const renderReply = (reply: string) => mrkdwnBody(absoluteLinks(reply, deps.baseUrl))
   let savedReply: { body_md: string; meta_json: string | null } | undefined
   let job: JobRecord | null
   let already = false
@@ -883,16 +877,9 @@ export const handleSlackMention = async (
     // citation as literal `[Title](/artifacts/x)` — the most useful part of an answer rendered
     // as punctuation.
     //
-    // Citations are ROOT-RELATIVE by design (the agent cites by path, knowing no hostname), and
-    // mrkdwnBody only linkifies absolute http(s) targets — correctly, since a relative href
-    // means nothing in Slack. So they are absolutised against this instance FIRST. The pattern
-    // stays strict for the same reason it is strict in the web renderer: a leading slash then an
-    // alphanumeric admits /artifacts/x and excludes both `javascript:` and the protocol-relative
-    // `//evil.com`.
-    const withLinks = reply.replace(
-      /\]\((\/[A-Za-z0-9][\w\-./?=&#%]*)\)/g,
-      (_m, path: string) => `](${deps.baseUrl}${path})`,
-    )
+    // Citations are ROOT-RELATIVE by design, so they are absolutised against this instance
+    // first (absoluteLinks says why mrkdwnBody needs that).
+    const withLinks = absoluteLinks(reply, deps.baseUrl)
     // The page the question was about, when the message named one, is where to carry on; a
     // question about the whole workspace has no page to send anyone to.
     const onward =
