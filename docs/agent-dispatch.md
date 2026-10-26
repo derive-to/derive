@@ -1,6 +1,6 @@
 # Agent Dispatch Specification
 
-Status: Draft v2.1, in review
+Status: v3, shipped. Steps 1–3 of §16 are on main as of 2026-10-26 (#1070 reviewer filter, #1072 Slack hand-off, #1073 thread reply).
 
 Purpose: Define how a request made outside Derive, a pull request review request on GitHub or an
 @Derive mention in Slack, starts a named workspace agent and how that agent's result is delivered
