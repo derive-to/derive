@@ -1,9 +1,9 @@
 # Agent Dispatch Specification
 
-Status: v3, shipped. Steps 1–3 of §16 are on main as of 2026-10-26 (#1070 reviewer filter, #1072 Slack hand-off, #1073 thread reply).
+Status: v3, shipped. Steps 1–3 of §16 are on main as of 2026-10-26 (#1070 reviewer filter, #1072 Slack hand-off, #1073 thread reply). Step 4, @derive in a pull request comment, is §17.
 
-Purpose: Define how a request made outside Derive, a pull request review request on GitHub or an
-@Derive mention in Slack, starts a named workspace agent and how that agent's result is delivered
+Purpose: Define how a request made outside Derive, a pull request review request on GitHub, an
+@Derive mention in Slack, or an @derive mention in a pull request comment, starts a named workspace agent and how that agent's result is delivered
 back to the place the request was made.
 
 This document describes the system as it is meant to work. Where the code on `main` differs, the
@@ -208,11 +208,16 @@ Slack fields:
   mention started the thread.
 - `message_ts` (string): REQUIRED. The mention that caused the hand-off. Part of the dedupe key.
 
-GitHub fields (recorded for display on the agent page; nothing replies to them):
+GitHub fields (recorded for display on the agent page; only a mention gets a reply, §17.6):
 
 - `repository` (string, `owner/name`): REQUIRED.
 - `number` (integer | null): the pull request or issue number.
 - `delivery_id` (string): REQUIRED.
+- `comment_id` (integer): the pull request comment that mentioned the App (§17). Absent for an
+  automation.
+- `ack_comment_id` (integer): Derive's own reply to that comment, the one the outcome edits.
+  Written once, right after the reply is posted (§17.5); the only field added to an origin after
+  the job is created.
 
 #### 4.1.2 Trigger Shape
 
@@ -527,7 +532,8 @@ job into "try again".
 ### 8.1 When
 
 The reply step runs inside `notifyJob`, once for each announcement (`job.needs_you`,
-`job.finished`), for jobs whose `meta_json.origin.kind` is `slack`. It is isolated like every
+`job.finished`), for jobs whose `meta_json.origin.kind` is `slack`, and for a `github` origin
+that carries `ack_comment_id` (§17.6, which edits a comment instead of posting a message). It is isolated like every
 other `notifyJob` step: a failed reply never skips the bell.
 
 | Job status | Reply |
@@ -606,6 +612,8 @@ No new agent field. No new workspace setting.
 | `CATALOG_MAX` | 40 |
 | `THREAD_CONTEXT_MAX_MESSAGES` | 30 |
 | `THREAD_CONTEXT_MAX_CHARS` | 12000 |
+| `PR_CONTEXT_MAX_COMMENTS` | 30 |
+| `PR_CONTEXT_MAX_CHARS` | 12000 |
 | `SLACK_REPLY_MAX_CHARS` | 3000 |
 
 ## 11. Observability
@@ -648,7 +656,8 @@ No new agent field. No new workspace setting.
 
 - **Principal.** A Slack hand-off acts as a Derive user proven by an OAuth link, never by an email
   match or by a Slack id alone. A GitHub dispatch acts as the agent's creator, as event triggers
-  do today. GitHub identity is display-only.
+  do today. A pull request mention acts as the Derive user who signed in with the commenter's
+  GitHub account (§17.3); a login or a matching email never stands in for that sign-in.
 - **Spend.** Follows the agent's spend policy. Slack grants nobody a payer they would not have in
   the app.
 - **Prompt injection.** Thread messages and GitHub payload text are untrusted. They reach the
@@ -666,6 +675,17 @@ No new agent field. No new workspace setting.
   writes its instruction from what it read. So the router never reads the thread of a private
   channel or a group DM, whose members are not the workspace (7.2). A 1:1 DM is only the asker
   and the bot, and is read.
+- **Pull request audience.** A comment Derive posts on a pull request is readable by everyone who
+  can read the pull request: on a public repository, anyone. The turn's answer is written from
+  what the asker can read in the workspace, so the turn is told, in its lane sentence, that its
+  reply is posted there and not to copy workspace documents into it beyond what the request
+  needs. The outcome edit (§17.6) carries only the summary, the effect links, and the task link,
+  whose page keeps its own access. In the other direction, the pull request and its comments are
+  read into a turn whose hand-off is visible to the workspace; that workspace installed the App
+  on the account, so its agents could already read them.
+- **Mentions in Derive's comments.** Text Derive writes on GitHub (the turn's answer, an agent's
+  summary) is shaped by the pull request it read. An `@login` or `@org/team` in it is made inert
+  before posting, so a comment cannot page people in Derive's name.
 
 ## 14. Reference Algorithms
 
@@ -775,11 +795,31 @@ asserts what comes out.
 - A successful thread reply skips the asker's DM interrupt. A failed one does not.
 - `cancelled` posts nothing. A GitHub-origin job posts nothing.
 
-### 15.4 Real Integration Profile (RECOMMENDED before enabling on a shared workspace)
+### 15.4 Pull Request Mention (`github-integration.test.ts`, `jobs.test.ts`)
+
+- A collaborator with a GitHub sign-in mentions the App: one dispatched job (the agent,
+  `asked_by` the asker, `task.repo` at the head sha even when the model named another repo,
+  origin with `comment_id` and `ack_comment_id`), one chat job, and one comment with the
+  "started" sentence. The same delivery again posts nothing and opens nothing.
+- A question the turn answers: one comment with the answer, links absolute, mentions inert, and
+  no dispatched job.
+- A commenter with no sign-in: one sign-in reply, however often the delivery arrives, no jobs.
+- `author_association: NONE`, no mention (or only a quoted one), a plain issue, the App's own
+  comment: no GitHub call and no job.
+- Reporting `succeeded` on a job with `ack_comment_id`: one edit, the "started" line kept above
+  the outcome; reporting again edits nothing. A refused edit posts a new comment. A GitHub origin
+  without `ack_comment_id` makes no GitHub call.
+- The status route reports `update_required` for an App without Issues, and the connected
+  accounts stay usable.
+
+### 15.5 Real Integration Profile (RECOMMENDED before enabling on a shared workspace)
 
 - On a test repository: request a review from the trigger's login and see the agent's comment.
 - In a test Slack channel: "@Derive review this" under a PR link message. Expect the hand-off
   acknowledgement, then a result message in the thread.
+- On a test pull request, as a collaborator signed in to Derive with GitHub: "@<app slug> review
+  this". Expect one comment saying what started, the agent's own review comment, then the first
+  comment edited with the outcome.
 - Before step 2: count the workspace's Slack links by origin. If most are `email`, plan the
   linking nudge first.
 
@@ -816,6 +856,156 @@ Results reach the asker by the existing finish DM. This step is useful on its ow
 - [x] The acknowledgement sentence switches to "I'll post the result in this thread" (7.4).
 - [x] Tests 15.3.
 
+### 16.4 Step 4: @derive in a Pull Request Comment
+
+- [x] Issues read in the App's permissions and `issue_comment` in the manifest's events (17.2).
+- [x] Arrival, guard, identity, and workspace (17.1, 17.3).
+- [x] Pull request context, the turn, and `hand_off` with the event's repository (17.4).
+- [x] One comment, recorded as `ack_comment_id` on both jobs (17.5).
+- [x] The outcome edits that comment, with the same marker (17.6).
+- [x] Tests 15.4.
+
+Each owner of an existing App adds the Issues permission once on GitHub, and each account
+accepts it; the Sources page asks for both. Until then no mention arrives and nothing else
+changes.
+
+## 17. Pull Request Mention Route
+
+A person writes a comment on a pull request, in a repository where the Derive GitHub App is
+installed: "@derive review this", or any request or question. Derive reads the pull request and
+its conversation, hands the work to the workspace agent whose description fits or answers
+itself, and posts one comment. For a hand-off that comment says what started, and the same
+comment is edited later with the outcome. The agent's own comment on the pull request remains the
+real result. No trigger is involved.
+
+### 17.1 Why a Dispatcher Here
+
+This is the addressed shape of 3.4 rule 1. A person spoke to Derive, so the router chooses, as in
+Slack. An automation stays a fixed trigger because nobody chose: something happened, and the
+person who set the trigger up decided in advance what runs and pays for it (rule 10). A mention
+is that decision being made now, by the person asking, so it needs no trigger and runs as them.
+An event trigger on `issue_comment` still runs its fixed agent as before (14.1); both read the
+same delivery and neither can break the other (17.2).
+
+### 17.2 Arrival
+
+- The App MUST hold Issues (read). GitHub delivers `issue_comment` only to an App holding it, and
+  a pull request's conversation comments are issue comments. It is part of the App's wanted
+  permissions, so an App without it shows "Derive's GitHub App needs new permissions" on the
+  Sources page; it does not mark any connected account as needing a reconnect, because reading
+  and commenting on pull requests keep working without it. Posting and editing a conversation
+  comment is the Issues route that `pull_requests: write` already covers, so replying needs
+  nothing more.
+- The manifest's `default_events` includes `issue_comment`. `issues` stays out: nothing answers a
+  plain issue.
+- The webhook handler runs the mention lane after `dispatchGithubEvent`, each in its own error
+  boundary.
+- A delivery is a mention only when every one of these holds; anything else is dropped silently:
+  - `event = issue_comment` and `action = created`. An edit is not a new request.
+  - `issue.pull_request` exists. Plain issues are out of scope (17.7).
+  - The comment body names the App as `@<slug>`, where the App's bot login is `<slug>[bot]`: a
+    whole word, any case. Quoted lines (`> …`) are someone else's words and do not count.
+  - The commenter and the sender are not the App's bot.
+
+### 17.3 Who, and Which Workspace
+
+- **Guard.** `comment.author_association` MUST be `OWNER`, `MEMBER`, or `COLLABORATOR`. Anyone
+  can comment on a public repository; this keeps strangers from costing a model call. Anyone else
+  is dropped silently, without a reply.
+- **Identity.** `comment.user.id` is looked up in Better Auth's `account` table
+  (`providerId = 'github'`, `accountId` = the numeric GitHub id) through `usersByGithubIds`. A
+  sign-in with GitHub is as strong as Slack's OAuth link, so the asker acts at their real seat;
+  there is no viewer clamp. A login or an email never stands in for it (3.4 rule 4).
+- **Workspace.** The asker's workspaces that hold an active `github_app` connection whose
+  `broker_ref` is the delivery's installation id. With one, that one. With several, the one where
+  the asker most recently asked any job; with no job in any, the oldest membership.
+- **Nobody to act as.** No signed-in user, or no such workspace: one reply, then stop. Unlinked:
+  "To ask me here, sign in to Derive with this GitHub account at `<base>`, then mention me
+  again." Linked but in no such workspace: the same, asking an admin to add them. There is no job
+  to dedupe on, so the reply carries a hidden marker naming the comment it answers
+  (`<!-- derive:reply-to:<comment_id> -->`), and a redelivery that finds it on the pull request
+  posts nothing.
+- **Gate.** `liveChatArrival` applies, keyed on `github:<user id>`. A refusal is said once, the
+  same way, except `not_enabled` and `not_allowlisted`, which would describe a workspace's setup
+  on a pull request.
+- **Switch.** The workspace's agent-writes switch closes `hand_off` exactly as in Slack (7.3).
+
+### 17.4 Context and the Turn
+
+- **Reading.** With the server's own installation token (minted for the one repository, never an
+  agent's narrowed one): `GET /repos/{o}/{r}/pulls/{n}` for the title, body, author, base, head
+  sha, and whether the head is a fork; and `GET /repos/{o}/{r}/issues/{n}/comments`, newest last.
+  Capped at `PR_CONTEXT_MAX_COMMENTS = 30` and `PR_CONTEXT_MAX_CHARS = 12000`, the description
+  always kept, the newest comments that fit. Each comment is labelled with its author's login,
+  Derive's own as "Derive (you)". The block is quoted inside the asker's turn text under a label
+  that says it is source material, not instructions, exactly as Slack quotes a thread. The
+  triggering comment with the mention removed is "their message", and the only instruction.
+- **Best effort.** A failed read costs the context, not the turn: one warn log, and the turn runs
+  on the comment and the pull request's link.
+- **The job.** One chat job per comment on `DERIVE_AGENT_ID`: `attended = 1`,
+  `dedupe_key = github:comment:<comment_id>`, `asked_by` and `payer_id` the asker, and
+  `meta_json = { via: "github", origin: { kind: github, requested_by: <login>, repository,
+  number, delivery_id, comment_id } }`. A redelivery finds the job by `origin.comment_id` and
+  stops; two first deliveries racing are settled by the open-job dedupe index.
+- **The turn.** `runChatTurn` with `buildChatTools` for the asker and `withHandOff` on top, the
+  catalog from `agentCatalogFor`. The lane sentence says the reply is posted on the pull request,
+  readable by everyone who can read the repository (13).
+- **`hand_off`.** As 7.4, with three differences. The repository is the event's: the server
+  fixes it to `owner/name` whatever the model's `repo` says, checks the agent's GitHub source
+  reaches it (so an agent without one refuses), and sets `task.repo = owner/name@<head sha>`. The
+  dispatched job's origin is the chat job's, `comment_id` included, and its dedupe key is
+  `github:<delivery_id>:<agent_id>`. The `say` sentence ends "I'll update this comment when it
+  finishes." The tool is withheld, with a one-sentence reason, when the pull request could not be
+  read (there is no commit to check out) or comes from a fork (no run on code the repository's
+  owners did not push, 13).
+- **Routing record and wake.** As in Slack: the routing record rides the chat job's settle (11),
+  and a Derive-machine agent is woken after the comment is posted.
+
+### 17.5 The Reply
+
+- One comment, posted with the installation token: the model's answer, or the `say` sentence
+  after a hand-off, or the refusal or question. Markdown as GitHub renders it; Derive's relative
+  links made absolute; `@` mentions made inert (13).
+- Its id is recorded as `origin.ack_comment_id` on the chat job and, after a hand-off, on the
+  dispatched job, merged onto each row as it stands.
+- Once a hand-off has started a job, the comment is the `say` sentence on every exit, a failed
+  turn included, as in 7.4.
+- A comment that fails to post is logged. The dispatched job then has no `ack_comment_id`, so its
+  outcome reaches the asker by the bell and the usual interrupts.
+
+### 17.6 The Outcome Edits the Comment
+
+- `notifyJob`'s reply step (8) handles a `github` origin with `ack_comment_id`, keyed and marked
+  exactly as Slack: `origin_replies`, by announcement, status, and run.
+- The App's installation for the repository is looked up when the outcome is written (the App
+  may have been reinstalled since), and the edit goes ahead only while the job's workspace still
+  holds that installation.
+- The comment is read, and the outcome appended under what it already says, so it reads as a
+  history: "started", then perhaps "needs you", then how it ended.
+  - `succeeded`: "✅ **Agent** finished: summary", then each effect with a URL as a link, the
+    report link when there is one, and the task link.
+  - `needs_you`: "❓ **Agent** needs you: question", and a link to answer in Derive.
+  - `failed`: "❌ **Agent** failed: reason", and the task link.
+  - `lost`: "⚠️ **Agent** was interrupted before it finished.", and the task link.
+  - `cancelled`: nothing.
+- An edit GitHub refuses (403), or a comment that is gone, gets a new comment instead; the
+  marker records the new comment's id.
+- The asker's bell is unchanged. Their Slack DM and email for that announcement are skipped once
+  the comment has it, as 8.3.
+- An edit notifies nobody. That is deliberate: the person is told by the agent's own comment on
+  the pull request, by their bell, and, for `needs_you`, by the comment they are already
+  watching.
+- A `github` origin without `ack_comment_id` (an automation, section 6) still gets no reply.
+
+### 17.7 Out of Scope
+
+- **Plain issues.** No code for an agent to work on, and `issues` events are not subscribed.
+- **Inline review comments.** `pull_request_review_comment` is a different event on a line of the
+  diff; it is not delivered and not read.
+- **Unlinked commenters running as somebody else.** A mention has no trigger, so there is no
+  creator to fall back to (3.4 rule 10). An unlinked commenter is told how to sign in, and
+  nothing runs.
+
 ## Appendix A. Where the Code Is Today
 
 - **Reviewer is dropped.** `readGithubEvent` (`apps/api/src/lib/github-events.ts`) keeps
@@ -845,10 +1035,7 @@ Results reach the asker by the existing finish DM. This step is useful on its ow
 
 ### B.1 @Derive in GitHub Comments
 
-An `issue_comment` on a pull request that mentions the App's bot runs the same router. It uses
-the comment's thread as context and a catalog for the commenter's linked Derive user; the agent
-replies on the PR through its own source. It needs reverse GitHub-to-Derive identity lookup
-through the `account` table, which does not exist yet.
+Built as section 17.
 
 ### B.2 Answering in the Thread
 
@@ -1274,30 +1461,9 @@ per channel per target.
 
 ### E.3 A PR comment that mentions the Derive app
 
-Shape: addressed, on a GitHub origin (B.1), glued to an automation so someone opts the
-repository in.
-
-```
-trigger on DERIVE_AGENT_ID:
-  on: { github: { event: "issue_comment", repository: "acme/api",
-                  actions: ["created"], mentions_app: true } }
-```
-
-Flow, with the Slack mention route alongside:
-
-| Step | Slack mention (section 7) | PR comment mention |
-|---|---|---|
-| Arrival | `app_mention` event | `issue_comment.created` whose body names the App's bot login |
-| Who | `slack_user_link` by Slack user id | `account` table by `comment.user.id` (reverse lookup, new); fallback per 3.4 rule 10 |
-| Extra guard | none | `author_association` ∈ {OWNER, MEMBER, COLLABORATOR}; a public repo lets anyone comment |
-| Context | thread via `conversations.replies` | PR title + body + comment thread via the installation token |
-| Catalog and `hand_off` | section 7 | same; `repo` is known from the event |
-| Acknowledgement | edit the placeholder | a 👀 reaction on the comment (new broker call, no litter on the PR) |
-| Result | thread reply (section 8) | the agent's own PR comment, as always; no Derive reply |
-| Dedupe | message ts + agent id | `github:<delivery_id>:<agent_id>` |
-
-New pieces: the reverse identity lookup, the `mentions_app` filter, the context fetch, the
-association guard, and the reaction. Reused: everything in sections 5, 7.3–7.5, and 11.
+Built, without the trigger this section first proposed: a mention is addressed, so it needs no
+opt-in and runs as the commenter (section 17). An `issue_comment` event trigger remains the
+automation shape for a repository that wants a fixed agent on every comment.
 
 ### E.4 Reading the three together
 
@@ -1305,7 +1471,7 @@ association guard, and the reaction. Reused: everything in sections 5, 7.3–7.5
 |---|---|---|---|---|---|
 | PR opened | automation | creator | event lines | agent's PR comment | none |
 | #ask-eng | automation → router | poster if linked, else trigger creator | the message | thread reply | Slack trigger key, channel branch, `ignored` |
-| @app on a PR | addressed, opted in | commenter if linked (and a collaborator), else trigger creator | PR + comments | agent's PR comment, 👀 ack | reverse lookup, context fetch, guard, reaction |
+| @app on a PR (§17) | addressed | commenter, signed in and a collaborator; nobody otherwise | PR + comments | one Derive comment, edited with the outcome; the agent's PR comment | Issues read, context fetch, guard, comment edit |
 
 What every row has in common: one `askAgent` call, an `origin` written at entry and read at
 exit, a dedupe key from the source's own id, and the server rechecking the router's proposal.
