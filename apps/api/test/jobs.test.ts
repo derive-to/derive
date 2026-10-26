@@ -36,6 +36,7 @@ import {
 } from "../src/lib/job-machine"
 import { HELD_FOR_BUDGET, jobTick, OWNER_LEFT } from "../src/lib/jobs"
 import { catalogOf } from "../src/lib/model-catalog"
+import { notifyJob } from "../src/lib/notify-job"
 import { bufferedSessionSocket } from "../src/lib/session-transport"
 import { nodeSessionTransport } from "../src/lib/session-transport-node"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
@@ -1810,6 +1811,197 @@ describe("jobs: telling people", () => {
     expect(await count(owner.email)).toBe(1)
     await app.request(`/v1/jobs/${job.id}/answer`, jsonAs(as(ed.email), { text: "Monthly" }))
     expect(await count(ed.email)).toBe(0)
+  })
+
+  // THE SLACK THREAD REPLY (docs/agent-dispatch.md §8): a job handed off from "@Derive review
+  // this" answers in that thread, once per announcement, and spares its asker the DM.
+  const SLACK_ORIGIN = {
+    kind: "slack",
+    requested_by: "U0ASKER",
+    team_id: "T1",
+    channel: "C1",
+    thread_ts: "100.1",
+    message_ts: "100.2",
+  }
+  const threadSetup = async (name: string, slack: "ok" | "refuse" = "ok") => {
+    const made = await setup(name)
+    const { app, meta } = made
+    await meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Team",
+      bot_token: encryptSecret("xoxb-test", "test-encryption-key"),
+      bot_user_id: "UBOT",
+      created_at: new Date().toISOString(),
+    })
+    const posts: { channel: string; thread_ts?: string; text: string }[] = []
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
+      if (!String(url).endsWith("/chat.postMessage")) return Response.json({ ok: false })
+      if (slack === "refuse") return Response.json({ ok: false, error: "channel_not_found" })
+      posts.push(JSON.parse(String(init?.body)))
+      return Response.json({ ok: true, ts: `300.${posts.length}`, channel: "C1" })
+    })
+    const a = await createAgent(app)
+    const handedOff = (origin: Record<string, unknown> | null = SLACK_ORIGIN) =>
+      meta.createJob({
+        id: newId("job"),
+        org_id: "default",
+        agent_id: a.id,
+        kind: "ask",
+        instruction: "Review https://github.com/acme/api/pull/123",
+        asked_by: ed.id,
+        ...(origin ? { meta_json: JSON.stringify({ repo: "acme/api", origin }) } : {}),
+      })
+    const settle = async (jobId: string, body: Record<string, unknown>) => {
+      const [p] = await pull(app, a)
+      expect(p?.id).toBe(jobId)
+      const sent = { started_at: p?.started_at ?? null, ...body }
+      expect((await report(app, a.token, jobId, sent)).status).toBe(200)
+      return sent
+    }
+    const dms = async () =>
+      (await outbox(meta)).filter(
+        (d) => d.kind === "slack_dm" && JSON.parse(d.payload).userId === ed.id,
+      )
+    const replies = async (jobId: string) =>
+      (JSON.parse((await meta.getJob(jobId))?.meta_json ?? "{}") as { origin_replies?: unknown[] })
+        .origin_replies ?? []
+    return { ...made, a, posts, handedOff, settle, dms, replies }
+  }
+
+  it("a job handed off from a Slack thread posts its result there once, and the asker gets no DM", async () => {
+    const t = await threadSetup("jobs-thread-finished")
+    try {
+      const job = await t.handedOff()
+      const done = await t.settle(job.id, {
+        status: "succeeded",
+        body_md: "Reviewed the PR. Two findings.",
+        result: {
+          summary: "Reviewed acme/api#123: 2 findings, posted on the PR.",
+          effects: [
+            {
+              kind: "pr",
+              label: "acme/api#123",
+              url: "https://github.com/acme/api/pull/123#issuecomment-55",
+            },
+          ],
+        },
+        // A report's own meta can neither move nor drop where the job was asked from.
+        meta: { note: "runner meta", origin: { ...SLACK_ORIGIN, channel: "C_ELSEWHERE" } },
+      })
+      expect(t.posts).toHaveLength(1)
+      const [post] = t.posts
+      expect(post).toMatchObject({ channel: "C1", thread_ts: "100.1" })
+      expect(post?.text.startsWith("<@U0ASKER> ")).toBe(true)
+      expect(post?.text).toContain("Reviewed acme/api#123: 2 findings, posted on the PR.")
+      expect(post?.text).toContain(
+        "<https://github.com/acme/api/pull/123#issuecomment-55|acme/api#123>",
+      )
+      expect(post?.text).toContain(`<http://derive.test/tasks/${job.id}|Open in Derive>`)
+      expect(await t.replies(job.id)).toEqual([
+        expect.objectContaining({ announcement: "job.finished", status: "succeeded", ts: "300.1" }),
+      ])
+      // They read it in the thread; the bell still rings.
+      expect(await t.dms()).toHaveLength(0)
+      expect(await bells(t.app, ed.email)).toHaveLength(1)
+
+      // Resent, the report lands nowhere; announced a second time, the marker holds.
+      expect((await report(t.app, t.a.token, job.id, done)).status).toBe(409)
+      const settled = await t.meta.getJob(job.id)
+      if (!settled) throw new Error("no job")
+      await notifyJob(
+        { meta: t.meta, baseUrl: "http://derive.test", encryptionKey: "test-encryption-key" },
+        settled,
+      )
+      expect(t.posts).toHaveLength(1)
+      expect(await t.replies(job.id)).toHaveLength(1)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it("a Slack-asked job that needs its asker, then finishes, is two replies in the thread", async () => {
+    const t = await threadSetup("jobs-thread-needs")
+    try {
+      const job = await t.handedOff()
+      await t.settle(job.id, {
+        status: "needs_you",
+        needs: { kind: "decision", question: "Post the findings as a blocking review?" },
+      })
+      expect(t.posts).toHaveLength(1)
+      expect(t.posts[0]?.text).toContain("Post the findings as a blocking review?")
+      expect(t.posts[0]?.text).toContain(`<http://derive.test/tasks/${job.id}|Answer in Derive>`)
+      await t.app.request(`/v1/jobs/${job.id}/answer`, jsonAs(as(ed.email), { text: "Yes" }))
+      await t.settle(job.id, { status: "succeeded", body_md: "Posted a blocking review." })
+      expect(t.posts).toHaveLength(2)
+      expect(t.posts[1]?.text).toContain("Posted a blocking review.")
+      expect((await t.replies(job.id)).map((r) => (r as { status: string }).status)).toEqual([
+        "needs_you",
+        "succeeded",
+      ])
+      expect(await t.dms()).toHaveLength(0)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it("a Slack-asked job that fails says why in the thread", async () => {
+    const t = await threadSetup("jobs-thread-failed")
+    try {
+      const job = await t.handedOff()
+      await t.settle(job.id, {
+        status: "failed",
+        result: { failure: { reason: "The PR branch was deleted.", retryable: false } },
+      })
+      expect(t.posts).toHaveLength(1)
+      expect(t.posts[0]?.text).toContain("The PR branch was deleted.")
+      expect(t.posts[0]?.text).toContain(`<http://derive.test/tasks/${job.id}|Open in Derive>`)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it("a thread reply Slack refuses leaves no marker, and the asker's DM still goes", async () => {
+    const t = await threadSetup("jobs-thread-refused", "refuse")
+    try {
+      const job = await t.handedOff()
+      await t.settle(job.id, { status: "succeeded", body_md: "Reviewed." })
+      expect(await t.replies(job.id)).toEqual([])
+      const dms = await t.dms()
+      expect(dms).toHaveLength(1)
+      expect(dms[0]?.event_type).toBe("job.finished")
+      expect(await bells(t.app, ed.email)).toHaveLength(1)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it("a job asked inside Derive, from GitHub, or cancelled, posts nothing to Slack", async () => {
+    const t = await threadSetup("jobs-thread-none")
+    try {
+      const plain = await t.handedOff(null)
+      await t.settle(plain.id, { status: "succeeded", body_md: "Done." })
+      expect(t.posts).toHaveLength(0)
+      expect(await t.dms()).toHaveLength(1)
+      expect((await t.meta.getJob(plain.id))?.meta_json ?? null).toBeNull()
+
+      const github = await t.handedOff({
+        kind: "github",
+        requested_by: "octocat",
+        repository: "acme/api",
+        number: 123,
+        delivery_id: "d1",
+      })
+      await t.settle(github.id, { status: "succeeded", body_md: "Reviewed." })
+      expect(t.posts).toHaveLength(0)
+
+      const dropped = await t.handedOff()
+      await t.app.request(`/v1/jobs/${dropped.id}/cancel`, jsonAs(as(owner.email), {}))
+      expect((await t.meta.getJob(dropped.id))?.status).toBe("cancelled")
+      expect(t.posts).toHaveLength(0)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
 

@@ -203,6 +203,7 @@ async function jobTickEdge(env: Env): Promise<void> {
           meta,
           bus,
           baseUrl: env.BASE_URL,
+          encryptionKey: env.DERIVE_AUTH_SECRET,
           pokeWebhooks: () => edgeWaitUntil(pokeOutbox(env)),
         })
       : undefined

@@ -14,7 +14,8 @@
 // finishes tells nobody (the graph tells, once, at its end); a step that needs a person tells
 // the graph's asker and manager, since the graph waits on it.
 //
-// How: a bell row and the live `u:<id>` events for every one of those; then the interrupts,
+// How: a bell row and the live `u:<id>` events for every one of those; then, for a job asked
+// for in a Slack thread, a reply in that thread (lib/slack-thread-reply.ts); then the interrupts,
 // an email (workspace email on and the person's agent-email opt-in) and a Slack DM (the
 // workspace has Slack and the person has not turned DMs off). A finished job nobody asked
 // rings the bell only. Every needs-you is its own email and DM; finishes collapse per agent,
@@ -36,6 +37,7 @@ import { log } from "../log"
 import { enqueueJobEvent } from "../webhooks"
 import { canManageAgent } from "./job-policy"
 import { enqueueJobInterrupts } from "./slack-dm"
+import { replyToThread, type ThreadReplyOutcome } from "./slack-thread-reply"
 import { truncate } from "./text"
 
 export type JobAnnouncement = "job.needs_you" | "job.finished"
@@ -44,6 +46,8 @@ export interface JobNotifyDeps {
   meta: MetaStore
   bus?: Pick<Backplane, "publish">
   baseUrl: string
+  /** Decrypts the Slack bot token a thread reply posts with. */
+  encryptionKey?: string
   /** Drain the outbox now rather than on the next tick. */
   pokeWebhooks?: () => void
 }
@@ -185,9 +189,21 @@ export const notifyJob = async (
       })
     })
 
+  // A job asked for in a Slack thread answers in that thread, and the asker, who reads it
+  // there, is spared the DM and email that would repeat it. Only once the thread has it: a
+  // reply that failed leaves the interrupts exactly as they were.
+  let thread = "none" as ThreadReplyOutcome
+  await step("thread", async () => {
+    thread = await replyToThread(deps, { owner, job, event, agent, report })
+  })
+  const interrupted =
+    (thread === "posted" || thread === "skipped_marker") && owner.asked_by
+      ? recipients.filter((uid) => uid !== owner.asked_by)
+      : recipients
+
   // Interrupts: a job someone asked, or one that waits on a person. A schedule's routine
   // result rings the bell and nothing louder.
-  if (recipients.length && (event === "job.needs_you" || owner.asked_by))
+  if (interrupted.length && (event === "job.needs_you" || owner.asked_by))
     await step("interrupts", () =>
       enqueueJobInterrupts(meta, {
         orgId: job.org_id,
@@ -195,7 +211,7 @@ export const notifyJob = async (
         jobId: job.id,
         since: job.updated_at,
         agentName: agent.name,
-        recipients,
+        recipients: interrupted,
         event,
         status: job.status,
         verb,

@@ -190,7 +190,8 @@ is wrong even if its tests pass.
 #### 4.1.1 Origin
 
 Where a dispatched job was requested, and where its outcome goes. Stored on the job in
-`meta_json.origin`. Immutable after the job is created.
+`meta_json.origin`. Immutable after the job is created: a runner's report may send its own
+`meta`, and it never replaces `origin` or `origin_replies`.
 
 Common fields:
 
@@ -281,8 +282,9 @@ An ordinary job row. Field values:
 | `meta_json.origin` | 4.1.1 | 4.1.1 |
 | `meta_json.repo` (the task options sit at the top level of `meta_json`; `origin` beside them) | `hand_off.repo`, when given | `owner/name@head_sha` |
 
-A dispatched job is unattended. Nobody is holding a request open for it. The thread reply, or
-until it exists the asker's finish DM, is how its result reaches the person who asked.
+A dispatched job is unattended. Nobody is holding a request open for it. For a Slack origin the
+thread reply is how its result reaches the person who asked; the asker's finish DM goes only
+when the reply could not be posted.
 
 ### 4.2 Stable Identifiers and Dedupe Keys
 
@@ -292,8 +294,11 @@ until it exists the asker's finish DM, is how its result reaches the person who 
   replays the chat turn after a crash MUST find the job it already made rather than start a
   second run. This key is separate from the chat job's thread key, which exists so follow-ups
   continue one conversation.
-- Reply marker: `meta_json.origin_replies`, a list of `{ announcement, status, ts }` already
-  posted for this job.
+- Reply marker: `meta_json.origin_replies`, a list of `{ announcement, status, since, ts }`
+  already posted for this job. `since` names the run: its `started_at` for `job.needs_you`, its
+  `finished_at` for `job.finished`. Both are fixed by the transition, so a pass that re-reads the
+  row finds the same key, and a job asked again after it finished, or waiting a second time, gets
+  a new one.
 
 ## 5. Agent Catalog Contract
 
@@ -498,12 +503,11 @@ started and where the result will appear:
 
 > Started **PR Review** on acme/api#123. I'll post the result in this thread.
 
-Until the thread reply (section 8) ships, the sentence is "You'll get a DM when it finishes."
-
 When the job waits for an owner machine (its runner is not online, or its creator has left the
 workspace), the sentence says so instead, as the app does:
 
-> Queued **PR Review** on acme/api#123; it starts when its machine is online.
+> Queued **PR Review** on acme/api#123; it starts when its machine is online. I'll post the
+> result in this thread.
 
 Once a hand-off has started a job, the turn's reply is that sentence whatever else the turn did:
 a timeout, a failed model call after the tool, or a failed transcript write never turns a started
@@ -529,20 +533,23 @@ other `notifyJob` step: a failed reply never skips the bell.
 | Job status | Reply |
 |---|---|
 | `needs_you` | the question, and a link to answer it in Derive |
-| `succeeded` | the summary, the effects, the report link |
+| `succeeded` | the summary, the effects, the report link (the job link when there is no report) |
 | `failed` | the failure reason, and a link to the job |
-| `lost` | "The run was interrupted", and a link to the job |
+| `lost` | that the run was interrupted before it finished, and a link to the job |
 | `cancelled` | nothing |
 
+The job link is the job's task page, `/tasks/<job id>`. A graph step that needs a person replies
+in its graph's thread and links the graph's task page, as its bell does.
+
 A job can go to `needs_you` more than once. Each time is a new announcement and gets a new
-reply. The marker (4.2) records announcement and status, so a repeated settle of the same
+reply. The marker (4.2) records announcement, status, and run, so a repeated settle of the same
 transition does not post twice.
 
 ### 8.2 Message
 
 - A new message in `origin.thread_ts`, not an edit. Editing a message does not notify anyone,
   and the asker needs to be notified.
-- It opens with a mention of `origin.requested_by`.
+- It opens with a mention of `origin.requested_by`, then the agent's name and what happened.
 - Body for `succeeded`:
   - `result.summary` as the first line. If there is no summary, the first sentence of
     `body_md`.
@@ -550,15 +557,19 @@ transition does not post twice.
   - Then the report artifact link (`report_artifact_id`) if there is one.
 - At most `SLACK_REPLY_MAX_CHARS = 3000`, rendered with the existing `mrkdwnBody`. Relative
   Derive links are made absolute.
-- Posted with `postWithRecovery`, so an auth failure flags the install for reconnection.
+- Posted with `postWithRecovery`, so an auth failure flags the install for reconnection, with
+  the bot token of the job's own workspace, and only while that workspace's install is for
+  `origin.team_id`.
 
 ### 8.3 Exactly Once, and No Double Notice
 
 - The marker (4.2) is written in the same update that records a successful post. A retry that
   finds the marker posts nothing.
-- When the thread reply succeeds, the asker's Slack DM and email interrupt for that announcement
-  MUST be skipped; they would only repeat what the thread already shows. The bell, the bus, and
-  webhooks are unchanged. When the thread reply fails, the interrupts go out as today.
+- When the thread reply succeeds, or its marker shows an earlier pass posted it, the asker's
+  Slack DM and email interrupt for that announcement MUST be skipped; they would only repeat what
+  the thread already shows. The skip is the asker's alone: the agent's manager, told on
+  `needs_you`, still gets theirs. The bell, the bus, and webhooks are unchanged. When the thread
+  reply fails, or the install is gone, the interrupts go out as today.
 
 ## 9. State and Transitions
 
@@ -717,13 +728,16 @@ hand_off(agent_id, instruction, repo?):                            // server sid
 ### 14.3 Thread Reply
 
 ```
-reply_to_thread(job, announcement):            // a notify_job step, isolated
+reply_to_thread(job, announcement):            // a notify_job step, isolated, before interrupts
   o = job.meta.origin
-  if o == null or o.kind != slack or job.status == cancelled: return
-  if (announcement, job.status) in job.meta.origin_replies: return
+  if o == null or o.kind != slack or job.status == cancelled: return none
+  since = announcement == job.finished ? job.finished_at : job.started_at
+  if (announcement, job.status, since) in fresh(job).meta.origin_replies: return skipped_marker
+  bot = install(job.org); if bot == null or bot.team_id != o.team_id: return failed
   ts = slack_post(o.channel, o.thread_ts, render_slack(job, mention=o.requested_by))
-  mark(job, announcement, job.status, ts)      // same update as the post record
-  skip_interrupts(job, announcement)           // 8.3, only after a successful post
+  if ts == null: return failed                 // the interrupts go as if there were no thread
+  mark(job, announcement, job.status, since, ts)   // the marker is the record of the post
+  return posted                                // posted, skipped_marker: skip the asker's interrupts
 ```
 
 ## 15. Test and Validation Matrix
@@ -798,9 +812,9 @@ Results reach the asker by the existing finish DM. This step is useful on its ow
 
 ### 16.3 Step 3: Thread Reply
 
-- [ ] The reply step in `notifyJob`, the marker, and interrupt skipping (8).
-- [ ] The acknowledgement sentence switches to "I'll post the result in this thread" (7.4).
-- [ ] Tests 15.3.
+- [x] The reply step in `notifyJob`, the marker, and interrupt skipping (8).
+- [x] The acknowledgement sentence switches to "I'll post the result in this thread" (7.4).
+- [x] Tests 15.3.
 
 ## Appendix A. Where the Code Is Today
 
@@ -1181,15 +1195,15 @@ result.effects: [ { kind: "pr", label: "acme/api#123", url: "...#issuecomment-56
 
 ```
 chat.postMessage(channel=C0ENG, thread_ts=1761499000.000100, text=
-  "<@U0ALICE> PR Review finished.
-   Reviewed acme/api#123: 2 findings, posted on the PR.
-   • acme/api#123 — https://github.com/acme/api/pull/123#issuecomment-56")
+  "<@U0ALICE> *PR Review* finished: Reviewed acme/api#123: 2 findings, posted on the PR.
+   • <https://github.com/acme/api/pull/123#issuecomment-56|acme/api#123>
+   <https://derive.example/tasks/job_def|Open in Derive>")
 → ts 1761500600.000300
 ```
 
-In the same update it writes
-`origin_replies = [ { announcement: "job.finished", status: "succeeded", ts: "1761500600.000300" } ]`
-and skips Alice's DM interrupt. The bell still rings for Alice, the bus publishes, and the
+It then writes the marker
+`origin_replies = [ { announcement: "job.finished", status: "succeeded",
+since: <finished_at>, ts: "1761500600.000300" } ]` and skips Alice's DM interrupt. The bell still rings for Alice, the bus publishes, and the
 workspace webhooks fire. A second settle of the same transition finds the marker and posts
 nothing.
 

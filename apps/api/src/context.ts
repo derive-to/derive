@@ -553,6 +553,7 @@ export function buildContext(input: AppDeps) {
     meta,
     bus,
     baseUrl: deps.baseUrl,
+    encryptionKey: deps.encryptionKey,
     pokeWebhooks: deps.pokeWebhooks,
   })
   const announceJob = (job: JobRecord, actorId?: string | null): Promise<void> =>

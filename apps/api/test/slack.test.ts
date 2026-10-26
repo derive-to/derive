@@ -803,6 +803,8 @@ describe("@Derive in Slack hands work to a workspace agent", () => {
 
     // The acknowledgement is the server's sentence, and the chat job records what it decided.
     expect(t.said.at(-1)).toContain("Started *PR Review* on acme/api#123")
+    // The result comes back where the request was made (docs/agent-dispatch.md §8).
+    expect(t.said.at(-1)).toContain("I'll post the result in this thread.")
     expect(JSON.parse((await t.chatJob())?.meta_json ?? "{}")).toMatchObject({
       via: "slack",
       slack_thread: "slack:T1:C1:100.1",
@@ -933,6 +935,7 @@ describe("@Derive in Slack hands work to a workspace agent", () => {
     await t.mention("100.2")
     expect(t.said.at(-1)).toContain("Queued *Video Maker*")
     expect(t.said.at(-1)).toContain("starts when its machine is online")
+    expect(t.said.at(-1)).toContain("I'll post the result in this thread.")
   })
 
   it("a replay after a crash returns the job the hand-off already opened", async () => {
