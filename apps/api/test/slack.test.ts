@@ -568,7 +568,7 @@ describe("@Derive in Slack hands work to a workspace agent", () => {
     opts: {
       link?: "oauth" | "email"
       replies?: "ok" | "fail"
-      channel?: "public" | "private"
+      channel?: "public" | "private" | "private-outside" | "info-fails"
       runner?: AppDeps["chatTurnRunner"]
     } = {},
   ) => {
@@ -668,10 +668,16 @@ describe("@Derive in Slack hands work to a workspace agent", () => {
               },
             },
           })
+        if (method === "conversations.info" && opts.channel === "info-fails")
+          return Response.json({ ok: false, error: "missing_scope" })
         if (method === "conversations.info")
           return Response.json({
             ok: true,
-            channel: { name: "eng", is_private: opts.channel === "private", is_member: true },
+            channel: {
+              name: "eng",
+              is_private: opts.channel === "private" || opts.channel === "private-outside",
+              is_member: opts.channel !== "private-outside",
+            },
           })
         if (method === "conversations.replies") {
           repliesCalls++
@@ -1088,11 +1094,44 @@ describe("@Derive in Slack hands work to a workspace agent", () => {
     expect(t.said.at(-1)).toContain("Answered.")
   })
 
-  it("does not read a private conversation's thread, and says so to the model", async () => {
+  // Most engineering channels are private. Being added to one is the members' consent, so the
+  // thread is read there, marked confidential; the turn is told to carry only the request and
+  // its links into a hand-off, never the discussion.
+  it("reads a private channel's thread when the bot is in it, and marks it confidential", async () => {
     const t = await setup("ho-private", { link: "oauth", channel: "private" })
     expect(await t.mention("100.2")).toEqual({ status: "answered" })
+    expect(t.repliesCalls()).toBe(1)
+    expect(t.calls[0]?.system).toMatch(/private conversation the bot was invited into/)
+    expect(t.calls[0]?.system).toMatch(/pass the request and its links, not the discussion/)
+    expect(JSON.stringify(t.calls[0]?.messages)).toContain("webhook retry")
+    // The hand_off tool's own writing rule agrees: no quoting from a private thread.
+    const handOffTool = t.calls[0]?.tools?.find((x) => x.name === "hand_off")
+    expect(handOffTool?.description).toMatch(/Do not quote the Slack thread/)
+    expect(handOffTool?.description).not.toMatch(/quoted\./)
+  })
+
+  it("marks nothing confidential in a public channel, and lets hand_off quote the thread", async () => {
+    const t = await setup("ho-public", { link: "oauth", channel: "public" })
+    expect(await t.mention("100.2")).toEqual({ status: "answered" })
+    expect(t.repliesCalls()).toBe(1)
+    expect(t.calls[0]?.system ?? "").not.toMatch(/invited into|could not be read/)
+    const handOffTool = t.calls[0]?.tools?.find((x) => x.name === "hand_off")
+    expect(handOffTool?.description).toMatch(/relevant parts of it, quoted/)
+  })
+
+  it("does not read the thread when Slack cannot say what the conversation is", async () => {
+    const t = await setup("ho-info-fails", { link: "oauth", channel: "info-fails" })
+    expect(await t.mention("100.2")).toEqual({ status: "answered" })
     expect(t.repliesCalls()).toBe(0)
-    expect(t.calls[0]?.system).toMatch(/not read, because the conversation is private/)
+    expect(t.calls[0]?.system).toMatch(/could not be read/)
+    expect(JSON.stringify(t.calls[0]?.messages)).not.toContain("webhook retry")
+  })
+
+  it("does not read a private conversation the bot is not in, and says so to the model", async () => {
+    const t = await setup("ho-private-out", { link: "oauth", channel: "private-outside" })
+    expect(await t.mention("100.2")).toEqual({ status: "answered" })
+    expect(t.repliesCalls()).toBe(0)
+    expect(t.calls[0]?.system).toMatch(/could not be read/)
     expect(JSON.stringify(t.calls[0]?.messages)).not.toContain("webhook retry")
   })
 

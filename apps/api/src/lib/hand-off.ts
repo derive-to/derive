@@ -101,6 +101,8 @@ interface Venue {
   thread: string
   /** Set when the event named the repository, so the model is not asked to. */
   repository: string | null
+  /** The thread came from a private conversation: the instruction must not quote it. */
+  confidential: boolean
 }
 
 const describe = (catalog: AgentRecord[], answerTools: string[], venue: Venue): string =>
@@ -123,7 +125,9 @@ const describe = (catalog: AgentRecord[], answerTools: string[], venue: Venue): 
       ? `5. The request is about ${venue.repository}. The agent works in it whatever repo says, so leave repo out.`
       : "5. When the request is about a pull request or a repository, pass its owner/name as repo.",
     "6. Never call hand_off more than once per turn.",
-    `Write the instruction so the agent can do the task without ${venue.thread}: what to do, every link it needs, and the relevant parts of it, quoted.`,
+    venue.confidential
+      ? `Write the instruction so the agent can do the task without ${venue.thread}: what to do and every link it needs. Do not quote ${venue.thread}; it is from a private conversation, and the agent's job is readable by the whole workspace.`
+      : `Write the instruction so the agent can do the task without ${venue.thread}: what to do, every link it needs, and the relevant parts of it, quoted.`,
     "When it succeeds, reply with the result's `say` sentence. When it refuses, tell the person why in one sentence. Do not try a different agent instead.",
   ].join("\n")
 
@@ -134,7 +138,7 @@ const handOffInput = z.object({
     .trim()
     .min(1)
     .max(20_000)
-    .describe("The task, complete without the thread: what to do, the links, quoted context."),
+    .describe("The task, complete without the thread: what to do and the links it needs."),
   repo: z
     .string()
     .regex(REPO, "repo is owner/name")
@@ -168,6 +172,10 @@ export interface HandOffOptions {
   catalog: AgentRecord[]
   /** Where the request came from: its reply-to address and the dedupe key's parts. */
   origin: JobOrigin
+  /** The thread the turn read came from a private conversation (Slack): the instruction the
+   *  model writes must carry the request and its links, never the discussion, because the
+   *  dispatched job is readable by the whole workspace. */
+  confidential?: boolean
   /**
    * The repository the event itself named, which the agent works in whatever the model says:
    * a mention on a pull request is about that pull request. `ref` is the commit it checks out.
@@ -195,8 +203,12 @@ export const withHandOff = (base: ChatToolSurface, opts: HandOffOptions): HandOf
       opts.catalog,
       base.tools.map((t) => t.name).filter((n) => n !== "publish"),
       origin.kind === "slack"
-        ? { thread: "the Slack thread", repository: null }
-        : { thread: "the pull request and its comments", repository: fixed?.repository ?? null },
+        ? { thread: "the Slack thread", repository: null, confidential: opts.confidential === true }
+        : {
+            thread: "the pull request and its comments",
+            repository: fixed?.repository ?? null,
+            confidential: false,
+          },
     ),
     params: jsonSchemaOf(handOffInput),
   }
