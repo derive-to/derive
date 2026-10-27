@@ -35,7 +35,7 @@
       "ip-address": ">=10.7.4",
       "ws": "^8.21.0",
       "postcss": ">=8.5.23",
-      "qs": ">=6.16.0",
+      "qs": ">=6.16.1",
       "body-parser": ">=2.4.0",
       "nanoid@<4": ">=3.3.17",
       "brace-expansion@<2.0.0": "1.1.18",
@@ -54,9 +54,9 @@
       "zod": "^4.6.7"
     },
     "patchedDependencies": {
-      "@better-auth/oauth-provider@1.6.19": "patches/@better-auth__oauth-provider@1.6.19.patch",
       "knip@6.16.1": "patches/knip@6.16.1.patch",
-      "http-cache-semantics@4.2.0": "patches/http-cache-semantics@4.2.0.patch"
+      "http-cache-semantics@4.2.0": "patches/http-cache-semantics@4.2.0.patch",
+      "@better-auth/oauth-provider@1.7.13": "patches/@better-auth__oauth-provider@1.7.13.patch"
     }
   },
   "scripts": {

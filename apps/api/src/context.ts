@@ -1184,7 +1184,8 @@ export function buildContext(input: AppDeps) {
     auth: deps.auth,
     baseUrl: deps.baseUrl,
     // The accepted token audiences (RFC 8707) — the RS-side check that a JWT was issued for
-    // THIS server, mirroring the AS-side validAudiences. Same helper, so they can't drift.
+    // THIS server, mirroring the AS-side oauthProvider `resources`. Same helper, so they
+    // can't drift.
     audiences: mcpAudiences(deps.baseUrl),
     provisionPersonal,
   })

@@ -74,7 +74,7 @@ interface OauthAgentDeps {
   baseUrl: string
   /** The accepted RFC 8707 audiences (see auth-config `mcpAudiences`). A JWT access token
    *  is accepted only when its `aud` is one of these — the MCP-spec MUST that a resource
-   *  server rejects tokens not issued for it, mirroring the AS-side `validAudiences`. */
+   *  server rejects tokens not issued for it, mirroring the AS-side `resources`. */
   audiences: string[]
   /** Find (or provision) the granting user's personal workspace — the agent runs there. */
   provisionPersonal: (me: { id: string; email: string; name: string | null }) => Promise<string>
@@ -195,7 +195,7 @@ export function makeOauthAgent({
       // Validate the audience (RFC 8707), not just the issuer + signature: a token this
       // AS minted for a DIFFERENT resource must be rejected here (the MCP-spec MUST). jose
       // passes when the token's `aud` matches any accepted audience. Legitimately-minted MCP
-      // tokens carry aud ∈ audiences (== the AS-side validAudiences), so this only rejects
+      // tokens carry aud ∈ audiences (== the AS-side `resources`), so this only rejects
       // foreign-audience tokens.
       return (await jwtVerify(token, jwksCache, { issuer: oauthIssuer, audience: audiences }))
         .payload

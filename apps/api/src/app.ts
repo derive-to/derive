@@ -4,7 +4,7 @@ import { Scalar } from "@scalar/hono-api-reference"
 import type { Context, Hono } from "hono"
 import { compress } from "hono/compress"
 import type { BlankEnv } from "hono/types"
-import { OAUTH_ANON_CLIENT_TTL_MS } from "./auth-config"
+import { OAUTH_ANON_CLIENT_TTL_MS, OIDC_LEGACY_CALLBACK_PREFIX } from "./auth-config"
 import { type AppDeps, buildContext } from "./context"
 import { draftChip, expiredDraftPage } from "./lib/draft-chip"
 import { cacheControlFor, corsFor, fail, TOMBSTONE } from "./lib/http"
@@ -456,6 +456,13 @@ export function createApp(deps: AppDeps): Hono {
         }
       }
       await next()
+    })
+    // Enterprise SSO callbacks registered against Better Auth 1.6 land on the old path;
+    // 1.7 serves the same handler at /api/auth/callback/:id (see OIDC_LEGACY_CALLBACK_PREFIX).
+    app.on(["GET", "POST"], `${OIDC_LEGACY_CALLBACK_PREFIX}:providerId`, (c) => {
+      const url = new URL(c.req.url)
+      url.pathname = `/api/auth/callback/${encodeURIComponent(c.req.param("providerId"))}`
+      return auth.handler(new Request(url, c.req.raw))
     })
     app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw))
   }

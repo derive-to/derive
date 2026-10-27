@@ -296,8 +296,10 @@ function EnableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
 
   const start = useApiMutation({
     mutationFn: async () => {
-      const res = await authClient.twoFactor.enable({ password })
+      const res = await authClient.twoFactor.enable({ password, method: "totp" })
       if (res?.error || !res?.data) throw new Error(res?.error?.message ?? "Could not start setup.")
+      // Better Auth 1.7 answers per method; only the TOTP branch carries the URI and codes.
+      if (res.data.method !== "totp") throw new Error("Could not start setup.")
       return res.data
     },
     errorToast: false, // rendered inline in the dialog

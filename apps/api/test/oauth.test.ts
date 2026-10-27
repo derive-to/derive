@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from "node:crypto"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -6,7 +7,7 @@ import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
 import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
-import { oauthIssuerFor } from "../src/auth-config"
+import { makeAuth, migrateAuth, oauthIssuerFor } from "../src/auth-config"
 import { sha256 } from "../src/lib/crypto"
 import { dir as helpersDir, meta as helpersMeta } from "./helpers"
 
@@ -196,5 +197,155 @@ describe("GET /oauth/cli-callback", () => {
     const html = await r.text()
     expect(html).toContain("ABC123XYZ")
     expect(html).toContain("paste it back into your terminal")
+  })
+})
+
+// The whole agent sign-in against the real Better Auth tables, through the surface an MCP
+// client uses: register itself (RFC 7591), send its human through authorize → consent, trade
+// the code for tokens bound to the MCP resource (RFC 8707), call the API, and refresh. MCP
+// clients register loopback or private-scheme redirect URIs and almost never send
+// `application_type`; Better Auth 1.7 treats such a registration as a "web" client by default
+// and refuses all of them, which no other test here would notice.
+describe("an MCP client signs in end to end", () => {
+  const BASE = "http://localhost:8080"
+
+  async function realApp(name: string) {
+    const path = join(dir, `${name}.db`)
+    const meta = new SqliteMetaStore(path)
+    const auth = makeAuth(new Database(path), BASE, "test-secret-0123456789-abcdefghijklmnopqrstuv")
+    await migrateAuth(auth)
+    const app = createApp({
+      meta,
+      blobs: new FsBlobStore(join(dir, `${name}-blobs`)),
+      baseUrl: BASE,
+      auth,
+    })
+    const call = (p: string, init: RequestInit & { headers?: Record<string, string> } = {}) =>
+      app.request(
+        new Request(BASE + p, {
+          redirect: "manual",
+          ...init,
+          headers: { origin: BASE, ...init.headers },
+        }),
+      )
+    return { call }
+  }
+
+  const form = (body: Record<string, string>) => ({
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(body).toString(),
+  })
+
+  it("registers loopback, private-scheme and https redirect URIs without application_type", async () => {
+    const { call } = await realApp("dcr-shapes")
+    for (const redirect of [
+      "http://localhost:53682/callback",
+      "http://127.0.0.1:41234/cb",
+      "cursor://anysphere.cursor-mcp/oauth/callback",
+      "https://claude.ai/api/mcp/auth_callback",
+    ]) {
+      const reg = await call("/api/auth/oauth2/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          client_name: "Agent",
+          redirect_uris: [redirect],
+          grant_types: ["authorization_code", "refresh_token"],
+          response_types: ["code"],
+          token_endpoint_auth_method: "none",
+        }),
+      })
+      expect(reg.status, redirect).toBe(201)
+    }
+  })
+
+  it("register → consent → token for the MCP resource → API call → refresh", async () => {
+    const { call } = await realApp("e2e")
+    const signup = await call("/api/auth/sign-up/email", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        email: "agent-owner@oauth.test",
+        password: "correct-horse-9",
+        name: "O",
+      }),
+    })
+    expect(signup.status).toBe(200)
+    const cookie = signup.headers
+      .getSetCookie()
+      .map((c) => c.split(";")[0])
+      .join("; ")
+
+    const redirect = "http://localhost:53682/callback"
+    const reg = await call("/api/auth/oauth2/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "Claude Code",
+        redirect_uris: [redirect],
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+      }),
+    })
+    const clientId = ((await reg.json()) as { client_id: string }).client_id
+
+    // Claude Code sends the server origin with a trailing slash as the resource.
+    const resource = `${BASE}/`
+    const verifier = randomBytes(32).toString("base64url")
+    const authorize = await call(
+      `/api/auth/oauth2/authorize?${new URLSearchParams({
+        response_type: "code",
+        client_id: clientId,
+        redirect_uri: redirect,
+        scope: "openid offline_access derive:read derive:publish",
+        state: "st",
+        code_challenge: createHash("sha256").update(verifier).digest("base64url"),
+        code_challenge_method: "S256",
+        resource,
+      })}`,
+      { headers: { cookie } },
+    )
+    const consentAt = new URL(authorize.headers.get("location") ?? "", BASE)
+    expect(consentAt.pathname).toBe("/oauth/consent")
+
+    // What the consent page's Approve button posts.
+    const consent = await call("/api/auth/oauth2/consent", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ accept: true, oauth_query: consentAt.search.slice(1) }),
+    })
+    const back = new URL(((await consent.json()) as { url: string }).url)
+    expect(`${back.origin}${back.pathname}`).toBe(redirect)
+
+    const token = await call(
+      "/api/auth/oauth2/token",
+      form({
+        grant_type: "authorization_code",
+        code: back.searchParams.get("code") ?? "",
+        redirect_uri: redirect,
+        client_id: clientId,
+        code_verifier: verifier,
+        resource,
+      }),
+    )
+    expect(token.status).toBe(200)
+    const tokens = (await token.json()) as { access_token: string; refresh_token: string }
+    const asAgent = (t: string) =>
+      call("/v1/workspaces", { headers: { authorization: `Bearer ${t}` } })
+    expect((await asAgent(tokens.access_token)).status).toBe(200)
+
+    const refreshed = await call(
+      "/api/auth/oauth2/token",
+      form({
+        grant_type: "refresh_token",
+        refresh_token: tokens.refresh_token,
+        client_id: clientId,
+      }),
+    )
+    expect(refreshed.status).toBe(200)
+    const next = (await refreshed.json()) as { access_token: string }
+    expect((await asAgent(next.access_token)).status).toBe(200)
   })
 })
