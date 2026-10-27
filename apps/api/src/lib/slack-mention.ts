@@ -33,9 +33,13 @@ import {
   declineTurn,
   dispatchTurn,
   leaseMsFor,
+  MENTION_FAILED,
+  markTurnBegan,
   ownLeaseMs,
   repliedUnderClaim,
   TURN_FAILED,
+  turnBegan,
+  turnViaOf,
 } from "./page-ask"
 import {
   type SlackThreadMessage,
@@ -657,11 +661,7 @@ export const handleSlackMention = async (
       threadTs: p.threadTs ?? p.ts,
       pending,
     })
-    await out.settle(
-      savedReply
-        ? renderReply(savedReply.body_md)
-        : "The previous turn was interrupted. Check Derive Activity for completed changes, then send a new request. I have not repeated the interrupted request.",
-    )
+    await out.settle(savedReply ? renderReply(savedReply.body_md) : SLACK_INTERRUPTED)
     const outcome = savedReply ? JSON.parse(savedReply.meta_json ?? "{}").outcome : "failed"
     await settleSlackJob(meta, jobId, startedAt, outcome === "answered" ? "succeeded" : "failed")
     return quiet("interrupted delivery recovered without replay")
@@ -684,6 +684,10 @@ export const handleSlackMention = async (
   })
   return { status }
 }
+
+/** What a thread is told when a turn was cut off and is not run again. */
+const SLACK_INTERRUPTED =
+  "The previous turn was interrupted. Check Derive Activity for completed changes, then send a new request. I have not repeated the interrupted request."
 
 /** The thread key a Slack chat job is found by: `slack:<team>:<channel>:<thread ts>`. */
 const slackThreadKey = (team: string, channel: string, threadTs: string) =>
@@ -794,6 +798,26 @@ const settleSlackJob = async (
     .catch((e) => log.warn("slack mention job settle failed", { job: jobId, error: String(e) }))
 }
 
+/** Tell a Slack thread its turn failed, for a runner that gave up on it (chat-turn-do.ts): the
+ *  placeholder becomes the failure line, or the line is posted when there is none. Best effort
+ *  and never throws. */
+export const tellSlackMentionFailed = async (
+  meta: MetaStore,
+  encryptionKey: string | undefined,
+  job: JobRecord,
+): Promise<void> => {
+  const bot = await resolveBotToken(meta, job.org_id, encryptionKey).catch(() => null)
+  if (!bot) return
+  const pending = slackPendingOf(job.meta_json)
+  const where = slackThreadParts(job.meta_json)
+  if (where)
+    await slackReplies(meta, job.org_id, bot.token, { ...where, pending })
+      .settle(MENTION_FAILED)
+      .catch(() => {})
+  else if (pending)
+    await updateSlackMessage(bot.token, { ...pending, text: MENTION_FAILED }).catch(() => {})
+}
+
 /**
  * Serve the turn of a Slack thread's job from the job id alone, for a runner that holds nothing
  * else (the ChatTurn Durable Object), and for the request itself where there is no runner.
@@ -820,10 +844,13 @@ export const runSlackMentionTurnById = async (
     return { status }
   }
   const claimed = await meta.getJob(jobId)
-  if (!claimed || claimed.agent_id !== DERIVE_AGENT_ID || !claimed.asked_by)
+  if (
+    !claimed ||
+    claimed.agent_id !== DERIVE_AGENT_ID ||
+    !claimed.asked_by ||
+    turnViaOf(claimed) !== "slack"
+  )
     return quiet("not a slack turn")
-  const where = slackThreadParts(claimed.meta_json)
-  if (!where) return quiet("not a slack turn")
   if (claimed.status !== "running") return quiet("job settled")
   if (startedAt && claimed.started_at !== startedAt) return quiet("claim moved")
   const askerId = claimed.asked_by
@@ -837,27 +864,41 @@ export const runSlackMentionTurnById = async (
   if (!job?.started_at) return quiet("claim moved")
   const claim = job.started_at
   const baseUrl = ctx.deps.baseUrl
-  const bot = await resolveBotToken(meta, org, ctx.deps.encryptionKey)
-  if (!bot) {
-    // Nowhere to answer: the workspace disconnected Slack since the request.
+  const bot = await resolveBotToken(meta, org, ctx.deps.encryptionKey).catch(() => null)
+  const pending = slackPendingOf(job.meta_json)
+  const where = slackThreadParts(job.meta_json)
+  if (!bot || !where) {
+    // Nowhere to serve: Slack was disconnected since the request, or a row this code cannot
+    // read. The placeholder is told whenever there is still a token to edit it with.
+    log.error("slack mention turn cannot be served", { job: jobId, bot: !!bot, thread: !!where })
+    if (bot && pending)
+      await updateSlackMessage(bot.token, { ...pending, text: MENTION_FAILED }).catch(() => {})
     await declineTurn({ meta, bus: ctx.backplane }, job, TURN_FAILED)
-    return quiet("slack not connected")
+    return quiet(bot ? "unreadable slack thread" : "slack not connected")
   }
   const { settle } = slackReplies(meta, org, bot.token, {
     channel: where.channel,
     threadTs: where.threadTs,
-    pending: slackPendingOf(job.meta_json),
+    pending,
   })
   const renderReply = (reply: string) => mrkdwnBody(absoluteLinks(reply, baseUrl))
 
-  // Already answered under this claim: settle as that reply said and show it, do not answer
-  // again. Showing it edits the placeholder, which is the same message however often it runs.
+  // Already answered under this claim: show it, then settle as that reply said. Never answered
+  // again. Showing it edits the placeholder, which is the same message however often it runs;
+  // without one, a post here could be a second copy, so the job is only settled.
   const replied = await repliedUnderClaim(meta, job)
   if (replied) {
     const said = JSON.parse(replied.meta_json ?? "{}") as { outcome?: string }
+    if (pending) await settle(renderReply(replied.body_md))
     await settleSlackJob(meta, jobId, claim, said.outcome === "failed" ? "failed" : "succeeded")
-    if (slackPendingOf(job.meta_json)) await settle(renderReply(replied.body_md))
     return quiet("already answered")
+  }
+  // Began under this claim and died before replying: its tools may already have acted (a
+  // hand-off, a source call), so the turn is not run again, as the placeholder promised.
+  if (turnBegan(job)) {
+    await settle(SLACK_INTERRUPTED)
+    await settleSlackJob(meta, jobId, claim, "failed")
+    return quiet("interrupted turn not repeated")
   }
 
   const asked = (await meta.listJobMessages(jobId)).filter((m) => m.author_kind === "asker").at(-1)
@@ -873,7 +914,7 @@ export const runSlackMentionTurnById = async (
         }
       : null
   if (!p) {
-    await settle("Something went wrong on my side, so I have not answered that. Try me again.")
+    await settle(MENTION_FAILED)
     await settleSlackJob(meta, jobId, claim, "failed")
     return quiet("no question to answer")
   }
@@ -889,7 +930,12 @@ export const runSlackMentionTurnById = async (
     { org, userId: askerId },
   )
   if (!gate.ok) {
-    await settle(refusalMessage(gate.reason))
+    // The two the request keeps quiet would describe the workspace's setup in the channel.
+    await settle(
+      gate.reason === "not_enabled" || gate.reason === "not_allowlisted"
+        ? MENTION_FAILED
+        : refusalMessage(gate.reason),
+    )
     await settleSlackJob(meta, jobId, claim, "failed")
     return quiet(gate.reason)
   }
@@ -985,6 +1031,7 @@ export const runSlackMentionTurnById = async (
       ]
         .filter(Boolean)
         .join(" ") || undefined
+    if (!(await markTurnBegan(meta, job))) return quiet("thread claim ended")
     const res = await runChatTurn(
       // The budget of whatever clock serves this: the runner's own, or the request's.
       { model, budgetMs: ctx.attendedTurnBudgetMs },
@@ -1020,6 +1067,8 @@ export const runSlackMentionTurnById = async (
       },
     )
 
+    // Spent whatever happens next, so recorded before anything else can fail.
+    if (res.costMicroUsd) await meta.addJobCost(jobId, res.costMicroUsd).catch(() => null)
     // The server's sentence, not the model's, once a job exists: the turn may have timed out
     // or failed on the step after the tool, and its own text would then say the opposite.
     const said = startedSay()
@@ -1027,7 +1076,6 @@ export const runSlackMentionTurnById = async (
     const outcome = said ? "answered" : res.outcome
     const held = await meta.getJob(jobId)
     if (held?.status !== "running" || held.started_at !== claim) {
-      if (res.costMicroUsd) await meta.addJobCost(jobId, res.costMicroUsd).catch(() => null)
       if (said) await settle(mrkdwnBody(said))
       return quiet("thread claim ended")
     }
@@ -1064,15 +1112,6 @@ export const runSlackMentionTurnById = async (
           ...(handed?.kind === "handed_off" ? { job_id: handed.job.id } : {}),
         }
       : undefined
-    await settleSlackJob(
-      meta,
-      jobId,
-      claim,
-      outcome === "failed" ? "failed" : !said && res.needs ? "needs_you" : "succeeded",
-      res.costMicroUsd,
-      said ? undefined : res.needs,
-      routing,
-    )
 
     // AN ANSWER IS PROSE, not a label, so it goes through mrkdwnBody rather than escapeMrkdwn:
     // the model writes markdown, and escaping alone left `**bold**` as asterisks and every
@@ -1087,7 +1126,20 @@ export const runSlackMentionTurnById = async (
       named && named.org_id === org
         ? `\n\n<${artifactUrl(baseUrl.replace(/\/$/, ""), named)}|Open in Derive>`
         : ""
+    // Shown BEFORE the job settles: a turn that dies between the two leaves the job running
+    // with its reply written, and the replay shows it again (an edit, the same message) and
+    // settles. Settled first, the replay would find a settled job and the placeholder would
+    // never change.
     await settle(`${renderReply(reply)}${onward}`)
+    await settleSlackJob(
+      meta,
+      jobId,
+      claim,
+      outcome === "failed" ? "failed" : !said && res.needs ? "needs_you" : "succeeded",
+      null,
+      said ? undefined : res.needs,
+      routing,
+    )
     // A Derive-machine agent starts now rather than at the next tick. After the reply, because
     // the person is waiting for the acknowledgement and not for the machine.
     if (handed?.kind === "handed_off") {
@@ -1117,11 +1169,7 @@ export const runSlackMentionTurnById = async (
     // Through settle, so a crash REPLACES "thinking…" rather than leaving it there for ever —
     // a placeholder that never resolves reads as a hung bot, which is worse than an error.
     const said = startedSay()
-    await settle(
-      said
-        ? mrkdwnBody(said)
-        : "Something went wrong on my side, so I have not answered that. Try me again.",
-    )
+    await settle(said ? mrkdwnBody(said) : MENTION_FAILED)
     await settleSlackJob(meta, jobId, claim, said ? "succeeded" : "failed")
     return quiet("turn failed")
   }

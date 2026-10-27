@@ -372,6 +372,57 @@ export const repliedUnderClaim = async (
     : null
 }
 
+/** What a mention turn says when it failed for a reason the person cannot act on, including the
+ *  refusals that would describe a workspace's setup in a public channel or pull request. */
+export const MENTION_FAILED =
+  "Something went wrong on my side, so I have not answered that. Try me again."
+
+/** The lane a built-in Derive job's turn belongs to (`meta_json.via`): "slack", "github", or a
+ *  page ask's "page" / "chat". Null when the row cannot be read. */
+export const turnViaOf = (job: Pick<JobRecord, "meta_json">): string | null => {
+  try {
+    const via = (JSON.parse(job.meta_json ?? "{}") as { via?: unknown }).via
+    return typeof via === "string" ? via : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Record on the job that its turn under this claim has begun (`turn_began`), fenced on the claim,
+ * right before the model runs. A mention's tools reach outside Derive (hand_off, a source call)
+ * and have no save guard, so a turn that began and died without replying is not run again: the
+ * replay finds this and says the turn was interrupted (turnBegan). False when the claim moved.
+ */
+export const markTurnBegan = async (meta: JobDeps["meta"], job: JobRecord): Promise<boolean> => {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const held = await meta.getJob(job.id)
+    if (held?.status !== "running" || held.started_at !== job.started_at) return false
+    const marked = await meta.updateJob(
+      job.id,
+      {
+        meta_json: JSON.stringify({
+          ...JSON.parse(held.meta_json ?? "{}"),
+          turn_began: job.started_at,
+        }),
+      },
+      { status: "running", started_at: job.started_at, meta_json: held.meta_json },
+    )
+    if (marked) return true
+  }
+  return false
+}
+
+/** Whether a turn already began under the job's current claim (markTurnBegan). */
+export const turnBegan = (job: JobRecord): boolean => {
+  try {
+    const began = (JSON.parse(job.meta_json ?? "{}") as { turn_began?: unknown }).turn_began
+    return !!job.started_at && began === job.started_at
+  } catch {
+    return false
+  }
+}
+
 /** Write `reason` on the job and settle it failed, fenced on its current claim. Throws if the
  *  settle fails, so a runner's retry gets to settle it. */
 export const declineTurn = async (deps: JobDeps, job: JobRecord, reason: string): Promise<void> => {

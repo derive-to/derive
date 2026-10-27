@@ -49,9 +49,13 @@ import {
   declineTurn,
   dispatchTurn,
   leaseMsFor,
+  MENTION_FAILED,
+  markTurnBegan,
   ownLeaseMs,
   repliedUnderClaim,
   TURN_FAILED,
+  turnBegan,
+  turnViaOf,
 } from "./page-ask"
 import { absoluteLinks } from "./text"
 
@@ -367,9 +371,15 @@ export const handleGithubMention = async (
       payer_id: linked.id,
       attended: 1,
       subject_json: null,
-      // `installation_id` is the one thing the turn (runGithubMentionTurnById) cannot read back
-      // from the origin: the installation whose token reads the pull request and posts on it.
-      meta_json: JSON.stringify({ via: "github", origin, installation_id: d.installationId }),
+      // What the turn (runGithubMentionTurnById) cannot read back from the origin: the
+      // installation whose token reads the pull request and posts on it, and the commenter's
+      // numeric GitHub id, so it can check their sign-in still names the asker.
+      meta_json: JSON.stringify({
+        via: "github",
+        origin,
+        installation_id: d.installationId,
+        github_user_id: m.userId,
+      }),
       // Two first deliveries racing: the open-job dedupe index lets one win.
       dedupe_key: dedupeKey,
     })
@@ -378,6 +388,15 @@ export const handleGithubMention = async (
       return quiet("duplicate delivery")
     throw error
   }
+  // Acknowledged at once, as the Slack placeholder is: one comment, posted before the turn and
+  // edited into its answer. Its id is written IN THE CLAIM below, so a running job always knows
+  // its acknowledgement and the turn never posts a second comment beside it. It is carried into
+  // a hand-off's origin, so the dispatched job is born knowing which comment to edit: a turn cut
+  // off after `hand_off` still leaves the job a comment to update, and an agent that needs the
+  // asker before the turn ends can already say so there.
+  //
+  // Best effort, as Slack's is: if it fails, the answer is posted as a new comment at the end.
+  const placeholder = await post(LOOKING)
   // The request's lease: the long one when a runner serves the turn off this clock, else this
   // deploy's own turn ceiling plus slack (page-ask.ts). The turn re-leases when it starts.
   const claimed = await meta.updateJob(
@@ -386,10 +405,22 @@ export const handleGithubMention = async (
       status: "running",
       started_at: new Date().toISOString(),
       lease_until: new Date(Date.now() + leaseMsFor(deps.ctx)).toISOString(),
+      ...(placeholder
+        ? {
+            meta_json: JSON.stringify({
+              ...JSON.parse(created.meta_json ?? "{}"),
+              origin: { ...origin, ack_comment_id: placeholder.id },
+            }),
+          }
+        : {}),
     },
     { status: created.status, updated_at: created.updated_at },
   )
-  if (!claimed) return quiet("job claim changed")
+  if (!claimed) {
+    // Nothing else writes a job this new; if something did, the acknowledgement is left behind.
+    log.warn("github mention job moved before its claim", { delivery: d.id, job: created.id })
+    return quiet("job claim changed")
+  }
   const jobId = created.id
   await meta.addJobMessage({
     id: newId("jm"),
@@ -399,15 +430,6 @@ export const handleGithubMention = async (
     body_md: m.question,
     meta_json: JSON.stringify({ github: { comment_id: m.commentId } }),
   })
-  // Acknowledged at once, as the Slack placeholder is: one comment, posted before the turn and
-  // edited into its answer. Recorded on the chat job now and carried into a hand-off's origin,
-  // so the dispatched job is born knowing which comment to edit. That matters twice: a turn cut
-  // off after `hand_off` still leaves the job a comment to update, and an agent that needs the
-  // asker before the turn ends can already say so there.
-  //
-  // Best effort, as Slack's is: if it fails, the answer is posted as a new comment at the end.
-  const placeholder = await post(LOOKING)
-  if (placeholder) await recordAckComment(meta, jobId, placeholder.id)
 
   // THE TURN, off this clock where the deploy has a runner for it (a Durable Object on
   // Workers, where this request's after-response work gets seconds), else right here.
@@ -457,104 +479,71 @@ const settleGithubJob = async (
     .catch((e) => log.warn("github mention job settle failed", { job: jobId, error: String(e) }))
 }
 
-/**
- * Serve the turn of a pull request mention's job from the job id alone, for a runner that holds
- * nothing else (the ChatTurn Durable Object), and for the request itself where there is no
- * runner.
- *
- * The request walked every gate, opened and leased the job, wrote the question and posted the
- * acknowledgement (its id is `origin.ack_comment_id`). This re-reads what the turn needs: the
- * App and an installation token (`installation_id`), the asker's seat, the workspace's
- * settings, the model, the agent catalog, and the pull request with its conversation. If the
- * workspace or seat moved since, the acknowledgement says so and the job settles failed.
- *
- * Runners are at-least-once. A stale claim and a settled job are left alone; a turn that wrote
- * its reply but died before settling is settled as that reply said and the acknowledgement
- * shows the reply, never answered twice. A hand-off is deduped on the delivery (hand-off.ts),
- * so a turn replayed after the hand-off returns the job it already started.
- */
-export const runGithubMentionTurnById = async (
-  ctx: AppContext,
-  jobId: string,
-  startedAt?: string,
-): Promise<{ status: string }> => {
-  const { meta } = ctx
-  const quiet = (status: string) => {
-    log.info("github mention turn not served", { job: jobId, status })
-    return { status }
-  }
-  const claimed = await meta.getJob(jobId)
-  if (!claimed || claimed.agent_id !== DERIVE_AGENT_ID || !claimed.asked_by)
-    return quiet("not a github turn")
-  const origin = jobOriginOf(claimed.meta_json)
-  const installationId = (JSON.parse(claimed.meta_json ?? "{}") as { installation_id?: unknown })
-    .installation_id
+/** What a pull request is told when a turn was cut off and is not run again. */
+const GITHUB_INTERRUPTED =
+  "The previous turn was interrupted. Check Derive Activity for completed changes, then mention me again. I have not repeated the interrupted request."
+
+/** What a mention's job row says about where its turn answers, or null for a row this code
+ *  cannot read. `installation_id` and `github_user_id` are written with the job (the request
+ *  phase of handleGithubMention); the rest is the job's origin. */
+const githubTurnOf = (job: JobRecord) => {
+  const origin = jobOriginOf(job.meta_json)
+  let raw: { installation_id?: unknown; github_user_id?: unknown } = {}
+  try {
+    raw = JSON.parse(job.meta_json ?? "{}")
+  } catch {}
   if (
     origin?.kind !== "github" ||
     !origin.comment_id ||
     !origin.number ||
-    typeof installationId !== "string"
+    typeof raw.installation_id !== "string" ||
+    typeof raw.github_user_id !== "number"
   )
-    return quiet("not a github turn")
-  if (claimed.status !== "running") return quiet("job settled")
-  if (startedAt && claimed.started_at !== startedAt) return quiet("claim moved")
-  // The request leased the job for its own clock; this turn knows its budget.
-  const job = await meta.updateJob(
-    claimed.id,
-    { lease_until: new Date(Date.now() + ownLeaseMs(ctx)).toISOString() },
-    { status: "running", started_at: claimed.started_at },
-  )
-  if (!job?.started_at) return quiet("claim moved")
-  const claim = job.started_at
-  const org = job.org_id
-  const askerId = claimed.asked_by
-  const { repository, number, comment_id: commentId, delivery_id: delivery } = origin
-  const base = ctx.deps.baseUrl.replace(/\/$/, "")
-
-  // The App, as the request had it: its key signs the installation token.
-  const stored = await meta.getGithubApp().catch(() => null)
-  const key = ctx.deps.encryptionKey
-  if (!stored || !key) {
-    await declineTurn({ meta, bus: ctx.backplane }, job, TURN_FAILED)
-    return quiet("github app not configured")
+    return null
+  return {
+    origin,
+    number: origin.number,
+    commentId: origin.comment_id,
+    installationId: raw.installation_id,
+    githubUserId: raw.github_user_id,
   }
-  const appBot = `${stored.slug}[bot]`
-  // The server's own token for this one repository: posting Derive's comment, and reading the
-  // pull request for the turn. Never an agent's, which is narrowed to that agent's sources.
+}
+
+/**
+ * How a mention's turn answers on its pull request, built from the job row and the stored App.
+ * Null when there is no App (or key) to mint a token with, and so no way to say anything.
+ *
+ * `answer` turns the acknowledgement (`origin.ack_comment_id`) into the answer. Only its line is
+ * replaced: an agent that already reported under it (lib/github-comment-reply.ts) keeps its line,
+ * and an acknowledgement that already shows the answer is left alone, so a replay edits nothing.
+ * Without an acknowledgement, or one GitHub will not let us edit, the answer is a new comment,
+ * recorded on the chat job and on `alsoOn` (a job the turn handed off to).
+ */
+const githubReplier = async (
+  meta: MetaStore,
+  encryptionKey: string | undefined,
+  baseUrl: string,
+  job: JobRecord,
+  turn: NonNullable<ReturnType<typeof githubTurnOf>>,
+) => {
+  const stored = await meta.getGithubApp().catch(() => null)
+  if (!stored || !encryptionKey) return null
+  const { repository } = turn.origin
+  const base = baseUrl.replace(/\/$/, "")
+  const delivery = turn.origin.delivery_id
   let token: Promise<string> | null = null
   const tokenFor = () => {
     token ??= installationToken(
       stored.app_id,
-      decryptSecret(stored.private_key, key),
-      installationId,
+      decryptSecret(stored.private_key, encryptionKey),
+      turn.installationId,
       "pr-comment",
       repository.split("/")[1] ?? "",
     )
     return token
   }
-  const post = (body: string): Promise<IssueComment | null> =>
-    tokenFor()
-      .then((t) => createIssueComment(t, repository, number, body))
-      .catch((e) => {
-        log.warn("github mention reply failed", { delivery, error: String(e) })
-        return null
-      })
-  const placeholder = origin.ack_comment_id ?? null
-
-  // FROM HERE ON, SOMEBODY IS WAITING ON THE PULL REQUEST, and once a hand-off has started a
-  // job every exit says so, or they read "try again" and start a second one.
-  let handOff: HandOffSurface | null = null
-  const startedSay = (): string | null => {
-    const o = handOff?.outcome()
-    return o?.kind === "handed_off" ? o.say : null
-  }
-  /**
-   * Turn the placeholder into the answer. Only the placeholder's line is replaced: an agent that
-   * already reported under it (lib/github-comment-reply.ts) keeps its line. Without a
-   * placeholder, or one GitHub will not let us edit, the answer is a new comment, recorded on
-   * every job it concerns.
-   */
-  const answer = async (text: string) => {
+  const placeholder = turn.origin.ack_comment_id ?? null
+  const answer = async (text: string, alsoOn?: string | null) => {
     const body = quietMentions(absoluteLinks(text, base))
     if (placeholder) {
       const edited = await tokenFor()
@@ -575,41 +564,159 @@ export const runGithubMentionTurnById = async (
         })
       if (edited) return
     }
-    const made = await post(body)
+    const made = await tokenFor()
+      .then((t) => createIssueComment(t, repository, turn.number, body))
+      .catch((e) => {
+        log.warn("github mention reply failed", { delivery, error: String(e) })
+        return null
+      })
     if (!made) return
-    await recordAckComment(meta, jobId, made.id)
+    await recordAckComment(meta, job.id, made.id)
+    if (alsoOn) await recordAckComment(meta, alsoOn, made.id)
+  }
+  return { appBot: `${stored.slug}[bot]`, tokenFor, placeholder, answer }
+}
+
+/** Tell a pull request its mention's turn failed, for a runner that gave up on it
+ *  (chat-turn-do.ts): the acknowledgement becomes the failure line, or the line is posted when
+ *  there is none. Best effort and never throws. */
+export const tellGithubMentionFailed = async (
+  meta: MetaStore,
+  encryptionKey: string | undefined,
+  baseUrl: string,
+  job: JobRecord,
+): Promise<void> => {
+  const turn = githubTurnOf(job)
+  if (!turn) return
+  const replier = await githubReplier(meta, encryptionKey, baseUrl, job, turn).catch(() => null)
+  await replier?.answer(MENTION_FAILED).catch(() => {})
+}
+
+/**
+ * Serve the turn of a pull request mention's job from the job id alone, for a runner that holds
+ * nothing else (the ChatTurn Durable Object), and for the request itself where there is no
+ * runner.
+ *
+ * The request walked every gate, opened and leased the job, wrote the question and posted the
+ * acknowledgement (its id is `origin.ack_comment_id`, written with the claim). This re-reads what
+ * the turn needs and re-checks what the request checked: the App and an installation token, that
+ * the workspace still holds that installation, that the commenter's GitHub sign-in still names
+ * the asker, the asker's seat, the workspace's settings and the model; then the agent catalog,
+ * and the pull request with its conversation. If any of it moved, the acknowledgement says so
+ * and the job settles failed.
+ *
+ * Runners are at-least-once. A stale claim and a settled job are left alone. A turn that wrote
+ * its reply but died before settling shows that reply and settles, never answered twice; one
+ * that began (markTurnBegan) and died before replying is not run again, since its tools may
+ * already have acted. The answer is always shown before the job settles, so a death between the
+ * two leaves a job the replay can still finish.
+ */
+export const runGithubMentionTurnById = async (
+  ctx: AppContext,
+  jobId: string,
+  startedAt?: string,
+): Promise<{ status: string }> => {
+  const { meta } = ctx
+  const quiet = (status: string) => {
+    log.info("github mention turn not served", { job: jobId, status })
+    return { status }
+  }
+  const claimed = await meta.getJob(jobId)
+  if (
+    !claimed ||
+    claimed.agent_id !== DERIVE_AGENT_ID ||
+    !claimed.asked_by ||
+    turnViaOf(claimed) !== "github"
+  )
+    return quiet("not a github turn")
+  if (claimed.status !== "running") return quiet("job settled")
+  if (startedAt && claimed.started_at !== startedAt) return quiet("claim moved")
+  // The request leased the job for its own clock; this turn knows its budget.
+  const job = await meta.updateJob(
+    claimed.id,
+    { lease_until: new Date(Date.now() + ownLeaseMs(ctx)).toISOString() },
+    { status: "running", started_at: claimed.started_at },
+  )
+  if (!job?.started_at) return quiet("claim moved")
+  const claim = job.started_at
+  const org = job.org_id
+  const askerId = claimed.asked_by
+  const turn = githubTurnOf(job)
+  const replier = turn
+    ? await githubReplier(meta, ctx.deps.encryptionKey, ctx.deps.baseUrl, job, turn)
+    : null
+  if (!turn || !replier) {
+    // No installation or App to mint a token with, so nothing can be said on the pull request.
+    log.error("github mention turn cannot be served", { job: jobId, row: !!turn })
+    await declineTurn({ meta, bus: ctx.backplane }, job, TURN_FAILED)
+    return quiet(turn ? "github app not configured" : "unreadable github turn")
+  }
+  const { origin, number, commentId } = turn
+  const { repository, delivery_id: delivery } = origin
+  const { appBot, tokenFor, answer } = replier
+
+  // FROM HERE ON, SOMEBODY IS WAITING ON THE PULL REQUEST, and once a hand-off has started a
+  // job every exit says so, or they read "try again" and start a second one.
+  let handOff: HandOffSurface | null = null
+  const startedSay = (): string | null => {
     const o = handOff?.outcome()
-    if (o?.kind === "handed_off") await recordAckComment(meta, o.job.id, made.id)
+    return o?.kind === "handed_off" ? o.say : null
+  }
+  const handedJob = () => {
+    const o = handOff?.outcome()
+    return o?.kind === "handed_off" ? o.job.id : null
   }
 
-  // Already answered under this claim: settle as that reply said and show it, do not answer
-  // again. Without an acknowledgement to edit, showing it would be a second comment, so the
-  // job is only settled.
+  // Already answered under this claim: show it, then settle as that reply said. Without an
+  // acknowledgement to edit, showing it would be a second comment, so the job is only settled.
   const replied = await repliedUnderClaim(meta, job)
   if (replied) {
     const said = JSON.parse(replied.meta_json ?? "{}") as { outcome?: string }
+    if (replier.placeholder) await answer(replied.body_md)
     await settleGithubJob(meta, jobId, claim, said.outcome === "failed" ? "failed" : "succeeded")
-    if (placeholder) await answer(replied.body_md)
     return quiet("already answered")
+  }
+  // Began under this claim and died before replying: its tools may already have acted (a
+  // hand-off, a source call), so the turn is not run again.
+  if (turnBegan(job)) {
+    await answer(GITHUB_INTERRUPTED)
+    await settleGithubJob(meta, jobId, claim, "failed")
+    return quiet("interrupted turn not repeated")
+  }
+  const refuse = async (status: string, text = MENTION_FAILED) => {
+    await answer(text)
+    await settleGithubJob(meta, jobId, claim, "failed")
+    return quiet(status)
   }
   const question = (await meta.listJobMessages(jobId))
     .filter((msg) => msg.author_kind === "asker")
     .at(-1)?.body_md
-  if (!question) {
-    await answer("Something went wrong on my side, so I have not answered that. Try me again.")
-    await settleGithubJob(meta, jobId, claim, "failed")
-    return quiet("no question to answer")
-  }
+  if (!question) return refuse("no question to answer")
+  // WHO and WHICH WORKSPACE, again: the commenter's sign-in still names the asker, and the
+  // workspace still holds the installation the comment came through.
+  const linked = (await meta.usersByGithubIds([String(turn.githubUserId)]).catch(() => []))[0]
+  if (linked?.id !== askerId) return refuse("commenter no longer linked")
+  const connections = await meta.listConnections(org, undefined, "workspace").catch(() => [])
+  if (
+    !connections.some(
+      (cn) =>
+        cn.kind === "github_app" && cn.status === "active" && cn.broker_ref === turn.installationId,
+    )
+  )
+    return refuse("installation no longer connected")
   // Every rung but the rate limit, which the request already spent for this comment.
   const gate = await liveChatArrival(
     { meta, models: ctx.modelsFor, chatAllowlist: ctx.chatAllowlist },
     { org, userId: askerId },
   )
-  if (!gate.ok) {
-    await answer(refusalMessage(gate.reason))
-    await settleGithubJob(meta, jobId, claim, "failed")
-    return quiet(gate.reason)
-  }
+  if (!gate.ok)
+    // The two the request keeps quiet would describe the workspace's setup on a pull request.
+    return refuse(
+      gate.reason,
+      gate.reason === "not_enabled" || gate.reason === "not_allowlisted"
+        ? MENTION_FAILED
+        : refusalMessage(gate.reason),
+    )
   const { settings, model } = gate
   const askerName = (await meta.getUsers([askerId]).catch(() => []))[0]?.name ?? origin.requested_by
   const m = { repository, number, commentId }
@@ -678,6 +785,7 @@ export const runGithubMentionTurnById = async (
     ]
       .filter(Boolean)
       .join(" ")
+    if (!(await markTurnBegan(meta, job))) return quiet("job claim ended")
     const link = `https://github.com/${repository}/pull/${number}`
     const where = `(This comment is on ${link}, from GitHub user ${origin.requested_by}.)`
     const res = await runChatTurn(
@@ -704,14 +812,15 @@ export const runGithubMentionTurnById = async (
       },
     )
 
+    // Spent whatever happens next, so recorded before anything else can fail.
+    if (res.costMicroUsd) await meta.addJobCost(jobId, res.costMicroUsd).catch(() => null)
     // The server's sentence once a job exists, whatever the turn went on to say or fail at.
     const said = startedSay()
     const reply = said ?? res.reply
     const outcome = said ? "answered" : res.outcome
     const held = await meta.getJob(jobId)
     if (held?.status !== "running" || held.started_at !== claim) {
-      if (res.costMicroUsd) await meta.addJobCost(jobId, res.costMicroUsd).catch(() => null)
-      if (said) await answer(said)
+      if (said) await answer(said, handedJob())
       return quiet("job claim ended")
     }
     await meta.addJobMessage({
@@ -744,16 +853,20 @@ export const runGithubMentionTurnById = async (
           ...(handed?.kind === "handed_off" ? { job_id: handed.job.id } : {}),
         }
       : undefined
+    // Shown BEFORE the job settles: a turn that dies between the two leaves the job running
+    // with its reply written, and the replay shows it (an acknowledgement already showing it is
+    // left alone) and settles. Settled first, the replay would find a settled job and the
+    // acknowledgement would keep saying it is looking.
+    await answer(reply, handedJob())
     await settleGithubJob(
       meta,
       jobId,
       claim,
       outcome === "failed" ? "failed" : !said && res.needs ? "needs_you" : "succeeded",
-      res.costMicroUsd,
+      null,
       said ? undefined : res.needs,
       routing,
     )
-    await answer(reply)
     // A Derive-machine agent starts now rather than at the next tick; after the comment,
     // because the person is waiting for the comment and not for the machine.
     if (handed?.kind === "handed_off") {
@@ -780,10 +893,8 @@ export const runGithubMentionTurnById = async (
       error: e instanceof Error ? e.message : String(e),
     })
     const said = startedSay()
+    await answer(said ?? MENTION_FAILED, handedJob())
     await settleGithubJob(meta, jobId, claim, said ? "succeeded" : "failed")
-    await answer(
-      said ?? "Something went wrong on my side, so I have not answered that. Try me again.",
-    )
     return quiet("turn failed")
   }
   return { status: "answered" }

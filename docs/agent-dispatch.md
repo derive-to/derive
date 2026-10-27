@@ -435,10 +435,20 @@ asker message, and it reads again the bot token, the asker's seat and whether th
 still an `oauth` one for this asker, the workspace settings, the model, and the catalog. Rules:
 
 - A claim that has moved (a different `started_at`) or a settled job: do nothing.
-- A reply already written under this claim: settle as it said and show it in the placeholder.
+- A reply already written under this claim: show it in the placeholder, then settle as it said.
   Never answer again.
+- A turn that began under this claim (`turn_began`, written fenced on the claim right before the
+  model runs) and died before replying: the placeholder says the turn was interrupted and the job
+  settles failed. The turn is not run again, because its tools may already have acted.
+- The answer is always shown before the job settles, so a turn that dies between the two leaves
+  a running job with its reply written, which the replay finishes. The turn's cost is recorded as
+  soon as the model returns.
 - The seat or the workspace changed since the event: the placeholder says why and the job
-  settles failed.
+  settles failed. `not_enabled` and `not_allowlisted` are said as the generic failure line, as
+  the event keeps them quiet.
+- A runner that gives up after its retries, a row the turn cannot read, or a Slack install that
+  was removed: the placeholder gets the generic failure line where there is still a token to
+  edit it with, and the job settles failed.
 - A runner that declines the turn (the poke fails) does not lose it. The event takes the claim
   back with a `started_at` strictly later than the one it handed over, fenced on that one, and
   serves the turn itself, so the runner's late run of the old claim stays silent.
@@ -976,15 +986,18 @@ same delivery and neither can break the other (17.2).
 - **The job.** One chat job per comment on `DERIVE_AGENT_ID`: `attended = 1`,
   `dedupe_key = github:comment:<comment_id>`, `asked_by` and `payer_id` the asker, and
   `meta_json = { via: "github", origin: { kind: github, requested_by: <login>, repository,
-  number, delivery_id, comment_id }, installation_id }`. `installation_id` is the delivery's
-  installation, kept because the turn mints its token from it and cannot read it back from
-  anywhere else. A redelivery finds the job by `origin.comment_id` and
+  number, delivery_id, comment_id }, installation_id, github_user_id }`. The turn cannot read
+  these two back from anywhere else: it mints its token from the installation, and it checks the
+  commenter's sign-in still names the asker. The acknowledgement is posted before the job is
+  claimed, and its id is written into `origin.ack_comment_id` in the same write as the claim. A redelivery finds the job by `origin.comment_id` and
   stops; two first deliveries racing are settled by the open-job dedupe index.
 - **Where the turn runs.** As in Slack (7.1): the delivery handler posts the acknowledgement,
   records it as `origin.ack_comment_id`, leases the job, and hands the turn over by job id. On
   Workers it runs on the `ChatTurn` Durable Object; elsewhere right after the response. The turn
   (`runGithubMentionTurnById`) loads the App and mints the installation token, then reads the
-  question and checks the seat and gate again, all from the job row. It has the same claim,
+  question and checks again that the commenter's GitHub sign-in names the asker, that the
+  workspace still holds an active connection to the installation, and the seat and gate, all
+  from the job row. It has the same claim,
   replay and decline rules as 7.1. A replay that finds the reply already written edits the
   acknowledgement only if it is not already the answer.
 - **The turn.** `runChatTurn` with `buildChatTools` for the asker and `withHandOff` on top, the
@@ -1057,9 +1070,10 @@ Known and not covered:
 
 - Two first deliveries of an unlinked commenter's mention, arriving at the same moment, can each
   post the sign-in reply once; the marker stops every later one.
-- A turn whose Durable Object keeps failing (three alarm attempts) settles its chat job failed,
-  but the acknowledgement comment (or Slack placeholder) is not edited to say so. An object that
-  dies without throwing leaves the job running until its ten-minute lease lapses.
+- An object that dies without throwing leaves the job running until its ten-minute lease lapses;
+  the reaper then marks it lost without editing the acknowledgement.
+- A row with no installation id, or an App that was removed, leaves nothing to post with: the job
+  settles failed and the acknowledgement keeps saying it is looking.
 - Choosing between several workspaces that hold the installation (17.3) has no test.
 
 ## Appendix A. Where the Code Is Today
