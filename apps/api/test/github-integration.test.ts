@@ -1558,6 +1558,47 @@ describe("@derive in a pull request comment hands work to a workspace agent", ()
     expect(t.posted()).toHaveLength(5)
   })
 
+  // An agent with no GitHub source is not refused for a pull request: it starts with no
+  // checkout, and the server names the pull request and its commit in the instruction so the
+  // agent knows which code was asked about. Its default repository must not stand in.
+  it("starts an agent with no GitHub source without a checkout, naming the pull request and commit", async () => {
+    const t = await setup("ghm-no-source")
+    const video = (await t.meta.listAgents("default")).find((a) => a.name === "Video Maker")
+    if (!video) throw new Error("fixture agent missing")
+    await t.meta.updateAgent(video.id, "default", {
+      repositories_json: JSON.stringify(["acme/videos"]),
+    })
+    t.setScript((call) =>
+      toolResults(call).length === 0
+        ? {
+            text: "",
+            toolUses: [
+              {
+                id: "t0",
+                name: "hand_off",
+                input: { agent_id: video.id, instruction: "Make a clip of the retry fix." },
+              },
+            ],
+            costUsd: null,
+          }
+        : {
+            text: (JSON.parse(toolResults(call)[0] ?? "{}") as { say?: string }).say ?? "",
+            toolUses: [],
+            costUsd: null,
+          },
+    )
+    await t.deliver(t.comment({ body: "@derive-test make a clip of this" }), "dlv-ns")
+    const [job, ...more] = await t.dispatched()
+    expect(more).toEqual([])
+    expect(job?.agent_id).toBe(video.id)
+    expect(JSON.parse(job?.meta_json ?? "{}").repo).toBeUndefined()
+    expect(job?.instruction).toBe(
+      "Make a clip of the retry fix.\n\nPull request: https://github.com/acme/api/pull/123 at commit abc123",
+    )
+    // The fixture agent's machine is offline, so it is queued rather than started.
+    expect(t.posted().at(-1)).toMatch(/Queued \*\*Video Maker\*\* on acme\/api#123/)
+  })
+
   it("a commenter with no Derive sign-in is told how, once, and nothing runs", async () => {
     const t = await setup("ghm-unlinked")
     const stranger = { id: 4242, login: "carol-gh" }

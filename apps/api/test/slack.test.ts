@@ -1019,7 +1019,7 @@ describe("@Derive in Slack hands work to a workspace agent", () => {
     expect(toolResults(t.calls[1] as Call).at(-1)).toMatch(/once per turn/)
   })
 
-  it("refuses an agent off the list, a repository the agent cannot reach, and an agent paused or unshared mid-turn", async () => {
+  it("refuses an agent off the list or paused or unshared mid-turn, and starts without a checkout for a repository it cannot reach", async () => {
     const t = await setup("ho-refuse", { link: "oauth" })
     const lastResult = () => toolResults(t.calls.at(-1) as Call).at(-1)
 
@@ -1027,11 +1027,21 @@ describe("@Derive in Slack hands work to a workspace agent", () => {
     await t.mention("100.2")
     expect(lastResult()).toMatch(/not one of the agents/)
 
+    // A repository no source of the agent's reaches is not a refusal: the job starts without a
+    // checkout, and the instruction (which carries the links) is what the agent works from.
+    await t.meta.updateAgent(t.review.id, "default", {
+      repositories_json: JSON.stringify(["elsewhere/default"]),
+    })
     t.setScript(
       handOff({ agent_id: t.review.id, instruction: "Review it.", repo: "elsewhere/api" }),
     )
     await t.mention("100.3")
-    expect(lastResult()).toMatch(/no GitHub connection that reaches elsewhere\/api/)
+    expect(lastResult()).toMatch(/Started/)
+    const unreached = (await t.dispatched()).find((j) => j.instruction === "Review it.")
+    expect(unreached).toBeDefined()
+    // The task options are the top level of meta_json. No checkout, and the agent's default
+    // repository (a different codebase) must not stand in for the one asked about.
+    expect(JSON.parse(unreached?.meta_json ?? "{}").repo).toBeUndefined()
 
     // Paused after the catalog was rendered: the live state is the answer.
     t.setScript(async (call) => {
@@ -1052,7 +1062,8 @@ describe("@Derive in Slack hands work to a workspace agent", () => {
     await t.mention("100.5")
     expect(lastResult()).toMatch(/cannot ask Video Maker/)
 
-    expect(await t.dispatched()).toHaveLength(0)
+    // Only the no-checkout start above made a job; every refusal made none.
+    expect(await t.dispatched()).toHaveLength(1)
     expect(JSON.parse((await t.chatJob())?.meta_json ?? "{}").routing).toMatchObject({
       decision: "refused",
       agent_id: t.video.id,

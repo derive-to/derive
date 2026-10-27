@@ -153,8 +153,9 @@ is wrong even if its tests pass.
    name or email match. Like a real uid versus the username in a log line.
 
 5. **The model proposes, the server disposes.** The router's choice of agent, and the `repo` it
-   names, are proposals. The server rechecks access, pause state, repository reach, payer, and
-   budget on every call, against live state, never against the catalog it rendered. The catalog
+   names, are proposals. The server rechecks access, pause state, payer, and budget on every
+   call, against live state, never against the catalog it rendered, and gives the repository
+   to the task as a checkout only when a source of the agent's reaches it. The catalog
    is read fresh each turn and never cached.
 
 6. **Routing is tool selection.** The router is a model choosing among tools whose descriptions
@@ -172,8 +173,8 @@ is wrong even if its tests pass.
    an agent. The chat turn's budget (eight minutes on the Durable Object that serves it, 7.1)
    forces this; it is also what makes a lost runner recoverable.
 
-9. **Fail closed on authority, fail open on decoration.** Access, payer, `agentWrites`,
-   repository reach: refuse when unsure. Thread context, the placeholder, the thread reply: best
+9. **Fail closed on authority, fail open on decoration.** Access, payer, `agentWrites`:
+   refuse when unsure. Thread context, the placeholder, the thread reply: best
    effort, never block the core, and the bell still rings when they fail. Every step in this
    document sorts into one of these two buckets; a `try/catch` that cannot say which bucket it is
    in is a bug.
@@ -531,11 +532,13 @@ refusal to say why in one sentence and not try a different agent.
   - The agent is in this turn's catalog, then rechecked live: same workspace, not managed, not
     paused, `canAskAgent` for the asker, `agentWrites` on. The catalog that was rendered is not
     trusted.
-  - `repo`, when given, is `owner/name` and the agent holds a bound, active `github_app`
-    connection installed on the account that owns it. This is the same test the task's checkout
-    makes, so the hand-off accepts exactly what the checkout will try. An installation limited to
-    selected repositories that excludes `repo` passes here and is refused at checkout. An agent
-    with no GitHub source refuses a `repo`.
+  - `repo`, when given, is `owner/name`. It becomes the task's checkout only when the agent
+    holds a bound, active `github_app` connection installed on the account that owns it: the
+    same test the checkout makes, so a checkout is asked for exactly where it will work. An
+    installation limited to selected repositories that excludes `repo` passes here and is
+    refused at checkout. An agent with no such source is not refused: many bring their own way
+    in (a token in their environment, instructions that clone from a link), so the job starts
+    without a checkout and the instruction, which carries every link, is what it works from.
   - The budget check the jobs route makes, through the same helper. A Derive-machine agent is
     judged at admission (payer account, sandbox, budget), and its refusal is the reason given.
 - Effect: `askAgent` with the 4.1.4 field values and the 4.2 dedupe key. Then the same machine
@@ -687,7 +690,7 @@ No new agent field. No new workspace setting.
 | Asker unlinked or email-matched | No `hand_off` tool; turn gives the link URL |
 | Agent paused or access revoked between render and call | `hand_off` refuses; turn says so |
 | Payer has no account, or budget exhausted | `hand_off` refuses with the reason; no job |
-| `repo` not reachable by the agent's GitHub source | `hand_off` refuses; turn says which repo |
+| `repo` not reachable by the agent's GitHub source | Job starts without a checkout; the instruction carries the links |
 | Slack redelivers the mention | Chat turn dedupes on message ts; hand-off dedupes on 4.2 key |
 | Thread read fails | Turn runs on the mention alone |
 | Agent's machine offline (owner runner) | Job waits queued; the acknowledgement says it is queued |
@@ -707,9 +710,9 @@ No new agent field. No new workspace setting.
   the app.
 - **Prompt injection.** Thread messages and GitHub payload text are untrusted. They reach the
   router labelled as quoted content. The router's only power is choosing one agent from a list
-  the server rechecks, and naming a repository the server checks against the agent's own
-  installation. The agent receives the instruction the router wrote, and it holds only its own
-  bound sources.
+  the server rechecks, and naming a repository that becomes a checkout only when the agent's
+  own installation reaches it. The agent receives the instruction the router wrote, and it
+  holds only its own bound sources.
 - **Reply credentials.** Thread replies are posted by the API with the install's bot token. The
   runner never holds it.
 - **Fork pull requests** never trigger, so no run starts on code the repository's owners did not
@@ -783,11 +786,11 @@ hand_off(agent_id, instruction, repo?):                            // server sid
   a = get_agent(agent_id)
   require a.org == org and not a.managed and not a.paused and can_ask(asker, a)
   require agent_writes_on(org)
-  if repo: require bound_github_connection(a, owner_of(repo))      // as the checkout does
+  checkout = repo if repo and bound_github_connection(a, owner_of(repo)) else None  // as the checkout does
   require budget_allows(a, asker)                                  // the jobs route's helper
   job, _ = ask_agent(a, asked_by=asker.id, instruction,
                      dedupe_key="slack:" + team + ":" + channel + ":" + message_ts + ":" + a.id,
-                     task.repo=repo,
+                     task.repo=checkout,   // none: no default repository stands in
                      origin={ kind: slack, team_id, channel, thread_ts, message_ts,
                               requested_by: slack_user_id })
   return { job_id: job.id, agent_name: a.name, status: job.status, say: acknowledgement }
@@ -830,7 +833,8 @@ asserts what comes out.
   message as quoted content.
 - With one askable agent and an OAuth-linked asker, a scripted model's `hand_off` creates one
   job with `asked_by` = the asker, `origin.kind = slack`, and `task.repo` = the given repo.
-- `hand_off` with a `repo` the agent's installation does not reach is refused.
+- `hand_off` with a `repo` the agent's installation does not reach starts the job with no
+  `task.repo`, and the agent's default repository does not stand in for it.
 - An email-matched asker gets no `hand_off` tool, and the reply contains the link URL.
 - `hand_off` to an agent paused after the catalog rendered is refused.
 - A Slack redelivery of the same mention creates no second job.
@@ -1018,8 +1022,10 @@ same delivery and neither can break the other (17.2).
   catalog from `agentCatalogFor`. The lane sentence says the reply is posted on the pull request,
   readable by everyone who can read the repository (13).
 - **`hand_off`.** As 7.4, with three differences. The repository is the event's: the server
-  fixes it to `owner/name` whatever the model's `repo` says, checks the agent's GitHub source
-  reaches it (so an agent without one refuses), and sets `task.repo = owner/name@<head sha>`. The
+  fixes it to `owner/name` whatever the model's `repo` says, and sets
+  `task.repo = owner/name@<head sha>` when the agent's GitHub source reaches it; when none does,
+  the job starts with no checkout and the server appends the pull request link and the head sha
+  to the instruction, so the agent knows which commit was asked about. The
   dispatched job's origin is the chat job's, `comment_id` included, and its dedupe key is
   `github:<delivery_id>:<agent_id>`. The `say` sentence ends "I'll update this comment when it
   finishes." The tool is withheld, with a one-sentence reason, when the pull request could not be

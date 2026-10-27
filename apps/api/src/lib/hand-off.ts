@@ -122,7 +122,7 @@ const describe = (catalog: AgentRecord[], answerTools: string[], venue: Venue): 
     `3. If it is a question your other tools (${answerTools.join(", ")}) can answer, answer it. Do not hand off what you can do yourself.`,
     `4. If the agent's description names an input ${venue.thread} does not contain (for example a PR link), ask for that input instead of handing off.`,
     venue.repository
-      ? `5. The request is about ${venue.repository}. The agent works in it whatever repo says, so leave repo out.`
+      ? `5. The request is about ${venue.repository}. Leave repo out. The agent gets a checkout of it when its GitHub source reaches it, and the pull request link and commit either way, so the instruction still needs every other link.`
       : "5. When the request is about a pull request or a repository, pass its owner/name as repo.",
     "6. Never call hand_off more than once per turn.",
     venue.confidential
@@ -253,8 +253,25 @@ export const withHandOff = (base: ChatToolSurface, opts: HandOffOptions): HandOf
     // Fail closed, as every agent write does: an unreadable switch reads as off.
     if (await agentWritesOff(meta, opts.org))
       return refuse("Agents are switched off in this workspace.", agent_id)
-    if (repo && !(await githubConnectionFor(meta, agent, repo)))
-      return refuse(`${agent.name} has no GitHub connection that reaches ${repo}.`, agent_id)
+    // A checkout needs a GitHub source of the agent's that reaches the repository. Many agents
+    // bring their own way in (a token in their environment, instructions that clone from a
+    // link), and refusing them here refused the request outright. So the repository is a
+    // checkout only when the agent's source reaches it; otherwise the job starts without one,
+    // and the instruction, which carries every link, is what the agent works from.
+    const checkout = repo && (await githubConnectionFor(meta, agent, repo)) ? repo : null
+    if (repo && !checkout)
+      log.info("hand_off without checkout: no GitHub source reaches the repository", {
+        agent: agent.id,
+        repo,
+        origin: origin.kind,
+      })
+    // Without a checkout the commit the event pinned would be lost, and an agent cloning on
+    // its own would see whatever the branch is by then. The pull request and its commit go
+    // into the instruction itself, in the server's words.
+    const pinned =
+      !checkout && fixed && origin.kind === "github" && origin.number
+        ? `${instruction}\n\nPull request: https://github.com/${origin.repository}/pull/${origin.number}${fixed.ref ? ` at commit ${fixed.ref}` : ""}`
+        : instruction
 
     const dedupeKey =
       origin.kind === "slack"
@@ -301,11 +318,13 @@ export const withHandOff = (base: ChatToolSurface, opts: HandOffOptions): HandOf
       const { job } = await askAgent(opts.jobDeps, {
         agent,
         askedBy: opts.askerId,
-        instruction,
+        instruction: pinned,
         // Nobody holds this open: the turn ends in seconds and the agent takes minutes.
         attended: false,
         dedupeKey,
-        task: repo ? { repo: fixed?.ref ? `${repo}@${fixed.ref}` : repo } : undefined,
+        task: checkout ? { repo: fixed?.ref ? `${checkout}@${fixed.ref}` : checkout } : undefined,
+        // A repository the agent cannot check out must not become its default one instead.
+        noDefaultRepository: !!repo && !checkout,
         origin,
       })
       return await started(job)
