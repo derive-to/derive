@@ -4,6 +4,7 @@ import {
   type ArtifactRecord,
   DERIVE_AGENT_ID,
   type JobEffect,
+  type JobMessageRecord,
   type JobNeeds,
   type JobRecord,
   jobResult,
@@ -32,11 +33,12 @@ const LEASE_SLACK_MS = 2 * 60_000
 const DETACHED_LEASE_MS = 10 * 60_000
 
 /** The lease for a turn served on this context's own clock. */
-const ownLeaseMs = (ctx: AppContext) =>
+export const ownLeaseMs = (ctx: AppContext) =>
   ctx.attendedTurnBudgetMs ? ctx.attendedTurnBudgetMs + LEASE_SLACK_MS : DETACHED_LEASE_MS
 
 /** The lease the request takes when it starts a turn: its own, unless a runner serves it. */
-const leaseMsFor = (ctx: AppContext) => (ctx.chatTurnRunner ? DETACHED_LEASE_MS : ownLeaseMs(ctx))
+export const leaseMsFor = (ctx: AppContext) =>
+  ctx.chatTurnRunner ? DETACHED_LEASE_MS : ownLeaseMs(ctx)
 
 /** The refusal a turn writes when the turn before it died mid-save. The retry route says the
  *  same thing, because it is the same refusal. */
@@ -197,29 +199,40 @@ const startTurn = (ctx: AppContext, job: JobRecord) =>
     { status: job.status, updated_at: job.updated_at, needs_json: job.needs_json },
   )
 
+/** How a turn is handed off (dispatchTurn). */
+export interface TurnDispatch {
+  /** The scoped page's version as the request saw it; null for every turn without a page. */
+  baseVersion?: number | null
+  /** The turn rebuilt from the job id and the claim alone, for a runner that holds nothing
+   *  else. */
+  run: (startedAt: string) => Promise<void>
+  /** The turn served by this request under `claim` (the job as handed in, or a claim the
+   *  request took back from a runner that declined it). */
+  serve: (claim: JobRecord) => Promise<void>
+  /** Where the request serves it: after its response, or inline when the caller already runs
+   *  after one (a webhook's deferred work). */
+  later: (work: () => Promise<void>) => Promise<void>
+}
+
 /**
- * Serve the turn after this response, or hand it to the deploy's runner (chatTurnRunner, a
- * Durable Object per conversation on Workers) to serve on its own clock. A runner that cannot
- * take the turn does not lose it: the request serves it as before.
+ * Hand a running, leased job's turn to the deploy's runner (chatTurnRunner, a Durable Object per
+ * conversation on Workers) to serve on its own clock, or serve it through `later` where there is
+ * no runner. A runner that cannot take the turn does not lose it: the request takes the claim
+ * back and serves it itself. Page asks, Slack mentions and GitHub mentions all go through here.
  */
-export const dispatchPageTurn = async (
+export const dispatchTurn = async (
   ctx: AppContext,
-  c: Context,
   job: JobRecord,
-  asker: { id: string; name: string | null },
-  page: ArtifactRecord | null,
-  grant: PageTurnGrant,
+  turn: TurnDispatch,
 ): Promise<void> => {
   const startedAt = job.started_at
-  if (!ctx.chatTurnRunner || !startedAt)
-    return ctx.afterResponse(c, () => servePageTurn(ctx, job, asker, page, grant))
-  const baseVersion = page?.current_version ?? null
+  if (!ctx.chatTurnRunner || !startedAt) return turn.later(() => turn.serve(job))
   try {
     await ctx.chatTurnRunner({
       jobId: job.id,
       startedAt,
-      baseVersion,
-      run: () => runPageTurnById(ctx, job.id, startedAt, baseVersion),
+      baseVersion: turn.baseVersion ?? null,
+      run: () => turn.run(startedAt),
     })
   } catch (e) {
     log.warn("chat turn runner declined the turn; serving it after the response", {
@@ -251,8 +264,27 @@ export const dispatchPageTurn = async (
       log.warn("chat turn moved before the request could take it back", { job: job.id })
       return
     }
-    await ctx.afterResponse(c, () => servePageTurn(ctx, mine, asker, page, grant))
+    const claim = mine
+    await turn.later(() => turn.serve(claim))
   }
+}
+
+/** A page ask's turn, through dispatchTurn: after this response, or on the runner. */
+export const dispatchPageTurn = (
+  ctx: AppContext,
+  c: Context,
+  job: JobRecord,
+  asker: { id: string; name: string | null },
+  page: ArtifactRecord | null,
+  grant: PageTurnGrant,
+): Promise<void> => {
+  const baseVersion = page?.current_version ?? null
+  return dispatchTurn(ctx, job, {
+    baseVersion,
+    run: (startedAt) => runPageTurnById(ctx, job.id, startedAt, baseVersion),
+    serve: (claim) => servePageTurn(ctx, claim, asker, page, grant),
+    later: (work) => ctx.afterResponse(c, work),
+  })
 }
 
 /**
@@ -290,8 +322,8 @@ export const runPageTurnById = async (
   // Already answered under this claim: settle as that reply said, do not answer again. The
   // reply's cost is not recorded again. (A turn that published and died before replying is
   // not caught here; the next turn sees the version in its effects.)
-  const last = (await meta.listJobMessages(job.id)).filter((m) => !isServerNote(m)).at(-1)
-  if (last?.author_kind === "agent" && job.started_at && last.created_at >= job.started_at) {
+  const last = await repliedUnderClaim(meta, job)
+  if (last) {
     const said = JSON.parse(last.meta_json ?? "{}") as { outcome?: string; needs?: JobNeeds }
     const status =
       said.outcome === "failed" ? "failed" : said.needs ? ("needs_you" as const) : "succeeded"
@@ -325,6 +357,19 @@ export const runPageTurnById = async (
     name: (await meta.getUsers([askerId]).catch(() => []))[0]?.name ?? null,
   }
   await servePageTurn(ctx, job, asker, page, gate)
+}
+
+/** The reply a turn already wrote under the job's current claim, or null. A runner is
+ *  at-least-once: a turn that replied and died before settling is settled from this, never
+ *  answered again. */
+export const repliedUnderClaim = async (
+  meta: JobDeps["meta"],
+  job: JobRecord,
+): Promise<JobMessageRecord | null> => {
+  const last = (await meta.listJobMessages(job.id)).filter((m) => !isServerNote(m)).at(-1)
+  return last?.author_kind === "agent" && job.started_at && last.created_at >= job.started_at
+    ? last
+    : null
 }
 
 /** Write `reason` on the job and settle it failed, fenced on its current claim. Throws if the

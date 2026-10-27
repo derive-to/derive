@@ -1,6 +1,7 @@
 import { generateKeyPairSync } from "node:crypto"
 import { DERIVE_AGENT_ID, jobOriginOf, newId } from "@derive/core"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import type { AppDeps } from "../src/context"
 import type { ModelTurn } from "../src/lib/agent-loop"
 import { encryptSecret, signState } from "../src/lib/crypto"
 import { githubWebhookSecret, githubWebhookSignature } from "../src/lib/github-app"
@@ -1136,7 +1137,11 @@ describe("@derive in a pull request comment hands work to a workspace agent", ()
 
   /** A workspace that connected GitHub installation 44050 (account acme), two described
    *  agents, and a scripted model. GitHub's API is a stub that remembers what was written. */
-  const setup = async (name: string, pr: Record<string, unknown> = {}) => {
+  const setup = async (
+    name: string,
+    pr: Record<string, unknown> = {},
+    runner?: AppDeps["chatTurnRunner"],
+  ) => {
     const calls: Call[] = []
     let script: (call: Call) => ModelTurn = () => ({
       text: "Answered.",
@@ -1157,6 +1162,7 @@ describe("@derive in a pull request comment hands work to a workspace agent", ()
             },
           },
         ]),
+        ...(runner ? { chatTurnRunner: runner } : {}),
       },
     })
     await seedApp(meta)
@@ -1410,6 +1416,54 @@ describe("@derive in a pull request comment hands work to a workspace agent", ()
     const [chat] = await t.chats()
     expect(jobOriginOf(chat?.meta_json)).toMatchObject({ comment_id: 501, ack_comment_id: 7001 })
     expect(JSON.parse(chat?.meta_json ?? "{}").routing).toMatchObject({ decision: "answered" })
+  })
+
+  it("serves the turn on a runner that outlives the delivery, editing the acknowledgement once", async () => {
+    // On Workers the delivery's after-response work gets seconds, so the turn is handed to a
+    // runner (the chat-turn Durable Object) by job id alone.
+    const handed: Parameters<NonNullable<AppDeps["chatTurnRunner"]>>[0][] = []
+    let refuse = false
+    const t = await setup("ghm-runner", {}, async (turn) => {
+      handed.push(turn)
+      // Declined after taking the turn: the delivery must take it back and serve it.
+      if (refuse) throw new Error("no runner")
+    })
+    await t.deliver(t.comment({ body: "@derive-test what does this change?" }), "dlv-r1")
+    // Acknowledged and leased, and nothing answered yet.
+    expect(t.posted()).toEqual(["👀 Looking at this…"])
+    expect(t.calls).toEqual([])
+    const [chat] = await t.chats()
+    expect(chat?.status).toBe("running")
+    expect(new Date(chat?.lease_until ?? 0).getTime() - Date.now()).toBeGreaterThan(5 * 60_000)
+    expect(handed).toEqual([
+      expect.objectContaining({ jobId: chat?.id, startedAt: chat?.started_at, baseVersion: null }),
+    ])
+    const edits = () => t.github.filter((g) => g.method === "PATCH").length
+
+    // The runner, from the id alone, turns the acknowledgement into the answer.
+    await handed[0]?.run()
+    expect(t.posted()).toEqual(["Answered."])
+    expect(edits()).toBe(1)
+    expect((await t.chats())[0]?.status).toBe("succeeded")
+    // At least once: a replay after the job settled edits and asks nothing.
+    await handed[0]?.run()
+    expect(edits()).toBe(1)
+    expect(t.calls).toHaveLength(1)
+
+    // A runner that cannot take the turn does not lose it: the delivery serves it itself.
+    refuse = true
+    await t.deliver(t.comment({ id: 502, body: "@derive-test and the tests?" }), "dlv-r2")
+    expect(handed).toHaveLength(2)
+    expect(t.posted()).toEqual(["Answered.", "Answered."])
+    expect(edits()).toBe(2)
+    const second = (await t.chats()).find((j) => j.id !== chat?.id)
+    expect(second?.status).toBe("succeeded")
+    // It took the turn back under a claim of its own, so the runner's late run says nothing.
+    expect(second?.started_at).not.toBe(handed[1]?.startedAt)
+    await handed[1]?.run()
+    expect(edits()).toBe(2)
+    expect(t.posted()).toHaveLength(2)
+    expect(t.calls).toHaveLength(2)
   })
 
   it("a commenter with no Derive sign-in is told how, once, and nothing runs", async () => {

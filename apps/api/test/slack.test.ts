@@ -13,6 +13,7 @@ import {
 } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import type { AppDeps } from "../src/context"
 import type { ModelTurn } from "../src/lib/agent-loop"
 import { parseMeta } from "../src/lib/comments"
 import { encryptSecret } from "../src/lib/crypto"
@@ -568,6 +569,7 @@ describe("@Derive in Slack hands work to a workspace agent", () => {
       link?: "oauth" | "email"
       replies?: "ok" | "fail"
       channel?: "public" | "private"
+      runner?: AppDeps["chatTurnRunner"]
     } = {},
   ) => {
     const calls: Call[] = []
@@ -590,6 +592,7 @@ describe("@Derive in Slack hands work to a workspace agent", () => {
             },
           },
         ]),
+        ...(opts.runner ? { chatTurnRunner: opts.runner } : {}),
       },
     })
     await meta.setSlackInstall({
@@ -819,6 +822,74 @@ describe("@Derive in Slack hands work to a workspace agent", () => {
     // Slack redelivers: the same mention again starts nothing new.
     expect(await t.mention("100.2")).toEqual({ status: "duplicate slack delivery" })
     expect(await t.dispatched()).toHaveLength(1)
+  })
+
+  it("serves the turn on a runner that outlives the event, once, and itself when the runner declines", async () => {
+    // On Workers the event's after-ack work gets seconds, so the turn is handed to a runner
+    // (the chat-turn Durable Object) by job id alone.
+    const handed: Parameters<NonNullable<AppDeps["chatTurnRunner"]>>[0][] = []
+    let refuse = false
+    const t = await setup("ho-runner", {
+      link: "oauth",
+      runner: async (turn) => {
+        handed.push(turn)
+        // A refusal AFTER taking the turn, as an object that armed its alarm and then failed
+        // to answer the poke: the request must take the turn back from it.
+        if (refuse) throw new Error("no runner")
+      },
+    })
+    t.setScript(
+      handOff({
+        agent_id: t.review.id,
+        instruction: "Review https://github.com/acme/api/pull/123.",
+      }),
+    )
+    expect(await t.mention("100.2")).toEqual({ status: "handed to the turn runner" })
+    // The event acknowledged the person and leased the job, and nothing answered yet.
+    expect(t.said).toEqual([expect.stringMatching(/request received/i)])
+    expect(t.calls).toHaveLength(0)
+    const chat = await t.chatJob()
+    expect(chat?.status).toBe("running")
+    expect(new Date(chat?.lease_until ?? 0).getTime() - Date.now()).toBeGreaterThan(5 * 60_000)
+    expect(handed).toEqual([
+      expect.objectContaining({ jobId: chat?.id, startedAt: chat?.started_at, baseVersion: null }),
+    ])
+
+    // The runner, from the id alone, hands off and replies in the thread as the event would have.
+    await handed[0]?.run()
+    expect((await t.dispatched()).map((j) => j.agent_id)).toEqual([t.review.id])
+    expect(t.said).toHaveLength(2)
+    expect(t.said.at(-1)).toContain("Started *PR Review* on acme/api#123")
+    expect((await t.chatJob())?.status).toBe("succeeded")
+    // At least once: a replay after the job settled says and starts nothing.
+    const calls = t.calls.length
+    await handed[0]?.run()
+    expect(t.said).toHaveLength(2)
+    expect(t.calls).toHaveLength(calls)
+    expect(await t.dispatched()).toHaveLength(1)
+
+    // A runner that cannot take the turn does not lose it: the event serves the follow-up itself,
+    // with one reply on the same job.
+    refuse = true
+    t.setScript(() => ({ text: "Answered.", toolUses: [], costUsd: null }))
+    expect(await t.mention("100.3", "<@UBOT> and the tests?")).toEqual({ status: "answered" })
+    expect(handed).toHaveLength(2)
+    expect(t.said).toHaveLength(4)
+    expect(t.said.at(-1)).toContain("Answered.")
+    const followed = await t.chatJob()
+    expect(followed?.status).toBe("succeeded")
+    expect(followed?.id).toBe(chat?.id)
+    // The event took the turn back under a claim of its own, so the runner's late run of the
+    // claim it was handed says nothing more.
+    expect(followed?.started_at).not.toBe(handed[1]?.startedAt)
+    await handed[1]?.run()
+    expect(t.said).toHaveLength(4)
+    expect((await t.meta.listJobMessages(chat?.id ?? "")).map((m) => m.author_kind)).toEqual([
+      "asker",
+      "agent",
+      "asker",
+      "agent",
+    ])
   })
 
   it("hands off once per turn, however many times the model calls it", async () => {

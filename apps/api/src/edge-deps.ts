@@ -409,7 +409,8 @@ export function edgeAppDeps(env: Env, baseUrl: string): AppDeps {
     // leaves the turn several seconds of live isolate to settle its own job instead. Set only
     // here; Node has no such ceiling.
     attendedTurnBudgetMs: 22_000,
-    // A chat turn escapes that ceiling on its own Durable Object (chat-turn-do.ts).
+    // A chat turn (a page ask, a Slack or pull request mention) escapes that ceiling on its own
+    // Durable Object (chat-turn-do.ts).
     chatTurnRunner: chatTurnRunnerFor(env),
     rateLimiters: {
       auth: nativeLimiter(env.RL_AUTH, 60),

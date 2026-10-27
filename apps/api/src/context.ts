@@ -162,8 +162,8 @@ export interface AppDeps {
    */
   attendedTurnBudgetMs?: number
   /**
-   * Serves a built-in Derive chat turn off the request's clock (lib/page-ask.ts
-   * dispatchPageTurn). The Workers entry sets a Durable Object per conversation; unset, the
+   * Serves a built-in Derive chat turn (a page ask, a Slack or pull request mention) off the
+   * request's clock (lib/page-ask.ts dispatchTurn). The Workers entry sets a Durable Object per conversation; unset, the
    * turn runs after the response and is subject to the ceiling above. A runner that throws
    * declines the turn, and the request serves it itself.
    */
@@ -171,8 +171,8 @@ export interface AppDeps {
     jobId: string
     /** The job's started_at at hand-over; the runner stays silent if the claim has moved. */
     startedAt: string
-    /** The scoped page's version as the request saw it, or null for a workspace chat; the
-     *  runner refuses the turn if the page moved on. */
+    /** The scoped page's version as the request saw it, or null for a workspace chat or a
+     *  mention; the runner refuses the turn if the page moved on. */
     baseVersion: number | null
     /** The turn, rebuilt from the job id, for a runner in the same process. */
     run: () => Promise<void>
