@@ -937,12 +937,14 @@ export const api = {
     const data = await f("/api/auth/sign-in/social", opts({ provider, callbackURL })).then(authJson)
     if (data?.url) window.location.href = data.url
   },
-  // Enterprise SSO (generic OIDC) sign-in via Better Auth's genericOAuth plugin — same
-  // navigate-to-authorize-URL shape as social; providerId comes from capabilities().oidc.
+  // Enterprise SSO (generic OIDC) sign-in via Better Auth's genericOAuth plugin, which 1.7
+  // registers as a social provider: same endpoint and navigate-to-authorize-URL shape as
+  // social, with providerId from capabilities().oidc as the provider.
   async ssoSignIn(providerId: string, callbackURL = "/"): Promise<void> {
-    const data = await f("/api/auth/sign-in/oauth2", opts({ providerId, callbackURL })).then(
-      authJson,
-    )
+    const data = await f(
+      "/api/auth/sign-in/social",
+      opts({ provider: providerId, callbackURL }),
+    ).then(authJson)
     if (data?.url) window.location.href = data.url
   },
   // "Forgot password" — email a reset link. The reply is a neutral OK even for an unknown

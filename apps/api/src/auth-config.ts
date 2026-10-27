@@ -94,12 +94,17 @@ export const OAUTH_ANON_CLIENT_TTL_MS = 30 * 24 * 3600_000
 
 const env = (k: string) => process.env[k]
 
+/** The generic-OAuth callback path Better Auth 1.6 served, which operators registered with
+ *  their IdP. 1.7 serves the callback at /api/auth/callback/:id; app.ts forwards this
+ *  prefix there so an upgrade does not require re-registering the redirect URI. */
+export const OIDC_LEGACY_CALLBACK_PREFIX = "/api/auth/oauth2/callback/"
+
 /**
  * The RFC 8707 resource indicators an MCP client may bind its token to — the accepted
  * `aud` values. A superset of the plugin's default ([baseUrl]): the origin and the /mcp
  * endpoint in both slash forms, because MCP clients send the SERVER as the resource
  * (Claude Code sends the origin with a trailing slash; others send /mcp). Used on BOTH
- * sides so they can't drift: the AS side (`validAudiences`, what tokens may be minted for)
+ * sides so they can't drift: the AS side (`resources`, what tokens may be minted for)
  * and the RS side (`oauthAgentFromJwt` audience validation, what tokens are accepted) —
  * the MCP-spec MUST that a server only accept tokens issued for it.
  */
@@ -223,18 +228,26 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
     clientId: string
     clientSecret: string
     scopes: string[]
+    redirectURI: string
   }[] = []
   const oidcIssuer = env("OIDC_ISSUER")
   const oidcId = env("OIDC_CLIENT_ID")
   const oidcSecret = env("OIDC_CLIENT_SECRET")
-  if (oidcIssuer && oidcId && oidcSecret)
+  if (oidcIssuer && oidcId && oidcSecret) {
+    const providerId = env("OIDC_PROVIDER_ID") ?? "sso"
     oidc.push({
-      providerId: env("OIDC_PROVIDER_ID") ?? "sso",
+      providerId,
       discoveryUrl: `${oidcIssuer.replace(/\/$/, "")}/.well-known/openid-configuration`,
       clientId: oidcId,
       clientSecret: oidcSecret,
       scopes: ["openid", "email", "profile"],
+      // Better Auth 1.7 moved the generic-OAuth callback to /api/auth/callback/:id. Every
+      // existing IdP registration names the 1.6 path, so keep advertising that one and let
+      // app.ts forward it to the new handler (OIDC_LEGACY_CALLBACK_PREFIX). The authorize
+      // request and the token exchange both use this value, so they stay consistent.
+      redirectURI: `${withoutTrailingSlashes(baseUrl)}${OIDC_LEGACY_CALLBACK_PREFIX}${providerId}`,
     })
+  }
 
   // When the SPA and API are on different sites (CDN web + container API), the
   // session cookie must be SameSite=None; Secure to ride cross-site fetches.
@@ -491,6 +504,12 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
         // endpoint is rate-limited (/api/auth/*) and a client is inert until a human
         // consents, so the only surface is spam client rows.
         allowUnauthenticatedClientRegistration: true,
+        // MCP clients register loopback (http://localhost:<port>/…) or private-scheme
+        // (cursor://…) redirect URIs and almost never send `application_type`. Better Auth
+        // 1.7 defaults a dynamic registration to "web", which only accepts https on a
+        // public host and so rejects every one of those clients. "infer" classifies a
+        // registration as native exactly when its redirect URIs could only be native.
+        clientRegistrationDefaultApplicationType: "infer",
         // 24h, not the textbook 1h: these are opaque tokens resolved by DB hash on
         // every request (see storeTokens below), so revocation is immediate no matter
         // the TTL - the short-expiry rationale for bearer JWTs doesn't apply. A day
@@ -508,7 +527,15 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
         refreshTokenExpiresIn: 60 * 60 * 24 * 365, // 365d (idle)
         scopes: [...OAUTH_SCOPES],
         // Accept the resource indicators MCP clients send (else token exchange 400s).
-        validAudiences: audiences,
+        // Better Auth 1.7 replaced `validAudiences` with persisted protected resources
+        // (an `oauthResource` row per identifier, seeded lazily, insert-only).
+        resources: audiences,
+        // 1.7 by default also requires each client to be linked to every resource it
+        // asks for through `oauthClientResource`. Derive's resources are URL variants of
+        // one MCP server and its clients self-register anonymously, so there is no
+        // per-client resource policy to enforce: every client may target every variant,
+        // as with `validAudiences` in 1.6.
+        enforcePerClientResources: false,
         storeTokens: { hash: async (token) => sha256(token) },
       }),
     ],
