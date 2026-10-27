@@ -584,4 +584,21 @@ describe("has_preview on the profile work-list", () => {
     // v1 was ready but v2 (current) is not
     expect(row.has_preview).toBe(false)
   })
+
+  // Settings → Profile shows whether a GitHub identity is attached, which is what lets @Derive
+  // on a pull request act as the commenter. The login comes from GitHub and is not exercised
+  // here (the fake auth has no account-info); linked must not depend on it.
+  it("says whether a GitHub account is linked, and never for a stranger", async () => {
+    const linked: TestUser = { id: "u_gh", email: "gh@derive.test", name: "Gia", githubId: "4242" }
+    const plain: TestUser = { id: "u_pw", email: "pw@derive.test", name: "Pat" }
+    const { app } = makeAuthedApp("profiles-github-link", [linked, plain])
+
+    expect(
+      await (await app.request("/v1/me/github", { headers: as(linked.email) })).json(),
+    ).toEqual({ linked: true, account_id: "acct_u_gh", login: null })
+    expect(await (await app.request("/v1/me/github", { headers: as(plain.email) })).json()).toEqual(
+      { linked: false, account_id: null, login: null },
+    )
+    expect((await app.request("/v1/me/github")).status).toBe(401)
+  })
 })

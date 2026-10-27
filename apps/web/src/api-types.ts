@@ -62,6 +62,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/github": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Whether a GitHub account is linked to the signed-in user. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Linked or not, with the GitHub login when it could be read. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @description True when a GitHub identity is attached. */
+                            linked: boolean;
+                            /** @description Better Auth's row for the attached account (for unlinking); null when none. */
+                            account_id: string | null;
+                            /** @description The attached account's GitHub login; null when unknown. */
+                            login: string | null;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me/username": {
         parameters: {
             query?: never;

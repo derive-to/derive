@@ -326,6 +326,13 @@ const fakeAuth = (users: TestUser[]): AppDeps["auth"] =>
   ({
     handler: async () => new Response(null, { status: 404 }),
     api: {
+      // The `account` rows the seeders wrote for users with a githubId (id `acct_<user id>`).
+      listUserAccounts: async ({ headers }: { headers: Headers }) => {
+        const u = users.find((x) => x.email === headers.get("x-test-user"))
+        return u?.githubId
+          ? [{ id: `acct_${u.id}`, providerId: "github", accountId: u.githubId }]
+          : []
+      },
       getSession: async ({ headers }: { headers: Headers }) => {
         const u = users.find((x) => x.email === headers.get("x-test-user"))
         return u

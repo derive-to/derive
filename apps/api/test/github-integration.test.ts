@@ -1565,7 +1565,7 @@ describe("@derive in a pull request comment hands work to a workspace agent", ()
     await t.deliver(t.comment({ user: stranger }), "dlv-3")
     expect(t.posted()).toHaveLength(1)
     expect(t.posted()[0]).toContain(
-      "sign in to Derive with this GitHub account at http://derive.test",
+      "link this GitHub account to your Derive account at http://derive.test/settings/profile",
     )
     expect(t.calls).toEqual([])
     expect(await t.chats()).toEqual([])
