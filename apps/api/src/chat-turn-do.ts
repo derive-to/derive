@@ -2,8 +2,10 @@ import type { DurableObjectState, ExecutionContext } from "@cloudflare/workers-t
 import { type AppContext, buildContext } from "./context"
 import { CHAT_TURN_PATH, type Env, edgeAppDeps } from "./edge-deps"
 import { hyperdriveConn, requestPg, tickStore } from "./edge-pg"
+import { runGithubMentionTurnById } from "./lib/github-mention"
 import { declineTurn, runPageTurnById, TURN_FAILED } from "./lib/page-ask"
 import { requestD1 } from "./lib/request-d1"
+import { runSlackMentionTurnById } from "./lib/slack-mention"
 import { log } from "./log"
 import { createDoBackplane, edgeCtx } from "./realtime-do"
 
@@ -29,7 +31,8 @@ interface Turn {
 }
 
 /**
- * One built-in Derive chat turn, served on a Durable Object per conversation (named by job id).
+ * One built-in Derive chat turn (a page ask, or an @Derive mention in Slack or on a pull
+ * request), served on a Durable Object per conversation (named by job id).
  *
  * A request's after-response work on Workers ends a short while after the response, and dies
  * with the request isolate. A turn served here runs on the object's own clock, in the object's
@@ -37,7 +40,8 @@ interface Turn {
  *
  * The request opens and leases the job, then pokes this object with the id and the claim
  * (pokeChatTurn). `fetch` records both and arms an alarm; `alarm` rebuilds the turn from the job
- * row (runPageTurnById) and serves it. The job row stays the source of truth: the object holds
+ * row (runTurnById: a page ask, an @Derive mention in Slack, or an @derive mention on a pull
+ * request) and serves it. The job row stays the source of truth: the object holds
  * nothing else, and a job whose claim lapsed or changed hands is left alone.
  *
  * Turns on one job are serialized by the job's status fence (continuePageAsk), so an alarm
@@ -80,10 +84,7 @@ export class ChatTurn {
     // Store bindings are request-scoped (edge-pg.ts, request-d1.ts). Nothing here outlives the
     // handler, so the connection is released when it returns.
     const conn = this.env.HYPERDRIVE ? hyperdriveConn(this.env.HYPERDRIVE) : null
-    const serve = () =>
-      withEdgeWork(() =>
-        runPageTurnById(this.context(), turn.job_id, turn.started_at, turn.base_version),
-      )
+    const serve = () => withEdgeWork(() => runTurnById(this.context(), turn))
     try {
       await (conn ? requestPg.run(conn, serve) : requestD1.run(this.env.DB, serve))
       await this.forget(turn)
@@ -150,6 +151,23 @@ export class ChatTurn {
     })
     return this.app
   }
+}
+
+/**
+ * Serve a turn by its job, deciding what kind of turn it is from the job row rather than the
+ * poke, so a replayed alarm serves what the job is now. Each lane re-checks the claim, the
+ * job's status and its own gates, and stays silent on a job that is not its own.
+ */
+const runTurnById = async (ctx: AppContext, turn: Turn): Promise<void> => {
+  const job = await ctx.meta.getJob(turn.job_id)
+  if (!job) return
+  let via: unknown = null
+  try {
+    via = (JSON.parse(job.meta_json ?? "{}") as { via?: unknown }).via
+  } catch {}
+  if (via === "slack") await runSlackMentionTurnById(ctx, job.id, turn.started_at)
+  else if (via === "github") await runGithubMentionTurnById(ctx, job.id, turn.started_at)
+  else await runPageTurnById(ctx, job.id, turn.started_at, turn.base_version)
 }
 
 /**

@@ -169,8 +169,8 @@ is wrong even if its tests pass.
 
 8. **Fire and forget, with a durable receipt.** A hand-off returns in milliseconds; the job row
    is the promise, and the reply adapter is the callback. Nothing holds a request open waiting for
-   an agent. The chat turn's two-minute budget forces this; it is also what makes a lost runner
-   recoverable.
+   an agent. The chat turn's budget (eight minutes on the Durable Object that serves it, 7.1)
+   forces this; it is also what makes a lost runner recoverable.
 
 9. **Fail closed on authority, fail open on decoration.** Access, payer, `agentWrites`,
    repository reach: refuse when unsure. Thread context, the placeholder, the thread reply: best
@@ -420,6 +420,29 @@ Unchanged:
 - One built-in Derive job per thread.
 - The "Request received" placeholder that becomes the turn's answer.
 
+Where the turn runs. The event handler (after Slack's ack) does everything above, writes the
+asker's message with its Slack `ts` and user id, records the placeholder on the job as
+`slack_pending`, leases the job, and then hands the turn over by job id
+(`dispatchTurn`, `apps/api/src/lib/page-ask.ts`). On Workers the turn runs on the `ChatTurn`
+Durable Object (`apps/api/src/chat-turn-do.ts`), the same one page asks use, with an
+eight-minute budget. Work after Slack's ack on Workers ends about 22 seconds after the response,
+which one model call plus a `hand_off` round trip does not fit in. Where there is no runner
+(Node, self-host, tests) the turn runs right after the ack, as before.
+
+The turn (`runSlackMentionTurnById`) rebuilds everything it needs from the job row. It reads the
+team, channel and thread from `slack_thread`, the question, `ts` and Slack user from the last
+asker message, and it reads again the bot token, the asker's seat and whether their link is
+still an `oauth` one for this asker, the workspace settings, the model, and the catalog. Rules:
+
+- A claim that has moved (a different `started_at`) or a settled job: do nothing.
+- A reply already written under this claim: settle as it said and show it in the placeholder.
+  Never answer again.
+- The seat or the workspace changed since the event: the placeholder says why and the job
+  settles failed.
+- A runner that declines the turn (the poke fails) does not lose it. The event takes the claim
+  back with a `started_at` strictly later than the one it handed over, fenced on that one, and
+  serves the turn itself, so the runner's late run of the old claim stays silent.
+
 ### 7.2 Thread Context
 
 When the mention is a reply in a thread (`thread_ts` differs from `ts`), the turn MUST receive
@@ -501,7 +524,7 @@ refusal to say why in one sentence and not try a different agent.
   acknowledgement sentence below, written by the server; or `{ error }`, a refusal reason the
   model can repeat.
 - The wake runs after the turn's reply is posted, so the acknowledgement does not wait on it.
-- The tool MUST NOT wait for the job. Agent runs take minutes, and the turn's budget is two.
+- The tool MUST NOT wait for the job. Agent runs take minutes, longer than the turn's budget.
 
 After a successful hand-off, the turn's reply (the edited placeholder) says that the agent
 started and where the result will appear:
@@ -651,6 +674,8 @@ No new agent field. No new workspace setting.
 | Thread post fails (auth) | Install flagged for reconnection; bell rings; DM interrupt still sent |
 | Job settles twice (lease race) | Marker prevents a second post |
 | Review requested from a team | No match; only user requests match `reviewers` |
+| Mention turn replayed by its runner | Stale claim or settled job: nothing; reply already written: settled, not re-answered (7.1) |
+| Turn runner declines the turn | The event reclaims the job and serves the turn after the ack (7.1) |
 
 ## 13. Security
 
@@ -951,8 +976,17 @@ same delivery and neither can break the other (17.2).
 - **The job.** One chat job per comment on `DERIVE_AGENT_ID`: `attended = 1`,
   `dedupe_key = github:comment:<comment_id>`, `asked_by` and `payer_id` the asker, and
   `meta_json = { via: "github", origin: { kind: github, requested_by: <login>, repository,
-  number, delivery_id, comment_id } }`. A redelivery finds the job by `origin.comment_id` and
+  number, delivery_id, comment_id }, installation_id }`. `installation_id` is the delivery's
+  installation, kept because the turn mints its token from it and cannot read it back from
+  anywhere else. A redelivery finds the job by `origin.comment_id` and
   stops; two first deliveries racing are settled by the open-job dedupe index.
+- **Where the turn runs.** As in Slack (7.1): the delivery handler posts the acknowledgement,
+  records it as `origin.ack_comment_id`, leases the job, and hands the turn over by job id. On
+  Workers it runs on the `ChatTurn` Durable Object; elsewhere right after the response. The turn
+  (`runGithubMentionTurnById`) loads the App and mints the installation token, then reads the
+  question and checks the seat and gate again, all from the job row. It has the same claim,
+  replay and decline rules as 7.1. A replay that finds the reply already written edits the
+  acknowledgement only if it is not already the answer.
 - **The turn.** `runChatTurn` with `buildChatTools` for the asker and `withHandOff` on top, the
   catalog from `agentCatalogFor`. The lane sentence says the reply is posted on the pull request,
   readable by everyone who can read the repository (13).
@@ -1023,9 +1057,9 @@ Known and not covered:
 
 - Two first deliveries of an unlinked commenter's mention, arriving at the same moment, can each
   post the sign-in reply once; the marker stops every later one.
-- A turn that outruns the Workers after-response clock leaves its chat job running until its
-  lease lapses and the reaper settles it. The placeholder comment and any dispatched job are
-  unaffected.
+- A turn whose Durable Object keeps failing (three alarm attempts) settles its chat job failed,
+  but the acknowledgement comment (or Slack placeholder) is not edited to say so. An object that
+  dies without throwing leaves the job running until its ten-minute lease lapses.
 - Choosing between several workspaces that hold the installation (17.3) has no test.
 
 ## Appendix A. Where the Code Is Today
