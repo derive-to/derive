@@ -448,7 +448,9 @@ still an `oauth` one for this asker, the workspace settings, the model, and the 
   the event keeps them quiet.
 - A runner that gives up after its retries, a row the turn cannot read, or a Slack install that
   was removed: the placeholder gets the generic failure line where there is still a token to
-  edit it with, and the job settles failed.
+  edit it with, and the job settles failed. A runner that gives up after a reply was already
+  written under the claim settles the job as that reply said and edits nothing, so a failure
+  line never replaces an answer already on screen.
 - A runner that declines the turn (the poke fails) does not lose it. The event takes the claim
   back with a `started_at` strictly later than the one it handed over, fenced on that one, and
   serves the turn itself, so the runner's late run of the old claim stays silent.

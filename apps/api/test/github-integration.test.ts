@@ -1143,7 +1143,7 @@ describe("@derive in a pull request comment hands work to a workspace agent", ()
     runner?: AppDeps["chatTurnRunner"],
   ) => {
     const calls: Call[] = []
-    let script: (call: Call) => ModelTurn = () => ({
+    let script: (call: Call) => ModelTurn | Promise<ModelTurn> = () => ({
       text: "Answered.",
       toolUses: [],
       costUsd: null,
@@ -1537,14 +1537,25 @@ describe("@derive in a pull request comment hands work to a workspace agent", ()
     expect(t.posted().at(-1)).toMatch(/previous turn was interrupted/)
     expect((await job(third))?.status).toBe("failed")
 
+    // A real turn marks itself begun before the model runs: one that dies inside the model call
+    // is not asked again on replay.
+    t.setScript(() => new Promise<ModelTurn>(() => {}))
+    const hung = await ask(605)
+    void handed[3]?.run()
+    await vi.waitFor(() => expect(t.calls).toHaveLength(2))
+    await handed[3]?.run()
+    expect(t.calls).toHaveLength(2)
+    expect(t.posted().at(-1)).toMatch(/previous turn was interrupted/)
+    expect((await job(hung))?.status).toBe("failed")
+
     // The asker left the workspace between the delivery and the turn: refused, and said there.
     const fourth = await ask(604)
     await t.meta.removeMembership("default", asker.id)
-    await handed[3]?.run()
-    expect(t.calls).toHaveLength(1)
+    await handed[4]?.run()
+    expect(t.calls).toHaveLength(2)
     expect(t.posted().at(-1)).toMatch(/not a member of this workspace/)
     expect((await job(fourth))?.status).toBe("failed")
-    expect(t.posted()).toHaveLength(4)
+    expect(t.posted()).toHaveLength(5)
   })
 
   it("a commenter with no Derive sign-in is told how, once, and nothing runs", async () => {

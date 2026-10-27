@@ -986,6 +986,18 @@ describe("@Derive in Slack hands work to a workspace agent", () => {
     expect(await t.dispatched()).toHaveLength(0)
     expect(t.said).toHaveLength(saidBefore + 1)
     expect((await chat()).status).toBe("succeeded")
+
+    // A real turn marks itself begun before the model runs: one that dies inside the model call
+    // is not asked again on replay.
+    t.setScript(() => new Promise<ModelTurn>(() => {}))
+    await t.mention("100.6", "<@UBOT> fourth?")
+    const asked = t.calls.length
+    void handed[4]?.run()
+    await vi.waitFor(() => expect(t.calls).toHaveLength(asked + 1))
+    await handed[4]?.run()
+    expect(t.calls).toHaveLength(asked + 1)
+    expect(t.said.at(-1)).toContain("previous turn was interrupted")
+    expect((await chat()).status).toBe("failed")
   })
 
   it("hands off once per turn, however many times the model calls it", async () => {

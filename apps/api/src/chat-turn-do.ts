@@ -3,7 +3,14 @@ import { type AppContext, buildContext } from "./context"
 import { CHAT_TURN_PATH, type Env, edgeAppDeps } from "./edge-deps"
 import { hyperdriveConn, requestPg, tickStore } from "./edge-pg"
 import { runGithubMentionTurnById, tellGithubMentionFailed } from "./lib/github-mention"
-import { declineTurn, runPageTurnById, TURN_FAILED, turnViaOf } from "./lib/page-ask"
+import {
+  declineTurn,
+  repliedUnderClaim,
+  runPageTurnById,
+  settleAsReplied,
+  TURN_FAILED,
+  turnViaOf,
+} from "./lib/page-ask"
 import { requestD1 } from "./lib/request-d1"
 import { runSlackMentionTurnById, tellSlackMentionFailed } from "./lib/slack-mention"
 import { log } from "./log"
@@ -126,6 +133,14 @@ export class ChatTurn {
     try {
       const job = await store.getJob(turn.job_id)
       if (job?.status === "running" && job.started_at === turn.started_at) {
+        const deps = { meta: store, bus: createDoBackplane(this.env.ROOMS) }
+        // A reply already written under this claim may already be on screen (a mention shows
+        // its answer before settling): settle as it said, and do not paint a failure over it.
+        const replied = await repliedUnderClaim(store, job)
+        if (replied) {
+          await withEdgeWork(() => settleAsReplied(deps, job, replied))
+          return
+        }
         // A mention's person is waiting in Slack or on a pull request, not on the job page: the
         // placeholder is told first, best effort, then the job settles.
         const via = turnViaOf(job)
@@ -133,9 +148,7 @@ export class ChatTurn {
         if (via === "slack") await tellSlackMentionFailed(store, key, job)
         else if (via === "github")
           await tellGithubMentionFailed(store, key, this.env.BASE_URL ?? "", job)
-        await withEdgeWork(() =>
-          declineTurn({ meta: store, bus: createDoBackplane(this.env.ROOMS) }, job, TURN_FAILED),
-        )
+        await withEdgeWork(() => declineTurn(deps, job, TURN_FAILED))
       }
     } catch (error) {
       log.error("chat turn could not be settled after its alarm failed", {

@@ -323,23 +323,7 @@ export const runPageTurnById = async (
   // reply's cost is not recorded again. (A turn that published and died before replying is
   // not caught here; the next turn sees the version in its effects.)
   const last = await repliedUnderClaim(meta, job)
-  if (last) {
-    const said = JSON.parse(last.meta_json ?? "{}") as { outcome?: string; needs?: JobNeeds }
-    const status =
-      said.outcome === "failed" ? "failed" : said.needs ? ("needs_you" as const) : "succeeded"
-    const done = await meta.updateJob(
-      job.id,
-      {
-        status,
-        finished_at: status === "needs_you" ? null : new Date().toISOString(),
-        needs_json: said.needs ? JSON.stringify(said.needs) : null,
-        lease_until: null,
-      },
-      { status: "running", started_at: job.started_at },
-    )
-    if (done) wakeSettled(deps, done)
-    return
-  }
+  if (last) return settleAsReplied(deps, job, last)
   const about = JSON.parse(job.subject_json ?? "{}") as { id?: string }
   const page = about.id ? await meta.getByShortId(about.id) : null
   if (about.id && (!page || page.org_id !== job.org_id)) return declineTurn(deps, job, PAGE_GONE)
@@ -370,6 +354,30 @@ export const repliedUnderClaim = async (
   return last?.author_kind === "agent" && job.started_at && last.created_at >= job.started_at
     ? last
     : null
+}
+
+/** Settle a running job the way the reply its turn already wrote under the claim says: failed,
+ *  waiting on the person with its question restored, or succeeded. No message is written and the
+ *  reply's cost is not recorded again. */
+export const settleAsReplied = async (
+  deps: JobDeps,
+  job: JobRecord,
+  reply: JobMessageRecord,
+): Promise<void> => {
+  const said = JSON.parse(reply.meta_json ?? "{}") as { outcome?: string; needs?: JobNeeds }
+  const status =
+    said.outcome === "failed" ? "failed" : said.needs ? ("needs_you" as const) : "succeeded"
+  const done = await deps.meta.updateJob(
+    job.id,
+    {
+      status,
+      finished_at: status === "needs_you" ? null : new Date().toISOString(),
+      needs_json: said.needs ? JSON.stringify(said.needs) : null,
+      lease_until: null,
+    },
+    { status: "running", started_at: job.started_at },
+  )
+  if (done) wakeSettled(deps, done)
 }
 
 /** What a mention turn says when it failed for a reason the person cannot act on, including the
