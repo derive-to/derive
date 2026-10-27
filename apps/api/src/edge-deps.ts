@@ -298,24 +298,33 @@ export function edgeAppDeps(env: Env, baseUrl: string): AppDeps {
     env.DERIVE_BILLING_ENABLED === "true"
       ? makeBillingDriver(env.STRIPE_SECRET_KEY, env.STRIPE_WEBHOOK_SECRET)
       : undefined
-  const auth = makeAuth(authDb, baseUrl, secret, {
-    signupAllowed: signupPolicy(parseSignupMode(env.DERIVE_SIGNUP_MODE), secret, meta),
-    usernameTaken: (u) => meta.getUserByUsername(u).then(Boolean),
-    // Transactional auth emails ride the same outbox; the WebhookOutbox DO drains it
-    // with the Cloudflare Email sender (env.SEND_EMAIL). See webhook-do.ts.
-    sendAuthEmail: (kind, input) =>
-      enqueueChannelDelivery(meta, "email", `auth.${kind}`, buildAuthEmail(kind, input)),
-    blockUserDeletion: async (userId) => {
-      const blocking = await workspacesBlockingDeletion(meta, userId)
-      return blocking.length
-        ? `Resolve owned work or workspace ownership in ${blocking.join(", ")} before deleting your account.`
-        : null
+  const auth = makeAuth(
+    authDb,
+    baseUrl,
+    secret,
+    {
+      signupAllowed: signupPolicy(parseSignupMode(env.DERIVE_SIGNUP_MODE), secret, meta),
+      usernameTaken: (u) => meta.getUserByUsername(u).then(Boolean),
+      // Transactional auth emails ride the same outbox; the WebhookOutbox DO drains it
+      // with the Cloudflare Email sender (env.SEND_EMAIL). See webhook-do.ts.
+      sendAuthEmail: (kind, input) =>
+        enqueueChannelDelivery(meta, "email", `auth.${kind}`, buildAuthEmail(kind, input)),
+      blockUserDeletion: async (userId) => {
+        const blocking = await workspacesBlockingDeletion(meta, userId)
+        return blocking.length
+          ? `Resolve owned work or workspace ownership in ${blocking.join(", ")} before deleting your account.`
+          : null
+      },
+      // Purge, then heal Stripe seat counts on every workspace the deleted account was
+      // billable in (see purgeUserDataAndSyncSeats) — otherwise a vacated editor/owner
+      // seat keeps being billed until an unrelated membership change happens to heal it.
+      purgeUserData: (userId) => purgeUserDataAndSyncSeats(meta, billing, userId),
     },
-    // Purge, then heal Stripe seat counts on every workspace the deleted account was
-    // billable in (see purgeUserDataAndSyncSeats) — otherwise a vacated editor/owner
-    // seat keeps being billed until an unrelated membership change happens to heal it.
-    purgeUserData: (userId) => purgeUserDataAndSyncSeats(meta, billing, userId),
-  })
+    // Deploys apply the auth schema before the Worker ships (migrate-auth-d1.ts /
+    // apply-pg-schema.ts), so Better Auth's runtime check buys nothing here and costs a
+    // full table introspection on every cold isolate. auth-config.test.ts pins the D1 schema.
+    { validateSchema: false },
+  )
   const models = catalogFromGateway(workerGateway(env))
   return {
     runtime: ortamRuntimeFromEnv(env),

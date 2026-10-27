@@ -119,9 +119,9 @@ describe("auth-config: enterprise SSO callback", () => {
 
 describe("auth-config: the edge (D1) auth schema", () => {
   // The Worker's D1 path hands Better Auth a hand-written Drizzle schema (auth-schema.ts).
-  // Better Auth 1.7 checks that schema against the config before serving any auth request
-  // and fails every one of them on a missing table or column, so a field or plugin added to
-  // makeAuth without a matching auth-schema.ts entry takes D1 sign-in down entirely.
+  // Better Auth 1.7 can check that schema against the config and refuse auth on a missing
+  // table or column. The Worker turns that runtime check off (cold-start cost), so this test
+  // is where a field or plugin added to makeAuth without an auth-schema.ts entry gets caught.
   it("matches what makeAuth needs: sign-up and agent registration work through Drizzle", async () => {
     const BASE = "http://localhost:8787"
     const raw = new Database(":memory:")

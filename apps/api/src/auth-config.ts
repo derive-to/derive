@@ -172,7 +172,22 @@ export interface AuthHooks {
   purgeUserData?: (userId: string) => Promise<void>
 }
 
-export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: AuthHooks = {}) {
+/** How the surrounding runtime wants Better Auth to behave, as opposed to what it integrates. */
+export interface AuthRuntime {
+  /** Better Auth 1.7 compares the live schema with this config before it serves the first
+   *  auth request, and fails every auth request on a mismatch. Default on. On Node,
+   *  makeAuth runs before migrateAuth, so an upgrade boot logs a schema-mismatch ERROR
+   *  once; the migration invalidates that result and the next request checks again. */
+  validateSchema?: boolean
+}
+
+export function makeAuth(
+  db: AuthDb,
+  baseUrl: string,
+  secret: string,
+  hooks: AuthHooks = {},
+  runtime: AuthRuntime = {},
+) {
   // The browser sends its own Origin (the web app), which differs from the API's
   // baseURL whenever the SPA and API are on separate origins (dev proxy, or the
   // hosted split of static-web + API container). DERIVE_WEB_ORIGIN lists those in
@@ -545,6 +560,7 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
       // disables it when NODE_ENV=test; pinning it false means a server mistakenly
       // booted with NODE_ENV=test still validates Origin (and lets the suite test it).
       disableOriginCheck: false,
+      ...(runtime.validateSchema === false ? { database: { validateSchema: false } } : {}),
       ...(crossSite
         ? { defaultCookieAttributes: { sameSite: "none" as const, secure: true } }
         : {}),
