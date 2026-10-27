@@ -80,6 +80,8 @@ const sweepEditSessions = async (env: Env, ctx: ExecutionContext): Promise<void>
 }
 
 let app: ReturnType<typeof createApp> | null = null
+// Better Auth's init, until it settles. Null once it has (and before the app exists).
+let authReady: Promise<unknown> | null = null
 
 // The request handler behind both tiers. Split from `fetch` so the pg tier can
 // wrap it in a request-scoped pool without indenting the whole body.
@@ -87,10 +89,33 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
   // Bind THIS request's D1 for the entire handler — including the one-time app/auth
   // construction below — so liveD1 always resolves to a live binding, never a stale one.
   return requestD1.run(env.DB, () => {
-    if (!app) app = createApp(edgeAppDeps(env, env.BASE_URL ?? new URL(req.url).origin))
-    // Run within the per-request context so the DO backplane's publish can waitUntil.
+    if (!app) {
+      const deps = edgeAppDeps(env, env.BASE_URL ?? new URL(req.url).origin)
+      app = createApp(deps)
+      authReady =
+        deps.auth?.$context.then(() => {
+          authReady = null
+        }) ?? null
+    }
     const ready = app
-    return edgeCtx.run(ctx, () => ready.fetch(req))
+    // Run within the per-request context so the DO backplane's publish can waitUntil.
+    const serve = () => edgeCtx.run(ctx, () => ready.fetch(req))
+    // Better Auth's init does database work (the OAuth provider seeds its resource rows),
+    // and every later auth call in this isolate waits on that one promise. It runs on the
+    // connection of the request that built the app, so that request must not finish
+    // first: an anonymous page answered before init settles would leave the promise tied
+    // to a dead connection, and every sign-in in the isolate would hang. Only requests
+    // that arrive before init settles wait. A failed init drops the app so the next
+    // request builds it again instead of inheriting the failure.
+    const init = authReady
+    if (!init) return serve()
+    return init.then(serve, (err: unknown) => {
+      if (app === ready) {
+        app = null
+        authReady = null
+      }
+      throw err
+    })
   })
 }
 
