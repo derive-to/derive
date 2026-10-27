@@ -1466,6 +1466,87 @@ describe("@derive in a pull request comment hands work to a workspace agent", ()
     expect(t.calls).toHaveLength(2)
   })
 
+  it("a runner's replay finishes what a dead turn left, re-checks the asker, and never runs a begun turn twice", async () => {
+    const handed: Parameters<NonNullable<AppDeps["chatTurnRunner"]>>[0][] = []
+    const t = await setup("ghm-runner-replay", {}, async (turn) => {
+      handed.push(turn)
+    })
+    // GitHub's edit can be made to hang, which is how a turn whose object died mid-call looks.
+    const github = globalThis.fetch
+    let hangEdits = false
+    vi.stubGlobal("fetch", async (url: string | URL, init?: RequestInit) =>
+      hangEdits && init?.method === "PATCH" ? new Promise<Response>(() => {}) : github(url, init),
+    )
+    const ask = async (id: number) => {
+      await t.deliver(t.comment({ id, body: "@derive-test what does this change?" }), `dlv-${id}`)
+      return (
+        (await t.chats()).find((j) => {
+          const origin = jobOriginOf(j.meta_json)
+          return origin?.kind === "github" && origin.comment_id === id
+        })?.id ?? ""
+      )
+    }
+    const job = async (id: string) => t.meta.getJob(id)
+    const edits = () => t.github.filter((g) => g.method === "PATCH").length
+
+    // A reply written under the claim, the job never settled: shown and settled, not re-asked.
+    const first = await ask(601)
+    await t.meta.addJobMessage({
+      id: newId("jm"),
+      job_id: first,
+      author_kind: "agent",
+      author_id: DERIVE_AGENT_ID,
+      body_md: "Saved answer.",
+      meta_json: JSON.stringify({ outcome: "answered", via: "github" }),
+    })
+    await handed[0]?.run()
+    expect(t.calls).toEqual([])
+    expect(edits()).toBe(1)
+    expect(t.posted()).toEqual(["Saved answer."])
+    expect((await job(first))?.status).toBe("succeeded")
+
+    // Dead while showing its answer: the job is not settled yet, so the replay shows it, once.
+    const second = await ask(602)
+    hangEdits = true
+    void handed[1]?.run()
+    await vi.waitFor(async () =>
+      expect((await t.meta.listJobMessages(second)).at(-1)?.author_kind).toBe("agent"),
+    )
+    expect((await job(second))?.status).toBe("running")
+    hangEdits = false
+    await handed[1]?.run()
+    expect(t.posted()).toEqual(["Saved answer.", "Answered."])
+    expect((await job(second))?.status).toBe("succeeded")
+    expect(t.calls).toHaveLength(1)
+
+    // A turn that began and died before replying is not run again: its tools may have acted.
+    const third = await ask(603)
+    const began = await job(third)
+    await t.meta.updateJob(
+      third,
+      {
+        meta_json: JSON.stringify({
+          ...JSON.parse(began?.meta_json ?? "{}"),
+          turn_began: began?.started_at,
+        }),
+      },
+      { status: "running" },
+    )
+    await handed[2]?.run()
+    expect(t.calls).toHaveLength(1)
+    expect(t.posted().at(-1)).toMatch(/previous turn was interrupted/)
+    expect((await job(third))?.status).toBe("failed")
+
+    // The asker left the workspace between the delivery and the turn: refused, and said there.
+    const fourth = await ask(604)
+    await t.meta.removeMembership("default", asker.id)
+    await handed[3]?.run()
+    expect(t.calls).toHaveLength(1)
+    expect(t.posted().at(-1)).toMatch(/not a member of this workspace/)
+    expect((await job(fourth))?.status).toBe("failed")
+    expect(t.posted()).toHaveLength(4)
+  })
+
   it("a commenter with no Derive sign-in is told how, once, and nothing runs", async () => {
     const t = await setup("ghm-unlinked")
     const stranger = { id: 4242, login: "carol-gh" }

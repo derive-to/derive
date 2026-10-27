@@ -2,10 +2,10 @@ import type { DurableObjectState, ExecutionContext } from "@cloudflare/workers-t
 import { type AppContext, buildContext } from "./context"
 import { CHAT_TURN_PATH, type Env, edgeAppDeps } from "./edge-deps"
 import { hyperdriveConn, requestPg, tickStore } from "./edge-pg"
-import { runGithubMentionTurnById } from "./lib/github-mention"
-import { declineTurn, runPageTurnById, TURN_FAILED } from "./lib/page-ask"
+import { runGithubMentionTurnById, tellGithubMentionFailed } from "./lib/github-mention"
+import { declineTurn, runPageTurnById, TURN_FAILED, turnViaOf } from "./lib/page-ask"
 import { requestD1 } from "./lib/request-d1"
-import { runSlackMentionTurnById } from "./lib/slack-mention"
+import { runSlackMentionTurnById, tellSlackMentionFailed } from "./lib/slack-mention"
 import { log } from "./log"
 import { createDoBackplane, edgeCtx } from "./realtime-do"
 
@@ -125,10 +125,18 @@ export class ChatTurn {
     const { store, close } = tickStore(this.env)
     try {
       const job = await store.getJob(turn.job_id)
-      if (job?.status === "running" && job.started_at === turn.started_at)
+      if (job?.status === "running" && job.started_at === turn.started_at) {
+        // A mention's person is waiting in Slack or on a pull request, not on the job page: the
+        // placeholder is told first, best effort, then the job settles.
+        const via = turnViaOf(job)
+        const key = this.env.DERIVE_AUTH_SECRET
+        if (via === "slack") await tellSlackMentionFailed(store, key, job)
+        else if (via === "github")
+          await tellGithubMentionFailed(store, key, this.env.BASE_URL ?? "", job)
         await withEdgeWork(() =>
           declineTurn({ meta: store, bus: createDoBackplane(this.env.ROOMS) }, job, TURN_FAILED),
         )
+      }
     } catch (error) {
       log.error("chat turn could not be settled after its alarm failed", {
         job: turn.job_id,
@@ -161,10 +169,7 @@ export class ChatTurn {
 const runTurnById = async (ctx: AppContext, turn: Turn): Promise<void> => {
   const job = await ctx.meta.getJob(turn.job_id)
   if (!job) return
-  let via: unknown = null
-  try {
-    via = (JSON.parse(job.meta_json ?? "{}") as { via?: unknown }).via
-  } catch {}
+  const via = turnViaOf(job)
   if (via === "slack") await runSlackMentionTurnById(ctx, job.id, turn.started_at)
   else if (via === "github") await runGithubMentionTurnById(ctx, job.id, turn.started_at)
   else await runPageTurnById(ctx, job.id, turn.started_at, turn.base_version)

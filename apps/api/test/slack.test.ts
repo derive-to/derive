@@ -892,6 +892,102 @@ describe("@Derive in Slack hands work to a workspace agent", () => {
     ])
   })
 
+  it("a runner's replay finishes what a dead turn left, re-checks the asker, and never runs a begun turn twice", async () => {
+    const handed: Parameters<NonNullable<AppDeps["chatTurnRunner"]>>[0][] = []
+    const t = await setup("ho-runner-replay", {
+      link: "oauth",
+      runner: async (turn) => {
+        handed.push(turn)
+      },
+    })
+    const answered = () => ({ text: "Answered.", toolUses: [], costUsd: null })
+    t.setScript(answered)
+    // Slack's edit can be made to hang, which is how a turn whose object died mid-call looks.
+    const slack = globalThis.fetch
+    let hangEdits = false
+    vi.stubGlobal("fetch", async (url: string | URL, init?: RequestInit) =>
+      hangEdits && String(url).endsWith("/chat.update")
+        ? new Promise<Response>(() => {})
+        : slack(url, init),
+    )
+    const chat = async () =>
+      (await t.chatJob()) as NonNullable<Awaited<ReturnType<typeof t.chatJob>>>
+
+    // A reply written under the claim, the job never settled: shown and settled, not re-asked.
+    await t.mention("100.2", "<@UBOT> first?")
+    await t.meta.addJobMessage({
+      id: newId("jm"),
+      job_id: (await chat()).id,
+      author_kind: "agent",
+      author_id: DERIVE_AGENT_ID,
+      body_md: "Saved answer.",
+      meta_json: JSON.stringify({ outcome: "answered", via: "slack" }),
+    })
+    await handed[0]?.run()
+    expect(t.calls).toHaveLength(0)
+    expect(t.said).toHaveLength(2)
+    expect(t.said.at(-1)).toContain("Saved answer.")
+    expect((await chat()).status).toBe("succeeded")
+
+    // Dead while showing its answer: the job is not settled yet, so the replay shows it.
+    await t.mention("100.3", "<@UBOT> second?")
+    hangEdits = true
+    void handed[1]?.run()
+    await vi.waitFor(async () =>
+      expect((await t.meta.listJobMessages((await chat()).id)).at(-1)?.author_kind).toBe("agent"),
+    )
+    expect((await chat()).status).toBe("running")
+    hangEdits = false
+    await handed[1]?.run()
+    expect(t.said.at(-1)).toContain("Answered.")
+    expect((await chat()).status).toBe("succeeded")
+    expect(t.calls).toHaveLength(1)
+
+    // A turn that began and died before replying is not run again: its tools may have acted.
+    await t.mention("100.4", "<@UBOT> third?")
+    const began = await chat()
+    await t.meta.updateJob(
+      began.id,
+      {
+        meta_json: JSON.stringify({
+          ...JSON.parse(began.meta_json ?? "{}"),
+          turn_began: began.started_at,
+        }),
+      },
+      { status: "running" },
+    )
+    await handed[2]?.run()
+    expect(t.calls).toHaveLength(1)
+    expect(t.said.at(-1)).toContain("previous turn was interrupted")
+    expect((await chat()).status).toBe("failed")
+
+    // The link weakened between the event and the turn: the turn acts at the weaker level and
+    // offers no hand-off, and the placeholder still becomes the answer.
+    t.setScript(
+      handOff({
+        agent_id: t.review.id,
+        instruction: "Review https://github.com/acme/api/pull/123.",
+      }),
+    )
+    await t.mention("100.5")
+    const saidBefore = t.said.length
+    await t.meta.setSlackUserLink({
+      id: newId("sul"),
+      org_id: "default",
+      user_id: asker.id,
+      team_id: "T1",
+      slack_user_id: "U1",
+      origin: "email",
+      created_at: new Date().toISOString(),
+      checked_at: new Date().toISOString(),
+    })
+    await handed[3]?.run()
+    expect(t.calls.at(-1)?.tools.map((x) => x.name)).not.toContain("hand_off")
+    expect(await t.dispatched()).toHaveLength(0)
+    expect(t.said).toHaveLength(saidBefore + 1)
+    expect((await chat()).status).toBe("succeeded")
+  })
+
   it("hands off once per turn, however many times the model calls it", async () => {
     const t = await setup("ho-once", { link: "oauth" })
     t.setScript(
