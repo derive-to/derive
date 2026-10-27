@@ -203,9 +203,15 @@ export const agentRepository = (agent: Pick<AgentRecord, "repositories_json">): 
   }
 }
 
-/** A task's options with the agent's repository filled in when the ask named none. */
-const withRepository = (agent: AgentRecord, task: TaskOptions | undefined): TaskOptions => {
-  const repo = task?.repo ?? agentRepository(agent)
+/** A task's options with the agent's repository filled in when the ask named none, unless the
+ *  ask said no repository at all (a hand-off that named one the agent cannot check out: the
+ *  agent's default would be a different codebase standing in for the one asked about). */
+const withRepository = (
+  agent: AgentRecord,
+  task: TaskOptions | undefined,
+  noDefault: boolean,
+): TaskOptions => {
+  const repo = task?.repo ?? (noDefault ? null : agentRepository(agent))
   return { ...(task ?? {}), ...(repo ? { repo } : {}) }
 }
 
@@ -223,6 +229,8 @@ export interface AskInput {
   kind?: "ask" | "node" | "graph"
   /** How a Derive-machine task runs (interactive session, repository); kept for its life. */
   task?: TaskOptions
+  /** Never stand the agent's default repository in for one the ask could not check out. */
+  noDefaultRepository?: boolean
   /** The event trigger that started it. */
   triggerId?: string
   /** Where it was asked for, when that was outside Derive (a Slack thread, a GitHub event).
@@ -240,7 +248,7 @@ export const askAgent = async (
   const { meta } = deps
   const kind =
     input.kind ?? ((await deps.isGraph?.(input.agent).catch(() => false)) ? "graph" : "ask")
-  const task = withRepository(input.agent, input.task)
+  const task = withRepository(input.agent, input.task, input.noDefaultRepository === true)
   // The task options are the top level of meta_json (the runner reads `repo` there); origin
   // rides beside them under its own key.
   const jobMeta = { ...task, ...(input.origin ? { origin: input.origin } : {}) }
