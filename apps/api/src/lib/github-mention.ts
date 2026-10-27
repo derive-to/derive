@@ -268,7 +268,7 @@ export const handleGithubMention = async (
   const linked = (await meta.usersByGithubIds([String(m.userId)]).catch(() => []))[0] ?? null
   if (!linked) {
     await replyOnce(
-      `To ask me here, sign in to Derive with this GitHub account at ${base}, then mention me again.`,
+      `To ask me here, link this GitHub account to your Derive account at ${base}/settings/profile, then mention me again.`,
     )
     return quiet("commenter not linked")
   }

@@ -16,6 +16,10 @@ import { MAX_AVATAR_BYTES, sniffImageType } from "../lib/image"
 import { log } from "../log"
 import { Artifact, PersonalBrandprintSchema } from "../schemas"
 
+/** How long GET /v1/me/github waits on GitHub for the linked account's login before answering
+ *  without it. The page shows "Linked" either way; the login is a courtesy. */
+const GITHUB_LOGIN_WAIT_MS = 2_500
+
 /** Session identity + the workspace member/agent directory for the @mention picker.
  *  PublicProfile + DirUser are generated for the web; `Me` stays a web-side mapped type
  *  (the /v1/me payload is a SessionUser + role that the client's mapMe() folds together
@@ -169,6 +173,67 @@ export const sessionRoutes = (ctx: AppContext) => {
       if (u instanceof Response) return bail(u)
       const role = await ensureMembership(c, await activeWorkspace(c), u.id) // provisions on first load
       return c.json({ user: { ...u, role }, multi: true })
+    },
+  )
+
+  // Whether a GitHub identity is attached to this account (Settings → Profile). @Derive on a
+  // pull request maps a commenter to a Derive user through Better Auth's `account` row for the
+  // github provider, so this is the one fact that page needs. The login is read from GitHub
+  // with the stored token, best-effort and briefly, so somebody with two GitHub accounts can
+  // see which one they attached; null when GitHub cannot be asked in time.
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/me/github",
+      tags: ["Session"],
+      summary: "Whether a GitHub account is linked to the signed-in user.",
+      responses: {
+        200: {
+          description: "Linked or not, with the GitHub login when it could be read.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                linked: z.boolean().describe("True when a GitHub identity is attached."),
+                account_id: z
+                  .string()
+                  .nullable()
+                  .describe(
+                    "Better Auth's row for the attached account (for unlinking); null when none.",
+                  ),
+                login: z
+                  .string()
+                  .nullable()
+                  .describe("The attached account's GitHub login; null when unknown."),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const u = await requireUser(c)
+      if (u instanceof Response) return bail(u)
+      const [ghId] = await meta.githubIdsForUser(u.id)
+      if (!ghId) return c.json({ linked: false, account_id: null, login: null })
+      // The row id is what unlink-account wants; the store knows only the GitHub id.
+      const row = await deps.auth?.api
+        .listUserAccounts({ headers: c.req.raw.headers })
+        .then((rows) => rows.find((r) => r.providerId === "github" && r.accountId === ghId) ?? null)
+        .catch(() => null)
+      const login = await (async () => {
+        try {
+          if (!deps.auth || !row) return null
+          const info = await Promise.race([
+            deps.auth.api.accountInfo({ query: { accountId: row.id }, headers: c.req.raw.headers }),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), GITHUB_LOGIN_WAIT_MS)),
+          ])
+          const data = (info as { data?: { login?: unknown } } | null)?.data
+          return typeof data?.login === "string" ? data.login : null
+        } catch {
+          return null
+        }
+      })()
+      return c.json({ linked: true, account_id: row?.id ?? null, login })
     },
   )
 

@@ -5835,6 +5835,47 @@
         }
       }
     },
+    "/v1/me/github": {
+      "get": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "Whether a GitHub account is linked to the signed-in user.",
+        "responses": {
+          "200": {
+            "description": "Linked or not, with the GitHub login when it could be read.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "linked": {
+                      "type": "boolean",
+                      "description": "True when a GitHub identity is attached."
+                    },
+                    "account_id": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Better Auth's row for the attached account (for unlinking); null when none."
+                    },
+                    "login": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The attached account's GitHub login; null when unknown."
+                    }
+                  },
+                  "required": [
+                    "linked",
+                    "account_id",
+                    "login"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/me/username": {
       "post": {
         "tags": [

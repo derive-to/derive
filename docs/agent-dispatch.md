@@ -915,16 +915,17 @@ same delivery and neither can break the other (17.2).
   can comment on a public repository; this keeps strangers from costing a model call. Anyone else
   is dropped silently, without a reply.
 - **Identity.** `comment.user.id` is looked up in Better Auth's `account` table
-  (`providerId = 'github'`, `accountId` = the numeric GitHub id) through `usersByGithubIds`. A
-  sign-in with GitHub is as strong as Slack's OAuth link, so the asker acts at their real seat;
-  there is no viewer clamp. A login or an email never stands in for it (3.4 rule 4).
+  (`providerId = 'github'`, `accountId` = the numeric GitHub id) through `usersByGithubIds`. The
+  row comes from a sign-in with GitHub or from linking GitHub on Settings → Profile; either is
+  as strong as Slack's OAuth link, so the asker acts at their real seat; there is no viewer
+  clamp. A login or an email never stands in for it (3.4 rule 4).
 - **Workspace.** The asker's workspaces that hold an active `github_app` connection whose
   `broker_ref` is the delivery's installation id. With one, that one. With several, the one where
   the asker most recently asked any job; with no job in any, the oldest membership.
 - **Nobody to act as.** No signed-in user, or no such workspace: one reply, then stop. Unlinked:
-  "To ask me here, sign in to Derive with this GitHub account at `<base>`, then mention me
-  again." Linked but in no such workspace: the same, asking an admin to add them. There is no job
-  to dedupe on, so the reply carries a hidden marker naming the comment it answers
+  "To ask me here, link this GitHub account to your Derive account at `<base>/settings/profile`,
+  then mention me again." Linked but in no such workspace: the same, asking an admin to add
+  them. There is no job to dedupe on, so the reply carries a hidden marker naming the comment it answers
   (`<!-- derive:reply-to:<comment_id> -->`), and a redelivery that finds it on the pull request
   posts nothing.
 - **Gate.** `liveChatArrival` applies, keyed on `github:<user id>`. A refusal is said once, the

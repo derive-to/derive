@@ -285,6 +285,18 @@ export function makeAuth(
     env("DERIVE_BREACH_CHECK") !== "0" &&
     env("NODE_ENV") !== "test"
   const BREACH_PATHS = new Set(["/sign-up/email", "/reset-password", "/change-password"])
+  // allowDifferentEmails (account.accountLinking) is one switch for every provider. Only
+  // GitHub is meant to attach under a different email, so every other link request is refused
+  // here; sign-in with those providers is untouched.
+  const linkGuard = createAuthMiddleware(async (ctx) => {
+    if (ctx.path !== "/link-social") return
+    const provider = (ctx.body as { provider?: unknown } | undefined)?.provider
+    if (provider !== "github")
+      throw new APIError("BAD_REQUEST", {
+        message: "Only a GitHub account can be linked here.",
+        code: "LINK_PROVIDER_NOT_ALLOWED",
+      })
+  })
   const breachGuard = createAuthMiddleware(async (ctx) => {
     if (!BREACH_PATHS.has(ctx.path)) return
     const body = ctx.body as { password?: unknown; newPassword?: unknown } | undefined
@@ -463,6 +475,14 @@ export function makeAuth(
       },
     },
     socialProviders,
+    // A signed-in person may attach a GitHub identity to the account they already have
+    // (POST /api/auth/link-social, Settings → Profile): @Derive on a pull request maps a
+    // commenter to a Derive user through that `account` row, and the attached account also
+    // signs them in from then on. The identity's email need not match the account's — the
+    // person is signed in, which is the proof that matters, and a GitHub primary email is
+    // often not the work address. The allowance is Better Auth-wide, so linkGuard (below)
+    // keeps every other provider on the email-match rule.
+    account: { accountLinking: { enabled: true, allowDifferentEmails: true } },
     trustedOrigins: trusted,
     plugins: [
       ...(oidc.length ? [genericOAuth({ config: oidc })] : []),
@@ -554,7 +574,12 @@ export function makeAuth(
         storeTokens: { hash: async (token) => sha256(token) },
       }),
     ],
-    ...(breachCheck ? { hooks: { before: breachGuard } } : {}),
+    hooks: {
+      before: createAuthMiddleware(async (ctx) => {
+        await linkGuard(ctx)
+        if (breachCheck) await breachGuard(ctx)
+      }),
+    },
     advanced: {
       // Keep the CSRF origin check on in every environment. Better Auth silently
       // disables it when NODE_ENV=test; pinning it false means a server mistakenly

@@ -937,6 +937,34 @@ export const api = {
     const data = await f("/api/auth/sign-in/social", opts({ provider, callbackURL })).then(authJson)
     if (data?.url) window.location.href = data.url
   },
+  // Whether a GitHub identity is attached to the signed-in account (Settings → Profile).
+  githubLink: (): Promise<{ linked: boolean; account_id: string | null; login: string | null }> =>
+    f("/v1/me/github", opts()).then(j),
+  // Attach a GitHub identity to the account you are signed in to (Better Auth link-social):
+  // the browser goes to GitHub and comes back to callbackURL, with ?error= on a refusal. The
+  // attached account also signs you in from then on.
+  async linkGithub(callbackURL: string): Promise<void> {
+    const data = await f(
+      "/api/auth/link-social",
+      opts({ provider: "github", callbackURL, errorCallbackURL: callbackURL }),
+    ).then(authJson)
+    if (data?.url) window.location.href = data.url
+  },
+  // Better Auth refuses two cases worth their own words: a session older than its freshness
+  // window (sign in again), and the account being the only way in (add a password first).
+  // `accountId` is the Better Auth account row (GET /v1/me/github's account_id).
+  async unlinkGithub(accountId: string | null): Promise<void> {
+    if (!accountId) throw new Error("No GitHub account is linked.")
+    const r = await f("/api/auth/unlink-account", opts({ accountId }))
+    if (r.ok) return
+    const data = await r.json().catch(() => null)
+    const code = data?.code
+    if (code === "SESSION_NOT_FRESH")
+      throw new Error("Sign out and back in, then unlink GitHub. Unlinking needs a recent sign-in.")
+    if (code === "FAILED_TO_UNLINK_LAST_ACCOUNT")
+      throw new Error("GitHub is the only way you sign in. Set a password first, then unlink it.")
+    throw new Error(data?.message ?? `HTTP ${r.status}`)
+  },
   // Enterprise SSO (generic OIDC) sign-in via Better Auth's genericOAuth plugin, which 1.7
   // registers as a social provider: same endpoint and navigate-to-authorize-URL shape as
   // social, with providerId from capabilities().oidc as the provider.
