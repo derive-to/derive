@@ -323,7 +323,15 @@ export const slackThreadReplies = async (
 export const slackChannelReach = async (
   token: string,
   channel: string,
-): Promise<{ reachable: boolean; name: string | null; isPrivate: boolean } | null> => {
+): Promise<{
+  reachable: boolean
+  name: string | null
+  isPrivate: boolean
+  /** A group DM (mpim): the install has no scope to read one. */
+  isGroupDm: boolean
+  /** Shared with another organisation (Slack Connect): its members never invited the bot. */
+  isShared: boolean
+} | null> => {
   try {
     const q = new URLSearchParams({ channel })
     const res = await fetch(`${API}/conversations.info?${q}`, {
@@ -333,17 +341,25 @@ export const slackChannelReach = async (
     const data = (await res.json()) as {
       ok: boolean
       error?: string
-      channel?: { is_private?: boolean; is_mpim?: boolean; is_member?: boolean; name?: string }
+      channel?: {
+        is_private?: boolean
+        is_mpim?: boolean
+        is_member?: boolean
+        is_ext_shared?: boolean
+        name?: string
+      }
     }
     if (!data.ok)
       return data.error === "channel_not_found"
-        ? { reachable: false, name: null, isPrivate: true }
+        ? { reachable: false, name: null, isPrivate: true, isGroupDm: false, isShared: false }
         : null
     const c = data.channel ?? {}
     return {
       reachable: !c.is_private || c.is_member === true,
       name: c.name ?? null,
       isPrivate: c.is_private === true || c.is_mpim === true,
+      isGroupDm: c.is_mpim === true,
+      isShared: c.is_ext_shared === true,
     }
   } catch {
     return null

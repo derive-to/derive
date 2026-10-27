@@ -266,7 +266,9 @@ tool call, and it creates exactly one dispatched job.
 
 - `agent_id` (string): REQUIRED. MUST be an agent in the current catalog.
 - `instruction` (string, max 20000): REQUIRED. A task the agent can do without the Slack
-  thread: what to do, every link it needs, and the relevant parts of the thread, quoted.
+  thread: what to do, every link it needs, and the relevant parts of the thread, quoted. When
+  the thread came from a private channel (7.2), the tool's rule is the opposite: what to do and
+  every link, and nothing quoted from the thread.
 - `repo` (string, `owner/name`): OPTIONAL. The repository the agent should check out. The
   router sets it when the request is about a pull request or a repository, taken from the link
   in the thread.
@@ -473,10 +475,16 @@ the thread's earlier messages:
 Reading the thread MUST be best-effort. If the read fails, the turn still runs on the mention
 alone.
 
-The thread MUST NOT be read in a private channel or a group DM (13, Visibility). A 1:1 DM with
-the bot is read. A conversation whose kind cannot be determined counts as private. When the
-thread is not read for this reason, the turn gets one `lane` sentence: the thread above was not
-read because the conversation is private, so use only what this message says and links.
+The thread of a private channel is read only when the bot is a member of it, and is then marked
+confidential (13, Visibility): the turn gets one `lane` sentence saying the thread came from a
+private conversation the bot was invited into, to repeat nothing from it the answer does not
+need, and to pass only the request and its links into a hand-off, never the discussion; the
+`hand_off` tool's writing rule says the same (4.1.3). Not read, failing closed: a private
+channel the bot is not in; a group DM (the install has no `mpim:*` scope); a channel shared with
+another organisation through Slack Connect, whose members never invited the bot; a conversation
+whose kind cannot be determined. Then the turn gets one `lane` sentence: the thread above could
+not be read, so use only what this message says and links. A 1:1 DM with the bot is read. The
+thread itself is never stored; the transcript keeps the asker's own words and the turn's reply.
 
 ### 7.3 The Router Turn
 
@@ -709,9 +717,12 @@ No new agent field. No new workspace setting.
 - **Visibility.** A thread reply exposes the summary and the links in the channel. The links keep
   their own access, and a person without access who opens a report sees the usual access screen.
   In the other direction, a dispatched job is visible to the whole workspace, and the router
-  writes its instruction from what it read. So the router never reads the thread of a private
-  channel or a group DM, whose members are not the workspace (7.2). A 1:1 DM is only the asker
-  and the bot, and is read.
+  writes its instruction from what it read. Most engineering channels are private, so the router
+  reads a private channel's thread when the bot was added to it (the members' consent, as for
+  any Slack app), marks it confidential, and is told, in the lane and by the `hand_off` tool
+  itself, to carry only the request and its links into the instruction, never the discussion
+  (7.2). A private channel the bot is not in, a group DM, and a Slack Connect channel are never
+  read. A 1:1 DM is only the asker and the bot, and is read.
 - **Pull request audience.** A comment Derive posts on a pull request is readable by everyone who
   can read the pull request: on a public repository, anyone. The turn's answer is written from
   what the asker can read in the workspace, so the turn is told, in its lane sentence, that its
