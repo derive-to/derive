@@ -417,6 +417,24 @@ describe("connections (Sources — per-user connected accounts)", () => {
       await app.request("/v1/credentials", { headers: as(member.email) })
     ).json()
     const original = catalog.items.find((item: { id: string }) => item.id === credential.id)
+    // The list carries the same reach as /usage, as a count, so a secret saved twice under one
+    // name can be told apart without opening each.
+    expect(original.used_by).toBe(1)
+    const spare = await (
+      await app.request(
+        "/v1/connections",
+        jsonAs(as(member.email), {
+          kind: "secret",
+          toolkit: "environment",
+          scopes_label: "Private reporting DB",
+          secret: "second-fixture",
+        }),
+      )
+    ).json()
+    const listed = await (
+      await app.request("/v1/credentials", { headers: as(member.email) })
+    ).json()
+    expect(listed.items.find((item: { id: string }) => item.id === spare.id).used_by).toBe(0)
     const replace = () =>
       app.request(
         `/v1/credentials/${credential.id}`,
