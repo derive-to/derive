@@ -25,6 +25,7 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
 import { accountsQuery, agentConnectionsQuery, artifactQuery } from "@/lib/queries"
+import { dayLabel } from "@/lib/time"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 import { accountLabel } from "../settings/accounts-section"
@@ -922,6 +923,11 @@ function EnvironmentField({
                 {saved.map((c) => (
                   <SelectItem key={c.id} value={c.id}>
                     {sourceName(c)}
+                    {/* Two secrets saved under one name are the same word twice without this. */}
+                    <span className="ml-2 text-muted-foreground">
+                      {c.scope === "workspace" ? "Workspace" : "Personal"} · added{" "}
+                      {dayLabel(c.created_at)}
+                    </span>
                   </SelectItem>
                 ))}
                 <SelectSeparator />

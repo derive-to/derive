@@ -9,6 +9,7 @@ import { SettingsGroup } from "@/components/shared/settings-group"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { credentialsQuery, credentialUsageQuery } from "@/lib/queries"
+import { dayLabel } from "@/lib/time"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 
@@ -63,17 +64,19 @@ export function SecretsGroup() {
               data-testid={`credential-row-${credential.id}`}
               title={credential.name}
               meta={
-                // Silence for the default: an active secret says only whose it is.
+                // Whose it is, when it was saved, and how many agents read it: two secrets saved
+                // under one name (a token pasted twice) are otherwise identical rows.
                 [
                   credential.scope === "personal" ? "Personal" : "Workspace",
+                  `Added ${dayLabel(credential.created_at)}`,
                   credential.status === "revoked"
                     ? "Revoked"
                     : credential.status === "pending"
                       ? "Pending"
-                      : null,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")
+                      : credential.used_by === 0
+                        ? "Not used"
+                        : `Used by ${credential.used_by} agent${credential.used_by === 1 ? "" : "s"}`,
+                ].join(" · ")
               }
               actions={
                 credential.can_manage ? (

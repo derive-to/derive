@@ -2171,6 +2171,8 @@ export interface Credential {
   health: "not_checked"
   can_manage: boolean
   can_use: boolean
+  /** How many agents read it, as a source or an environment variable. */
+  used_by: number
 }
 export interface CredentialUsage {
   items: { id: string; name: string; kind: "agent" }[]

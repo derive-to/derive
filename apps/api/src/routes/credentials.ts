@@ -44,11 +44,24 @@ export const credentialRoutes = (ctx: AppContext) => {
     const auth = await principal(c)
     if (auth instanceof Response) return auth
     const canManage = await ctx.workspaceCan(c, "manage")
+    // How many agents read each secret, so two secrets saved under one name can be told apart
+    // in the list without opening each. Same reach as /usage below: agents are workspace-visible.
+    const usedBy = new Map<string, number>()
+    for (const agent of await ctx.meta.listAgents(auth.org)) {
+      const ids = new Set([
+        ...parseConnectionIds(agent.connection_ids_json),
+        ...Object.values(readEnvironmentBindings(agent.environment_json)),
+      ])
+      for (const id of ids) usedBy.set(id, (usedBy.get(id) ?? 0) + 1)
+    }
     return c.json({
       can_create_workspace: canManage,
       items: (await ctx.meta.listConnections(auth.org))
         .filter((connection) => credentialVisible(connection, auth.userId))
-        .map((connection) => credentialView(connection, auth.userId, canManage)),
+        .map((connection) => ({
+          ...credentialView(connection, auth.userId, canManage),
+          used_by: usedBy.get(connection.id) ?? 0,
+        })),
     })
   })
   // Which agents a secret reaches: bound as a source, or named in an agent's environment.
