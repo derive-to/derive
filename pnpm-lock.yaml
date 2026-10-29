@@ -34,7 +34,7 @@ overrides:
   svgo: ^4.1.0
   katex: ^0.18.5
   proxy-addr: ^2.0.8
-  seroval: ^1.6.3
+  seroval: ^1.6.11
   source-map-js: ^1.2.2
   onnxruntime-node>global-agent: 4.1.3
   zod: ^4.6.7
@@ -121,8 +121,8 @@ importers:
         specifier: ^0.3.0
         version: 0.3.0(@modelcontextprotocol/sdk@1.32.1(zod@4.6.7))(hono-rate-limiter@0.5.3(hono@4.13.13)(unstorage@1.17.5(idb-keyval@6.3.0)))(hono@4.13.13)(zod@4.6.7)
       '@hono/node-server':
-        specifier: ^2.1.0
-        version: 2.1.0(hono@4.13.13)
+        specifier: ^2.1.3
+        version: 2.1.5(hono@4.13.13)
       '@hono/zod-openapi':
         specifier: 1.0.2
         version: 1.0.2(hono@4.13.13)(zod@4.6.7)
@@ -554,8 +554,8 @@ importers:
         specifier: workspace:*
         version: link:../storage
       '@hono/node-server':
-        specifier: ^2.1.0
-        version: 2.1.0(hono@4.13.13)
+        specifier: ^2.1.3
+        version: 2.1.5(hono@4.13.13)
       '@types/node':
         specifier: ^25.9.3
         version: 25.9.3
@@ -1591,11 +1591,11 @@ packages:
       hono-rate-limiter: ^0.5.3
       zod: ^4.6.7
 
-  '@hono/node-server@2.1.0':
-    resolution: {integrity: sha512-XovyyCCnBzW+zKu+z/zq8hwNs4KOR5rEMAOxo2f40Q5xoOI37IMm6MIg2COOUtUApo0i6850MTBKH2u4QLGIqg==}
+  '@hono/node-server@2.1.5':
+    resolution: {integrity: sha512-MgP/I06GdvsilDspMk/qmRzpk8LOUStP6jFAbSRi40W09DhoyUn+Mj7eyKICPqeYKybOjVFLVIAQzvu1bfIa7Q==}
     engines: {node: '>=20'}
     peerDependencies:
-      hono: ^4
+      hono: ^4 || ^5.0.0-0
 
   '@hono/zod-openapi@1.0.2':
     resolution: {integrity: sha512-zbxUZEnA+NaeotXRI2YPL5GEbz38DiO7Zp1nx/7yXOA2ITkcASYsYe/My/I38c44GCu+oUVM899zn4TBVn7JRg==}
@@ -7202,11 +7202,11 @@ packages:
     resolution: {integrity: sha512-kiDK/Tb8IWZ61WEU8pA2PDmAuw37gKph9Y77OZlD56mg0Y2g0Bg7gZ1HeHhs5d40w+nRoUq/wj08V26ilbez9g==}
     engines: {node: '>=10'}
     peerDependencies:
-      seroval: ^1.6.3
+      seroval: ^1.6.11
 
-  seroval@1.6.8:
-    resolution: {integrity: sha512-HlSgSAkTk4EqHcje1ptJjfZi1YDv5KbhVJ/d3P7T/nAXua2VmDu+AKDX5VTdFfZf48nDkWB2TKYt0DrCSa+3wg==}
-    engines: {node: '>=10'}
+  seroval@1.7.2:
+    resolution: {integrity: sha512-NPOYrDVbvtuTo5m9InqKE7O6wBASON46OabjyqLUGPvoXNDYp0pReuFYkqOQwGsoj1OpZVj6mIdnRRgt5O1/gQ==}
+    engines: {node: '>=20'}
 
   serve-static@2.2.1:
     resolution: {integrity: sha512-xRXBn0pPqQTVQiC8wyQrKs2MOlX24zQ0POGaj0kultvoOCstBQM5yvOhAVSUwOMjQtTvsPWoNCHfPGwaaQJhTw==}
@@ -9257,7 +9257,7 @@ snapshots:
       pkce-challenge: 5.0.1
       zod: 4.6.7
 
-  '@hono/node-server@2.1.0(hono@4.13.13)':
+  '@hono/node-server@2.1.5(hono@4.13.13)':
     dependencies:
       hono: 4.13.13
 
@@ -9517,7 +9517,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.32.1(zod@4.6.7)':
     dependencies:
-      '@hono/node-server': 2.1.0(hono@4.13.13)
+      '@hono/node-server': 2.1.5(hono@4.13.13)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
@@ -11453,8 +11453,8 @@ snapshots:
     dependencies:
       '@tanstack/history': 1.162.5
       cookie-es: 3.1.1
-      seroval: 1.6.8
-      seroval-plugins: 1.6.9(seroval@1.6.8)
+      seroval: 1.7.2
+      seroval-plugins: 1.6.9(seroval@1.7.2)
 
   '@tanstack/router-generator@1.167.44':
     dependencies:
@@ -11511,7 +11511,7 @@ snapshots:
       '@tanstack/router-core': 1.171.37
       '@tanstack/start-fn-stubs': 1.162.0
       '@tanstack/start-storage-context': 1.167.39
-      seroval: 1.6.8
+      seroval: 1.7.2
 
   '@tanstack/start-fn-stubs@1.162.0': {}
 
@@ -11530,7 +11530,7 @@ snapshots:
       lightningcss: 1.33.0
       pathe: 2.0.3
       picomatch: 4.0.7
-      seroval: 1.6.8
+      seroval: 1.7.2
       source-map: 0.7.6
       srvx: 1.0.5
       tinyglobby: 0.2.17
@@ -11561,7 +11561,7 @@ snapshots:
       '@tanstack/start-storage-context': 1.167.39
       cookie-es: 3.1.1
       fetchdts: 0.2.0
-      seroval: 1.6.8
+      seroval: 1.7.2
 
   '@tanstack/start-storage-context@1.167.39':
     dependencies:
@@ -15337,11 +15337,11 @@ snapshots:
     dependencies:
       type-fest: 0.20.2
 
-  seroval-plugins@1.6.9(seroval@1.6.8):
+  seroval-plugins@1.6.9(seroval@1.7.2):
     dependencies:
-      seroval: 1.6.8
+      seroval: 1.7.2
 
-  seroval@1.6.8: {}
+  seroval@1.7.2: {}
 
   serve-static@2.2.1:
     dependencies:
