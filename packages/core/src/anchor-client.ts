@@ -31,6 +31,7 @@ import {
   fingerprintFrom,
   normWs,
 } from "./anchor-shared"
+import { imageViewer, ZOOMABLE_CSS } from "./image-viewer-client"
 import {
   isMentionHandle,
   MENTION_NON_PROSE_SELECTOR,
@@ -289,6 +290,7 @@ interface ElReg {
 
   const emitSelection = () => {
     if (editOn) return // editing: selections are for the caret, not the comment bar
+    if (viewer.isOpen()) return
     const s = window.getSelection()
     const t = s ? s.toString().trim() : ""
     // A tap fires a synthesized mouseup with no selection; don't let it clear the
@@ -407,6 +409,9 @@ interface ElReg {
         selectReviewElement(ael)
         return
       }
+      // A picture opens the image viewer on the click this tap becomes; commenting on
+      // it is the viewer's Comment action.
+      if (viewer.isOpen() || viewer.viewable(el)) return
       if (
         ael &&
         /^(img|svg|canvas|video|audio|iframe|embed|object|picture)$/.test(ael.tagName.toLowerCase())
@@ -464,6 +469,8 @@ interface ElReg {
   let pY = 0
   let pIn = false
   const postCursor = (type: "cursor" | "cursor-tap") => {
+    // Over the image viewer the pointer isn't on the page peers see.
+    if (viewer.isOpen()) return
     const w = window.innerWidth || 1
     const dh = document.documentElement.scrollHeight || 1
     // Document-normalized: x by width, y by full doc height (incl. scroll). Each viewer maps
@@ -584,6 +591,8 @@ interface ElReg {
   }
   const ownKeys = (e: KeyboardEvent) =>
     guard(() => {
+      // The image viewer is modal and owns the keyboard (its own listener).
+      if (viewer.isOpen()) return
       const focused = editingCaret()
       const precisionFocused = !!asEl(document.activeElement)?.closest(".derive-resize-panel")
       // An IME is mid-word. Not ours to interpret.
@@ -677,6 +686,7 @@ interface ElReg {
   /* -- highlight styles (mark's default yellow is overridden) -- */
   const st = document.createElement("style")
   st.textContent =
+    ZOOMABLE_CSS +
     /* Text-comment highlights paint through the CSS Custom Highlight API (::highlight),
        NOT <mark> DOM wraps — so we never mutate the artifact's own DOM, and OVERLAPPING
        comments render correctly (the old mark-wrapping nested awkwardly). `::highlight`
@@ -1014,6 +1024,26 @@ interface ElReg {
     }
   }
 
+  // Click a picture to see it full-frame and page through the rest. Not in a deck or
+  // a video (a click there advances the slide), nor while editing or reviewing.
+  const viewer = imageViewer({
+    allowed: () => !editOn && !reviewOn && slideEls().length < 2 && !videoRoot(),
+    canComment: () => imageCommentsOn,
+    comment: (img) => {
+      tapGuard = Date.now()
+      const r = img.getBoundingClientRect()
+      // Picked, like a review-mode pick: the reader already chose Comment, so the host
+      // opens the composer on the image instead of offering a Comment pill first.
+      post({
+        type: "select",
+        element: true,
+        reviewPicked: true,
+        rect: { top: r.top, bottom: r.bottom, left: r.left, right: r.right },
+        selector: buildElSelector(img),
+      })
+    },
+  })
+
   // The host opts in only where comments are available. Keep the browser's image
   // actions reachable with Shift-right-click, including for linked images.
   on(
@@ -1047,6 +1077,7 @@ interface ElReg {
     reviewHover?.classList.add("derive-review-hover")
   }
   const setReviewMode = (on: boolean) => {
+    if (on) viewer.close()
     reviewOn = on && !editOn
     document.body?.classList.toggle("derive-review-mode", reviewOn)
     if (!reviewOn) setReviewHover(null)
@@ -2381,6 +2412,7 @@ interface ElReg {
         editClick(e)
         return
       }
+      if (viewer.isOpen() || viewer.swallow(e)) return
       if (reviewOn) {
         const target = anchorEl(asEl(e.target))
         if (target) {
@@ -2400,6 +2432,7 @@ interface ElReg {
         post({ type: "anchor-click", id: hit })
         return
       }
+      if (viewer.click(e)) return
       extLink(e)
     },
     true,
@@ -5174,6 +5207,7 @@ interface ElReg {
   type EditEntry = { fromSelection?: boolean }
   const setEditMode = (on: boolean, entry?: EditEntry, allowElementEdits = false) => {
     if (on === editOn) return
+    if (on) viewer.close()
     editOn = on
     elementEditsOn = on && allowElementEdits
     if (on) {

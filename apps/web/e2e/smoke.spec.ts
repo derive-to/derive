@@ -134,6 +134,54 @@ test("right-click an image to comment, then reload its durable anchor", async ({
   expect(await prevented(guestImage)).toBe(false)
 })
 
+test("click an image to view it full-frame, page on, and comment from the viewer", async ({
+  owner,
+}) => {
+  const svg = (fill: string) =>
+    `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='640' height='360'%3E%3Crect width='640' height='360' fill='${fill}'/%3E%3C/svg%3E`
+  const shortId = await publishArtifact(
+    owner,
+    "image-viewer.html",
+    `<body style="padding:40px">
+      <figure><img data-testid="first" id="first" alt="Teal study" width="320" height="180" src="${svg("teal")}">
+        <figcaption>The first study.</figcaption></figure>
+      <img id="second" alt="Coral study" width="320" height="180" src="${svg("coral")}">
+      <a href="https://example.com"><img data-testid="linked" width="320" height="180" src="${svg("navy")}"></a>
+    </body>`,
+    "text/html",
+  )
+  await openArtifact(owner, shortId)
+  const frame = owner.frameLocator("iframe[title]:not([aria-hidden])")
+  const viewer = frame.getByRole("dialog", { name: "Image viewer" })
+
+  await frame.getByTestId("first").click()
+  await expect(viewer).toBeVisible()
+  // The linked image belongs to its link, so the page has two pictures, not three.
+  await expect(viewer.getByText("1 of 2")).toBeVisible()
+  await expect(viewer.getByText("The first study.")).toBeVisible()
+  await owner.keyboard.press("ArrowRight")
+  await expect(viewer.getByText("2 of 2")).toBeVisible()
+  await expect(viewer.getByText("Coral study")).toBeVisible()
+  // Escape closes the viewer, not anything the host has open.
+  await owner.keyboard.press("Escape")
+  await expect(viewer).toHaveCount(0)
+
+  await frame.getByTestId("first").click()
+  await owner.keyboard.press("ArrowRight")
+  await viewer.getByRole("button", { name: "Comment on this image" }).click()
+  await expect(viewer).toHaveCount(0)
+  await owner.getByTestId("composer-input").fill("Warmer, please.")
+  await owner.getByTestId("composer-submit").click()
+  await expect(owner.getByText("Warmer, please.")).toBeVisible()
+  const response = await owner.request.get(`/v1/artifacts/${shortId}/comments`)
+  const { comments } = (await response.json()) as { comments: { anchor: string }[] }
+  expect(JSON.parse(comments[0]?.anchor ?? "null")).toMatchObject({
+    type: "ElementSelector",
+    tag: "img",
+    id: "second",
+  })
+})
+
 test("a cached screenshot still becomes a visible library thumbnail", async ({ owner }) => {
   const shortId = await publishArtifact(owner, "cached-thumb.md", "# Cached thumbnail")
 
