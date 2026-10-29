@@ -56,9 +56,18 @@ function ghThroughFile(tokenFile) {
  *  With `task`, on a machine many tasks share (a team's own box), the shared checkout only
  *  holds the objects: each task works in its own git worktree beside it, made on the task's
  *  first turn and kept for its follow-ups, so parallel tasks never touch each other's files. */
-export function prepareRepo({ repo, ref, token }, { cwd, firstTurn, tokenFile, task }) {
+export function prepareRepo(
+  { repo, ref, token },
+  { cwd, firstTurn, tokenFile, task, ownGhToken = false },
+) {
   writeFileSync(tokenFile, token, { mode: 0o600 })
-  const env = { DERIVE_GIT_TOKEN_FILE: tokenFile, ...ghThroughFile(tokenFile) }
+  // The task's token is for git. `gh` takes it too, unless the agent's environment binds its
+  // own GH_TOKEN: then reviews and comments post from that account, as they do without a
+  // checkout, instead of from the installation.
+  const env = {
+    DERIVE_GIT_TOKEN_FILE: tokenFile,
+    ...(ownGhToken ? {} : ghThroughFile(tokenFile)),
+  }
   const name = repo.split("/")[1]
   const mine = (dir) =>
     existsSync(join(dir, ".git")) &&

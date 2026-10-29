@@ -612,6 +612,19 @@ describe("cloud sessions", () => {
       // The runner renews the token in place; the harness's gh picks it up without a restart.
       writeFileSync(tokenFile, "renewed-token")
       expect(gh()).toBe("gh sees renewed-token")
+      // An agent whose environment binds its own GH_TOKEN keeps posting from that account:
+      // git still checks out with the task's token, but gh is left to the bound one.
+      const own = prepareRepo(
+        { repo: "acme-dev/widgets", ref: "main", token: "task-token" },
+        { cwd: root, firstTurn: false, tokenFile, ownGhToken: true },
+      )
+      expect(own.env.PATH).toBeUndefined()
+      expect(
+        execSync("gh auth status", {
+          env: { ...process.env, ...own.env, GH_TOKEN: "own-token" },
+          encoding: "utf8",
+        }).trim(),
+      ).toBe("gh sees own-token")
     } finally {
       process.env.PATH = before.PATH
       if (before.GIT_CONFIG_GLOBAL === undefined) delete process.env.GIT_CONFIG_GLOBAL
