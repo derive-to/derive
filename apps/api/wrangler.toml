@@ -310,7 +310,7 @@ DERIVE_SIGNUP_MODE = "open"
 DERIVE_MANAGED_RUNS_ALLOWLIST = "*"
 # The pinned CLI a Derive machine installs and launches for each job (docs/ortam-smoke.md).
 # Execution still requires the workspace allowlist above and the workspace's agentWrites.
-DERIVE_ORTAM_RUNNER_PATH = "/home/ortam/derive-runtime/0.8.9/node_modules/@derive-to/cli/bin/derive.js"
+DERIVE_ORTAM_RUNNER_PATH = "/home/ortam/derive-runtime/0.8.10/node_modules/@derive-to/cli/bin/derive.js"
 # Machines one workspace may hold at once (each cloud session or task holds one; parked ones
 # do not count). A team running ten sessions each needs more than the default of 20.
 DERIVE_WORKSPACE_MACHINE_LIMIT = "60"
