@@ -82,20 +82,42 @@ const sweepEditSessions = async (env: Env, ctx: ExecutionContext): Promise<void>
 let app: ReturnType<typeof createApp> | null = null
 // Better Auth's init, until it settles. Null once it has (and before the app exists).
 let authReady: Promise<unknown> | null = null
+// How long a request waits on that init before giving up on it. Init is a lookup or two
+// (well under a second); a stall is a stuck query on the building request's connection,
+// which only the 35s query_timeout would end.
+const AUTH_INIT_WAIT_MS = 5_000
+const AUTH_INIT_STALLED = Symbol("auth init stalled")
+
+const settledWithin = <T>(work: Promise<T>, ms: number): Promise<T | typeof AUTH_INIT_STALLED> => {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const stalled = new Promise<typeof AUTH_INIT_STALLED>((resolve) => {
+    timer = setTimeout(() => resolve(AUTH_INIT_STALLED), ms)
+  })
+  return Promise.race([work, stalled]).finally(() => clearTimeout(timer))
+}
 
 // The request handler behind both tiers. Split from `fetch` so the pg tier can
-// wrap it in a request-scoped pool without indenting the whole body.
-const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promise<Response> => {
+// wrap it in a request-scoped pool without indenting the whole body. `retried` marks the
+// second pass after a stalled init (see the wait below).
+const handle = (
+  req: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  retried = false,
+): Response | Promise<Response> => {
   // Bind THIS request's D1 for the entire handler — including the one-time app/auth
   // construction below — so liveD1 always resolves to a live binding, never a stale one.
   return requestD1.run(env.DB, () => {
     if (!app) {
       const deps = edgeAppDeps(env, env.BASE_URL ?? new URL(req.url).origin)
       app = createApp(deps)
-      authReady =
+      // Clears only its own slot: an abandoned init that settles late must not clear the
+      // init of the app that replaced it.
+      const pending: Promise<unknown> | null =
         deps.auth?.$context.then(() => {
-          authReady = null
+          if (authReady === pending) authReady = null
         }) ?? null
+      authReady = pending
     }
     const ready = app
     // Run within the per-request context so the DO backplane's publish can waitUntil.
@@ -107,15 +129,43 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
     // to a dead connection, and every sign-in in the isolate would hang. Only requests
     // that arrive before init settles wait. A failed init drops the app so the next
     // request builds it again instead of inheriting the failure.
+    //
+    // The wait is bounded. An init that has not settled in AUTH_INIT_WAIT_MS is abandoned:
+    // the app is dropped and this request retries once, building a fresh app on a fresh
+    // connection (the request that built the stalled app is the first to time out, and its
+    // own connection is the stuck one). Waiting it out held every request on a new isolate
+    // (a whole page load) until the browser gave up. A retry whose init stalls too answers
+    // 503 rather than serving into an unsettled init, which is the hang 7e182157 prevents.
     const init = authReady
     if (!init) return serve()
-    return init.then(serve, (err: unknown) => {
-      if (app === ready) {
-        app = null
-        authReady = null
-      }
-      throw err
-    })
+    const started = Date.now()
+    return settledWithin(init, AUTH_INIT_WAIT_MS).then(
+      (result) => {
+        if (result !== AUTH_INIT_STALLED) return serve()
+        if (app === ready) {
+          app = null
+          authReady = null
+          log.warn("auth init stalled; rebuilding the app", {
+            waited_ms: Date.now() - started,
+            retried,
+          })
+        }
+        if (retried)
+          return new Response("Service starting, retry shortly", {
+            status: 503,
+            headers: { "retry-after": "1" },
+          })
+        const retry = () => handle(req, env, ctx, true)
+        return env.HYPERDRIVE ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), retry) : retry()
+      },
+      (err: unknown) => {
+        if (app === ready) {
+          app = null
+          authReady = null
+        }
+        throw err
+      },
+    )
   })
 }
 
