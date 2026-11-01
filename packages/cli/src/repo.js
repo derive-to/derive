@@ -145,10 +145,19 @@ export function gitState(repo, dir) {
   }
 }
 
-/** The pull request the turn's branch has open (or had), for the task's result. */
+/** The pull request the turn's branch has open (or had), for the task's result. A turn that
+ *  stayed on the repository's default branch opened nothing: whatever pull request that branch
+ *  has (a release or a reset into another branch) is not this task's work. */
 export async function pullRequestFor({ repo, token }, dir, fetcher = fetch) {
   const branch = run(["rev-parse", "--abbrev-ref", "HEAD"], { cwd: dir, quiet: true }).stdout.trim()
   if (!branch || branch === "HEAD") return null
+  const main = run(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], {
+    cwd: dir,
+    quiet: true,
+  })
+    .stdout.trim()
+    .replace(/^origin\//, "")
+  if (main && branch === main) return null
   const [owner] = repo.split("/")
   const res = await fetcher(
     `https://api.github.com/repos/${repo}/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}`,
