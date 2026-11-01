@@ -16,7 +16,7 @@ import { describe, expect, it } from "vitest"
 import { WebSocketServer } from "ws"
 import { loadJobRunnerConfig } from "../src/job-runner.js"
 import { claudeCode } from "../src/providers/claude-code.js"
-import { prepareRepo } from "../src/repo.js"
+import { prepareRepo, pullRequestFor } from "../src/repo.js"
 import { OUTPUT_CONTRACT, parseAnswer, resolveArtifactHtml, runAgent } from "../src/runner.js"
 import { runSession } from "../src/session.js"
 import { sessionApi, sessionCommand } from "../src/sessions.js"
@@ -669,6 +669,63 @@ describe("cloud sessions", () => {
       // A follow-up on task a returns to its own folder with the work in progress.
       expect(checkout("job_a")).toBe(a)
       expect(readFileSync(join(a, "change.txt"), "utf8")).toBe("task a")
+    } finally {
+      if (before === undefined) delete process.env.GIT_CONFIG_GLOBAL
+      else process.env.GIT_CONFIG_GLOBAL = before
+    }
+  })
+
+  it("reports no pull request for a turn that stayed on the default branch", async () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-pr-"))
+    const bare = join(root, "origin.git")
+    execSync(`git init -q --bare ${bare}`)
+    execSync(`git -C ${bare} symbolic-ref HEAD refs/heads/main`)
+    const seed = join(root, "seed")
+    execSync(`git init -q -b main ${seed}`)
+    execSync(`git -C ${seed} -c user.email=a@b -c user.name=a commit -q --allow-empty -m first`)
+    execSync(`git -C ${seed} push -q ${bare} main`)
+    const config = join(root, "gitconfig")
+    writeFileSync(
+      config,
+      `[url "${bare}"]\n\tinsteadOf = https://github.com/acme-dev/widgets.git\n`,
+    )
+    const before = process.env.GIT_CONFIG_GLOBAL
+    process.env.GIT_CONFIG_GLOBAL = config
+    try {
+      const { dir } = prepareRepo(
+        { repo: "acme-dev/widgets", ref: "main", token: "t" },
+        { cwd: root, firstTurn: true, tokenFile: join(mkdtempSync(join(tmpdir(), "g-")), "t") },
+      )
+      const asked = []
+      const github = async (url) => {
+        asked.push(url)
+        return {
+          ok: true,
+          json: async () => [
+            {
+              number: 7,
+              title: "Add the widget",
+              html_url: "https://github.com/acme-dev/widgets/pull/7",
+            },
+          ],
+        }
+      }
+      // main has a pull request of its own (a release into another branch). A review that
+      // worked from main did not open it, so the task reports none and never asks GitHub.
+      const git = { repo: "acme-dev/widgets", token: "t" }
+      expect(await pullRequestFor(git, dir, github)).toBeNull()
+      expect(asked).toEqual([])
+      // A turn that moved to its own branch reports that branch's pull request.
+      execSync(`git -C ${dir} checkout -q -b feature/widget`)
+      expect(await pullRequestFor(git, dir, github)).toEqual({
+        kind: "pr",
+        label: "Add the widget",
+        ref: "acme-dev/widgets#7",
+        url: "https://github.com/acme-dev/widgets/pull/7",
+      })
+      expect(asked).toEqual([
+        "https://api.github.com/repos/acme-dev/widgets/pulls?state=all&head=acme-dev%3Afeature%2Fwidget",
+      ])
     } finally {
       if (before === undefined) delete process.env.GIT_CONFIG_GLOBAL
       else process.env.GIT_CONFIG_GLOBAL = before
