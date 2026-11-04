@@ -116,7 +116,8 @@ export function prepareRepo(
   }
   if (firstTurn) {
     const { base, at } = start()
-    if (at === `origin/${base}`) run(["checkout", "--force", "-B", base, at], { cwd: dir })
+    // A partial clone fetches the blobs a checkout needs on demand, so it needs the token too.
+    if (at === `origin/${base}`) run(["checkout", "--force", "-B", base, at], { cwd: dir, env })
     else run(["checkout", "--force", "--detach", base], { cwd: dir, env })
   }
   return { dir, env }

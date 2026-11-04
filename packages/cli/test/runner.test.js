@@ -675,6 +675,48 @@ describe("cloud sessions", () => {
     }
   })
 
+  it("checks out the task's branch with the token, since a partial clone fetches blobs then", () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-checkout-"))
+    const bare = join(root, "origin.git")
+    execSync(`git init -q --bare ${bare}`)
+    const seed = join(root, "seed")
+    execSync(`git init -q -b main ${seed}`)
+    execSync(`git -C ${seed} -c user.email=a@b -c user.name=a commit -q --allow-empty -m first`)
+    execSync(`git -C ${seed} push -q ${bare} main`)
+    // A hook stands in for the credential helper: it records what a checkout's git can see.
+    const hooks = join(root, "hooks")
+    mkdirSync(hooks)
+    const seen = join(root, "seen")
+    writeFileSync(
+      join(hooks, "post-checkout"),
+      `#!/bin/sh\necho "\${DERIVE_GIT_TOKEN_FILE:-none}" >> ${seen}\n`,
+      { mode: 0o755 },
+    )
+    const config = join(root, "gitconfig")
+    writeFileSync(
+      config,
+      `[url "${bare}"]\n\tinsteadOf = https://github.com/acme-dev/widgets.git\n[core]\n\thooksPath = ${hooks}\n`,
+    )
+    const before = process.env.GIT_CONFIG_GLOBAL
+    process.env.GIT_CONFIG_GLOBAL = config
+    try {
+      const tokenFile = join(mkdtempSync(join(tmpdir(), "g-")), "t")
+      const turn = () =>
+        prepareRepo(
+          { repo: "acme-dev/widgets", ref: "main", token: "t" },
+          { cwd: root, firstTurn: true, tokenFile },
+        )
+      turn() // clones
+      writeFileSync(seen, "")
+      turn() // reuses the clone and moves it to the task's ref
+      const lines = readFileSync(seen, "utf8").trim().split("\n")
+      expect(lines).toEqual([tokenFile])
+    } finally {
+      if (before === undefined) delete process.env.GIT_CONFIG_GLOBAL
+      else process.env.GIT_CONFIG_GLOBAL = before
+    }
+  })
+
   it("reports no pull request for a turn that stayed on the default branch", async () => {
     const root = mkdtempSync(join(tmpdir(), "derive-pr-"))
     const bare = join(root, "origin.git")
