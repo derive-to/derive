@@ -547,6 +547,52 @@ describe("cloud sessions", () => {
     )
   })
 
+  it("a session's harness command rides the private env file, so a long instructions page never reaches tmux", async () => {
+    // Observed on a Derive machine: a 20 KB --append-system-prompt made tmux refuse the
+    // session with "command too long", and the task failed before the harness started.
+    const systemPrompt = "x".repeat(40_000)
+    let newSession = null
+    let envFile = null
+    const tmux = (cmd, ...args) => {
+      if (cmd === "new-session") {
+        newSession = args
+        envFile = readFileSync(args[args.length - 1], "utf8")
+        return { status: 0, stdout: "", stderr: "" }
+      }
+      if (cmd === "has-session") return { status: 1, stdout: "" }
+      return { status: 0, stdout: "", stderr: "" }
+    }
+    const ended = await runSession(
+      {
+        bin: "claude",
+        args: ["--append-system-prompt", systemPrompt, "it's a 'quoted' prompt"],
+        cwd: tmpdir(),
+        env: { CLAUDE_CODE_OAUTH_TOKEN: "tok" },
+      },
+      { pollMs: 1, tmux },
+    )
+    expect(ended).toBe("exited")
+    expect(newSession.join(" ").length).toBeLessThan(1_000)
+    expect(newSession.join(" ")).not.toContain(systemPrompt)
+    expect(envFile).toContain("export CLAUDE_CODE_OAUTH_TOKEN='tok'")
+    expect(envFile).toContain("DERIVE_SESSION_COMMAND=")
+    expect(envFile).not.toMatch(/export DERIVE_SESSION_COMMAND/)
+    // The command the wrapper evals reproduces the exact argv, quoting included.
+    const line = envFile.split("\n").find((l) => l.startsWith("DERIVE_SESSION_COMMAND="))
+    const argv = execSync(`${line}; eval "printf '%s\\0' $DERIVE_SESSION_COMMAND"`, {
+      shell: "/bin/sh",
+    })
+      .toString()
+      .split("\0")
+      .slice(0, -1)
+    expect(argv).toEqual([
+      "claude",
+      "--append-system-prompt",
+      systemPrompt,
+      "it's a 'quoted' prompt",
+    ])
+  })
+
   it("a session parks once nobody types and its screen stops changing, even with a dropped client listed", async () => {
     let clock = 1_000_000
     let screen = "working 1s"
