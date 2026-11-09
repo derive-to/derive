@@ -16,7 +16,7 @@
     "deploy:check": "pnpm build && wrangler deploy --dry-run"
   },
   "dependencies": {
-    "@astrojs/mdx": "7.0.5",
+    "@astrojs/mdx": "7.0.8",
     "@astrojs/sitemap": "3.7.3",
     "astro": "7.3.3"
   },
