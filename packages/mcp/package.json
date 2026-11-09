@@ -61,7 +61,7 @@
     "@derive/db": "workspace:*",
     "@derive/storage": "workspace:*",
     "@hono/node-server": "^2.1.3",
-    "@types/node": "^25.9.3",
+    "@types/node": "^26.6.5",
     "typescript": "^6.0.3",
     "vitest": "^4.1.12"
   }
