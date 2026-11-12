@@ -314,11 +314,19 @@ export const accountLoginRoutes = (ctx: AppContext) => {
       // A provider that creates and then sets up may fail between the two: it names the
       // sandbox it made, and nothing else would ever delete it.
       const made = (error as { sandbox_id?: unknown } | null)?.sandbox_id
-      if (typeof made === "string")
-        await box.deleteSandbox(made, `${p.attempt}-delete`, p.identity).catch(() => null)
+      const orphan = typeof made === "string" ? made : undefined
+      if (orphan)
+        await box.deleteSandbox(orphan, `${p.attempt}-delete`, p.identity).catch(() => null)
+      // Kept on the attempt, so stopping it later deletes a sandbox this try could not.
       await save(
         a,
-        { ...p, phase: "failed", reason: "setup_failed", secret: undefined },
+        {
+          ...p,
+          ...(orphan ? { sandbox_id: orphan } : {}),
+          phase: "failed",
+          reason: "setup_failed",
+          secret: undefined,
+        },
         "needs_attention",
       )
       return fail(c, 503, "The connection sandbox could not start. Try again.")

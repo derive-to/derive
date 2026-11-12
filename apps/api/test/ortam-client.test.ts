@@ -580,7 +580,6 @@ describe("Ortam usage", () => {
     expect(
       await usage({
         "": {
-          unknown_starts: 0,
           next_after: 7,
           // Ten minutes, half of them inside the window.
           starts: [
@@ -592,7 +591,6 @@ describe("Ortam usage", () => {
           ],
         },
         "?after=7": {
-          unknown_starts: 0,
           next_after: null,
           starts: [
             // Still running: charged to date, all of it inside.
@@ -612,23 +610,13 @@ describe("Ortam usage", () => {
   })
 
   it.each([
-    [
-      "a start it could not price",
-      {
-        unknown_starts: 0,
-        starts: [
-          {
-            running_at: "2026-11-12T00:10:00Z",
-            ended_at: "2026-11-12T00:20:00Z",
-            charge_atoms: null,
-            gap: "unpriced",
-          },
-        ],
-      },
-    ],
-    ["starts it cannot account for", { unknown_starts: 1, starts: [] }],
-  ])("gives no cost at all for %s, never a low one", async (_name, compute) => {
-    await expect(usage({ "": compute })).rejects.toThrow("Ortam usage is not settled")
+    ["could not price", { charge_atoms: null, gap: "unpriced" }],
+    ["has not charged yet", { charge_atoms: null }],
+  ])("gives no cost at all, never a low one, for a start in the window it %s", async (_name, start) => {
+    const starts = [
+      { running_at: "2026-11-12T00:10:00Z", ended_at: "2026-11-12T00:20:00Z", ...start },
+    ]
+    await expect(usage({ "": { starts } })).rejects.toThrow("Ortam usage is not settled")
   })
 })
 
@@ -644,6 +632,9 @@ describe("the stop timer a command arms", () => {
       `#!/bin/sh\necho "sudo $*" >> "${dir}/log"\ncase "$1" in tee) cat > "${dir}/$(basename "$2")" ;; systemctl) ${systemctl} ;; esac\n`,
     )
     chmodSync(join(bin, "sudo"), 0o755)
+    // Asked without sudo whether the service is installed: not yet, on a new disk.
+    writeFileSync(join(bin, "systemctl"), "#!/bin/sh\nexit 1\n")
+    chmodSync(join(bin, "systemctl"), 0o755)
     const ran = spawnSync(
       "sh",
       ["-c", ARMED, "derive", "900", dir, "sh", "-c", 'echo "ran in $(pwd) with $1"', "x", "arg"],
@@ -659,13 +650,19 @@ describe("the stop timer a command arms", () => {
     try {
       expect(armed.status).toBe(0)
       expect(armed.stdout).toMatch(/^ran in .*derive-armed-.* with arg\n$/)
+      const calls = armed.log.split("\n")
       const deadline = Number(armed.read("derive-stop-at.new"))
       expect(Math.abs(deadline - (Date.now() / 1000 + 900))).toBeLessThan(30)
       // The service powers off at the deadline, and fifteen minutes after a boot that set none.
       expect(armed.read("derive-stop-1")).toContain("|| poweroff")
       expect(armed.read("derive-stop-1")).toContain("+ 900")
+      // Enabling comes last, and is what a later command checks before trusting the install.
+      expect(calls.at(-2)).not.toBe("sudo systemctl enable derive-stop.service")
+      expect(calls.indexOf("sudo chmod 755 /usr/local/sbin/derive-stop-1")).toBeLessThan(
+        calls.indexOf("sudo systemctl enable derive-stop.service"),
+      )
+      expect(ARMED).toContain("systemctl is-enabled --quiet derive-stop.service")
       expect(armed.read("derive-stop.service")).toContain("WantedBy=multi-user.target")
-      const calls = armed.log.split("\n")
       expect(calls).toContain("sudo systemctl enable derive-stop.service")
       expect(calls.indexOf("sudo mv /run/derive-stop-at.new /run/derive-stop-at")).toBeLessThan(
         calls.indexOf("sudo systemctl start derive-stop.service"),

@@ -47,7 +47,6 @@ const Usage = z.object({
   as_of: z.string(),
   atoms_per_unit: z.number().positive(),
   compute: z.object({
-    unknown_starts: z.number(),
     next_after: z.number().nullish(),
     starts: z.array(
       z.object({
@@ -97,10 +96,11 @@ export const ortamId = (id: string): string => {
 export const ARMED = [
   "set -eu",
   '[ -d /home/ortam ] || sudo install -d -o "$(id -u)" -g "$(id -g)" /home/ortam',
-  "if [ ! -x /usr/local/sbin/derive-stop-1 ]; then",
+  // Enabling is the install's last step, so one cut short is redone, never half trusted.
+  "if ! { [ -x /usr/local/sbin/derive-stop-1 ] && systemctl is-enabled --quiet derive-stop.service; }; then",
   "  sudo tee /usr/local/sbin/derive-stop-1 >/dev/null <<'DERIVE_STOP'",
   "#!/bin/sh",
-  "[ -s /run/derive-stop-at ] || echo $(($(date +%s) + 900)) > /run/derive-stop-at",
+  "(set -C; echo $(($(date +%s) + 900)) > /run/derive-stop-at) 2>/dev/null || :",
   'while sleep 15; do [ "$(date +%s)" -lt "$(cat /run/derive-stop-at)" ] || poweroff; done',
   "DERIVE_STOP",
   "  sudo chmod 755 /usr/local/sbin/derive-stop-1",
@@ -587,7 +587,6 @@ export class OrtamClient implements SandboxClient {
       const report = Usage.parse(
         await this.json(this.path(id, `/usage${after == null ? "" : `?after=${after}`}`)),
       )
-      if (report.compute.unknown_starts > 0) throw new Error("Ortam usage is not settled")
       unit = report.atoms_per_unit
       for (const start of report.compute.starts) {
         if (!start.running_at) continue
@@ -612,7 +611,9 @@ export class OrtamClient implements SandboxClient {
 }
 
 /** An operation Ortam cannot account for is not a success: the caller reads the sandbox. Nor
- *  is a stop that did not save the files, which is what a stopped sandbox promises. */
+ *  is a stop that did not save the files. The controller takes a sandbox that reads stopped
+ *  as stopped before it asks after the operation, so this decides only a stop still under
+ *  way; a turn whose final save failed resumes from the save before it. */
 const settled = (op: z.infer<typeof Operation>) => {
   if (op.state === "pending") return "queued" as const
   if (op.state === "running") return "running" as const
