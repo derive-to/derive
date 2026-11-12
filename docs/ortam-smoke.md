@@ -3,10 +3,11 @@
 For the current agent setup and Box adapter, see [Agent home](agent-home.md).
 
 This is the first integration check for running Derive agents on Ortam. It uses
-Ortam's public API to create a Small sandbox, run a fixed `printf` command, save
+Ortam's API to create a Small sandbox, run a fixed `printf` command, save
 its exit status and output, stop the sandbox, and delete the disposable test
-resource. A pass requires successful command output, a successful stop operation,
-and a successful delete operation. Accepting a shutdown request is not enough.
+resource. A pass requires successful command output, a stop operation that
+completed with the files saved, and a completed delete operation. Accepting a
+shutdown request is not enough.
 
 This check does not dispatch a Derive agent, pass Context secrets to Ortam,
 install a coding agent, clone a repository, or run a schedule. It is an operator
@@ -21,7 +22,7 @@ recovery evidence for this check, not the production job store.
 
 ## Run against Ortam
 
-Use Node 24 and an Ortam Developer API key for the intended test organization.
+Use Node 24 and an Ortam API key for the intended test organization.
 Supply the key through `ORTAM_API_KEY` in the shell environment; do not put it in
 command arguments or commit it. `ORTAM_API_URL` defaults to
 `https://api.ortam.dev/v1`. An HTTPS test deployment or a loopback HTTP API can be
@@ -33,14 +34,15 @@ From the repository root:
 pnpm test:ortam --state tmp/ortam-smoke/receipt.json
 ```
 
-This starts paid compute. The machine has a five-minute automatic stop limit once
-ready; the command has a 30-second runtime limit. The check normally stops and
-deletes it much sooner. No Context, database, GitHub, or model credentials are
+This starts paid compute. Ortam creates the machine stopped; the command starts it.
+Ortam never stops a running machine by itself, so the command first arms a
+five-minute power-off inside the machine, then prints its line; it has a 30-second
+runtime limit. The check normally stops and deletes the machine much sooner. No Context, database, GitHub, or model credentials are
 sent to the machine. The API key is used only to authenticate control requests.
 
 The receipt is private to the local user and contains resource IDs, request
 identity, lifecycle progress, and the fixed command's result. It contains no
-API key or access token. Keep it until `cleanup_confirmed` is true. A completed
+API key. Keep it until `cleanup_confirmed` is true. A completed
 receipt is not reused for new work: use a new path for another check.
 
 ## Recover an interrupted check
@@ -52,15 +54,19 @@ and finish cleanup:
 pnpm test:ortam --state tmp/ortam-smoke/receipt.json --cleanup-only
 ```
 
-The receipt pins the API URL and organization. Different credentials are fine
-only if they still belong to that organization. Machine creation, stop, and
-delete requests reuse their original idempotency keys when a response is lost.
+The receipt pins the API URL. Ortam has no call that names a key's organization,
+so the receipt cannot pin one: a key from another organization does not see the
+machine, and the check ends with cleanup unconfirmed rather than creating
+anything. Use a key from the organization that ran the check. Every request that
+changes something (create, launch, stop, delete) reuses its original idempotency
+key when a response is lost, so Ortam answers with the first result.
 A failed check still owns cleanup. A failed deletion leaves its operation ID in
 the receipt; inspect that operation in Ortam and keep the receipt until resolved.
 Each invocation allows up to 15 minutes for the check and another 15 for cleanup.
 If Ortam stays unreachable, the command exits with cleanup explicitly unconfirmed;
-it cannot guarantee deletion during an outage. Ortam's automatic stop is the
-independent compute backstop, and does not delete saved storage.
+it cannot guarantee deletion during an outage. The power-off the command armed is
+the independent compute backstop, and does not delete saved storage. It exists
+only once the command has launched; before that the machine is stopped.
 
 `Ctrl-C` and termination requests enter cleanup. A hard kill or machine crash
 leaves a `.lock` file beside the receipt. Read its PID and confirm the original
@@ -68,21 +74,31 @@ process is no longer running before removing **only the lock file**, then rerun
 with the same receipt. Do not remove the receipt or invent a replacement ID.
 The check will not steal a lock just because time has passed.
 
-Ortam process starts currently have no idempotency key. Before sending that
-request, the check records that the launch was consumed. If it crashes at that
-point or loses the response, it does not send another start request. It reports
-an unknown command outcome and cleans up. This can miss a check; it prevents a
-retry from doing the same work twice. A production executor needs its own claim
-or an Ortam process request identity before retrying arbitrary agent work.
+The launch carries an idempotency key like every other request. After a crash or
+a lost response the check asks again with the same key and receives the command
+already accepted; the command does not run twice. A receipt written against
+Ortam's earlier API (version 1) is refused: those machines no longer exist.
 
 ## What is tested locally
 
 `pnpm test` includes an HTTP peer that exercises the public request shapes and
 injects lost responses, failed operations, and an actual caller-process crash.
-It checks recovery, cleanup, credential omission from receipts, organization
-binding, and single command submission. The peer is simulated: these tests do
+It checks recovery, cleanup, credential omission from receipts, a key that
+cannot see the machine, and single command submission. The peer is simulated: these tests do
 not prove VM provisioning, file persistence, or cloud resource release. Only a
 successful receipt from a real Ortam deployment qualifies that boundary.
+
+## Live results — 12 November 2026
+
+Ortam replaced its API (one bearer key, bare UUIDs, executions in place of
+processes, sandboxes created stopped, no stop timers). The check and the
+`OrtamClient` adapter were ported and the lifecycle passed against
+`api.ortam.dev`: create, launch, read the output, stop with the files saved, delete.
+The adapter was also run end to end with the real machine setup: the pinned CLI,
+Codex, Claude Code and tmux install in about 40 seconds, the real runner starts,
+a stop and resume takes about 15 seconds with the installs still on disk, and a
+machine left alone powers itself off at its armed deadline. The results below
+describe the earlier API and are kept as a record.
 
 ## Live results — 21 September 2026
 

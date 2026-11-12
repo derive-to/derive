@@ -4,10 +4,10 @@ import { z } from "zod"
 import type { AppContext } from "../context"
 import { ACCOUNT_LOGIN_SETUP } from "../lib/account-login-script"
 import { signCapabilityToken, verifyCapabilityToken } from "../lib/capability-token"
-import { decryptSecret, encryptSecret, sha256 } from "../lib/crypto"
+import { decryptSecret, encryptSecret } from "../lib/crypto"
 import { fail, readJson } from "../lib/http"
 import { hasSeat } from "../lib/job-accounts"
-import { ORTAM_NODE_SETUP, OrtamClient } from "../lib/ortam-client"
+import { OrtamClient } from "../lib/ortam-client"
 import {
   cloudEnabled,
   connectionClient,
@@ -102,18 +102,13 @@ const clientFor = async (
     (requireActive && !managedFor(config, org))
   )
     return null
-  return new OrtamClient(
-    config.apiUrl,
-    config.managed.apiKey,
-    sha256(JSON.stringify([org, "account-login", p.attempt])),
-    deps.runtimeFetch,
-  )
+  return new OrtamClient(config.apiUrl, config.managed.apiKey, deps.runtimeFetch)
 }
 
 const stopConnection = async (ctx: AppContext, p: PendingLogin, org: string) => {
   if (!p.sandbox_id) return
   const client = await clientFor(ctx, org, p)
-  await client?.deleteSandbox(p.sandbox_id, p.attempt, p.identity)
+  await client?.deleteSandbox(p.sandbox_id, `${p.attempt}-delete`, p.identity)
 }
 
 export const stopAccountConnection = async (ctx: AppContext, a: AccountRecord) => {
@@ -229,12 +224,7 @@ export const accountLoginRoutes = (ctx: AppContext) => {
     const attempt = newId("login")
     const box = selected.connection
       ? connectionClient(selected.connection, key, deps.runtimeFetch)
-      : new OrtamClient(
-          selected.apiUrl,
-          runtime?.managed?.apiKey ?? "",
-          sha256(JSON.stringify([org, "account-login", attempt])),
-          deps.runtimeFetch,
-        )
+      : new OrtamClient(selected.apiUrl, runtime?.managed?.apiKey ?? "", deps.runtimeFetch)
     const p: PendingLogin = {
       attempt,
       owner: who,
@@ -293,7 +283,7 @@ export const accountLoginRoutes = (ctx: AppContext) => {
         {
           name: "Derive model account sign-in",
           size: "small",
-          setup_script: `${p.provider === "ortam" ? `${ORTAM_NODE_SETUP}\n` : ""}${ACCOUNT_LOGIN_SETUP}\nnohup node /home/ortam/derive-account-login/connect.mjs >/dev/null 2>&1 </dev/null &`,
+          setup_script: `${ACCOUNT_LOGIN_SETUP}\nnohup node /home/ortam/derive-account-login/connect.mjs >/dev/null 2>&1 </dev/null &`,
           auto_stop_after_seconds: 600,
           env: {
             DERIVE_TOKEN: token,
@@ -308,22 +298,35 @@ export const accountLoginRoutes = (ctx: AppContext) => {
         const current = await meta.getAccount(a.id)
         const now = current && pending(current)
         if (current?.status === "ready") {
-          await box.deleteSandbox(created.sandbox.id, p.attempt, p.identity)
+          await box.deleteSandbox(created.sandbox.id, `${p.attempt}-delete`, p.identity)
           return c.json(view(current))
         }
         if (!current || !now || now.attempt !== p.attempt) break
         const updated = await save(current, { ...now, sandbox_id: created.sandbox.id })
         if (!updated) continue
         if (updated.status === "needs_attention")
-          await box.deleteSandbox(created.sandbox.id, p.attempt, p.identity)
+          await box.deleteSandbox(created.sandbox.id, `${p.attempt}-delete`, p.identity)
         return c.json(view(updated), 202)
       }
-      await box.deleteSandbox(created.sandbox.id, p.attempt, p.identity)
+      await box.deleteSandbox(created.sandbox.id, `${p.attempt}-delete`, p.identity)
       return fail(c, 409, "This connection changed. Open it again.")
-    } catch {
+    } catch (error) {
+      // A provider that creates and then sets up may fail between the two: it names the
+      // sandbox it made, and nothing else would ever delete it.
+      const made = (error as { sandbox_id?: unknown } | null)?.sandbox_id
+      const orphan = typeof made === "string" ? made : undefined
+      if (orphan)
+        await box.deleteSandbox(orphan, `${p.attempt}-delete`, p.identity).catch(() => null)
+      // Kept on the attempt, so stopping it later deletes a sandbox this try could not.
       await save(
         a,
-        { ...p, phase: "failed", reason: "setup_failed", secret: undefined },
+        {
+          ...p,
+          ...(orphan ? { sandbox_id: orphan } : {}),
+          phase: "failed",
+          reason: "setup_failed",
+          secret: undefined,
+        },
         "needs_attention",
       )
       return fail(c, 503, "The connection sandbox could not start. Try again.")

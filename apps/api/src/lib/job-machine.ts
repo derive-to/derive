@@ -12,7 +12,6 @@ import {
 import { taskOptions } from "@derive-to/cli/conversation-format"
 import { log } from "../log"
 import { agentWritesOff } from "./agent-writes"
-import { sha256 } from "./crypto"
 import { turnProblem } from "./job-command"
 import type { JobDeps } from "./job-policy"
 import { jobOverBudget, noteHeldForBudget, reportJob, wakeClaimed, wakeSettled } from "./jobs"
@@ -67,6 +66,9 @@ const MAX_SANDBOX_FAILURES = 3
 /** A shared sandbox's provider-side stop timer at creation, before any job sets its own. */
 const CREATE_TTL_SECONDS = 2700
 const CREATE_REPLAY_MS = 24 * 60 * 60_000 - 60_000
+/** The provider as a person knows it, for a refusal quoted back to them. */
+const providerName = (state: { provider?: "ortam" | "boat" } | null) =>
+  state?.provider === "boat" ? "boat.dev" : "Ortam"
 /** A start the provider refused for now (see SandboxRateLimited). */
 const WAITING = Symbol("waiting")
 /** A start the provider refused outright (see SandboxRefused). */
@@ -250,7 +252,7 @@ const runtimeFor = async (deps: MachineDeps, orgId: string, state: SandboxState 
     : current
 }
 
-/** One provider selection for normal work and retirement. Ortam scopes identity per agent. */
+/** One provider selection for normal work and retirement. */
 const clientFor = async (
   deps: MachineDeps,
   agent: AgentRecord,
@@ -272,12 +274,7 @@ const clientFor = async (
     return connectionClient(runtime.connection, deps.secret, deps.fetcher)
   }
   if (!deps.config.managed?.apiKey) throw new Error("Derive machines are not configured")
-  return new OrtamClient(
-    deps.config.apiUrl,
-    deps.config.managed.apiKey,
-    sha256(JSON.stringify([agent.org_id, "agent", agent.id])),
-    deps.fetcher,
-  )
+  return new OrtamClient(deps.config.apiUrl, deps.config.managed.apiKey, deps.fetcher)
 }
 
 /** A new sandbox's frozen state: the workspace runtime and the agent's machine spec. */
@@ -784,7 +781,7 @@ async function advanceMachineJobStep(deps: MachineDeps, job: JobRecord): Promise
       return await start()
     } catch (error) {
       if (error instanceof SandboxRefused) {
-        const why = `boat.dev would not start a machine: ${error.message}`
+        const why = `${providerName(state)} would not start a machine: ${error.message}`
         await failIfOpen(deps, agent, job, why, false)
         return REFUSED
       }
@@ -838,7 +835,7 @@ async function advanceMachineJobStep(deps: MachineDeps, job: JobRecord): Promise
               deps,
               agent,
               job,
-              `boat.dev would not start a machine: ${error.message}`,
+              `${providerName(submitted)} would not start a machine: ${error.message}`,
               false,
             )
           return
@@ -942,7 +939,12 @@ async function advanceMachineJobStep(deps: MachineDeps, job: JobRecord): Promise
           WORKDIR,
         ],
         cwd: "/home/ortam",
-        env: await environment(),
+        // The launch is replayed under one key, and a provider may refuse a replay whose
+        // request differs at all: the runner's budget is the claim's, not this pass's clock.
+        env: {
+          ...(await environment()),
+          RUNNER_TIMEOUT_MS: String(claim.launch_timeout_seconds * 1000),
+        },
         timeout_seconds: claim.launch_timeout_seconds,
         keep_awake: claim.launch_keep_awake ?? false,
       },
@@ -976,7 +978,12 @@ async function advanceMachineJobStep(deps: MachineDeps, job: JobRecord): Promise
           client.lifecycle(sandbox, "resume", `derive-job-${m.turn}-resume`, state.identity, env, {
             size: state.size,
             environment: state.environment,
-            ttl_seconds: ttlFor(m.deadline_at, at),
+            // An armed timer is part of the keyed request, so it is measured from the turn's
+            // start, which a replay repeats; a provider's own deadline timer from now.
+            ttl_seconds: ttlFor(
+              m.deadline_at,
+              client.stopTimer === "armed" ? (job.started_at ?? at) : at,
+            ),
           }),
         )
         if (op === WAITING) return
@@ -1001,11 +1008,12 @@ async function advanceMachineJobStep(deps: MachineDeps, job: JobRecord): Promise
       const observed = await client.sandbox(sandbox, state.identity)
       // The provider must stop the machine by itself if this controller never does: a deadline
       // timer bounds compute after resume; an idle timer resets with activity; a maximum
-      // lifetime ends it whatever happens (Ortam stops machines for nothing else since
-      // 2026-10-16). All keep the controller deadline and process timeout.
+      // lifetime ends it whatever happens; an armed timer is set inside the machine by the
+      // launch itself (Ortam, which has none of its own). All keep the controller deadline and
+      // process timeout.
       if (
         observed.state !== "ready" ||
-        providerStopSeconds(observed, at) <= 0 ||
+        (client.stopTimer !== "armed" && providerStopSeconds(observed, at) <= 0) ||
         (client.stopTimer === "deadline" &&
           observed.auto_stop_after_seconds >
             Math.max(CREATE_TTL_SECONDS, ttlFor(m.deadline_at, at)) + TTL_SLACK_SECONDS)
@@ -1090,8 +1098,10 @@ async function advanceMachineJobStep(deps: MachineDeps, job: JobRecord): Promise
         )
         if (
           after?.status === "queued" &&
-          providerStopSeconds(observed, at) >=
-            ttlFor(new Date(next.deadline).toISOString(), at) - RELAUNCH_SLACK_SECONDS
+          // An armed timer still holds this turn's deadline, and the next launch moves it.
+          (client.stopTimer === "armed" ||
+            providerStopSeconds(observed, at) >=
+              ttlFor(new Date(next.deadline).toISOString(), at) - RELAUNCH_SLACK_SECONDS)
         ) {
           await recordCompute(sandbox, at)
           await move("parked")

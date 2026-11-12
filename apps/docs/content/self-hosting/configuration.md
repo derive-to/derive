@@ -579,7 +579,7 @@ instance with `--server`. See [Run agents](/agents/run/).
 
 **Derive machines** (one sandbox per agent) need an Ortam account. Set:
 
-- `DERIVE_ORTAM_INTEGRATION_KEY`, the deployment's Ortam service key.
+- `DERIVE_ORTAM_INTEGRATION_KEY`, the deployment's Ortam API key.
 - `DERIVE_ORTAM_RUNNER_PATH`, the pinned CLI each sandbox installs. The path must name the CLI
   version the sandbox installs, 0.8 or later; otherwise Derive machines stay off, with no
   error.

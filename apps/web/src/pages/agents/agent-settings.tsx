@@ -590,7 +590,10 @@ function SandboxFields({
           options={[
             { value: "small", label: "Small" },
             { value: "default", label: "Standard" },
-            { value: "large", label: "Large" },
+            // Ortam's largest machine is Standard.
+            ...(agent.runtime?.provider === "boat" || spec.size === "large"
+              ? [{ value: "large", label: "Large" }]
+              : []),
           ]}
         />
       </Field>

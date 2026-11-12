@@ -236,7 +236,6 @@ export function CloudConnection() {
                         {editingLabel} dashboard
                       </a>
                       . We check access and store it encrypted.
-                      {provider === "ortam" && " Allow sandbox read and write access on the key."}
                     </p>
                   </div>
                   {connect.error && (

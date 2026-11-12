@@ -449,7 +449,7 @@ const CONFIG_VARS: ConfigVar[] = [
   {
     name: "DERIVE_ORTAM_INTEGRATION_KEY",
     group: "advanced",
-    doc: "Derive machines: the Ortam service integration key owned by the deployment, never a user\nconnection. Requires Ortam's explicit integration profile. Rotate under the same\nOrtam owner and organization to retain job connection identities. Keep the key\navailable for shutdown/cleanup even after withdrawing the rollout allowlist.",
+    doc: "Derive machines: the Ortam API key owned by the deployment, never a user connection.\nEvery managed sandbox lives in this key's Ortam organization. Rotate within that\norganization: a key from another one cannot see the sandboxes already made. Keep the key\navailable for shutdown/cleanup even after withdrawing the rollout allowlist.",
     active: true,
   },
   {

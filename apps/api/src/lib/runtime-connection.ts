@@ -51,7 +51,7 @@ export const connectionClient = (
 ) =>
   cn.toolkit === "boat"
     ? boatClient(cn, key, fetcher)
-    : new OrtamClient(ORTAM_API_URL, connectionKey(cn, key), "", fetcher, "api_key")
+    : new OrtamClient(ORTAM_API_URL, connectionKey(cn, key), fetcher)
 
 export const workspaceRuntime = async (
   meta: MetaStore,

@@ -82,7 +82,9 @@ export interface SandboxLaunch {
   keep_awake?: boolean
 }
 export interface SandboxClient {
-  readonly stopTimer: "idle" | "deadline"
+  /** What stops a machine this controller never stops: the provider's idle timer, its
+   *  deadline timer, or one the adapter arms inside the machine with every command. */
+  readonly stopTimer: "idle" | "deadline" | "armed"
   authenticate(): Promise<Identity>
   create(
     body: SandboxCreate,
