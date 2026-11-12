@@ -4393,6 +4393,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
     // Setup is the sandbox's first command, sent once its create is known.
     const setups: Array<{ body: { argv: string[] }; key: string }> = []
     const created = new Map<string, string>()
+    const keyed = new Map<string, string>()
     const createOutcome = {
       loseNext: false,
       status: 200,
@@ -4408,7 +4409,8 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
     let deleted = false
     // Once set, the provider answers every call about the sandbox with 404, as Ortam did for
     // every existing sandbox on 2026-10-17.
-    const gone = { now: false }
+    // `deleted` instead leaves the record Ortam keeps of a sandbox deleted behind Derive's back.
+    const gone = { now: false, deleted: false }
     const sshGrants: Array<unknown> = []
     let stopped = false
     const provisioning = { ready: false }
@@ -4461,6 +4463,12 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
       }
       if (gone.now && /^\/(sandboxes\/sbx|executions\/)/.test(path))
         return new Response(null, { status: 404 })
+      if (gone.deleted && path === "/sandboxes/sbx/ssh-access")
+        return Response.json({ code: "not_found" }, { status: 404 })
+      if (gone.deleted && path.startsWith("/sandboxes/sbx/"))
+        return Response.json({ code: "sandbox_deleted" }, { status: 409 })
+      if (gone.deleted && path === "/sandboxes/sbx" && request.method === "GET")
+        return Response.json({ id: "sbx", phase: "deleted" })
       if (path === "/sandboxes/sbx") {
         if (request.method === "DELETE") {
           deleted = true
@@ -4483,13 +4491,16 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
         const body = (await request.json()) as Record<string, unknown> & { argv: string[] }
         const kind = key.endsWith("-setup") ? "create" : key.endsWith("-resume") ? "resume" : null
         if (kind) {
+          const sent = JSON.stringify(body)
+          if ((keyed.get(key) ?? sent) !== sent) return new Response(null, { status: 409 })
+          keyed.set(key, sent)
           stopped = false
           if (kind === "create") setups.push({ body, key })
           return Response.json({ operation: operation(kind), resource: { id: `run-${kind}` } })
         }
         launches.push({ body, key })
-        const { env: _env, ...immutable } = body
-        const fingerprint = JSON.stringify(immutable)
+        // Ortam refuses a key it has seen with any other request, variables included.
+        const fingerprint = JSON.stringify(body)
         const old = processes.get(key)
         if (old && old.body !== fingerprint) return new Response(null, { status: 409 })
         const process = old ?? { body: fingerprint, id: `process-${processes.size + 1}` }
@@ -4691,7 +4702,7 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
     // The machine powers itself off ten minutes after the runner's own timeout, whether or
     // not this controller is still there; the runner starts in Derive's directory.
     expect(argv.slice(3, 6)).toEqual(["derive", String(timeout_seconds + 600), "/home/ortam"])
-    expect(argv[2]).toContain("sudo poweroff")
+    expect(argv[2]).toContain("derive-stop.service")
     await advanceMachineJob(
       { ...deps, now: () => new Date(Date.parse(machine.deadline_at) + 1) },
       running,
@@ -4703,11 +4714,20 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
   const VANISHED =
     "The machine for this job is gone from the provider, so it was given up before the runner reported back."
 
-  it("lets go of a machine the provider no longer has instead of asking after it every pass", async () => {
-    const { meta, job, until, launches, gone } = await cloudSetup("jobs-ortam-vanished")
+  it.each([
+    "now",
+    "deleted",
+  ] as const)("lets go of a machine the provider no longer has instead of asking after it every pass (%s)", async (how) => {
+    const { meta, job, until, launches, gone, processOutcome } = await cloudSetup(
+      `jobs-ortam-vanished-${how}`,
+    )
     await until("running")
     expect(launches).toHaveLength(1)
-    gone.now = true
+    gone[how] = true
+    // A sandbox deleted elsewhere still answers, as a deleted record whose command was ended
+    // and which refuses every further call.
+    if (how === "deleted")
+      processOutcome.finished = { state: "interrupted", stdout: "", stderr: "" }
     await until("released")
     const failed = await meta.getJob(job.id)
     expect(failed?.status).toBe("failed")
@@ -5135,8 +5155,10 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
   })
 
   it("only the running session's starter is listed for SSH on the sandbox", async () => {
+    const tunnel = { connect: vi.fn(), accept: vi.fn() }
     const { app, meta, job, agent, until, sshGrants } = await cloudSetup("jobs-ortam-attach", {
       session: true,
+      sessionTransport: tunnel as unknown as AppDeps["sessionTransport"],
     })
     await until("running")
     const publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOx3 ed@laptop"
@@ -5161,6 +5183,16 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
       { user_id: expect.stringMatching(/^derive-[a-f0-9]{32}$/), public_keys: [publicKey] },
     ]
     expect(sshGrants).toEqual(granted)
+    // The tunnel through Derive opens nothing: no provider offers one any more.
+    const relayed = await app.request(`/v1/jobs/${job.id}/ssh`, {
+      headers: {
+        ...as(ed.email),
+        upgrade: "websocket",
+        "x-derive-job-claim": current?.started_at ?? "",
+      },
+    })
+    expect(relayed.status).toBe(409)
+    expect(tunnel.connect).not.toHaveBeenCalled()
     if (!current) throw new Error("missing attached Ortam session")
     const machine = JSON.parse(current.machine_json ?? "{}")
     await meta.transitionJobMachine(job.id, current.machine_rev, { phase: "parked" })
@@ -5217,7 +5249,8 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
       `derive-job-${machine.turn}-launch`,
     ])
     expect(launches[0]?.body.timeout_seconds).toBe(machine.launch_timeout_seconds)
-    expect({ ...launches[1]?.body, env: null }).toEqual({ ...launches[0]?.body, env: null })
+    // Ortam answers a repeat only when nothing in it changed, the runner's variables included.
+    expect(launches[1]?.body).toEqual(launches[0]?.body)
     expect(JSON.parse(running?.machine_json ?? "{}").process_id).toBe("process-1")
   })
 })

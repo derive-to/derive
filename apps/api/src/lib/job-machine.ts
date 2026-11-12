@@ -66,6 +66,9 @@ const MAX_SANDBOX_FAILURES = 3
 /** A shared sandbox's provider-side stop timer at creation, before any job sets its own. */
 const CREATE_TTL_SECONDS = 2700
 const CREATE_REPLAY_MS = 24 * 60 * 60_000 - 60_000
+/** The provider as a person knows it, for a refusal quoted back to them. */
+const providerName = (state: { provider?: "ortam" | "boat" } | null) =>
+  state?.provider === "boat" ? "boat.dev" : "Ortam"
 /** A start the provider refused for now (see SandboxRateLimited). */
 const WAITING = Symbol("waiting")
 /** A start the provider refused outright (see SandboxRefused). */
@@ -778,7 +781,7 @@ async function advanceMachineJobStep(deps: MachineDeps, job: JobRecord): Promise
       return await start()
     } catch (error) {
       if (error instanceof SandboxRefused) {
-        const why = `boat.dev would not start a machine: ${error.message}`
+        const why = `${providerName(state)} would not start a machine: ${error.message}`
         await failIfOpen(deps, agent, job, why, false)
         return REFUSED
       }
@@ -832,7 +835,7 @@ async function advanceMachineJobStep(deps: MachineDeps, job: JobRecord): Promise
               deps,
               agent,
               job,
-              `boat.dev would not start a machine: ${error.message}`,
+              `${providerName(submitted)} would not start a machine: ${error.message}`,
               false,
             )
           return
@@ -936,7 +939,12 @@ async function advanceMachineJobStep(deps: MachineDeps, job: JobRecord): Promise
           WORKDIR,
         ],
         cwd: "/home/ortam",
-        env: await environment(),
+        // The launch is replayed under one key, and a provider may refuse a replay whose
+        // request differs at all: the runner's budget is the claim's, not this pass's clock.
+        env: {
+          ...(await environment()),
+          RUNNER_TIMEOUT_MS: String(claim.launch_timeout_seconds * 1000),
+        },
         timeout_seconds: claim.launch_timeout_seconds,
         keep_awake: claim.launch_keep_awake ?? false,
       },
@@ -970,7 +978,12 @@ async function advanceMachineJobStep(deps: MachineDeps, job: JobRecord): Promise
           client.lifecycle(sandbox, "resume", `derive-job-${m.turn}-resume`, state.identity, env, {
             size: state.size,
             environment: state.environment,
-            ttl_seconds: ttlFor(m.deadline_at, at),
+            // An armed timer is part of the keyed request, so it is measured from the turn's
+            // start, which a replay repeats; a provider's own deadline timer from now.
+            ttl_seconds: ttlFor(
+              m.deadline_at,
+              client.stopTimer === "armed" ? (job.started_at ?? at) : at,
+            ),
           }),
         )
         if (op === WAITING) return

@@ -393,8 +393,9 @@ The disconnect dialog explains this before you confirm.
 
 The Ortam adapter sends the API key with every request and keeps Derive's files under
 `/home/ortam` on the sandbox's saved disk, where it installs the pinned Derive CLI.
-Ortam has no stop timer of its own, so each command Derive runs arms one inside the machine:
-it powers itself off shortly after the task's deadline even if Derive never stops it.
+Ortam has no stop timer of its own, so Derive installs one inside the machine: it powers
+itself off shortly after the task's deadline even if Derive never stops it, and fifteen
+minutes after any start Derive did not make. Ortam's largest machine is Standard.
 It does not copy the old sandbox's files to another provider. Each task shows its share of
 the sandbox's Ortam compute charge, next to its model usage.
 

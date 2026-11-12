@@ -8,6 +8,7 @@ import {
   type SandboxLaunch,
   type SandboxMachine,
   SandboxRateLimited,
+  SandboxRefused,
   type SandboxSshAccess,
 } from "./sandbox-client"
 
@@ -19,6 +20,10 @@ const Operation = z.object({
   kind: z.string(),
   resource_id: z.string(),
   state: z.enum(["pending", "running", "completed", "failed", "unknown"]),
+  result: z
+    .object({ final_save: z.object({ state: z.string() }).optional() })
+    .nullish()
+    .catch(null),
 })
 const Execution = z.object({
   id: z.string(),
@@ -42,11 +47,14 @@ const Usage = z.object({
   as_of: z.string(),
   atoms_per_unit: z.number().positive(),
   compute: z.object({
+    unknown_starts: z.number(),
+    next_after: z.number().nullish(),
     starts: z.array(
       z.object({
         running_at: z.string().nullish(),
         ended_at: z.string().nullish(),
         charge_atoms: z.string().nullish(),
+        gap: z.string().nullish(),
       }),
     ),
   }),
@@ -72,20 +80,46 @@ export const ortamId = (id: string): string => {
 }
 
 /**
- * Ortam has no stop timer: a started sandbox runs, and bills, until someone stops it. Every
- * command this adapter submits therefore first arms one inside the machine, which powers it
- * off `$1` seconds from now (Ortam saves the files and reports it stopped). One watchdog per
- * boot; a later command moves its deadline. Unarmed, the command does not run.
+ * Ortam has no stop timer: a started sandbox runs, and bills, until someone stops it. So the
+ * machine carries its own. A service Derive installs on the saved disk powers the machine off
+ * at the deadline in /run/derive-stop-at (Ortam saves the files and reports it stopped), and
+ * every command this adapter submits first sets that deadline, `$1` seconds from now. The
+ * service starts with the machine, so one that something else woke (an SSH login starts a
+ * stopped sandbox) still powers off, fifteen minutes after boot. If the deadline cannot be
+ * set or the service will not start, the command does not run.
  *
  * It also makes /home/ortam, where Derive keeps its runner on every provider, and enters `$2`
  * itself: Ortam refuses a command whose working directory does not exist yet.
+ *
+ * The task runs as a user with sudo, so this bounds a machine nobody is driving, not one whose
+ * occupant sets out to keep it up. The controller's own stop remains the ordinary path.
  */
-const ARMED = [
+export const ARMED = [
   "set -eu",
   '[ -d /home/ortam ] || sudo install -d -o "$(id -u)" -g "$(id -g)" /home/ortam',
-  'echo "$(($(date +%s) + $1))" > "/tmp/derive-stop-at.$$"',
-  'mv "/tmp/derive-stop-at.$$" /tmp/derive-stop-at',
-  'setsid flock -n /tmp/derive-stop.lock sh -c \'while sleep 15; do [ "$(date +%s)" -lt "$(cat /tmp/derive-stop-at)" ] || sudo poweroff; done\' >/dev/null 2>&1 </dev/null &',
+  "if [ ! -x /usr/local/sbin/derive-stop-1 ]; then",
+  "  sudo tee /usr/local/sbin/derive-stop-1 >/dev/null <<'DERIVE_STOP'",
+  "#!/bin/sh",
+  "[ -s /run/derive-stop-at ] || echo $(($(date +%s) + 900)) > /run/derive-stop-at",
+  'while sleep 15; do [ "$(date +%s)" -lt "$(cat /run/derive-stop-at)" ] || poweroff; done',
+  "DERIVE_STOP",
+  "  sudo chmod 755 /usr/local/sbin/derive-stop-1",
+  "  sudo tee /etc/systemd/system/derive-stop.service >/dev/null <<'DERIVE_STOP'",
+  "[Unit]",
+  "Description=Power this machine off at the deadline Derive set",
+  "[Service]",
+  "ExecStart=/usr/local/sbin/derive-stop-1",
+  "Restart=always",
+  "[Install]",
+  "WantedBy=multi-user.target",
+  "DERIVE_STOP",
+  "  sudo systemctl daemon-reload",
+  "  sudo systemctl enable derive-stop.service >/dev/null 2>&1",
+  "fi",
+  // Written whole, then renamed: the service powers off on a deadline it cannot read.
+  'echo "$(($(date +%s) + $1))" | sudo tee /run/derive-stop-at.new >/dev/null',
+  "sudo mv /run/derive-stop-at.new /run/derive-stop-at",
+  "sudo systemctl start derive-stop.service",
   'cd "$2"',
   "shift 2",
   'exec "$@"',
@@ -95,6 +129,18 @@ const STOP_SLACK_SECONDS = 600
 const SSH_ENDPOINT = "https://get.ortam.dev/endpoint.json"
 /** The prefix of every SSH entry Derive lists on a sandbox. */
 const SSH_USER = "derive-"
+
+const BUSY: Record<string, string> = {
+  organization_machine_limit_reached: "The Ortam organization has all its machines in use",
+  execution_limit_reached: "The Ortam sandbox is running as many commands as it may",
+}
+const REFUSED: Record<string, string> = {
+  organization_not_approved: "The Ortam organization is waiting for approval",
+  admission_closed: "Ortam is not admitting new sandboxes",
+  organization_limit_reached: "The Ortam organization has reached its limit",
+  organization_sandbox_limit_reached: "The Ortam organization has as many sandboxes as it may",
+  organization_storage_limit_reached: "The Ortam organization is out of storage",
+}
 
 class OrtamHttpError extends Error {
   constructor(
@@ -157,6 +203,10 @@ export class OrtamClient implements SandboxClient {
         Number.isFinite(after) && after > 0 ? after : 60,
       )
     }
+    // Ortam's standing refusals, in words a person can act on. One that clears by itself
+    // (machines in use) is a wait; one that needs the account changed fails the task.
+    if (code && code in BUSY) throw new SandboxRateLimited(BUSY[code] as string, 120)
+    if (code && code in REFUSED) throw new SandboxRefused(REFUSED[code] as string)
     throw new OrtamHttpError(response.status, path, code)
   }
 
@@ -179,11 +229,15 @@ export class OrtamClient implements SandboxClient {
   }
 
   /** Ortam's key is the whole credential: there is no token exchange and no "who am I". This
-   *  proves the key works; the identity names the API it works on, not an account, so two
-   *  keys cannot be told apart here. A sandbox the key cannot see reads as not found. */
+   *  proves the key works. With nothing to name the organization behind it, the identity is
+   *  the key itself: a different key is a different account until its sandboxes are retired,
+   *  because a key from another organization would see none of them. */
   async authenticate(): Promise<Identity> {
     await this.json("/sandboxes?limit=1")
-    return { organization_id: new URL(this.base).host, user_id: "api-key" }
+    return {
+      organization_id: new URL(this.base).host,
+      user_id: `key-${sha256(this.key).slice(0, 24)}`,
+    }
   }
 
   private path(id: string, rest = "") {
@@ -267,10 +321,14 @@ export class OrtamClient implements SandboxClient {
       },
       `${key}-setup`,
     ).catch((error) => {
-      // The sandbox exists by now. To the caller a rate limit proves nothing was allocated,
-      // so here it is only a create whose outcome is unknown: replayed, never forgotten.
-      if (error instanceof SandboxRateLimited) throw new Error("Ortam request outcome is unknown")
-      throw error
+      // The sandbox exists by now. To the caller a rate limit or refusal proves nothing was
+      // allocated, so here it is only a create whose outcome is unknown: replayed, never
+      // forgotten. The error names the sandbox for a caller that will not replay.
+      const unknown =
+        error instanceof SandboxRateLimited || error instanceof SandboxRefused
+          ? new Error("Ortam request outcome is unknown")
+          : error
+      throw Object.assign(unknown, { sandbox_id: id })
     })
     return {
       sandbox: this.shaped(created.resource),
@@ -283,11 +341,18 @@ export class OrtamClient implements SandboxClient {
     }
   }
 
-  /** Ortam calls a sandbox with compute `running`; the controller's word for it is `ready`. */
+  /** Ortam calls a sandbox with compute `running`; the controller's word for it is `ready`.
+   *  One Ortam `lost` has no compute either, and keeps the files it last saved: it reads as
+   *  stopped, so a turn ends there and the next start decides whether it comes back. */
   private shaped(sandbox: z.infer<typeof Sandbox>) {
     return {
       id: sandbox.id,
-      state: sandbox.phase === "running" ? "ready" : sandbox.phase,
+      state:
+        sandbox.phase === "running"
+          ? "ready"
+          : sandbox.phase === "lost"
+            ? "stopped"
+            : sandbox.phase,
       current_operation_id: null,
       auto_stop_after_seconds: 0,
     }
@@ -300,7 +365,7 @@ export class OrtamClient implements SandboxClient {
       .parse(await this.json(this.path(id), "DELETE", undefined, key))
     if (operation.resource_id !== id || operation.kind !== "delete")
       throw new Error("Ortam operation mismatch")
-    return { id: operation.id, sandbox_id: id, kind: "delete", state: settled(operation.state) }
+    return { id: operation.id, sandbox_id: id, kind: "delete", state: settled(operation) }
   }
 
   async sandbox(id: string, _identity: Identity) {
@@ -310,8 +375,11 @@ export class OrtamClient implements SandboxClient {
     return this.shaped(sandbox)
   }
 
+  /** Not found, or refused because the sandbox is deleted: either way it may be gone. */
   notFound(error: unknown) {
-    return error instanceof OrtamHttpError && error.status === 404
+    return (
+      error instanceof OrtamHttpError && (error.status === 404 || error.code === "sandbox_deleted")
+    )
   }
 
   /** Ortam keeps a deleted sandbox's record, marked `deleted`; one it never had, or that
@@ -320,7 +388,8 @@ export class OrtamClient implements SandboxClient {
     try {
       return (await this.sandbox(id, identity)).state === "deleted"
     } catch (error) {
-      if (this.notFound(error) && (error as OrtamHttpError).path === this.path(id)) return true
+      if (error instanceof OrtamHttpError && error.status === 404 && error.path === this.path(id))
+        return true
       throw error
     }
   }
@@ -353,7 +422,7 @@ export class OrtamClient implements SandboxClient {
     }
     if (op.resource_id !== sandboxId || op.kind !== kind)
       throw new Error("Ortam operation mismatch")
-    return { id, sandbox_id: sandboxId, kind, state: settled(op.state) }
+    return { id, sandbox_id: sandboxId, kind, state: settled(op) }
   }
 
   async lifecycle(
@@ -387,7 +456,7 @@ export class OrtamClient implements SandboxClient {
       .parse(await this.json(this.path(id, "/stop"), "POST", undefined, key))
     if (operation.resource_id !== id || operation.kind !== "stop")
       throw new Error("Ortam operation mismatch")
-    return { id: operation.id, sandbox_id: id, kind: action, state: settled(operation.state) }
+    return { id: operation.id, sandbox_id: id, kind: action, state: settled(operation) }
   }
 
   /** An SSH login starts a stopped sandbox by itself, with no stop timer armed. So a key
@@ -423,6 +492,7 @@ export class OrtamClient implements SandboxClient {
 
   /** Output outlives the sandbox's compute, so the tails are read once the command is over. */
   async process(sandboxId: string, id: string, _identity: Identity, tailBytes = 1) {
+    id = ortamId(id)
     const ran = await this.execution(id)
     if (ran.id !== id || ran.sandbox_id !== ortamId(sandboxId))
       throw new Error("Ortam process mismatch")
@@ -504,35 +574,49 @@ export class OrtamClient implements SandboxClient {
   }
 
   /** What the window cost: each start's charge, by the share of its run inside the window.
-   *  Ortam bills whole minutes per start, so a start still running is charged to date. */
+   *  Ortam bills whole minutes per start, and a start still running is charged to date. A
+   *  start it could not price or time makes the whole answer unknown, never a low number. */
   async usage(id: string, since: string, until: string, _identity: Identity) {
-    const report = Usage.parse(await this.json(this.path(id, "/usage")))
     const from = Date.parse(since)
     const to = Date.parse(until)
     let seconds = 0
     let atoms = 0
-    for (const start of report.compute.starts) {
-      if (!start.running_at) continue
-      const began = Date.parse(start.running_at)
-      const ended = Date.parse(start.ended_at ?? report.as_of)
-      const inside = Math.min(ended, to) - Math.max(began, from)
-      if (!(inside > 0) || !(ended > began)) continue
-      seconds += inside / 1000
-      atoms += (Number(start.charge_atoms ?? 0) * inside) / (ended - began)
+    let unit = 1
+    let after: number | null | undefined
+    for (let page = 0; page < 50; page++) {
+      const report = Usage.parse(
+        await this.json(this.path(id, `/usage${after == null ? "" : `?after=${after}`}`)),
+      )
+      if (report.compute.unknown_starts > 0) throw new Error("Ortam usage is not settled")
+      unit = report.atoms_per_unit
+      for (const start of report.compute.starts) {
+        if (!start.running_at) continue
+        const began = Date.parse(start.running_at)
+        const ended = Date.parse(start.ended_at ?? report.as_of)
+        const inside = Math.min(ended, to) - Math.max(began, from)
+        if (!(inside > 0) || !(ended > began)) continue
+        if (start.gap || start.charge_atoms == null) throw new Error("Ortam usage is not settled")
+        seconds += inside / 1000
+        atoms += (Number(start.charge_atoms) * inside) / (ended - began)
+      }
+      after = report.compute.next_after
+      if (after == null) {
+        return {
+          billable_seconds: Math.ceil(seconds),
+          cost_micro_usd: Math.round((atoms / unit) * 1_000_000),
+        }
+      }
     }
-    return {
-      billable_seconds: Math.ceil(seconds),
-      cost_micro_usd: Math.round((atoms / report.atoms_per_unit) * 1_000_000),
-    }
+    throw new Error("Ortam usage is not settled")
   }
 }
 
-/** An operation Ortam cannot account for is not a success: the caller reads the sandbox. */
-const settled = (state: z.infer<typeof Operation>["state"]) =>
-  state === "pending"
-    ? ("queued" as const)
-    : state === "running"
-      ? ("running" as const)
-      : state === "completed"
-        ? ("succeeded" as const)
-        : ("failed" as const)
+/** An operation Ortam cannot account for is not a success: the caller reads the sandbox. Nor
+ *  is a stop that did not save the files, which is what a stopped sandbox promises. */
+const settled = (op: z.infer<typeof Operation>) => {
+  if (op.state === "pending") return "queued" as const
+  if (op.state === "running") return "running" as const
+  const save = op.kind === "stop" ? op.result?.final_save?.state : undefined
+  const saved = save === undefined || save === "published" || save === "not_required"
+  return op.state === "completed" && saved ? ("succeeded" as const) : ("failed" as const)
+}

@@ -1,18 +1,22 @@
 import { spawnSync } from "node:child_process"
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import { stoppedBeforeReport } from "../src/lib/job-machine"
-import { OrtamClient, ortamId } from "../src/lib/ortam-client"
+import { ARMED, OrtamClient, ortamId } from "../src/lib/ortam-client"
 import { redactedOutputTail } from "../src/lib/runtime-diagnostics"
 import { runtimeSetup } from "../src/lib/runtime-setup"
-import { SandboxCreateRejected, SandboxRateLimited } from "../src/lib/sandbox-client"
+import {
+  SandboxCreateRejected,
+  SandboxRateLimited,
+  SandboxRefused,
+} from "../src/lib/sandbox-client"
 
 const SBX = "01890a5d-ac96-774b-bcce-b302099a8057"
 const EXE = "11111111-1111-4111-8111-111111111111"
 const OP = "22222222-2222-4222-8222-222222222222"
-const identity = { organization_id: "ortam.test", user_id: "api-key" }
+const identity = { organization_id: "ortam.test", user_id: "key-any" }
 
 type Body = { argv: string[]; cwd?: string; [field: string]: unknown }
 
@@ -122,6 +126,35 @@ describe("Ortam IDs", () => {
   })
 })
 
+describe("Ortam sandboxes that are gone or lost", () => {
+  it("reads a lost sandbox as stopped: no compute, and the files it last saved", async () => {
+    expect((await ortam({ phase: "lost" }).client.sandbox(SBX, identity)).state).toBe("stopped")
+  })
+
+  it.each([
+    [404, "not_found"],
+    [409, "sandbox_deleted"],
+  ])("takes a %s %s on a command as a sandbox that may be gone", async (status, code) => {
+    const { client } = ortam({
+      respond: (_request, path) =>
+        path.endsWith("/executions") ? Response.json({ code }, { status }) : undefined,
+    })
+    const launch = { argv: ["true"], cwd: "/home/ortam", env: {}, timeout_seconds: 60 }
+    const error = await client.launch(SBX, launch, "k", identity).catch((e) => e)
+    expect(client.notFound(error)).toBe(true)
+    // Any other conflict is not evidence of that.
+    const busy = ortam({
+      respond: (_request, path) =>
+        path.endsWith("/executions")
+          ? Response.json({ code: "sandbox_transitioning" }, { status: 409 })
+          : undefined,
+    })
+    expect(
+      busy.client.notFound(await busy.client.launch(SBX, launch, "k", identity).catch((e) => e)),
+    ).toBe(false)
+  })
+})
+
 describe("Ortam runner requests", () => {
   const create = {
     name: "coding",
@@ -131,10 +164,19 @@ describe("Ortam runner requests", () => {
     env: { TOKEN: "t" },
   }
 
-  it("proves the key with a read, since Ortam has no identity to return", async () => {
+  it("proves the key with a read, and takes the key itself as the account", async () => {
+    // Ortam names no organization, so another key is another account until shown otherwise.
     const { client, requests } = ortam()
-    expect(await client.authenticate()).toEqual(identity)
+    const account = await client.authenticate()
+    expect(account).toEqual({
+      organization_id: "ortam.test",
+      user_id: expect.stringMatching(/^key-[a-f0-9]{24}$/),
+    })
     expect(requests).toMatchObject([{ method: "GET", path: "/sandboxes?limit=1" }])
+    const other = new OrtamClient("https://ortam.test/v1", "another", (async () =>
+      Response.json([])) as unknown as typeof fetch)
+    expect((await other.authenticate()).user_id).not.toBe(account.user_id)
+    expect(JSON.stringify(account)).not.toContain('key"')
   })
 
   it("creates the sandbox, then runs setup as the create the caller waits on", async () => {
@@ -172,7 +214,7 @@ describe("Ortam runner requests", () => {
       "-c",
       "mkdir -p /home/ortam/work",
     ])
-    expect(requests[1]?.body.argv[2]).toContain("sudo poweroff")
+    expect(requests[1]?.body.argv[2]).toBe(ARMED)
   })
 
   it.each([
@@ -214,6 +256,43 @@ describe("Ortam runner requests", () => {
   ])("reads a %s stop as %s", async (state, want) => {
     const { client } = ortam({ operation: { kind: "stop", resource_id: SBX, state } })
     expect((await client.operation(OP, SBX, "stop", identity)).state).toBe(want)
+  })
+
+  it.each([
+    ["published", "succeeded"],
+    ["not_required", "succeeded"],
+    ["failed", "failed"],
+    ["unknown", "failed"],
+  ])("counts a completed stop whose final save is %s as %s", async (save, want) => {
+    // A stopped sandbox promises its files were saved.
+    const { client } = ortam({
+      operation: { kind: "stop", resource_id: SBX, result: { final_save: { state: save } } },
+    })
+    expect((await client.operation(OP, SBX, "stop", identity)).state).toBe(want)
+    expect((await client.lifecycle(SBX, "stop", "k", identity)).state).toBe(want)
+  })
+
+  it.each([
+    ["organization_machine_limit_reached", SandboxRateLimited, "all its machines in use"],
+    ["organization_not_approved", SandboxRefused, "waiting for approval"],
+    ["organization_storage_limit_reached", SandboxRefused, "out of storage"],
+  ])("says %s as a wait or a refusal, in words", async (code, kind, words) => {
+    const { client } = ortam({
+      respond: (request) =>
+        request.method === "POST" ? Response.json({ code }, { status: 403 }) : undefined,
+    })
+    const error = await client.lifecycle(SBX, "resume", "k", identity).catch((e) => e)
+    expect(error).toBeInstanceOf(kind)
+    expect(error.message).toContain(words)
+  })
+
+  it("names the sandbox it made when setup could not be sent, so a caller can delete it", async () => {
+    const { client } = ortam({
+      respond: (_request, path) =>
+        path.endsWith("/executions") ? new Response(null, { status: 503 }) : undefined,
+    })
+    const error = await client.create(create, "k", identity).catch((e) => e)
+    expect(error.sandbox_id).toBe(SBX)
   })
 
   it.each([
@@ -470,6 +549,15 @@ describe("Ortam process reads", () => {
     })
   })
 
+  it("reads a process saved under its old ID as an unknown command, not a malformed one", async () => {
+    const { client, requests } = ortam()
+    const error = await client
+      .process(SBX, "prc_01h455vb4pex5vsknk084sn02q", identity)
+      .catch((e) => e)
+    expect(requests[0]?.path).toBe(`/executions/${SBX}`)
+    expect(client.notFound(error)).toBe(true)
+  })
+
   it("refuses another sandbox's command", async () => {
     await expect(ortam().client.process(EXE, EXE, identity)).rejects.toThrow(
       "Ortam process mismatch",
@@ -478,32 +566,123 @@ describe("Ortam process reads", () => {
 })
 
 describe("Ortam usage", () => {
-  it("charges a turn its share of each start it ran in", async () => {
-    const { client } = ortam({
-      respond: (_request, path) =>
-        path === `/sandboxes/${SBX}/usage`
-          ? Response.json({
-              as_of: "2026-11-12T01:00:00Z",
-              atoms_per_unit: 1_000_000_000,
-              compute: {
-                starts: [
-                  // Ten minutes, half of them inside the window.
-                  {
-                    running_at: "2026-11-12T00:00:00Z",
-                    ended_at: "2026-11-12T00:10:00Z",
-                    charge_atoms: "4000000",
-                  },
-                  // Still running: charged to date, all of it inside.
-                  { running_at: "2026-11-12T00:20:00Z", ended_at: null, charge_atoms: "1000000" },
-                  { running_at: null, ended_at: null, charge_atoms: null },
-                ],
-              },
-            })
-          : undefined,
-    })
+  const usage = (pages: Record<string, unknown>) =>
+    ortam({
+      respond: (_request, path) => {
+        const page = pages[path.replace(`/sandboxes/${SBX}/usage`, "")]
+        return page
+          ? Response.json({ as_of: "2026-11-12T01:00:00Z", atoms_per_unit: 1e9, compute: page })
+          : undefined
+      },
+    }).client.usage(SBX, "2026-11-12T00:05:00Z", "2026-11-12T02:00:00Z", identity)
+
+  it("charges a turn its share of each start it ran in, across every page", async () => {
     expect(
-      await client.usage(SBX, "2026-11-12T00:05:00Z", "2026-11-12T02:00:00Z", identity),
+      await usage({
+        "": {
+          unknown_starts: 0,
+          next_after: 7,
+          // Ten minutes, half of them inside the window.
+          starts: [
+            {
+              running_at: "2026-11-12T00:00:00Z",
+              ended_at: "2026-11-12T00:10:00Z",
+              charge_atoms: "4000000",
+            },
+          ],
+        },
+        "?after=7": {
+          unknown_starts: 0,
+          next_after: null,
+          starts: [
+            // Still running: charged to date, all of it inside.
+            { running_at: "2026-11-12T00:20:00Z", ended_at: null, charge_atoms: "1000000" },
+            // Never ran, and one outside the window that Ortam could not price.
+            { running_at: null, ended_at: null, charge_atoms: null },
+            {
+              running_at: "2026-11-11T00:00:00Z",
+              ended_at: "2026-11-11T00:10:00Z",
+              charge_atoms: null,
+              gap: "unpriced",
+            },
+          ],
+        },
+      }),
     ).toEqual({ billable_seconds: 300 + 2400, cost_micro_usd: 2000 + 1000 })
+  })
+
+  it.each([
+    [
+      "a start it could not price",
+      {
+        unknown_starts: 0,
+        starts: [
+          {
+            running_at: "2026-11-12T00:10:00Z",
+            ended_at: "2026-11-12T00:20:00Z",
+            charge_atoms: null,
+            gap: "unpriced",
+          },
+        ],
+      },
+    ],
+    ["starts it cannot account for", { unknown_starts: 1, starts: [] }],
+  ])("gives no cost at all for %s, never a low one", async (_name, compute) => {
+    await expect(usage({ "": compute })).rejects.toThrow("Ortam usage is not settled")
+  })
+})
+
+describe("the stop timer a command arms", () => {
+  // The script that bounds what a forgotten machine costs, run for real with the machine's
+  // root commands replaced by a recorder.
+  const arm = (systemctl: string) => {
+    const dir = mkdtempSync(join(tmpdir(), "derive-armed-"))
+    const bin = join(dir, "bin")
+    mkdirSync(bin)
+    writeFileSync(
+      join(bin, "sudo"),
+      `#!/bin/sh\necho "sudo $*" >> "${dir}/log"\ncase "$1" in tee) cat > "${dir}/$(basename "$2")" ;; systemctl) ${systemctl} ;; esac\n`,
+    )
+    chmodSync(join(bin, "sudo"), 0o755)
+    const ran = spawnSync(
+      "sh",
+      ["-c", ARMED, "derive", "900", dir, "sh", "-c", 'echo "ran in $(pwd) with $1"', "x", "arg"],
+      { env: { PATH: `${bin}:${process.env.PATH}` }, encoding: "utf8" },
+    )
+    const read = (name: string) => readFileSync(join(dir, name), "utf8")
+    const result = { status: ran.status, stdout: ran.stdout, log: read("log"), read }
+    return { ...result, clean: () => rmSync(dir, { recursive: true, force: true }) }
+  }
+
+  it("installs the power-off service, sets the deadline, then runs the command in its directory", () => {
+    const armed = arm("true")
+    try {
+      expect(armed.status).toBe(0)
+      expect(armed.stdout).toMatch(/^ran in .*derive-armed-.* with arg\n$/)
+      const deadline = Number(armed.read("derive-stop-at.new"))
+      expect(Math.abs(deadline - (Date.now() / 1000 + 900))).toBeLessThan(30)
+      // The service powers off at the deadline, and fifteen minutes after a boot that set none.
+      expect(armed.read("derive-stop-1")).toContain("|| poweroff")
+      expect(armed.read("derive-stop-1")).toContain("+ 900")
+      expect(armed.read("derive-stop.service")).toContain("WantedBy=multi-user.target")
+      const calls = armed.log.split("\n")
+      expect(calls).toContain("sudo systemctl enable derive-stop.service")
+      expect(calls.indexOf("sudo mv /run/derive-stop-at.new /run/derive-stop-at")).toBeLessThan(
+        calls.indexOf("sudo systemctl start derive-stop.service"),
+      )
+    } finally {
+      armed.clean()
+    }
+  })
+
+  it("does not run the command when the service will not start", () => {
+    const armed = arm('[ "$2" != start ]')
+    try {
+      expect(armed.status).not.toBe(0)
+      expect(armed.stdout).toBe("")
+    } finally {
+      armed.clean()
+    }
   })
 })
 

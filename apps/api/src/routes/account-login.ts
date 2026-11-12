@@ -108,7 +108,7 @@ const clientFor = async (
 const stopConnection = async (ctx: AppContext, p: PendingLogin, org: string) => {
   if (!p.sandbox_id) return
   const client = await clientFor(ctx, org, p)
-  await client?.deleteSandbox(p.sandbox_id, p.attempt, p.identity)
+  await client?.deleteSandbox(p.sandbox_id, `${p.attempt}-delete`, p.identity)
 }
 
 export const stopAccountConnection = async (ctx: AppContext, a: AccountRecord) => {
@@ -298,19 +298,24 @@ export const accountLoginRoutes = (ctx: AppContext) => {
         const current = await meta.getAccount(a.id)
         const now = current && pending(current)
         if (current?.status === "ready") {
-          await box.deleteSandbox(created.sandbox.id, p.attempt, p.identity)
+          await box.deleteSandbox(created.sandbox.id, `${p.attempt}-delete`, p.identity)
           return c.json(view(current))
         }
         if (!current || !now || now.attempt !== p.attempt) break
         const updated = await save(current, { ...now, sandbox_id: created.sandbox.id })
         if (!updated) continue
         if (updated.status === "needs_attention")
-          await box.deleteSandbox(created.sandbox.id, p.attempt, p.identity)
+          await box.deleteSandbox(created.sandbox.id, `${p.attempt}-delete`, p.identity)
         return c.json(view(updated), 202)
       }
-      await box.deleteSandbox(created.sandbox.id, p.attempt, p.identity)
+      await box.deleteSandbox(created.sandbox.id, `${p.attempt}-delete`, p.identity)
       return fail(c, 409, "This connection changed. Open it again.")
-    } catch {
+    } catch (error) {
+      // A provider that creates and then sets up may fail between the two: it names the
+      // sandbox it made, and nothing else would ever delete it.
+      const made = (error as { sandbox_id?: unknown } | null)?.sandbox_id
+      if (typeof made === "string")
+        await box.deleteSandbox(made, `${p.attempt}-delete`, p.identity).catch(() => null)
       await save(
         a,
         { ...p, phase: "failed", reason: "setup_failed", secret: undefined },

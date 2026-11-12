@@ -80,14 +80,23 @@ Each workspace uses its own connection. The runner-path setting keeps its existi
 No deployment secret is needed for a workspace connection.
 
 Ortam takes one API key as the bearer on every request. A key has no scopes and the API has no
-"who am I" call, so Derive cannot tell two Ortam organizations apart: a sandbox the key cannot
-see reads as not found. Disconnect before connecting a key from another organization.
+"who am I" call, so nothing names the organization behind a key, and a sandbox a key cannot see
+reads as not found. Derive therefore treats each key as its own account: to change a workspace's
+key, disconnect first, which retires its sandboxes under the old key. The deployment's managed
+key has no such guard; rotate it only within its Ortam organization.
 A sandbox is created stopped; its first command starts it. Commands run as `developer`, and the
 adapter keeps Derive's files under `/home/ortam` on the saved disk. The base image carries Node.
-Ortam never stops a running sandbox by itself. Every command the adapter submits first arms a
-timer inside the machine that powers it off (Ortam saves its files) after the command's budget.
-An SSH login also starts a stopped sandbox, with no timer, so the adapter removes the SSH keys
-Derive listed whenever it stops or resumes one.
+Ortam never stops a running sandbox by itself, so the machine carries its own stop. The adapter
+installs a small service on the saved disk that powers the machine off at a deadline (Ortam
+saves its files and reports it stopped). Every command the adapter submits first sets that
+deadline to the command's budget plus ten minutes, and will not run if it cannot. The service
+starts with the machine, so one that something else woke still powers off, fifteen minutes
+after boot: an SSH login starts a stopped sandbox by itself. For the same reason the adapter
+removes the SSH keys Derive listed whenever it stops or resumes a sandbox; a running machine
+handed from one turn of a task to the next keeps them. The task runs as a user with sudo, so
+this bounds a machine nobody is driving, not one whose occupant works to keep it up; the
+controller stopping the machine at the end of each turn remains the ordinary path.
+Ortam has two sizes. Small is Small; Standard and anything larger are its Medium.
 The ordinary job launch installs the pinned Derive CLI. No custom environment or template is created.
 A task's Ortam compute cost is its share of each start's charge, from the sandbox's usage report.
 
