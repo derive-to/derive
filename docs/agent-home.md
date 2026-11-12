@@ -79,26 +79,29 @@ Derive verifies the account and encrypts the key. The controller holds it; tasks
 Each workspace uses its own connection. The runner-path setting keeps its existing name.
 No deployment secret is needed for a workspace connection.
 
-Ortam requires a Developer API key with `sandboxes:read` and `sandboxes:write` scopes.
-Its public API exchanges the key at `/v1/auth/token`. Resource requests carry the short-lived token.
-Each request checks the same organization and user. A different account cannot replace an active key.
-The public API creates a plain Small sandbox with a 20-minute automatic stop limit.
-Public processes run as the workspace user. The adapter maps the saved runtime to `/workspace`.
-If the image lacks Node 24+, it installs pinned Node 24.14.0 with verified release hashes.
+Ortam takes one API key as the bearer on every request. A key has no scopes and the API has no
+"who am I" call, so Derive cannot tell two Ortam organizations apart: a sandbox the key cannot
+see reads as not found. Disconnect before connecting a key from another organization.
+A sandbox is created stopped; its first command starts it. Commands run as `developer`, and the
+adapter keeps Derive's files under `/home/ortam` on the saved disk. The base image carries Node.
+Ortam never stops a running sandbox by itself. Every command the adapter submits first arms a
+timer inside the machine that powers it off (Ortam saves its files) after the command's budget.
+An SSH login also starts a stopped sandbox, with no timer, so the adapter removes the SSH keys
+Derive listed whenever it stops or resumes one.
 The ordinary job launch installs the pinned Derive CLI. No custom environment or template is created.
-Ortam compute cost remains unknown until a task-specific usage receipt is available.
+A task's Ortam compute cost is its share of each start's charge, from the sandbox's usage report.
 
 Disconnect before changing providers. The controller retains the old key for cleanup.
 Replacement waits until all agent sandboxes finish retirement and pending model sign-in is cancelled.
 Ortam retirement deletes agent sandboxes and their saved files. Boat retirement archives them.
 The disconnect confirmation explains this difference. Provider, API URL, identity, and connection
 stay pinned for the sandbox's life. Each sandbox retains an encrypted cleanup credential so a
-replacement race cannot strand it. Same-account rotation uses the current key. Existing deployment-managed Ortam sandboxes keep their original
-integration credential; a workspace connection cannot take over that identity.
+replacement race cannot strand it. Same-account rotation uses the current key. Existing deployment-managed Ortam sandboxes keep the
+deployment's key; a workspace connection does not take them over.
 
 Codex device sign-in currently needs a Boat connection. Saved plan logins and model API keys run
 on either provider. Ortam users import their login or model key in Model accounts.
-Existing allowlisted Ortam service integrations remain available under their deployment settings.
+Managed Ortam machines remain available to allowlisted workspaces under the deployment's key.
 
 Boat creates a Small sandbox in the connected account's personal wallet.
 Runner setup accepts an optional company snapshot for new agents. The controller freezes its

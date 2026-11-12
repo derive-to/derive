@@ -4,10 +4,10 @@ import { z } from "zod"
 import type { AppContext } from "../context"
 import { ACCOUNT_LOGIN_SETUP } from "../lib/account-login-script"
 import { signCapabilityToken, verifyCapabilityToken } from "../lib/capability-token"
-import { decryptSecret, encryptSecret, sha256 } from "../lib/crypto"
+import { decryptSecret, encryptSecret } from "../lib/crypto"
 import { fail, readJson } from "../lib/http"
 import { hasSeat } from "../lib/job-accounts"
-import { ORTAM_NODE_SETUP, OrtamClient } from "../lib/ortam-client"
+import { OrtamClient } from "../lib/ortam-client"
 import {
   cloudEnabled,
   connectionClient,
@@ -102,12 +102,7 @@ const clientFor = async (
     (requireActive && !managedFor(config, org))
   )
     return null
-  return new OrtamClient(
-    config.apiUrl,
-    config.managed.apiKey,
-    sha256(JSON.stringify([org, "account-login", p.attempt])),
-    deps.runtimeFetch,
-  )
+  return new OrtamClient(config.apiUrl, config.managed.apiKey, deps.runtimeFetch)
 }
 
 const stopConnection = async (ctx: AppContext, p: PendingLogin, org: string) => {
@@ -229,12 +224,7 @@ export const accountLoginRoutes = (ctx: AppContext) => {
     const attempt = newId("login")
     const box = selected.connection
       ? connectionClient(selected.connection, key, deps.runtimeFetch)
-      : new OrtamClient(
-          selected.apiUrl,
-          runtime?.managed?.apiKey ?? "",
-          sha256(JSON.stringify([org, "account-login", attempt])),
-          deps.runtimeFetch,
-        )
+      : new OrtamClient(selected.apiUrl, runtime?.managed?.apiKey ?? "", deps.runtimeFetch)
     const p: PendingLogin = {
       attempt,
       owner: who,
@@ -293,7 +283,7 @@ export const accountLoginRoutes = (ctx: AppContext) => {
         {
           name: "Derive model account sign-in",
           size: "small",
-          setup_script: `${p.provider === "ortam" ? `${ORTAM_NODE_SETUP}\n` : ""}${ACCOUNT_LOGIN_SETUP}\nnohup node /home/ortam/derive-account-login/connect.mjs >/dev/null 2>&1 </dev/null &`,
+          setup_script: `${ACCOUNT_LOGIN_SETUP}\nnohup node /home/ortam/derive-account-login/connect.mjs >/dev/null 2>&1 </dev/null &`,
           auto_stop_after_seconds: 600,
           env: {
             DERIVE_TOKEN: token,

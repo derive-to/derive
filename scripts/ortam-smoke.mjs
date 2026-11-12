@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Disposable, opt-in qualification of Ortam's public lifecycle API. This is not
+// Disposable, opt-in qualification of Ortam's lifecycle API. This is not
 // the hosted-run dispatcher. Keep its receipt until cleanup is confirmed.
 import { randomUUID } from "node:crypto"
 import { mkdir, open, readFile, rename, rm } from "node:fs/promises"
@@ -10,6 +10,8 @@ import { pathToFileURL } from "node:url"
 const REQUEST_MS = 15_000
 const PROBE_MS = 15 * 60_000
 const CLEANUP_MS = 15 * 60_000
+// How long the test machine may run if this check never stops it.
+const SELF_STOP_SECONDS = 300
 class CleanupUnconfirmed extends Error {}
 
 const phases = ["create", "ready", "launch", "observe", "stop", "delete", "done"]
@@ -31,7 +33,7 @@ function apiBase(value) {
 
 // Never include response bodies or request headers in errors: a proxy may echo
 // credentials. The receipt carries only this probe's fixed command output.
-async function json(fetcher, url, init) {
+async function send(fetcher, url, init) {
   let response
   try {
     response = await fetcher(url, {
@@ -43,47 +45,35 @@ async function json(fetcher, url, init) {
     throw new Error("Ortam request did not complete; its outcome may be unknown")
   }
   if (!response.ok) throw new Error(`Ortam returned HTTP ${response.status}`)
-  try {
-    return await response.json()
-  } catch {
-    throw new Error("Ortam returned invalid JSON")
-  }
+  return response
 }
 
+// Ortam takes the API key as the bearer on every request. It has no token exchange and no
+// call that names the key's organization: a machine the key cannot see reads as not found.
 function client(apiUrl, apiKey, fetcher) {
-  let token
-  let organization
-  const authenticate = async () => {
-    const body = await json(fetcher, `${apiUrl}/auth/token`, { headers: { "X-API-Key": apiKey } })
-    let claims
-    try {
-      claims = JSON.parse(Buffer.from(body.token.split(".")[1], "base64url").toString())
-    } catch {
-      throw new Error("Ortam did not return a usable access token")
-    }
-    if (typeof claims.organization_id !== "string" || !claims.organization_id)
-      throw new Error("Ortam access token has no organization")
-    if (organization && organization !== claims.organization_id)
-      throw new Error("Ortam credentials changed organization during the check")
-    organization = claims.organization_id
-    token = body.token
-    return organization
-  }
+  const call = (path, method, body, key) =>
+    send(fetcher, `${apiUrl}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        ...(key ? { "Idempotency-Key": key } : {}),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    })
   return {
-    authenticate,
-    async request(path, method = "GET", body, key, headers = {}) {
-      // Refresh before each step. No implicit retries, especially for process start.
-      await authenticate()
-      return json(fetcher, `${apiUrl}${path}`, {
-        method,
-        headers: {
-          ...headers,
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-          ...(key ? { "Idempotency-Key": key } : {}),
-        },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      })
+    /** Every mutation carries `key`: Ortam answers a repeat of the same key and body with
+     *  the first result, so a lost response is retried, never guessed at. */
+    async request(path, method = "GET", body, key) {
+      const response = await call(path, method, body, key)
+      try {
+        return await response.json()
+      } catch {
+        throw new Error("Ortam returned invalid JSON")
+      }
+    },
+    async text(path) {
+      return (await call(path, "GET")).text()
     },
   }
 }
@@ -106,27 +96,30 @@ async function writeReceipt(path, value) {
   }
 }
 
-function validateReceipt(state, apiUrl, organization) {
+const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/
+
+function validateReceipt(state, apiUrl) {
   if (
-    state?.version !== 1 ||
-    !/^[a-f0-9-]{36}$/.test(state.id ?? "") ||
+    state?.version !== 2 ||
+    !UUID.test(state.id ?? "") ||
     !phases.includes(state.phase) ||
     state.api_url !== apiUrl ||
-    state.organization !== organization ||
     !Number.isFinite(Date.parse(state.created_at)) ||
     (state.phase !== "create" && (!state.sandbox_id || !state.create_operation)) ||
-    (state.phase === "observe" && !state.process_id) ||
+    (state.phase === "observe" && !state.execution_id) ||
     (state.phase === "done" &&
       (!state.delete_operation ||
         state.cleanup_confirmed !== true ||
         typeof state.passed !== "boolean")) ||
-    (state.sandbox_id && !/^sbx_[a-z0-9]{26}$/.test(state.sandbox_id)) ||
-    (state.process_id && !/^prc_[a-z0-9]{26}$/.test(state.process_id)) ||
-    [state.create_operation, state.stop_operation, state.delete_operation].some(
-      (id) => id && !/^op_[a-z0-9]{26}$/.test(id),
-    )
+    [
+      state.sandbox_id,
+      state.execution_id,
+      state.create_operation,
+      state.stop_operation,
+      state.delete_operation,
+    ].some((id) => id && !UUID.test(id))
   )
-    throw new Error("Receipt is invalid or belongs to a different Ortam API or organization")
+    throw new Error("Receipt is invalid, from an older Ortam API, or belongs to a different one")
 }
 
 /** Reopening the same receipt resumes this check, never creates a second check.
@@ -143,7 +136,7 @@ export async function runOrtamSmoke({
   signal,
   onProgress = () => {},
 }) {
-  if (!apiKey) throw new Error("Set ORTAM_API_KEY to a Developer API key before running this check")
+  if (!apiKey) throw new Error("Set ORTAM_API_KEY to an Ortam API key before running this check")
   const base = apiBase(apiUrl)
   const path = resolve(statePath)
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
@@ -159,7 +152,8 @@ export async function runOrtamSmoke({
     await lock.writeFile(`${process.pid}\n`)
     await lock.sync()
     const api = client(base, apiKey, fetcher)
-    const organization = await api.authenticate()
+    // Proves the key works before anything is created or a receipt is written.
+    await api.request("/sandboxes?limit=1")
     let state
     try {
       state = JSON.parse(await readFile(path, "utf8"))
@@ -168,20 +162,19 @@ export async function runOrtamSmoke({
         throw new Error("Receipt cannot be read; do not replace it while cleanup is outstanding")
       if (cleanupOnly) throw new Error("Cleanup requires an existing receipt")
       state = {
-        version: 1,
+        version: 2,
         id: randomUUID(),
         api_url: base,
-        organization,
         created_at: new Date().toISOString(),
         phase: "create",
         error: null,
       }
       await writeReceipt(path, state)
     }
-    validateReceipt(state, base, organization)
+    validateReceipt(state, base)
     const save = async (patch) => {
       const next = { ...state, ...patch }
-      validateReceipt(next, base, organization)
+      validateReceipt(next, base)
       await writeReceipt(path, next)
       state = next
       onProgress(state.phase)
@@ -191,12 +184,6 @@ export async function runOrtamSmoke({
     const cleanup = async () => {
       cleanupDeadline ??= Date.now() + cleanupMs
       if (!state.cleanup_started_at) await save({ cleanup_started_at: new Date().toISOString() })
-    }
-    // A resumed launch may have succeeded before the response/receipt was lost.
-    // Never repeat it: clean up and leave an honest unknown result instead.
-    if (state.phase === "launch") {
-      await fail("Process start outcome is unknown; the command was not repeated")
-      await save({ phase: "stop" })
     }
     if (state.phase === "done") return state
     const deadline = Date.now() + probeMs
@@ -211,7 +198,7 @@ export async function runOrtamSmoke({
               : "Check deadline exceeded",
         )
         await cleanup()
-        if (["ready", "observe"].includes(state.phase)) await save({ phase: "stop" })
+        if (["ready", "launch", "observe"].includes(state.phase)) await save({ phase: "stop" })
       }
       if (["stop", "delete"].includes(state.phase) && !state.cleanup_started_at) {
         await cleanup()
@@ -224,63 +211,59 @@ export async function runOrtamSmoke({
         const sandboxPath = `/sandboxes/${state.sandbox_id}`
         const key = (action) => `derive-smoke-${state.id}-${action}`
         if (state.phase === "create") {
-          // Write intent first; replay exactly this body/key after a lost response.
-          const mutation = await api.request(
+          // A sandbox is created stopped: nothing runs, or bills compute, until the launch.
+          const made = await api.request(
             "/sandboxes",
             "POST",
-            {
-              name: `derive-smoke-${state.id}`,
-              size: "small",
-              auto_stop_after_seconds: 300,
-            },
+            { name: `derive-smoke-${state.id}`, size: "small" },
             key("create"),
           )
           await save({
-            sandbox_id: mutation.sandbox.id,
-            create_operation: mutation.operation.id,
+            sandbox_id: made.resource.id,
+            create_operation: made.operation.id,
             phase: "ready",
           })
-          validateReceipt(state, base, organization)
         } else if (state.phase === "ready") {
           const operation = await api.request(`/operations/${state.create_operation}`)
-          if (operation.state === "failed") {
+          if (operation.state === "completed") await save({ phase: "launch" })
+          else if (["failed", "unknown"].includes(operation.state)) {
             await fail("Ortam could not create the test machine")
             await save({ phase: "stop" })
-          } else if (operation.state === "succeeded") {
-            const sandbox = await api.request(sandboxPath)
-            if (sandbox.state !== "ready") {
-              await fail("Test machine was not ready after creation")
-              await save({ phase: "stop" })
-            } else {
-              // Ortam process starts have no idempotency key. Persist consumed
-              // intent BEFORE issuing it; a crash here is a missed check, not a duplicate.
-              await save({ phase: "launch" })
-              try {
-                const process = await api.request(`${sandboxPath}/processes`, "POST", {
-                  argv: ["/usr/bin/printf", "%s\\n", `derive-ortam-ok:${state.id}`],
-                  cwd: "/home/ortam",
-                  timeout_seconds: 30,
-                })
-                await save({ process_id: process.id, phase: "observe" })
-                validateReceipt(state, base, organization)
-              } catch {
-                await fail("Process start outcome is unknown; the command was not repeated")
-                await save({ phase: "stop" })
-              }
-            }
           }
-        } else if (state.phase === "observe") {
-          const process = await api.request(
-            `${sandboxPath}/processes/${state.process_id}?tail_bytes=4096`,
+        } else if (state.phase === "launch") {
+          // The command starts the stopped machine. Ortam never stops a running machine by
+          // itself, so the command first arms a power-off: if this check dies here, the
+          // machine still turns itself off, and Ortam saves it and reports it stopped.
+          const launched = await api.request(
+            `${sandboxPath}/executions`,
+            "POST",
+            {
+              argv: [
+                "sh",
+                "-c",
+                `(sleep ${SELF_STOP_SECONDS}; sudo poweroff) >/dev/null 2>&1 </dev/null &\nprintf '%s\\n' "$1"`,
+                "derive-smoke",
+                `derive-ortam-ok:${state.id}`,
+              ],
+              timeout_seconds: 30,
+            },
+            key("launch"),
           )
-          if (!["starting", "running"].includes(process.status)) {
+          await save({ execution_id: launched.resource.id, phase: "observe" })
+        } else if (state.phase === "observe") {
+          const run = `/executions/${state.execution_id}`
+          const execution = await api.request(run)
+          if (!["accepted", "running"].includes(execution.state)) {
+            const output = await api.request(`${run}/output`)
+            const read = (stream) =>
+              output[stream].durable_end ? api.text(`${run}/output/${stream}?limit=4096`) : ""
             const result = {
-              status: process.status,
-              exit_code: process.exit_code ?? null,
-              stdout: process.stdout ?? "",
-              stderr: process.stderr ?? "",
-              stdout_truncated: process.stdout_truncated,
-              stderr_truncated: process.stderr_truncated,
+              status: execution.state,
+              exit_code: execution.exit_code ?? null,
+              stdout: await read("stdout"),
+              stderr: await read("stderr"),
+              stdout_truncated: output.stdout.truncated,
+              stderr_truncated: output.stderr.truncated,
             }
             const passed = !(
               result.status !== "exited" ||
@@ -301,51 +284,47 @@ export async function runOrtamSmoke({
         } else if (state.phase === "stop") {
           if (state.stop_operation) {
             const operation = await api.request(`/operations/${state.stop_operation}`)
-            if (operation.state === "succeeded" || operation.state === "failed") {
-              if (operation.state === "failed")
-                await fail("Ortam stop failed; deleting the disposable test machine")
-              await save({ stop_status: operation.state, phase: "delete" })
+            if (["completed", "failed", "unknown"].includes(operation.state)) {
+              // A stop that saved nothing is not a stop this check can vouch for.
+              const saved = operation.result?.final_save?.state === "published"
+              const stopped = operation.state === "completed" && saved
+              if (!stopped) await fail("Ortam stop failed; deleting the disposable test machine")
+              await save({ stop_status: stopped ? "succeeded" : "failed", phase: "delete" })
             }
           } else if (state.stop_requested) {
-            const operation = await api.request(
-              `${sandboxPath}/stop`,
-              "POST",
-              undefined,
-              key("stop"),
-            )
-            await save({ stop_operation: operation.id })
+            // Intent is saved first: after a lost response the machine reads as stopped,
+            // and only the receipt says this check is what stopped it.
+            const stop = await api.request(`${sandboxPath}/stop`, "POST", undefined, key("stop"))
+            await save({ stop_operation: stop.operation.id })
           } else {
             const sandbox = await api.request(sandboxPath)
-            if (sandbox.current_operation_id) {
-              // Includes provisioning and Ortam's automatic stop. Wait for the
-              // existing owner rather than submitting a competing operation.
-            } else if (sandbox.state === "ready") {
-              await save({ stop_requested: true })
-            } else if (["stopped", "failed"].includes(sandbox.state)) {
+            if (sandbox.phase === "running") await save({ stop_requested: true })
+            else if (["stopped", "lost", "deleted"].includes(sandbox.phase)) {
+              // Never started is the ordinary end of a failed create or launch; a machine
+              // that ran and is no longer running was stopped by something else.
               await fail(
-                sandbox.state === "failed"
-                  ? "Test machine entered a failed state"
-                  : "Test machine stopped before this check requested stop",
+                sandbox.phase === "stopped"
+                  ? "Test machine stopped before this check requested stop"
+                  : `Test machine was ${sandbox.phase} before this check requested stop`,
               )
-              await save({ stop_status: sandbox.state, phase: "delete" })
-            } else throw new Error("Unexpected test machine state; cleanup is unconfirmed")
+              await save({ stop_status: sandbox.phase, phase: "delete" })
+            }
+            // `starting` and `stopping` are Ortam's own transitions: wait for them.
           }
         } else if (state.phase === "delete") {
           if (!state.delete_operation) {
-            const operation = await api.request(sandboxPath, "DELETE", undefined, key("delete"), {
-              "X-Ortam-Confirm-Delete": state.sandbox_id,
-            })
-            await save({ delete_operation: operation.id })
+            const deleted = await api.request(sandboxPath, "DELETE", undefined, key("delete"))
+            await save({ delete_operation: deleted.operation.id })
           } else {
             const operation = await api.request(`/operations/${state.delete_operation}`)
-            if (operation.state === "succeeded")
+            if (operation.state === "completed")
               await save({
                 phase: "done",
                 cleanup_confirmed: true,
                 completed_at: new Date().toISOString(),
                 passed: !state.error && !!state.result && state.stop_status === "succeeded",
               })
-            else if (operation.state === "failed")
+            else if (["failed", "unknown"].includes(operation.state))
               throw new CleanupUnconfirmed(
                 "Ortam deletion failed. Cleanup is unconfirmed; inspect the saved operation before retiring the receipt",
               )

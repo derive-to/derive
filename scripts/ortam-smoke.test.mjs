@@ -8,127 +8,118 @@ import { join } from "node:path"
 import { test } from "node:test"
 import { runOrtamSmoke } from "./ortam-smoke.mjs"
 
-const sandboxId = `sbx_${"a".repeat(26)}`
-const processId = `prc_${"b".repeat(26)}`
-const operationId = (letter) => `op_${letter.repeat(26)}`
+const uuid = (digit) =>
+  `${digit.repeat(8)}-${digit.repeat(4)}-4${digit.repeat(3)}-8${digit.repeat(3)}-${digit.repeat(12)}`
+const sandboxId = uuid("a")
+const executionId = uuid("b")
+const operationId = { create: uuid("c"), launch: uuid("e"), stop: uuid("5"), delete: uuid("d") }
 
-// A public-API peer with real HTTP disconnects. It tests the controller contract,
+// An API peer with real HTTP disconnects. It tests the controller contract,
 // not VM provision, filesystem checkpoint durability or Hetzner cleanup.
 async function fixture(t, options = {}) {
   const directory = await mkdtemp(join(tmpdir(), "derive-ortam-smoke-"))
   const statePath = join(directory, "receipt.json")
   const calls = []
   const accepted = new Map()
-  let sandboxState = "provisioning"
+  let phase = "stopped"
   let output = ""
   let starts = 0
   let creates = 0
   let dropped = false
-  let organization = "test-organization"
+  let visible = true
   const server = createServer(async (req, res) => {
     let text = ""
     for await (const chunk of req) text += chunk
     const body = text ? JSON.parse(text) : undefined
     const path = req.url.replace(/^\/v1/, "")
-    calls.push({ path, method: req.method, body, key: req.headers["idempotency-key"] })
+    const key = req.headers["idempotency-key"]
+    calls.push({ path, method: req.method, body, key })
     const reply = (value, status = 200) => {
       res.writeHead(status, { "Content-Type": "application/json" })
       res.end(JSON.stringify(value))
     }
-    if (path === "/auth/token") {
-      const claims = Buffer.from(JSON.stringify({ organization_id: organization })).toString(
-        "base64url",
-      )
-      reply({ token: `test.${claims}.unsigned` })
+    if (req.headers.authorization !== "Bearer test-only-key") {
+      reply({ code: "unauthorized" }, 401)
       return
     }
-    if (!req.headers.authorization?.startsWith("Bearer test.")) {
-      reply({}, 401)
+    if (req.method !== "GET" && !key) {
+      reply({ code: "invalid_request", error: "Idempotency-Key is required" }, 400)
       return
     }
-    const operation = (kind, state = "succeeded") => ({
-      id: operationId(kind[0]),
-      sandbox_id: sandboxId,
-      kind,
-      state,
+    // Lose the first response to this kind of request, after the work was accepted.
+    const lost = (kind) => {
+      if (options.drop !== kind || dropped) return false
+      dropped = true
+      res.destroy()
+      return true
+    }
+    const operation = (kind, resource = sandboxId) => ({
+      id: operationId[kind],
+      kind: kind === "launch" ? "execute" : kind,
+      resource_id: resource,
+      state: kind === options.failedOperation ? "failed" : "completed",
+      ...(kind === "stop" ? { result: { final_save: { state: "published" } } } : {}),
     })
-    const sandbox = () => ({ id: sandboxId, state: sandboxState, current_operation_id: null })
-    if (req.method === "POST" && path === "/sandboxes") {
-      assert.equal(body.auto_stop_after_seconds, 300)
+    const sandbox = () => ({ id: sandboxId, name: "derive-smoke", phase })
+    if (path === "/sandboxes?limit=1") reply([])
+    else if (req.method === "POST" && path === "/sandboxes") {
+      assert.deepEqual(Object.keys(body).sort(), ["name", "size"])
       assert.equal(body.size, "small")
-      if (!accepted.has(req.headers["idempotency-key"])) {
+      if (!accepted.has(key)) {
         creates++
-        sandboxState = "ready"
-        accepted.set(req.headers["idempotency-key"], {
-          sandbox: sandbox(),
-          operation: operation("create"),
-        })
+        accepted.set(key, { operation: operation("create"), resource: sandbox() })
       }
-      if (options.drop === "create" && !dropped) {
-        dropped = true
-        res.destroy()
-        return
-      }
-      reply(accepted.get(req.headers["idempotency-key"]), 202)
-    } else if (req.method === "POST" && path.endsWith("/processes")) {
-      starts++
-      assert.deepEqual(body.argv.slice(0, 2), ["/usr/bin/printf", "%s\\n"])
+      if (!lost("create")) reply(accepted.get(key), 201)
+    } else if (!visible) reply({ code: "not_found" }, 404)
+    else if (req.method === "POST" && path === `/sandboxes/${sandboxId}/executions`) {
+      // The command arms its own power-off before printing: Ortam stops nothing itself.
+      assert.match(body.argv[2], /^\(sleep 300; sudo poweroff\) .*&\nprintf '%s\\n' "\$1"$/)
       assert.equal(body.timeout_seconds, 30)
       assert.equal(body.env, undefined)
-      output = `${body.argv[2]}\n`
+      if (!accepted.has(key)) {
+        starts++
+        phase = "running"
+        output = `${body.argv[4]}\n`
+        accepted.set(key, {
+          operation: operation("launch", executionId),
+          resource: { id: executionId },
+        })
+      }
       if (options.onLaunch) {
         options.onLaunch()
         // The crash test kills the requesting process after the server accepted
-        // work, before the caller can learn its process ID.
+        // work, before the caller can learn its execution ID.
+        options.onLaunch = undefined
         return
       }
-      if (options.drop === "process") {
-        res.destroy()
-        return
-      }
-      reply({ id: processId, status: "running" }, 201)
-    } else if (path.includes(`/processes/${processId}`)) {
+      if (!lost("launch")) reply(accepted.get(key), 202)
+      if (options.hideAfterLaunch) visible = false
+    } else if (path === `/executions/${executionId}`)
       reply({
-        id: processId,
-        status: "exited",
+        id: executionId,
+        sandbox_id: sandboxId,
+        state: "exited",
         exit_code: options.exitCode ?? 0,
-        stdout: output,
-        stderr: "",
-        stdout_truncated: false,
-        stderr_truncated: false,
       })
-    } else if (req.method === "POST" && path.endsWith("/stop")) {
-      accepted.set(req.headers["idempotency-key"], operation("stop"))
-      sandboxState = "stopped"
-      if (options.drop === "stop" && !dropped) {
-        dropped = true
-        res.destroy()
-        return
-      }
-      reply(operation("stop"), 202)
-    } else if (req.method === "DELETE") {
-      if (req.headers["x-ortam-confirm-delete"] !== sandboxId) {
-        reply({ code: "delete_confirmation_required" }, 422)
-        return
-      }
-      accepted.set(req.headers["idempotency-key"], operation("delete"))
-      sandboxState = "deleted"
-      if (options.drop === "delete" && !dropped) {
-        dropped = true
-        res.destroy()
-        return
-      }
-      reply(operation("delete"), 202)
+    else if (path === `/executions/${executionId}/output`)
+      reply({
+        stdout: { durable_end: output.length, truncated: false },
+        stderr: { durable_end: 0, truncated: false },
+      })
+    else if (path === `/executions/${executionId}/output/stdout?limit=4096`) {
+      res.writeHead(200, { "Content-Type": "application/octet-stream" })
+      res.end(output)
+    } else if (req.method === "POST" && path === `/sandboxes/${sandboxId}/stop`) {
+      phase = "stopped"
+      if (!lost("stop")) reply({ operation: operation("stop") }, 202)
+    } else if (req.method === "DELETE" && path === `/sandboxes/${sandboxId}`) {
+      phase = "deleted"
+      if (!lost("delete")) reply({ operation: operation("delete") }, 202)
     } else if (path.startsWith("/operations/")) {
-      const kind = path.endsWith(operationId("c"))
-        ? "create"
-        : path.endsWith(operationId("s"))
-          ? "stop"
-          : "delete"
-      reply(operation(kind, kind === options.failedOperation ? "failed" : "succeeded"))
-    } else if (path === `/sandboxes/${sandboxId}`) {
-      reply(sandbox())
-    } else reply({ unexpected: path }, 404)
+      const kind = Object.keys(operationId).find((name) => path.endsWith(operationId[name]))
+      reply(operation(kind, kind === "launch" ? executionId : sandboxId))
+    } else if (path === `/sandboxes/${sandboxId}`) reply(sandbox())
+    else reply({ code: "not_found", unexpected: path }, 404)
   })
   server.listen(0, "127.0.0.1")
   await once(server, "listening")
@@ -152,9 +143,6 @@ async function fixture(t, options = {}) {
     statePath,
     starts: () => starts,
     creates: () => creates,
-    organization: (value) => {
-      organization = value
-    },
   }
 }
 
@@ -170,14 +158,13 @@ test("a check records its result and waits for stop and deletion; reopening does
   assert.equal(f.creates(), 1)
   const receipt = await readFile(f.statePath, "utf8")
   assert.ok(!receipt.includes(f.input.apiKey))
-  assert.ok(!receipt.includes("unsigned"))
   assert.ok(
-    f.calls.findIndex((c) => c.path.includes("/processes/")) <
+    f.calls.findIndex((c) => c.path.startsWith("/executions/")) <
       f.calls.findIndex((c) => c.method === "DELETE"),
   )
 })
 
-for (const drop of ["create", "stop", "delete"]) {
+for (const drop of ["create", "launch", "stop", "delete"]) {
   test(`lost ${drop} response reuses the same request identity`, async (t) => {
     const f = await fixture(t, { drop })
     const result = await runOrtamSmoke(f.input)
@@ -190,15 +177,6 @@ for (const drop of ["create", "stop", "delete"]) {
     assert.deepEqual(retries[0].body, retries[1].body)
   })
 }
-
-test("a lost process response never repeats the command and still cleans up", async (t) => {
-  const f = await fixture(t, { drop: "process" })
-  const result = await runOrtamSmoke(f.input)
-  assert.equal(result.passed, false)
-  assert.equal(result.cleanup_confirmed, true)
-  assert.match(result.error, /unknown/)
-  assert.equal(f.starts(), 1)
-})
 
 test("a nonzero child exit is a failed check with confirmed cleanup", async (t) => {
   const f = await fixture(t, { exitCode: 7 })
@@ -247,18 +225,26 @@ test("a hard crash after accepting the command recovers without starting it twic
   // This test has proved that the old PID exited. A human follows the same
   // procedure for a lock left by SIGKILL or a machine restart.
   await rm(`${f.statePath}.lock`)
+  // The launch is keyed, so asking again returns the command already accepted.
   const result = await runOrtamSmoke(f.input)
-  assert.equal(result.passed, false)
+  assert.equal(result.passed, true)
   assert.equal(result.cleanup_confirmed, true)
   assert.equal(f.starts(), 1)
 })
 
-test("wrong organization, malformed receipt and simultaneous readers fail before creating resources", async (t) => {
-  const f = await fixture(t)
-  await runOrtamSmoke(f.input)
-  f.organization("another-organization")
-  await assert.rejects(runOrtamSmoke(f.input), /different Ortam/)
-  assert.equal(f.creates(), 1)
+test("a key that cannot see the machine never reports cleanup; a bad receipt or a second reader stops first", async (t) => {
+  const f = await fixture(t, { hideAfterLaunch: true })
+  // Ortam cannot say whose key this is. Another organization's key sees no such machine,
+  // so the check ends with cleanup unconfirmed and the receipt kept for the right key.
+  await assert.rejects(
+    runOrtamSmoke({ ...f.input, probeMs: 200, cleanupMs: 200 }),
+    /Cleanup is unconfirmed; rerun with the same receipt/,
+  )
+  const receipt = JSON.parse(await readFile(f.statePath, "utf8"))
+  assert.equal(receipt.sandbox_id, sandboxId)
+  assert.notEqual(receipt.cleanup_confirmed, true)
+  await writeFile(f.statePath, JSON.stringify({ ...receipt, version: 1 }))
+  await assert.rejects(runOrtamSmoke(f.input), /older Ortam API/)
   await writeFile(f.statePath, "{invalid")
   await assert.rejects(runOrtamSmoke(f.input), /Receipt cannot be read/)
   await writeFile(`${f.statePath}.lock`, "12345\n")

@@ -109,7 +109,7 @@ export const runtimeConnectionRoutes = (ctx: AppContext) => {
       try {
         identity = await (input.provider === "boat"
           ? new BoatClient(BOAT_API_URL, input.api_key, deps.runtimeFetch)
-          : new OrtamClient(ORTAM_API_URL, input.api_key, "", deps.runtimeFetch, "api_key")
+          : new OrtamClient(ORTAM_API_URL, input.api_key, deps.runtimeFetch)
         ).authenticate()
       } catch {
         return bail(
