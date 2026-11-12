@@ -1,3 +1,4 @@
+import { scryptSync } from "node:crypto"
 import { unbound } from "@derive/broker"
 import { z } from "zod"
 import { sha256 } from "./crypto"
@@ -230,15 +231,15 @@ export class OrtamClient implements SandboxClient {
 
   /** Ortam's key is the whole credential: there is no token exchange and no "who am I". This
    *  proves the key works. With nothing to name the organization behind it, the identity is
-   *  the key itself: a different key is a different account until its sandboxes are retired,
-   *  because a key from another organization would see none of them. */
+   *  a fingerprint of the key: a different key is a different account until its sandboxes
+   *  are retired, because a key from another organization would see none of them. The
+   *  fingerprint is saved, so it is a slow, salted derivation and not a plain hash. */
   async authenticate(): Promise<Identity> {
     await this.json("/sandboxes?limit=1")
-    return {
-      organization_id: new URL(this.base).host,
-      user_id: `key-${sha256(this.key).slice(0, 24)}`,
-    }
+    this.account ??= scryptSync(this.key, "derive-ortam-account", 12).toString("hex")
+    return { organization_id: new URL(this.base).host, user_id: `key-${this.account}` }
   }
+  private account?: string
 
   private path(id: string, rest = "") {
     return `/sandboxes/${encodeURIComponent(ortamId(id))}${rest}`
