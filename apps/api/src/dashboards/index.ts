@@ -19,7 +19,7 @@ export const DASHBOARDS_PATH = "/v1/dashboards"
 export const createDashboards = ({ meta, trustedOrigins }: DashboardsHost) => {
   const backend = meta.dashboards
   if (!backend) return null
-  const viewers = new WeakMap<Request, Viewer>()
+  const viewers = new WeakMap<Request, WorkspaceViewer>()
   const server = deriveDashboards({
     model: dashboardsModel,
     basePath: DASHBOARDS_PATH,
@@ -41,7 +41,7 @@ export const createDashboards = ({ meta, trustedOrigins }: DashboardsHost) => {
   return {
     server,
     /** Answers one request as this viewer. */
-    handle: (request: Request, viewer: Viewer) => {
+    handle: (request: Request, viewer: WorkspaceViewer) => {
       viewers.set(request, viewer)
       return server.handler(request)
     },
@@ -71,13 +71,16 @@ export const dashboardsFor = (ctx: {
   return built.get(ctx.meta) ?? null
 }
 
+/** A viewer in one workspace: the workspace is always its tenant. */
+export type WorkspaceViewer = Viewer & { tenant: { org: string } }
+
 /** The viewer a person is, in a workspace, for the library. */
 export const dashboardsViewer = (a: {
   userId: string
   orgId: string
   role: Role
   artifacts: string[]
-}): Viewer => ({
+}): WorkspaceViewer => ({
   id: a.userId,
   tenant: { org: a.orgId },
   roles: [a.role],

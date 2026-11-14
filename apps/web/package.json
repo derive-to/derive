@@ -46,7 +46,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
-    "derive-dashboards": "file:/Users/aniraga/Projects/derive-dashboards-v1/.local/derive-dashboards-0.1.0.tgz",
+    "derive-dashboards": "^0.1.0",
     "fflate": "^0.8.2",
     "idb-keyval": "^6.3.0",
     "input-otp": "^1.4.2",
