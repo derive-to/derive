@@ -156,6 +156,7 @@ import {
   SHARED_STATE_ACTIVITY_LIMIT,
   WORKSPACE_FACT_ROW_CAP,
 } from "@derive/core"
+import { nodePostgres } from "derive-dashboards"
 import {
   and,
   asc,
@@ -589,6 +590,8 @@ type PgWriter = Pick<NodePgDatabase<typeof schema>, "insert" | "update" | "delet
 
 export class PgMetaStore implements MetaStore {
   readonly jobExecution: import("@derive/core").JobExecutionStore<AgentRecord>
+  /** derive-dashboards on this database: a read-only snapshot per request, and its `dd_` tables. */
+  readonly dashboards: ReturnType<typeof nodePostgres>
   private readonly agentModel = agentModelRepos(
     async (statement) => (await this.db.execute(statement)).rows,
   )
@@ -662,6 +665,7 @@ export class PgMetaStore implements MetaStore {
     private db: NodePgDatabase<typeof schema>,
   ) {
     this.jobExecution = jobExecutionRepos(db)
+    this.dashboards = nodePostgres(pool)
   }
 
   /** Connect and apply the schema (idempotent) before first use. `onError` is

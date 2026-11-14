@@ -29,6 +29,7 @@
   "dependencies": {
     "@derive/core": "workspace:*",
     "better-sqlite3": "^13.0.3",
+    "derive-dashboards": "file:/Users/aniraga/Projects/derive-dashboards-v1/.local/derive-dashboards-0.1.0.tgz",
     "drizzle-orm": "^0.45.2",
     "pg": "^8.13.1"
   },
