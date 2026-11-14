@@ -5,7 +5,10 @@ import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 const owner: TestUser = { id: "u_dash_owner", email: "owner@dash.test", name: "Owner" }
 const editor: TestUser = { id: "u_dash_editor", email: "editor@dash.test", name: "Editor" }
-const { app, meta } = makeAuthedApp("dashboards", [owner, editor])
+const WEB = "https://app.derive.test"
+const { app, meta } = makeAuthedApp("dashboards", [owner, editor], undefined, {
+  deps: { webOrigins: [WEB] },
+})
 
 /** One number from the dashboards' free query: versions published, as this person sees them. */
 const versionsSeenBy = async (who: TestUser) => {
@@ -64,6 +67,19 @@ describe("dashboards", () => {
     },
   )
 
+  it.runIf(meta.dashboards !== undefined)(
+    "accept the web app's origin and refuse any other site's",
+    async () => {
+      const open = (origin: string) =>
+        app.request(
+          "/v1/dashboards/dashboards/get",
+          jsonAs({ ...as(owner.email), origin }, { dashboardId: "default:publishing" }),
+        )
+      expect((await open(WEB)).status).toBe(200)
+      expect((await open("https://elsewhere.example")).status).toBe(403)
+    },
+  )
+
   it.runIf(meta.dashboards !== undefined)("refuse someone signed out", async () => {
     const r = await app.request("/v1/dashboards/dashboards/list")
     expect(r.status).toBe(401)
@@ -73,7 +89,11 @@ describe("dashboards", () => {
     "answer an agent's question through dashboards_query, for the person it acts for",
     async () => {
       await publishAs(app, "<h1>Notes</h1>", {}, as(owner.email))
-      const dashboards = dashboardsFor(meta)
+      const dashboards = dashboardsFor({
+        meta,
+        deps: { baseUrl: "http://derive.test" },
+        allowOrigins: new Set([WEB]),
+      })
       if (!dashboards) throw new Error("Postgres serves dashboards")
       const [query] = dashboardTools(dashboards.server)
       const answered = await query?.run(

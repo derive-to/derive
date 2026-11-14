@@ -1,6 +1,7 @@
 import { type MetaStore, type Role, roleAllows } from "@derive/core"
 import { deriveDashboards } from "derive-dashboards"
 import type { Viewer } from "derive-dashboards/core"
+import { trustedWebOrigins } from "../auth-config"
 import { dashboardsModel } from "./model"
 import { PUBLISHING } from "./publishing"
 
@@ -15,13 +16,14 @@ export const DASHBOARDS_PATH = "/v1/dashboards"
  * role, and the ids of the artifacts they can open. `viewerFor` keeps it beside the request,
  * so nothing the library does re-derives identity on its own.
  */
-export const createDashboards = (meta: MetaStore) => {
+export const createDashboards = ({ meta, trustedOrigins }: DashboardsHost) => {
   const backend = meta.dashboards
   if (!backend) return null
   const viewers = new WeakMap<Request, Viewer>()
   const server = deriveDashboards({
     model: dashboardsModel,
     basePath: DASHBOARDS_PATH,
+    trustedOrigins,
     viewer: (request) => viewers.get(request) ?? null,
     access: {
       // Every member views; a seat that may publish edits and makes dashboards; owners manage.
@@ -48,12 +50,25 @@ export const createDashboards = (meta: MetaStore) => {
 
 export type Dashboards = NonNullable<ReturnType<typeof createDashboards>>
 
+/** What the dashboards server needs from the app: its store and the web origins it trusts. */
+type DashboardsHost = { meta: MetaStore; trustedOrigins: string[] }
+
 const built = new WeakMap<MetaStore, Dashboards | null>()
 
-/** One dashboards server per store, shared by the routes and the MCP tools. */
-export const dashboardsFor = (meta: MetaStore): Dashboards | null => {
-  if (!built.has(meta)) built.set(meta, createDashboards(meta))
-  return built.get(meta) ?? null
+/**
+ * One dashboards server per store, shared by the routes and the MCP tools. The web app may
+ * live on another origin than the API, so its POSTs are trusted by the same list as sign-in.
+ */
+export const dashboardsFor = (ctx: {
+  meta: MetaStore
+  deps: { baseUrl: string }
+  allowOrigins: ReadonlySet<string>
+}): Dashboards | null => {
+  if (!built.has(ctx.meta)) {
+    const trustedOrigins = trustedWebOrigins(ctx.deps.baseUrl, [...ctx.allowOrigins])
+    built.set(ctx.meta, createDashboards({ meta: ctx.meta, trustedOrigins }))
+  }
+  return built.get(ctx.meta) ?? null
 }
 
 /** The viewer a person is, in a workspace, for the library. */

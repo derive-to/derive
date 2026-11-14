@@ -503,7 +503,7 @@ importers:
         version: file:.local/derive-dashboards-0.1.0.tgz(react@19.2.7)(recharts@3.10.1(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react-is@19.3.1)(react@19.2.7)(redux@5.0.1))(vitest@4.1.12)
       drizzle-orm:
         specifier: 0.45.2
-        version: 0.45.2(@cloudflare/workers-types@5.20260818.1)(@opentelemetry/api@1.9.1)(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(better-sqlite3@13.0.3)(gel@2.2.0)(kysely@0.29.7)(pg@8.21.0)
+        version: 0.45.2(@cloudflare/workers-types@5.20260818.1)(@opentelemetry/api@1.9.1)(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(better-sqlite3@13.0.3)(gel@2.2.0)(kysely@0.29.2)(pg@8.21.0)
       pg:
         specifier: ^8.13.1
         version: 8.21.0
@@ -5240,7 +5240,7 @@ packages:
     engines: {node: '>=6'}
 
   derive-dashboards@file:.local/derive-dashboards-0.1.0.tgz:
-    resolution: {integrity: sha512-JfcsQ9kxwpDBer7v0IREspA9L6k5ngrSLFZO58Zxv5CSAjgzVdUzdlmW7LJc0QvBdo/DtTCEXCOE2hQ6mpCAsw==, tarball: file:.local/derive-dashboards-0.1.0.tgz}
+    resolution: {integrity: sha512-OeC1gaRGL7DyVL6SkJyv/iGcq3usu99CCAaB0Hq6wp6owXnL7x9do8U4IY2QOuy0mk3Rn/LFS/pe5cxKoP8xrw==, tarball: file:.local/derive-dashboards-0.1.0.tgz}
     version: 0.1.0
     engines: {node: '>=20'}
     hasBin: true
@@ -6122,10 +6122,6 @@ packages:
 
   kysely@0.29.2:
     resolution: {integrity: sha512-s6WVJyEZrbm6jhBpiKHsGHyePMrVQKJ85wZCFCr9W4QHv6WTjWIrdvTmO9hDEA3bNK0xkrE2DqrHsXMLWuZpQg==}
-    engines: {node: '>=22.0.0'}
-
-  kysely@0.29.7:
-    resolution: {integrity: sha512-fmIq+7kv4WbFm2tcfznRzikqB4cuNpgZ40PSU2fAJ2/OO5XhojqnTPrmgrCjYSRJVwBln03XcRXJGnw9H099IQ==}
     engines: {node: '>=22.0.0'}
 
   layout-base@1.0.2:
@@ -12919,7 +12915,7 @@ snapshots:
       big.js: 7.0.1
       canonicalize: 5.1.0
       jiti: 2.7.0
-      kysely: 0.29.7
+      kysely: 0.29.2
       rou3: 1.0.0
       swr: 2.5.1(react@19.2.7)
       temporal-polyfill: 1.0.8
@@ -12987,17 +12983,6 @@ snapshots:
       better-sqlite3: 13.0.3
       gel: 2.2.0
       kysely: 0.29.2
-      pg: 8.21.0
-
-  drizzle-orm@0.45.2(@cloudflare/workers-types@5.20260818.1)(@opentelemetry/api@1.9.1)(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(better-sqlite3@13.0.3)(gel@2.2.0)(kysely@0.29.7)(pg@8.21.0):
-    optionalDependencies:
-      '@cloudflare/workers-types': 5.20260818.1
-      '@opentelemetry/api': 1.9.1
-      '@types/better-sqlite3': 7.6.13
-      '@types/pg': 8.20.0
-      better-sqlite3: 13.0.3
-      gel: 2.2.0
-      kysely: 0.29.7
       pg: 8.21.0
 
   dset@3.1.4: {}
@@ -13821,8 +13806,6 @@ snapshots:
       zod: 4.6.7
 
   kysely@0.29.2: {}
-
-  kysely@0.29.7: {}
 
   layout-base@1.0.2: {}
 

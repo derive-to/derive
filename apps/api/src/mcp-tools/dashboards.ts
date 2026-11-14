@@ -13,7 +13,7 @@ import type { ToolContext } from "../mcp-tool-context"
  */
 export const registerDashboardsTools = (tc: ToolContext) => {
   const { ctx, server, agent, actingFor, defaultOrg, defaultRole, scopeForCap } = tc
-  const dashboards = dashboardsFor(ctx.meta)
+  const dashboards = dashboardsFor(ctx)
   if (!dashboards) return
   addDashboardTools(server, dashboards.server, {
     viewer: async () => {

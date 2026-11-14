@@ -13,7 +13,7 @@ import { visibleArtifactsInWorkspace } from "../lib/visibility"
 export const dashboardsRoutes = (ctx: AppContext) => {
   const { meta, requireUser, requireWorkspace, workspaceRole } = ctx
   const app = new Hono<BlankEnv>()
-  const dashboards = dashboardsFor(meta)
+  const dashboards = dashboardsFor(ctx)
 
   app.all(`${DASHBOARDS_PATH}/*`, async (c) => {
     if (!dashboards) return fail(c, 404, "Dashboards need a Postgres database.")
