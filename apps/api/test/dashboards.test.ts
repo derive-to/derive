@@ -5,8 +5,13 @@ import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 const owner: TestUser = { id: "u_dash_owner", email: "owner@dash.test", name: "Owner" }
 const editor: TestUser = { id: "u_dash_editor", email: "editor@dash.test", name: "Editor" }
+const commenter: TestUser = {
+  id: "u_dash_commenter",
+  email: "commenter@dash.test",
+  name: "Commenter",
+}
 const WEB = "https://app.derive.test"
-const { app, meta } = makeAuthedApp("dashboards", [owner, editor], undefined, {
+const { app, meta } = makeAuthedApp("dashboards", [owner, editor, commenter], undefined, {
   deps: { webOrigins: [WEB] },
 })
 
@@ -46,24 +51,34 @@ describe("dashboards", () => {
       const { dashboards } = (await listed.json()) as {
         dashboards: { id: string; title: string }[]
       }
-      expect(dashboards.map((d) => d.title)).toContain("Publishing")
 
-      const doc = await app.request(
-        "/v1/dashboards/dashboards/get",
-        jsonAs(as(owner.email), { dashboardId: "default:publishing" }),
+      expect(dashboards.map((d) => d.title)).toEqual(
+        expect.arrayContaining(["Publishing", "Reading", "Agents", "Workspace health"]),
       )
-      const { document } = (await doc.json()) as { document: { widgets: Record<string, unknown> } }
-      const tiles = Object.keys(document.widgets).map((widgetId) => ({ widgetId }))
-      const streamed = await app.request(
-        "/v1/dashboards/dashboards/tiles",
-        jsonAs(as(owner.email), { dashboardId: "default:publishing", tiles }),
-      )
-      const lines = (await streamed.text())
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line) as { ok?: boolean; done?: true })
-      expect(lines.at(-1)).toEqual({ done: true })
-      expect(lines.filter((l) => l.ok === false)).toEqual([])
+      for (const key of ["publishing", "reading", "agents", "health"]) {
+        const dashboardId = `default:${key}`
+        const doc = await app.request(
+          "/v1/dashboards/dashboards/get",
+          jsonAs(as(owner.email), { dashboardId }),
+        )
+        const { document } = (await doc.json()) as {
+          document: { widgets: Record<string, unknown> }
+        }
+        const tiles = Object.keys(document.widgets).map((widgetId) => ({ widgetId }))
+        const streamed = await app.request(
+          "/v1/dashboards/dashboards/tiles",
+          jsonAs(as(owner.email), { dashboardId, tiles }),
+        )
+        const lines = (await streamed.text())
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line) as { ok?: boolean; done?: true; error?: unknown })
+        expect(lines.at(-1), key).toEqual({ done: true })
+        expect(
+          lines.filter((l) => l.ok === false),
+          key,
+        ).toEqual([])
+      }
     },
   )
 
@@ -77,6 +92,61 @@ describe("dashboards", () => {
         )
       expect((await open(WEB)).status).toBe(200)
       expect((await open("https://elsewhere.example")).status).toBe(403)
+    },
+  )
+
+  it.runIf(meta.dashboards !== undefined)(
+    "show who read what only to a seat that may publish",
+    async () => {
+      const seat = await meta.getMembership("default", commenter.id)
+      await meta.setMembership({
+        id: seat?.id ?? "m_dash_commenter",
+        org_id: "default",
+        user_id: commenter.id,
+        role: "commenter",
+      })
+      const query = {
+        kind: "aggregate",
+        source: "visit",
+        measures: [{ id: "m0", measure: "visit.readers" }],
+        dimensions: [{ id: "d0", member: "visit.reader" }],
+      }
+      const asOwner = await app.request(
+        "/v1/dashboards/query/run",
+        jsonAs(as(owner.email), { query }),
+      )
+      expect(asOwner.status).toBe(200)
+      const asCommenter = await app.request(
+        "/v1/dashboards/query/run",
+        jsonAs(as(commenter.email), { query }),
+      )
+      expect(asCommenter.status).toBe(403)
+    },
+  )
+
+  it.runIf(meta.dashboards !== undefined)(
+    "count the built-in agent's runs only for the person who asked, as the runs page does",
+    async () => {
+      await meta.createJob({
+        id: "job_dash_private",
+        org_id: "default",
+        agent_id: "derive",
+        kind: "ask",
+        instruction: "Summarize my notes",
+        asked_by: editor.id,
+        attended: 1,
+      })
+      const runsSeenBy = async (who: TestUser, measure = "job.count") => {
+        const query = { kind: "aggregate", source: "job", measures: [{ id: "m0", measure }] }
+        const r = await app.request("/v1/dashboards/query/run", jsonAs(as(who.email), { query }))
+        const answer = (await r.json()) as { rows: [[{ v: string }]] }
+        return Number(answer.rows[0][0].v)
+      }
+      expect(await runsSeenBy(editor)).toBe(1)
+      expect(await runsSeenBy(owner)).toBe(0)
+      // A run waiting on its asker counts as waiting.
+      await meta.updateJob("job_dash_private", { status: "needs_you" })
+      expect(await runsSeenBy(editor, "job.waiting")).toBe(1)
     },
   )
 

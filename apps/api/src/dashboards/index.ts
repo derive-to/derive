@@ -1,9 +1,12 @@
-import { type MetaStore, type Role, roleAllows } from "@derive/core"
+import { DASHBOARD_ITEM_LINKS, type MetaStore, type Role, roleAllows } from "@derive/core"
 import { deriveDashboards } from "derive-dashboards"
 import type { Viewer } from "derive-dashboards/core"
 import { trustedWebOrigins } from "../auth-config"
+import { AGENTS } from "./agents"
+import { HEALTH } from "./health"
 import { dashboardsModel } from "./model"
 import { PUBLISHING } from "./publishing"
+import { READING } from "./reading"
 
 /** Where the dashboards' endpoints are mounted (the web client calls the same path). */
 export const DASHBOARDS_PATH = "/v1/dashboards"
@@ -33,10 +36,17 @@ export const createDashboards = ({ meta, trustedOrigins }: DashboardsHost) => {
         if (verb === "view") return true
         return roleAllows(role, verb === "manage" ? "manage" : "publish")
       },
+      // Who read what (a reader's name) is for seats that may publish, as the artifact's
+      // viewer list is; everyone else counts readers.
+      sensitive: (viewer) => {
+        const role = viewer.roles?.[0] as Role | undefined
+        return role !== undefined && roleAllows(role, "publish")
+      },
     },
+    itemLinks: DASHBOARD_ITEM_LINKS,
     connections: { main: backend.connection },
     database: backend.store,
-    dashboards: [PUBLISHING],
+    dashboards: [PUBLISHING, READING, AGENTS, HEALTH],
   })
   return {
     server,

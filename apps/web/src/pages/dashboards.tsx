@@ -1,10 +1,11 @@
 import "derive-dashboards/react/theme.css"
-import { useNavigate } from "@tanstack/react-router"
+import { useNavigate, useRouter } from "@tanstack/react-router"
 import {
   createDashboardsClient,
   Dashboard,
   DashboardList,
   DashboardsProvider,
+  type LinkProps,
 } from "derive-dashboards/react"
 import { RECHARTS_RENDERERS } from "derive-dashboards/recharts"
 import type { ReactNode } from "react"
@@ -17,6 +18,30 @@ const dashboardsClient = createDashboardsClient({
   fetch: (input, init) => fetch(input, { ...init, credentials: "include" }),
 })
 
+/**
+ * Every link the library draws (a list row, a drill item) goes through Derive's router: a plain
+ * click navigates in place; a modified click, or a middle click, opens as a link always does.
+ */
+function RouterLink({ href, className, children, onClick }: LinkProps) {
+  const router = useRouter()
+  return (
+    <a
+      href={href}
+      className={className}
+      onClick={(event) => {
+        onClick?.(event)
+        const plain =
+          event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
+        if (event.defaultPrevented || !plain) return
+        event.preventDefault()
+        router.history.push(href)
+      }}
+    >
+      {children}
+    </a>
+  )
+}
+
 /** The library's components, on Derive's tokens (`.dd-host` in globals.css) and session. */
 function DashboardsShell({ children }: { children: ReactNode }) {
   const { me } = useAuth()
@@ -25,6 +50,7 @@ function DashboardsShell({ children }: { children: ReactNode }) {
       <DashboardsProvider
         client={dashboardsClient}
         renderers={RECHARTS_RENDERERS}
+        link={RouterLink}
         viewerKey={me?.id ?? "signed-out"}
       >
         {children}
@@ -46,7 +72,7 @@ export function DashboardsIndex() {
   )
 }
 
-/** One dashboard: its filters, tiles, and edit mode for those who may edit. */
+/** One dashboard: its tiles, its drill-ins (items link where the server says), and edit mode. */
 export function DashboardView({ id }: { id: string }) {
   return (
     <DashboardsShell>
