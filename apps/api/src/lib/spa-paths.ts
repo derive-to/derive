@@ -14,6 +14,7 @@ const SPA_EXACT = new Set([
   "/agents",
   "/brandprint",
   "/chat",
+  "/dashboards",
   "/favorites",
   "/feedback",
   "/following",
@@ -36,7 +37,7 @@ const SPA_EXACT = new Set([
 ])
 
 const oneSegment =
-  /^\/(?:tasks|agents|artifacts|claim|collections|contexts|join|papers|settings|template-libraries|templates|users)\/[^/]+$/
+  /^\/(?:tasks|agents|artifacts|claim|collections|contexts|dashboards|join|papers|settings|template-libraries|templates|users)\/[^/]+$/
 const invite = /^\/invite\/(?:(?:a|c)\/)?[^/]+$/
 
 export const isSpaPath = (path: string): boolean => {
