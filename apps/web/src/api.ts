@@ -388,6 +388,8 @@ export interface BootstrapPayload {
   /** The publishing-blocked verdict — the same value GET /v1/billing reports as
    *  `blocked`, which is all the app shell's banner ever read it for. */
   blocked: BillingInfo["blocked"]
+  /** Whether this instance serves dashboards (/v1/dashboards): Postgres yes, SQLite and D1 no. */
+  dashboards: boolean
 }
 /** A Slack channel subscription. Generated from the OpenAPI spec. */
 export type SlackSubscription = components["schemas"]["SlackSubscription"]

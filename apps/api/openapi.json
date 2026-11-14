@@ -10931,6 +10931,10 @@
                         "message"
                       ],
                       "description": "The publishing-blocked verdict, or null when the workspace is free to publish. Same value GET /v1/billing reports as `blocked`."
+                    },
+                    "dashboards": {
+                      "type": "boolean",
+                      "description": "Whether this instance serves dashboards (/v1/dashboards): on Postgres yes, on SQLite and D1 no. The rail shows Dashboards only when true."
                     }
                   },
                   "required": [
@@ -10940,7 +10944,8 @@
                     "notifications",
                     "unread",
                     "needs_you",
-                    "blocked"
+                    "blocked",
+                    "dashboards"
                   ]
                 }
               }

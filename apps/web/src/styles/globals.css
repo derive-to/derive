@@ -460,3 +460,23 @@
 .vt-doc-title {
   view-transition-name: doc-title;
 }
+
+/* Dashboards (derive-dashboards): its theme variables, from Derive's tokens. Set on the
+   wrapper, the nearest ancestor of every dashboard element, so they win over the library's
+   own :root defaults in both modes and follow Derive's theme through var(). */
+.dd-host {
+  --dd-bg: var(--background);
+  --dd-surface: var(--card);
+  --dd-ink: var(--foreground);
+  --dd-muted: var(--muted-foreground);
+  --dd-line: var(--border);
+  --dd-accent: var(--primary);
+  --dd-accent-soft: var(--accent);
+  --dd-danger: var(--destructive);
+  --dd-good: var(--success);
+  --dd-good-soft: color-mix(in oklab, var(--success) 14%, transparent);
+  --dd-warn: var(--warning);
+  --dd-warn-soft: color-mix(in oklab, var(--warning) 14%, transparent);
+  --dd-radius: var(--radius);
+  --dd-font: inherit;
+}
