@@ -63,6 +63,8 @@ import type {
   WebhookKind,
   WorkspaceAccess,
 } from "@derive/core"
+import { schemaStatements } from "derive-dashboards/core"
+import { foldFunctionSql } from "derive-dashboards/core/engine"
 import { getTableConfig, index, integer, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core"
 import { generateDdl, PERF_INDEXES, placeholderTables } from "./ddl"
 
@@ -1629,6 +1631,12 @@ export const buildPgSchemaStatements = (): string[] => {
     // be litter. SQLite has no ALTER CONSTRAINT and needs a rebuild instead — see
     // SLACK_THREAD_LINK_REKEY_SQLITE.
     SLACK_THREAD_LINK_REKEY_PG,
+    // Embedded dashboards (derive-dashboards): its own dd_ tables, from the installed release,
+    // so they always match it. Every statement is IF NOT EXISTS, and a release only adds tables
+    // and nullable or defaulted columns, so this is safe on the shared preview database.
+    ...schemaStatements("postgres"),
+    // The one SQL function its case-insensitive fields compare through (CREATE OR REPLACE).
+    foldFunctionSql(),
   ]
 }
 

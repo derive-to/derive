@@ -71,6 +71,11 @@ export const bootstrapRoutes = (ctx: AppContext) => {
                   .describe(
                     "The publishing-blocked verdict, or null when the workspace is free to publish. Same value GET /v1/billing reports as `blocked`.",
                   ),
+                dashboards: z
+                  .boolean()
+                  .describe(
+                    "Whether this instance serves dashboards (/v1/dashboards): on Postgres yes, on SQLite and D1 no. The rail shows Dashboards only when true.",
+                  ),
               }),
             },
           },
@@ -130,6 +135,7 @@ export const bootstrapRoutes = (ctx: AppContext) => {
         // The rail's Inbox count, an arm of the same batch, so the shell needs no poll for it.
         needs_you: b.needsYou,
         blocked,
+        dashboards: meta.dashboards !== undefined,
       })
     },
   )

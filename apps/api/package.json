@@ -55,6 +55,7 @@
     "better-auth": "1.7.13",
     "better-sqlite3": "^13.0.3",
     "croner": "^10.0.1",
+    "derive-dashboards": "^0.1.0",
     "drizzle-orm": "^0.45.2",
     "fflate": "^0.8.2",
     "hono": "^4.13.11",
