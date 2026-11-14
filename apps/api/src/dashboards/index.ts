@@ -44,6 +44,8 @@ export const createDashboards = ({ meta, trustedOrigins }: DashboardsHost) => {
       },
     },
     itemLinks: DASHBOARD_ITEM_LINKS,
+    // Every mark opens what is behind it: a breakdown, the trend, or the items, each linked.
+    drill: true,
     connections: { main: backend.connection },
     database: backend.store,
     dashboards: [PUBLISHING, READING, AGENTS, HEALTH],

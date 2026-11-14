@@ -72,12 +72,20 @@ describe("dashboards", () => {
         const lines = (await streamed.text())
           .trim()
           .split("\n")
-          .map((line) => JSON.parse(line) as { ok?: boolean; done?: true; error?: unknown })
+          .map(
+            (line) =>
+              JSON.parse(line) as { ok?: boolean; done?: true; result?: { drill?: unknown } },
+          )
         expect(lines.at(-1), key).toEqual({ done: true })
         expect(
           lines.filter((l) => l.ok === false),
           key,
         ).toEqual([])
+        // Derive turns drill-in on: a member's tiles come back with what a click opens.
+        expect(
+          lines.some((l) => l.result?.drill !== undefined),
+          key,
+        ).toBe(true)
       }
     },
   )

@@ -7,7 +7,7 @@ function DashboardPage() {
   const { id } = Route.useParams()
   useDocumentTitle("Dashboard")
   return (
-    <PageShell width="wide">
+    <PageShell width="full">
       <DashboardView id={id} />
     </PageShell>
   )

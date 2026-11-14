@@ -23,8 +23,9 @@ export function PageShell({
 }: {
   /** The scroll container ref — the library's virtualizer windows against it. */
   scrollRef?: Ref<HTMLDivElement>
-  /** `reading` = max-w-3xl (settings, people, profile); `wide` = max-w-5xl (library). */
-  width?: "reading" | "wide"
+  /** `reading` = max-w-3xl (settings, people, profile); `wide` = max-w-5xl (library);
+   *  `full` = the whole column (a dashboard, whose tiles and drill panel need the room). */
+  width?: "reading" | "wide" | "full"
   /** Extra classes for the measure element (e.g. a flex column with gaps). */
   className?: string
   children: ReactNode
@@ -37,7 +38,7 @@ export function PageShell({
       <div
         className={cn(
           "mx-auto w-full px-5 pt-5 pb-16 sm:px-8 sm:pt-8",
-          width === "wide" ? "max-w-5xl" : "max-w-3xl",
+          { reading: "max-w-3xl", wide: "max-w-5xl", full: "max-w-none" }[width],
           className,
         )}
       >

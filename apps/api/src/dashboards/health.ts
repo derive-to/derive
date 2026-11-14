@@ -48,7 +48,7 @@ export const HEALTH = dashboard(
         ],
         [
           "loose",
-          2,
+          3,
           number(
             "Not in a collection",
             ask("artifact", {
@@ -66,7 +66,7 @@ export const HEALTH = dashboard(
         ],
         [
           "quiet",
-          3,
+          2,
           number(
             "Gone quiet",
             ask("artifact", {

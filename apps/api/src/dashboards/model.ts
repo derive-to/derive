@@ -73,6 +73,8 @@ export const dashboardsModel = defineModel({
         WHERE a.removed_at IS NULL`,
       key: ["id", "short_id"],
       time: "createdAt",
+      // What a drill breaks down by, in this order.
+      drill: { prefer: ["kind"] },
       tenant: { columns: { org: "org_id" } },
       policy: "visible",
       noun: { one: "artifact", other: "artifacts" },
@@ -121,6 +123,8 @@ export const dashboardsModel = defineModel({
         FROM version v JOIN artifact a ON a.id = v.artifact_id`,
       key: ["id", "artifact_short_id"],
       time: "createdAt",
+      // What a drill breaks down by, in this order.
+      drill: { prefer: ["madeBy", "author", "source", "agent", "artifact.kind", "artifact.title"] },
       ...throughArtifact,
       noun: { one: "version", other: "versions" },
       measures: {
@@ -174,6 +178,8 @@ export const dashboardsModel = defineModel({
       in: "main",
       key: ["id"],
       time: "createdAt",
+      // What a drill breaks down by, in this order.
+      drill: { prefer: ["from", "artifact.title"] },
       ...throughArtifact,
       noun: { one: "view", other: "views" },
       measures: { count: { kind: "count", merge: "sum", label: "Views" } },
@@ -198,6 +204,8 @@ export const dashboardsModel = defineModel({
         GROUP BY v.artifact_id, v.viewer, v.viewer_kind`,
       key: ["id", "artifact_short_id"],
       time: "createdAt",
+      // What a drill breaks down by, in this order.
+      drill: { prefer: ["readThrough", "reader", "artifact.title"] },
       ...throughArtifact,
       noun: { one: "reader", other: "readers" },
       measures: {
@@ -237,6 +245,8 @@ export const dashboardsModel = defineModel({
         WHERE j.parent_id IS NULL`,
       key: ["id"],
       time: "createdAt",
+      // What a drill breaks down by, in this order.
+      drill: { prefer: ["agent", "status", "askedBy"] },
       tenant: { columns: { org: "org_id" } },
       policy: {
         rules: [
@@ -324,6 +334,8 @@ export const dashboardsModel = defineModel({
         ORDER BY c.thread_id, c.created_at`,
       key: ["id", "artifact_short_id"],
       time: "createdAt",
+      // What a drill breaks down by, in this order.
+      drill: { prefer: ["state", "author", "artifact.title"] },
       ...throughArtifact,
       noun: { one: "thread", other: "threads" },
       measures: {
@@ -363,6 +375,8 @@ export const dashboardsModel = defineModel({
         LEFT JOIN "user" u ON u.id = x.person_id`,
       key: ["id", "artifact_short_id"],
       time: "createdAt",
+      // What a drill breaks down by, in this order.
+      drill: { prefer: ["person", "act", "artifact.title"] },
       ...throughArtifact,
       measures: {
         people: { kind: "count", distinct: "person_id", merge: "none", label: "Active people" },
@@ -379,6 +393,8 @@ export const dashboardsModel = defineModel({
       in: "main",
       key: ["id"],
       time: "createdAt",
+      // What a drill breaks down by, in this order.
+      drill: { prefer: ["role"] },
       tenant: { columns: { org: "org_id" } },
       policy: { rules: [{ allow: "all" }] },
       noun: { one: "member", other: "members" },
