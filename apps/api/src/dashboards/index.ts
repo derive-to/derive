@@ -19,7 +19,7 @@ export const DASHBOARDS_PATH = "/v1/dashboards"
  * role, and the ids of the artifacts they can open. `viewerFor` keeps it beside the request,
  * so nothing the library does re-derives identity on its own.
  */
-export const createDashboards = ({ meta, trustedOrigins }: DashboardsHost) => {
+export const createDashboards = ({ meta, trustedOrigins, secret }: DashboardsHost) => {
   const backend = meta.dashboards
   if (!backend) return null
   const viewers = new WeakMap<Request, WorkspaceViewer>()
@@ -27,6 +27,9 @@ export const createDashboards = ({ meta, trustedOrigins }: DashboardsHost) => {
     model: dashboardsModel,
     basePath: DASHBOARDS_PATH,
     trustedOrigins,
+    // Drill links, records cursors and receipt hashes are sealed or keyed by this, so every
+    // replica opens what another issued. Unset (tests), the kit makes one per process.
+    ...(secret === undefined ? {} : { secret }),
     viewer: (request) => viewers.get(request) ?? null,
     access: {
       // Every member views; a seat that may publish edits and makes dashboards; owners manage.
@@ -63,7 +66,7 @@ export const createDashboards = ({ meta, trustedOrigins }: DashboardsHost) => {
 export type Dashboards = NonNullable<ReturnType<typeof createDashboards>>
 
 /** What the dashboards server needs from the app: its store and the web origins it trusts. */
-type DashboardsHost = { meta: MetaStore; trustedOrigins: string[] }
+type DashboardsHost = { meta: MetaStore; trustedOrigins: string[]; secret?: string }
 
 const built = new WeakMap<MetaStore, Dashboards | null>()
 
@@ -73,12 +76,15 @@ const built = new WeakMap<MetaStore, Dashboards | null>()
  */
 export const dashboardsFor = (ctx: {
   meta: MetaStore
-  deps: { baseUrl: string }
+  deps: { baseUrl: string; encryptionKey?: string }
   allowOrigins: ReadonlySet<string>
 }): Dashboards | null => {
   if (!built.has(ctx.meta)) {
     const trustedOrigins = trustedWebOrigins(ctx.deps.baseUrl, [...ctx.allowOrigins])
-    built.set(ctx.meta, createDashboards({ meta: ctx.meta, trustedOrigins }))
+    // The deployment's shared auth secret, labelled for dashboards: every replica has it.
+    const key = ctx.deps.encryptionKey
+    const secret = key === undefined ? undefined : `derive dashboards\u0000${key}`
+    built.set(ctx.meta, createDashboards({ meta: ctx.meta, trustedOrigins, secret }))
   }
   return built.get(ctx.meta) ?? null
 }

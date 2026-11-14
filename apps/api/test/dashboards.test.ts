@@ -1,6 +1,6 @@
 import { dashboardTools } from "derive-dashboards/mcp"
 import { describe, expect, it } from "vitest"
-import { dashboardsFor } from "../src/dashboards"
+import { createDashboards, dashboardsFor, dashboardsViewer } from "../src/dashboards"
 import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 const owner: TestUser = { id: "u_dash_owner", email: "owner@dash.test", name: "Owner" }
@@ -155,6 +155,37 @@ describe("dashboards", () => {
       // A run waiting on its asker counts as waiting.
       await meta.updateJob("job_dash_private", { status: "needs_you" })
       expect(await runsSeenBy(editor, "job.waiting")).toBe(1)
+    },
+  )
+
+  it.runIf(meta.dashboards !== undefined)(
+    "open a page cursor one replica issued on another that shares the deployment's secret",
+    async () => {
+      await publishAs(app, "<h1>One</h1>", {}, as(owner.email))
+      await publishAs(app, "<h1>Two</h1>", {}, as(owner.email))
+      const replica = () =>
+        createDashboards({ meta, trustedOrigins: [], secret: "derive dashboards\u0000shared" })
+      const [first, second] = [replica(), replica()]
+      if (!first || !second) throw new Error("Postgres serves dashboards")
+      const artifacts = (await meta.listArtifacts({ orgId: "default" })).map((a) => a.id)
+      const viewer = dashboardsViewer({
+        userId: owner.id,
+        orgId: "default",
+        role: "owner",
+        artifacts,
+      })
+      const query = {
+        kind: "aggregate" as const,
+        source: "version",
+        measures: [{ id: "m1", measure: "version.count" }],
+      }
+      const page1 = await first.server.api.queryRecords({ body: { query, limit: 1 }, viewer })
+      expect(page1.next).toBeDefined()
+      const page2 = await second.server.api.queryRecords({
+        body: { query, limit: 1, after: page1.next ?? "" },
+        viewer,
+      })
+      expect(page2.rows).toHaveLength(1)
     },
   )
 
