@@ -479,4 +479,27 @@
   --dd-warn-soft: color-mix(in oklab, var(--warning) 14%, transparent);
   --dd-radius: var(--radius);
   --dd-font: inherit;
+  /* Chart series, in a fixed order checked for color-blind separation on Derive's card:
+     blue, orange, aqua, yellow, magenta, green. People are always blue, agents orange. */
+  --dd-series-1: #2a78d6;
+  --dd-series-2: #eb6834;
+  --dd-series-3: #1baf7a;
+  --dd-series-4: #eda100;
+  --dd-series-5: #e87ba4;
+  --dd-series-6: #008300;
+  --dd-other: var(--muted-foreground);
+  /* States on charts (a run succeeded, waits, failed): fixed in both modes, apart from the
+     series hues and from each other, always beside a label. */
+  --dd-state-good: #0ca30c;
+  --dd-state-warning: #fab219;
+  --dd-state-critical: #d03b3b;
+}
+/* The same hues, stepped for the dark card. */
+.dark .dd-host {
+  --dd-series-1: #3987e5;
+  --dd-series-2: #d95926;
+  --dd-series-3: #199e70;
+  --dd-series-4: #c98500;
+  --dd-series-5: #d55181;
+  --dd-series-6: #008300;
 }

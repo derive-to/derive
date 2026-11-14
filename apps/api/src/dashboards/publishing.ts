@@ -92,6 +92,7 @@ export const PUBLISHING = dashboard(
                 fill: "zero",
               }),
             },
+            display: { colors: { People: "var(--dd-series-1)", Agents: "var(--dd-series-2)" } },
           },
         ],
         [

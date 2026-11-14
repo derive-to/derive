@@ -91,9 +91,9 @@ export const AGENTS = dashboard(
             },
             display: {
               colors: {
-                Succeeded: "var(--dd-good)",
-                Failed: "var(--dd-danger)",
-                "Waiting on someone": "var(--dd-warn)",
+                Succeeded: "var(--dd-state-good)",
+                Failed: "var(--dd-state-critical)",
+                "Waiting on someone": "var(--dd-state-warning)",
                 Cancelled: "var(--dd-other)",
               },
             },
