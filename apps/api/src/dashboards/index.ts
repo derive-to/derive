@@ -48,6 +48,14 @@ export const createDashboards = (meta: MetaStore) => {
 
 export type Dashboards = NonNullable<ReturnType<typeof createDashboards>>
 
+const built = new WeakMap<MetaStore, Dashboards | null>()
+
+/** One dashboards server per store, shared by the routes and the MCP tools. */
+export const dashboardsFor = (meta: MetaStore): Dashboards | null => {
+  if (!built.has(meta)) built.set(meta, createDashboards(meta))
+  return built.get(meta) ?? null
+}
+
 /** The viewer a person is, in a workspace, for the library. */
 export const dashboardsViewer = (a: {
   userId: string

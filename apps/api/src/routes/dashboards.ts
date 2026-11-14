@@ -1,7 +1,7 @@
 import { Hono } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
-import { createDashboards, DASHBOARDS_PATH, dashboardsViewer } from "../dashboards"
+import { DASHBOARDS_PATH, dashboardsFor, dashboardsViewer } from "../dashboards"
 import { fail } from "../lib/http"
 import { visibleArtifactsInWorkspace } from "../lib/visibility"
 
@@ -13,7 +13,7 @@ import { visibleArtifactsInWorkspace } from "../lib/visibility"
 export const dashboardsRoutes = (ctx: AppContext) => {
   const { meta, requireUser, requireWorkspace, workspaceRole } = ctx
   const app = new Hono<BlankEnv>()
-  const dashboards = createDashboards(meta)
+  const dashboards = dashboardsFor(meta)
 
   app.all(`${DASHBOARDS_PATH}/*`, async (c) => {
     if (!dashboards) return fail(c, 404, "Dashboards need a Postgres database.")

@@ -21,7 +21,6 @@ export const dashboardsModel = defineModel({
       in: "main",
       key: ["id"],
       time: "createdAt",
-      label: "Artifacts",
       tenant: { columns: { org: "org_id" } },
       policy: "visible",
       measures: { count: { kind: "count", merge: "sum", label: "Artifacts" } },
@@ -41,7 +40,6 @@ export const dashboardsModel = defineModel({
       in: "main",
       key: ["id"],
       time: "createdAt",
-      label: "Versions",
       tenant: { via: "artifact" },
       policy: { via: "artifact" },
       joins: {

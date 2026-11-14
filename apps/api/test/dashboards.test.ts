@@ -1,4 +1,6 @@
+import { dashboardTools } from "derive-dashboards/mcp"
 import { describe, expect, it } from "vitest"
+import { dashboardsFor } from "../src/dashboards"
 import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 const owner: TestUser = { id: "u_dash_owner", email: "owner@dash.test", name: "Owner" }
@@ -66,4 +68,28 @@ describe("dashboards", () => {
     const r = await app.request("/v1/dashboards/dashboards/list")
     expect(r.status).toBe(401)
   })
+
+  it.runIf(meta.dashboards !== undefined)(
+    "answer an agent's question through dashboards_query, for the person it acts for",
+    async () => {
+      await publishAs(app, "<h1>Notes</h1>", {}, as(owner.email))
+      const dashboards = dashboardsFor(meta)
+      if (!dashboards) throw new Error("Postgres serves dashboards")
+      const [query] = dashboardTools(dashboards.server)
+      const answered = await query?.run(
+        { op: "ask", query: { source: "Version", measures: [{ id: "m0", measure: "Versions" }] } },
+        {
+          id: "ag_dash",
+          tenant: { org: "default" },
+          roles: ["editor"],
+          attributes: {
+            artifacts: (await meta.listArtifacts({ orgId: "default" })).map((a) => a.id),
+          },
+          agent: { for: owner.id },
+        },
+      )
+      expect(answered?.isError).toBeUndefined()
+      expect(answered?.content[0]?.text).toMatch(/\| Versions \|\n\| --- \|\n\| \d+ \|/)
+    },
+  )
 })
