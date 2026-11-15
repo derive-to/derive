@@ -177,7 +177,7 @@ describe("dashboards", () => {
       const query = {
         kind: "aggregate" as const,
         source: "version",
-        measures: [{ id: "m1", measure: "version.count" }],
+        measures: [{ id: "m1" as const, measure: "version.count" }],
       }
       const page1 = await first.server.api.queryRecords({ body: { query, limit: 1 }, viewer })
       expect(page1.next).toBeDefined()

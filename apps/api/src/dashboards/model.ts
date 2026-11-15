@@ -26,7 +26,7 @@ const labelled = (
     label,
     expr: {
       case: cases.map(([values, lit]) => ({
-        when: { left: { col: column }, op: "in", values },
+        when: { left: { col: column }, op: "in" as const, values },
         // biome-ignore lint/suspicious/noThenProperty: a CASE branch in derive-dashboards' model expression, not a thenable.
         then: { lit },
       })),
