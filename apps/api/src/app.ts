@@ -35,6 +35,7 @@ import { commentRoutes } from "./routes/comments"
 import { conciergeRoutes } from "./routes/concierge"
 import { connectionRoutes } from "./routes/connections"
 import { credentialRoutes } from "./routes/credentials"
+import { dashboardsRoutes } from "./routes/dashboards"
 import { domainRoutes } from "./routes/domains"
 import { dynamicDataRoutes } from "./routes/dynamic-data"
 import { embedRoutes } from "./routes/embeds"
@@ -550,6 +551,7 @@ export function createApp(deps: AppDeps): Hono {
     templateLibraryRoutes,
     realtimeRoutes,
     analyticsRoutes,
+    dashboardsRoutes,
     notificationRoutes,
     webhookRoutes,
     rawRoutes,

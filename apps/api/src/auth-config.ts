@@ -181,6 +181,25 @@ export interface AuthRuntime {
   validateSchema?: boolean
 }
 
+const webOriginsFromEnv = () =>
+  (env("DERIVE_WEB_ORIGIN") ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+
+/**
+ * The origins whose browser requests the API trusts. The browser sends its own Origin (the web
+ * app), which differs from the API's baseURL whenever the SPA and API are on separate origins
+ * (dev proxy, or the hosted split of static-web + API container). DERIVE_WEB_ORIGIN lists
+ * those in production; localhost dev ports are trusted automatically.
+ */
+export function trustedWebOrigins(baseUrl: string, webOrigins: readonly string[]): string[] {
+  const devOrigins = /^https?:\/\/(localhost|127\.0\.0\.1)(:|$)/.test(baseUrl)
+    ? ["http://localhost:3090", "http://localhost:5173"]
+    : []
+  return [...new Set([baseUrl, ...webOrigins, ...devOrigins])]
+}
+
 export function makeAuth(
   db: AuthDb,
   baseUrl: string,
@@ -188,18 +207,8 @@ export function makeAuth(
   hooks: AuthHooks = {},
   runtime: AuthRuntime = {},
 ) {
-  // The browser sends its own Origin (the web app), which differs from the API's
-  // baseURL whenever the SPA and API are on separate origins (dev proxy, or the
-  // hosted split of static-web + API container). DERIVE_WEB_ORIGIN lists those in
-  // production; localhost dev ports are trusted automatically.
-  const webOrigins = (env("DERIVE_WEB_ORIGIN") ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean)
-  const devOrigins = /^https?:\/\/(localhost|127\.0\.0\.1)(:|$)/.test(baseUrl)
-    ? ["http://localhost:3090", "http://localhost:5173"]
-    : []
-  const staticTrusted = [...new Set([baseUrl, ...webOrigins, ...devOrigins])]
+  const webOrigins = webOriginsFromEnv()
+  const staticTrusted = trustedWebOrigins(baseUrl, webOrigins)
 
   // The accepted RFC 8707 resource indicators (see mcpAudiences). A superset of the
   // plugin's default ([baseUrl]) so no previously-valid audience is narrowed; resource

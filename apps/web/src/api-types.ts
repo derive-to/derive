@@ -4936,6 +4936,8 @@ export interface paths {
                                 code: string;
                                 message: string;
                             } | null;
+                            /** @description Whether this instance serves dashboards (/v1/dashboards): on Postgres yes, on SQLite and D1 no. The rail shows Dashboards only when true. */
+                            dashboards: boolean;
                         };
                     };
                 };

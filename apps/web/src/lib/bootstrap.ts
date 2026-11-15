@@ -1,6 +1,7 @@
 import { type QueryClient, queryOptions, useQuery, useQueryClient } from "@tanstack/react-query"
 import { api, type BootstrapPayload } from "@/api"
 import { useAuth } from "@/ctx"
+import { dashboardsAvailableQuery } from "@/lib/dashboards"
 import {
   blockedQuery,
   collectionsQuery,
@@ -42,6 +43,7 @@ export const seedFromBootstrap = (client: QueryClient, b: BootstrapPayload) => {
   })
   client.setQueryData(blockedQuery().queryKey, b.blocked)
   client.setQueryData(needsYouCountQuery().queryKey, b.needs_you)
+  client.setQueryData(dashboardsAvailableQuery().queryKey, b.dashboards)
 }
 
 export const bootstrapQuery = (client: QueryClient) =>

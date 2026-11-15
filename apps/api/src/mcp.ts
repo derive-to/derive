@@ -116,6 +116,7 @@ import { registerCheckpointTool } from "./mcp-tools/checkpoint"
 import { registerClearQueueTool } from "./mcp-tools/clear-queue"
 import { registerCodeTool } from "./mcp-tools/code"
 import { registerCommentTool } from "./mcp-tools/comment"
+import { registerDashboardsTools } from "./mcp-tools/dashboards"
 import { registerFindTool } from "./mcp-tools/find"
 import { registerListWorkspacesTool } from "./mcp-tools/list-workspaces"
 import {
@@ -682,6 +683,8 @@ export function registerToolSurface(
   if (wanted("stage")) registerStageTool(tc)
   if (wanted("publish")) registerPublishTool(tc)
   if (wanted("checkpoint")) registerCheckpointTool(tc)
+  // The workspace's dashboards, on Postgres: dashboards_query (read only) and dashboards_api.
+  if (wanted("dashboards")) registerDashboardsTools(tc)
   // The agent model: make and change agents, ask them, follow and answer their jobs, and
   // (for a runner) pull and report the work.
   if (wanted("agents")) {

@@ -70,10 +70,33 @@ export const visibleArtifacts = async (
     })
     visible.push(...rows)
   }
-  return visible.filter(
-    (a) => !a.password_hash || (!opts.publicOnly && a.workspace_access === "member"),
-  )
+  return visible.filter(readable(opts))
 }
+
+/** The password-lock rule above, as one predicate, so both gates in this file share it. */
+const readable =
+  (opts: VisibilityOpts) =>
+  (a: ArtifactRecord): boolean =>
+    !a.password_hash || (!opts.publicOnly && a.workspace_access === "member")
+
+/**
+ * Every artifact in a workspace this caller may read, with no candidates to start from: the
+ * same listing gate and the same lock rule as `visibleArtifacts`. The dashboards count only
+ * these, so a private artifact never shows in anyone else's numbers. It reads the whole
+ * workspace's listing, which is what a count over the workspace needs.
+ */
+export const visibleArtifactsInWorkspace = async (
+  meta: Pick<MetaStore, "listArtifacts">,
+  opts: VisibilityOpts,
+): Promise<ArtifactRecord[]> =>
+  (
+    await meta.listArtifacts({
+      orgId: opts.orgId,
+      viewerId: opts.viewerId,
+      publicOnly: opts.publicOnly,
+      excludeRemoved: true,
+    })
+  ).filter(readable(opts))
 
 /** The same gate as a set of surviving ids, for callers holding rows rather than records. */
 export const visibleArtifactIds = async (

@@ -27,8 +27,9 @@ unavailable, or project policy forbids publishing.
 1. Confirm Derive tools are connected. The current remote surface is:
    <!-- tools:start -->
    `agents`, `ask`, `browse_library`, `catch_up`, `checkpoint`, `clear_queue`, `comment`,
-   `derive_code`, `find`, `jobs`, `list_workspaces`, `organize`, `publish`, `pull`, `read`,
-   `shelve`, `show`, `stage`.
+   `dashboards_api`, `dashboards_query`, `derive_code`, `find`, `jobs`, `list_workspaces`,
+   `organize`, `publish`, `pull`, `read`, `shelve`, `show`, `stage`. The two `dashboards_*`
+   tools are served where the instance runs dashboards (on Postgres).
    <!-- tools:end -->
    An installed copy of this file goes stale. `list_workspaces` reports what the server
    serves right now, and is the answer when the two disagree.
@@ -49,6 +50,7 @@ unavailable, or project policy forbids publishing.
 | Make, ask, or run a workspace agent | `derive://skills/agents` | `agents`, `ask`, `jobs`, `pull` |
 | Save resumable working state | `derive://skills/checkpoint` | `checkpoint` |
 | Tag, collect, retire, or delete library work | `derive://skills/organize` | `browse_library`, `organize`, `shelve`, `find` |
+| Numbers about the workspace: publishing, reading, agents, health | (the tool's own description) | `dashboards_query`, `dashboards_api` |
 
 Workspace-specific procedures may also be published as skills. Discover them with
 `find({skills:true})`, then `read` the relevant one before acting.

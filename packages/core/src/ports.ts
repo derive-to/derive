@@ -2922,6 +2922,10 @@ export interface MetaStore
     DynamicDataStore {
   /** Durable cloud execution uses Postgres on both Node and Workers. */
   readonly jobExecution?: import("./job-execution").JobExecutionStore<AgentRecord>
+  /** Embedded dashboards read the database through derive-dashboards' Postgres engine: one
+   *  read-only snapshot per request, and the library's own `dd_` tables for stored
+   *  dashboards. Postgres only; absent on SQLite and D1, where the Dashboards page is hidden. */
+  readonly dashboards?: ReturnType<typeof import("derive-dashboards").nodePostgres>
 }
 
 /** What a user follows: another Derive person (`target` = their user id). */

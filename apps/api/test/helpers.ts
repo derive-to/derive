@@ -7,6 +7,7 @@ import { PgMetaStore } from "@derive/db/pg"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
+import { nodePostgres } from "derive-dashboards"
 import { Pool } from "pg"
 import { afterAll } from "vitest"
 import { type AppDeps, createApp } from "../src/app"
@@ -54,6 +55,14 @@ const schemaFor = (name: string) =>
 const makePgStore = (name: string, users: TestUser[], team: Seat[]): TestStore => {
   const base = PG_URL as string
   const schema = schemaFor(name)
+  // Encode the search_path manually: URLSearchParams emits `+` for spaces, which
+  // node-postgres decodeURIComponent's back to `+` (not a space) → invalid options.
+  const scoped = `${base}${base.includes("?") ? "&" : "?"}options=${encodeURIComponent(`-c search_path=${schema}`)}`
+  // The dashboards' backend is an OBJECT (a connection and a store), not a method, so the
+  // deferring Proxy below would hand back a function. Build the real one now, on its own pool
+  // in the same schema; requests wait on `ready`, so the schema exists before it is used.
+  const dashboardsPool = new Pool({ connectionString: scoped, max: 2 })
+  const dashboards = nodePostgres(dashboardsPool)
   const ready = (async (): Promise<TestStore> => {
     // Bootstrap on the default search_path: (re)create the schema and the Better
     // Auth `user` table + seed it, all schema-qualified so search_path is moot.
@@ -97,10 +106,7 @@ const makePgStore = (name: string, users: TestUser[], team: Seat[]): TestStore =
     } finally {
       await boot.end()
     }
-    // Encode the search_path manually: URLSearchParams emits `+` for spaces, which
-    // node-postgres decodeURIComponent's back to `+` (not a space) → invalid options.
-    const opt = encodeURIComponent(`-c search_path=${schema}`)
-    const store = await PgMetaStore.create(`${base}${base.includes("?") ? "&" : "?"}options=${opt}`)
+    const store = await PgMetaStore.create(scoped)
     // Seed the shared "default" team inside `ready`, so the Proxy's deferred calls
     // (test requests) only run once the membership rows exist (no race).
     if (team.length) {
@@ -137,7 +143,11 @@ const makePgStore = (name: string, users: TestUser[], team: Seat[]): TestStore =
         })
     },
   })
-  return new Proxy({ jobExecution } as TestStore, {
+  const close = async () => {
+    await (await ready).close()
+    await dashboardsPool.end()
+  }
+  return new Proxy({ jobExecution, dashboards, close } as unknown as TestStore, {
     get: (target, prop: string) =>
       Object.hasOwn(target, prop) ? Reflect.get(target, prop) : deferredMethod(prop),
     // Fault-injection tests need to intercept the same method the app calls.
