@@ -8,4 +8,4 @@ reason = "Re-audited 2026-09-18 after upgrading adm-zip to 0.6.1 for GHSA-7q85-x
 [[IgnoredVulns]]
 id = "GHSA-ch52-4w7c-c8xp"
 ignoreUntil = 2026-11-01
-reason = "The locked 4.2.0 package has a committed pnpm security patch. Zero-freshness cache entries always miss, so client max-stale cannot bypass cookie, private, no-cache, or no-store restrictions. lint:dependency-exceptions checks the exact patch digest, its lockfile application, and the installed behavior. Re-audit when upstream publishes a verified fix."
+reason = "The locked 4.3.0 package has a committed pnpm security patch. Zero-freshness cache entries always miss, so client max-stale cannot bypass cookie, private, no-cache, or no-store restrictions. lint:dependency-exceptions checks the exact patch digest, its lockfile application, and the installed behavior. Re-audit when upstream publishes a verified fix."

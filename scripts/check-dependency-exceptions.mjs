@@ -47,9 +47,9 @@ if (exceptions.some((exception) => exception.id === "GHSA-vwc7-r8mq-g2x9")) {
 }
 
 if (exceptions.some((exception) => exception.id === "GHSA-ch52-4w7c-c8xp")) {
-  const patch = "patches/http-cache-semantics@4.2.0.patch"
+  const patch = "patches/http-cache-semantics@4.3.0.patch"
   const manifest = JSON.parse(read("package.json"))
-  assert.equal(manifest.pnpm?.patchedDependencies?.["http-cache-semantics@4.2.0"], patch)
+  assert.equal(manifest.pnpm?.patchedDependencies?.["http-cache-semantics@4.3.0"], patch)
   const digest = createHash("sha256").update(read(patch)).digest("hex")
   assert.equal(
     digest,
@@ -57,7 +57,7 @@ if (exceptions.some((exception) => exception.id === "GHSA-ch52-4w7c-c8xp")) {
     "Re-audit the cache security patch before changing it",
   )
   const lock = parse(read("pnpm-lock.yaml"))
-  assert.equal(lock.patchedDependencies?.["http-cache-semantics@4.2.0"]?.hash, digest)
+  assert.equal(lock.patchedDependencies?.["http-cache-semantics@4.3.0"]?.hash, digest)
   const docsRequire = createRequire(new URL("../apps/docs/package.json", import.meta.url))
   const astroRequire = createRequire(docsRequire.resolve("astro/package.json"))
   const CachePolicy = astroRequire("http-cache-semantics")

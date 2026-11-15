@@ -155,7 +155,10 @@ describe("the published skill agrees with the served surface", () => {
   it("the tool list in SKILL.md is the tool list tools/list returns", async () => {
     const { app, token } = await setup("sc-skill-md")
     const listed = await rpc(app, token, "tools/list", {})
-    const served = ((listed?.result?.tools ?? []) as { name: string }[]).map((t) => t.name).sort()
+    const names = ((listed?.result?.tools ?? []) as { name: string }[]).map((t) => t.name)
+    // The dashboards tools are served only where the store runs dashboards (Postgres, the hosted
+    // shape). The skill documents the hosted surface, so a SQLite run expects them too.
+    const served = [...new Set([...names, "dashboards_api", "dashboards_query"])].sort()
 
     const region = AGENT_SKILL_MD.match(/tools:start\s*-->([\s\S]*?)<!--\s*tools:end/)
     expect(region, "SKILL.md lost its <!-- tools:start --> region").toBeTruthy()
