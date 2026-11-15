@@ -149,8 +149,8 @@ importers:
         specifier: ^10.0.1
         version: 10.0.1
       derive-dashboards:
-        specifier: ^0.1.0
-        version: 0.1.0(react@19.2.7)(recharts@3.10.1(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react-is@19.3.1)(react@19.2.7)(redux@5.0.1))(vitest@4.1.12)
+        specifier: ^0.1.1
+        version: 0.1.1(react@19.2.7)(recharts@3.10.1(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react-is@19.3.1)(react@19.2.7)(redux@5.0.1))(vitest@4.1.12)
       drizzle-orm:
         specifier: 0.45.2
         version: 0.45.2(@cloudflare/workers-types@5.20260818.1)(@opentelemetry/api@1.9.1)(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(better-sqlite3@13.0.3)(gel@2.2.0)(kysely@0.29.2)(pg@8.21.0)
@@ -325,8 +325,8 @@ importers:
         specifier: ^1.1.1
         version: 1.1.1(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       derive-dashboards:
-        specifier: ^0.1.0
-        version: 0.1.0(react@19.2.7)(recharts@3.10.1(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react-is@19.3.1)(react@19.2.7)(redux@5.0.1))(vitest@4.1.12)
+        specifier: ^0.1.1
+        version: 0.1.1(react@19.2.7)(recharts@3.10.1(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react-is@19.3.1)(react@19.2.7)(redux@5.0.1))(vitest@4.1.12)
       fflate:
         specifier: ^0.8.2
         version: 0.8.3
@@ -465,8 +465,8 @@ importers:
         specifier: workspace:*
         version: link:../facts
       derive-dashboards:
-        specifier: ^0.1.0
-        version: 0.1.0(react@19.2.7)(recharts@3.10.1(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react-is@19.3.1)(react@19.2.7)(redux@5.0.1))(vitest@4.1.12)
+        specifier: ^0.1.1
+        version: 0.1.1(react@19.2.7)(recharts@3.10.1(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react-is@19.3.1)(react@19.2.7)(redux@5.0.1))(vitest@4.1.12)
       entities:
         specifier: ^6.0.1
         version: 6.0.1
@@ -499,8 +499,8 @@ importers:
         specifier: ^13.0.3
         version: 13.0.3
       derive-dashboards:
-        specifier: ^0.1.0
-        version: 0.1.0(react@19.2.7)(recharts@3.10.1(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react-is@19.3.1)(react@19.2.7)(redux@5.0.1))(vitest@4.1.12)
+        specifier: ^0.1.1
+        version: 0.1.1(react@19.2.7)(recharts@3.10.1(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react-is@19.3.1)(react@19.2.7)(redux@5.0.1))(vitest@4.1.12)
       drizzle-orm:
         specifier: 0.45.2
         version: 0.45.2(@cloudflare/workers-types@5.20260818.1)(@opentelemetry/api@1.9.1)(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(better-sqlite3@13.0.3)(gel@2.2.0)(kysely@0.29.2)(pg@8.21.0)
@@ -5239,14 +5239,14 @@ packages:
     resolution: {integrity: sha512-0je+qPKHEMohvfRTCEo3CrPG6cAzAYgmzKyxRiYSSDkS6eGJdyVJm7WaYA5ECaAD9wLB2T4EEeymA5aFVcYXCA==}
     engines: {node: '>=6'}
 
-  derive-dashboards@0.1.0:
-    resolution: {integrity: sha512-mmGpAH15n+3Ib8BaQe804CyQf9UBOu3REonOk8WC7Yrio3I30t4k5IlEirAN2GKIiI+D9m+Goy/VQOIzpe5Xag==}
-    engines: {node: '>=20'}
+  derive-dashboards@0.1.1:
+    resolution: {integrity: sha512-XXB7ntGooQKZpiTILExMjmKxEuudLJx2OOoyt/z4xO5OFGVWGz+FCseLps+kXlggcJo6KfErcRKpJjZ9Pe5cTg==}
+    engines: {node: '>=22.18'}
     hasBin: true
     peerDependencies:
       react: ^19.0.0
       recharts: ^3.0.0
-      vitest: ^5.0.0
+      vitest: ^4.0.0 || ^5.0.0
     peerDependenciesMeta:
       react:
         optional: true
@@ -12914,7 +12914,7 @@ snapshots:
 
   dequal@2.0.3: {}
 
-  derive-dashboards@0.1.0(react@19.2.7)(recharts@3.10.1(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react-is@19.3.1)(react@19.2.7)(redux@5.0.1))(vitest@4.1.12):
+  derive-dashboards@0.1.1(react@19.2.7)(recharts@3.10.1(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react-is@19.3.1)(react@19.2.7)(redux@5.0.1))(vitest@4.1.12):
     dependencies:
       big.js: 7.0.1
       canonicalize: 5.1.0
