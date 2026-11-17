@@ -358,6 +358,9 @@ const STATUSES = [
 ] as const
 const KINDS = ["ask", "scheduled", "graph", "node"] as const
 
+/** The tool-route call a machine's git credential helper makes (packages/cli/src/repo.js). */
+const GIT_READ_TOOL = "git.read"
+
 export const jobRoutes = (ctx: AppContext) => {
   const { meta, deps, agentFor, actingHuman } = ctx
   const app = new OpenAPIHono<BlankEnv>()
@@ -1296,6 +1299,19 @@ export const jobRoutes = (ctx: AppContext) => {
         }
     }
     const connIds = parseConnectionIds(agent.connection_ids_json)
+    // The GitHub accounts whose repositories the machine may clone read-only (the tool
+    // route's git.read), so the runner sets up git for them and the model knows it can.
+    const githubOwners =
+      connIds.length && jobs.length
+        ? [
+            ...new Set(
+              (await spendableConnections(meta, agent.org_id, connIds))
+                .filter((cn) => cn.kind === "github_app")
+                .map((cn) => cn.scopes_label ?? "")
+                .filter((login) => /^[A-Za-z0-9-]{1,39}$/.test(login)),
+            ),
+          ]
+        : []
     const quiet: SourceQuiet[] = []
     let tools: { def: unknown; ref: string }[] = []
     if (connIds.length && jobs.length) {
@@ -1346,6 +1362,7 @@ export const jobRoutes = (ctx: AppContext) => {
       jobs.map(async (j) => ({
         ...(await showOne(j)),
         tool_token: await toolToken(j),
+        github_owners: githubOwners,
         // The transcript the model reads: what people and the agent said. Notes the server
         // wrote about the job itself (held for budget) are for the people watching it.
         messages: (await meta.listJobMessages(j.id))
@@ -1669,6 +1686,35 @@ export const jobRoutes = (ctx: AppContext) => {
       }),
     )
     if (b instanceof Response) return b
+    // Read access to any repository a bound GitHub connection covers, beyond the task's own:
+    // git's credential helper on the machine asks here when the agent clones or fetches one.
+    // A read-only token for that one repository, about an hour, nothing the task's own
+    // checkout does not already allow.
+    if (b.tool === GIT_READ_TOOL) {
+      const repo = z
+        .object({ repo: z.string().regex(/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/) })
+        .safeParse(b.args)
+      if (!repo.success) return fail(c, 400, "repo must be owner/name")
+      if (!deps.encryptionKey) return fail(c, 503, "Secret encryption is not configured")
+      const [owner = "", name = ""] = repo.data.repo.split("/")
+      const github = await githubConnectionFor(meta, agent, repo.data.repo)
+      if (!github)
+        return fail(
+          c,
+          409,
+          `Bind a GitHub connection for ${owner} to this agent to read ${repo.data.repo}.`,
+        )
+      try {
+        const token = await bearerFor(meta, github, deps.encryptionKey, "contents-read", name)
+        return c.json({ result: { repo: repo.data.repo, token } })
+      } catch (error) {
+        return fail(
+          c,
+          409,
+          `GitHub refused a token for ${repo.data.repo}: ${(error as Error).message}`,
+        )
+      }
+    }
     if (agent.machine === "derive" && b.tool.startsWith(JOB_TOOL_PREFIX)) {
       const own = await buildJobTools(ctx, agent)
       if (!own) return fail(c, 403, "this agent's creator no longer has a seat here")

@@ -30,7 +30,7 @@ import {
 import { RUNNER_PROTOCOL_VERSION, SESSION_RESUME } from "./conversation-format.js"
 import { selectProvider } from "./providers/index.js"
 import { redactSecrets, safeCommand, terminateProcess } from "./providers/process.js"
-import { gitState, prepareRepo, pullRequestFor } from "./repo.js"
+import { gitReadEnv, gitState, prepareRepo, pullRequestFor } from "./repo.js"
 import {
   buildPrompt,
   DeriveClient,
@@ -213,6 +213,14 @@ const runnerFreeEnv = (env, { keepModelLogin = false } = {}) => {
   return out
 }
 
+/** What the shim and the git helper need to call this job's tool route, and nothing more. */
+const toolRouteEnv = (server, job) => ({
+  DERIVE_SERVER: server,
+  DERIVE_JOB_ID: job.id,
+  DERIVE_JOB_CLAIM: job.started_at,
+  DERIVE_TOOL_TOKEN: job.tool_token,
+})
+
 /** The system prompt for one job: the agent's standing instructions, then what this job is,
  *  then the source tools it may call (when the runner wrote a shim for them). */
 export function jobSystemPrompt(job, { shim = null } = {}) {
@@ -231,6 +239,10 @@ export function jobSystemPrompt(job, { shim = null } = {}) {
       `You can use this agent's sources through these tools. Call one by running \`node ${shim} <tool> '<json args>'\` in the shell; it prints the tool's JSON result:\n${list}`,
     )
   }
+  if (job.github_owners?.length)
+    parts.push(
+      `You can clone any repository this agent's GitHub connection covers, read-only, with \`git clone https://github.com/<owner>/<repo>.git\` (owners: ${job.github_owners.join(", ")}). Git gets the login on its own; don't use SSH URLs or ask for keys.`,
+    )
   // A bound source that gave no tools. Saying so beats letting the model work as though the
   // source was never configured.
   if (job.sources_quiet?.length) {
@@ -666,6 +678,17 @@ export async function serveJob(client, job, cfg, deps = {}) {
         cfg = { ...cfg, cwd: checkout.dir }
         Object.assign(environment, checkout.env)
       }
+      // Every other repository the agent's GitHub connections cover clones read-only: git asks
+      // the job's tool route for each, so a task about one repository can still read the rest,
+      // and an agent with no task repository can read any of them.
+      if (job.github_owners?.length && job.tool_token) {
+        gitDir ??= privateDir("derive-git-")
+        Object.assign(
+          environment,
+          toolRouteEnv(cfg.server, job),
+          gitReadEnv(gitDir, { ...process.env, ...environment }),
+        )
+      }
       // The machine must be ready before a model credential or token is spent on it.
       if (job.execution?.check)
         await (deps.checkMachine ?? checkMachine)(
@@ -707,12 +730,7 @@ export async function serveJob(client, job, cfg, deps = {}) {
       let toolEnv = {}
       if (job.tools?.length && job.tool_token) {
         shim = writeToolShim(cfg.cwd, job)
-        toolEnv = {
-          DERIVE_SERVER: cfg.server,
-          DERIVE_JOB_ID: job.id,
-          DERIVE_JOB_CLAIM: job.started_at,
-          DERIVE_TOOL_TOKEN: job.tool_token,
-        }
+        toolEnv = toolRouteEnv(cfg.server, job)
       }
       env = {
         ...runnerFreeEnv(process.env, { keepModelLogin: cred.local }),

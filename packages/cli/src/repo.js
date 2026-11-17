@@ -8,8 +8,14 @@ import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "nod
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
-const HELPER =
-  '!f() { test "$1" = get || exit 0; echo username=x-access-token; echo "password=$(cat "$DERIVE_GIT_TOKEN_FILE")"; }; f'
+// It answers only for the task's repository: run inside the checkout, git asks the checkout's
+// helper first for any github.com URL, and another repository is the git.read helper's
+// (gitReadEnv) to answer.
+const helperFor = (repo) => {
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo))
+    throw Object.assign(new Error(`Not a GitHub repository: ${repo}`), { retryable: false })
+  return `!f() { test "$1" = get || exit 0; grep -iFx -e 'path=${repo}' -e 'path=${repo}.git' >/dev/null || exit 0; echo username=x-access-token; echo "password=$(cat "$DERIVE_GIT_TOKEN_FILE")"; }; f`
+}
 
 const run = (args, { cwd, env, quiet } = {}) => {
   const out = spawnSync("git", args, {
@@ -75,12 +81,15 @@ export function prepareRepo(
       run(["config", "--get", "remote.origin.url"], { cwd: dir, quiet: true }).stdout.trim(),
     ) === repo.toLowerCase()
   let dir = [join(cwd, name), join(homedir(), name)].find(mine)
+  const HELPER = helperFor(repo)
   if (!dir) {
     dir = join(cwd, name)
     run(
       [
         "-c",
         `credential.helper=${HELPER}`,
+        "-c",
+        "credential.useHttpPath=true",
         "clone",
         "--filter=blob:none",
         `https://github.com/${repo}.git`,
@@ -90,6 +99,7 @@ export function prepareRepo(
     )
   }
   run(["config", "--replace-all", "credential.helper", HELPER], { cwd: dir })
+  run(["config", "credential.useHttpPath", "true"], { cwd: dir })
   run(["fetch", "--prune", "origin"], { cwd: dir, env })
   const start = () => {
     const base =
@@ -166,4 +176,52 @@ export async function pullRequestFor({ repo, token }, dir, fetcher = fetch) {
   ).catch(() => null)
   const [pr] = res?.ok ? await res.json() : []
   return pr ? { kind: "pr", label: pr.title, ref: `${repo}#${pr.number}`, url: pr.html_url } : null
+}
+
+// Git's credential helper for every other GitHub repository the agent's connection covers:
+// asked only when GitHub wants a login, it trades the repository's path for a read-only token
+// from the job's tool route (git.read), with the model's tool token. Anything it cannot answer
+// it leaves to git, which then reports GitHub's own refusal.
+export const GIT_READ_HELPER_SRC = `const env = process.env
+if (process.argv[2] !== "get") process.exit(0)
+let input = ""
+for await (const chunk of process.stdin) input += chunk
+const fields = Object.fromEntries(
+  input.split("\\n").filter(Boolean).map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
+)
+const repo = /^([A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+?)(\\.git)?\\/?$/.exec(fields.path ?? "")?.[1]
+if (fields.host !== "github.com" || !repo) process.exit(0)
+const res = await fetch(env.DERIVE_SERVER + "/v1/jobs/" + encodeURIComponent(env.DERIVE_JOB_ID) + "/tool", {
+  method: "POST",
+  headers: {
+    authorization: "Bearer " + env.DERIVE_TOOL_TOKEN,
+    "content-type": "application/json",
+    "x-derive-claim": env.DERIVE_JOB_CLAIM,
+  },
+  body: JSON.stringify({ tool: "git.read", args: { repo } }),
+  signal: AbortSignal.timeout(30_000),
+}).catch((error) => ({ ok: false, text: async () => error.message }))
+if (!res.ok) {
+  console.error("Derive could not get a token for " + repo + ": " + (await res.text()).slice(0, 500))
+  process.exit(0)
+}
+const { result } = await res.json()
+console.log("username=x-access-token")
+console.log("password=" + result.token)
+`
+
+/** Git settings, as environment, that send a login for any github.com repository to the
+ *  helper above. They sit after a checkout's own helper, which answers for the task's
+ *  repository first. */
+export function gitReadEnv(dir, env = process.env) {
+  const helper = join(dir, "git-read.mjs")
+  writeFileSync(helper, GIT_READ_HELPER_SRC, { mode: 0o700 })
+  const at = Number(env.GIT_CONFIG_COUNT) || 0
+  return {
+    GIT_CONFIG_COUNT: String(at + 2),
+    [`GIT_CONFIG_KEY_${at}`]: "credential.https://github.com.helper",
+    [`GIT_CONFIG_VALUE_${at}`]: `!${JSON.stringify(process.execPath)} ${JSON.stringify(helper)}`,
+    [`GIT_CONFIG_KEY_${at + 1}`]: "credential.https://github.com.useHttpPath",
+    [`GIT_CONFIG_VALUE_${at + 1}`]: "true",
+  }
 }
