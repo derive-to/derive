@@ -16,7 +16,7 @@ import { describe, expect, it } from "vitest"
 import { WebSocketServer } from "ws"
 import { loadJobRunnerConfig } from "../src/job-runner.js"
 import { claudeCode } from "../src/providers/claude-code.js"
-import { prepareRepo, pullRequestFor } from "../src/repo.js"
+import { gitReadEnv, prepareRepo, pullRequestFor } from "../src/repo.js"
 import { OUTPUT_CONTRACT, parseAnswer, resolveArtifactHtml, runAgent } from "../src/runner.js"
 import { runSession } from "../src/session.js"
 import { sessionApi, sessionCommand } from "../src/sessions.js"
@@ -1193,5 +1193,79 @@ socket.on('end', () => process.exit(7))
       "/v1/artifacts/x/ssh",
     ])
       expect(() => api.openSshTunnel(path, claim)).toThrow(/invalid SSH tunnel/)
+  })
+})
+
+describe("reading other repositories", () => {
+  it("logs git in to any github.com repository through the job's tool route, and only there", async () => {
+    const calls = []
+    const server = createServer((req, res) => {
+      let body = ""
+      req.on("data", (chunk) => {
+        body += chunk
+      })
+      req.on("end", () => {
+        calls.push({
+          url: req.url,
+          auth: req.headers.authorization,
+          claim: req.headers["x-derive-claim"],
+          body: JSON.parse(body),
+        })
+        const { args } = JSON.parse(body)
+        if (args.repo === "acme-dev/secret") {
+          res.writeHead(409).end('{"error":"GitHub refused a token"}')
+          return
+        }
+        res.writeHead(200, { "content-type": "application/json" })
+        res.end(JSON.stringify({ result: { repo: args.repo, token: `read-${args.repo}` } }))
+      })
+    })
+    await new Promise((r) => server.listen(0, "127.0.0.1", r))
+    const dir = mkdtempSync(join(tmpdir(), "derive-git-"))
+    try {
+      const env = {
+        ...process.env,
+        GIT_CONFIG_NOSYSTEM: "1",
+        HOME: dir,
+        DERIVE_SERVER: `http://127.0.0.1:${server.address().port}`,
+        DERIVE_JOB_ID: "job_1",
+        DERIVE_JOB_CLAIM: "2026-11-17T00:00:00.000Z",
+        DERIVE_TOOL_TOKEN: "dkjtool_x",
+      }
+      Object.assign(env, gitReadEnv(dir, env))
+      const fill = (input) =>
+        new Promise((resolve) => {
+          const p = spawn("git", ["credential", "fill"], {
+            env: { ...env, GIT_TERMINAL_PROMPT: "0" },
+            cwd: dir,
+          })
+          let out = ""
+          p.stdout.on("data", (d) => {
+            out += d
+          })
+          p.on("close", () => resolve(out))
+          p.stdin.end(input)
+        })
+      expect(
+        await fill("protocol=https\nhost=github.com\npath=acme-dev/widgets.git\n\n"),
+      ).toContain("password=read-acme-dev/widgets")
+      expect(calls.at(-1)).toEqual({
+        url: "/v1/jobs/job_1/tool",
+        auth: "Bearer dkjtool_x",
+        claim: "2026-11-17T00:00:00.000Z",
+        body: { tool: "git.read", args: { repo: "acme-dev/widgets" } },
+      })
+      // A refusal leaves git without a login, so it reports GitHub's own answer.
+      expect(
+        await fill("protocol=https\nhost=github.com\npath=acme-dev/secret.git\n\n"),
+      ).not.toContain("password=")
+      // Other hosts never reach Derive.
+      const before = calls.length
+      await fill("protocol=https\nhost=gitlab.com\npath=acme-dev/widgets.git\n\n")
+      expect(calls.length).toBe(before)
+    } finally {
+      server.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

@@ -470,6 +470,70 @@ describe("standard GitHub integration", () => {
     expect(asked).toEqual(["write", "read"])
   })
 
+  it("lets a task read any repository its GitHub connection covers, read-only", async () => {
+    const { app, meta } = makeAuthedApp("gh-read-any", [owner], "owner", {
+      deps: { encryptionKey: KEY },
+    })
+    await seedApp(meta)
+    const minted: unknown[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        if (/\/access_tokens$/.test(new URL(String(url)).pathname)) {
+          minted.push(JSON.parse(String(init?.body)))
+          return new Response(
+            JSON.stringify({ token: "read-token", expires_at: new Date(Date.now() + 3.6e6) }),
+            { status: 201 },
+          )
+        }
+        return new Response("not found", { status: 404 })
+      }),
+    )
+    const source = await upsertGithubConnection(meta, {
+      orgId: "default",
+      userId: owner.id,
+      installationId: "44013",
+      accountLogin: "acme",
+    })
+    const agent = (await (
+      await app.request(
+        "/v1/agents",
+        jsonAs(as(owner.email), { name: "Support", connection_ids: [source.id] }),
+      )
+    ).json()) as { id: string; token: string }
+    await app.request(
+      "/v1/jobs",
+      jsonAs(as(owner.email), { agent_id: agent.id, instruction: "Why did this fail?" }),
+    )
+    const pulled = (await (
+      await app.request(`/v1/agents/${agent.id}/pull`, jsonAs(bearer(agent.token), {}))
+    ).json()) as {
+      jobs: { id: string; started_at: string; tool_token: string; github_owners: string[] }[]
+    }
+    const job = pulled.jobs[0]
+    if (!job) throw new Error("nothing pulled")
+    expect(job.github_owners).toEqual(["acme"])
+    const read = (args: unknown) =>
+      app.request(`/v1/jobs/${job.id}/tool`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${job.tool_token}`,
+          "content-type": "application/json",
+          "x-derive-claim": job.started_at,
+        },
+        body: JSON.stringify({ tool: "git.read", args }),
+      })
+    const ok = await read({ repo: "acme/api" })
+    expect(await ok.json()).toEqual({ result: { repo: "acme/api", token: "read-token" } })
+    expect(minted).toEqual([
+      { permissions: { metadata: "read", contents: "read" }, repositories: ["api"] },
+    ])
+    // Another account's repositories need their own connection; a path is not a repository.
+    expect((await read({ repo: "other/api" })).status).toBe(409)
+    expect((await read({ repo: "acme/api/../x" })).status).toBe(400)
+    expect(minted).toHaveLength(1)
+  })
+
   it("turns an install callback into one stable source without collection work", async () => {
     const { app, meta } = makeAuthedApp("gh-standard", [owner, member], "editor", {
       deps: { encryptionKey: KEY },
