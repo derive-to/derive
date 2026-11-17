@@ -11,8 +11,11 @@ import { dirname, join } from "node:path"
 // It answers only for the task's repository: run inside the checkout, git asks the checkout's
 // helper first for any github.com URL, and another repository is the git.read helper's
 // (gitReadEnv) to answer.
-const helperFor = (repo) =>
-  `!f() { test "$1" = get || exit 0; grep -iEx 'path=${repo.replace(/\./g, "\\.")}(\\.git)?/?' >/dev/null || exit 0; echo username=x-access-token; echo "password=$(cat "$DERIVE_GIT_TOKEN_FILE")"; }; f`
+const helperFor = (repo) => {
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo))
+    throw Object.assign(new Error(`Not a GitHub repository: ${repo}`), { retryable: false })
+  return `!f() { test "$1" = get || exit 0; grep -iFx -e 'path=${repo}' -e 'path=${repo}.git' >/dev/null || exit 0; echo username=x-access-token; echo "password=$(cat "$DERIVE_GIT_TOKEN_FILE")"; }; f`
+}
 
 const run = (args, { cwd, env, quiet } = {}) => {
   const out = spawnSync("git", args, {
