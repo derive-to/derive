@@ -464,6 +464,17 @@ describe("connections (Sources — per-user connected accounts)", () => {
       method: "DELETE",
       headers: as(member.email),
     })
+    await app.request(`/v1/connections/${spare.id}`, {
+      method: "DELETE",
+      headers: as(member.email),
+    })
+    // Revoked: the one an agent still reads stays listed, so its breakage has a cause; the
+    // unused one drops out of the list.
+    const afterRevoke = (await (
+      await app.request("/v1/credentials", { headers: as(member.email) })
+    ).json()) as { items: { id: string; status: string }[] }
+    expect(afterRevoke.items.find((item) => item.id === credential.id)?.status).toBe("revoked")
+    expect(afterRevoke.items.some((item) => item.id === spare.id)).toBe(false)
     expect(
       (
         await app.request(
