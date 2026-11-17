@@ -58,6 +58,9 @@ export const credentialRoutes = (ctx: AppContext) => {
       can_create_workspace: canManage,
       items: (await ctx.meta.listConnections(auth.org))
         .filter((connection) => credentialVisible(connection, auth.userId))
+        // A revoked secret can't be restored or deleted, so once nothing reads it the row is
+        // only clutter. One an agent still names stays, to show why that agent breaks.
+        .filter((connection) => connection.status !== "revoked" || usedBy.has(connection.id))
         .map((connection) => ({
           ...credentialView(connection, auth.userId, canManage),
           used_by: usedBy.get(connection.id) ?? 0,
