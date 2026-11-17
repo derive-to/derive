@@ -20,7 +20,7 @@ const versionsSeenBy = async (who: TestUser) => {
   const query = {
     kind: "aggregate",
     source: "version",
-    measures: [{ id: "m0", measure: "version.count" }],
+    measures: [{ id: "m1", measure: "version.count" }],
   }
   const r = await app.request("/v1/dashboards/query/run", jsonAs(as(who.email), { query }))
   expect(r.status).toBe(200)
@@ -116,8 +116,8 @@ describe("dashboards", () => {
       const query = {
         kind: "aggregate",
         source: "visit",
-        measures: [{ id: "m0", measure: "visit.readers" }],
-        dimensions: [{ id: "d0", member: "visit.reader" }],
+        measures: [{ id: "m1", measure: "visit.readers" }],
+        dimensions: [{ id: "d1", member: "visit.reader" }],
       }
       const asOwner = await app.request(
         "/v1/dashboards/query/run",
@@ -145,7 +145,7 @@ describe("dashboards", () => {
         attended: 1,
       })
       const runsSeenBy = async (who: TestUser, measure = "job.count") => {
-        const query = { kind: "aggregate", source: "job", measures: [{ id: "m0", measure }] }
+        const query = { kind: "aggregate", source: "job", measures: [{ id: "m1", measure }] }
         const r = await app.request("/v1/dashboards/query/run", jsonAs(as(who.email), { query }))
         const answer = (await r.json()) as { rows: [[{ v: string }]] }
         return Number(answer.rows[0][0].v)
