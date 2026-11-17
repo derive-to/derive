@@ -8,8 +8,11 @@ import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "nod
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
-const HELPER =
-  '!f() { test "$1" = get || exit 0; echo username=x-access-token; echo "password=$(cat "$DERIVE_GIT_TOKEN_FILE")"; }; f'
+// It answers only for the task's repository: run inside the checkout, git asks the checkout's
+// helper first for any github.com URL, and another repository is the git.read helper's
+// (gitReadEnv) to answer.
+const helperFor = (repo) =>
+  `!f() { test "$1" = get || exit 0; grep -iEx 'path=${repo.replace(/\./g, "\\.")}(\\.git)?/?' >/dev/null || exit 0; echo username=x-access-token; echo "password=$(cat "$DERIVE_GIT_TOKEN_FILE")"; }; f`
 
 const run = (args, { cwd, env, quiet } = {}) => {
   const out = spawnSync("git", args, {
@@ -75,12 +78,15 @@ export function prepareRepo(
       run(["config", "--get", "remote.origin.url"], { cwd: dir, quiet: true }).stdout.trim(),
     ) === repo.toLowerCase()
   let dir = [join(cwd, name), join(homedir(), name)].find(mine)
+  const HELPER = helperFor(repo)
   if (!dir) {
     dir = join(cwd, name)
     run(
       [
         "-c",
         `credential.helper=${HELPER}`,
+        "-c",
+        "credential.useHttpPath=true",
         "clone",
         "--filter=blob:none",
         `https://github.com/${repo}.git`,
@@ -90,6 +96,7 @@ export function prepareRepo(
     )
   }
   run(["config", "--replace-all", "credential.helper", HELPER], { cwd: dir })
+  run(["config", "credential.useHttpPath", "true"], { cwd: dir })
   run(["fetch", "--prune", "origin"], { cwd: dir, env })
   const start = () => {
     const base =
@@ -189,6 +196,7 @@ const res = await fetch(env.DERIVE_SERVER + "/v1/jobs/" + encodeURIComponent(env
     "x-derive-claim": env.DERIVE_JOB_CLAIM,
   },
   body: JSON.stringify({ tool: "git.read", args: { repo } }),
+  signal: AbortSignal.timeout(30_000),
 }).catch((error) => ({ ok: false, text: async () => error.message }))
 if (!res.ok) {
   console.error("Derive could not get a token for " + repo + ": " + (await res.text()).slice(0, 500))

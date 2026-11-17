@@ -609,6 +609,18 @@ describe("cloud sessions", () => {
       const gh = () =>
         execSync("gh auth status", { env: { ...process.env, ...env }, encoding: "utf8" }).trim()
       expect(gh()).toBe("gh sees first-token")
+      // Git asks the checkout's helper first for any github.com URL; it answers only for the
+      // task's repository and leaves the rest to the git.read helper.
+      const fill = (path) =>
+        execSync("git credential fill", {
+          cwd: dir,
+          env: { ...process.env, ...env, GIT_TERMINAL_PROMPT: "0" },
+          input: `protocol=https\nhost=github.com\npath=${path}\n\n`,
+          encoding: "utf8",
+          stdio: ["pipe", "pipe", "ignore"],
+        })
+      expect(fill("acme-dev/widgets.git")).toContain("password=first-token")
+      expect(() => fill("acme-dev/other.git")).toThrow()
       // The runner renews the token in place; the harness's gh picks it up without a restart.
       writeFileSync(tokenFile, "renewed-token")
       expect(gh()).toBe("gh sees renewed-token")

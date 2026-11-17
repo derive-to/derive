@@ -1301,11 +1301,17 @@ export const jobRoutes = (ctx: AppContext) => {
     const connIds = parseConnectionIds(agent.connection_ids_json)
     // The GitHub accounts whose repositories the machine may clone read-only (the tool
     // route's git.read), so the runner sets up git for them and the model knows it can.
-    const githubOwners = connIds.length
-      ? (await spendableConnections(meta, agent.org_id, connIds))
-          .filter((cn) => cn.kind === "github_app" && cn.scopes_label)
-          .map((cn) => cn.scopes_label as string)
-      : []
+    const githubOwners =
+      connIds.length && jobs.length
+        ? [
+            ...new Set(
+              (await spendableConnections(meta, agent.org_id, connIds))
+                .filter((cn) => cn.kind === "github_app")
+                .map((cn) => cn.scopes_label ?? "")
+                .filter((login) => /^[A-Za-z0-9-]{1,39}$/.test(login)),
+            ),
+          ]
+        : []
     const quiet: SourceQuiet[] = []
     let tools: { def: unknown; ref: string }[] = []
     if (connIds.length && jobs.length) {
