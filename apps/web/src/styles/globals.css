@@ -503,18 +503,3 @@
   --dd-series-5: #d55181;
   --dd-series-6: #008300;
 }
-
-/* derive-dashboards 0.1.1 sizes Copy link like its row (its `.dd-list li button` rule matches
-   both), so the invisible button covers each row and takes every click. Copy link keeps its own
-   size here, and "+ New dashboard" its own width. derive-dashboards#1 fixes the library; this
-   goes with the version that carries it. */
-.dd-host .dd-list li > .dd-list-copy {
-  width: auto;
-  padding: 2px 8px;
-  border: 1px solid var(--dd-line);
-  background: var(--dd-surface);
-  color: var(--dd-muted);
-}
-.dd-host .dd-list-new {
-  align-self: flex-start;
-}
