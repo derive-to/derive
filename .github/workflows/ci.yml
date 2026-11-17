@@ -198,7 +198,7 @@ jobs:
   # WORKERD — split from `db` so the Postgres run (~110s) is the only thing on its
   # critical path; these two need no Docker and share nothing with it.
   workerd:
-    runs-on: ubicloud-standard-4
+    runs-on: ubuntu-latest # ~50s; free for a public repo, and well inside the Postgres lane's time
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
