@@ -37,7 +37,10 @@ concurrency:
 
 jobs:
   render-fidelity:
-    runs-on: ubicloud-standard-4 # see ci.yml for the runner rationale
+    runs-on: ubuntu-latest # free for a public repo; not on the gate's critical path
+    # The suite takes a few minutes; a run once sat for 2h40m before GitHub's 6h
+    # cap would have ended it. Fail fast instead of holding the PR's checks open.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup

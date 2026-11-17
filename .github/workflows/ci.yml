@@ -195,6 +195,14 @@ jobs:
           DERIVE_PG_WORKERS: 16
         run: pnpm test:pg
 
+  # WORKERD — split from `db` so the Postgres run (~110s) is the only thing on its
+  # critical path; these two need no Docker and share nothing with it.
+  workerd:
+    runs-on: ubuntu-latest # ~50s; free for a public repo, and well inside the Postgres lane's time
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+
       - name: Test against Cloudflare D1 (workerd)
         run: pnpm --filter @derive/db test:d1
 
@@ -211,8 +219,15 @@ jobs:
   # evidence says it earns that: in one week it caught a container base bump and
   # a better-sqlite3 native-build break, both on dependency PRs, both of which
   # every other lane passed.
+  #
+  # The two images build as two parallel jobs (a matrix): they share no layers,
+  # and the self-host build (~100s) no longer waits behind the runner one.
   images:
     runs-on: ubicloud-standard-8
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [runner, selfhost]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -234,7 +249,7 @@ jobs:
       # CLI's only dependency is fflate, pure JS. So an arch change would not break
       # this step; it just would not be building the thing that ships.)
       - name: Build runner image + start check
-        if: steps.filter.outputs.runner == 'true'
+        if: matrix.image == 'runner' && steps.filter.outputs.runner == 'true'
         # No agent/key on purpose: a healthy image exits 1 with the house
         # one-liner, not a stack trace — proves node, the CLI, and its deps wired.
         run: |
@@ -246,7 +261,7 @@ jobs:
       # it on every affecting PR so a bad production dependency graph, non-root
       # permission, SPA path, or healthcheck cannot wait until a version tag.
       - name: Build self-host image + readiness check
-        if: steps.filter.outputs.app_image == 'true'
+        if: matrix.image == 'selfhost' && steps.filter.outputs.app_image == 'true'
         run: |
           mkdir -p deploy/backups
           printf '%s\n' 'build-context-secret-canary' > deploy/.env
@@ -281,7 +296,7 @@ jobs:
   # rule, report success.
   gate:
     if: always()
-    needs: [check, tests, db, images]
+    needs: [check, tests, db, workerd, images]
     runs-on: ubuntu-latest
     steps:
       # `contains(needs.*.result, ...)` is GitHub's own reduction over the needs
@@ -295,12 +310,12 @@ jobs:
       - name: Fail if any lane did not pass
         if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
         run: |
-          echo "::error::a required lane did not pass — check=${{ needs.check.result }} tests=${{ needs.tests.result }} db=${{ needs.db.result }} images=${{ needs.images.result }}"
+          echo "::error::a required lane did not pass — check=${{ needs.check.result }} tests=${{ needs.tests.result }} db=${{ needs.db.result }} workerd=${{ needs.workerd.result }} images=${{ needs.images.result }}"
           exit 1
 
       - name: Summary
         run: |
-          echo "check=${{ needs.check.result }} tests=${{ needs.tests.result }} db=${{ needs.db.result }} images=${{ needs.images.result }}"
+          echo "check=${{ needs.check.result }} tests=${{ needs.tests.result }} db=${{ needs.db.result }} workerd=${{ needs.workerd.result }} images=${{ needs.images.result }}"
 
   # CD: ship main to the hosted tier (Workers + Hyperdrive/Neon, derive.to) once
   # both lanes pass. Schemas (D1 + Postgres) land BEFORE the worker flips, so a

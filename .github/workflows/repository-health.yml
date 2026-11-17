@@ -11,7 +11,7 @@ permissions:
 jobs:
   public-surface:
     if: github.repository == 'derive-to/derive'
-    runs-on: ubicloud-standard-4
+    runs-on: ubuntu-latest # free for a public repo; not on the gate's critical path
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
