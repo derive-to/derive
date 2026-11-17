@@ -24,14 +24,19 @@ export async function runSession(
 ) {
   tmux("kill-session", "-t", SESSION_TMUX)
   // The model login and job tokens reach the harness through a private file the wrapper
-  // deletes before exec, never through argv, which any process on the machine can read.
+  // deletes before exec, never through argv, which any process on the machine can read. The
+  // harness command line rides the same file: an agent's instructions page travels in
+  // `--append-system-prompt`, and tmux refuses a new-session command past its own limit
+  // ("command too long"), so the arguments never go through tmux at all.
   const dir = mkdtempSync(join(tmpdir(), "derive-session-"))
   const envFile = join(dir, "env")
   writeFileSync(
     envFile,
-    Object.entries(env ?? {})
-      .map(([k, v]) => `export ${k}=${shellQuote(v)}`)
-      .join("\n"),
+    [
+      ...Object.entries(env ?? {}).map(([k, v]) => `export ${k}=${shellQuote(v)}`),
+      // A shell variable, not exported: the harness never sees its own command line twice.
+      `DERIVE_SESSION_COMMAND=${shellQuote([bin, ...args].map(shellQuote).join(" "))}`,
+    ].join("\n"),
     { mode: 0o600 },
   )
   const started = tmux(
@@ -47,11 +52,9 @@ export async function runSession(
     cwd,
     "sh",
     "-c",
-    '. "$1"; rm -rf "$(dirname "$1")"; shift; exec "$@"',
+    '. "$1"; rm -rf "$(dirname "$1")"; eval "exec $DERIVE_SESSION_COMMAND"',
     "derive-session",
     envFile,
-    bin,
-    ...args,
   )
   if (started.status !== 0)
     throw Object.assign(new Error(`could not start the session: ${started.stderr.trim()}`), {
