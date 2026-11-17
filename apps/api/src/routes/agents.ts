@@ -169,6 +169,7 @@ export const agentRoutes = (ctx: AppContext) => {
       a.machine === "derive" && deps.runtime && a.sandbox_state_json
         ? JSON.parse(a.sandbox_state_json)
         : null
+    const sandbox = parseAgentSandbox(a.sandbox_json)
     return {
       id: a.id,
       name: a.name,
@@ -183,14 +184,16 @@ export const agentRoutes = (ctx: AppContext) => {
         a.machine === "derive" && deps.runtime
           ? {
               provider: sandboxState?.provider ?? sandboxProvider,
-              phase: a.sandbox_phase,
-              reason: sandboxState?.create_problem ?? null,
+              // A fresh agent's tasks each get their own machine. A shared sandbox left from
+              // before it went fresh is not what its tasks wait on, so its phase is not shown.
+              phase: sandbox.fresh ? null : a.sandbox_phase,
+              reason: sandbox.fresh ? null : (sandboxState?.create_problem ?? null),
             }
           : null,
       provider: a.provider,
       model: a.model,
       effort: a.effort,
-      sandbox: parseAgentSandbox(a.sandbox_json),
+      sandbox,
       ask_policy: a.ask_policy,
       spend_policy: a.spend_policy,
       write_policy: a.write_policy,

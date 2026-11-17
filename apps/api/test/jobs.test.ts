@@ -4839,6 +4839,23 @@ describe.runIf(process.env.DERIVE_TEST_DB === "pg")("jobs: managed Ortam machine
     expect(fixture.launches).toHaveLength(0)
   })
 
+  it("does not show a fresh agent a shared sandbox left from before", async () => {
+    const fixture = await cloudSetup("jobs-ortam-fresh-stale-runtime", { fresh: true })
+    const agent = await fixture.meta.getAgent(fixture.agent.id)
+    if (!agent) throw new Error("missing agent")
+    await fixture.meta.transitionAgentSandbox(agent.id, agent.org_id, agent.sandbox_rev, {
+      phase: "failed",
+      state_json: JSON.stringify({ failures: 1, create_problem: "old sandbox" }),
+    })
+    const response = await fixture.app.request(`/v1/agents/${fixture.agent.id}`, {
+      headers: as(owner.email),
+    })
+    const visible = (await response.json()) as {
+      runtime: { phase: string | null; reason: string | null }
+    }
+    expect(visible.runtime).toMatchObject({ phase: null, reason: null })
+  })
+
   it("retains a legacy shared creation without guessing its key's age", async () => {
     const fixture = await cloudSetup("jobs-ortam-shared-create-legacy", {
       reserveOnly: true,
