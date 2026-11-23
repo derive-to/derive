@@ -7,7 +7,7 @@
 # DERIVE_TOKEN, RUNNER_MODEL / RUNNER_TIMEOUT_MS / RUNNER_POLL_MS, GH_TOKEN (gh), plus
 # whatever the agent's tools expect. Each job's model account comes from the API; no model
 # key is baked in. See runner.compose.example.yml.
-FROM node:24-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03
+FROM node:26-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc
 
 # git: repo pointers clone at boot. python3 + gh: what context manifests most
 # commonly shell out to (doctor checks both, warn-only). uv: the launcher
