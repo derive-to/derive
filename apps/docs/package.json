@@ -17,14 +17,14 @@
   },
   "dependencies": {
     "@astrojs/mdx": "7.0.5",
-    "@astrojs/sitemap": "3.7.3",
-    "astro": "7.4.7"
+    "@astrojs/sitemap": "3.7.6",
+    "astro": "7.4.13"
   },
   "devDependencies": {
-    "@astrojs/check": "0.9.10",
-    "@astrojs/markdown-remark": "7.2.4",
-    "pagefind": "1.5.2",
+    "@astrojs/check": "0.9.12",
+    "@astrojs/markdown-remark": "7.3.9",
+    "pagefind": "1.6.0",
     "typescript": "6.0.3",
-    "wrangler": "4.122.0"
+    "wrangler": "4.163.0"
   }
 }
