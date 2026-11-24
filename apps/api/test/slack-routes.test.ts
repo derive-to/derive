@@ -132,7 +132,12 @@ describe("slack status + admin routes", () => {
   it("defaults Slack review DMs on, review email off, and lets each change independently", async () => {
     const { app } = make("slack-personal-prefs")
     const initial = await (await app.request("/v1/slack", { headers: as(owner.email) })).json()
-    expect(initial).toMatchObject({ slack_dm: true, review_email: false })
+    expect(initial).toMatchObject({
+      slack_dm: true,
+      review_email: false,
+      account_email: owner.email,
+      slack_email: null,
+    })
 
     const emailOn = await (
       await app.request("/v1/slack/prefs", {
@@ -149,6 +154,98 @@ describe("slack status + admin routes", () => {
       })
     ).json()
     expect(slackOff).toMatchObject({ slack_dm: false, review_email: true })
+
+    const savedEmail = await (
+      await app.request("/v1/slack/prefs", {
+        ...jsonAs(as(owner.email), { slack_email: "Sift@Example.com" }),
+        method: "PATCH",
+      })
+    ).json()
+    expect(savedEmail).toMatchObject({ slack_email: "sift@example.com" })
+  })
+
+  it("keeps Slack lookup emails separate for the same user in two workspaces", async () => {
+    const { app, meta } = make("slack-workspace-emails")
+    for (const orgId of ["org-derive", "org-sift"]) {
+      await meta.setWorkspace(orgId, orgId)
+      await meta.setMembership({
+        id: `membership-${orgId}`,
+        org_id: orgId,
+        user_id: owner.id,
+        role: "owner",
+      })
+    }
+    await meta.setUserNotificationPref({
+      id: "pref-derive",
+      org_id: "org-derive",
+      user_id: owner.id,
+      prefs: JSON.stringify({ slackEmail: "anir@derive.example" }),
+      created_at: new Date().toISOString(),
+    })
+    await meta.setUserNotificationPref({
+      id: "pref-sift",
+      org_id: "org-sift",
+      user_id: owner.id,
+      prefs: JSON.stringify({ slackEmail: "anir@sift.example" }),
+      created_at: new Date().toISOString(),
+    })
+
+    const derive = await (
+      await app.request("/v1/slack", {
+        headers: { ...as(owner.email), cookie: "derive_ws=org-derive" },
+      })
+    ).json()
+    const sift = await (
+      await app.request("/v1/slack", {
+        headers: { ...as(owner.email), cookie: "derive_ws=org-sift" },
+      })
+    ).json()
+
+    expect(derive).toMatchObject({
+      account_email: owner.email,
+      slack_email: "anir@derive.example",
+    })
+    expect(sift).toMatchObject({
+      account_email: owner.email,
+      slack_email: "anir@sift.example",
+    })
+  })
+
+  it("sends fixed test DMs to a deduplicated email list through the active workspace", async () => {
+    const { app, meta } = make("slack-test-dm-list")
+    await meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Acme",
+      bot_token: encryptSecret("xoxb-1", KEY),
+      bot_user_id: "UBOT",
+      created_at: new Date().toISOString(),
+    })
+    const lookups: string[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.includes("/users.lookupByEmail")) {
+          lookups.push(new URL(url).searchParams.get("email") ?? "")
+          return Response.json({ ok: true, user: { id: `U${lookups.length}` } })
+        }
+        if (url.endsWith("/conversations.open"))
+          return Response.json({ ok: true, channel: { id: "D1" } })
+        const body = JSON.parse(String(init?.body)) as { channel: string }
+        return Response.json({ ok: true, ts: "1.1", channel: body.channel })
+      }),
+    )
+
+    const response = await app.request("/v1/slack/test-dm", {
+      ...jsonAs(as(owner.email), {
+        emails: ["Anir@Derive.example", "anir@derive.example", "anir@sift.example"],
+      }),
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ ok: true, sent: 2, total: 2 })
+    expect(lookups).toEqual(["anir@derive.example", "anir@sift.example"])
   })
 
   it("persists an OAuth install and returns an explicit success handoff", async () => {
