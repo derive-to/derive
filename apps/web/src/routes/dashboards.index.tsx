@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router"
 import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
+import { requireAuth } from "@/lib/route-guards"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { DashboardsIndex } from "@/pages/dashboards"
 
@@ -19,5 +20,6 @@ function DashboardsPage() {
 }
 
 export const Route = createFileRoute("/dashboards/")({
+  beforeLoad: requireAuth,
   component: DashboardsPage,
 })
