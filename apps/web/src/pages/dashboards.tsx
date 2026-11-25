@@ -1,14 +1,18 @@
 import "derive-dashboards/react/theme.css"
-import { useNavigate, useRouter } from "@tanstack/react-router"
+import "derive-dashboards/charts-react/chart.css"
+import { useLocation, useNavigate, useRouter } from "@tanstack/react-router"
+import { CHARTS_RENDERERS } from "derive-dashboards/charts-react"
+import { type ViewState, withView } from "derive-dashboards/core"
+import { decodeView } from "derive-dashboards/core/schema"
 import {
   createDashboardsClient,
   Dashboard,
   DashboardList,
   DashboardsProvider,
   type LinkProps,
+  type ViewChange,
 } from "derive-dashboards/react"
-import { RECHARTS_RENDERERS } from "derive-dashboards/recharts"
-import type { ReactNode } from "react"
+import { type ReactNode, useEffect, useRef, useState } from "react"
 import { useAuth } from "@/ctx"
 import { DASHBOARDS_BASE } from "@/lib/dashboards"
 
@@ -49,7 +53,7 @@ function DashboardsShell({ children }: { children: ReactNode }) {
     <div className="dd-host">
       <DashboardsProvider
         client={dashboardsClient}
-        renderers={RECHARTS_RENDERERS}
+        renderers={CHARTS_RENDERERS}
         link={RouterLink}
         viewerKey={me?.id ?? "signed-out"}
       >
@@ -74,9 +78,41 @@ export function DashboardsIndex() {
 
 /** One dashboard: its tiles, its drill-ins (items link where the server says), and edit mode. */
 export function DashboardView({ id }: { id: string }) {
+  const router = useRouter()
+  const search = useLocation({ select: (location) => location.searchStr })
+  const written = useRef(search)
+  const [current, setCurrent] = useState(() => decodeView(new URLSearchParams(search)))
+
+  // A new drill is held in React until the server returns its shareable path.
+  // Back and Forward read the URL. Our own writes keep the in-flight drill intact.
+  useEffect(() => {
+    if (search === written.current) return
+    written.current = search
+    setCurrent(decodeView(new URLSearchParams(search)))
+  }, [search])
+
+  const onViewChange = (view: ViewState, { history }: ViewChange) => {
+    setCurrent({ view, dropped: [] })
+    const location = router.history.location
+    const params = withView(location.search, view).toString()
+    const nextSearch = params ? `?${params}` : ""
+    if (history === "replace" && nextSearch === location.search) return
+    written.current = nextSearch
+    const href = `${location.pathname}${nextSearch}${location.hash}`
+    if (history === "push") router.history.push(href)
+    else router.history.replace(href)
+  }
+
   return (
     <DashboardsShell>
-      <Dashboard id={id} />
+      <Dashboard
+        id={id}
+        tiles="cards"
+        view={current.view}
+        onViewChange={onViewChange}
+        linkDropped={current.dropped}
+        filterBar={{ shortcuts: false }}
+      />
     </DashboardsShell>
   )
 }

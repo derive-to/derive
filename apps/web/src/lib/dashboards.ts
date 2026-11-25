@@ -6,7 +6,7 @@ export const DASHBOARDS_BASE = `${API_BASE}/v1/dashboards`
 
 /** Whether this instance serves dashboards. Seeded by the bootstrap (`dashboards`); asked
  *  directly only when the bootstrap has not answered. Kept free of the library itself: the
- *  rail reads it on every page, and the library loads only with the Dashboards route. */
+ *  search palette reads it, and the library loads only with the Dashboards route. */
 export const dashboardsAvailableQuery = () =>
   queryOptions({
     queryKey: ["dashboards", "available"] as const,

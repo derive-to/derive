@@ -13,6 +13,12 @@ const throughArtifact = {
 /** Whole days, counted in SQL. */
 const WHOLE = { scale: 0, stored: "decimal" } as const
 
+const finishedRun = {
+  member: "job.status",
+  op: "in",
+  values: ["Succeeded", "Failed", "Cancelled"],
+} as const
+
 /** A text field whose column values read as labels: a SQL CASE, the rest `otherwise`. */
 const labelled = (
   column: string,
@@ -80,6 +86,20 @@ export const dashboardsModel = defineModel({
       noun: { one: "artifact", other: "artifacts" },
       measures: {
         count: { kind: "count", merge: "sum", label: "Artifacts" },
+        uncollected: {
+          kind: "count",
+          where: { member: "artifact.inCollection", op: "equals", values: [false] },
+          merge: "sum",
+          label: "Artifacts outside collections",
+        },
+        uncollectedShare: {
+          kind: "ratio",
+          numerator: "uncollected",
+          denominator: "count",
+          merge: "none",
+          format: "percent",
+          label: "Not in a collection",
+        },
         idle: {
           kind: "max",
           of: "idle_days",
@@ -106,6 +126,12 @@ export const dashboardsModel = defineModel({
           drill: false,
         },
         quiet: { kind: "boolean", column: "quiet", label: "No version in 90 days", drill: false },
+        idleDays: {
+          kind: "number",
+          column: "idle_days",
+          label: "Days since a version",
+          drill: false,
+        },
         createdAt: published("Created"),
         lastVersionAt: {
           kind: "time",
@@ -119,16 +145,30 @@ export const dashboardsModel = defineModel({
     version: {
       in: "main",
       sql: `
-        SELECT v.*, a.short_id AS artifact_short_id
+        SELECT v.*, a.short_id AS artifact_short_id, a.title AS artifact_title
         FROM version v JOIN artifact a ON a.id = v.artifact_id`,
-      key: ["id", "artifact_short_id"],
+      key: ["id", "artifact_short_id", "n"],
       time: "createdAt",
       // What a drill breaks down by, in this order.
-      drill: { prefer: ["madeBy", "author", "source", "agent", "artifact.kind", "artifact.title"] },
+      drill: { prefer: ["source", "agent", "madeBy", "author", "artifact.kind", "artifact.title"] },
       ...throughArtifact,
       noun: { one: "version", other: "versions" },
       measures: {
         count: { kind: "count", merge: "sum", label: "Versions" },
+        byAgents: {
+          kind: "count",
+          where: { member: "version.madeBy", op: "equals", values: ["Agents"] },
+          merge: "sum",
+          label: "Versions published by agents",
+        },
+        agentShare: {
+          kind: "ratio",
+          numerator: "byAgents",
+          denominator: "count",
+          merge: "none",
+          format: "percent",
+          label: "Share by agents",
+        },
         publishers: {
           kind: "count",
           distinct: "author_id",
@@ -137,7 +177,9 @@ export const dashboardsModel = defineModel({
         },
       },
       dimensions: {
+        artifactTitle: { ...text("artifact_title", "Artifact"), drill: false },
         author: text("author", "Person"),
+        authorId: { ...text("author_id", "Person"), shownAs: "author", drill: false },
         number: { kind: "number", column: "n", label: "Version number" },
         source: labelled(
           "source",
@@ -170,13 +212,15 @@ export const dashboardsModel = defineModel({
       },
       records: {
         order: [["createdAt", "desc"]],
-        columns: ["author", "madeBy", "source", "createdAt"],
+        columns: ["artifactTitle", "number", "author", "madeBy", "source", "createdAt"],
       },
     },
     view: {
-      table: "view",
       in: "main",
-      key: ["id"],
+      sql: `
+        SELECT v.*, a.short_id AS artifact_short_id, a.title AS artifact_title
+        FROM view v JOIN artifact a ON a.id = v.artifact_id`,
+      key: ["id", "artifact_short_id", "version"],
       time: "createdAt",
       // What a drill breaks down by, in this order.
       drill: { prefer: ["from", "artifact.title"] },
@@ -184,19 +228,23 @@ export const dashboardsModel = defineModel({
       noun: { one: "view", other: "views" },
       measures: { count: { kind: "count", merge: "sum", label: "Views" } },
       dimensions: {
+        artifactTitle: { ...text("artifact_title", "Artifact"), drill: false },
         from: labelled("viewer_kind", [[["user"], "Members"]], "Shared links", "From"),
         createdAt: published("Viewed"),
       },
+      records: { order: [["createdAt", "desc"]], columns: ["artifactTitle", "from", "createdAt"] },
     },
     // One row per artifact and reader: when they first opened it, how often, and whether they
     // stayed long enough to read it (Derive's confirmed read).
     visit: {
       in: "main",
+      // Record keys travel to the browser. Use a view ID so the key never contains a reader ID.
       sql: `
-        SELECT v.artifact_id || ':' || v.viewer AS id, v.artifact_id, v.viewer, v.viewer_kind,
+        SELECT min(v.id) AS id, v.artifact_id,
           min(v.created_at) AS created_at, count(*) AS views,
           bool_or(r.viewer IS NOT NULL) AS read_through,
-          max(coalesce(u.name, 'Visitor')) AS reader, max(a.short_id) AS artifact_short_id
+          max(coalesce(u.name, 'Visitor')) AS reader, max(a.short_id) AS artifact_short_id,
+          max(a.title) AS artifact_title
         FROM view v
         JOIN artifact a ON a.id = v.artifact_id
         LEFT JOIN view_read r ON r.artifact_id = v.artifact_id AND r.viewer = v.viewer
@@ -205,7 +253,7 @@ export const dashboardsModel = defineModel({
       key: ["id", "artifact_short_id"],
       time: "createdAt",
       // What a drill breaks down by, in this order.
-      drill: { prefer: ["readThrough", "reader", "artifact.title"] },
+      drill: { prefer: ["artifact.title", "reader", "readThrough"] },
       ...throughArtifact,
       noun: { one: "reader", other: "readers" },
       measures: {
@@ -221,13 +269,20 @@ export const dashboardsModel = defineModel({
           numerator: "read",
           denominator: "readers",
           merge: "none",
+          format: "percent",
           label: "Read through",
         },
       },
       dimensions: {
+        artifactTitle: { ...text("artifact_title", "Artifact"), drill: false },
         reader: { ...text("reader", "Reader"), sensitive: true },
         readThrough: { kind: "boolean", column: "read_through", label: "Read through" },
         createdAt: published("First opened"),
+      },
+      records: {
+        title: "artifactTitle",
+        order: [["createdAt", "desc"]],
+        columns: ["artifactTitle", "createdAt"],
       },
     },
     job: {
@@ -265,17 +320,16 @@ export const dashboardsModel = defineModel({
         count: { kind: "count", merge: "sum", label: "Agent runs" },
         finished: {
           kind: "count",
-          where: {
-            member: "job.status",
-            op: "in",
-            values: ["Succeeded", "Failed", "Cancelled"],
-          },
+          where: finishedRun,
           merge: "sum",
           label: "Finished",
         },
         succeeded: {
           kind: "count",
-          where: { member: "job.status", op: "equals", values: ["Succeeded"] },
+          // The drill compares the two filters to prove each success is in the finished set.
+          where: {
+            all: [finishedRun, { member: "job.status", op: "equals", values: ["Succeeded"] }],
+          },
           merge: "sum",
           label: "Succeeded",
         },
@@ -284,6 +338,7 @@ export const dashboardsModel = defineModel({
           numerator: "succeeded",
           denominator: "finished",
           merge: "none",
+          format: "percent",
           label: "Succeeded",
         },
         waiting: {
@@ -327,10 +382,10 @@ export const dashboardsModel = defineModel({
       in: "main",
       sql: `
         SELECT DISTINCT ON (c.thread_id) c.thread_id AS id, c.artifact_id, c.author, c.state,
-          (SELECT a.short_id FROM artifact a WHERE a.id = c.artifact_id) AS artifact_short_id,
+          a.short_id AS artifact_short_id, a.title AS artifact_title,
           c.created_at, left(regexp_replace(c.body_md, '\\s+', ' ', 'g'), 140) AS excerpt,
           floor(extract(epoch FROM now() - c.created_at::timestamptz) / 86400) AS age_days
-        FROM comment c
+        FROM comment c JOIN artifact a ON a.id = c.artifact_id
         ORDER BY c.thread_id, c.created_at`,
       key: ["id", "artifact_short_id"],
       time: "createdAt",
@@ -352,7 +407,13 @@ export const dashboardsModel = defineModel({
         state: text("state", "State"),
         author: text("author", "Started by"),
         excerpt: { ...text("excerpt", "Thread"), drill: false },
+        artifactTitle: { ...text("artifact_title", "Artifact"), drill: false },
+        daysOpen: { kind: "number", column: "age_days", label: "Days open", drill: false },
         createdAt: published("Started"),
+      },
+      records: {
+        order: [["createdAt", "asc"]],
+        columns: ["excerpt", "artifactTitle", "author", "createdAt", "state"],
       },
     },
     // Everything a person did on an artifact: published a version, commented, or opened it.
@@ -384,13 +445,16 @@ export const dashboardsModel = defineModel({
       },
       dimensions: {
         person: text("person", "Person"),
+        personId: { ...text("person_id", "Person"), shownAs: "person", drill: false },
         act: text("act", "Did"),
         createdAt: published("When"),
       },
     },
     member: {
-      table: "membership",
       in: "main",
+      sql: `
+        SELECT m.id, m.org_id, m.role, m.created_at, coalesce(u.name, 'Workspace member') AS name
+        FROM membership m LEFT JOIN "user" u ON u.id = m.user_id`,
       key: ["id"],
       time: "createdAt",
       // What a drill breaks down by, in this order.
@@ -400,9 +464,11 @@ export const dashboardsModel = defineModel({
       noun: { one: "member", other: "members" },
       measures: { count: { kind: "count", merge: "sum", label: "Members" } },
       dimensions: {
+        name: { ...text("name", "Member"), drill: false },
         role: text("role", "Seat"),
         createdAt: published("Joined"),
       },
+      records: { order: [["createdAt", "asc"]], columns: ["name", "role", "createdAt"] },
     },
   },
 })

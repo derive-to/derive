@@ -15,6 +15,8 @@ import {
 } from "@/components/ui/command"
 import { Kbd } from "@/components/ui/kbd"
 import { colorForName } from "@/lib/avatar-tints"
+import { useBootGate } from "@/lib/bootstrap"
+import { dashboardsAvailableQuery } from "@/lib/dashboards"
 import { fuzzyTitles } from "@/lib/fuzzy"
 import { splitMatches } from "@/lib/highlight"
 import { getMonogram } from "@/lib/initials"
@@ -62,6 +64,11 @@ export function CommandPalette() {
   // signed-in-only, so no `enabled` gate is needed.
   const { data: collections = [] } = useQuery(collectionsQuery())
   const { data: workspaces } = useQuery(workspacesQuery())
+  const bootGate = useBootGate()
+  const { data: dashboardsOn = false } = useQuery({
+    ...dashboardsAvailableQuery(),
+    enabled: paletteOpen && bootGate,
+  })
   const nav = useNavigate()
   const prefetch = usePrefetchArtifact()
   const [query, setQuery] = useState("")
@@ -205,6 +212,7 @@ export function CommandPalette() {
   const showFav = "favorites".includes(q)
   const showFollowing = "following".includes(q)
   const showTemplates = "templates".includes(q) || "start from a template".includes(q)
+  const showDashboards = dashboardsOn && ("dashboards".includes(q) || "analytics".includes(q))
   const showSkills = "skills".includes(q) || "shared skills".includes(q)
   // The way back to the connection instructions after onboarding.
   const showConnect =
@@ -231,6 +239,7 @@ export function CommandPalette() {
             showFollowing ||
             showTemplates ||
             showSkills ||
+            showDashboards ||
             showConnect) && (
             <CommandGroup heading="Jump to">
               {showAgents && (
@@ -281,6 +290,15 @@ export function CommandPalette() {
               {showSkills && (
                 <CommandItem value="jump-skills" onSelect={() => go(() => nav({ to: "/skills" }))}>
                   <Icon name="skill" size={16} /> Skills
+                </CommandItem>
+              )}
+              {showDashboards && (
+                <CommandItem
+                  value="jump-dashboards"
+                  data-testid="palette-dashboards"
+                  onSelect={() => go(() => nav({ to: "/dashboards" }))}
+                >
+                  <Icon name="insights" size={16} /> Dashboards
                 </CommandItem>
               )}
               {showConnect && (

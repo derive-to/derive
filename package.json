@@ -57,7 +57,8 @@
     "patchedDependencies": {
       "knip@6.16.1": "patches/knip@6.16.1.patch",
       "http-cache-semantics@4.3.0": "patches/http-cache-semantics@4.3.0.patch",
-      "@better-auth/oauth-provider@1.7.13": "patches/@better-auth__oauth-provider@1.7.13.patch"
+      "@better-auth/oauth-provider@1.7.13": "patches/@better-auth__oauth-provider@1.7.13.patch",
+      "derive-dashboards@0.15.0": "patches/derive-dashboards@0.15.0.patch"
     }
   },
   "scripts": {

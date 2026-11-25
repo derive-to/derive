@@ -74,7 +74,7 @@ export const bootstrapRoutes = (ctx: AppContext) => {
                 dashboards: z
                   .boolean()
                   .describe(
-                    "Whether this instance serves dashboards (/v1/dashboards): on Postgres yes, on SQLite and D1 no. The rail shows Dashboards only when true.",
+                    "Whether this instance serves dashboards (/v1/dashboards): on Postgres yes, on SQLite and D1 no.",
                   ),
               }),
             },

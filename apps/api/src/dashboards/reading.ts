@@ -6,7 +6,6 @@ import {
   measure,
   number,
   over,
-  share,
   top,
   where,
 } from "./parts"
@@ -18,7 +17,7 @@ import {
 export const READING = dashboard(
   "reading",
   "Reading",
-  "Who reads what the workspace publishes, and what nobody opened.",
+  "See what people open and read. Each reader counts once per artifact.",
   [
     {
       height: 2,
@@ -48,8 +47,7 @@ export const READING = dashboard(
           number(
             "Read through",
             ask("visit", {
-              measures: [measure("m_part", "visit.read"), measure("m_whole", "visit.readers")],
-              ...share("Read through"),
+              measures: [measure("m_share", "visit.readRate")],
               time: over("visit"),
             }),
           ),

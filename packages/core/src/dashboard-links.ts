@@ -5,9 +5,10 @@
  */
 export const DASHBOARD_ITEM_LINKS = {
   artifact: "/artifacts/{key.short_id}",
-  version: "/artifacts/{key.artifact_short_id}",
+  version: "/artifacts/{key.artifact_short_id}@v{key.n}",
+  view: "/artifacts/{key.artifact_short_id}@v{key.version}",
   visit: "/artifacts/{key.artifact_short_id}",
-  thread: "/artifacts/{key.artifact_short_id}",
+  thread: "/artifacts/{key.artifact_short_id}?comment={key.id}",
   activity: "/artifacts/{key.artifact_short_id}",
   job: "/tasks/{key.id}",
 } as const

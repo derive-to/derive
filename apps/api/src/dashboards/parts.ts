@@ -2,7 +2,8 @@ import type { CodeDashboard, StoredQuery } from "derive-dashboards/core"
 
 type Doc = CodeDashboard["document"]
 type Widget = Doc["widgets"][string]
-type Layout = Doc["tabs"][number]["layout"][number]
+type Layout = NonNullable<Doc["tabs"]>[number]["layout"][number]
+type Control = NonNullable<Doc["controls"]>[number]
 type Query = Omit<StoredQuery, "kind" | "source">
 
 /** The range every built-in dashboard opens on. */
@@ -48,21 +49,6 @@ export const number = (title: string, main: StoredQuery): Widget => ({
   queries: { main },
 })
 
-/** A share of a total, in percent points: `m_part` over `m_whole`, both entries of the query. */
-export const share = (label: string) => ({
-  calc: [
-    {
-      id: "c_share",
-      formula: {
-        op: "*" as const,
-        args: [{ op: "/" as const, args: [{ ref: "m_part" }, { ref: "m_whole" }] }, { lit: 100 }],
-      } as const,
-      format: "percent" as const,
-      label,
-    },
-  ],
-})
-
 /** The one control every built-in dashboard has: its range. Filters come from clicking the data. */
 export const RANGE = {
   id: "range",
@@ -70,6 +56,7 @@ export const RANGE = {
   kind: "date_range" as const,
   presets: [
     { last: 7, unit: "day" as const, includeCurrent: true },
+    { last: 14, unit: "day" as const, includeCurrent: true },
     LAST_30,
     { last: 90, unit: "day" as const, includeCurrent: true },
   ],
@@ -87,6 +74,7 @@ export const dashboard = (
     height: number
     tiles: readonly (readonly [id: string, width: number, widget: Widget])[]
   }[],
+  filters: readonly Control[] = [],
 ): CodeDashboard => {
   const layout: Layout[] = []
   const widgets: Record<string, Widget> = {}
@@ -107,7 +95,7 @@ export const dashboard = (
       meta: { title, description },
       tabs: [{ id: "main", title, layout }],
       widgets,
-      controls: [RANGE],
+      controls: [RANGE, ...filters],
       scope: { bySource: {} },
     },
   }

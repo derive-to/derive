@@ -24,7 +24,6 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useAuth } from "@/ctx"
 import { useBootGate } from "@/lib/bootstrap"
-import { dashboardsAvailableQuery } from "@/lib/dashboards"
 import { getMonogram } from "@/lib/initials"
 import {
   collectionsQuery,
@@ -152,7 +151,7 @@ function NavItem({
   icon: IconName
   label: string
   count?: number
-  to: "/agents" | "/inbox" | "/skills" | "/chat" | "/dashboards"
+  to: "/agents" | "/inbox" | "/skills" | "/chat"
   active: boolean
   testId?: string
 }) {
@@ -366,11 +365,6 @@ export function NavRail() {
     enabled: !!me && bootGate,
   })
   const { data: workspaces } = useQuery({ ...workspacesQuery(), enabled: !!me })
-  // Dashboards exist only where the instance serves them (Postgres); the boot batch says so.
-  const { data: dashboardsOn = false } = useQuery({
-    ...dashboardsAvailableQuery(),
-    enabled: !!me && bootGate,
-  })
   // The Inbox count: jobs waiting on this person. Seeded by the boot batch and refreshed by
   // job events; the slow timer only catches what sends this person no event (a teammate
   // answering a job on an agent they manage).
@@ -455,16 +449,6 @@ export function NavRail() {
                 active={loc.pathname === "/chat"}
                 testId="nav-chat"
               />
-              {/* Only where the instance serves dashboards (Postgres): the bootstrap says so. */}
-              {dashboardsOn ? (
-                <NavItem
-                  icon="insights"
-                  label="Dashboards"
-                  to="/dashboards"
-                  active={loc.pathname.startsWith("/dashboards")}
-                  testId="nav-dashboards"
-                />
-              ) : null}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

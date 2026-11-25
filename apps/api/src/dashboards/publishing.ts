@@ -6,7 +6,6 @@ import {
   measure,
   number,
   over,
-  share,
   top,
   where,
 } from "./parts"
@@ -61,14 +60,7 @@ export const PUBLISHING = dashboard(
           number(
             "Published by agents",
             ask("version", {
-              measures: [
-                {
-                  ...measure("m_part", "version.count"),
-                  filter: where("agents", "version.madeBy", "Agents"),
-                },
-                measure("m_whole", "version.count"),
-              ],
-              ...share("Share by agents"),
+              measures: [measure("m_share", "version.agentShare")],
               time: over("version"),
             }),
           ),
@@ -76,11 +68,11 @@ export const PUBLISHING = dashboard(
       ],
     },
     {
-      height: 4,
+      height: 3,
       tiles: [
         [
           "perDay",
-          8,
+          12,
           {
             kind: "bar",
             title: "Versions per day",
@@ -88,16 +80,26 @@ export const PUBLISHING = dashboard(
               main: ask("version", {
                 measures: [versions],
                 dimensions: [{ id: "who", member: "version.madeBy" }],
-                time: { ...over("version"), grain: "day" },
+                time: { ...againstBefore("version"), grain: "day" },
                 fill: "zero",
               }),
             },
-            display: { colors: { People: "var(--dd-series-1)", Agents: "var(--dd-series-2)" } },
+            display: {
+              colors: {
+                People: "var(--dd-publisher-people)",
+                Agents: "var(--dd-publisher-agents)",
+              },
+            },
           },
         ],
+      ],
+    },
+    {
+      height: 4,
+      tiles: [
         [
           "bySource",
-          4,
+          5,
           {
             kind: "bar",
             title: "By source",
@@ -107,28 +109,6 @@ export const PUBLISHING = dashboard(
                 dimensions: [{ id: "s", member: "version.source" }],
                 time: over("version"),
                 ...top("m_n", 5),
-              }),
-            },
-          },
-        ],
-      ],
-    },
-    {
-      height: 5,
-      tiles: [
-        [
-          "byPerson",
-          5,
-          {
-            kind: "bar",
-            title: "Top publishers",
-            queries: {
-              main: ask("version", {
-                measures: [versions],
-                dimensions: [{ id: "who", member: "version.author" }],
-                time: over("version"),
-                ...top("m_n", 6),
-                other: true,
               }),
             },
           },
@@ -161,6 +141,39 @@ export const PUBLISHING = dashboard(
           },
         ],
       ],
+    },
+    {
+      height: 4,
+      tiles: [
+        [
+          "byPerson",
+          12,
+          {
+            kind: "bar",
+            title: "Top publishers",
+            queries: {
+              main: ask("version", {
+                measures: [versions],
+                dimensions: [{ id: "who", member: "version.author" }],
+                time: over("version"),
+                ...top("m_n", 6),
+                other: true,
+              }),
+            },
+          },
+        ],
+      ],
+    },
+  ],
+  [
+    {
+      id: "publisher",
+      label: "Publisher type",
+      kind: "filter",
+      member: "version.madeBy",
+      ops: ["equals"],
+      values: ["Agents", "People"],
+      multi: false,
     },
   ],
 )
