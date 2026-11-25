@@ -119,12 +119,12 @@ export const dashboardsModel = defineModel({
     version: {
       in: "main",
       sql: `
-        SELECT v.*, a.short_id AS artifact_short_id
+        SELECT v.*, a.short_id AS artifact_short_id, a.title AS artifact_title
         FROM version v JOIN artifact a ON a.id = v.artifact_id`,
-      key: ["id", "artifact_short_id"],
+      key: ["id", "artifact_short_id", "n"],
       time: "createdAt",
       // What a drill breaks down by, in this order.
-      drill: { prefer: ["madeBy", "author", "source", "agent", "artifact.kind", "artifact.title"] },
+      drill: { prefer: ["source", "agent", "madeBy", "author", "artifact.kind", "artifact.title"] },
       ...throughArtifact,
       noun: { one: "version", other: "versions" },
       measures: {
@@ -137,6 +137,7 @@ export const dashboardsModel = defineModel({
         },
       },
       dimensions: {
+        artifactTitle: { ...text("artifact_title", "Artifact"), drill: false },
         author: text("author", "Person"),
         number: { kind: "number", column: "n", label: "Version number" },
         source: labelled(
@@ -170,13 +171,15 @@ export const dashboardsModel = defineModel({
       },
       records: {
         order: [["createdAt", "desc"]],
-        columns: ["author", "madeBy", "source", "createdAt"],
+        columns: ["artifactTitle", "number", "author", "madeBy", "source", "createdAt"],
       },
     },
     view: {
-      table: "view",
       in: "main",
-      key: ["id"],
+      sql: `
+        SELECT v.*, a.short_id AS artifact_short_id, a.title AS artifact_title
+        FROM view v JOIN artifact a ON a.id = v.artifact_id`,
+      key: ["id", "artifact_short_id", "version"],
       time: "createdAt",
       // What a drill breaks down by, in this order.
       drill: { prefer: ["from", "artifact.title"] },
@@ -184,9 +187,11 @@ export const dashboardsModel = defineModel({
       noun: { one: "view", other: "views" },
       measures: { count: { kind: "count", merge: "sum", label: "Views" } },
       dimensions: {
+        artifactTitle: { ...text("artifact_title", "Artifact"), drill: false },
         from: labelled("viewer_kind", [[["user"], "Members"]], "Shared links", "From"),
         createdAt: published("Viewed"),
       },
+      records: { order: [["createdAt", "desc"]], columns: ["artifactTitle", "from", "createdAt"] },
     },
     // One row per artifact and reader: when they first opened it, how often, and whether they
     // stayed long enough to read it (Derive's confirmed read).

@@ -477,8 +477,12 @@
   --dd-good-soft: color-mix(in oklab, var(--success) 14%, transparent);
   --dd-warn: var(--warning);
   --dd-warn-soft: color-mix(in oklab, var(--warning) 14%, transparent);
-  --dd-radius: var(--radius);
-  --dd-font: inherit;
+  --dd-radius: var(--radius-lg);
+  --dd-font: var(--font-sans);
+  --dd-card-shadow: var(--shadow-sm);
+  --dd-drill-panel: clamp(23rem, 31vw, 28rem);
+  --dd-publisher-agents: color-mix(in oklab, var(--color-share) 80%, var(--foreground));
+  --dd-publisher-people: color-mix(in oklab, var(--color-share) 44%, var(--card));
   /* Chart series, in a fixed order checked for color-blind separation on Derive's card:
      blue, orange, aqua, yellow, magenta, green. People are always blue, agents orange. */
   --dd-series-1: #2a78d6;
@@ -502,4 +506,53 @@
   --dd-series-4: #c98500;
   --dd-series-5: #d55181;
   --dd-series-6: #008300;
+}
+
+.dd-host .dd-title {
+  font-size: clamp(var(--text-2xl), 3.2vw, var(--text-4xl));
+  letter-spacing: -0.045em;
+}
+
+.dd-host .dd-drill-drawer::backdrop {
+  background: color-mix(in srgb, var(--scrim) 10%, transparent);
+}
+
+/* Keep the selected chart in view next to the drill on wide screens. The library
+   still owns focus, the narrow-screen drawer, and the full-width records table. */
+@media (min-width: 1280px) {
+  .dd-host .dd-dashboard:has(.dd-drill-drawer[open] > .dd-drill:not([data-wide])) > .dd-board {
+    margin-inline-end: calc(var(--dd-drill-panel) - 2rem);
+  }
+}
+
+.dd-host .dd-list ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  gap: 0.75rem;
+}
+
+.dd-host .dd-list-open {
+  height: 100%;
+  min-height: 6rem;
+  justify-content: center;
+  gap: 0.25rem;
+  padding: 1rem;
+  border: 1px solid var(--dd-line);
+  border-radius: var(--dd-radius);
+  background: var(--dd-surface);
+}
+
+.dd-host .dd-list-open:hover,
+.dd-host .dd-list-open:focus-visible {
+  background: var(--dd-accent-soft);
+}
+
+.dd-host .dd-list-title {
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.dd-host .dd-list-desc {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }

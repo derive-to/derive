@@ -2,7 +2,8 @@ import type { CodeDashboard, StoredQuery } from "derive-dashboards/core"
 
 type Doc = CodeDashboard["document"]
 type Widget = Doc["widgets"][string]
-type Layout = Doc["tabs"][number]["layout"][number]
+type Layout = NonNullable<Doc["tabs"]>[number]["layout"][number]
+type Control = NonNullable<Doc["controls"]>[number]
 type Query = Omit<StoredQuery, "kind" | "source">
 
 /** The range every built-in dashboard opens on. */
@@ -70,6 +71,7 @@ export const RANGE = {
   kind: "date_range" as const,
   presets: [
     { last: 7, unit: "day" as const, includeCurrent: true },
+    { last: 14, unit: "day" as const, includeCurrent: true },
     LAST_30,
     { last: 90, unit: "day" as const, includeCurrent: true },
   ],
@@ -87,6 +89,7 @@ export const dashboard = (
     height: number
     tiles: readonly (readonly [id: string, width: number, widget: Widget])[]
   }[],
+  filters: readonly Control[] = [],
 ): CodeDashboard => {
   const layout: Layout[] = []
   const widgets: Record<string, Widget> = {}
@@ -107,7 +110,7 @@ export const dashboard = (
       meta: { title, description },
       tabs: [{ id: "main", title, layout }],
       widgets,
-      controls: [RANGE],
+      controls: [RANGE, ...filters],
       scope: { bySource: {} },
     },
   }
