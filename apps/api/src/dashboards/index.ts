@@ -1,7 +1,8 @@
 import { DASHBOARD_ITEM_LINKS, type MetaStore, type Role, roleAllows } from "@derive/core"
 import { deriveDashboards } from "derive-dashboards"
-import type { Viewer } from "derive-dashboards/core"
+import { MIN_SECRET_BYTES, type Viewer } from "derive-dashboards/core"
 import { trustedWebOrigins } from "../auth-config"
+import { sha256 } from "../lib/crypto"
 import { AGENTS } from "./agents"
 import { HEALTH } from "./health"
 import { dashboardsModel } from "./model"
@@ -22,6 +23,11 @@ export const DASHBOARDS_PATH = "/v1/dashboards"
 export const createDashboards = ({ meta, trustedOrigins, secret }: DashboardsHost) => {
   const backend = meta.dashboards
   if (!backend) return null
+  // Keep keys the library already accepts so outstanding receipts stay valid.
+  const signingKey =
+    secret !== undefined && new TextEncoder().encode(secret).length < MIN_SECRET_BYTES
+      ? sha256(secret)
+      : secret
   const viewers = new WeakMap<Request, WorkspaceViewer>()
   const server = deriveDashboards({
     model: dashboardsModel,
@@ -29,7 +35,7 @@ export const createDashboards = ({ meta, trustedOrigins, secret }: DashboardsHos
     trustedOrigins,
     // Drill links, records cursors and receipt hashes are sealed or keyed by this, so every
     // replica opens what another issued. Unset (tests), the kit makes one per process.
-    ...(secret === undefined ? {} : { secret }),
+    ...(signingKey === undefined ? {} : { secret: signingKey }),
     viewer: (request) => viewers.get(request) ?? null,
     access: {
       // Every member views; a seat that may publish edits and makes dashboards; owners manage.
