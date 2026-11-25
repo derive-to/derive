@@ -6,7 +6,6 @@ import {
   measure,
   number,
   over,
-  share,
   top,
   where,
 } from "./parts"
@@ -61,14 +60,7 @@ export const PUBLISHING = dashboard(
           number(
             "Published by agents",
             ask("version", {
-              measures: [
-                {
-                  ...measure("m_part", "version.count"),
-                  filter: where("agents", "version.madeBy", "Agents"),
-                },
-                measure("m_whole", "version.count"),
-              ],
-              ...share("Share by agents"),
+              measures: [measure("m_share", "version.agentShare")],
               time: over("version"),
             }),
           ),

@@ -49,21 +49,6 @@ export const number = (title: string, main: StoredQuery): Widget => ({
   queries: { main },
 })
 
-/** A share of a total, in percent points: `m_part` over `m_whole`, both entries of the query. */
-export const share = (label: string) => ({
-  calc: [
-    {
-      id: "c_share",
-      formula: {
-        op: "*" as const,
-        args: [{ op: "/" as const, args: [{ ref: "m_part" }, { ref: "m_whole" }] }, { lit: 100 }],
-      } as const,
-      format: "percent" as const,
-      label,
-    },
-  ],
-})
-
 /** The one control every built-in dashboard has: its range. Filters come from clicking the data. */
 export const RANGE = {
   id: "range",

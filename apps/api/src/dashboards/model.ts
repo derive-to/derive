@@ -80,6 +80,20 @@ export const dashboardsModel = defineModel({
       noun: { one: "artifact", other: "artifacts" },
       measures: {
         count: { kind: "count", merge: "sum", label: "Artifacts" },
+        uncollected: {
+          kind: "count",
+          where: { member: "artifact.inCollection", op: "equals", values: [false] },
+          merge: "sum",
+          label: "Artifacts outside collections",
+        },
+        uncollectedShare: {
+          kind: "ratio",
+          numerator: "uncollected",
+          denominator: "count",
+          merge: "none",
+          format: "percent",
+          label: "Not in a collection",
+        },
         idle: {
           kind: "max",
           of: "idle_days",
@@ -129,6 +143,20 @@ export const dashboardsModel = defineModel({
       noun: { one: "version", other: "versions" },
       measures: {
         count: { kind: "count", merge: "sum", label: "Versions" },
+        byAgents: {
+          kind: "count",
+          where: { member: "version.madeBy", op: "equals", values: ["Agents"] },
+          merge: "sum",
+          label: "Versions published by agents",
+        },
+        agentShare: {
+          kind: "ratio",
+          numerator: "byAgents",
+          denominator: "count",
+          merge: "none",
+          format: "percent",
+          label: "Share by agents",
+        },
         publishers: {
           kind: "count",
           distinct: "author_id",
@@ -226,6 +254,7 @@ export const dashboardsModel = defineModel({
           numerator: "read",
           denominator: "readers",
           merge: "none",
+          format: "percent",
           label: "Read through",
         },
       },
@@ -289,6 +318,7 @@ export const dashboardsModel = defineModel({
           numerator: "succeeded",
           denominator: "finished",
           merge: "none",
+          format: "percent",
           label: "Succeeded",
         },
         waiting: {

@@ -1,4 +1,4 @@
-import { againstBefore, ask, dashboard, measure, number, over, share, top, where } from "./parts"
+import { againstBefore, ask, dashboard, measure, number, over, top, where } from "./parts"
 
 const runs = measure("m_n", "job.count")
 
@@ -45,8 +45,7 @@ export const AGENTS = dashboard(
           number(
             "Succeeded",
             ask("job", {
-              measures: [measure("m_part", "job.succeeded"), measure("m_whole", "job.finished")],
-              ...share("Succeeded"),
+              measures: [measure("m_share", "job.successRate")],
               time: over("job"),
             }),
           ),

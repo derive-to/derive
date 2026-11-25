@@ -1,14 +1,4 @@
-import {
-  againstBefore,
-  artifactHref,
-  ask,
-  dashboard,
-  measure,
-  number,
-  share,
-  top,
-  where,
-} from "./parts"
+import { againstBefore, artifactHref, ask, dashboard, measure, number, top, where } from "./parts"
 
 const live = where("live", "artifact.archived", false)
 
@@ -52,15 +42,8 @@ export const HEALTH = dashboard(
           number(
             "Not in a collection",
             ask("artifact", {
-              measures: [
-                {
-                  ...measure("m_part", "artifact.count"),
-                  filter: where("out", "artifact.inCollection", false),
-                },
-                measure("m_whole", "artifact.count"),
-              ],
+              measures: [measure("m_share", "artifact.uncollectedShare")],
               filters: live,
-              ...share("Not in a collection"),
             }),
           ),
         ],
