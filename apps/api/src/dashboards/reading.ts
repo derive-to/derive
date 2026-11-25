@@ -17,7 +17,7 @@ import {
 export const READING = dashboard(
   "reading",
   "Reading",
-  "Who reads what the workspace publishes, and what nobody opened.",
+  "See what people open and read. Each reader counts once per artifact.",
   [
     {
       height: 2,

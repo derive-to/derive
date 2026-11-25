@@ -1,0 +1,24 @@
+diff --git a/dist/drill-distinct.mjs b/dist/drill-distinct.mjs
+index 1e1f0916cc9b554b174420b32a3ee3a01f1211fd..3665c29996fdef06d0c3ccb40a8e8d8884b63f35 100644
+--- a/dist/drill-distinct.mjs
++++ b/dist/drill-distinct.mjs
+@@ -103,7 +103,8 @@ async function distinctItems(o, rows, field, page) {
+ 		take
+ 	}), [field]);
+ 	const [column] = recordColumns(model, source, [field]);
+-	const columns = [...column === void 0 ? [] : [column], {
++	const labels = answer.columns.find((candidate) => candidate.member === field)?.labels;
++	const columns = [...column === void 0 ? [] : [{ ...column, labels }], {
+ 		member: "count",
+ 		label: "Rows",
+ 		type: "int"
+@@ -122,7 +123,8 @@ async function distinctItems(o, rows, field, page) {
+ 		source,
+ 		columns,
+ 		items,
+-		value: field,
++		title: field,
++		value: "count",
+ 		sort: "count",
+ 		...next === void 0 ? {} : { next },
+ 		...answer.status === "truncated" ? { truncated: true } : {}
