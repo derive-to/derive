@@ -15,6 +15,7 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
+      - ".github/workflows/e2e-fidelity.yml"
       - "apps/api/src/lib/http.ts"
       - "apps/api/src/lib/serve-content.ts"
       - "apps/api/src/routes/raw.ts"
@@ -41,6 +42,22 @@ jobs:
     # The suite takes a few minutes; a run once sat for 2h40m before GitHub's 6h
     # cap would have ended it. Fail fast instead of holding the PR's checks open.
     timeout-minutes: 15
+    services:
+      # Signup enqueues a verification email while the auth transaction is open.
+      # The outbox uses a separate connection, so SQLite can lock during setup.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: derive_fidelity
+          POSTGRES_USER: derive_fidelity
+          POSTGRES_PASSWORD: derive_fidelity
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U derive_fidelity -d derive_fidelity"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
@@ -49,7 +66,12 @@ jobs:
         run: pnpm --filter @derive/web exec playwright install --with-deps chromium
 
       - name: Render fidelity suite
-        run: pnpm --filter @derive/web test:e2e:fidelity
+        env:
+          DATABASE_URL: postgres://derive_fidelity:derive_fidelity@127.0.0.1:${{ job.services.postgres.ports[5432] }}/derive_fidelity
+          DERIVE_DEFAULT_ORG_ID: ws_render_fidelity
+        run: |
+          export DERIVE_AUTH_SECRET="$(openssl rand -hex 32)"
+          pnpm --filter @derive/web test:e2e:fidelity
 
       - name: Upload Playwright report
         if: ${{ !cancelled() }}
