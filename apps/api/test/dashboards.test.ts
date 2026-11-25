@@ -164,7 +164,11 @@ describe("dashboards", () => {
       await publishAs(app, "<h1>One</h1>", {}, as(owner.email))
       await publishAs(app, "<h1>Two</h1>", {}, as(owner.email))
       const replica = () =>
-        createDashboards({ meta, trustedOrigins: [], secret: "derive dashboards\u0000shared" })
+        createDashboards({
+          meta,
+          trustedOrigins: [],
+          secret: "derive dashboards\u0000local replica test fixture",
+        })
       const [first, second] = [replica(), replica()]
       if (!first || !second) throw new Error("Postgres serves dashboards")
       const artifacts = (await meta.listArtifacts({ orgId: "default" })).map((a) => a.id)
