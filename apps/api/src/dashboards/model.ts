@@ -238,11 +238,13 @@ export const dashboardsModel = defineModel({
     // stayed long enough to read it (Derive's confirmed read).
     visit: {
       in: "main",
+      // Record keys travel to the browser. Use a view ID so the key never contains a reader ID.
       sql: `
-        SELECT v.artifact_id || ':' || v.viewer AS id, v.artifact_id, v.viewer, v.viewer_kind,
+        SELECT min(v.id) AS id, v.artifact_id,
           min(v.created_at) AS created_at, count(*) AS views,
           bool_or(r.viewer IS NOT NULL) AS read_through,
-          max(coalesce(u.name, 'Visitor')) AS reader, max(a.short_id) AS artifact_short_id
+          max(coalesce(u.name, 'Visitor')) AS reader, max(a.short_id) AS artifact_short_id,
+          max(a.title) AS artifact_title
         FROM view v
         JOIN artifact a ON a.id = v.artifact_id
         LEFT JOIN view_read r ON r.artifact_id = v.artifact_id AND r.viewer = v.viewer
@@ -272,9 +274,15 @@ export const dashboardsModel = defineModel({
         },
       },
       dimensions: {
+        artifactTitle: { ...text("artifact_title", "Artifact"), drill: false },
         reader: { ...text("reader", "Reader"), sensitive: true },
         readThrough: { kind: "boolean", column: "read_through", label: "Read through" },
         createdAt: published("First opened"),
+      },
+      records: {
+        title: "artifactTitle",
+        order: [["createdAt", "desc"]],
+        columns: ["artifactTitle", "createdAt"],
       },
     },
     job: {
